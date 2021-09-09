@@ -10,7 +10,6 @@ async fn main() -> eyre::Result<()> {
         Subcommands::FromAscii(inner) => {
             println!("{}", Seth::from_ascii(&inner.text));
         }
-        _ => {}
     };
 
     Ok(())

@@ -1,7 +1,6 @@
 use ethers::types::{Address, U256};
 use ethers::{prelude::*, signers::coins_bip39::English};
 use std::convert::TryFrom;
-use std::path::PathBuf;
 use std::str::FromStr;
 use structopt::StructOpt;
 

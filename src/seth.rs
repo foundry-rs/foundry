@@ -1,5 +1,6 @@
 use rustc_hex::ToHex;
 
+#[derive(Default)]
 pub struct Seth {}
 
 impl Seth {
