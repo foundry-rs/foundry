@@ -1,17 +1,16 @@
 use structopt::StructOpt;
 
 use dapptools::opts::{Opts, Subcommands};
+use dapptools::seth::Seth;
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
     let opts = Opts::from_args();
     match opts.sub {
-        Subcommands::Buy(inner) => {
+        Subcommands::FromAscii(inner) => {
+            println!("{}", Seth::from_ascii(&inner.text));
         }
-        Subcommands::Deploy(inner) => {
-        }
-        Subcommands::Prices(inner) => {
-        }
+        _ => {}
     };
 
     Ok(())

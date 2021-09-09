@@ -1,4 +1,5 @@
 pub mod opts;
+pub mod seth;
 
 #[cfg(test)]
 mod tests {

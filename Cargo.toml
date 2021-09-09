@@ -10,3 +10,4 @@ structopt = "0.3.22"
 ethers = "0.4.0"
 eyre = "0.6.5"
 tokio = { version = "1.10.1", features = ["macros"] }
+rustc-hex = "2.1.0"
