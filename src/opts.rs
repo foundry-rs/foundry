@@ -9,6 +9,8 @@ use structopt::StructOpt;
 pub enum Subcommands {
     #[structopt(name = "--from-ascii")]
     FromAscii(FromAsciiOpts),
+    #[structopt(name = "--to-checksum-address")]
+    ToCheckSumAddress(ToCheckSumAddressOpts),
 }
 
 #[derive(StructOpt, Debug, Clone)]
@@ -16,6 +18,13 @@ pub enum Subcommands {
 pub struct FromAsciiOpts {
     #[structopt(help = "the ascii text you want to convert")]
     pub text: String,
+}
+
+#[derive(StructOpt, Debug, Clone)]
+#[structopt(about = "convert an address to a checksummed format (EIP-55)")]
+pub struct ToCheckSumAddressOpts {
+    #[structopt(help = "the address you want the checksum of")]
+    pub address: String,
 }
 
 #[derive(Debug, StructOpt)]

@@ -10,6 +10,9 @@ async fn main() -> eyre::Result<()> {
         Subcommands::FromAscii(inner) => {
             println!("{}", Seth::from_ascii(&inner.text));
         }
+        Subcommands::ToCheckSumAddress(inner) => {
+            println!("{}", Seth::to_checksum_address(&inner.address)?);
+        }
     };
 
     Ok(())
