@@ -1,19 +1,88 @@
 //! Seth
 //!
 //! TODO
-use ethers::{types::*, utils};
+use ethers::{
+    providers::{self, Http, Middleware, Provider},
+    types::*,
+    utils,
+};
 use eyre::Result;
 use rustc_hex::ToHex;
+use std::convert::TryFrom;
 use std::str::FromStr;
 
 // TODO: SethContract with common contract initializers? Same for SethProviders?
 
-#[derive(Default)]
-pub struct Seth {}
+pub struct Seth {
+    provider: Provider<Http>,
+}
+
+fn to_table(value: serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(s) => s,
+        serde_json::Value::Object(map) => {
+            let mut s = String::new();
+            for (k, v) in map.iter() {
+                s.push_str(&format!("{: <20} {}\n", k, v));
+            }
+            s
+        }
+        _ => "".to_owned(),
+    }
+}
 
 impl Seth {
-    pub fn new() -> Self {
-        Self {}
+    pub async fn new(rpc_url: &str) -> Result<Self> {
+        let provider = providers::Provider::try_from(rpc_url)?;
+        Ok(Self { provider })
+    }
+
+    pub async fn block(
+        &self,
+        block: BlockId,
+        full: bool,
+        field: Option<String>,
+        to_json: bool,
+    ) -> Result<String> {
+        let block = if full {
+            let block = self
+                .provider
+                .get_block_with_txs(block)
+                .await?
+                .ok_or(eyre::eyre!("block {:?} not found", block))?;
+            if let Some(ref field) = field {
+                // TODO: Use custom serializer to serialize
+                // u256s as decimals
+                serde_json::to_value(&block)?
+                    .get(field)
+                    .cloned()
+                    .ok_or(eyre::eyre!("field {} not found", field))?
+            } else {
+                serde_json::to_value(&block)?
+            }
+        } else {
+            let block = self
+                .provider
+                .get_block(block)
+                .await?
+                .ok_or(eyre::eyre!("block {:?} not found", block))?;
+            if let Some(ref field) = field {
+                serde_json::to_value(block)?
+                    .get(field)
+                    .cloned()
+                    .ok_or(eyre::eyre!("field {} not found", field))?
+            } else {
+                serde_json::to_value(&block)?
+            }
+        };
+
+        let block = if to_json {
+            serde_json::to_string(&block)?
+        } else {
+            to_table(block)
+        };
+
+        Ok(block)
     }
 
     /// Converts ASCII text input to hex

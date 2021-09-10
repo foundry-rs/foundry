@@ -16,6 +16,30 @@ pub enum Subcommands {
     #[structopt(name = "--to-bytes32")]
     #[structopt(about = "left-pads a hex bytes string to 32 bytes)")]
     ToBytes32 { bytes: String },
+    #[structopt(name = "block")]
+    #[structopt(
+        about = "Prints information about <block>. If <field> is given, print only the value of that field"
+    )]
+    Block {
+        #[structopt(help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
+        block: BlockId,
+        #[structopt(long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+        #[structopt(long, env = "SETH_FULL_BLOCK")]
+        full: bool,
+        field: Option<String>,
+        #[structopt(long = "--json", short = "-j")]
+        to_json: bool,
+    },
+}
+
+fn parse_block_id(s: &str) -> eyre::Result<BlockId> {
+    Ok(match s {
+        "earliest" => BlockId::Number(BlockNumber::Earliest),
+        "latest" => BlockId::Number(BlockNumber::Latest),
+        s if s.starts_with("0x") => BlockId::Hash(H256::from_str(s)?),
+        s => BlockId::Number(BlockNumber::Number(U64::from_str(s)?)),
+    })
 }
 
 #[derive(Debug, StructOpt)]
