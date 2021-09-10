@@ -32,18 +32,39 @@ fn to_table(value: serde_json::Value) -> String {
 }
 
 impl Seth {
+    /// Converts ASCII text input to hex
+    ///
+    /// ```
+    /// use dapptools::seth::Seth;
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let seth = Seth::new("http://localhost:8545").await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn new(rpc_url: &str) -> Result<Self> {
         let provider = providers::Provider::try_from(rpc_url)?;
         Ok(Self { provider })
     }
 
-    pub async fn block(
+    /// ```no_run
+    /// use dapptools::seth::Seth;
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let seth = Seth::new("http://localhost:8545").await?;
+    /// let block = seth.block(5, true, None, false).await?;
+    /// println!("{}", block);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn block<T: Into<BlockId>>(
         &self,
-        block: BlockId,
+        block: T,
         full: bool,
         field: Option<String>,
         to_json: bool,
     ) -> Result<String> {
+        let block = block.into();
         let block = if full {
             let block = self
                 .provider
