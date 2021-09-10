@@ -74,9 +74,10 @@ impl Seth {
                 .functions
                 .iter()
                 .next()
-                .ok_or(eyre::eyre!("function name not found"))?
-                .clone();
-            let func = func.get(0).ok_or(eyre::eyre!("functions array empty"))?;
+                .ok_or_else(|| eyre::eyre!("function name not found"))?;
+            let func = func
+                .get(0)
+                .ok_or_else(|| eyre::eyre!("functions array empty"))?;
             if args.len() != func.inputs.len() {
                 eyre::bail!("function inputs do len does not match provided args len");
             }
@@ -138,14 +139,14 @@ impl Seth {
                 .provider
                 .get_block_with_txs(block)
                 .await?
-                .ok_or(eyre::eyre!("block {:?} not found", block))?;
+                .ok_or_else(|| eyre::eyre!("block {:?} not found", block))?;
             if let Some(ref field) = field {
                 // TODO: Use custom serializer to serialize
                 // u256s as decimals
                 serde_json::to_value(&block)?
                     .get(field)
                     .cloned()
-                    .ok_or(eyre::eyre!("field {} not found", field))?
+                    .ok_or_else(|| eyre::eyre!("field {} not found", field))?
             } else {
                 serde_json::to_value(&block)?
             }
@@ -154,12 +155,12 @@ impl Seth {
                 .provider
                 .get_block(block)
                 .await?
-                .ok_or(eyre::eyre!("block {:?} not found", block))?;
+                .ok_or_else(|| eyre::eyre!("block {:?} not found", block))?;
             if let Some(ref field) = field {
                 serde_json::to_value(block)?
                     .get(field)
                     .cloned()
-                    .ok_or(eyre::eyre!("field {} not found", field))?
+                    .ok_or_else(|| eyre::eyre!("field {} not found", field))?
             } else {
                 serde_json::to_value(&block)?
             }
