@@ -120,6 +120,12 @@ impl Seth {
         Ok(s.join(","))
     }
 
+    // TODO: These should be builder pattern style args which get populated dynamically in the CLI
+    // 1. abstract away function selection
+    // 2. abstract away encoding of args
+    // 3. decoding of args is sort of OK but the printing of the args back to the user is ?
+    // 4. figure out middleware situation
+    // 5. figure out signature calculation on ethers human readable
     pub async fn send(&self, to: Address, sig: &str, args: Vec<String>, from: Address) -> Result<String> {
         // TODO: Make human readable ABI better / more minimal
         let abi = parse_abi(&[sig])?;
