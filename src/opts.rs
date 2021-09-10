@@ -13,6 +13,9 @@ pub enum Subcommands {
     #[structopt(name = "--to-checksum-address")]
     #[structopt(about = "convert an address to a checksummed format (EIP-55)")]
     ToCheckSumAddress { address: Address },
+    #[structopt(name = "--to-bytes32")]
+    #[structopt(about = "left-pads a hex bytes string to 32 bytes)")]
+    ToBytes32 { bytes: String },
 }
 
 #[derive(Debug, StructOpt)]

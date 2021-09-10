@@ -48,4 +48,35 @@ impl Seth {
     pub fn to_checksum_address(address: &Address) -> Result<String> {
         Ok(utils::to_checksum(address, None))
     }
+
+    /// Converts hexdata into bytes32 value
+    /// ```
+    /// use dapptools::seth::Seth;
+    ///
+    /// # fn main() -> eyre::Result<()> {
+    /// let bytes = Seth::to_bytes32("1234")?;
+    /// assert_eq!(bytes, "0x1234000000000000000000000000000000000000000000000000000000000000");
+    ///
+    /// let bytes = Seth::to_bytes32("0x1234")?;
+    /// assert_eq!(bytes, "0x1234000000000000000000000000000000000000000000000000000000000000");
+    ///
+    /// let err = Seth::to_bytes32("0x123400000000000000000000000000000000000000000000000000000000000011").unwrap_err();
+    /// assert_eq!(err.to_string(), "string >32 bytes");
+    ///
+    /// # Ok(())
+    /// # }
+    pub fn to_bytes32(s: &str) -> Result<String> {
+        let s = strip_0x(s);
+        if s.len() > 64 {
+            eyre::bail!("string >32 bytes");
+        }
+
+        let padded = format!("0x{:0<64}", s);
+        // need to use the Debug implementation
+        Ok(format!("{:?}", H256::from_str(&padded)?))
+    }
+}
+
+fn strip_0x(s: &str) -> &str {
+    s.strip_prefix("0x").unwrap_or(s)
 }

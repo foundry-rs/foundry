@@ -1,6 +1,9 @@
 pub mod opts;
 pub mod seth;
 
+// Re-export Ethers for convenience.
+pub use ethers;
+
 #[cfg(test)]
 mod tests {
     #[test]

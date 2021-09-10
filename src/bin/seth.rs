@@ -13,6 +13,9 @@ async fn main() -> eyre::Result<()> {
         Subcommands::ToCheckSumAddress { address } => {
             println!("{}", Seth::to_checksum_address(&address)?);
         }
+        Subcommands::ToBytes32 { bytes } => {
+            println!("{}", Seth::to_bytes32(&bytes)?);
+        }
     };
 
     Ok(())
