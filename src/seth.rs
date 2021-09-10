@@ -1,5 +1,8 @@
-use ethers::{types::Address, utils};
-use eyre::{Context, Result};
+//! Seth
+//!
+//! TODO
+use ethers::{types::*, utils};
+use eyre::Result;
 use rustc_hex::ToHex;
 use std::str::FromStr;
 
@@ -31,15 +34,18 @@ impl Seth {
     ///
     /// ```
     /// use dapptools::seth::Seth;
+    /// use dapptools::ethers::types::Address;
+    /// use std::str::FromStr;
     ///
     /// # fn main() -> eyre::Result<()> {
-    /// let addr = Seth::to_checksum_address("0xb7e390864a90b7b923c9f9310c6f98aafe43f707")?;
+    /// let addr = Address::from_str("0xb7e390864a90b7b923c9f9310c6f98aafe43f707")?;
+    /// let addr = Seth::to_checksum_address(&addr)?;
     /// assert_eq!(addr, "0xB7e390864a90b7b923C9f9310C6F98aafE43F707");
+    ///
     /// # Ok(())
     /// # }
     /// ```
-    pub fn to_checksum_address(s: &str) -> Result<String> {
-        let addr = Address::from_str(s).context("could not parse address for checksum")?;
-        Ok(utils::to_checksum(&addr, None))
+    pub fn to_checksum_address(address: &Address) -> Result<String> {
+        Ok(utils::to_checksum(address, None))
     }
 }

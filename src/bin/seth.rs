@@ -7,11 +7,11 @@ use dapptools::seth::Seth;
 async fn main() -> eyre::Result<()> {
     let opts = Opts::from_args();
     match opts.sub {
-        Subcommands::FromAscii(inner) => {
-            println!("{}", Seth::from_ascii(&inner.text));
+        Subcommands::FromAscii { text } => {
+            println!("{}", Seth::from_ascii(&text));
         }
-        Subcommands::ToCheckSumAddress(inner) => {
-            println!("{}", Seth::to_checksum_address(&inner.address)?);
+        Subcommands::ToCheckSumAddress { address } => {
+            println!("{}", Seth::to_checksum_address(&address)?);
         }
     };
 
