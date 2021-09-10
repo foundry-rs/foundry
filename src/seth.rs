@@ -2,6 +2,8 @@
 //!
 //! TODO
 use ethers::{
+    abi::{ParamType, Tokenizable},
+    core::abi::parse_abi,
     providers::{self, Http, Middleware, Provider},
     types::*,
     utils,
@@ -35,7 +37,7 @@ impl Seth {
     /// Converts ASCII text input to hex
     ///
     /// ```
-    /// use dapptools::seth::Seth;
+    /// use dapptools::Seth;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let seth = Seth::new("http://localhost:8545").await?;
@@ -47,8 +49,74 @@ impl Seth {
         Ok(Self { provider })
     }
 
+    // TODO: `send`, same story but sending the tx.
     /// ```no_run
-    /// use dapptools::seth::Seth;
+    /// use dapptools::Seth;
+    /// use dapptools::ethers::types::Address;
+    /// use std::str::FromStr;
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let seth = Seth::new("http://localhost:8545").await?;
+    /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
+    /// let sig = "function greeting(uint256 i) public returns (string)";
+    /// let args = vec!["5".to_owned()];
+    /// let data = seth.call(to, sig, args).await?;
+    /// println!("{}", data);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn call(&self, to: Address, sig: &str, args: Vec<String>) -> Result<String> {
+        // TODO: Make human readable ABI better / more minimal
+        let abi = parse_abi(&[sig])?;
+        // get the function
+        let func = {
+            let (_, func) = abi
+                .functions
+                .iter()
+                .next()
+                .ok_or(eyre::eyre!("function name not found"))?
+                .clone();
+            let func = func.get(0).ok_or(eyre::eyre!("functions array empty"))?;
+            if args.len() != func.inputs.len() {
+                eyre::bail!("function inputs do len does not match provided args len");
+            }
+            func
+        };
+
+        // Dynamically build up the calldata via the function sig
+        let mut inputs = Vec::new();
+        for (i, input) in func.inputs.iter().enumerate() {
+            let input = match input.kind {
+                // TODO: Do the rest of the types
+                ParamType::Address => Address::from_str(&args[i])?.into_token(),
+                ParamType::Uint(256) => U256::from_str(&args[i])?.into_token(),
+                _ => Address::zero().into_token(),
+            };
+            inputs.push(input);
+        }
+
+        // encode args
+        let data = func.encode_input(&inputs)?;
+
+        // make the call
+        let tx = Eip1559TransactionRequest::new().to(to).data(data).into();
+        let res = self.provider.call(&tx, None).await?;
+
+        // decode args into tokens
+        let res = func.decode_output(res.as_ref())?;
+
+        // concatenate them
+        let mut s = Vec::new();
+        for output in res {
+            s.push(format!("{}", output));
+        }
+
+        // return string
+        Ok(s.join(","))
+    }
+
+    /// ```no_run
+    /// use dapptools::Seth;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let seth = Seth::new("http://localhost:8545").await?;
@@ -109,7 +177,7 @@ impl Seth {
     /// Converts ASCII text input to hex
     ///
     /// ```
-    /// use dapptools::seth::Seth;
+    /// use dapptools::Seth;
     ///
     /// let bin = Seth::from_ascii("yo");
     /// assert_eq!(bin, "0x796f")
@@ -123,7 +191,7 @@ impl Seth {
     /// according to [EIP-55](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-55.md)
     ///
     /// ```
-    /// use dapptools::seth::Seth;
+    /// use dapptools::Seth;
     /// use dapptools::ethers::types::Address;
     /// use std::str::FromStr;
     ///
@@ -141,7 +209,7 @@ impl Seth {
 
     /// Converts hexdata into bytes32 value
     /// ```
-    /// use dapptools::seth::Seth;
+    /// use dapptools::Seth;
     ///
     /// # fn main() -> eyre::Result<()> {
     /// let bytes = Seth::to_bytes32("1234")?;

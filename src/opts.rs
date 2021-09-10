@@ -23,13 +23,26 @@ pub enum Subcommands {
     Block {
         #[structopt(help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
         block: BlockId,
-        #[structopt(long, env = "ETH_RPC_URL")]
-        rpc_url: String,
         #[structopt(long, env = "SETH_FULL_BLOCK")]
         full: bool,
         field: Option<String>,
         #[structopt(long = "--json", short = "-j")]
         to_json: bool,
+        #[structopt(long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+    },
+    #[structopt(name = "call")]
+    #[structopt(
+        about = "Perform a local call to <to> without publishing a transaction.
+"
+    )]
+    Call {
+        #[structopt(help = "the address you want to query")]
+        address: Address,
+        sig: String,
+        args: Vec<String>,
+        #[structopt(long, env = "ETH_RPC_URL")]
+        rpc_url: String,
     },
 }
 

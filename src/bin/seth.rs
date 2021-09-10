@@ -1,7 +1,7 @@
 use structopt::StructOpt;
 
 use dapptools::opts::{Opts, Subcommands};
-use dapptools::seth::Seth;
+use dapptools::Seth;
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
@@ -29,6 +29,17 @@ async fn main() -> eyre::Result<()> {
                     .await?
                     .block(block, full, field, to_json)
                     .await?
+            );
+        }
+        Subcommands::Call {
+            rpc_url,
+            address,
+            sig,
+            args,
+        } => {
+            println!(
+                "{}",
+                Seth::new(&rpc_url).await?.call(address, &sig, args).await?
             );
         }
     };

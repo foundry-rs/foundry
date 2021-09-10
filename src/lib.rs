@@ -1,5 +1,7 @@
 pub mod opts;
-pub mod seth;
+
+mod seth;
+pub use seth::*;
 
 // Re-export Ethers for convenience.
 pub use ethers;
