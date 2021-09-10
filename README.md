@@ -10,7 +10,8 @@
     * [x] `--from-ascii`
     * [x] `--to-checksum-address`
     * [x] `--to-bytes32`
-    * [ ] `--from-bin`: isn't this the same as from-ascii?
+    * [x] `block`
+    * [x] `call` (partial)
 * dapp
     * [ ]
 * hevm
