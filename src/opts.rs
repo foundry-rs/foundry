@@ -33,8 +33,7 @@ pub enum Subcommands {
     },
     #[structopt(name = "call")]
     #[structopt(
-        about = "Perform a local call to <to> without publishing a transaction.
-"
+        about = "Perform a local call to <to> without publishing a transaction."
     )]
     Call {
         #[structopt(help = "the address you want to query")]
@@ -43,6 +42,20 @@ pub enum Subcommands {
         args: Vec<String>,
         #[structopt(long, env = "ETH_RPC_URL")]
         rpc_url: String,
+    },
+    #[structopt(name = "send")]
+    #[structopt(
+        about = "Publish a transaction signed by <from> to call <to> with <data>"
+    )]
+    SendTx {
+        #[structopt(help = "the address you want to query")]
+        address: Address,
+        sig: String,
+        args: Vec<String>,
+        #[structopt(long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+        #[structopt(long, env = "ETH_FROM")]
+        from: Address,
     },
 }
 

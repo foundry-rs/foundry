@@ -90,7 +90,11 @@ impl Seth {
             let input = match input.kind {
                 // TODO: Do the rest of the types
                 ParamType::Address => Address::from_str(&args[i])?.into_token(),
-                ParamType::Uint(256) => U256::from_str(&args[i])?.into_token(),
+                ParamType::Uint(256) => if args[i].starts_with("0x") {
+                    U256::from_str(&args[i])?
+                } else {
+                    U256::from_dec_str(&args[i])?
+                }.into_token(),
                 _ => Address::zero().into_token(),
             };
             inputs.push(input);
@@ -114,6 +118,51 @@ impl Seth {
 
         // return string
         Ok(s.join(","))
+    }
+
+    pub async fn send(&self, to: Address, sig: &str, args: Vec<String>, from: Address) -> Result<String> {
+        // TODO: Make human readable ABI better / more minimal
+        let abi = parse_abi(&[sig])?;
+        // get the function
+        let func = {
+            let (_, func) = abi
+                .functions
+                .iter()
+                .next()
+                .ok_or_else(|| eyre::eyre!("function name not found"))?;
+            let func = func
+                .get(0)
+                .ok_or_else(|| eyre::eyre!("functions array empty"))?;
+            if args.len() != func.inputs.len() {
+                eyre::bail!("function inputs do len does not match provided args len");
+            }
+            func
+        };
+
+        // Dynamically build up the calldata via the function sig
+        let mut inputs = Vec::new();
+        for (i, input) in func.inputs.iter().enumerate() {
+            let input = match input.kind {
+                // TODO: Do the rest of the types
+                ParamType::Address => Address::from_str(&args[i])?.into_token(),
+                ParamType::Uint(256) => if args[i].starts_with("0x") {
+                    U256::from_str(&args[i])?
+                } else {
+                    U256::from_dec_str(&args[i])?
+                }.into_token(),
+                _ => Address::zero().into_token(),
+            };
+            inputs.push(input);
+        }
+
+        // encode args
+        let data = func.encode_input(&inputs)?;
+
+        // make the call
+        let tx = Eip1559TransactionRequest::new().from(from).to(to).data(data);
+        let res = self.provider.send_transaction(tx, None).await?;
+
+        Ok(format!("{:?}", *res))
     }
 
     /// ```no_run

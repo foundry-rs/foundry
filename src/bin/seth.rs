@@ -42,6 +42,18 @@ async fn main() -> eyre::Result<()> {
                 Seth::new(&rpc_url).await?.call(address, &sig, args).await?
             );
         }
+        Subcommands::SendTx {
+            rpc_url,
+            address,
+            sig,
+            args,
+            from,
+        } => {
+            println!(
+                "{}",
+                Seth::new(&rpc_url).await?.send(address, &sig, args, from).await?
+            );
+        }
     };
 
     Ok(())
