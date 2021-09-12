@@ -26,6 +26,14 @@ enum Subcommands {
         )]
         contracts: String,
 
+        #[structopt(help = "the remappings", long, short)]
+        remappings: Vec<String>,
+        #[structopt(env = "DAPP_REMAPPINGS")]
+        remappings_env: String,
+
+        #[structopt(help = "the path where your libraries are installed", long)]
+        lib_path: Option<String>,
+
         #[structopt(
             help = "path to where the contract artifacts are stored",
             long = "out",
@@ -120,14 +128,37 @@ fn main() -> eyre::Result<()> {
     match opts.sub {
         Subcommands::Test {
             contracts,
+            mut remappings,
+            remappings_env,
+            lib_path,
             out_path,
             env,
             json,
         } => {
             let cfg = Config::istanbul();
 
+            // merge the cli-provided remappings vector with the
+            // new-line separated env var
+            remappings.extend_from_slice(
+                &remappings_env
+                    .split('\n')
+                    .map(|x| x.to_string())
+                    .collect::<Vec<_>>(),
+            );
+            // deduplicate the extra remappings
+            remappings.sort_unstable();
+            remappings.dedup();
+
             let runner = MultiContractRunner::new(
                 &contracts,
+                remappings,
+                lib_path.unwrap_or(
+                    std::env::current_dir()?
+                        .join("lib")
+                        .into_os_string()
+                        .into_string()
+                        .expect("could not parse libs path. is it not utf-8 maybe?"),
+                ),
                 out_path,
                 &cfg,
                 env.gas_limit,

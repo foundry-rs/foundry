@@ -286,7 +286,12 @@ impl DapptoolsArtifact {
 }
 
 impl<'a> MultiContractRunner<'a> {
-    fn build(contracts: &str, out_path: PathBuf) -> Result<HashMap<String, CompiledContract>> {
+    fn build(
+        contracts: &str,
+        remappings: Vec<String>,
+        lib_path: String,
+        out_path: PathBuf,
+    ) -> Result<HashMap<String, CompiledContract>> {
         // TODO:
         // 1. incremental compilation
         // 2. parallel compilation
@@ -296,19 +301,24 @@ impl<'a> MultiContractRunner<'a> {
             let out_file = std::fs::read_to_string(out_path)?;
             serde_json::from_str::<DapptoolsArtifact>(&out_file)?.contracts()?
         } else {
-            Solc::new(contracts).build()?
+            Solc::new(contracts)
+                .args(remappings)
+                .args(["--allow-paths", &lib_path])
+                .build()?
         })
     }
 
     pub fn new(
         contracts: &str,
+        remappings: Vec<String>,
+        lib_path: String,
         out_path: PathBuf,
         config: &'a Config,
         gas_limit: u64,
         env: MemoryVicinity,
     ) -> Result<Self> {
         // 1. compile the contracts
-        let contracts = Self::build(contracts, out_path)?;
+        let contracts = Self::build(contracts, remappings, lib_path, out_path)?;
 
         // 2. create the initial state
         // TODO: Allow further overriding perhaps?
