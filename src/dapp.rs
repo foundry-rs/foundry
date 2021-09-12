@@ -301,10 +301,15 @@ impl<'a> MultiContractRunner<'a> {
             let out_file = std::fs::read_to_string(out_path)?;
             serde_json::from_str::<DapptoolsArtifact>(&out_file)?.contracts()?
         } else {
-            Solc::new(contracts)
-                .args(remappings)
-                .args(["--allow-paths", &lib_path])
-                .build()?
+            let mut solc = Solc::new(contracts);
+            if !lib_path.is_empty() {
+                solc = solc.args(["--allow-paths", &lib_path]);
+            }
+
+            if !remappings.is_empty() {
+                solc = solc.args(remappings)
+            }
+            solc.build()?
         })
     }
 
@@ -592,8 +597,16 @@ mod tests {
         let gas_limit = 12_500_000;
         let env = Executor::new_vicinity();
 
-        let runner =
-            MultiContractRunner::new(contracts, PathBuf::new(), &cfg, gas_limit, env).unwrap();
+        let runner = MultiContractRunner::new(
+            contracts,
+            vec![],
+            String::new(),
+            PathBuf::new(),
+            &cfg,
+            gas_limit,
+            env,
+        )
+        .unwrap();
         let results = runner.test().unwrap();
         for (_, res) in results {
             assert!(res.iter().all(|(_, result)| result.success == true));
