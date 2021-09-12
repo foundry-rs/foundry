@@ -28,9 +28,12 @@ where
     ///
     /// ```
     /// use dapptools::Seth;
+    /// use ethers::providers::{Provider, Http};
+    /// use std::convert::TryFrom;
     ///
     /// # async fn foo() -> eyre::Result<()> {
-    /// let seth = Seth::new("http://localhost:8545").await?;
+    /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
+    /// let seth = Seth::new(provider).await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -44,10 +47,12 @@ where
     ///
     /// use dapptools::Seth;
     /// use dapptools::ethers::types::Address;
-    /// use std::str::FromStr;
+    /// use ethers::providers::{Provider, Http};
+    /// use std::{str::FromStr, convert::TryFrom};
     ///
     /// # async fn foo() -> eyre::Result<()> {
-    /// let seth = Seth::new("http://localhost:8545").await?;
+    /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
+    /// let seth = Seth::new(provider).await?;
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let sig = "function greeting(uint256 i) public returns (string)";
     /// let args = vec!["5".to_owned()];
@@ -82,12 +87,14 @@ where
     /// ```no_run
     /// use dapptools::Seth;
     /// use dapptools::ethers::types::Address;
-    /// use std::str::FromStr;
+    /// use ethers::providers::{Provider, Http};
+    /// use std::{str::FromStr, convert::TryFrom};
     ///
     /// # async fn foo() -> eyre::Result<()> {
-    /// let seth = Seth::new("http://localhost:8545").await?;
+    /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
+    /// let seth = Seth::new(provider).await?;
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
-    /// let sig = "function greetg(string memory) public returns (string)";
+    /// let sig = "function greet(string memory) public returns (string)";
     /// let args = vec!["5".to_owned()];
     /// let data = seth.call(to, sig, args).await?;
     /// println!("{}", data);
@@ -116,9 +123,12 @@ where
 
     /// ```no_run
     /// use dapptools::Seth;
+    /// use ethers::providers::{Provider, Http};
+    /// use std::convert::TryFrom;
     ///
     /// # async fn foo() -> eyre::Result<()> {
-    /// let seth = Seth::new("http://localhost:8545").await?;
+    /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
+    /// let seth = Seth::new(provider).await?;
     /// let block = seth.block(5, true, None, false).await?;
     /// println!("{}", block);
     /// # Ok(())
@@ -179,7 +189,7 @@ impl SimpleSeth {
     /// Converts ASCII text input to hex
     ///
     /// ```
-    /// use dapptools::Seth;
+    /// use dapptools::SimpleSeth as Seth;
     ///
     /// let bin = Seth::from_ascii("yo");
     /// assert_eq!(bin, "0x796f")
@@ -193,7 +203,7 @@ impl SimpleSeth {
     /// according to [EIP-55](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-55.md)
     ///
     /// ```
-    /// use dapptools::Seth;
+    /// use dapptools::SimpleSeth as Seth;
     /// use dapptools::ethers::types::Address;
     /// use std::str::FromStr;
     ///
@@ -211,7 +221,7 @@ impl SimpleSeth {
 
     /// Converts hexdata into bytes32 value
     /// ```
-    /// use dapptools::Seth;
+    /// use dapptools::SimpleSeth as Seth;
     ///
     /// # fn main() -> eyre::Result<()> {
     /// let bytes = Seth::to_bytes32("1234")?;
