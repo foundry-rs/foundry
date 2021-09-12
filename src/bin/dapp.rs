@@ -4,6 +4,7 @@ use dapptools::dapp::{Executor, MultiContractRunner};
 use evm::Config;
 
 use ansi_term::Colour;
+use std::path::PathBuf;
 
 #[derive(Debug, StructOpt)]
 pub struct Opts {
@@ -22,6 +23,14 @@ pub enum Subcommands {
             default_value = "./src/**/*.sol"
         )]
         contracts: String,
+
+        #[structopt(
+            help = "path to where the contract artifacts are stored",
+            long = "out",
+            short,
+            default_value = "./out/dapp.sol.json"
+        )]
+        out_path: PathBuf,
         // TODO: Add extra configuration options around blockchain context
     },
 }
@@ -29,13 +38,16 @@ pub enum Subcommands {
 fn main() -> eyre::Result<()> {
     let opts = Opts::from_args();
     match opts.sub {
-        Subcommands::Test { contracts } => {
+        Subcommands::Test {
+            contracts,
+            out_path,
+        } => {
             let cfg = Config::istanbul();
             let gas_limit = 12_500_000;
             let env = Executor::new_vicinity();
 
-            let runner = MultiContractRunner::new(&contracts, &cfg, gas_limit, env).unwrap();
-            let results = runner.test().unwrap();
+            let runner = MultiContractRunner::new(&contracts, out_path, &cfg, gas_limit, env)?;
+            let results = runner.test()?;
 
             // TODO: Once we add traces in the VM, proceed to print them in a nice and structured
             // way

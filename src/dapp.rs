@@ -9,7 +9,10 @@ use evm::backend::{MemoryAccount, MemoryBackend, MemoryVicinity};
 use evm::executor::{MemoryStackState, StackExecutor, StackSubstateMetadata};
 use evm::{Config, Handler};
 use evm::{ExitReason, ExitRevert, ExitSucceed};
-use std::collections::{BTreeMap, HashMap};
+use std::{
+    collections::{BTreeMap, HashMap},
+    path::PathBuf,
+};
 
 use eyre::Result;
 
@@ -113,6 +116,7 @@ impl<'a> Executor<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
 #[derive(Clone, Debug)]
 pub struct TestResult {
     pub success: bool,
+    // TODO: Ensure that this is calculated properly
     pub gas_used: u64,
 }
 
@@ -222,15 +226,89 @@ pub struct MultiContractRunner<'a> {
     pub gas_limit: u64,
 }
 
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DapptoolsArtifact {
+    contracts: HashMap<String, HashMap<String, serde_json::Value>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Contract {
+    abi: ethers::abi::Abi,
+    evm: Evm,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Evm {
+    bytecode: Bytecode,
+    deployed_bytecode: Bytecode,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Bytecode {
+    #[serde(deserialize_with = "deserialize_bytes")]
+    object: Bytes,
+}
+
+use serde::Deserializer;
+
+pub fn deserialize_bytes<'de, D>(d: D) -> Result<Bytes, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = String::deserialize(d)?;
+
+    Ok(hex::decode(&value)
+        .map_err(|e| serde::de::Error::custom(e.to_string()))?
+        .into())
+}
+
+impl DapptoolsArtifact {
+    fn contracts(&self) -> Result<HashMap<String, CompiledContract>> {
+        let mut map = HashMap::new();
+        for (key, value) in &self.contracts {
+            for (contract, data) in value.iter() {
+                let data: Contract = serde_json::from_value(data.clone())?;
+                let data = CompiledContract {
+                    abi: data.abi,
+                    bytecode: data.evm.bytecode.object,
+                    runtime_bytecode: data.evm.deployed_bytecode.object,
+                };
+                map.insert(format!("{}:{}", key, contract), data);
+            }
+        }
+
+        Ok(map)
+    }
+}
+
 impl<'a> MultiContractRunner<'a> {
+    fn build(contracts: &str, out_path: PathBuf) -> Result<HashMap<String, CompiledContract>> {
+        // TODO:
+        // 1. incremental compilation
+        // 2. parallel compilation
+        // 3. multi-version compiling
+        // 4. Hardhat / Truffle-style artifacts
+        Ok(if out_path.exists() {
+            let out_file = std::fs::read_to_string(out_path)?;
+            serde_json::from_str::<DapptoolsArtifact>(&out_file)?.contracts()?
+        } else {
+            Solc::new(contracts).build()?
+        })
+    }
+
     pub fn new(
         contracts: &str,
+        out_path: PathBuf,
         config: &'a Config,
         gas_limit: u64,
         env: MemoryVicinity,
     ) -> Result<Self> {
         // 1. compile the contracts
-        let contracts = Solc::new(contracts).build()?;
+        let contracts = Self::build(contracts, out_path)?;
 
         // 2. create the initial state
         // TODO: Allow further overriding perhaps?
@@ -496,7 +574,8 @@ mod tests {
         let gas_limit = 12_500_000;
         let env = Executor::new_vicinity();
 
-        let runner = MultiContractRunner::new(contracts, &cfg, gas_limit, env).unwrap();
+        let runner =
+            MultiContractRunner::new(contracts, PathBuf::new(), &cfg, gas_limit, env).unwrap();
         let results = runner.test().unwrap();
         for (_, res) in results {
             assert!(res.iter().all(|(_, result)| result.success == true));
