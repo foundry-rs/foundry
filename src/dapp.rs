@@ -68,8 +68,6 @@ impl<'a> Executor<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
             self.executor
                 .transact_call(from, to, value, data.to_vec(), self.gas_limit);
 
-        dbg!(&status, &retdata);
-
         let retdata = decode_function_data(&func, retdata, false)?;
 
         Ok((retdata, status))
@@ -128,8 +126,21 @@ struct ContractRunner<'a, S> {
 }
 
 impl<'a> ContractRunner<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
+    /// Runs the `setUp()` function call to initiate the contract's state
+    fn setup(&mut self) -> Result<()> {
+        let (_, status) = self.executor.call::<(), _>(
+            Address::zero(),
+            self.address,
+            &get_func("function setUp() external").unwrap(),
+            (),
+            0.into(),
+        )?;
+        debug_assert_eq!(status, ExitReason::Succeed(ExitSucceed::Stopped));
+        Ok(())
+    }
+
     /// runs all tests under a contract
-    fn test(&mut self) -> Result<HashMap<String, TestResult>> {
+    pub fn test(&mut self) -> Result<HashMap<String, TestResult>> {
         let test_fns = self
             .contract
             .abi
@@ -137,36 +148,43 @@ impl<'a> ContractRunner<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
             .into_iter()
             .filter(|func| func.name.starts_with("test"));
 
-        let mut map = HashMap::new();
+        // run all tests
+        let map = test_fns
+            .map(|func| {
+                // call the setup function in each test to reset the test's state.
+                // if we did this outside the map, we'd not have test isolation
+                self.setup()?;
 
-        for func in test_fns {
-            // the expected result depends on the function name
-            let expected = if func.name.contains("testFail") {
-                ExitReason::Revert(ExitRevert::Reverted)
-            } else {
-                ExitReason::Succeed(ExitSucceed::Stopped)
-            };
-
-            // set the selector & execute the call
-            let data = func.selector().to_vec();
-            let (result, _) = self.executor.executor.transact_call(
-                Address::zero(),
-                self.address,
-                0.into(),
-                data.to_vec(),
-                self.executor.gas_limit,
-            );
-
-            println!("{:?}, got {:?}", func.name, result);
-            map.insert(
-                func.name.clone(),
-                TestResult {
-                    success: expected == result,
-                },
-            );
-        }
+                let result = self.test_func(func);
+                println!("{:?}, got {:?}", func.name, result);
+                Ok((func.name.clone(), result))
+            })
+            .collect::<Result<HashMap<_, _>>>()?;
 
         Ok(map)
+    }
+
+    pub fn test_func(&mut self, func: &Function) -> TestResult {
+        // the expected result depends on the function name
+        let expected = if func.name.contains("testFail") {
+            ExitReason::Revert(ExitRevert::Reverted)
+        } else {
+            ExitReason::Succeed(ExitSucceed::Stopped)
+        };
+
+        // set the selector & execute the call
+        let data = func.selector().to_vec();
+        let (result, _) = self.executor.executor.transact_call(
+            Address::zero(),
+            self.address,
+            0.into(),
+            data.to_vec(),
+            self.executor.gas_limit,
+        );
+
+        TestResult {
+            success: expected == result,
+        }
     }
 }
 
@@ -220,7 +238,7 @@ mod tests {
     }
 
     #[test]
-    fn can_run_solidity_unit_test() {
+    fn solidity_unit_test() {
         let cfg = Config::istanbul();
 
         let compiled = Solc::new(&format!("./*.sol")).build().unwrap();
@@ -257,17 +275,73 @@ mod tests {
             )
             .unwrap();
         assert_eq!(status, ExitReason::Succeed(ExitSucceed::Stopped));
+    }
 
+    #[test]
+    fn failing_with_no_reason_if_no_setup() {
+        let cfg = Config::istanbul();
+
+        let compiled = Solc::new(&format!("./*.sol")).build().unwrap();
+        let compiled = compiled.get("GreetTest").expect("could not find contract");
+
+        let addr = "0x1000000000000000000000000000000000000000"
+            .parse()
+            .unwrap();
+        let state = Executor::initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
+
+        let vicinity = Executor::new_vicinity();
+        let backend = Executor::new_backend(&vicinity, state);
+        let mut dapp = Executor::new(12_000_000, &cfg, &backend);
+
+        let (status, res) = dapp.executor.transact_call(
+            Address::zero(),
+            addr,
+            0.into(),
+            id("testFailGreeting()").to_vec(),
+            dapp.gas_limit,
+        );
+        assert_eq!(status, ExitReason::Revert(ExitRevert::Reverted));
+        assert!(res.is_empty());
+    }
+
+    #[test]
+    fn failing_solidity_unit_test() {
+        let cfg = Config::istanbul();
+
+        let compiled = Solc::new(&format!("./*.sol")).build().unwrap();
+        let compiled = compiled.get("GreetTest").expect("could not find contract");
+
+        let addr = "0x1000000000000000000000000000000000000000"
+            .parse()
+            .unwrap();
+        let state = Executor::initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
+
+        let vicinity = Executor::new_vicinity();
+        let backend = Executor::new_backend(&vicinity, state);
+        let mut dapp = Executor::new(12_000_000, &cfg, &backend);
+
+        // call the setup function to deploy the contracts inside the test
         let (_, status) = dapp
             .call::<(), _>(
                 Address::zero(),
                 addr,
-                &get_func("function testFailGreetingLength()").unwrap(),
+                &get_func("function setUp() external").unwrap(),
                 (),
                 0.into(),
             )
             .unwrap();
+        assert_eq!(status, ExitReason::Succeed(ExitSucceed::Stopped));
+
+        let (status, res) = dapp.executor.transact_call(
+            Address::zero(),
+            addr,
+            0.into(),
+            id("testFailGreeting()").to_vec(),
+            dapp.gas_limit,
+        );
         assert_eq!(status, ExitReason::Revert(ExitRevert::Reverted));
+        let reason = decode_revert(&res).unwrap();
+        assert_eq!(reason, "not equal to `hi`");
     }
 
     #[test]
