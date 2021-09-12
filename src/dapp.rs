@@ -37,20 +37,12 @@ impl<'a> Executor<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
         // setup state
         let state = MemoryStackState::new(metadata, backend);
         // setup executor
-        let executor = StackExecutor::new(state, &config);
+        let executor = StackExecutor::new(state, config);
 
         Self {
             executor,
             gas_limit,
         }
-    }
-
-    /// builds the contracts & writes the output to out/dapp.out.json
-    pub fn build(&self) -> Result<()> {
-        // TODO: Set remappings, optimizer runs, config files
-        // Set location to read sol contracts from
-        let _compiled = Solc::new(&format!("./*.sol")).build()?;
-        Ok(())
     }
 
     /// Runs the selected function
@@ -62,7 +54,7 @@ impl<'a> Executor<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
         args: T, // derive arbitrary for Tokenize?
         value: U256,
     ) -> Result<(D, ExitReason, u64)> {
-        let calldata = encode_function_data(&func, args)?;
+        let calldata = encode_function_data(func, args)?;
 
         let gas_before = self.executor.gas_left();
 
@@ -73,7 +65,7 @@ impl<'a> Executor<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
         let gas_after = self.executor.gas_left();
         let gas = remove_extra_costs(gas_before - gas_after, calldata.as_ref());
 
-        let retdata = decode_function_data(&func, retdata, false)?;
+        let retdata = decode_function_data(func, retdata, false)?;
 
         Ok((retdata, status, gas.as_u64()))
     }
@@ -210,9 +202,7 @@ fn remove_extra_costs(gas: U256, calldata: &[u8]) -> U256 {
         }
     }
     gas - calldata_cost - BASE_TX_COST
-
 }
-
 
 pub fn decode_revert(error: &[u8]) -> Result<String> {
     Ok(abi::decode(&[abi::ParamType::String], &error[4..])?[0].to_string())
@@ -301,7 +291,7 @@ impl<'a> MultiContractRunner<'a> {
         address: Address,
         backend: MemoryBackend<'_>,
     ) -> Result<HashMap<String, TestResult>> {
-        let mut dapp = Executor::new(self.gas_limit, &self.config, &backend);
+        let mut dapp = Executor::new(self.gas_limit, self.config, &backend);
         let mut runner = ContractRunner {
             executor: &mut dapp,
             contract,
