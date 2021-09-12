@@ -7,7 +7,7 @@ use ethers::{
 
 use evm::backend::{MemoryAccount, MemoryBackend, MemoryVicinity};
 use evm::executor::{MemoryStackState, StackExecutor, StackSubstateMetadata};
-use evm::Config;
+use evm::{Config, Handler};
 use evm::{ExitReason, ExitRevert, ExitSucceed};
 use std::collections::{BTreeMap, HashMap};
 
@@ -61,16 +61,21 @@ impl<'a> Executor<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
         func: &Function,
         args: T, // derive arbitrary for Tokenize?
         value: U256,
-    ) -> Result<(D, ExitReason)> {
-        let data = encode_function_data(&func, args)?;
+    ) -> Result<(D, ExitReason, u64)> {
+        let calldata = encode_function_data(&func, args)?;
+
+        let gas_before = self.executor.gas_left();
 
         let (status, retdata) =
             self.executor
-                .transact_call(from, to, value, data.to_vec(), self.gas_limit);
+                .transact_call(from, to, value, calldata.to_vec(), self.gas_limit);
+
+        let gas_after = self.executor.gas_left();
+        let gas = remove_extra_costs(gas_before - gas_after, calldata.as_ref());
 
         let retdata = decode_function_data(&func, retdata, false)?;
 
-        Ok((retdata, status))
+        Ok((retdata, status, gas.as_u64()))
     }
 
     /// given an iterator of contract address to contract bytecode, initializes
@@ -116,7 +121,7 @@ impl<'a> Executor<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
 #[derive(Clone, Debug)]
 pub struct TestResult {
     success: bool,
-    // TODO: Add gas consumption if possible?
+    gas_used: u64,
 }
 
 struct ContractRunner<'a, S> {
@@ -128,7 +133,7 @@ struct ContractRunner<'a, S> {
 impl<'a> ContractRunner<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
     /// Runs the `setUp()` function call to initiate the contract's state
     fn setup(&mut self) -> Result<()> {
-        let (_, status) = self.executor.call::<(), _>(
+        let (_, status, _) = self.executor.call::<(), _>(
             Address::zero(),
             self.address,
             &get_func("function setUp() external").unwrap(),
@@ -172,20 +177,42 @@ impl<'a> ContractRunner<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
         };
 
         // set the selector & execute the call
-        let data = func.selector().to_vec();
+        let calldata = func.selector();
+
+        let gas_before = self.executor.executor.gas_left();
         let (result, _) = self.executor.executor.transact_call(
             Address::zero(),
             self.address,
             0.into(),
-            data.to_vec(),
+            calldata.to_vec(),
             self.executor.gas_limit,
         );
+        let gas_after = self.executor.executor.gas_left();
 
         TestResult {
             success: expected == result,
+            // We subtract the calldata & base gas cost from our test's
+            // gas consumption
+            gas_used: remove_extra_costs(gas_before - gas_after, &calldata).as_u64(),
         }
     }
 }
+
+const BASE_TX_COST: u64 = 21000;
+fn remove_extra_costs(gas: U256, calldata: &[u8]) -> U256 {
+    let mut calldata_cost = 0;
+    for i in calldata {
+        if *i != 0 {
+            // TODO: Check if EVM pre-eip2028 and charge 64
+            calldata_cost += 16
+        } else {
+            calldata_cost += 8;
+        }
+    }
+    gas - calldata_cost - BASE_TX_COST
+
+}
+
 
 pub fn decode_revert(error: &[u8]) -> Result<String> {
     Ok(abi::decode(&[abi::ParamType::String], &error[4..])?[0].to_string())
@@ -307,7 +334,7 @@ mod tests {
         let backend = Executor::new_backend(&vicinity, state);
         let mut dapp = Executor::new(12_000_000, &cfg, &backend);
 
-        let (_, status) = dapp
+        let (_, status, _) = dapp
             .call::<(), _>(
                 Address::zero(),
                 addr,
@@ -318,7 +345,7 @@ mod tests {
             .unwrap();
         assert_eq!(status, ExitReason::Succeed(ExitSucceed::Stopped));
 
-        let (retdata, status) = dapp
+        let (retdata, status, _) = dapp
             .call::<String, _>(
                 Address::zero(),
                 addr,
@@ -350,7 +377,7 @@ mod tests {
         let mut dapp = Executor::new(12_000_000, &cfg, &backend);
 
         // call the setup function to deploy the contracts inside the test
-        let (_, status) = dapp
+        let (_, status, _) = dapp
             .call::<(), _>(
                 Address::zero(),
                 addr,
@@ -361,7 +388,7 @@ mod tests {
             .unwrap();
         assert_eq!(status, ExitReason::Succeed(ExitSucceed::Stopped));
 
-        let (_, status) = dapp
+        let (_, status, _) = dapp
             .call::<(), _>(
                 Address::zero(),
                 addr,
@@ -421,7 +448,7 @@ mod tests {
         let mut dapp = Executor::new(12_000_000, &cfg, &backend);
 
         // call the setup function to deploy the contracts inside the test
-        let (_, status) = dapp
+        let (_, status, _) = dapp
             .call::<(), _>(
                 Address::zero(),
                 addr,
