@@ -15,6 +15,7 @@ tokio = { version = "1.10.1", features = ["macros"] }
 rustc-hex = "2.1.0"
 serde_json = "1.0.67"
 evm = "0.30.1"
+rpassword = "5.0.1"
 
 [patch.'crates-io']
 ethabi = { git = "https://github.com/gakonst/ethabi/", branch = "patch-1" }

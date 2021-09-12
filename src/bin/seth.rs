@@ -1,7 +1,9 @@
 use std::convert::TryFrom;
 
 use ethers::{
+    prelude::SignerMiddleware,
     providers::{Middleware, Provider},
+    signers::Signer,
     types::Address,
 };
 use structopt::StructOpt;
@@ -50,17 +52,16 @@ async fn main() -> eyre::Result<()> {
                 Seth::new(provider).await?.call(address, &sig, args).await?
             );
         }
-        Subcommands::SendTx {
-            seth_async,
-            rpc_url,
-            address,
-            sig,
-            args,
-            from,
-        } => {
-            let provider = Provider::try_from(rpc_url)?;
-            let seth = Seth::new(provider).await?;
-            seth_send(seth, from, address, sig, args, seth_async).await?;
+        Subcommands::SendTx { eth, to, sig, args } => {
+            let provider = Provider::try_from(eth.rpc_url.as_str())?;
+            if let Some(signer) = eth.signer()? {
+                let from = eth.from.unwrap_or(signer.address());
+                let provider = SignerMiddleware::new(provider, signer);
+                seth_send(provider, from, to, sig, args, eth.seth_async).await?;
+            } else {
+                let from = eth.from.expect("No ETH_FROM or signer specified");
+                seth_send(provider, from, to, sig, args, eth.seth_async).await?;
+            }
         }
     };
 
@@ -68,7 +69,7 @@ async fn main() -> eyre::Result<()> {
 }
 
 async fn seth_send<M: Middleware>(
-    seth: Seth<M>,
+    provider: M,
     from: Address,
     to: Address,
     sig: String,
@@ -78,6 +79,7 @@ async fn seth_send<M: Middleware>(
 where
     M::Error: 'static,
 {
+    let seth = Seth::new(provider).await?;
     let pending_tx = seth
         .send(
             from,
