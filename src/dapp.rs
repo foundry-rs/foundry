@@ -6,7 +6,7 @@ use ethers::{
 };
 
 use evm::backend::{MemoryAccount, MemoryBackend, MemoryVicinity};
-use evm::executor::{MemoryStackState, StackExecutor, StackSubstateMetadata};
+use evm::executor::{self, MemoryStackState, StackSubstateMetadata};
 use evm::Config;
 use evm::{ExitReason, ExitRevert, ExitSucceed};
 use std::collections::{BTreeMap, HashMap};
@@ -14,13 +14,70 @@ use std::collections::{BTreeMap, HashMap};
 use eyre::Result;
 
 use crate::utils::get_func;
-use rayon::prelude::*;
 
 // TODO: Check if we can implement this as the base layer of an ethers-provider
 // Middleware stack instead of doing RPC calls.
 pub struct Executor<'a, S> {
-    executor: std::sync::Mutex<StackExecutor<'a, S>>,
+    executor: StackExecutor<'a, S>,
     gas_limit: u64,
+}
+
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
+
+use stack_executor::StackExecutor;
+
+mod stack_executor {
+    use evm::executor::StackState;
+
+    use super::*;
+
+    #[cfg(feature = "parallel")]
+    use std::sync::Mutex;
+
+    /// Thread-safe wrapper around the StackExecutor which can be triggered with a
+    /// `parallel` feature flag to compare parallel/serial performance
+    pub struct StackExecutor<'a, S> {
+        #[cfg(feature = "parallel")]
+        executor: Mutex<executor::StackExecutor<'a, S>>,
+        #[cfg(not(feature = "parallel"))]
+        executor: executor::StackExecutor<'a, S>,
+    }
+
+    impl<'a, S: StackState<'a>> StackExecutor<'a, S> {
+        pub fn new(state: S, config: &'a Config) -> Self {
+            let executor = executor::StackExecutor::new(state, config);
+            #[cfg(feature = "parallel")]
+            let executor = Mutex::new(executor);
+            Self { executor }
+        }
+
+        #[cfg(not(feature = "parallel"))]
+        pub fn transact_call(
+            &mut self,
+            caller: H160,
+            address: H160,
+            value: U256,
+            data: Vec<u8>,
+            gas_limit: u64,
+        ) -> (ExitReason, Vec<u8>) {
+            self.executor
+                .transact_call(caller, address, value, data.to_vec(), gas_limit)
+        }
+
+        #[cfg(feature = "parallel")]
+        pub fn transact_call(
+            &self,
+            caller: H160,
+            address: H160,
+            value: U256,
+            data: Vec<u8>,
+            gas_limit: u64,
+        ) -> (ExitReason, Vec<u8>) {
+            let mut executor = self.executor.lock().unwrap();
+            executor.transact_call(caller, address, value, data.to_vec(), gas_limit)
+        }
+    }
 }
 
 type MemoryState = BTreeMap<Address, MemoryAccount>;
@@ -41,7 +98,7 @@ impl<'a> Executor<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
         let executor = StackExecutor::new(state, &config);
 
         Self {
-            executor: std::sync::Mutex::new(executor),
+            executor,
             gas_limit,
         }
     }
@@ -56,7 +113,7 @@ impl<'a> Executor<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
 
     /// Runs the selected function
     pub fn call<D: Detokenize, T: Tokenize>(
-        &self,
+        &mut self,
         from: Address,
         to: Address,
         func: &Function,
@@ -65,13 +122,9 @@ impl<'a> Executor<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
     ) -> Result<(D, ExitReason)> {
         let data = encode_function_data(&func, args)?;
 
-        let (status, retdata) = self.executor.lock().unwrap().transact_call(
-            from,
-            to,
-            value,
-            data.to_vec(),
-            self.gas_limit,
-        );
+        let (status, retdata) =
+            self.executor
+                .transact_call(from, to, value, data.to_vec(), self.gas_limit);
 
         let retdata = decode_function_data(&func, retdata, false)?;
 
@@ -125,14 +178,14 @@ pub struct TestResult {
 }
 
 pub struct ContractRunner<'a, S> {
-    executor: &'a Executor<'a, S>,
+    executor: &'a mut Executor<'a, S>,
     contract: &'a CompiledContract,
     address: Address,
 }
 
 impl<'a> ContractRunner<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
     /// Runs the `setUp()` function call to initiate the contract's state
-    fn setup(&self) -> Result<()> {
+    fn setup(&mut self) -> Result<()> {
         let (_, status) = self.executor.call::<(), _>(
             Address::zero(),
             self.address,
@@ -145,7 +198,7 @@ impl<'a> ContractRunner<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
     }
 
     /// runs all tests under a contract
-    pub fn test(&self) -> Result<HashMap<String, TestResult>> {
+    pub fn test(&mut self) -> Result<HashMap<String, TestResult>> {
         let test_fns = self
             .contract
             .abi
@@ -154,9 +207,13 @@ impl<'a> ContractRunner<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
             .filter(|func| func.name.starts_with("test"))
             .collect::<Vec<_>>();
 
+        #[cfg(feature = "parallel")]
+        let test_fns = test_fns.par_iter();
+        #[cfg(not(feature = "parallel"))]
+        let test_fns = test_fns.iter();
+
         // run all tests
         let map = test_fns
-            .par_iter()
             .map(|func| {
                 // call the setup function in each test to reset the test's state.
                 // if we did this outside the map, we'd not have test isolation
@@ -171,7 +228,7 @@ impl<'a> ContractRunner<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
         Ok(map)
     }
 
-    pub fn test_func(&self, func: &Function) -> TestResult {
+    pub fn test_func(&mut self, func: &Function) -> TestResult {
         // the expected result depends on the function name
         let expected = if func.name.contains("testFail") {
             ExitReason::Revert(ExitRevert::Reverted)
@@ -181,7 +238,7 @@ impl<'a> ContractRunner<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
 
         // set the selector & execute the call
         let data = func.selector().to_vec();
-        let (result, _) = self.executor.executor.lock().unwrap().transact_call(
+        let (result, _) = self.executor.executor.transact_call(
             Address::zero(),
             self.address,
             0.into(),
