@@ -1,5 +1,7 @@
 pub mod opts;
 
+mod utils;
+
 mod seth;
 pub use seth::*;
 

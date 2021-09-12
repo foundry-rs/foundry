@@ -2,8 +2,6 @@
 //!
 //! TODO
 use ethers::{
-    abi::{ParamType, Tokenizable},
-    core::abi::parse_abi,
     providers::{self, Http, Middleware, Provider},
     types::*,
     utils,
@@ -13,24 +11,14 @@ use rustc_hex::ToHex;
 use std::convert::TryFrom;
 use std::str::FromStr;
 
+use crate::utils::get_func;
+
+use super::utils::{encode_args, to_table};
+
 // TODO: SethContract with common contract initializers? Same for SethProviders?
 
 pub struct Seth {
     provider: Provider<Http>,
-}
-
-fn to_table(value: serde_json::Value) -> String {
-    match value {
-        serde_json::Value::String(s) => s,
-        serde_json::Value::Object(map) => {
-            let mut s = String::new();
-            for (k, v) in map.iter() {
-                s.push_str(&format!("{: <20} {}\n", k, v));
-            }
-            s
-        }
-        _ => "".to_owned(),
-    }
 }
 
 impl Seth {
@@ -49,8 +37,10 @@ impl Seth {
         Ok(Self { provider })
     }
 
-    // TODO: `send`, same story but sending the tx.
+    /// Makes a read-only call to the specified address
+    ///
     /// ```no_run
+    ///
     /// use dapptools::Seth;
     /// use dapptools::ethers::types::Address;
     /// use std::str::FromStr;
@@ -66,38 +56,8 @@ impl Seth {
     /// # }
     /// ```
     pub async fn call(&self, to: Address, sig: &str, args: Vec<String>) -> Result<String> {
-        // TODO: Make human readable ABI better / more minimal
-        let abi = parse_abi(&[sig])?;
-        // get the function
-        let func = {
-            let (_, func) = abi
-                .functions
-                .iter()
-                .next()
-                .ok_or_else(|| eyre::eyre!("function name not found"))?;
-            let func = func
-                .get(0)
-                .ok_or_else(|| eyre::eyre!("functions array empty"))?;
-            if args.len() != func.inputs.len() {
-                eyre::bail!("function inputs do len does not match provided args len");
-            }
-            func
-        };
-
-        // Dynamically build up the calldata via the function sig
-        let mut inputs = Vec::new();
-        for (i, input) in func.inputs.iter().enumerate() {
-            let input = match input.kind {
-                // TODO: Do the rest of the types
-                ParamType::Address => Address::from_str(&args[i])?.into_token(),
-                ParamType::Uint(256) => U256::from_str(&args[i])?.into_token(),
-                _ => Address::zero().into_token(),
-            };
-            inputs.push(input);
-        }
-
-        // encode args
-        let data = func.encode_input(&inputs)?;
+        let func = get_func(&sig)?;
+        let data = encode_args(&func, args)?;
 
         // make the call
         let tx = Eip1559TransactionRequest::new().to(to).data(data).into();
@@ -107,13 +67,50 @@ impl Seth {
         let res = func.decode_output(res.as_ref())?;
 
         // concatenate them
-        let mut s = Vec::new();
+        let mut s = String::new();
         for output in res {
-            s.push(format!("{}", output));
+            s.push_str(&format!("{}\n", output));
         }
 
         // return string
-        Ok(s.join(","))
+        Ok(s)
+    }
+
+    /// Sends a transaction to the specified address
+    ///
+    /// ```no_run
+    /// use dapptools::Seth;
+    /// use dapptools::ethers::types::Address;
+    /// use std::str::FromStr;
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let seth = Seth::new("http://localhost:8545").await?;
+    /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
+    /// let sig = "function greetg(string memory) public returns (string)";
+    /// let args = vec!["5".to_owned()];
+    /// let data = seth.call(to, sig, args).await?;
+    /// println!("{}", data);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn send(
+        &self,
+        from: Address,
+        to: Address,
+        args: Option<(&str, Vec<String>)>,
+    ) -> Result<String> {
+        // make the call
+        let mut tx = Eip1559TransactionRequest::new().from(from).to(to);
+
+        if let Some((sig, args)) = args {
+            let func = get_func(&sig)?;
+            let data = encode_args(&func, args)?;
+            tx = tx.data(data);
+        }
+
+        let res = self.provider.send_transaction(tx, None).await?;
+
+        Ok(format!("{:?}", *res))
     }
 
     /// ```no_run
