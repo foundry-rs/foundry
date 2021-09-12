@@ -4,6 +4,7 @@
 
 ![Github Actions](https://github.com/gakonst/dapptools-rs/workflows/Tests/badge.svg)
 
+
 ## `dapp` example Usage
 
 ### Run Solidity tests
@@ -31,12 +32,55 @@ In order to compose with other commands, you may print the results as JSON via t
 {"GmTest":{"testGm":{"success":true,"gas_used":26123}},"GreeterTest":{"testGreeting":{"success":true,"gas_used":26622},"testFailGreeting":{"success":true,"gas_used":26693},"testIsolation":{"success":true,"gas_used":4144}}}
 ```
 
+### Build the contracts
+
+You can build the contracts by running, which will by default output the compilation artifacts
+of all contracts under `src/` at `out/dapp.sol.json`:
+
+```
+./target/release/dapp build
+```
+
+You can specify an alternative path for your contracts and libraries with `--remappings`, `--lib-path`
+and `--contracts`.
+
 ### CLI Help
 
 The CLI options can be seen below. You can fully customize the initial blockchain
 context. As an example, if you pass the flag `--block-number`, then the EVM's `NUMBER`
 opcode will always return the supplied value. This can be useful for testing.
 
+
+#### Build
+
+```
+cargo r --bin dapp build --help
+   Compiling dapptools v0.1.0
+    Finished dev [unoptimized + debuginfo] target(s) in 3.45s
+     Running `target/debug/dapp build --help`
+dapp-build 0.1.0
+build your smart contracts
+
+USAGE:
+    dapp build [FLAGS] [OPTIONS] [--] [remappings-env]
+
+FLAGS:
+    -h, --help          Prints help information
+    -n, --no-compile    skip re-compilation
+    -V, --version       Prints version information
+
+OPTIONS:
+    -c, --contracts <contracts>         glob path to your smart contracts [default: ./src/**/*.sol]
+        --evm-version <evm-version>     choose the evm version [default: berlin]
+        --lib-path <lib-path>           the path where your libraries are installed
+    -o, --out <out-path>                path to where the contract artifacts are stored [default: ./out/dapp.sol.json]
+    -r, --remappings <remappings>...    the remappings
+
+ARGS:
+    <remappings-env>     [env: DAPP_REMAPPINGS=]
+```
+
+#### Test
 
 ```bash
 $ cargo r --bin dapp test --help
@@ -71,8 +115,7 @@ OPTIONS:
             the tx.origin value during EVM execution [default: 0x0000000000000000000000000000000000000000]
 ```
 
-
-## Supported Commands
+## Features
 
 * seth
     * [x] `--from-ascii`
@@ -96,7 +139,23 @@ OPTIONS:
         * [ ] per-line gas profiling
         * [ ] forking mode
         * [ ] automatic solc selection
-    * [ ] build
+    * [x] build
         * [x] can read DappTools-style .sol.json artifacts
         * [x] remappings
     * [ ] debug
+
+## Development
+
+### Rust Toolchain
+
+We use the stable Rust toolchain. Install by running: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
+
+### Building & testing
+
+```
+cargo check
+cargo test
+cargo doc --open
+cargo build [--release]
+```
+

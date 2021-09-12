@@ -39,6 +39,10 @@ enum Subcommands {
         #[structopt(flatten)]
         opts: BuildOpts,
     },
+    Build {
+        #[structopt(flatten)]
+        opts: BuildOpts,
+    },
 }
 
 #[derive(Debug, StructOpt)]
@@ -239,6 +243,36 @@ fn main() -> eyre::Result<()> {
                 }
             }
         }
+        Subcommands::Build {
+            opts:
+                BuildOpts {
+                    contracts,
+                    remappings,
+                    remappings_env,
+                    lib_path,
+                    out_path,
+                    evm_version: _,
+                    no_compile,
+                },
+        } => {
+            // build the contracts
+            let remappings = merge(remappings, remappings_env);
+            let lib_path = default_path(lib_path)?;
+            // TODO: Do we also want to include the file path in the contract map so
+            // that we're more compatible with dapptools' artifact?
+            let contracts = MultiContractRunner::build(
+                &contracts,
+                remappings,
+                lib_path,
+                out_path.clone(),
+                no_compile,
+            )?;
+
+            let out_file = open_file(out_path)?;
+
+            // dump as json
+            serde_json::to_writer(out_file, &contracts)?;
+        }
     }
 
     Ok(())
@@ -246,6 +280,7 @@ fn main() -> eyre::Result<()> {
 
 /// Default deps path
 const LIB: &str = "lib";
+const DEFAULT_OUT_FILE: &str = "dapp.sol.json";
 
 fn default_path(path: Option<String>) -> eyre::Result<String> {
     Ok(path.unwrap_or(
@@ -270,4 +305,43 @@ fn merge(mut remappings: Vec<String>, remappings_env: Option<String>) -> Vec<Str
     }
 
     remappings
+}
+
+/// Opens the file at `out_path` for R/W and creates it if it doesn't exist.
+fn open_file(out_path: PathBuf) -> eyre::Result<File> {
+    Ok(if out_path.is_file() {
+        // get the file if it exists
+        OpenOptions::new().write(true).open(out_path)?
+    } else if out_path.is_dir() {
+        // get the directory if it exists & the default file path
+        let out_path = out_path.join(DEFAULT_OUT_FILE);
+
+        // get a file handler (overwrite any contents of the existing file)
+        OpenOptions::new().write(true).create(true).open(out_path)?
+    } else {
+        // otherwise try to create the entire path
+
+        // in case it's a directory, we must mkdir it
+        let out_path = if out_path
+            .to_str()
+            .ok_or_else(|| eyre::eyre!("not utf-8 path"))?
+            .ends_with('/')
+        {
+            std::fs::create_dir_all(&out_path)?;
+            out_path.join(DEFAULT_OUT_FILE)
+        } else {
+            // if it's a file path, we must mkdir the parent
+            let parent = out_path
+                .parent()
+                .ok_or_else(|| eyre::eyre!("could not get parent of {:?}", out_path))?;
+            std::fs::create_dir_all(parent)?;
+            out_path
+        };
+
+        // finally we get the handler
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(out_path)?
+    })
 }
