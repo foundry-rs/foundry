@@ -112,8 +112,8 @@ impl<'a> Executor<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
 
 #[derive(Clone, Debug)]
 pub struct TestResult {
-    success: bool,
-    gas_used: u64,
+    pub success: bool,
+    pub gas_used: u64,
 }
 
 struct ContractRunner<'a, S> {
