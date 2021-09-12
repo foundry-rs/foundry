@@ -51,8 +51,11 @@ fn main() -> eyre::Result<()> {
 
             // TODO: Once we add traces in the VM, proceed to print them in a nice and structured
             // way
-            for (contract_name, tests) in results {
+            for (i, (contract_name, tests)) in results.iter().enumerate() {
                 if !tests.is_empty() {
+                    if i > 0 {
+                        println!()
+                    }
                     println!("Running {} tests for {}", tests.len(), contract_name);
                 }
 
@@ -64,8 +67,6 @@ fn main() -> eyre::Result<()> {
                     };
                     println!("{} {} (gas: {})", status, name, result.gas_used);
                 }
-                // skip a line
-                println!();
             }
         }
     }
