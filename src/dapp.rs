@@ -41,7 +41,7 @@ impl<'a> Executor<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
         // setup state
         let state = MemoryStackState::new(metadata, backend);
         // setup executor
-        let executor = StackExecutor::new(state, config);
+        let executor = StackExecutor::new_with_precompile(state, config, Default::default());
 
         Self {
             executor,
@@ -64,7 +64,7 @@ impl<'a> Executor<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
 
         let (status, retdata) =
             self.executor
-                .transact_call(from, to, value, calldata.to_vec(), self.gas_limit);
+                .transact_call(from, to, value, calldata.to_vec(), self.gas_limit, vec![]);
 
         let gas_after = self.executor.gas_left();
         let gas = remove_extra_costs(gas_before - gas_after, calldata.as_ref());
@@ -184,6 +184,7 @@ impl<'a> ContractRunner<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
             0.into(),
             calldata.to_vec(),
             self.executor.gas_limit,
+            vec![],
         );
         let gas_after = self.executor.executor.gas_left();
 
@@ -522,6 +523,7 @@ mod tests {
             0.into(),
             id("testFailGreeting()").to_vec(),
             dapp.gas_limit,
+            vec![],
         );
         assert_eq!(status, ExitReason::Revert(ExitRevert::Reverted));
         assert!(res.is_empty());
@@ -563,6 +565,7 @@ mod tests {
             0.into(),
             id("testFailGreeting()").to_vec(),
             dapp.gas_limit,
+            vec![],
         );
         assert_eq!(status, ExitReason::Revert(ExitRevert::Reverted));
         let reason = decode_revert(&res).unwrap();

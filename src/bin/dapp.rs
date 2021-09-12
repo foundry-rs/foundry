@@ -4,7 +4,7 @@ use dapptools::dapp::MultiContractRunner;
 use evm::{backend::MemoryVicinity, Config};
 
 use ansi_term::Colour;
-use std::path::PathBuf;
+use std::{path::PathBuf, str::FromStr};
 
 use ethers::types::Address;
 
@@ -58,7 +58,43 @@ enum Subcommands {
 
         #[structopt(help = "force re-compilation", long, short)]
         force: bool,
+
+        #[structopt(help = "choose the evm version", long, default_value = "berlin")]
+        evm_version: EvmVersion,
     },
+}
+
+#[derive(Clone, Debug)]
+pub enum EvmVersion {
+    Frontier,
+    Istanbul,
+    Berlin,
+}
+
+impl EvmVersion {
+    fn cfg(self) -> Config {
+        use EvmVersion::*;
+        match self {
+            Frontier => Config::frontier(),
+            Istanbul => Config::istanbul(),
+            Berlin => Config::berlin(),
+        }
+    }
+}
+
+impl FromStr for EvmVersion {
+    type Err = eyre::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        use EvmVersion::*;
+        Ok(match s.to_lowercase().as_str() {
+            "frontier" => Frontier,
+            "istanbul" => Istanbul,
+            "berlin" => Berlin,
+            // TODO: Add London.
+            _ => eyre::bail!("unsupported evm version: {}", s),
+        })
+    }
 }
 
 #[derive(Debug, StructOpt)]
@@ -147,9 +183,9 @@ fn main() -> eyre::Result<()> {
             json,
             pattern,
             force,
+            evm_version,
         } => {
-            let cfg = Config::istanbul();
-
+            let cfg = evm_version.cfg();
             // merge the cli-provided remappings vector with the
             // new-line separated env var
             if let Some(env) = remappings_env {
