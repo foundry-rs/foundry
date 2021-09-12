@@ -114,7 +114,7 @@ impl<'a> Executor<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
 }
 
 #[derive(Clone, Debug)]
-struct TestResult {
+pub struct TestResult {
     success: bool,
     // TODO: Add gas consumption if possible?
 }
@@ -156,7 +156,6 @@ impl<'a> ContractRunner<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
                 self.setup()?;
 
                 let result = self.test_func(func);
-                println!("{:?}, got {:?}", func.name, result);
                 Ok((func.name.clone(), result))
             })
             .collect::<Result<HashMap<_, _>>>()?;
@@ -188,8 +187,102 @@ impl<'a> ContractRunner<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
     }
 }
 
-fn decode_revert(error: &[u8]) -> Result<String> {
+pub fn decode_revert(error: &[u8]) -> Result<String> {
     Ok(abi::decode(&[abi::ParamType::String], &error[4..])?[0].to_string())
+}
+
+pub struct MultiContractRunner<'a> {
+    pub contracts: HashMap<String, CompiledContract>,
+    pub addresses: HashMap<String, Address>,
+    pub config: &'a Config,
+    /// The blockchain environment (chain_id, gas_price, block gas limit etc.)
+    // TODO: The DAPP_XXX env vars should allow instantiating this via the cli
+    pub env: MemoryVicinity,
+    /// The initial blockchain state. All test contracts get inserted here at
+    /// initialization.
+    pub init_state: MemoryState,
+    pub state: MemoryState,
+    pub gas_limit: u64,
+}
+
+impl<'a> MultiContractRunner<'a> {
+    pub fn new(
+        contracts: &str,
+        config: &'a Config,
+        gas_limit: u64,
+        env: MemoryVicinity,
+    ) -> Result<Self> {
+        // 1. compile the contracts
+        let contracts = Solc::new(contracts).build()?;
+
+        // 2. create the initial state
+        // TODO: Allow further overriding perhaps?
+        let mut addresses = HashMap::new();
+        let init_state = contracts
+            .iter()
+            .map(|(name, compiled)| {
+                // make a fake address for the contract, maybe anti-pattern
+                let addr = Address::from_slice(&keccak256(&compiled.runtime_bytecode)[..20]);
+                addresses.insert(name.clone(), addr);
+                (addr, compiled.runtime_bytecode.clone())
+            })
+            .collect::<Vec<_>>();
+        let state = Executor::initialize_contracts(init_state);
+
+        Ok(Self {
+            contracts,
+            addresses,
+            config,
+            env,
+            init_state: state.clone(),
+            state,
+            gas_limit,
+        })
+    }
+
+    /// instantiate an executor with the init state
+    // TODO: Is this right? How would we cache results between calls when in
+    // forking mode?
+    fn backend(&self) -> MemoryBackend<'_> {
+        Executor::new_backend(&self.env, self.init_state.clone())
+    }
+
+    pub fn test(&self) -> Result<HashMap<String, HashMap<String, TestResult>>> {
+        // for each compiled contract, get its name, bytecode and address
+        // NB: We also have access to the contract's abi. When running the test.
+        // Can this be useful for decorating the stacktrace during a revert?
+        let contracts = self.contracts.iter();
+        let results = contracts
+            .map(|(name, contract)| {
+                let address = *self
+                    .addresses
+                    .get(name)
+                    .ok_or_else(|| eyre::eyre!("could not find contract address"))?;
+
+                let backend = self.backend();
+                let result = self.test_contract(contract, address, backend)?;
+                Ok((name.clone(), result))
+            })
+            .collect::<Result<HashMap<_, _>>>()?;
+
+        Ok(results)
+    }
+
+    fn test_contract(
+        &self,
+        contract: &CompiledContract,
+        address: Address,
+        backend: MemoryBackend<'_>,
+    ) -> Result<HashMap<String, TestResult>> {
+        let mut dapp = Executor::new(self.gas_limit, &self.config, &backend);
+        let mut runner = ContractRunner {
+            executor: &mut dapp,
+            contract,
+            address,
+        };
+
+        runner.test()
+    }
 }
 
 #[cfg(test)]
@@ -377,5 +470,19 @@ mod tests {
 
         let res = runner.test().unwrap();
         assert!(res.iter().all(|(_, result)| result.success == true));
+    }
+
+    #[test]
+    fn test_multi_runner() {
+        let contracts = "./*.sol";
+        let cfg = Config::istanbul();
+        let gas_limit = 12_500_000;
+        let env = Executor::new_vicinity();
+
+        let runner = MultiContractRunner::new(contracts, &cfg, gas_limit, env).unwrap();
+        let results = runner.test().unwrap();
+        for (_, res) in results {
+            assert!(res.iter().all(|(_, result)| result.success == true));
+        }
     }
 }

@@ -7,6 +7,10 @@ contract Greeter {
     function greet(string memory _greeting) public {
         greeting = _greeting;
     }
+
+    function gm() public {
+        greeting = "gm";
+    }
 }
 
 contract GreeterTestSetup {
@@ -40,5 +44,12 @@ contract GreeterTest is GreeterTestSetup {
 
     function testIsolation() public {
         require(bytes(greeter.greeting()).length == 0);
+    }
+}
+
+contract GmTest is GreeterTestSetup {
+    function testGm() public {
+        greeter.gm();
+        require(keccak256(abi.encodePacked(greeter.greeting())) == keccak256(abi.encodePacked("gm")), "not equal");
     }
 }
