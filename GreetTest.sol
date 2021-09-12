@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.6;
 
-contract Greet {
+contract Greeter {
     string public greeting;
 
     function greet(string memory _greeting) public {
@@ -9,30 +9,36 @@ contract Greet {
     }
 }
 
-contract GreetTest {
-    Greet greet;
+contract GreeterTestSetup {
+    Greeter greeter;
 
     function greeting() public view returns (string memory) {
-        return greet.greeting();
+        return greeter.greeting();
     }
 
     function setUp() public {
-        greet = new Greet();
+        greeter = new Greeter();
     }
+}
 
-    function testIsolation() public {
-        require(bytes(greet.greeting()).length == 0);
+contract GreeterTest is GreeterTestSetup {
+    function greet(string memory greeting) public {
+        greeter.greet(greeting);
     }
 
     // check the positive case
     function testGreeting() public {
-        greet.greet("yo");
-        require(keccak256(abi.encodePacked(greet.greeting())) == keccak256(abi.encodePacked("yo")), "not equal");
+        greeter.greet("yo");
+        require(keccak256(abi.encodePacked(greeter.greeting())) == keccak256(abi.encodePacked("yo")), "not equal");
     }
 
     // check the unhappy case
     function testFailGreeting() public {
-        greet.greet("yo");
-        require(keccak256(abi.encodePacked(greet.greeting())) == keccak256(abi.encodePacked("hi")), "not equal to `hi`");
+        greeter.greet("yo");
+        require(keccak256(abi.encodePacked(greeter.greeting())) == keccak256(abi.encodePacked("hi")), "not equal to `hi`");
+    }
+
+    function testIsolation() public {
+        require(bytes(greeter.greeting()).length == 0);
     }
 }

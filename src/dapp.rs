@@ -2,7 +2,7 @@ use ethers::{
     abi::{self, Detokenize, Function, FunctionExt, Tokenize},
     prelude::{decode_function_data, encode_function_data},
     types::*,
-    utils::{id, CompiledContract, Solc},
+    utils::{keccak256, CompiledContract, Solc},
 };
 
 use evm::backend::{MemoryAccount, MemoryBackend, MemoryVicinity};
@@ -77,7 +77,7 @@ impl<'a> Executor<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
     /// the state with the contract deployed at the specified address
     pub fn initialize_contracts<T: IntoIterator<Item = (Address, Bytes)>>(
         contracts: T,
-    ) -> BTreeMap<Address, MemoryAccount> {
+    ) -> MemoryState {
         contracts
             .into_iter()
             .map(|(address, bytecode)| {
@@ -195,6 +195,7 @@ fn decode_revert(error: &[u8]) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ethers::utils::id;
 
     #[test]
     fn can_call_vm_directly() {
@@ -202,7 +203,7 @@ mod tests {
         let cfg = Config::istanbul();
 
         let compiled = Solc::new(&format!("./*.sol")).build().unwrap();
-        let compiled = compiled.get("Greet").expect("could not find contract");
+        let compiled = compiled.get("Greeter").expect("could not find contract");
 
         let addr = "0x1000000000000000000000000000000000000000"
             .parse()
@@ -242,7 +243,9 @@ mod tests {
         let cfg = Config::istanbul();
 
         let compiled = Solc::new(&format!("./*.sol")).build().unwrap();
-        let compiled = compiled.get("GreetTest").expect("could not find contract");
+        let compiled = compiled
+            .get("GreeterTest")
+            .expect("could not find contract");
 
         let addr = "0x1000000000000000000000000000000000000000"
             .parse()
@@ -282,7 +285,9 @@ mod tests {
         let cfg = Config::istanbul();
 
         let compiled = Solc::new(&format!("./*.sol")).build().unwrap();
-        let compiled = compiled.get("GreetTest").expect("could not find contract");
+        let compiled = compiled
+            .get("GreeterTest")
+            .expect("could not find contract");
 
         let addr = "0x1000000000000000000000000000000000000000"
             .parse()
@@ -309,7 +314,9 @@ mod tests {
         let cfg = Config::istanbul();
 
         let compiled = Solc::new(&format!("./*.sol")).build().unwrap();
-        let compiled = compiled.get("GreetTest").expect("could not find contract");
+        let compiled = compiled
+            .get("GreeterTest")
+            .expect("could not find contract");
 
         let addr = "0x1000000000000000000000000000000000000000"
             .parse()
@@ -345,12 +352,13 @@ mod tests {
     }
 
     #[test]
-    // TODO: This still fails.
     fn test_runner() {
         let cfg = Config::istanbul();
 
         let compiled = Solc::new(&format!("./*.sol")).build().unwrap();
-        let compiled = compiled.get("GreetTest").expect("could not find contract");
+        let compiled = compiled
+            .get("GreeterTest")
+            .expect("could not find contract");
 
         let addr = "0x1000000000000000000000000000000000000000"
             .parse()
