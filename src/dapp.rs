@@ -2,7 +2,7 @@ use ethers::{
     abi::{self, Detokenize, Function, FunctionExt, Tokenize},
     prelude::{decode_function_data, encode_function_data},
     types::*,
-    utils::{id, CompiledContract, Solc},
+    utils::{CompiledContract, Solc},
 };
 
 use evm::backend::{MemoryAccount, MemoryBackend, MemoryVicinity};
@@ -14,11 +14,12 @@ use std::collections::{BTreeMap, HashMap};
 use eyre::Result;
 
 use crate::utils::get_func;
+use rayon::prelude::*;
 
 // TODO: Check if we can implement this as the base layer of an ethers-provider
 // Middleware stack instead of doing RPC calls.
 pub struct Executor<'a, S> {
-    executor: StackExecutor<'a, S>,
+    executor: std::sync::Mutex<StackExecutor<'a, S>>,
     gas_limit: u64,
 }
 
@@ -40,7 +41,7 @@ impl<'a> Executor<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
         let executor = StackExecutor::new(state, &config);
 
         Self {
-            executor,
+            executor: std::sync::Mutex::new(executor),
             gas_limit,
         }
     }
@@ -55,7 +56,7 @@ impl<'a> Executor<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
 
     /// Runs the selected function
     pub fn call<D: Detokenize, T: Tokenize>(
-        &mut self,
+        &self,
         from: Address,
         to: Address,
         func: &Function,
@@ -64,9 +65,13 @@ impl<'a> Executor<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
     ) -> Result<(D, ExitReason)> {
         let data = encode_function_data(&func, args)?;
 
-        let (status, retdata) =
-            self.executor
-                .transact_call(from, to, value, data.to_vec(), self.gas_limit);
+        let (status, retdata) = self.executor.lock().unwrap().transact_call(
+            from,
+            to,
+            value,
+            data.to_vec(),
+            self.gas_limit,
+        );
 
         let retdata = decode_function_data(&func, retdata, false)?;
 
@@ -114,20 +119,20 @@ impl<'a> Executor<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
 }
 
 #[derive(Clone, Debug)]
-struct TestResult {
+pub struct TestResult {
     success: bool,
     // TODO: Add gas consumption if possible?
 }
 
-struct ContractRunner<'a, S> {
-    executor: &'a mut Executor<'a, S>,
+pub struct ContractRunner<'a, S> {
+    executor: &'a Executor<'a, S>,
     contract: &'a CompiledContract,
     address: Address,
 }
 
 impl<'a> ContractRunner<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
     /// Runs the `setUp()` function call to initiate the contract's state
-    fn setup(&mut self) -> Result<()> {
+    fn setup(&self) -> Result<()> {
         let (_, status) = self.executor.call::<(), _>(
             Address::zero(),
             self.address,
@@ -140,16 +145,18 @@ impl<'a> ContractRunner<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
     }
 
     /// runs all tests under a contract
-    pub fn test(&mut self) -> Result<HashMap<String, TestResult>> {
+    pub fn test(&self) -> Result<HashMap<String, TestResult>> {
         let test_fns = self
             .contract
             .abi
             .functions()
             .into_iter()
-            .filter(|func| func.name.starts_with("test"));
+            .filter(|func| func.name.starts_with("test"))
+            .collect::<Vec<_>>();
 
         // run all tests
         let map = test_fns
+            .par_iter()
             .map(|func| {
                 // call the setup function in each test to reset the test's state.
                 // if we did this outside the map, we'd not have test isolation
@@ -164,7 +171,7 @@ impl<'a> ContractRunner<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
         Ok(map)
     }
 
-    pub fn test_func(&mut self, func: &Function) -> TestResult {
+    pub fn test_func(&self, func: &Function) -> TestResult {
         // the expected result depends on the function name
         let expected = if func.name.contains("testFail") {
             ExitReason::Revert(ExitRevert::Reverted)
@@ -174,7 +181,7 @@ impl<'a> ContractRunner<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
 
         // set the selector & execute the call
         let data = func.selector().to_vec();
-        let (result, _) = self.executor.executor.transact_call(
+        let (result, _) = self.executor.executor.lock().unwrap().transact_call(
             Address::zero(),
             self.address,
             0.into(),
@@ -188,13 +195,14 @@ impl<'a> ContractRunner<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
     }
 }
 
-fn decode_revert(error: &[u8]) -> Result<String> {
+pub fn decode_revert(error: &[u8]) -> Result<String> {
     Ok(abi::decode(&[abi::ParamType::String], &error[4..])?[0].to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ethers::utils::id;
 
     #[test]
     fn can_call_vm_directly() {
@@ -211,7 +219,7 @@ mod tests {
 
         let vicinity = Executor::new_vicinity();
         let backend = Executor::new_backend(&vicinity, state);
-        let mut dapp = Executor::new(12_000_000, &cfg, &backend);
+        let dapp = Executor::new(12_000_000, &cfg, &backend);
 
         let (_, status) = dapp
             .call::<(), _>(
@@ -251,7 +259,7 @@ mod tests {
 
         let vicinity = Executor::new_vicinity();
         let backend = Executor::new_backend(&vicinity, state);
-        let mut dapp = Executor::new(12_000_000, &cfg, &backend);
+        let dapp = Executor::new(12_000_000, &cfg, &backend);
 
         // call the setup function to deploy the contracts inside the test
         let (_, status) = dapp
@@ -291,9 +299,9 @@ mod tests {
 
         let vicinity = Executor::new_vicinity();
         let backend = Executor::new_backend(&vicinity, state);
-        let mut dapp = Executor::new(12_000_000, &cfg, &backend);
+        let dapp = Executor::new(12_000_000, &cfg, &backend);
 
-        let (status, res) = dapp.executor.transact_call(
+        let (status, res) = dapp.executor.lock().unwrap().transact_call(
             Address::zero(),
             addr,
             0.into(),
@@ -318,7 +326,7 @@ mod tests {
 
         let vicinity = Executor::new_vicinity();
         let backend = Executor::new_backend(&vicinity, state);
-        let mut dapp = Executor::new(12_000_000, &cfg, &backend);
+        let dapp = Executor::new(12_000_000, &cfg, &backend);
 
         // call the setup function to deploy the contracts inside the test
         let (_, status) = dapp
@@ -332,7 +340,7 @@ mod tests {
             .unwrap();
         assert_eq!(status, ExitReason::Succeed(ExitSucceed::Stopped));
 
-        let (status, res) = dapp.executor.transact_call(
+        let (status, res) = dapp.executor.lock().unwrap().transact_call(
             Address::zero(),
             addr,
             0.into(),
@@ -359,10 +367,10 @@ mod tests {
 
         let vicinity = Executor::new_vicinity();
         let backend = Executor::new_backend(&vicinity, state);
-        let mut dapp = Executor::new(12_000_000, &cfg, &backend);
+        let dapp = Executor::new(12_000_000, &cfg, &backend);
 
-        let mut runner = ContractRunner {
-            executor: &mut dapp,
+        let runner = ContractRunner {
+            executor: &dapp,
             contract: compiled,
             address: addr,
         };
