@@ -68,8 +68,8 @@ struct BuildOpts {
     )]
     out_path: PathBuf,
 
-    #[structopt(help = "force re-compilation", long, short)]
-    force: bool,
+    #[structopt(help = "skip re-compilation", long, short)]
+    no_compile: bool,
 
     #[structopt(help = "choose the evm version", long, default_value = "berlin")]
     evm_version: EvmVersion,
@@ -193,7 +193,7 @@ fn main() -> eyre::Result<()> {
                     lib_path,
                     out_path,
                     evm_version,
-                    force,
+                    no_compile,
                 },
             env,
             json,
@@ -211,7 +211,7 @@ fn main() -> eyre::Result<()> {
                 &cfg,
                 env.gas_limit,
                 env.vicinity(),
-                force,
+                no_compile,
             )?;
             let results = runner.test(pattern)?;
 

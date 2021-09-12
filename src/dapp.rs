@@ -294,14 +294,17 @@ impl<'a> MultiContractRunner<'a> {
         remappings: Vec<String>,
         lib_path: String,
         out_path: PathBuf,
-        force: bool,
+        no_compile: bool,
     ) -> Result<HashMap<String, CompiledContract>> {
         // TODO:
         // 1. incremental compilation
         // 2. parallel compilation
         // 3. multi-version compiling
         // 4. Hardhat / Truffle-style artifacts
-        Ok(if !out_path.exists() || force {
+        Ok(if no_compile {
+            let out_file = std::fs::read_to_string(out_path)?;
+            serde_json::from_str::<DapptoolsArtifact>(&out_file)?.contracts()?
+        } else {
             let mut solc = Solc::new(contracts);
             if !lib_path.is_empty() {
                 solc = solc.args(["--allow-paths", &lib_path]);
@@ -311,9 +314,6 @@ impl<'a> MultiContractRunner<'a> {
                 solc = solc.args(remappings)
             }
             solc.build()?
-        } else {
-            let out_file = std::fs::read_to_string(out_path)?;
-            serde_json::from_str::<DapptoolsArtifact>(&out_file)?.contracts()?
         })
     }
 
@@ -326,10 +326,10 @@ impl<'a> MultiContractRunner<'a> {
         config: &'a Config,
         gas_limit: u64,
         env: MemoryVicinity,
-        force: bool,
+        no_compile: bool,
     ) -> Result<Self> {
         // 1. compile the contracts
-        let contracts = Self::build(contracts, remappings, lib_path, out_path, force)?;
+        let contracts = Self::build(contracts, remappings, lib_path, out_path, no_compile)?;
 
         // 2. create the initial state
         // TODO: Allow further overriding perhaps?
