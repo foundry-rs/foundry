@@ -82,6 +82,10 @@ OPTIONS:
         * [ ] symbolic execution
         * [ ] coverage
         * [ ] HEVM-style Solidity cheatcodes
+        * [ ] structured tracing with abi decoding
+        * [ ] per-line gas profiling
+        * [ ] forking mode
+        * [ ] automatic solc selection
     * [ ] build
         * [x] can read DappTools-style .sol.json artifacts
         * [ ] remappings
