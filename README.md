@@ -78,6 +78,7 @@ OPTIONS:
             * [x] Gas costs
             * [x] DappTools style test output
             * [x] JSON test output
+            * [x] matching on regex
         * [ ] fuzzing
         * [ ] symbolic execution
         * [ ] coverage
@@ -88,5 +89,5 @@ OPTIONS:
         * [ ] automatic solc selection
     * [ ] build
         * [x] can read DappTools-style .sol.json artifacts
-        * [ ] remappings
+        * [x] remappings
     * [ ] debug

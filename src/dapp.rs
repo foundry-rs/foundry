@@ -15,6 +15,7 @@ use std::{
 };
 
 use eyre::Result;
+use regex::Regex;
 
 use crate::utils::get_func;
 
@@ -141,13 +142,14 @@ impl<'a> ContractRunner<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
     }
 
     /// runs all tests under a contract
-    pub fn test(&mut self) -> Result<HashMap<String, TestResult>> {
+    pub fn test(&mut self, regex: &Regex) -> Result<HashMap<String, TestResult>> {
         let test_fns = self
             .contract
             .abi
             .functions()
             .into_iter()
-            .filter(|func| func.name.starts_with("test"));
+            .filter(|func| func.name.starts_with("test"))
+            .filter(|func| regex.is_match(&func.name));
 
         // run all tests
         let map = test_fns
@@ -291,16 +293,14 @@ impl<'a> MultiContractRunner<'a> {
         remappings: Vec<String>,
         lib_path: String,
         out_path: PathBuf,
+        force: bool,
     ) -> Result<HashMap<String, CompiledContract>> {
         // TODO:
         // 1. incremental compilation
         // 2. parallel compilation
         // 3. multi-version compiling
         // 4. Hardhat / Truffle-style artifacts
-        Ok(if out_path.exists() {
-            let out_file = std::fs::read_to_string(out_path)?;
-            serde_json::from_str::<DapptoolsArtifact>(&out_file)?.contracts()?
-        } else {
+        Ok(if !out_path.exists() || force {
             let mut solc = Solc::new(contracts);
             if !lib_path.is_empty() {
                 solc = solc.args(["--allow-paths", &lib_path]);
@@ -310,9 +310,13 @@ impl<'a> MultiContractRunner<'a> {
                 solc = solc.args(remappings)
             }
             solc.build()?
+        } else {
+            let out_file = std::fs::read_to_string(out_path)?;
+            serde_json::from_str::<DapptoolsArtifact>(&out_file)?.contracts()?
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         contracts: &str,
         remappings: Vec<String>,
@@ -321,9 +325,10 @@ impl<'a> MultiContractRunner<'a> {
         config: &'a Config,
         gas_limit: u64,
         env: MemoryVicinity,
+        force: bool,
     ) -> Result<Self> {
         // 1. compile the contracts
-        let contracts = Self::build(contracts, remappings, lib_path, out_path)?;
+        let contracts = Self::build(contracts, remappings, lib_path, out_path, force)?;
 
         // 2. create the initial state
         // TODO: Allow further overriding perhaps?
@@ -357,11 +362,12 @@ impl<'a> MultiContractRunner<'a> {
         Executor::new_backend(&self.env, self.init_state.clone())
     }
 
-    pub fn test(&self) -> Result<HashMap<String, HashMap<String, TestResult>>> {
+    pub fn test(&self, pattern: Regex) -> Result<HashMap<String, HashMap<String, TestResult>>> {
         // for each compiled contract, get its name, bytecode and address
         // NB: We also have access to the contract's abi. When running the test.
         // Can this be useful for decorating the stacktrace during a revert?
         let contracts = self.contracts.iter();
+
         let results = contracts
             .map(|(name, contract)| {
                 let address = *self
@@ -370,7 +376,7 @@ impl<'a> MultiContractRunner<'a> {
                     .ok_or_else(|| eyre::eyre!("could not find contract address"))?;
 
                 let backend = self.backend();
-                let result = self.test_contract(contract, address, backend)?;
+                let result = self.test_contract(contract, address, backend, &pattern)?;
                 Ok((name.clone(), result))
             })
             .filter_map(|x: Result<_>| x.ok())
@@ -391,6 +397,7 @@ impl<'a> MultiContractRunner<'a> {
         contract: &CompiledContract,
         address: Address,
         backend: MemoryBackend<'_>,
+        pattern: &Regex,
     ) -> Result<HashMap<String, TestResult>> {
         let mut dapp = Executor::new(self.gas_limit, self.config, &backend);
         let mut runner = ContractRunner {
@@ -399,7 +406,7 @@ impl<'a> MultiContractRunner<'a> {
             address,
         };
 
-        runner.test()
+        runner.test(pattern)
     }
 }
 
@@ -586,7 +593,7 @@ mod tests {
             address: addr,
         };
 
-        let res = runner.test().unwrap();
+        let res = runner.test(&".*".parse().unwrap()).unwrap();
         assert!(res.iter().all(|(_, result)| result.success == true));
     }
 
@@ -605,11 +612,21 @@ mod tests {
             &cfg,
             gas_limit,
             env,
+            false,
         )
         .unwrap();
-        let results = runner.test().unwrap();
+        let results = runner.test(Regex::new(".*").unwrap()).unwrap();
+        // 2 contracts
+        assert_eq!(results.len(), 2);
+        // 3 tests on greeter 1 on gm
+        assert_eq!(results["GreeterTest"].len(), 3);
+        assert_eq!(results["GmTest"].len(), 1);
         for (_, res) in results {
             assert!(res.iter().all(|(_, result)| result.success == true));
         }
+
+        let only_gm = runner.test(Regex::new("testGm.*").unwrap()).unwrap();
+        assert_eq!(only_gm.len(), 1);
+        assert_eq!(only_gm["GmTest"].len(), 1);
     }
 }

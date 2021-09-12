@@ -29,7 +29,7 @@ enum Subcommands {
         #[structopt(help = "the remappings", long, short)]
         remappings: Vec<String>,
         #[structopt(env = "DAPP_REMAPPINGS")]
-        remappings_env: String,
+        remappings_env: Option<String>,
 
         #[structopt(help = "the path where your libraries are installed", long)]
         lib_path: Option<String>,
@@ -47,6 +47,17 @@ enum Subcommands {
 
         #[structopt(flatten)]
         env: Env,
+
+        #[structopt(
+            long = "--match",
+            short = "-m",
+            help = "only run test methods matching regex",
+            default_value = ".*"
+        )]
+        pattern: regex::Regex,
+
+        #[structopt(help = "force re-compilation", long, short)]
+        force: bool,
     },
 }
 
@@ -134,20 +145,20 @@ fn main() -> eyre::Result<()> {
             out_path,
             env,
             json,
+            pattern,
+            force,
         } => {
             let cfg = Config::istanbul();
 
             // merge the cli-provided remappings vector with the
             // new-line separated env var
-            remappings.extend_from_slice(
-                &remappings_env
-                    .split('\n')
-                    .map(|x| x.to_string())
-                    .collect::<Vec<_>>(),
-            );
-            // deduplicate the extra remappings
-            remappings.sort_unstable();
-            remappings.dedup();
+            if let Some(env) = remappings_env {
+                remappings
+                    .extend_from_slice(&env.split('\n').map(|x| x.to_string()).collect::<Vec<_>>());
+                // deduplicate the extra remappings
+                remappings.sort_unstable();
+                remappings.dedup();
+            }
 
             let runner = MultiContractRunner::new(
                 &contracts,
@@ -163,8 +174,9 @@ fn main() -> eyre::Result<()> {
                 &cfg,
                 env.gas_limit,
                 env.vicinity(),
+                force,
             )?;
-            let results = runner.test()?;
+            let results = runner.test(pattern)?;
 
             if json {
                 let res = serde_json::to_string(&results)?;

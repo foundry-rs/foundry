@@ -19,6 +19,7 @@ evm = "0.30.1"
 ansi_term = "0.12.1"
 serde = "1.0.130"
 hex = "0.4.3"
+regex = { version = "1.5.4", default-features = false }
 
 [patch.'crates-io']
 ethabi = { git = "https://github.com/gakonst/ethabi/", branch = "patch-1" }
