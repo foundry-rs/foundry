@@ -9,6 +9,8 @@
 
 ### Run Solidity tests
 
+Any contract that contains a function starting with `test` is being tested.
+
 ```bash
 $ cargo r --bin dapp test --contracts ./*.sol
    Compiling dapptools v0.1.0
@@ -21,6 +23,19 @@ Running 3 tests for GreeterTest
 [PASS] testFailGreeting (gas: 31293)
 [PASS] testGreeting (gas: 31222)
 [PASS] testIsolation (gas: 5444)
+```
+
+You can optionally specify a regular expresion, to only run matching functions:
+
+```
+cargo r --bin dapp test --contracts ./*.sol -m testG
+    Finished dev [unoptimized + debuginfo] target(s) in 0.20s
+     Running `target/debug/dapp test --contracts ./GreetTest.sol -m testG`
+Running 1 tests for GmTest
+[PASS] testGm (gas: 26123)
+
+Running 1 tests for GreeterTest
+[PASS] testGreeting (gas: 26622)
 ```
 
 ### Test output as JSON
