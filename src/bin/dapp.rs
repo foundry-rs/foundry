@@ -1,10 +1,12 @@
 use structopt::StructOpt;
 
-use dapptools::dapp::{Executor, MultiContractRunner};
+use dapptools::dapp::MultiContractRunner;
 use evm::{backend::MemoryVicinity, Config};
 
 use ansi_term::Colour;
 use std::path::PathBuf;
+
+use ethers::types::Address;
 
 #[derive(Debug, StructOpt)]
 struct Opts {
@@ -42,14 +44,74 @@ enum Subcommands {
 
 #[derive(Debug, StructOpt)]
 struct Env {
-    #[structopt(help = "the block gas limit", long, short, default_value = "25000000")]
+    #[structopt(help = "the block gas limit", long, default_value = "25000000")]
     pub gas_limit: u64,
-    // TODO: Add extra configuration options around blockchain context
+
+    #[structopt(help = "the chainid opcode value", long, default_value = "1")]
+    pub chain_id: u64,
+
+    #[structopt(
+        help = "the tx.gasprice value during EVM execution",
+        long,
+        default_value = "0"
+    )]
+    pub gas_price: u64,
+    #[structopt(
+        help = "the tx.origin value during EVM execution",
+        long,
+        default_value = "0x0000000000000000000000000000000000000000"
+    )]
+    pub tx_origin: Address,
+
+    #[structopt(
+        help = "the block.coinbase value during EVM execution",
+        long,
+        // TODO: It'd be nice if we could use Address::zero() here.
+        default_value = "0x0000000000000000000000000000000000000000"
+    )]
+    pub block_coinbase: Address,
+    #[structopt(
+        help = "the block.timestamp value during EVM execution",
+        long,
+        default_value = "0"
+    )]
+    pub block_timestamp: u64,
+
+    #[structopt(
+        help = "the block.number value during EVM execution",
+        long,
+        default_value = "0"
+    )]
+    pub block_number: u64,
+
+    #[structopt(
+        help = "the block.difficulty value during EVM execution",
+        long,
+        default_value = "0"
+    )]
+    pub block_difficulty: u64,
+
+    #[structopt(help = "the block.gaslimit value during EVM execution", long)]
+    pub block_gas_limit: Option<u64>,
 }
 
 impl Env {
+    // TODO: Maybe we should allow a way to specify multiple vicinities for use
+    // across tests? Probably not, better to do with HEVM cheat codes.
     fn vicinity(&self) -> MemoryVicinity {
-        Executor::new_vicinity()
+        MemoryVicinity {
+            chain_id: self.chain_id.into(),
+
+            gas_price: self.gas_price.into(),
+            origin: self.tx_origin.into(),
+
+            block_coinbase: self.block_coinbase,
+            block_number: self.block_number.into(),
+            block_timestamp: self.block_timestamp.into(),
+            block_difficulty: self.block_difficulty.into(),
+            block_gas_limit: self.block_gas_limit.unwrap_or(self.gas_limit).into(),
+            block_hashes: Vec::new(),
+        }
     }
 }
 
