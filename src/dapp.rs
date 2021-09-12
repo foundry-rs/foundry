@@ -113,7 +113,7 @@ impl<'a> Executor<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TestResult {
     pub success: bool,
     // TODO: Ensure that this is calculated properly
@@ -358,7 +358,15 @@ impl<'a> MultiContractRunner<'a> {
                 let result = self.test_contract(contract, address, backend)?;
                 Ok((name.clone(), result))
             })
-            .collect::<Result<HashMap<_, _>>>()?;
+            .filter_map(|x: Result<_>| x.ok())
+            .filter_map(|(name, res)| {
+                if res.is_empty() {
+                    None
+                } else {
+                    Some((name, res))
+                }
+            })
+            .collect::<HashMap<_, _>>();
 
         Ok(results)
     }
