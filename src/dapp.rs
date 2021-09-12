@@ -112,6 +112,27 @@ impl<'a> Executor<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
     }
 
     /// Runs the selected function
+    #[cfg(feature = "parallel")]
+    pub fn call<D: Detokenize, T: Tokenize>(
+        &self,
+        from: Address,
+        to: Address,
+        func: &Function,
+        args: T, // derive arbitrary for Tokenize?
+        value: U256,
+    ) -> Result<(D, ExitReason)> {
+        let data = encode_function_data(&func, args)?;
+
+        let (status, retdata) =
+            self.executor
+                .transact_call(from, to, value, data.to_vec(), self.gas_limit);
+
+        let retdata = decode_function_data(&func, retdata, false)?;
+
+        Ok((retdata, status))
+    }
+
+    #[cfg(not(feature = "parallel"))]
     pub fn call<D: Detokenize, T: Tokenize>(
         &mut self,
         from: Address,
@@ -178,11 +199,16 @@ pub struct TestResult {
 }
 
 pub struct ContractRunner<'a, S> {
+    #[cfg(feature = "parallel")]
+    executor: &'a Executor<'a, S>,
+    #[cfg(not(feature = "parallel"))]
     executor: &'a mut Executor<'a, S>,
+
     contract: &'a CompiledContract,
     address: Address,
 }
 
+#[cfg(not(feature = "parallel"))]
 impl<'a> ContractRunner<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
     /// Runs the `setUp()` function call to initiate the contract's state
     fn setup(&mut self) -> Result<()> {
@@ -252,6 +278,76 @@ impl<'a> ContractRunner<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
     }
 }
 
+#[cfg(feature = "parallel")]
+impl<'a> ContractRunner<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
+    /// Runs the `setUp()` function call to initiate the contract's state
+    fn setup(&self) -> Result<()> {
+        let (_, status) = self.executor.call::<(), _>(
+            Address::zero(),
+            self.address,
+            &get_func("function setUp() external").unwrap(),
+            (),
+            0.into(),
+        )?;
+        debug_assert_eq!(status, ExitReason::Succeed(ExitSucceed::Stopped));
+        Ok(())
+    }
+
+    /// runs all tests under a contract
+    pub fn test(&self) -> Result<HashMap<String, TestResult>> {
+        let test_fns = self
+            .contract
+            .abi
+            .functions()
+            .into_iter()
+            .filter(|func| func.name.starts_with("test"))
+            .collect::<Vec<_>>();
+
+        #[cfg(feature = "parallel")]
+        let test_fns = test_fns.par_iter();
+        #[cfg(not(feature = "parallel"))]
+        let test_fns = test_fns.iter();
+
+        // run all tests
+        let map = test_fns
+            .map(|func| {
+                // call the setup function in each test to reset the test's state.
+                // if we did this outside the map, we'd not have test isolation
+                self.setup()?;
+
+                let result = self.test_func(func);
+                println!("{:?}, got {:?}", func.name, result);
+                Ok((func.name.clone(), result))
+            })
+            .collect::<Result<HashMap<_, _>>>()?;
+
+        Ok(map)
+    }
+
+    pub fn test_func(&self, func: &Function) -> TestResult {
+        // the expected result depends on the function name
+        let expected = if func.name.contains("testFail") {
+            ExitReason::Revert(ExitRevert::Reverted)
+        } else {
+            ExitReason::Succeed(ExitSucceed::Stopped)
+        };
+
+        // set the selector & execute the call
+        let data = func.selector().to_vec();
+        let (result, _) = self.executor.executor.transact_call(
+            Address::zero(),
+            self.address,
+            0.into(),
+            data.to_vec(),
+            self.executor.gas_limit,
+        );
+
+        TestResult {
+            success: expected == result,
+        }
+    }
+}
+
 pub fn decode_revert(error: &[u8]) -> Result<String> {
     Ok(abi::decode(&[abi::ParamType::String], &error[4..])?[0].to_string())
 }
@@ -277,6 +373,8 @@ mod tests {
         let vicinity = Executor::new_vicinity();
         let backend = Executor::new_backend(&vicinity, state);
         let dapp = Executor::new(12_000_000, &cfg, &backend);
+        #[cfg(not(feature = "parallel"))]
+        let mut dapp = dapp;
 
         let (_, status) = dapp
             .call::<(), _>(
@@ -317,6 +415,8 @@ mod tests {
         let vicinity = Executor::new_vicinity();
         let backend = Executor::new_backend(&vicinity, state);
         let dapp = Executor::new(12_000_000, &cfg, &backend);
+        #[cfg(not(feature = "parallel"))]
+        let mut dapp = dapp;
 
         // call the setup function to deploy the contracts inside the test
         let (_, status) = dapp
@@ -357,8 +457,10 @@ mod tests {
         let vicinity = Executor::new_vicinity();
         let backend = Executor::new_backend(&vicinity, state);
         let dapp = Executor::new(12_000_000, &cfg, &backend);
+        #[cfg(not(feature = "parallel"))]
+        let mut dapp = dapp;
 
-        let (status, res) = dapp.executor.lock().unwrap().transact_call(
+        let (status, res) = dapp.executor.transact_call(
             Address::zero(),
             addr,
             0.into(),
@@ -384,6 +486,8 @@ mod tests {
         let vicinity = Executor::new_vicinity();
         let backend = Executor::new_backend(&vicinity, state);
         let dapp = Executor::new(12_000_000, &cfg, &backend);
+        #[cfg(not(feature = "parallel"))]
+        let mut dapp = dapp;
 
         // call the setup function to deploy the contracts inside the test
         let (_, status) = dapp
@@ -397,7 +501,7 @@ mod tests {
             .unwrap();
         assert_eq!(status, ExitReason::Succeed(ExitSucceed::Stopped));
 
-        let (status, res) = dapp.executor.lock().unwrap().transact_call(
+        let (status, res) = dapp.executor.transact_call(
             Address::zero(),
             addr,
             0.into(),
@@ -425,12 +529,19 @@ mod tests {
         let vicinity = Executor::new_vicinity();
         let backend = Executor::new_backend(&vicinity, state);
         let dapp = Executor::new(12_000_000, &cfg, &backend);
+        #[cfg(not(feature = "parallel"))]
+        let mut dapp = dapp;
 
         let runner = ContractRunner {
+            #[cfg(feature = "parallel")]
             executor: &dapp,
+            #[cfg(not(feature = "parallel"))]
+            executor: &mut dapp,
             contract: compiled,
             address: addr,
         };
+        #[cfg(not(feature = "parallel"))]
+        let mut runner = runner;
 
         let res = runner.test().unwrap();
         assert!(res.iter().all(|(_, result)| result.success == true));
