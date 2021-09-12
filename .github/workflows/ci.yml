@@ -19,8 +19,17 @@ jobs:
           toolchain: stable
           override: true
 
+      - name: Install Solc
+        run: |
+          mkdir -p "$HOME/bin"
+          wget -q https://github.com/ethereum/solidity/releases/download/v0.8.6/solc-static-linux -O $HOME/bin/solc
+          chmod u+x "$HOME/bin/solc"
+          export PATH=$HOME/bin:$PATH
+          solc --version
+
       - name: cargo test
         run: |
+            export PATH=$HOME/bin:$PATH
             cargo test
 
   lint:
