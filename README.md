@@ -12,7 +12,17 @@
     * [x] `--to-bytes32`
     * [x] `block`
     * [x] `call` (partial)
+    * [x] `send` (partial)
 * dapp
-    * [ ]
-* hevm
-    * TBD / May be replaced with [rust-cevm](https://github.com/brockelmore/rust-cevm/) or [evmc](https://github.com/ethereum/evmc/blob/master/examples/example-rust-vm/src/lib.rs#L12)
+    * [ ] test
+        * [x] simple unit tests
+            * [x] Gas costs
+            * [x] DappTools style test output
+            * [x] JSON test output
+        * [ ] fuzzing
+        * [ ] symbolic execution
+        * [ ] coverage
+    * [ ] build
+        * [x] can read DappTools-style .sol.json artifacts
+        * [ ] remappings
+    * [ ] debug
