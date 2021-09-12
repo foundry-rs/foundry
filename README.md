@@ -22,6 +22,15 @@ Running 3 tests for GreeterTest
 [PASS] testIsolation (gas: 5444)
 ```
 
+### Test output as JSON
+
+In order to compose with other commands, you may print the results as JSON via the `--json` flag
+
+```
+./target/release/dapp test --contracts ./*.sol --json
+{"GmTest":{"testGm":{"success":true,"gas_used":26123}},"GreeterTest":{"testGreeting":{"success":true,"gas_used":26622},"testFailGreeting":{"success":true,"gas_used":26693},"testIsolation":{"success":true,"gas_used":4144}}}
+```
+
 ### CLI Help
 
 The CLI options can be seen below. You can fully customize the initial blockchain
