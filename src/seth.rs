@@ -75,52 +75,38 @@ impl Seth {
         Ok(s)
     }
 
-    // TODO: These should be builder pattern style args which get populated dynamically in the CLI
-    // 1. abstract away function selection
-    // 2. abstract away encoding of args
-    // 3. decoding of args is sort of OK but the printing of the args back to the user is ?
-    // 4. figure out middleware situation
-    // 5. figure out signature calculation on ethers human readable
-    pub async fn send(&self, to: Address, sig: &str, args: Vec<String>, from: Address) -> Result<String> {
-        // TODO: Make human readable ABI better / more minimal
-        let abi = parse_abi(&[sig])?;
-        // get the function
-        let func = {
-            let (_, func) = abi
-                .functions
-                .iter()
-                .next()
-                .ok_or_else(|| eyre::eyre!("function name not found"))?;
-            let func = func
-                .get(0)
-                .ok_or_else(|| eyre::eyre!("functions array empty"))?;
-            if args.len() != func.inputs.len() {
-                eyre::bail!("function inputs do len does not match provided args len");
-            }
-            func
-        };
+    /// Sends a transaction to the specified address
+    ///
+    /// ```no_run
+    /// use dapptools::Seth;
+    /// use dapptools::ethers::types::Address;
+    /// use std::str::FromStr;
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let seth = Seth::new("http://localhost:8545").await?;
+    /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
+    /// let sig = "function greetg(string memory) public returns (string)";
+    /// let args = vec!["5".to_owned()];
+    /// let data = seth.call(to, sig, args).await?;
+    /// println!("{}", data);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn send(
+        &self,
+        from: Address,
+        to: Address,
+        args: Option<(&str, Vec<String>)>,
+    ) -> Result<String> {
+        // make the call
+        let mut tx = Eip1559TransactionRequest::new().from(from).to(to);
 
-        // Dynamically build up the calldata via the function sig
-        let mut inputs = Vec::new();
-        for (i, input) in func.inputs.iter().enumerate() {
-            let input = match input.kind {
-                // TODO: Do the rest of the types
-                ParamType::Address => Address::from_str(&args[i])?.into_token(),
-                ParamType::Uint(256) => if args[i].starts_with("0x") {
-                    U256::from_str(&args[i])?
-                } else {
-                    U256::from_dec_str(&args[i])?
-                }.into_token(),
-                _ => Address::zero().into_token(),
-            };
-            inputs.push(input);
+        if let Some((sig, args)) = args {
+            let func = get_func(&sig)?;
+            let data = encode_args(&func, args)?;
+            tx = tx.data(data);
         }
 
-        // encode args
-        let data = func.encode_input(&inputs)?;
-
-        // make the call
-        let tx = Eip1559TransactionRequest::new().from(from).to(to).data(data);
         let res = self.provider.send_transaction(tx, None).await?;
 
         Ok(format!("{:?}", *res))

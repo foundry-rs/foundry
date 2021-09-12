@@ -51,7 +51,18 @@ async fn main() -> eyre::Result<()> {
         } => {
             println!(
                 "{}",
-                Seth::new(&rpc_url).await?.send(address, &sig, args, from).await?
+                Seth::new(&rpc_url)
+                    .await?
+                    .send(
+                        from,
+                        address,
+                        if sig.len() > 0 {
+                            Some((&sig, args))
+                        } else {
+                            None
+                        }
+                    )
+                    .await?
             );
         }
     };

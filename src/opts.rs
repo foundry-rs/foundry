@@ -32,9 +32,7 @@ pub enum Subcommands {
         rpc_url: String,
     },
     #[structopt(name = "call")]
-    #[structopt(
-        about = "Perform a local call to <to> without publishing a transaction."
-    )]
+    #[structopt(about = "Perform a local call to <to> without publishing a transaction.")]
     Call {
         #[structopt(help = "the address you want to query")]
         address: Address,
@@ -44,9 +42,7 @@ pub enum Subcommands {
         rpc_url: String,
     },
     #[structopt(name = "send")]
-    #[structopt(
-        about = "Publish a transaction signed by <from> to call <to> with <data>"
-    )]
+    #[structopt(about = "Publish a transaction signed by <from> to call <to> with <data>")]
     SendTx {
         #[structopt(help = "the address you want to query")]
         address: Address,
