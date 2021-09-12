@@ -55,7 +55,7 @@ async fn main() -> eyre::Result<()> {
         Subcommands::SendTx { eth, to, sig, args } => {
             let provider = Provider::try_from(eth.rpc_url.as_str())?;
             if let Some(signer) = eth.signer()? {
-                let from = eth.from.unwrap_or(signer.address());
+                let from = eth.from.unwrap_or_else(|| signer.address());
                 let provider = SignerMiddleware::new(provider, signer);
                 seth_send(provider, from, to, sig, args, eth.seth_async).await?;
             } else {
@@ -84,7 +84,7 @@ where
         .send(
             from,
             to,
-            if sig.len() > 0 {
+            if !sig.is_empty() {
                 Some((&sig, args))
             } else {
                 None
@@ -98,7 +98,7 @@ where
     } else {
         let receipt = pending_tx
             .await?
-            .ok_or(eyre::eyre!("tx {} not found", tx_hash))?;
+            .ok_or_else(|| eyre::eyre!("tx {} not found", tx_hash))?;
         println!("Receipt: {:?}", receipt);
     }
 

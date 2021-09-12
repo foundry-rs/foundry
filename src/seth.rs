@@ -57,7 +57,7 @@ where
     /// # }
     /// ```
     pub async fn call(&self, to: Address, sig: &str, args: Vec<String>) -> Result<String> {
-        let func = get_func(&sig)?;
+        let func = get_func(sig)?;
         let data = encode_args(&func, &args)?;
 
         // make the call
@@ -104,7 +104,7 @@ where
         let mut tx = Eip1559TransactionRequest::new().from(from).to(to);
 
         if let Some((sig, args)) = args {
-            let func = get_func(&sig)?;
+            let func = get_func(sig)?;
             let data = encode_args(&func, &args)?;
             tx = tx.data(data);
         }

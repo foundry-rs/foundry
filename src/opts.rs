@@ -132,6 +132,7 @@ pub struct Wallet {
 }
 
 impl Wallet {
+    #[allow(clippy::manual_map)]
     pub fn signer(&self) -> Result<Option<LocalWallet>> {
         Ok(if let Some(wallet) = self.private_key()? {
             Some(wallet)

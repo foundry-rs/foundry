@@ -40,7 +40,7 @@ pub fn get_func(sig: &str) -> Result<Function> {
 pub fn encode_input(param: &ParamType, value: &str) -> Result<Token> {
     Ok(match param {
         // TODO: Do the rest of the types
-        ParamType::Address => Address::from_str(&value)?.into_token(),
+        ParamType::Address => Address::from_str(value)?.into_token(),
         ParamType::Bytes => Bytes::from(value.from_hex::<Vec<u8>>()?).into_token(),
         ParamType::FixedBytes(_) => value.from_hex::<Vec<u8>>()?.into_token(),
         ParamType::Uint(n) => {
