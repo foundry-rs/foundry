@@ -103,7 +103,7 @@ impl Env {
             chain_id: self.chain_id.into(),
 
             gas_price: self.gas_price.into(),
-            origin: self.tx_origin.into(),
+            origin: self.tx_origin,
 
             block_coinbase: self.block_coinbase,
             block_number: self.block_number.into(),
