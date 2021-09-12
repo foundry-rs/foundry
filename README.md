@@ -84,17 +84,19 @@ ARGS:
 
 ```bash
 $ cargo r --bin dapp test --help
-    Finished dev [unoptimized + debuginfo] target(s) in 0.28s
+    Finished dev [unoptimized + debuginfo] target(s) in 0.31s
      Running `target/debug/dapp test --help`
 dapp-test 0.1.0
+build your smart contracts
 
 USAGE:
-    dapp test [FLAGS] [OPTIONS]
+    dapp test [FLAGS] [OPTIONS] [--] [remappings-env]
 
 FLAGS:
-    -h, --help       Prints help information
-    -j, --json       print the test results in json format
-    -V, --version    Prints version information
+    -h, --help          Prints help information
+    -j, --json          print the test results in json format
+    -n, --no-compile    skip re-compilation
+    -V, --version       Prints version information
 
 OPTIONS:
         --block-coinbase <block-coinbase>
@@ -106,13 +108,22 @@ OPTIONS:
         --block-timestamp <block-timestamp>      the block.timestamp value during EVM execution [default: 0]
         --chain-id <chain-id>                    the chainid opcode value [default: 1]
     -c, --contracts <contracts>                  glob path to your smart contracts [default: ./src/**/*.sol]
+        --evm-version <evm-version>              choose the evm version [default: berlin]
         --gas-limit <gas-limit>                  the block gas limit [default: 25000000]
         --gas-price <gas-price>                  the tx.gasprice value during EVM execution [default: 0]
+        --lib-path <lib-path>                    the path where your libraries are installed
     -o, --out <out-path>
             path to where the contract artifacts are stored [default: ./out/dapp.sol.json]
 
+    -m, --match <pattern>                        only run test methods matching regex [default: .*]
+    -r, --remappings <remappings>...             the remappings
         --tx-origin <tx-origin>
             the tx.origin value during EVM execution [default: 0x0000000000000000000000000000000000000000]
+
+
+ARGS:
+    <remappings-env>     [env: DAPP_REMAPPINGS=]
+
 ```
 
 ## Features
