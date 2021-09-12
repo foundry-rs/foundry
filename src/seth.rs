@@ -37,8 +37,9 @@ impl Seth {
         Ok(Self { provider })
     }
 
-    /// ```no_run
     /// Makes a read-only call to the specified address
+    ///
+    /// ```no_run
     ///
     /// use dapptools::Seth;
     /// use dapptools::ethers::types::Address;
