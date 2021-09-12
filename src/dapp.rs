@@ -289,7 +289,7 @@ impl DapptoolsArtifact {
 }
 
 impl<'a> MultiContractRunner<'a> {
-    fn build(
+    pub fn build(
         contracts: &str,
         remappings: Vec<String>,
         lib_path: String,

@@ -4,7 +4,11 @@ use dapptools::dapp::MultiContractRunner;
 use evm::{backend::MemoryVicinity, Config};
 
 use ansi_term::Colour;
-use std::{path::PathBuf, str::FromStr};
+use std::{
+    fs::{File, OpenOptions},
+    path::PathBuf,
+    str::FromStr,
+};
 
 use ethers::types::Address;
 
@@ -18,30 +22,6 @@ struct Opts {
 #[structopt(about = "Perform Ethereum RPC calls from the comfort of your command line.")]
 enum Subcommands {
     Test {
-        #[structopt(
-            help = "glob path to your smart contracts",
-            long,
-            short,
-            default_value = "./src/**/*.sol"
-        )]
-        contracts: String,
-
-        #[structopt(help = "the remappings", long, short)]
-        remappings: Vec<String>,
-        #[structopt(env = "DAPP_REMAPPINGS")]
-        remappings_env: Option<String>,
-
-        #[structopt(help = "the path where your libraries are installed", long)]
-        lib_path: Option<String>,
-
-        #[structopt(
-            help = "path to where the contract artifacts are stored",
-            long = "out",
-            short,
-            default_value = "./out/dapp.sol.json"
-        )]
-        out_path: PathBuf,
-
         #[structopt(help = "print the test results in json format", long, short)]
         json: bool,
 
@@ -56,12 +36,43 @@ enum Subcommands {
         )]
         pattern: regex::Regex,
 
-        #[structopt(help = "force re-compilation", long, short)]
-        force: bool,
-
-        #[structopt(help = "choose the evm version", long, default_value = "berlin")]
-        evm_version: EvmVersion,
+        #[structopt(flatten)]
+        opts: BuildOpts,
     },
+}
+
+#[derive(Debug, StructOpt)]
+#[structopt(about = "build your smart contracts")]
+struct BuildOpts {
+    #[structopt(
+        help = "glob path to your smart contracts",
+        long,
+        short,
+        default_value = "./src/**/*.sol"
+    )]
+    contracts: String,
+
+    #[structopt(help = "the remappings", long, short)]
+    remappings: Vec<String>,
+    #[structopt(env = "DAPP_REMAPPINGS")]
+    remappings_env: Option<String>,
+
+    #[structopt(help = "the path where your libraries are installed", long)]
+    lib_path: Option<String>,
+
+    #[structopt(
+        help = "path to where the contract artifacts are stored",
+        long = "out",
+        short,
+        default_value = "./out/dapp.sol.json"
+    )]
+    out_path: PathBuf,
+
+    #[structopt(help = "force re-compilation", long, short)]
+    force: bool,
+
+    #[structopt(help = "choose the evm version", long, default_value = "berlin")]
+    evm_version: EvmVersion,
 }
 
 #[derive(Clone, Debug)]
@@ -174,38 +185,28 @@ fn main() -> eyre::Result<()> {
     let opts = Opts::from_args();
     match opts.sub {
         Subcommands::Test {
-            contracts,
-            mut remappings,
-            remappings_env,
-            lib_path,
-            out_path,
+            opts:
+                BuildOpts {
+                    contracts,
+                    remappings,
+                    remappings_env,
+                    lib_path,
+                    out_path,
+                    evm_version,
+                    force,
+                },
             env,
             json,
             pattern,
-            force,
-            evm_version,
         } => {
             let cfg = evm_version.cfg();
-            // merge the cli-provided remappings vector with the
-            // new-line separated env var
-            if let Some(env) = remappings_env {
-                remappings
-                    .extend_from_slice(&env.split('\n').map(|x| x.to_string()).collect::<Vec<_>>());
-                // deduplicate the extra remappings
-                remappings.sort_unstable();
-                remappings.dedup();
-            }
+            let remappings = merge(remappings, remappings_env);
+            let lib_path = default_path(lib_path)?;
 
             let runner = MultiContractRunner::new(
                 &contracts,
                 remappings,
-                lib_path.unwrap_or(
-                    std::env::current_dir()?
-                        .join("lib")
-                        .into_os_string()
-                        .into_string()
-                        .expect("could not parse libs path. is it not utf-8 maybe?"),
-                ),
+                lib_path,
                 out_path,
                 &cfg,
                 env.gas_limit,
@@ -241,4 +242,32 @@ fn main() -> eyre::Result<()> {
     }
 
     Ok(())
+}
+
+/// Default deps path
+const LIB: &str = "lib";
+
+fn default_path(path: Option<String>) -> eyre::Result<String> {
+    Ok(path.unwrap_or(
+        std::env::current_dir()?
+            .join(LIB)
+            .into_os_string()
+            .into_string()
+            .expect("could not parse libs path. is it not utf-8 maybe?"),
+    ))
+}
+
+// merge the cli-provided remappings vector with the
+// new-line separated env var
+fn merge(mut remappings: Vec<String>, remappings_env: Option<String>) -> Vec<String> {
+    // merge the cli-provided remappings vector with the
+    // new-line separated env var
+    if let Some(env) = remappings_env {
+        remappings.extend_from_slice(&env.split('\n').map(|x| x.to_string()).collect::<Vec<_>>());
+        // deduplicate the extra remappings
+        remappings.sort_unstable();
+        remappings.dedup();
+    }
+
+    remappings
 }
