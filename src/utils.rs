@@ -91,7 +91,7 @@ pub fn encode_input(param: &ParamType, value: &str) -> Result<Token> {
     })
 }
 
-pub fn encode_args(func: &Function, args: Vec<String>) -> Result<Vec<u8>> {
+pub fn encode_args(func: &Function, args: &[String]) -> Result<Vec<u8>> {
     // Dynamically build up the calldata via the function sig
     let mut inputs = Vec::new();
     for (i, input) in func.inputs.iter().enumerate() {

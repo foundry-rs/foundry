@@ -2,13 +2,12 @@
 //!
 //! TODO
 use ethers::{
-    providers::{self, Http, Middleware, Provider},
+    providers::{Middleware, PendingTransaction},
     types::*,
     utils,
 };
 use eyre::Result;
 use rustc_hex::ToHex;
-use std::convert::TryFrom;
 use std::str::FromStr;
 
 use crate::utils::get_func;
@@ -17,11 +16,14 @@ use super::utils::{encode_args, to_table};
 
 // TODO: SethContract with common contract initializers? Same for SethProviders?
 
-pub struct Seth {
-    provider: Provider<Http>,
+pub struct Seth<M> {
+    provider: M,
 }
 
-impl Seth {
+impl<M: Middleware> Seth<M>
+where
+    M::Error: 'static,
+{
     /// Converts ASCII text input to hex
     ///
     /// ```
@@ -32,8 +34,7 @@ impl Seth {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn new(rpc_url: &str) -> Result<Self> {
-        let provider = providers::Provider::try_from(rpc_url)?;
+    pub async fn new(provider: M) -> Result<Self> {
         Ok(Self { provider })
     }
 
@@ -57,7 +58,7 @@ impl Seth {
     /// ```
     pub async fn call(&self, to: Address, sig: &str, args: Vec<String>) -> Result<String> {
         let func = get_func(&sig)?;
-        let data = encode_args(&func, args)?;
+        let data = encode_args(&func, &args)?;
 
         // make the call
         let tx = Eip1559TransactionRequest::new().to(to).data(data).into();
@@ -98,19 +99,19 @@ impl Seth {
         from: Address,
         to: Address,
         args: Option<(&str, Vec<String>)>,
-    ) -> Result<String> {
+    ) -> Result<PendingTransaction<'_, M::Provider>> {
         // make the call
         let mut tx = Eip1559TransactionRequest::new().from(from).to(to);
 
         if let Some((sig, args)) = args {
             let func = get_func(&sig)?;
-            let data = encode_args(&func, args)?;
+            let data = encode_args(&func, &args)?;
             tx = tx.data(data);
         }
 
         let res = self.provider.send_transaction(tx, None).await?;
 
-        Ok(format!("{:?}", *res))
+        Ok::<_, eyre::Error>(res)
     }
 
     /// ```no_run
@@ -171,7 +172,10 @@ impl Seth {
 
         Ok(block)
     }
+}
 
+pub struct SimpleSeth;
+impl SimpleSeth {
     /// Converts ASCII text input to hex
     ///
     /// ```

@@ -52,6 +52,8 @@ pub enum Subcommands {
         rpc_url: String,
         #[structopt(long, env = "ETH_FROM")]
         from: Address,
+        #[structopt(long, env = "SETH_ASYNC")]
+        seth_async: bool,
     },
 }
 
