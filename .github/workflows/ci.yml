@@ -19,6 +19,10 @@ jobs:
           toolchain: stable
           override: true
 
+      - uses: Swatinem/rust-cache@v1
+        with:
+          cache-on-failure: true
+
       - name: cargo test
         run: cargo test
 
@@ -34,6 +38,10 @@ jobs:
           toolchain: stable
           override: true
           components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v1
+        with:
+          cache-on-failure: true
+
       - name: cargo fmt
         run: cargo fmt --all -- --check
       - name: cargo clippy
