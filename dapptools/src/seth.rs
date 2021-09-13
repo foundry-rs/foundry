@@ -18,6 +18,9 @@ pub enum Subcommands {
     #[structopt(name = "--from-ascii")]
     #[structopt(about = "convert text data into hexdata")]
     FromAscii { text: String },
+    #[structopt(name = "--to-hex")]
+    #[structopt(about = "convert a decimal number into hex")]
+    ToHex { decimal: Option<u128> },
     #[structopt(name = "--to-checksum-address")]
     #[structopt(about = "convert an address to a checksummed format (EIP-55)")]
     ToCheckSumAddress { address: Address },
@@ -130,6 +133,9 @@ async fn main() -> eyre::Result<()> {
     match opts.sub {
         Subcommands::FromAscii { text } => {
             println!("{}", SimpleSeth::from_ascii(&text));
+        }
+        Subcommands::ToHex { decimal } => {
+            println!("{}", SimpleSeth::to_hex(unwrap_or_stdin(decimal)?));
         }
         Subcommands::ToCheckSumAddress { address } => {
             println!("{}", SimpleSeth::to_checksum_address(&address)?);

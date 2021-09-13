@@ -197,6 +197,7 @@ ARGS:
 
 * seth
     * [x] `--from-ascii`
+    * [x] `--to-hex`
     * [x] `--to-checksum-address`
     * [x] `--to-bytes32`
     * [x] `block`
