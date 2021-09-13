@@ -1,0 +1,30 @@
+[package]
+name = "dapptools"
+version = "0.1.0"
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+structopt = "0.3.23"
+dapp-utils = { path = "../utils" }
+dapp = { path = "../dapp" }
+seth = { path = "../seth" }
+
+# ethers = "0.5"
+ethers = { git = "https://github.com/gakonst/ethers-rs", branch = "master" }
+eyre = "0.6.5"
+rustc-hex = "2.1.0"
+serde_json = "1.0.67"
+tokio = { version = "1.11.0", features = ["macros"] }
+regex = { version = "1.5.4", default-features = false }
+ansi_term = "0.12.1"
+rpassword = "5.0.1"
+
+[[bin]]
+name = "seth"
+path = "src/seth.rs"
+
+[[bin]]
+name = "dapp"
+path = "src/dapp.rs"
