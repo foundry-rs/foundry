@@ -14,6 +14,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// Re-export of the Rust EVM for convenience
+pub use evm;
+
 use eyre::Result;
 use regex::Regex;
 

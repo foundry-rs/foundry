@@ -1,7 +1,9 @@
 use structopt::StructOpt;
 
-use dapptools::dapp::MultiContractRunner;
-use evm::{backend::MemoryVicinity, Config};
+use dapp::{
+    evm::{backend::MemoryVicinity, Config},
+    MultiContractRunner,
+};
 
 use ansi_term::Colour;
 use std::{
