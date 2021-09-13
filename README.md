@@ -105,6 +105,11 @@ cargo test
 cargo doc --open
 cargo build [--release]
 ```
+**Tip**: If you encounter the following error when building the project, please update your Rust toolchain with `rustup update`.
+
+```
+error[E0658]: use of unstable library feature 'map_into_keys_values'
+```
 
 ### CLI Help
 
