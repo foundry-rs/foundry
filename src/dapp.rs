@@ -377,13 +377,13 @@ impl<'a> MultiContractRunner<'a> {
                         println!("Installing {}", upstream_version);
                         tokio::runtime::Runtime::new()?
                             .block_on(svm::install(&upstream_version))?;
+                        println!("Done!");
                         found_version = Some(upstream_version);
                     }
                 }
 
-                // we did not find a version
+                // we found a version
                 if let Some(found_version) = found_version {
-                    println!("Found latest version: {}", &found_version);
                     let entry = contracts_by_version.entry(found_version).or_insert(vec![]);
                     entry.push(path);
                 }
@@ -402,8 +402,7 @@ impl<'a> MultiContractRunner<'a> {
                     .clone();
                 compiler_path.push(format!("solc-{}", &version));
 
-                let files = files.join(",");
-                let mut solc = Solc::new(&files).solc_path(compiler_path);
+                let mut solc = Solc::new_with_paths(files).solc_path(compiler_path);
                 let lib_paths = lib_paths
                     .iter()
                     .filter(|path| !path.is_empty())
