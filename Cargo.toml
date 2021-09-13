@@ -7,14 +7,14 @@ edition = "2018"
 members = [
     "utils",
     "seth",
+    "dapp",
 ]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 dapp-utils = { path = "./utils" }
-# ethers = "0.5"
-ethers = { git = "https://github.com/gakonst/ethers-rs", branch = "master" }
+ethers = "0.5"
 
 structopt = "0.3.22"
 eyre = "0.6.5"
