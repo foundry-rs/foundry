@@ -61,8 +61,8 @@ struct BuildOpts {
     #[structopt(env = "DAPP_REMAPPINGS")]
     remappings_env: Option<String>,
 
-    #[structopt(help = "the path where your libraries are installed", long)]
-    lib_path: Option<String>,
+    #[structopt(help = "the paths where your libraries are installed", long)]
+    lib_paths: Vec<String>,
 
     #[structopt(
         help = "path to where the contract artifacts are stored",
@@ -194,7 +194,7 @@ fn main() -> eyre::Result<()> {
                     contracts,
                     remappings,
                     remappings_env,
-                    lib_path,
+                    lib_paths,
                     out_path,
                     evm_version,
                     no_compile,
@@ -205,12 +205,12 @@ fn main() -> eyre::Result<()> {
         } => {
             let cfg = evm_version.cfg();
             let remappings = merge(remappings, remappings_env);
-            let lib_path = default_path(lib_path)?;
+            let lib_paths = default_path(lib_paths)?;
 
             let runner = MultiContractRunner::new(
                 &contracts,
                 remappings,
-                lib_path,
+                lib_paths,
                 out_path,
                 &cfg,
                 env.gas_limit,
@@ -249,7 +249,7 @@ fn main() -> eyre::Result<()> {
                     contracts,
                     remappings,
                     remappings_env,
-                    lib_path,
+                    lib_paths,
                     out_path,
                     evm_version: _,
                     no_compile,
@@ -257,13 +257,13 @@ fn main() -> eyre::Result<()> {
         } => {
             // build the contracts
             let remappings = merge(remappings, remappings_env);
-            let lib_path = default_path(lib_path)?;
+            let lib_paths = default_path(lib_paths)?;
             // TODO: Do we also want to include the file path in the contract map so
             // that we're more compatible with dapptools' artifact?
             let contracts = MultiContractRunner::build(
                 &contracts,
                 remappings,
-                lib_path,
+                lib_paths,
                 out_path.clone(),
                 no_compile,
             )?;
@@ -282,14 +282,16 @@ fn main() -> eyre::Result<()> {
 const LIB: &str = "lib";
 const DEFAULT_OUT_FILE: &str = "dapp.sol.json";
 
-fn default_path(path: Option<String>) -> eyre::Result<String> {
-    Ok(path.unwrap_or(
-        std::env::current_dir()?
+fn default_path(path: Vec<String>) -> eyre::Result<Vec<String>> {
+    Ok(if path.is_empty() {
+        vec![std::env::current_dir()?
             .join(LIB)
             .into_os_string()
             .into_string()
-            .expect("could not parse libs path. is it not utf-8 maybe?"),
-    ))
+            .expect("could not parse libs path. is it not utf-8 maybe?")]
+    } else {
+        path
+    })
 }
 
 // merge the cli-provided remappings vector with the

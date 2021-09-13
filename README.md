@@ -57,7 +57,32 @@ of all contracts under `src/` at `out/dapp.sol.json`:
 ```
 
 You can specify an alternative path for your contracts and libraries with `--remappings`, `--lib-path`
-and `--contracts`.
+and `--contracts`. We default to importing libraries from `./lib`, but you still need to manually
+set your remappings.
+
+In the example below, we see that this also works for importing libraries from different paths
+(e.g. having a DappTools-style import under `lib/` and an NPM-style import under `node_modules`)
+
+Notably, we need 1 remapping and 1 lib path for each import. Given that this can be tedious,
+you can do set remappings via the env var `DAPP_REMAPPINGS`, by setting your remapping  1 in each line
+
+```
+dapp build --out out.json \
+    --remappings ds-test/=lib/ds-test/src/ \
+    --lib-paths `pwd`/lib/
+    --remappings @openzeppelin/=node_modules/@openzeppelin/ \
+    --lib-path `pwd`/node_modules/@openzeppelin
+```
+
+
+```
+$ echo $DAPP_REMAPPINGS
+@openzeppelin/=lib/openzeppelin-contracts/
+ds-test/=lib/ds-test/src/
+$ dapp build --out out.json \
+    --lib-paths `pwd`/lib/ \
+    --lib-paths `pwd`/node_modules/@openzeppelin
+```
 
 ### CLI Help
 

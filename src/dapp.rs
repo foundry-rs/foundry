@@ -292,7 +292,7 @@ impl<'a> MultiContractRunner<'a> {
     pub fn build(
         contracts: &str,
         remappings: Vec<String>,
-        lib_path: String,
+        lib_paths: Vec<String>,
         out_path: PathBuf,
         no_compile: bool,
     ) -> Result<HashMap<String, CompiledContract>> {
@@ -306,9 +306,9 @@ impl<'a> MultiContractRunner<'a> {
             serde_json::from_str::<DapptoolsArtifact>(&out_file)?.contracts()?
         } else {
             let mut solc = Solc::new(contracts);
-            if !lib_path.is_empty() {
-                solc = solc.args(["--allow-paths", &lib_path]);
-            }
+            let lib_paths = lib_paths.join(",");
+            dbg!(&lib_paths);
+            solc = solc.args(["--allow-paths", &lib_paths]);
 
             if !remappings.is_empty() {
                 solc = solc.args(remappings)
@@ -321,7 +321,7 @@ impl<'a> MultiContractRunner<'a> {
     pub fn new(
         contracts: &str,
         remappings: Vec<String>,
-        lib_path: String,
+        lib_paths: Vec<String>,
         out_path: PathBuf,
         config: &'a Config,
         gas_limit: u64,
@@ -329,7 +329,7 @@ impl<'a> MultiContractRunner<'a> {
         no_compile: bool,
     ) -> Result<Self> {
         // 1. compile the contracts
-        let contracts = Self::build(contracts, remappings, lib_path, out_path, no_compile)?;
+        let contracts = Self::build(contracts, remappings, lib_paths, out_path, no_compile)?;
 
         // 2. create the initial state
         // TODO: Allow further overriding perhaps?
