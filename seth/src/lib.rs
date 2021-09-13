@@ -211,6 +211,18 @@ impl SimpleSeth {
         let s: String = s.as_bytes().to_hex();
         format!("0x{}", s)
     }
+    /// Converts decimal input to hex
+    ///
+    /// ```
+    /// use seth::SimpleSeth as Seth;
+    ///
+    /// let bin = Seth::to_hex(424242);
+    /// assert_eq!(bin, "0x67932")
+    /// ```
+
+    pub fn to_hex(u: u128) -> String {
+        format!("{:#X}", u)
+    }
 
     /// Converts an Ethereum address to its checksum format
     /// according to [EIP-55](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-55.md)
