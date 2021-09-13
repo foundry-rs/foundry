@@ -71,6 +71,34 @@ pub enum Subcommands {
         #[structopt(short, long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
+    #[structopt(name = "resolve-name")]
+    #[structopt(about = "Returns the address the provided ENS name resolves to")]
+    ResolveName {
+        #[structopt(help = "the account you want to resolve")]
+        who: Option<String>,
+        #[structopt(short, long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+        #[structopt(
+            long,
+            short,
+            help = "do a forward resolution to ensure the ENS name is correct"
+        )]
+        verify: bool,
+    },
+    #[structopt(name = "lookup-address")]
+    #[structopt(about = "Returns the name the provided address resolves to")]
+    LookupAddress {
+        #[structopt(help = "the account you want to resolve")]
+        who: Option<Address>,
+        #[structopt(short, long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+        #[structopt(
+            long,
+            short,
+            help = "do a forward resolution to ensure the address is correct"
+        )]
+        verify: bool,
+    },
 }
 
 fn parse_name_or_address(s: &str) -> eyre::Result<NameOrAddress> {
@@ -156,9 +184,62 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Seth::new(provider).await?.balance(who, block).await?);
         }
+        Subcommands::ResolveName {
+            who,
+            rpc_url,
+            verify,
+        } => {
+            let provider = Provider::try_from(rpc_url)?;
+            let who = unwrap_or_stdin(who)?;
+            let address = provider.resolve_name(&who).await?;
+            if verify {
+                let name = provider.lookup_address(address).await?;
+                assert_eq!(
+                    name, who,
+                    "forward lookup verification failed. got {}, expected {}",
+                    name, who
+                );
+            }
+            println!("{:?}", address);
+        }
+        Subcommands::LookupAddress {
+            who,
+            rpc_url,
+            verify,
+        } => {
+            let provider = Provider::try_from(rpc_url)?;
+            let who = unwrap_or_stdin(who)?;
+            let name = provider.lookup_address(who).await?;
+            if verify {
+                let address = provider.resolve_name(&name).await?;
+                assert_eq!(
+                    address, who,
+                    "forward lookup verification failed. got {}, expected {}",
+                    name, who
+                );
+            }
+            println!("{}", name);
+        }
     };
 
     Ok(())
+}
+
+fn unwrap_or_stdin<T>(what: Option<T>) -> eyre::Result<T>
+where
+    T: FromStr + Send + Sync,
+    T::Err: Send + Sync + std::error::Error + 'static,
+{
+    Ok(match what {
+        Some(what) => what,
+        None => {
+            use std::io::Read;
+            let mut input = std::io::stdin();
+            let mut what = String::new();
+            input.read_to_string(&mut what)?;
+            T::from_str(&what.replace("\n", ""))?
+        }
+    })
 }
 
 async fn seth_send<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
