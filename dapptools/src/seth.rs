@@ -7,7 +7,7 @@ use ethers::{
     middleware::SignerMiddleware,
     providers::{Middleware, Provider},
     signers::Signer,
-    types::{Address, BlockId, BlockNumber, H256, U64},
+    types::{Address, BlockId, BlockNumber, NameOrAddress, H256, U64},
 };
 use std::{convert::TryFrom, str::FromStr};
 use structopt::StructOpt;
@@ -42,8 +42,8 @@ pub enum Subcommands {
     #[structopt(name = "call")]
     #[structopt(about = "Perform a local call to <to> without publishing a transaction.")]
     Call {
-        #[structopt(help = "the address you want to query")]
-        address: Address,
+        #[structopt(help = "the address you want to query", parse(try_from_str = parse_name_or_address))]
+        address: NameOrAddress,
         sig: String,
         args: Vec<String>,
         #[structopt(long, env = "ETH_RPC_URL")]
@@ -52,8 +52,8 @@ pub enum Subcommands {
     #[structopt(name = "send")]
     #[structopt(about = "Publish a transaction signed by <from> to call <to> with <data>")]
     SendTx {
-        #[structopt(help = "the address you want to transact with")]
-        to: Address,
+        #[structopt(help = "the address you want to transact with", parse(try_from_str = parse_name_or_address))]
+        to: NameOrAddress,
         #[structopt(help = "the function signature you want to call")]
         sig: String,
         #[structopt(help = "the list of arguments you want to call the function with")]
@@ -61,6 +61,14 @@ pub enum Subcommands {
         #[structopt(flatten)]
         eth: EthereumOpts,
     },
+}
+
+fn parse_name_or_address(s: &str) -> eyre::Result<NameOrAddress> {
+    Ok(if s.starts_with("0x") {
+        NameOrAddress::Address(s.parse::<Address>()?)
+    } else {
+        NameOrAddress::Name(s.into())
+    })
 }
 
 fn parse_block_id(s: &str) -> eyre::Result<BlockId> {
@@ -135,10 +143,10 @@ async fn main() -> eyre::Result<()> {
     Ok(())
 }
 
-async fn seth_send<M: Middleware>(
+async fn seth_send<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
     provider: M,
-    from: Address,
-    to: Address,
+    from: F,
+    to: T,
     sig: String,
     args: Vec<String>,
     seth_async: bool,
