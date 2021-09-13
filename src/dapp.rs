@@ -306,7 +306,17 @@ impl<'a> MultiContractRunner<'a> {
             serde_json::from_str::<DapptoolsArtifact>(&out_file)?.contracts()?
         } else {
             let mut solc = Solc::new(contracts);
-            let lib_paths = lib_paths.join(",");
+            let lib_paths = lib_paths
+                .iter()
+                .map(|path| {
+                    std::fs::canonicalize(path)
+                        .unwrap()
+                        .into_os_string()
+                        .into_string()
+                        .unwrap()
+                })
+                .collect::<Vec<_>>()
+                .join(",");
             solc = solc.args(["--allow-paths", &lib_paths]);
 
             if !remappings.is_empty() {

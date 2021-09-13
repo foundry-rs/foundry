@@ -28,7 +28,7 @@ Running 3 tests for GreeterTest
 You can optionally specify a regular expresion, to only run matching functions:
 
 ```bash
-cargo r --bin dapp test --contracts ./*.sol -m testG
+$ cargo r --bin dapp test --contracts ./*.sol -m testG
     Finished dev [unoptimized + debuginfo] target(s) in 0.20s
      Running `target/debug/dapp test --contracts ./GreetTest.sol -m testG`
 Running 1 tests for GmTest
@@ -43,7 +43,7 @@ Running 1 tests for GreeterTest
 In order to compose with other commands, you may print the results as JSON via the `--json` flag
 
 ```bash
-./target/release/dapp test --contracts ./*.sol --json
+$ ./target/release/dapp test --contracts ./*.sol --json
 {"GmTest":{"testGm":{"success":true,"gas_used":26123}},"GreeterTest":{"testGreeting":{"success":true,"gas_used":26622},"testFailGreeting":{"success":true,"gas_used":26693},"testIsolation":{"success":true,"gas_used":4144}}}
 ```
 
@@ -53,7 +53,7 @@ You can build the contracts by running, which will by default output the compila
 of all contracts under `src/` at `out/dapp.sol.json`:
 
 ```bash
-./target/release/dapp build
+$ ./target/release/dapp build
 ```
 
 You can specify an alternative path for your contracts and libraries with `--remappings`, `--lib-path`
@@ -67,11 +67,11 @@ Notably, we need 1 remapping and 1 lib path for each import. Given that this can
 you can do set remappings via the env var `DAPP_REMAPPINGS`, by setting your remapping  1 in each line
 
 ```bash
-dapp build --out out.json \
+$ dapp build --out out.json \
     --remappings ds-test/=lib/ds-test/src/ \
-    --lib-paths `pwd`/lib/
+    --lib-paths ./lib/
     --remappings @openzeppelin/=node_modules/@openzeppelin/ \
-    --lib-path `pwd`/node_modules/@openzeppelin
+    --lib-path ./node_modules/@openzeppelin
 ```
 
 
@@ -80,8 +80,8 @@ $ echo $DAPP_REMAPPINGS
 @openzeppelin/=lib/openzeppelin-contracts/
 ds-test/=lib/ds-test/src/
 $ dapp build --out out.json \
-    --lib-paths `pwd`/lib/ \
-    --lib-paths `pwd`/node_modules/@openzeppelin
+    --lib-paths ./lib/ \
+    --lib-paths ./node_modules/@openzeppelin
 ```
 
 ## Development
@@ -109,7 +109,7 @@ opcode will always return the supplied value. This can be useful for testing.
 #### Build
 
 ```bash
-cargo r --bin dapp build --help
+$ cargo r --bin dapp build --help
    Compiling dapptools v0.1.0
     Finished dev [unoptimized + debuginfo] target(s) in 3.45s
      Running `target/debug/dapp build --help`
