@@ -1,11 +1,8 @@
 //! Seth
 //!
 //! TODO
-use ethers::{
-    providers::{Middleware, PendingTransaction},
-    types::*,
-    utils,
-};
+use ethers_providers::{Middleware, PendingTransaction};
+use ethers_core::{types::*, utils};
 use eyre::Result;
 use rustc_hex::ToHex;
 use std::str::FromStr;

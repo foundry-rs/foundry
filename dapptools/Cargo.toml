@@ -17,7 +17,7 @@ eyre = "0.6.5"
 rustc-hex = "2.1.0"
 serde_json = "1.0.67"
 tokio = { version = "1.11.0", features = ["macros"] }
-regex = "1.5.4"
+regex = { version = "1.5.4", default-features = false }
 ansi_term = "0.12.1"
 rpassword = "5.0.1"
 
