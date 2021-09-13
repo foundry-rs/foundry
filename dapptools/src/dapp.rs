@@ -282,16 +282,12 @@ fn main() -> eyre::Result<()> {
 }
 
 /// Default deps path
-const LIB: &str = "lib";
 const DEFAULT_OUT_FILE: &str = "dapp.sol.json";
 
+// Default to including all files under current directory in the allowed paths
 fn default_path(path: Vec<String>) -> eyre::Result<Vec<String>> {
     Ok(if path.is_empty() {
-        vec![std::env::current_dir()?
-            .join(LIB)
-            .into_os_string()
-            .into_string()
-            .expect("could not parse libs path. is it not utf-8 maybe?")]
+        vec![".".to_owned()]
     } else {
         path
     })
