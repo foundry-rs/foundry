@@ -586,16 +586,19 @@ impl<'a> MultiContractRunner<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethers::utils::id;
+    use ethers::{prelude::Lazy, utils::id};
+
+    static COMPILED: Lazy<HashMap<String, CompiledContract>> = Lazy::new(|| {
+        SolcBuilder::new("./*.sol", &[], &[])
+            .unwrap()
+            .build_all()
+            .unwrap()
+    });
 
     #[test]
     fn can_call_vm_directly() {
         let cfg = Config::istanbul();
-        let compiled = SolcBuilder::new("./*.sol", &[], &[])
-            .unwrap()
-            .build_all()
-            .unwrap();
-        let compiled = compiled.get("Greeter").expect("could not find contract");
+        let compiled = COMPILED.get("Greeter").expect("could not find contract");
 
         let addr = "0x1000000000000000000000000000000000000000"
             .parse()
@@ -634,11 +637,7 @@ mod tests {
     fn solidity_unit_test() {
         let cfg = Config::istanbul();
 
-        let compiled = SolcBuilder::new("./*.sol", &[], &[])
-            .unwrap()
-            .build_all()
-            .unwrap();
-        let compiled = compiled
+        let compiled = COMPILED
             .get("GreeterTest")
             .expect("could not find contract");
 
@@ -679,11 +678,7 @@ mod tests {
     fn failing_with_no_reason_if_no_setup() {
         let cfg = Config::istanbul();
 
-        let compiled = SolcBuilder::new("./*.sol", &[], &[])
-            .unwrap()
-            .build_all()
-            .unwrap();
-        let compiled = compiled
+        let compiled = COMPILED
             .get("GreeterTest")
             .expect("could not find contract");
 
@@ -712,11 +707,7 @@ mod tests {
     fn failing_solidity_unit_test() {
         let cfg = Config::istanbul();
 
-        let compiled = SolcBuilder::new("./*.sol", &[], &[])
-            .unwrap()
-            .build_all()
-            .unwrap();
-        let compiled = compiled
+        let compiled = COMPILED
             .get("GreeterTest")
             .expect("could not find contract");
 
@@ -758,11 +749,7 @@ mod tests {
     fn test_runner() {
         let cfg = Config::istanbul();
 
-        let compiled = SolcBuilder::new("./*.sol", &[], &[])
-            .unwrap()
-            .build_all()
-            .unwrap();
-        let compiled = compiled
+        let compiled = COMPILED
             .get("GreeterTest")
             .expect("could not find contract");
 
