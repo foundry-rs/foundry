@@ -21,10 +21,9 @@ serde = "1.0.130"
 hex = "0.4.3"
 regex = { version = "1.5.4", default-features = false }
 
-svm = { package = "solc-vm-rs", git = "https://github.com/roynalnaruto/solc-vm-rs" }
+svm = { package = "svm-rs", git = "https://github.com/roynalnaruto/svm-rs" }
 glob = "0.3.0"
 semver = "1.0.4"
 
 [patch.'crates-io']
-ethabi = { git = "https://github.com/gakonst/ethabi/", branch = "patch-1" }
 evm = { git = "https://github.com/gakonst/evm" }
