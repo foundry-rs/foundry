@@ -587,10 +587,11 @@ mod tests {
 
     #[test]
     fn can_call_vm_directly() {
-        // TODO: Is there a cleaner way to initialize them all together in a function?
         let cfg = Config::istanbul();
-
-        let compiled = Solc::new(&format!("./GreetTest.sol")).build().unwrap();
+        let compiled = SolcBuilder::new("./*.sol", &[], &[])
+            .unwrap()
+            .build_all()
+            .unwrap();
         let compiled = compiled.get("Greeter").expect("could not find contract");
 
         let addr = "0x1000000000000000000000000000000000000000"
@@ -630,7 +631,10 @@ mod tests {
     fn solidity_unit_test() {
         let cfg = Config::istanbul();
 
-        let compiled = Solc::new(&format!("./GreetTest.sol")).build().unwrap();
+        let compiled = SolcBuilder::new("./*.sol", &[], &[])
+            .unwrap()
+            .build_all()
+            .unwrap();
         let compiled = compiled
             .get("GreeterTest")
             .expect("could not find contract");
@@ -672,7 +676,10 @@ mod tests {
     fn failing_with_no_reason_if_no_setup() {
         let cfg = Config::istanbul();
 
-        let compiled = Solc::new(&format!("./GreetTest.sol")).build().unwrap();
+        let compiled = SolcBuilder::new("./*.sol", &[], &[])
+            .unwrap()
+            .build_all()
+            .unwrap();
         let compiled = compiled
             .get("GreeterTest")
             .expect("could not find contract");
@@ -702,7 +709,10 @@ mod tests {
     fn failing_solidity_unit_test() {
         let cfg = Config::istanbul();
 
-        let compiled = Solc::new(&format!("./GreetTest.sol")).build().unwrap();
+        let compiled = SolcBuilder::new("./*.sol", &[], &[])
+            .unwrap()
+            .build_all()
+            .unwrap();
         let compiled = compiled
             .get("GreeterTest")
             .expect("could not find contract");
@@ -745,7 +755,10 @@ mod tests {
     fn test_runner() {
         let cfg = Config::istanbul();
 
-        let compiled = Solc::new(&format!("./GreetTest.sol")).build().unwrap();
+        let compiled = SolcBuilder::new("./*.sol", &[], &[])
+            .unwrap()
+            .build_all()
+            .unwrap();
         let compiled = compiled
             .get("GreeterTest")
             .expect("could not find contract");
