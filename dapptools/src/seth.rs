@@ -20,7 +20,7 @@ pub enum Subcommands {
     FromAscii { text: String },
     #[structopt(name = "--to-hex")]
     #[structopt(about = "convert a decimal number into hex")]
-    ToHex { decimal: u128 },
+    ToHex { decimal: Option<u128> },
     #[structopt(name = "--to-checksum-address")]
     #[structopt(about = "convert an address to a checksummed format (EIP-55)")]
     ToCheckSumAddress { address: Address },
@@ -135,7 +135,7 @@ async fn main() -> eyre::Result<()> {
             println!("{}", SimpleSeth::from_ascii(&text));
         }
         Subcommands::ToHex { decimal } => {
-            println!("{}", SimpleSeth::to_hex(decimal));
+            println!("{}", SimpleSeth::to_hex(unwrap_or_stdin(decimal)?));
         }
         Subcommands::ToCheckSumAddress { address } => {
             println!("{}", SimpleSeth::to_checksum_address(&address)?);
