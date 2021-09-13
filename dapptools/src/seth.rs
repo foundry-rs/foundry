@@ -61,6 +61,16 @@ pub enum Subcommands {
         #[structopt(flatten)]
         eth: EthereumOpts,
     },
+    #[structopt(name = "balance")]
+    #[structopt(about = "Print the balance of <account> in wei")]
+    Balance {
+        #[structopt(long, short, help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
+        block: Option<BlockId>,
+        #[structopt(help = "the account you want to query", parse(try_from_str = parse_name_or_address))]
+        who: NameOrAddress,
+        #[structopt(short, long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+    },
 }
 
 fn parse_name_or_address(s: &str) -> eyre::Result<NameOrAddress> {
@@ -137,6 +147,14 @@ async fn main() -> eyre::Result<()> {
                 let from = eth.from.expect("No ETH_FROM or signer specified");
                 seth_send(provider, from, to, sig, args, eth.seth_async).await?;
             }
+        }
+        Subcommands::Balance {
+            block,
+            who,
+            rpc_url,
+        } => {
+            let provider = Provider::try_from(rpc_url)?;
+            println!("{}", Seth::new(provider).await?.balance(who, block).await?);
         }
     };
 

@@ -82,6 +82,14 @@ where
         Ok(s)
     }
 
+    pub async fn balance<T: Into<NameOrAddress> + Send + Sync>(
+        &self,
+        who: T,
+        block: Option<BlockId>,
+    ) -> Result<U256> {
+        Ok(self.provider.get_balance(who, block).await?)
+    }
+
     /// Sends a transaction to the specified address
     ///
     /// ```no_run
