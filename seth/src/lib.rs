@@ -219,7 +219,6 @@ impl SimpleSeth {
     /// assert_eq!(Seth::to_hex(424242), "0x67932");
     /// assert_eq!(Seth::to_hex(1234), "0x4d2");
     /// ```
-
     pub fn to_hex(u: u128) -> String {
         format!("{:#x}", u)
     }
