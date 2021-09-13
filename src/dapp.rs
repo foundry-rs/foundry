@@ -609,7 +609,7 @@ mod tests {
         let runner = MultiContractRunner::new(
             contracts,
             vec![],
-            String::new(),
+            vec![],
             PathBuf::new(),
             &cfg,
             gas_limit,
