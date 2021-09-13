@@ -188,6 +188,7 @@ impl Env {
 }
 
 fn main() -> eyre::Result<()> {
+    tracing_subscriber::fmt::init();
     let opts = Opts::from_args();
     match opts.sub {
         Subcommands::Test {
