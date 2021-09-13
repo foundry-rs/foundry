@@ -56,7 +56,12 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn call(&self, to: Address, sig: &str, args: Vec<String>) -> Result<String> {
+    pub async fn call<T: Into<NameOrAddress>>(
+        &self,
+        to: T,
+        sig: &str,
+        args: Vec<String>,
+    ) -> Result<String> {
         let func = get_func(sig)?;
         let data = encode_args(&func, &args)?;
 
@@ -75,6 +80,14 @@ where
 
         // return string
         Ok(s)
+    }
+
+    pub async fn balance<T: Into<NameOrAddress> + Send + Sync>(
+        &self,
+        who: T,
+        block: Option<BlockId>,
+    ) -> Result<U256> {
+        Ok(self.provider.get_balance(who, block).await?)
     }
 
     /// Sends a transaction to the specified address
@@ -96,12 +109,17 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn send(
+    pub async fn send<F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
         &self,
-        from: Address,
-        to: Address,
+        from: F,
+        to: T,
         args: Option<(&str, Vec<String>)>,
     ) -> Result<PendingTransaction<'_, M::Provider>> {
+        let from = match from.into() {
+            NameOrAddress::Name(ref ens_name) => self.provider.resolve_name(ens_name).await?,
+            NameOrAddress::Address(addr) => addr,
+        };
+
         // make the call
         let mut tx = Eip1559TransactionRequest::new().from(from).to(to);
 

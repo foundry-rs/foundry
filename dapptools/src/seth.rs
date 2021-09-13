@@ -7,7 +7,7 @@ use ethers::{
     middleware::SignerMiddleware,
     providers::{Middleware, Provider},
     signers::Signer,
-    types::{Address, BlockId, BlockNumber, H256, U64},
+    types::{Address, BlockId, BlockNumber, NameOrAddress, H256, U64},
 };
 use std::{convert::TryFrom, str::FromStr};
 use structopt::StructOpt;
@@ -42,8 +42,8 @@ pub enum Subcommands {
     #[structopt(name = "call")]
     #[structopt(about = "Perform a local call to <to> without publishing a transaction.")]
     Call {
-        #[structopt(help = "the address you want to query")]
-        address: Address,
+        #[structopt(help = "the address you want to query", parse(try_from_str = parse_name_or_address))]
+        address: NameOrAddress,
         sig: String,
         args: Vec<String>,
         #[structopt(long, env = "ETH_RPC_URL")]
@@ -52,8 +52,8 @@ pub enum Subcommands {
     #[structopt(name = "send")]
     #[structopt(about = "Publish a transaction signed by <from> to call <to> with <data>")]
     SendTx {
-        #[structopt(help = "the address you want to transact with")]
-        to: Address,
+        #[structopt(help = "the address you want to transact with", parse(try_from_str = parse_name_or_address))]
+        to: NameOrAddress,
         #[structopt(help = "the function signature you want to call")]
         sig: String,
         #[structopt(help = "the list of arguments you want to call the function with")]
@@ -61,6 +61,52 @@ pub enum Subcommands {
         #[structopt(flatten)]
         eth: EthereumOpts,
     },
+    #[structopt(name = "balance")]
+    #[structopt(about = "Print the balance of <account> in wei")]
+    Balance {
+        #[structopt(long, short, help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
+        block: Option<BlockId>,
+        #[structopt(help = "the account you want to query", parse(try_from_str = parse_name_or_address))]
+        who: NameOrAddress,
+        #[structopt(short, long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+    },
+    #[structopt(name = "resolve-name")]
+    #[structopt(about = "Returns the address the provided ENS name resolves to")]
+    ResolveName {
+        #[structopt(help = "the account you want to resolve")]
+        who: Option<String>,
+        #[structopt(short, long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+        #[structopt(
+            long,
+            short,
+            help = "do a forward resolution to ensure the ENS name is correct"
+        )]
+        verify: bool,
+    },
+    #[structopt(name = "lookup-address")]
+    #[structopt(about = "Returns the name the provided address resolves to")]
+    LookupAddress {
+        #[structopt(help = "the account you want to resolve")]
+        who: Option<Address>,
+        #[structopt(short, long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+        #[structopt(
+            long,
+            short,
+            help = "do a forward resolution to ensure the address is correct"
+        )]
+        verify: bool,
+    },
+}
+
+fn parse_name_or_address(s: &str) -> eyre::Result<NameOrAddress> {
+    Ok(if s.starts_with("0x") {
+        NameOrAddress::Address(s.parse::<Address>()?)
+    } else {
+        NameOrAddress::Name(s.into())
+    })
 }
 
 fn parse_block_id(s: &str) -> eyre::Result<BlockId> {
@@ -130,15 +176,76 @@ async fn main() -> eyre::Result<()> {
                 seth_send(provider, from, to, sig, args, eth.seth_async).await?;
             }
         }
+        Subcommands::Balance {
+            block,
+            who,
+            rpc_url,
+        } => {
+            let provider = Provider::try_from(rpc_url)?;
+            println!("{}", Seth::new(provider).await?.balance(who, block).await?);
+        }
+        Subcommands::ResolveName {
+            who,
+            rpc_url,
+            verify,
+        } => {
+            let provider = Provider::try_from(rpc_url)?;
+            let who = unwrap_or_stdin(who)?;
+            let address = provider.resolve_name(&who).await?;
+            if verify {
+                let name = provider.lookup_address(address).await?;
+                assert_eq!(
+                    name, who,
+                    "forward lookup verification failed. got {}, expected {}",
+                    name, who
+                );
+            }
+            println!("{:?}", address);
+        }
+        Subcommands::LookupAddress {
+            who,
+            rpc_url,
+            verify,
+        } => {
+            let provider = Provider::try_from(rpc_url)?;
+            let who = unwrap_or_stdin(who)?;
+            let name = provider.lookup_address(who).await?;
+            if verify {
+                let address = provider.resolve_name(&name).await?;
+                assert_eq!(
+                    address, who,
+                    "forward lookup verification failed. got {}, expected {}",
+                    name, who
+                );
+            }
+            println!("{}", name);
+        }
     };
 
     Ok(())
 }
 
-async fn seth_send<M: Middleware>(
+fn unwrap_or_stdin<T>(what: Option<T>) -> eyre::Result<T>
+where
+    T: FromStr + Send + Sync,
+    T::Err: Send + Sync + std::error::Error + 'static,
+{
+    Ok(match what {
+        Some(what) => what,
+        None => {
+            use std::io::Read;
+            let mut input = std::io::stdin();
+            let mut what = String::new();
+            input.read_to_string(&mut what)?;
+            T::from_str(&what.replace("\n", ""))?
+        }
+    })
+}
+
+async fn seth_send<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
     provider: M,
-    from: Address,
-    to: Address,
+    from: F,
+    to: T,
     sig: String,
     args: Vec<String>,
     seth_async: bool,
