@@ -9,33 +9,40 @@
 
 ### Run Solidity tests
 
-Any contract that contains a function starting with `test` is being tested.
+Any contract that contains a function starting with `test` is being tested. The glob
+passed to `--contracts` must be wrapped with quotes so that it gets passed to the internal
+command without being expanded by your shell.
 
 ```bash
-$ cargo r --bin dapp test --contracts ./*.sol
-   Compiling dapptools v0.1.0
-    Finished dev [unoptimized + debuginfo] target(s) in 2.17s
-     Running `target/debug/dapp test --contracts ./GreetTest.sol`
+$ cargo r --bin dapp test --contracts './**/*.sol'
+    Finished dev [unoptimized + debuginfo] target(s) in 0.21s
+     Running `target/debug/dapp test --contracts './**/*.sol'`
+Running 1 tests for Foo
+[PASS] testX (gas: 267)
+
 Running 1 tests for GmTest
-[PASS] testGm (gas: 30723)
+[PASS] testGm (gas: 25786)
+
+Running 1 tests for FooBar
+[PASS] testX (gas: 267)
 
 Running 3 tests for GreeterTest
-[PASS] testFailGreeting (gas: 31293)
-[PASS] testGreeting (gas: 31222)
-[PASS] testIsolation (gas: 5444)
+[PASS] testIsolation (gas: 3702)
+[PASS] testFailGreeting (gas: 26299)
+[PASS] testGreeting (gas: 26223)
 ```
 
 You can optionally specify a regular expresion, to only run matching functions:
 
 ```bash
-$ cargo r --bin dapp test --contracts ./*.sol -m testG
-    Finished dev [unoptimized + debuginfo] target(s) in 0.20s
-     Running `target/debug/dapp test --contracts ./GreetTest.sol -m testG`
-Running 1 tests for GmTest
-[PASS] testGm (gas: 26123)
-
+$ cargo r --bin dapp test --contracts './**/*.sol' -m testG
+    Finished dev [unoptimized + debuginfo] target(s) in 0.26s
+     Running `target/debug/dapp test --contracts './**/*.sol' -m testG`
 Running 1 tests for GreeterTest
-[PASS] testGreeting (gas: 26622)
+[PASS] testGreeting (gas: 26223)
+
+Running 1 tests for GmTest
+[PASS] testGm (gas: 25786)
 ```
 
 ### Test output as JSON
@@ -43,8 +50,8 @@ Running 1 tests for GreeterTest
 In order to compose with other commands, you may print the results as JSON via the `--json` flag
 
 ```bash
-$ ./target/release/dapp test --contracts ./*.sol --json
-{"GmTest":{"testGm":{"success":true,"gas_used":26123}},"GreeterTest":{"testGreeting":{"success":true,"gas_used":26622},"testFailGreeting":{"success":true,"gas_used":26693},"testIsolation":{"success":true,"gas_used":4144}}}
+$ ./target/release/dapp test -c "./**/*.sol" --json
+{"GreeterTest":{"testIsolation":{"success":true,"gas_used":3702},"testFailGreeting":{"success":true,"gas_used":26299},"testGreeting":{"success":true,"gas_used":26223}},"FooBar":{"testX":{"success":true,"gas_used":267}},"Foo":{"testX":{"success":true,"gas_used":267}},"GmTest":{"testGm":{"success":true,"gas_used":25786}}}
 ```
 
 ### Build the contracts
@@ -208,4 +215,8 @@ ARGS:
     * [x] build
         * [x] can read DappTools-style .sol.json artifacts
         * [x] remappings
+        * [x] multiple compiler versions
+        * [ ] incremental compilation
+        * [ ] can read Hardhat-style artifacts
+        * [ ] can read Truffle-style artifacts
     * [ ] debug
