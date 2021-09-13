@@ -1,6 +1,6 @@
 use ethers_core::{
+    abi::{parse_abi, Function, ParamType, Token, Tokenizable},
     types::*,
-    abi::{Function, ParamType, Token, Tokenizable, parse_abi},
 };
 use eyre::Result;
 use rustc_hex::FromHex;

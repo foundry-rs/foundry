@@ -1,8 +1,8 @@
 //! Seth
 //!
 //! TODO
-use ethers_providers::{Middleware, PendingTransaction};
 use ethers_core::{types::*, utils};
+use ethers_providers::{Middleware, PendingTransaction};
 use eyre::Result;
 use rustc_hex::ToHex;
 use std::str::FromStr;
@@ -23,7 +23,7 @@ where
     ///
     /// ```
     /// use seth::Seth;
-    /// use ethers::providers::{Provider, Http};
+    /// use ethers_providers::{Provider, Http};
     /// use std::convert::TryFrom;
     ///
     /// # async fn foo() -> eyre::Result<()> {
@@ -41,8 +41,8 @@ where
     /// ```no_run
     ///
     /// use seth::Seth;
-    /// use ethers::types::Address;
-    /// use ethers::providers::{Provider, Http};
+    /// use ethers_core::types::Address;
+    /// use ethers_providers::{Provider, Http};
     /// use std::{str::FromStr, convert::TryFrom};
     ///
     /// # async fn foo() -> eyre::Result<()> {
@@ -81,8 +81,8 @@ where
     ///
     /// ```no_run
     /// use seth::Seth;
-    /// use ethers::types::Address;
-    /// use ethers::providers::{Provider, Http};
+    /// use ethers_core::types::Address;
+    /// use ethers_providers::{Provider, Http};
     /// use std::{str::FromStr, convert::TryFrom};
     ///
     /// # async fn foo() -> eyre::Result<()> {
@@ -118,7 +118,7 @@ where
 
     /// ```no_run
     /// use seth::Seth;
-    /// use ethers::providers::{Provider, Http};
+    /// use ethers_providers::{Provider, Http};
     /// use std::convert::TryFrom;
     ///
     /// # async fn foo() -> eyre::Result<()> {
@@ -199,7 +199,7 @@ impl SimpleSeth {
     ///
     /// ```
     /// use seth::SimpleSeth as Seth;
-    /// use ethers::types::Address;
+    /// use ethers_core::types::Address;
     /// use std::str::FromStr;
     ///
     /// # fn main() -> eyre::Result<()> {
