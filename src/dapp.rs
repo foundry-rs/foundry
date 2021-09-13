@@ -11,7 +11,7 @@ use evm::{Config, Handler};
 use evm::{ExitReason, ExitRevert, ExitSucceed};
 use std::{
     collections::{BTreeMap, HashMap},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use eyre::Result;
@@ -340,7 +340,7 @@ impl<'a> SolcBuilder<'a> {
             .filter_map(|fname| fname.ok())
             .filter_map(|fname| self.detect_version(fname).ok().flatten())
             .fold(HashMap::new(), |mut map, (version, path)| {
-                let entry = map.entry(version.to_string()).or_insert(vec![]);
+                let entry = map.entry(version.to_string()).or_insert_with(Vec::new);
                 entry.push(path);
                 map
             }))
@@ -348,7 +348,7 @@ impl<'a> SolcBuilder<'a> {
 
     /// Parses the given Solidity file looking for the `pragma` definition and
     /// returns the corresponding SemVer version requirement.
-    fn version_req(path: &PathBuf) -> Result<VersionReq> {
+    fn version_req(path: &Path) -> Result<VersionReq> {
         let file = BufReader::new(File::open(path)?);
         let version = file
             .lines()
