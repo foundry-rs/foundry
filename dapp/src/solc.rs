@@ -8,18 +8,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-fn installed_version_paths() -> Result<Vec<PathBuf>> {
-    let home_dir = svm::SVM_HOME.clone();
-    let mut versions = vec![];
-    for version in std::fs::read_dir(home_dir)? {
-        let version = version?;
-        versions.push(version.path());
-    }
-
-    versions.sort();
-    Ok(versions)
-}
-
 /// Supports building contracts
 pub struct SolcBuilder<'a> {
     contracts: &'a str,
@@ -44,6 +32,94 @@ impl<'a> SolcBuilder<'a> {
             versions,
             releases,
         })
+    }
+
+    /// Builds all provided contract files with the specified compiler version.
+    /// Assumes that the lib-paths and remappings have already been specified.
+    pub fn build(
+        &self,
+        version: String,
+        files: Vec<String>,
+    ) -> Result<HashMap<String, CompiledContract>> {
+        let mut compiler_path = installed_version_paths()?
+            .iter()
+            .find(|name| name.to_string_lossy().contains(&version))
+            .unwrap()
+            .clone();
+        compiler_path.push(format!("solc-{}", &version));
+
+        let mut solc = Solc::new_with_paths(files).solc_path(compiler_path);
+        let lib_paths = self
+            .lib_paths
+            .iter()
+            .filter(|path| PathBuf::from(path).exists())
+            .map(|path| {
+                std::fs::canonicalize(path)
+                    .unwrap()
+                    .into_os_string()
+                    .into_string()
+                    .unwrap()
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+
+        tracing::trace!(?lib_paths);
+        solc = solc.args(["--allow-paths", &lib_paths]);
+
+        tracing::trace!(?self.remappings);
+        if !self.remappings.is_empty() {
+            solc = solc.args(self.remappings)
+        }
+
+        Ok(solc.build()?)
+    }
+
+    /// Builds all contracts with their corresponding compiler versions
+    pub fn build_all(&mut self) -> Result<HashMap<String, CompiledContract>> {
+        let contracts_by_version = self.contract_versions()?;
+        contracts_by_version
+            .into_iter()
+            .try_fold(HashMap::new(), |mut map, (version, files)| {
+                let res = self.build(version, files)?;
+                map.extend(res);
+                Ok::<_, eyre::Error>(map)
+            })
+    }
+    /// Given a Solidity file, it detects the latest compiler version which can be used
+    /// to build it, and returns it along with its canonicalized path. If the required
+    /// compiler version is not installed, it also proceeds to install it.
+    fn detect_version(&mut self, fname: PathBuf) -> Result<Option<(Version, String)>> {
+        let path = std::fs::canonicalize(&fname)?;
+
+        // detects the required solc version
+        let sol_version = Self::version_req(&path)?;
+
+        let path_str = path
+            .into_os_string()
+            .into_string()
+            .map_err(|_| eyre::eyre!("invalid path, maybe not utf-8?"))?;
+
+        // use the installed one, install it if it does not exist
+        let res = self
+            .find_matching_installation(&self.versions, &sol_version)
+            .or_else(|| {
+                // Check upstream for a matching install
+                self.find_matching_installation(&self.releases, &sol_version)
+                    .map(|version| {
+                        println!("Installing {}", version);
+                        // Blocking call to install it over RPC.
+                        tokio::runtime::Runtime::new()
+                            .unwrap()
+                            .block_on(svm::install(&version))
+                            .unwrap();
+                        self.versions.push(version.clone());
+                        println!("Done!");
+                        version
+                    })
+            })
+            .map(|version| (version, path_str));
+
+        Ok(res)
     }
 
     /// Gets a map of compiler version -> vec[contract paths]
@@ -94,90 +170,16 @@ impl<'a> SolcBuilder<'a> {
             .find(|version| required_version.matches(version))
             .cloned()
     }
+}
 
-    /// Given a Solidity file, it detects the latest compiler version which can be used
-    /// to build it, and returns it along with its canonicalized path. If the required
-    /// compiler version is not installed, it also proceeds to install it.
-    fn detect_version(&mut self, fname: PathBuf) -> Result<Option<(Version, String)>> {
-        let path = std::fs::canonicalize(&fname)?;
-
-        // detects the required solc version
-        let sol_version = Self::version_req(&path)?;
-
-        let path_str = path
-            .into_os_string()
-            .into_string()
-            .map_err(|_| eyre::eyre!("invalid path, maybe not utf-8?"))?;
-
-        // use the installed one, install it if it does not exist
-        let res = self
-            .find_matching_installation(&self.versions, &sol_version)
-            .or_else(|| {
-                // Check upstream for a matching install
-                self.find_matching_installation(&self.releases, &sol_version)
-                    .map(|version| {
-                        println!("Installing {}", version);
-                        // Blocking call to install it over RPC.
-                        tokio::runtime::Runtime::new()
-                            .unwrap()
-                            .block_on(svm::install(&version))
-                            .unwrap();
-                        self.versions.push(version.clone());
-                        println!("Done!");
-                        version
-                    })
-            })
-            .map(|version| (version, path_str));
-
-        Ok(res)
+fn installed_version_paths() -> Result<Vec<PathBuf>> {
+    let home_dir = svm::SVM_HOME.clone();
+    let mut versions = vec![];
+    for version in std::fs::read_dir(home_dir)? {
+        let version = version?;
+        versions.push(version.path());
     }
 
-    /// Builds all provided contract files with the specified compiler version.
-    /// Assumes that the lib-paths and remappings have already been specified.
-    pub fn build(
-        &self,
-        version: String,
-        files: Vec<String>,
-    ) -> Result<HashMap<String, CompiledContract>> {
-        let mut compiler_path = installed_version_paths()?
-            .iter()
-            .find(|name| name.to_string_lossy().contains(&version))
-            .unwrap()
-            .clone();
-        compiler_path.push(format!("solc-{}", &version));
-
-        let mut solc = Solc::new_with_paths(files).solc_path(compiler_path);
-        let lib_paths = self
-            .lib_paths
-            .iter()
-            .filter(|path| PathBuf::from(path).exists())
-            .map(|path| {
-                std::fs::canonicalize(path)
-                    .unwrap()
-                    .into_os_string()
-                    .into_string()
-                    .unwrap()
-            })
-            .collect::<Vec<_>>()
-            .join(",");
-        solc = solc.args(["--allow-paths", &lib_paths]);
-
-        if !self.remappings.is_empty() {
-            solc = solc.args(self.remappings)
-        }
-
-        Ok(solc.build()?)
-    }
-
-    /// Builds all contracts with their corresponding compiler versions
-    pub fn build_all(&mut self) -> Result<HashMap<String, CompiledContract>> {
-        let contracts_by_version = self.contract_versions()?;
-        contracts_by_version
-            .into_iter()
-            .try_fold(HashMap::new(), |mut map, (version, files)| {
-                let res = self.build(version, files)?;
-                map.extend(res);
-                Ok::<_, eyre::Error>(map)
-            })
-    }
+    versions.sort();
+    Ok(versions)
 }
