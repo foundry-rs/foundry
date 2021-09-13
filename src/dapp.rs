@@ -288,6 +288,18 @@ impl DapptoolsArtifact {
     }
 }
 
+pub fn installed_version_paths() -> Result<Vec<PathBuf>> {
+    let home_dir = svm::home();
+    let mut versions = vec![];
+    for version in std::fs::read_dir(&home_dir)? {
+        let version = version?;
+        versions.push(version.path());
+    }
+
+    versions.sort();
+    Ok(versions)
+}
+
 impl<'a> MultiContractRunner<'a> {
     pub fn build(
         contracts: &str,
@@ -299,30 +311,120 @@ impl<'a> MultiContractRunner<'a> {
         // TODO:
         // 1. incremental compilation
         // 2. parallel compilation
-        // 3. multi-version compiling
-        // 4. Hardhat / Truffle-style artifacts
+        // 3. Hardhat / Truffle-style artifacts
         Ok(if no_compile {
             let out_file = std::fs::read_to_string(out_path)?;
             serde_json::from_str::<DapptoolsArtifact>(&out_file)?.contracts()?
         } else {
-            let mut solc = Solc::new(contracts);
-            let lib_paths = lib_paths
-                .iter()
-                .map(|path| {
-                    std::fs::canonicalize(path)
-                        .unwrap()
-                        .into_os_string()
-                        .into_string()
-                        .unwrap()
-                })
-                .collect::<Vec<_>>()
-                .join(",");
-            solc = solc.args(["--allow-paths", &lib_paths]);
+            // Group contracts in the nones with the same version pragma
+            let files = glob::glob(contracts)?;
 
-            if !remappings.is_empty() {
-                solc = solc.args(remappings)
+            let mut contracts_by_version = HashMap::new();
+            let versions = svm::installed_versions()?;
+            let releases = tokio::runtime::Runtime::new()?.block_on(svm::all_versions())?;
+            for fname in files {
+                let path = std::fs::canonicalize(fname?)
+                    .unwrap()
+                    .into_os_string()
+                    .into_string()
+                    .unwrap();
+                use std::fs::File;
+                use std::io::{BufRead, BufReader};
+
+                // parse the version from the contract
+                let sol_version = {
+                    use semver::VersionReq;
+                    let file = BufReader::new(File::open(&path)?);
+                    let version = file
+                        .lines()
+                        .map(|line| line.unwrap())
+                        .find(|line| line.starts_with("pragma"))
+                        .ok_or_else(|| eyre::eyre!("{} has no version", path))?;
+                    let version = version
+                        .replace("pragma solidity ", "")
+                        .replace(";", "")
+                        // needed to make it valid semver
+                        .replace(" ", ",");
+
+                    VersionReq::parse(&version)?
+                };
+
+                let mut found_version = None;
+                for version in &versions {
+                    if version == ".global-version" {
+                        continue;
+                    }
+                    if sol_version.matches(&version.parse().unwrap()) {
+                        found_version = Some(version.clone());
+                    }
+                }
+
+                // if we don't have the version, we'll try to install it from the
+                // available releases
+                if found_version.is_none() {
+                    let mut upstream_version = None;
+                    for version in &releases {
+                        if version == ".global-version" {
+                            continue;
+                        }
+                        if sol_version.matches(&version.parse().unwrap()) {
+                            upstream_version = Some(version.clone());
+                        }
+                    }
+
+                    // TODO: This blocks the thread, we obviously do not want that
+                    if let Some(upstream_version) = upstream_version {
+                        println!("Installing {}", upstream_version);
+                        tokio::runtime::Runtime::new()?
+                            .block_on(svm::install(&upstream_version))?;
+                        found_version = Some(upstream_version);
+                    }
+                }
+
+                // we did not find a version
+                if let Some(found_version) = found_version {
+                    println!("Found latest version: {}", &found_version);
+                    let entry = contracts_by_version.entry(found_version).or_insert(vec![]);
+                    entry.push(path);
+                }
             }
-            solc.build()?
+
+            let mut res = HashMap::new();
+            let paths = installed_version_paths()?;
+            for (version, files) in contracts_by_version {
+                // override the version for the loop
+                svm::use_version(&version)?;
+
+                let mut compiler_path = paths
+                    .iter()
+                    .find(|name| name.to_string_lossy().contains(&version))
+                    .unwrap()
+                    .clone();
+                compiler_path.push(format!("solc-{}", &version));
+
+                let files = files.join(",");
+                let mut solc = Solc::new(&files).solc_path(compiler_path);
+                let lib_paths = lib_paths
+                    .iter()
+                    .filter(|path| !path.is_empty())
+                    .map(|path| {
+                        std::fs::canonicalize(path)
+                            .unwrap()
+                            .into_os_string()
+                            .into_string()
+                            .unwrap()
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",");
+                solc = solc.args(["--allow-paths", &lib_paths]);
+
+                if !remappings.is_empty() {
+                    solc = solc.args(&remappings)
+                }
+                res.extend(solc.build()?);
+            }
+
+            res
         })
     }
 
@@ -430,7 +532,7 @@ mod tests {
         // TODO: Is there a cleaner way to initialize them all together in a function?
         let cfg = Config::istanbul();
 
-        let compiled = Solc::new(&format!("./*.sol")).build().unwrap();
+        let compiled = Solc::new(&format!("./GreetTest.sol")).build().unwrap();
         let compiled = compiled.get("Greeter").expect("could not find contract");
 
         let addr = "0x1000000000000000000000000000000000000000"
@@ -470,7 +572,7 @@ mod tests {
     fn solidity_unit_test() {
         let cfg = Config::istanbul();
 
-        let compiled = Solc::new(&format!("./*.sol")).build().unwrap();
+        let compiled = Solc::new(&format!("./GreetTest.sol")).build().unwrap();
         let compiled = compiled
             .get("GreeterTest")
             .expect("could not find contract");
@@ -512,7 +614,7 @@ mod tests {
     fn failing_with_no_reason_if_no_setup() {
         let cfg = Config::istanbul();
 
-        let compiled = Solc::new(&format!("./*.sol")).build().unwrap();
+        let compiled = Solc::new(&format!("./GreetTest.sol")).build().unwrap();
         let compiled = compiled
             .get("GreeterTest")
             .expect("could not find contract");
@@ -542,7 +644,7 @@ mod tests {
     fn failing_solidity_unit_test() {
         let cfg = Config::istanbul();
 
-        let compiled = Solc::new(&format!("./*.sol")).build().unwrap();
+        let compiled = Solc::new(&format!("./GreetTest.sol")).build().unwrap();
         let compiled = compiled
             .get("GreeterTest")
             .expect("could not find contract");
@@ -585,7 +687,7 @@ mod tests {
     fn test_runner() {
         let cfg = Config::istanbul();
 
-        let compiled = Solc::new(&format!("./*.sol")).build().unwrap();
+        let compiled = Solc::new(&format!("./GreetTest.sol")).build().unwrap();
         let compiled = compiled
             .get("GreeterTest")
             .expect("could not find contract");
@@ -611,7 +713,7 @@ mod tests {
 
     #[test]
     fn test_multi_runner() {
-        let contracts = "./*.sol";
+        let contracts = "./GreetTest.sol";
         let cfg = Config::istanbul();
         let gas_limit = 12_500_000;
         let env = Executor::new_vicinity();
