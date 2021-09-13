@@ -307,7 +307,6 @@ impl<'a> MultiContractRunner<'a> {
         } else {
             let mut solc = Solc::new(contracts);
             let lib_paths = lib_paths.join(",");
-            dbg!(&lib_paths);
             solc = solc.args(["--allow-paths", &lib_paths]);
 
             if !remappings.is_empty() {
