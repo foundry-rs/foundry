@@ -2,12 +2,6 @@ pub mod opts;
 
 pub mod dapp;
 
-mod seth;
-pub use seth::*;
-
-// Re-export Ethers for convenience.
-pub use ethers;
-
 #[cfg(test)]
 mod tests {
     #[test]

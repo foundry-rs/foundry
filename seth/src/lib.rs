@@ -25,7 +25,7 @@ where
     /// Converts ASCII text input to hex
     ///
     /// ```
-    /// use dapptools::Seth;
+    /// use seth::Seth;
     /// use ethers::providers::{Provider, Http};
     /// use std::convert::TryFrom;
     ///
@@ -43,8 +43,8 @@ where
     ///
     /// ```no_run
     ///
-    /// use dapptools::Seth;
-    /// use dapptools::ethers::types::Address;
+    /// use seth::Seth;
+    /// use ethers::types::Address;
     /// use ethers::providers::{Provider, Http};
     /// use std::{str::FromStr, convert::TryFrom};
     ///
@@ -83,8 +83,8 @@ where
     /// Sends a transaction to the specified address
     ///
     /// ```no_run
-    /// use dapptools::Seth;
-    /// use dapptools::ethers::types::Address;
+    /// use seth::Seth;
+    /// use ethers::types::Address;
     /// use ethers::providers::{Provider, Http};
     /// use std::{str::FromStr, convert::TryFrom};
     ///
@@ -120,7 +120,7 @@ where
     }
 
     /// ```no_run
-    /// use dapptools::Seth;
+    /// use seth::Seth;
     /// use ethers::providers::{Provider, Http};
     /// use std::convert::TryFrom;
     ///
@@ -187,7 +187,7 @@ impl SimpleSeth {
     /// Converts ASCII text input to hex
     ///
     /// ```
-    /// use dapptools::SimpleSeth as Seth;
+    /// use seth::SimpleSeth as Seth;
     ///
     /// let bin = Seth::from_ascii("yo");
     /// assert_eq!(bin, "0x796f")
@@ -201,8 +201,8 @@ impl SimpleSeth {
     /// according to [EIP-55](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-55.md)
     ///
     /// ```
-    /// use dapptools::SimpleSeth as Seth;
-    /// use dapptools::ethers::types::Address;
+    /// use seth::SimpleSeth as Seth;
+    /// use ethers::types::Address;
     /// use std::str::FromStr;
     ///
     /// # fn main() -> eyre::Result<()> {
@@ -219,7 +219,7 @@ impl SimpleSeth {
 
     /// Converts hexdata into bytes32 value
     /// ```
-    /// use dapptools::SimpleSeth as Seth;
+    /// use seth::SimpleSeth as Seth;
     ///
     /// # fn main() -> eyre::Result<()> {
     /// let bytes = Seth::to_bytes32("1234")?;
