@@ -17,7 +17,7 @@ use std::{
 use eyre::Result;
 use regex::Regex;
 
-use crate::utils::get_func;
+use dapp_utils::get_func;
 
 // TODO: Check if we can implement this as the base layer of an ethers-provider
 // Middleware stack instead of doing RPC calls.

@@ -1,7 +1,5 @@
 pub mod opts;
 
-mod utils;
-
 pub mod dapp;
 
 mod seth;

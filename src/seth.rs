@@ -10,9 +10,7 @@ use eyre::Result;
 use rustc_hex::ToHex;
 use std::str::FromStr;
 
-use crate::utils::get_func;
-
-use super::utils::{encode_args, to_table};
+use dapp_utils::{encode_args, get_func, to_table};
 
 // TODO: SethContract with common contract initializers? Same for SethProviders?
 
