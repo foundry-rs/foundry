@@ -202,6 +202,8 @@ ARGS:
     * [x] `block`
     * [x] `call` (partial)
     * [x] `send` (partial)
+    * [x] `balance`
+    * [x] `ens`
 * dapp
     * [ ] test
         * [x] simple unit tests
@@ -216,7 +218,7 @@ ARGS:
         * [ ] structured tracing with abi decoding
         * [ ] per-line gas profiling
         * [ ] forking mode
-        * [ ] automatic solc selection
+        * [x] automatic solc selection
     * [x] build
         * [x] can read DappTools-style .sol.json artifacts
         * [x] remappings
