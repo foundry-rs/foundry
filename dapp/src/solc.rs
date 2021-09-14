@@ -6,9 +6,11 @@ use std::{
     fs::File,
     io::{BufRead, BufReader},
     path::{Path, PathBuf},
+    time::Instant,
 };
 
 /// Supports building contracts
+#[derive(Clone, Debug)]
 pub struct SolcBuilder<'a> {
     contracts: &'a str,
     remappings: &'a [String],
@@ -36,6 +38,7 @@ impl<'a> SolcBuilder<'a> {
 
     /// Builds all provided contract files with the specified compiler version.
     /// Assumes that the lib-paths and remappings have already been specified.
+    #[tracing::instrument(skip(self, files))]
     pub fn build(
         &self,
         version: String,
@@ -48,6 +51,7 @@ impl<'a> SolcBuilder<'a> {
             .clone();
         compiler_path.push(format!("solc-{}", &version));
 
+        // tracing::trace!(?files);
         let mut solc = Solc::new_with_paths(files).solc_path(compiler_path);
         let lib_paths = self
             .lib_paths
@@ -63,10 +67,10 @@ impl<'a> SolcBuilder<'a> {
             .collect::<Vec<_>>()
             .join(",");
 
-        tracing::trace!(?lib_paths);
+        // tracing::trace!(?lib_paths);
         solc = solc.args(["--allow-paths", &lib_paths]);
 
-        tracing::trace!(?self.remappings);
+        // tracing::trace!(?self.remappings);
         if !self.remappings.is_empty() {
             solc = solc.args(self.remappings)
         }
@@ -75,15 +79,23 @@ impl<'a> SolcBuilder<'a> {
     }
 
     /// Builds all contracts with their corresponding compiler versions
+    #[tracing::instrument(skip(self))]
     pub fn build_all(&mut self) -> Result<HashMap<String, CompiledContract>> {
         let contracts_by_version = self.contract_versions()?;
-        contracts_by_version
-            .into_iter()
-            .try_fold(HashMap::new(), |mut map, (version, files)| {
+
+        let start = Instant::now();
+        let res = contracts_by_version.into_iter().try_fold(
+            HashMap::new(),
+            |mut map, (version, files)| {
                 let res = self.build(version, files)?;
                 map.extend(res);
                 Ok::<_, eyre::Error>(map)
-            })
+            },
+        );
+        let duration = Instant::now().duration_since(start);
+        tracing::info!(compilation_time = ?duration);
+
+        res
     }
     /// Given a Solidity file, it detects the latest compiler version which can be used
     /// to build it, and returns it along with its canonicalized path. If the required

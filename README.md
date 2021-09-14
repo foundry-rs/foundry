@@ -212,6 +212,7 @@ ARGS:
             * [x] DappTools style test output
             * [x] JSON test output
             * [x] matching on regex
+            * [x] DSTest-style assertions support
         * [ ] fuzzing
         * [ ] symbolic execution
         * [ ] coverage
@@ -222,9 +223,16 @@ ARGS:
         * [x] automatic solc selection
     * [x] build
         * [x] can read DappTools-style .sol.json artifacts
-        * [x] remappings
+        * [x] manual remappings
+        * [ ] automatic remappings
         * [x] multiple compiler versions
         * [ ] incremental compilation
         * [ ] can read Hardhat-style artifacts
         * [ ] can read Truffle-style artifacts
     * [ ] debug
+    * [x] CLI Tracing with `RUST_LOG=dapp=trace`
+
+## Tested Against
+
+This repository has been tested against the following DappTools repos:
+*

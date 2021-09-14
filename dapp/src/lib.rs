@@ -12,6 +12,7 @@ use evm::{ExitReason, ExitRevert, ExitSucceed};
 use std::{
     collections::{BTreeMap, HashMap},
     path::PathBuf,
+    time::Instant,
 };
 
 mod solc;
@@ -147,8 +148,26 @@ impl<'a> ContractRunner<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
         Ok(())
     }
 
+    /// Runs the `failed()` function call to inspect the test contract's state
+    fn failed(&mut self) -> Result<bool> {
+        let (failed, _, _) = self.executor.call::<bool, _>(
+            Address::zero(),
+            self.address,
+            &get_func("function failed() returns (bool)").unwrap(),
+            (),
+            0.into(),
+        )?;
+        Ok(failed)
+    }
+
     /// runs all tests under a contract
-    pub fn test(&mut self, regex: &Regex) -> Result<HashMap<String, TestResult>> {
+    pub fn run_tests(&mut self, regex: &Regex) -> Result<HashMap<String, TestResult>> {
+        let start = Instant::now();
+        let needs_setup = self
+            .contract
+            .abi
+            .functions()
+            .any(|func| func.name == "setUp");
         let test_fns = self
             .contract
             .abi
@@ -162,27 +181,28 @@ impl<'a> ContractRunner<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
             .map(|func| {
                 // call the setup function in each test to reset the test's state.
                 // if we did this outside the map, we'd not have test isolation
-                self.setup()?;
+                if needs_setup {
+                    self.setup()?;
+                }
 
-                let result = self.test_func(func);
+                let result = self.run_test(func);
                 Ok((func.name.clone(), result))
             })
             .collect::<Result<HashMap<_, _>>>()?;
 
+        if !map.is_empty() {
+            let duration = Instant::now().duration_since(start);
+            tracing::debug!("total duration: {:?}", duration);
+        }
         Ok(map)
     }
 
-    pub fn test_func(&mut self, func: &Function) -> TestResult {
-        // the expected result depends on the function name
-        let expected = if func.name.contains("testFail") {
-            ExitReason::Revert(ExitRevert::Reverted)
-        } else {
-            ExitReason::Succeed(ExitSucceed::Stopped)
-        };
+    #[tracing::instrument(name = "test", skip_all, fields(name = %func.name))]
+    pub fn run_test(&mut self, func: &Function) -> TestResult {
+        let start = Instant::now();
 
         // set the selector & execute the call
         let calldata = func.selector();
-
         let gas_before = self.executor.executor.gas_left();
         let (result, _) = self.executor.executor.transact_call(
             Address::zero(),
@@ -193,13 +213,34 @@ impl<'a> ContractRunner<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
             vec![],
         );
         let gas_after = self.executor.executor.gas_left();
+        // We subtract the calldata & base gas cost from our test's
+        // gas consumption
+        let gas_used = remove_extra_costs(gas_before - gas_after, &calldata).as_u64();
 
-        TestResult {
-            success: expected == result,
-            // We subtract the calldata & base gas cost from our test's
-            // gas consumption
-            gas_used: remove_extra_costs(gas_before - gas_after, &calldata).as_u64(),
-        }
+        let duration = Instant::now().duration_since(start);
+
+        // the expected result depends on the function name
+        // DAppTools' ds-test will not revert inside its `assertEq`-like functions
+        // which allows to test multiple assertions in 1 test function while also
+        // preserving logs.
+        let success = if func.name.contains("testFail") {
+            match result {
+                // If the function call failed, we're good.
+                ExitReason::Revert(inner) => inner == ExitRevert::Reverted,
+                // If the function call was successful in an expected fail case,
+                // we make a call to the `failed()` function inherited from DS-Test
+                ExitReason::Succeed(ExitSucceed::Stopped) => self.failed().unwrap_or(false),
+                err => {
+                    tracing::error!(?err);
+                    false
+                }
+            }
+        } else {
+            result == ExitReason::Succeed(ExitSucceed::Stopped)
+        };
+        tracing::trace!(?duration, %success, %gas_used);
+
+        TestResult { success, gas_used }
     }
 }
 
@@ -361,12 +402,17 @@ impl<'a> MultiContractRunner<'a> {
     }
 
     pub fn test(&self, pattern: Regex) -> Result<HashMap<String, HashMap<String, TestResult>>> {
-        // for each compiled contract, get its name, bytecode and address
         // NB: We also have access to the contract's abi. When running the test.
         // Can this be useful for decorating the stacktrace during a revert?
-        let contracts = self.contracts.iter();
+        // TODO: Check if the function starts with `prove` or `invariant`
+        // Filter out for contracts that have at least 1 test function
+        let tests = self
+            .contracts
+            .iter()
+            .filter(|(_, contract)| contract.abi.functions().any(|x| x.name.starts_with("test")));
 
-        let results = contracts
+        let results = tests
+            .into_iter()
             .map(|(name, contract)| {
                 let address = *self
                     .addresses
@@ -374,7 +420,7 @@ impl<'a> MultiContractRunner<'a> {
                     .ok_or_else(|| eyre::eyre!("could not find contract address"))?;
 
                 let backend = self.backend();
-                let result = self.test_contract(contract, address, backend, &pattern)?;
+                let result = self.run_tests(name, contract, address, backend, &pattern)?;
                 Ok((name.clone(), result))
             })
             .filter_map(|x: Result<_>| x.ok())
@@ -390,8 +436,14 @@ impl<'a> MultiContractRunner<'a> {
         Ok(results)
     }
 
-    fn test_contract(
+    #[tracing::instrument(
+        name = "contract",
+        skip_all,
+        fields(name = %_name)
+    )]
+    fn run_tests(
         &self,
+        _name: &str,
         contract: &CompiledContract,
         address: Address,
         backend: MemoryBackend<'_>,
@@ -404,7 +456,7 @@ impl<'a> MultiContractRunner<'a> {
             address,
         };
 
-        runner.test(pattern)
+        runner.run_tests(pattern)
     }
 }
 
@@ -593,7 +645,7 @@ mod tests {
             address: addr,
         };
 
-        let res = runner.test(&".*".parse().unwrap()).unwrap();
+        let res = runner.run_tests(&".*".parse().unwrap()).unwrap();
         assert!(res.iter().all(|(_, result)| result.success == true));
     }
 
@@ -628,5 +680,28 @@ mod tests {
         let only_gm = runner.test(Regex::new("testGm.*").unwrap()).unwrap();
         assert_eq!(only_gm.len(), 1);
         assert_eq!(only_gm["GmTest"].len(), 1);
+    }
+
+    #[test]
+    fn test_ds_test_fail() {
+        let contracts = "./../FooTest.sol";
+        let cfg = Config::istanbul();
+        let gas_limit = 12_500_000;
+        let env = Executor::new_vicinity();
+
+        let runner = MultiContractRunner::new(
+            contracts,
+            vec![],
+            vec![],
+            PathBuf::new(),
+            &cfg,
+            gas_limit,
+            env,
+            false,
+        )
+        .unwrap();
+        let results = runner.test(Regex::new("testFail").unwrap()).unwrap();
+        let test = results.get("FooTest").unwrap().get("testFailX").unwrap();
+        assert_eq!(test.success, true);
     }
 }
