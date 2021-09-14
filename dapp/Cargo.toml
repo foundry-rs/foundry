@@ -24,3 +24,4 @@ glob = "0.3.0"
 # TODO: Trim
 tokio = { version = "1.10.1" }
 tracing = "0.1.26"
+tracing-subscriber = "0.2.20"

@@ -535,6 +535,7 @@ dependencies = [
  "svm-rs",
  "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

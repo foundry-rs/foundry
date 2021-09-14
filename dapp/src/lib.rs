@@ -161,7 +161,7 @@ impl<'a> ContractRunner<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
     }
 
     /// runs all tests under a contract
-    pub fn test(&mut self, regex: &Regex) -> Result<HashMap<String, TestResult>> {
+    pub fn run_tests(&mut self, regex: &Regex) -> Result<HashMap<String, TestResult>> {
         let start = Instant::now();
         let needs_setup = self
             .contract
@@ -420,7 +420,7 @@ impl<'a> MultiContractRunner<'a> {
                     .ok_or_else(|| eyre::eyre!("could not find contract address"))?;
 
                 let backend = self.backend();
-                let result = self.test_contract(contract, address, backend, &pattern)?;
+                let result = self.run_tests(name, contract, address, backend, &pattern)?;
                 Ok((name.clone(), result))
             })
             .filter_map(|x: Result<_>| x.ok())
@@ -436,8 +436,14 @@ impl<'a> MultiContractRunner<'a> {
         Ok(results)
     }
 
-    fn test_contract(
+    #[tracing::instrument(
+        name = "contract",
+        skip_all,
+        fields(name = %_name)
+    )]
+    fn run_tests(
         &self,
+        _name: &str,
         contract: &CompiledContract,
         address: Address,
         backend: MemoryBackend<'_>,
@@ -450,7 +456,7 @@ impl<'a> MultiContractRunner<'a> {
             address,
         };
 
-        runner.test(pattern)
+        runner.run_tests(pattern)
     }
 }
 
@@ -639,7 +645,7 @@ mod tests {
             address: addr,
         };
 
-        let res = runner.test(&".*".parse().unwrap()).unwrap();
+        let res = runner.run_tests(&".*".parse().unwrap()).unwrap();
         assert!(res.iter().all(|(_, result)| result.success == true));
     }
 
