@@ -6,13 +6,12 @@ use dapp::{
 };
 
 use ansi_term::Colour;
+use ethers::types::Address;
 use std::{
     fs::{File, OpenOptions},
     path::PathBuf,
     str::FromStr,
 };
-
-use ethers::types::Address;
 
 #[derive(Debug, StructOpt)]
 struct Opts {

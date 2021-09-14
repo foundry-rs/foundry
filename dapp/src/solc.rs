@@ -6,9 +6,11 @@ use std::{
     fs::File,
     io::{BufRead, BufReader},
     path::{Path, PathBuf},
+    time::Instant,
 };
 
 /// Supports building contracts
+#[derive(Clone, Debug)]
 pub struct SolcBuilder<'a> {
     contracts: &'a str,
     remappings: &'a [String],
