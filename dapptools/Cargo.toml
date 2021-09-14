@@ -20,6 +20,7 @@ tokio = { version = "1.11.0", features = ["macros"] }
 regex = { version = "1.5.4", default-features = false }
 ansi_term = "0.12.1"
 rpassword = "5.0.1"
+tracing-subscriber = "0.2.20"
 
 [[bin]]
 name = "seth"
