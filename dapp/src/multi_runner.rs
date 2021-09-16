@@ -115,8 +115,10 @@ impl<'a> MultiContractRunner<'a> {
                     .get(name)
                     .ok_or_else(|| eyre::eyre!("could not find contract address"))?;
 
+                // TODO: Can we re-use the backend in a nice way, instead of re-instantiating
+                // it each time?
                 let backend = self.backend();
-                let result = self.run_tests(name, contract, address, backend, &pattern)?;
+                let result = self.run_tests(name, contract, address, &backend, &pattern)?;
                 Ok((name.clone(), result))
             })
             .filter_map(|x: Result<_>| x.ok())
@@ -142,10 +144,10 @@ impl<'a> MultiContractRunner<'a> {
         _name: &str,
         contract: &CompiledContract,
         address: Address,
-        backend: MemoryBackend<'_>,
+        backend: &MemoryBackend<'_>,
         pattern: &Regex,
     ) -> Result<HashMap<String, TestResult>> {
-        let mut dapp = Executor::new(self.gas_limit, self.config, &backend);
+        let mut dapp = Executor::new(self.gas_limit, self.config, backend);
         let mut runner = ContractRunner {
             executor: &mut dapp,
             contract,
