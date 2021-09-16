@@ -1,22 +1,22 @@
 use ethers::{
-    abi::{self, Detokenize, Function, FunctionExt, Tokenize},
-    prelude::{decode_function_data, encode_function_data},
+    abi::{self, Function, FunctionExt},
     types::*,
     utils::{keccak256, CompiledContract},
 };
 
-use evm::backend::{MemoryAccount, MemoryBackend, MemoryVicinity};
-use evm::executor::{MemoryStackState, StackExecutor, StackSubstateMetadata};
-use evm::{Config, Handler};
-use evm::{ExitReason, ExitRevert, ExitSucceed};
-use std::{
-    collections::{BTreeMap, HashMap},
-    path::PathBuf,
-    time::Instant,
+use evm::{
+    backend::{MemoryBackend, MemoryVicinity},
+    executor::MemoryStackState,
+    Config, ExitReason, ExitRevert, ExitSucceed, Handler,
 };
+
+use std::{collections::HashMap, path::PathBuf, time::Instant};
 
 mod solc;
 use solc::SolcBuilder;
+
+mod executor;
+use executor::{Executor, MemoryState};
 
 /// Re-export of the Rust EVM for convenience
 pub use evm;
@@ -25,101 +25,6 @@ use eyre::Result;
 use regex::Regex;
 
 use dapp_utils::get_func;
-
-// TODO: Check if we can implement this as the base layer of an ethers-provider
-// Middleware stack instead of doing RPC calls.
-pub struct Executor<'a, S> {
-    executor: StackExecutor<'a, S>,
-    gas_limit: u64,
-}
-
-type MemoryState = BTreeMap<Address, MemoryAccount>;
-
-impl<'a> Executor<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
-    /// Given a gas limit, vm version, initial chain configuration and initial state
-    // TOOD: See if we can make lifetimes better here
-    pub fn new(
-        gas_limit: u64,
-        config: &'a Config,
-        backend: &'a MemoryBackend<'a>,
-    ) -> Executor<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
-        // setup gasometer
-        let metadata = StackSubstateMetadata::new(gas_limit, config);
-        // setup state
-        let state = MemoryStackState::new(metadata, backend);
-        // setup executor
-        let executor = StackExecutor::new_with_precompile(state, config, Default::default());
-
-        Self {
-            executor,
-            gas_limit,
-        }
-    }
-
-    /// Runs the selected function
-    pub fn call<D: Detokenize, T: Tokenize>(
-        &mut self,
-        from: Address,
-        to: Address,
-        func: &Function,
-        args: T, // derive arbitrary for Tokenize?
-        value: U256,
-    ) -> Result<(D, ExitReason, u64)> {
-        let calldata = encode_function_data(func, args)?;
-
-        let gas_before = self.executor.gas_left();
-
-        let (status, retdata) =
-            self.executor
-                .transact_call(from, to, value, calldata.to_vec(), self.gas_limit, vec![]);
-
-        let gas_after = self.executor.gas_left();
-        let gas = remove_extra_costs(gas_before - gas_after, calldata.as_ref());
-
-        let retdata = decode_function_data(func, retdata, false)?;
-
-        Ok((retdata, status, gas.as_u64()))
-    }
-
-    /// given an iterator of contract address to contract bytecode, initializes
-    /// the state with the contract deployed at the specified address
-    pub fn initialize_contracts<T: IntoIterator<Item = (Address, Bytes)>>(
-        contracts: T,
-    ) -> MemoryState {
-        contracts
-            .into_iter()
-            .map(|(address, bytecode)| {
-                (
-                    address,
-                    MemoryAccount {
-                        nonce: U256::one(),
-                        balance: U256::zero(),
-                        storage: BTreeMap::new(),
-                        code: bytecode.to_vec(),
-                    },
-                )
-            })
-            .collect::<BTreeMap<_, _>>()
-    }
-
-    pub fn new_vicinity() -> MemoryVicinity {
-        MemoryVicinity {
-            gas_price: U256::zero(),
-            origin: H160::default(),
-            block_hashes: Vec::new(),
-            block_number: Default::default(),
-            block_coinbase: Default::default(),
-            block_timestamp: Default::default(),
-            block_difficulty: Default::default(),
-            block_gas_limit: Default::default(),
-            chain_id: U256::one(),
-        }
-    }
-
-    pub fn new_backend(vicinity: &MemoryVicinity, state: MemoryState) -> MemoryBackend<'_> {
-        MemoryBackend::new(vicinity, state)
-    }
-}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TestResult {
