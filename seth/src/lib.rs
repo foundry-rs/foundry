@@ -28,12 +28,12 @@ where
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
-    /// let seth = Seth::new(provider).await?;
+    /// let seth = Seth::new(provider);
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn new(provider: M) -> Result<Self> {
-        Ok(Self { provider })
+    pub fn new(provider: M) -> Self {
+        Self { provider }
     }
 
     /// Makes a read-only call to the specified address
@@ -47,7 +47,7 @@ where
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
-    /// let seth = Seth::new(provider).await?;
+    /// let seth = Seth::new(provider);
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let sig = "function greeting(uint256 i) public returns (string)";
     /// let args = vec!["5".to_owned()];
@@ -100,7 +100,7 @@ where
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
-    /// let seth = Seth::new(provider).await?;
+    /// let seth = Seth::new(provider);
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let sig = "function greet(string memory) public returns (string)";
     /// let args = vec!["5".to_owned()];
@@ -141,7 +141,7 @@ where
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
-    /// let seth = Seth::new(provider).await?;
+    /// let seth = Seth::new(provider);
     /// let block = seth.block(5, true, None, false).await?;
     /// println!("{}", block);
     /// # Ok(())

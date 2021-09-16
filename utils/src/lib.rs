@@ -6,7 +6,6 @@ use eyre::Result;
 use rustc_hex::FromHex;
 use std::str::FromStr;
 
-// TODO: SethContract with common contract initializers? Same for SethProviders?
 pub fn to_table(value: serde_json::Value) -> String {
     match value {
         serde_json::Value::String(s) => s,

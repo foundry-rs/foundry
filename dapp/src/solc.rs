@@ -26,7 +26,14 @@ impl<'a> SolcBuilder<'a> {
         lib_paths: &'a [String],
     ) -> Result<Self> {
         let versions = svm::installed_versions().unwrap_or_default();
-        let releases = tokio::runtime::Runtime::new()?.block_on(svm::all_versions())?;
+        // Try to download the releases, if it fails default to empty
+        let releases = match tokio::runtime::Runtime::new()?.block_on(svm::all_versions()) {
+            Ok(inner) => inner,
+            Err(err) => {
+                tracing::error!("Failed to get upstream releases: {}", err);
+                Vec::new()
+            }
+        };
         Ok(Self {
             contracts,
             remappings,
@@ -112,22 +119,20 @@ impl<'a> SolcBuilder<'a> {
             .map_err(|_| eyre::eyre!("invalid path, maybe not utf-8?"))?;
 
         // use the installed one, install it if it does not exist
-        let res = self
-            .find_matching_installation(&self.versions, &sol_version)
+        let res = Self::find_matching_installation(&self.versions, &sol_version)
             .or_else(|| {
                 // Check upstream for a matching install
-                self.find_matching_installation(&self.releases, &sol_version)
-                    .map(|version| {
-                        println!("Installing {}", version);
-                        // Blocking call to install it over RPC.
-                        tokio::runtime::Runtime::new()
-                            .unwrap()
-                            .block_on(svm::install(&version))
-                            .unwrap();
-                        self.versions.push(version.clone());
-                        println!("Done!");
-                        version
-                    })
+                Self::find_matching_installation(&self.releases, &sol_version).map(|version| {
+                    println!("Installing {}", version);
+                    // Blocking call to install it over RPC.
+                    tokio::runtime::Runtime::new()
+                        .unwrap()
+                        .block_on(svm::install(&version))
+                        .unwrap();
+                    self.versions.push(version.clone());
+                    println!("Done!");
+                    version
+                })
             })
             .map(|version| (version, path_str));
 
@@ -171,7 +176,6 @@ impl<'a> SolcBuilder<'a> {
 
     /// Find a matching local installation for the specified required version
     fn find_matching_installation(
-        &self,
         versions: &[Version],
         required_version: &VersionReq,
     ) -> Option<Version> {
