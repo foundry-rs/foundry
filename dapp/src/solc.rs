@@ -119,22 +119,20 @@ impl<'a> SolcBuilder<'a> {
             .map_err(|_| eyre::eyre!("invalid path, maybe not utf-8?"))?;
 
         // use the installed one, install it if it does not exist
-        let res = self
-            .find_matching_installation(&self.versions, &sol_version)
+        let res = Self::find_matching_installation(&self.versions, &sol_version)
             .or_else(|| {
                 // Check upstream for a matching install
-                self.find_matching_installation(&self.releases, &sol_version)
-                    .map(|version| {
-                        println!("Installing {}", version);
-                        // Blocking call to install it over RPC.
-                        tokio::runtime::Runtime::new()
-                            .unwrap()
-                            .block_on(svm::install(&version))
-                            .unwrap();
-                        self.versions.push(version.clone());
-                        println!("Done!");
-                        version
-                    })
+                Self::find_matching_installation(&self.releases, &sol_version).map(|version| {
+                    println!("Installing {}", version);
+                    // Blocking call to install it over RPC.
+                    tokio::runtime::Runtime::new()
+                        .unwrap()
+                        .block_on(svm::install(&version))
+                        .unwrap();
+                    self.versions.push(version.clone());
+                    println!("Done!");
+                    version
+                })
             })
             .map(|version| (version, path_str));
 
@@ -178,7 +176,6 @@ impl<'a> SolcBuilder<'a> {
 
     /// Find a matching local installation for the specified required version
     fn find_matching_installation(
-        &self,
         versions: &[Version],
         required_version: &VersionReq,
     ) -> Option<Version> {

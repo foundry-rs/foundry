@@ -1,16 +1,15 @@
 use ethers::{
-    abi::{self, Function, FunctionExt},
+    abi::{self},
     types::*,
     utils::{keccak256, CompiledContract},
 };
 
 use evm::{
     backend::{MemoryBackend, MemoryVicinity},
-    executor::MemoryStackState,
-    Config, ExitReason, ExitRevert, ExitSucceed, Handler,
+    Config,
 };
 
-use std::{collections::HashMap, path::PathBuf, time::Instant};
+use std::{collections::HashMap, path::PathBuf};
 
 mod solc;
 use solc::SolcBuilder;
@@ -18,136 +17,14 @@ use solc::SolcBuilder;
 mod executor;
 use executor::{Executor, MemoryState};
 
+mod runner;
+use runner::{ContractRunner, TestResult};
+
 /// Re-export of the Rust EVM for convenience
 pub use evm;
 
 use eyre::Result;
 use regex::Regex;
-
-use dapp_utils::get_func;
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct TestResult {
-    pub success: bool,
-    // TODO: Ensure that this is calculated properly
-    pub gas_used: u64,
-}
-
-struct ContractRunner<'a, S> {
-    executor: &'a mut Executor<'a, S>,
-    contract: &'a CompiledContract,
-    address: Address,
-}
-
-impl<'a> ContractRunner<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
-    /// Runs the `setUp()` function call to initiate the contract's state
-    fn setup(&mut self) -> Result<()> {
-        let (_, status, _) = self.executor.call::<(), _>(
-            Address::zero(),
-            self.address,
-            &get_func("function setUp() external").unwrap(),
-            (),
-            0.into(),
-        )?;
-        debug_assert_eq!(status, ExitReason::Succeed(ExitSucceed::Stopped));
-        Ok(())
-    }
-
-    /// Runs the `failed()` function call to inspect the test contract's state
-    fn failed(&mut self) -> Result<bool> {
-        let (failed, _, _) = self.executor.call::<bool, _>(
-            Address::zero(),
-            self.address,
-            &get_func("function failed() returns (bool)").unwrap(),
-            (),
-            0.into(),
-        )?;
-        Ok(failed)
-    }
-
-    /// runs all tests under a contract
-    pub fn run_tests(&mut self, regex: &Regex) -> Result<HashMap<String, TestResult>> {
-        let start = Instant::now();
-        let needs_setup = self
-            .contract
-            .abi
-            .functions()
-            .any(|func| func.name == "setUp");
-        let test_fns = self
-            .contract
-            .abi
-            .functions()
-            .into_iter()
-            .filter(|func| func.name.starts_with("test"))
-            .filter(|func| regex.is_match(&func.name));
-
-        // run all tests
-        let map = test_fns
-            .map(|func| {
-                // call the setup function in each test to reset the test's state.
-                // if we did this outside the map, we'd not have test isolation
-                if needs_setup {
-                    self.setup()?;
-                }
-
-                let result = self.run_test(func);
-                Ok((func.name.clone(), result))
-            })
-            .collect::<Result<HashMap<_, _>>>()?;
-
-        if !map.is_empty() {
-            let duration = Instant::now().duration_since(start);
-            tracing::debug!("total duration: {:?}", duration);
-        }
-        Ok(map)
-    }
-
-    #[tracing::instrument(name = "test", skip_all, fields(name = %func.name))]
-    pub fn run_test(&mut self, func: &Function) -> TestResult {
-        let start = Instant::now();
-
-        // set the selector & execute the call
-        let calldata = func.selector();
-        let gas_before = self.executor.executor.gas_left();
-        let (result, _) = self.executor.executor.transact_call(
-            Address::zero(),
-            self.address,
-            0.into(),
-            calldata.to_vec(),
-            self.executor.gas_limit,
-            vec![],
-        );
-        let gas_after = self.executor.executor.gas_left();
-        // We subtract the calldata & base gas cost from our test's
-        // gas consumption
-        let gas_used = remove_extra_costs(gas_before - gas_after, &calldata).as_u64();
-
-        let duration = Instant::now().duration_since(start);
-
-        // the expected result depends on the function name
-        // DAppTools' ds-test will not revert inside its `assertEq`-like functions
-        // which allows to test multiple assertions in 1 test function while also
-        // preserving logs.
-        let success = if func.name.contains("testFail") {
-            match result {
-                // If the function call failed, we're good.
-                ExitReason::Revert(inner) => inner == ExitRevert::Reverted,
-                // If the function call was successful in an expected fail case,
-                // we make a call to the `failed()` function inherited from DS-Test
-                ExitReason::Succeed(ExitSucceed::Stopped) => self.failed().unwrap_or(false),
-                err => {
-                    tracing::error!(?err);
-                    false
-                }
-            }
-        } else {
-            result == ExitReason::Succeed(ExitSucceed::Stopped)
-        };
-        tracing::trace!(?duration, %success, %gas_used);
-
-        TestResult { success, gas_used }
-    }
-}
 
 const BASE_TX_COST: u64 = 21000;
 fn remove_extra_costs(gas: U256, calldata: &[u8]) -> U256 {
@@ -369,6 +246,9 @@ impl<'a> MultiContractRunner<'a> {
 mod tests {
     use super::*;
     use ethers::{prelude::Lazy, utils::id};
+
+    use dapp_utils::get_func;
+    use evm::{ExitReason, ExitRevert, ExitSucceed};
 
     pub fn new_backend(vicinity: &MemoryVicinity, state: MemoryState) -> MemoryBackend<'_> {
         MemoryBackend::new(vicinity, state)
