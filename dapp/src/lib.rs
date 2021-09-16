@@ -37,3 +37,18 @@ fn remove_extra_costs(gas: U256, calldata: &[u8]) -> U256 {
 pub fn decode_revert(error: &[u8]) -> Result<String> {
     Ok(abi::decode(&[abi::ParamType::String], &error[4..])?[0].to_string())
 }
+
+#[cfg(test)]
+use ethers::prelude::Lazy;
+#[cfg(test)]
+use ethers::utils::CompiledContract;
+#[cfg(test)]
+use std::collections::HashMap;
+
+#[cfg(test)]
+static COMPILED: Lazy<HashMap<String, CompiledContract>> = Lazy::new(|| {
+    SolcBuilder::new("./*.sol", &[], &[])
+        .unwrap()
+        .build_all()
+        .unwrap()
+});

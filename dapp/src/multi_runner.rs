@@ -161,9 +161,8 @@ impl<'a> MultiContractRunner<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::decode_revert;
+    use crate::{decode_revert, COMPILED};
     use ethers::{
-        prelude::Lazy,
         types::{H160, U256},
         utils::id,
     };
@@ -188,13 +187,6 @@ mod tests {
             chain_id: U256::one(),
         }
     }
-
-    static COMPILED: Lazy<HashMap<String, CompiledContract>> = Lazy::new(|| {
-        SolcBuilder::new("./*.sol", &[], &[])
-            .unwrap()
-            .build_all()
-            .unwrap()
-    });
 
     #[test]
     fn can_call_vm_directly() {
