@@ -286,7 +286,7 @@ impl<'a> MultiContractRunner<'a> {
                 (addr, compiled.runtime_bytecode.clone())
             })
             .collect::<Vec<_>>();
-        let state = Executor::initialize_contracts(init_state);
+        let state = executor::initialize_contracts(init_state);
 
         Ok(Self {
             contracts,
@@ -303,7 +303,7 @@ impl<'a> MultiContractRunner<'a> {
     // TODO: Is this right? How would we cache results between calls when in
     // forking mode?
     fn backend(&self) -> MemoryBackend<'_> {
-        Executor::new_backend(&self.env, self.init_state.clone())
+        MemoryBackend::new(&self.env, self.init_state.clone())
     }
 
     pub fn test(&self, pattern: Regex) -> Result<HashMap<String, HashMap<String, TestResult>>> {
@@ -370,6 +370,24 @@ mod tests {
     use super::*;
     use ethers::{prelude::Lazy, utils::id};
 
+    pub fn new_backend(vicinity: &MemoryVicinity, state: MemoryState) -> MemoryBackend<'_> {
+        MemoryBackend::new(vicinity, state)
+    }
+
+    pub fn new_vicinity() -> MemoryVicinity {
+        MemoryVicinity {
+            gas_price: U256::zero(),
+            origin: H160::default(),
+            block_hashes: Vec::new(),
+            block_number: Default::default(),
+            block_coinbase: Default::default(),
+            block_timestamp: Default::default(),
+            block_difficulty: Default::default(),
+            block_gas_limit: Default::default(),
+            chain_id: U256::one(),
+        }
+    }
+
     static COMPILED: Lazy<HashMap<String, CompiledContract>> = Lazy::new(|| {
         SolcBuilder::new("./*.sol", &[], &[])
             .unwrap()
@@ -385,10 +403,10 @@ mod tests {
         let addr = "0x1000000000000000000000000000000000000000"
             .parse()
             .unwrap();
-        let state = Executor::initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
+        let state = executor::initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
 
-        let vicinity = Executor::new_vicinity();
-        let backend = Executor::new_backend(&vicinity, state);
+        let vicinity = new_vicinity();
+        let backend = new_backend(&vicinity, state);
         let mut dapp = Executor::new(12_000_000, &cfg, &backend);
 
         let (_, status, _) = dapp
@@ -426,10 +444,10 @@ mod tests {
         let addr = "0x1000000000000000000000000000000000000000"
             .parse()
             .unwrap();
-        let state = Executor::initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
+        let state = executor::initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
 
-        let vicinity = Executor::new_vicinity();
-        let backend = Executor::new_backend(&vicinity, state);
+        let vicinity = new_vicinity();
+        let backend = new_backend(&vicinity, state);
         let mut dapp = Executor::new(12_000_000, &cfg, &backend);
 
         // call the setup function to deploy the contracts inside the test
@@ -467,10 +485,10 @@ mod tests {
         let addr = "0x1000000000000000000000000000000000000000"
             .parse()
             .unwrap();
-        let state = Executor::initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
+        let state = executor::initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
 
-        let vicinity = Executor::new_vicinity();
-        let backend = Executor::new_backend(&vicinity, state);
+        let vicinity = new_vicinity();
+        let backend = new_backend(&vicinity, state);
         let mut dapp = Executor::new(12_000_000, &cfg, &backend);
 
         let (status, res) = dapp.executor.transact_call(
@@ -496,10 +514,10 @@ mod tests {
         let addr = "0x1000000000000000000000000000000000000000"
             .parse()
             .unwrap();
-        let state = Executor::initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
+        let state = executor::initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
 
-        let vicinity = Executor::new_vicinity();
-        let backend = Executor::new_backend(&vicinity, state);
+        let vicinity = new_vicinity();
+        let backend = new_backend(&vicinity, state);
         let mut dapp = Executor::new(12_000_000, &cfg, &backend);
 
         // call the setup function to deploy the contracts inside the test
@@ -538,10 +556,10 @@ mod tests {
         let addr = "0x1000000000000000000000000000000000000000"
             .parse()
             .unwrap();
-        let state = Executor::initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
+        let state = executor::initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
 
-        let vicinity = Executor::new_vicinity();
-        let backend = Executor::new_backend(&vicinity, state);
+        let vicinity = new_vicinity();
+        let backend = new_backend(&vicinity, state);
         let mut dapp = Executor::new(12_000_000, &cfg, &backend);
 
         let mut runner = ContractRunner {
@@ -559,7 +577,7 @@ mod tests {
         let contracts = "./GreetTest.sol";
         let cfg = Config::istanbul();
         let gas_limit = 12_500_000;
-        let env = Executor::new_vicinity();
+        let env = new_vicinity();
 
         let runner = MultiContractRunner::new(
             contracts,
@@ -592,7 +610,7 @@ mod tests {
         let contracts = "./../FooTest.sol";
         let cfg = Config::istanbul();
         let gas_limit = 12_500_000;
-        let env = Executor::new_vicinity();
+        let env = new_vicinity();
 
         let runner = MultiContractRunner::new(
             contracts,

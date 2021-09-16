@@ -26,7 +26,14 @@ impl<'a> SolcBuilder<'a> {
         lib_paths: &'a [String],
     ) -> Result<Self> {
         let versions = svm::installed_versions().unwrap_or_default();
-        let releases = tokio::runtime::Runtime::new()?.block_on(svm::all_versions())?;
+        // Try to download the releases, if it fails default to empty
+        let releases = match tokio::runtime::Runtime::new()?.block_on(svm::all_versions()) {
+            Ok(inner) => inner,
+            Err(err) => {
+                tracing::error!("Failed to get upstream releases: {}", err);
+                Vec::new()
+            }
+        };
         Ok(Self {
             contracts,
             remappings,

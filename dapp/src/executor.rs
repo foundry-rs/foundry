@@ -4,8 +4,8 @@ use ethers::{
     types::*,
 };
 
-use evm::backend::{MemoryAccount, MemoryBackend, MemoryVicinity};
-use evm::executor::{MemoryStackState, StackExecutor, StackSubstateMetadata};
+use evm::backend::{MemoryAccount, MemoryBackend};
+use evm::executor::{MemoryStackState, StackExecutor, StackState, StackSubstateMetadata};
 use evm::ExitReason;
 use evm::{Config, Handler};
 use std::collections::BTreeMap;
@@ -14,6 +14,8 @@ use eyre::Result;
 
 use crate::remove_extra_costs;
 
+pub type MemoryState = BTreeMap<Address, MemoryAccount>;
+
 // TODO: Check if we can implement this as the base layer of an ethers-provider
 // Middleware stack instead of doing RPC calls.
 pub struct Executor<'a, S> {
@@ -21,8 +23,7 @@ pub struct Executor<'a, S> {
     pub gas_limit: u64,
 }
 
-pub type MemoryState = BTreeMap<Address, MemoryAccount>;
-
+// Concrete implementation over the in-memory backend
 impl<'a> Executor<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
     /// Given a gas limit, vm version, initial chain configuration and initial state
     // TOOD: See if we can make lifetimes better here
@@ -43,7 +44,9 @@ impl<'a> Executor<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
             gas_limit,
         }
     }
+}
 
+impl<'a, S: StackState<'a>> Executor<'a, S> {
     /// Runs the selected function
     pub fn call<D: Detokenize, T: Tokenize>(
         &mut self,
@@ -68,29 +71,23 @@ impl<'a> Executor<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
 
         Ok((retdata, status, gas.as_u64()))
     }
+}
 
-    /// given an iterator of contract address to contract bytecode, initializes
-    /// the state with the contract deployed at the specified address
-    pub fn initialize_contracts<T: IntoIterator<Item = (Address, Bytes)>>(
-        contracts: T,
-    ) -> MemoryState {
-        contracts
-            .into_iter()
-            .map(|(address, bytecode)| {
-                (
-                    address,
-                    MemoryAccount {
-                        nonce: U256::one(),
-                        balance: U256::zero(),
-                        storage: BTreeMap::new(),
-                        code: bytecode.to_vec(),
-                    },
-                )
-            })
-            .collect::<BTreeMap<_, _>>()
-    }
-
-    pub fn new_backend(vicinity: &MemoryVicinity, state: MemoryState) -> MemoryBackend<'_> {
-        MemoryBackend::new(vicinity, state)
-    }
+/// given an iterator of contract address to contract bytecode, initializes
+/// the state with the contract deployed at the specified address
+pub fn initialize_contracts<T: IntoIterator<Item = (Address, Bytes)>>(contracts: T) -> MemoryState {
+    contracts
+        .into_iter()
+        .map(|(address, bytecode)| {
+            (
+                address,
+                MemoryAccount {
+                    nonce: U256::one(),
+                    balance: U256::zero(),
+                    storage: BTreeMap::new(),
+                    code: bytecode.to_vec(),
+                },
+            )
+        })
+        .collect::<BTreeMap<_, _>>()
 }
