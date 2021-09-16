@@ -133,7 +133,6 @@ pub struct Env {
         // TODO: It'd be nice if we could use Address::zero() here.
         default_value = "0x0000000000000000000000000000000000000000"
     )]
-
     pub block_coinbase: Address,
     #[structopt(
         help = "the block.timestamp value during EVM execution",
