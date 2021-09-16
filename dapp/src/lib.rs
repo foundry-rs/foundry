@@ -39,16 +39,39 @@ pub fn decode_revert(error: &[u8]) -> Result<String> {
 }
 
 #[cfg(test)]
-use ethers::prelude::Lazy;
-#[cfg(test)]
-use ethers::utils::CompiledContract;
-#[cfg(test)]
-use std::collections::HashMap;
+pub mod test_helpers {
+    use super::*;
 
-#[cfg(test)]
-static COMPILED: Lazy<HashMap<String, CompiledContract>> = Lazy::new(|| {
-    SolcBuilder::new("./*.sol", &[], &[])
-        .unwrap()
-        .build_all()
-        .unwrap()
-});
+    use ethers::prelude::Lazy;
+    use ethers::{types::H160, utils::CompiledContract};
+    use std::collections::HashMap;
+
+    use crate::solc::SolcBuilder;
+
+    use evm::backend::{MemoryBackend, MemoryVicinity};
+
+    pub static COMPILED: Lazy<HashMap<String, CompiledContract>> = Lazy::new(|| {
+        SolcBuilder::new("./*.sol", &[], &[])
+            .unwrap()
+            .build_all()
+            .unwrap()
+    });
+
+    pub fn new_backend(vicinity: &MemoryVicinity, state: MemoryState) -> MemoryBackend<'_> {
+        MemoryBackend::new(vicinity, state)
+    }
+
+    pub fn new_vicinity() -> MemoryVicinity {
+        MemoryVicinity {
+            gas_price: U256::zero(),
+            origin: H160::default(),
+            block_hashes: Vec::new(),
+            block_number: Default::default(),
+            block_coinbase: Default::default(),
+            block_timestamp: Default::default(),
+            block_difficulty: Default::default(),
+            block_gas_limit: Default::default(),
+            chain_id: U256::one(),
+        }
+    }
+}
