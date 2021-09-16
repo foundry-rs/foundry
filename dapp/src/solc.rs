@@ -46,6 +46,7 @@ impl<'a> SolcBuilder<'a> {
     /// Builds all provided contract files with the specified compiler version.
     /// Assumes that the lib-paths and remappings have already been specified and
     /// that the correct compiler version is provided.
+    // FIXME: Does NOT support contracts with the same name.
     #[tracing::instrument(skip(self, files))]
     fn build(
         &self,
@@ -86,7 +87,6 @@ impl<'a> SolcBuilder<'a> {
     #[tracing::instrument(skip(self))]
     pub fn build_all(&mut self) -> Result<HashMap<String, CompiledContract>> {
         let contracts_by_version = self.contract_versions()?;
-
         let start = Instant::now();
         let res = contracts_by_version.into_iter().try_fold(
             HashMap::new(),
@@ -165,10 +165,19 @@ impl<'a> SolcBuilder<'a> {
             .replace("pragma solidity ", "")
             .replace(";", "")
             // needed to make it valid semver for things like
-            // >=0.4.0 <0.5.0
+            // `>=0.4.0 <0.5.0` => `>=0.4.0,<0.5.0`
             .replace(" ", ",");
 
-        Ok(VersionReq::parse(&version)?)
+        // Somehow, Solidity semver without an operator is considered to be "exact",
+        // but lack of operator automatically marks the operator as Caret, so we need
+        // to manually patch it? :shrug:
+        let exact = !matches!(&version[0..1], "*" | "^" | "=" | ">" | "<" | "~");
+        let mut version = VersionReq::parse(&version)?;
+        if exact {
+            version.comparators[0].op = semver::Op::Exact;
+        }
+
+        Ok(version)
     }
 
     /// Find a matching local installation for the specified required version
@@ -212,7 +221,7 @@ fn install_blocking(version: &Version) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use ethers::prelude::Lazy;
+    use ethers::core::rand::random;
     use svm::SVM_HOME;
 
     use super::*;
@@ -278,16 +287,25 @@ mod tests {
         }
     }
 
-    static TMP_CONTRACTS_DIR: Lazy<PathBuf> = Lazy::new(|| {
-        let dir = std::env::temp_dir().join("contracts");
-        std::fs::remove_dir_all(&dir).unwrap();
-        std::fs::create_dir(&dir).unwrap();
+    // mkdir -p
+    fn mkdir() -> PathBuf {
+        let dir = std::env::temp_dir()
+            .join(&random::<u64>().to_string())
+            .join("contracts");
+        if !dir.exists() {
+            std::fs::create_dir_all(&dir).unwrap();
+        }
         dir
-    });
+    }
+
+    // rm -rf
+    fn rmdir(dir: &Path) {
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     impl TempSolidityFile {
-        fn new(version: &str) -> Self {
-            let path = TMP_CONTRACTS_DIR.join(format!("temp-{}.sol", version));
+        fn new(dir: &Path, version: &str) -> Self {
+            let path = dir.join(format!("temp-{}-{}.sol", version, random::<u64>()));
             let mut file = File::create(&path).unwrap();
             file.write(format!("pragma solidity {};\n", version).as_bytes())
                 .unwrap();
@@ -300,10 +318,12 @@ mod tests {
 
     #[test]
     fn test_version_req() {
-        let versions = ["0.1.2", "^0.5.6", ">=0.7.1", ">0.8.0"];
+        let dir = mkdir();
+
+        let versions = ["=0.1.2", "^0.5.6", ">=0.7.1", ">0.8.0"];
         let files = versions
             .iter()
-            .map(|version| TempSolidityFile::new(version));
+            .map(|version| TempSolidityFile::new(&dir, version));
 
         files.for_each(|file| {
             let version_req = SolcBuilder::version_req(&file.path).unwrap();
@@ -313,22 +333,26 @@ mod tests {
         // Solidity defines version ranges with a space, whereas the semver package
         // requires them to be separated with a comma
         let version_range = ">=0.8.0 <0.9.0";
-        let file = TempSolidityFile::new(version_range);
+        let file = TempSolidityFile::new(&dir, version_range);
         let version_req = SolcBuilder::version_req(&file.path).unwrap();
         assert_eq!(version_req, VersionReq::from_str(">=0.8.0,<0.9.0").unwrap());
+
+        rmdir(&dir);
     }
 
     #[test]
     // This test might be a bit hard t omaintain
     fn test_detect_version() {
+        let dir = mkdir();
+
         let mut builder = SolcBuilder::new("", &[], &[]).unwrap();
         for (pragma, expected) in [
             // pinned
             ("=0.4.14", "0.4.14"),
+            // pinned too
+            ("0.4.14", "0.4.14"),
             // Up to later patches
             ("^0.4.14", "0.4.24"),
-            // Up to later patches (caret implied)
-            ("0.4.14", "0.4.24"),
             // any version above 0.5.0
             (">=0.5.0", "0.8.6"),
             // range
@@ -337,43 +361,104 @@ mod tests {
         .iter()
         {
             // println!("Checking {}", pragma);
-            let file = TempSolidityFile::new(&pragma);
+            let file = TempSolidityFile::new(&dir, &pragma);
             let res = builder.detect_version(&file.path).unwrap().unwrap();
             assert_eq!(res.0, Version::from_str(&expected).unwrap());
         }
+
+        rmdir(&dir);
     }
 
     #[test]
     // Ensures that the contract versions get correctly assigned to a compiler
     // version given a glob
     fn test_contract_versions() {
+        let dir = mkdir();
+
         let versions = [
             // pinned
             "=0.4.14",
-            // Up to later patches
-            "^0.4.14",
             // Up to later patches (caret implied)
             "0.4.14",
+            // Up to later patches
+            "^0.4.14",
             // any version above 0.5.0
             ">=0.5.0",
             // range
             ">=0.4.0 <0.5.0",
         ];
         versions.iter().for_each(|version| {
-            TempSolidityFile::new(version);
+            TempSolidityFile::new(&dir, version);
         });
 
-        let dir = TMP_CONTRACTS_DIR
-            .clone()
-            .into_os_string()
-            .into_string()
-            .unwrap();
-        let glob = format!("{}/**/*.sol", dir);
+        let dir_str = dir.clone().into_os_string().into_string().unwrap();
+        let glob = format!("{}/**/*.sol", dir_str);
         let mut builder = SolcBuilder::new(&glob, &[], &[]).unwrap();
 
         let versions = builder.contract_versions().unwrap();
-        assert_eq!(versions["0.4.14"].len(), 1);
-        assert_eq!(versions["0.4.24"].len(), 3);
+        assert_eq!(versions["0.4.14"].len(), 2);
+        assert_eq!(versions["0.4.24"].len(), 2);
         assert_eq!(versions["0.8.6"].len(), 1);
+
+        rmdir(&dir);
+    }
+
+    fn get_glob(path: &str) -> String {
+        let path = std::fs::canonicalize(path).unwrap();
+        let mut path = path.into_os_string().into_string().unwrap();
+        path.push_str("/**/*.sol");
+        path
+    }
+
+    #[test]
+    fn test_build_all_versions() {
+        let path = get_glob("testdata/test-contract-versions");
+        let mut builder = SolcBuilder::new(&path, &[], &[]).unwrap();
+        let res = builder.build_all().unwrap();
+        // Contracts A to F
+        assert_eq!(res.keys().collect::<Vec<_>>().len(), 5);
+    }
+
+    #[test]
+    fn test_remappings() {
+        // Need to give the full paths here because we're running solc from the current
+        // directory and not the repo's root directory
+        let path = get_glob("testdata/test-contract-remappings");
+        let remappings = vec!["bar/=testdata/test-contract-remappings/lib/bar/".to_owned()];
+        let lib = std::fs::canonicalize("testdata/test-contract-remappings")
+            .unwrap()
+            .into_os_string()
+            .into_string()
+            .unwrap();
+        let libs = vec![lib];
+        let mut builder = SolcBuilder::new(&path, &remappings, &libs).unwrap();
+        let res = builder.build_all().unwrap();
+        // Foo & Bar
+        assert_eq!(res.keys().collect::<Vec<_>>().len(), 2);
+    }
+
+    fn canonicalized_path(path: &str) -> String {
+        std::fs::canonicalize(path)
+            .unwrap()
+            .into_os_string()
+            .into_string()
+            .unwrap()
+    }
+
+    #[test]
+    // This is useful if you want to import a library from e.g. `node_modules` (for
+    // whatever reason that may be) and from another path at the same time
+    fn test_multiple_libs() {
+        // Need to give the full paths here because we're running solc from the current
+        // directory and not the repo's root directory
+        let path = get_glob("testdata/test-contract-libs");
+        let libs = vec![
+            canonicalized_path("testdata/test-contract-libs/lib1"),
+            canonicalized_path("testdata/test-contract-libs/lib2"),
+        ];
+        let mut builder = SolcBuilder::new(&path, &[], &libs).unwrap();
+        let res = builder.build_all().unwrap();
+        // Foo & Bar
+        assert_eq!(res.keys().collect::<Vec<_>>().len(), 3);
     }
 }
