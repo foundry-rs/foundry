@@ -1,7 +1,7 @@
 use ethers::{
     abi::{Detokenize, Function, Tokenize},
     prelude::{decode_function_data, encode_function_data},
-    types::*,
+    types::{Address, Bytes, U256},
 };
 
 use evm::backend::{MemoryAccount, MemoryBackend};

@@ -1,6 +1,6 @@
 use ethers::{
     abi::{Function, FunctionExt},
-    types::*,
+    types::Address,
     utils::CompiledContract,
 };
 
