@@ -161,34 +161,7 @@ impl<'a> MultiContractRunner<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::{new_backend, new_vicinity, COMPILED};
-
-    #[test]
-    fn test_runner() {
-        let cfg = Config::istanbul();
-
-        let compiled = COMPILED
-            .get("GreeterTest")
-            .expect("could not find contract");
-
-        let addr = "0x1000000000000000000000000000000000000000"
-            .parse()
-            .unwrap();
-        let state = executor::initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
-
-        let vicinity = new_vicinity();
-        let backend = new_backend(&vicinity, state);
-        let mut dapp = Executor::new(12_000_000, &cfg, &backend);
-
-        let mut runner = ContractRunner {
-            executor: &mut dapp,
-            contract: compiled,
-            address: addr,
-        };
-
-        let res = runner.run_tests(&".*".parse().unwrap()).unwrap();
-        assert!(res.iter().all(|(_, result)| result.success));
-    }
+    use crate::test_helpers::new_vicinity;
 
     #[test]
     fn test_multi_runner() {
