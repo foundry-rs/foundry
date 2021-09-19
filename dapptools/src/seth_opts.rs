@@ -41,6 +41,12 @@ pub enum Subcommands {
         #[structopt(long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
+    #[structopt(name = "block-number")]
+    #[structopt(about = "returns latest block number")]
+    BlockNumber {
+        #[structopt(long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+    },
     #[structopt(name = "call")]
     #[structopt(about = "Perform a local call to <to> without publishing a transaction.")]
     Call {

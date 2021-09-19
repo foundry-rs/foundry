@@ -46,6 +46,10 @@ async fn main() -> eyre::Result<()> {
                     .await?
             );
         }
+        Subcommands::BlockNumber { rpc_url } => {
+            let provider = Provider::try_from(rpc_url)?;
+            println!("{}", Seth::new(provider).block_number().await?);
+        }
         Subcommands::Call {
             rpc_url,
             address,
