@@ -211,6 +211,31 @@ impl SimpleSeth {
         let s: String = s.as_bytes().to_hex();
         format!("0x{}", s)
     }
+
+    /// Converts integers with specified decimals into fixed point numbers
+    ///
+    /// ```
+    /// use seth::SimpleSeth as Seth;
+    ///
+    /// assert_eq!(Seth::to_fix(0, 10), "10.");
+    /// assert_eq!(Seth::to_fix(1, 10), "1.0");
+    /// assert_eq!(Seth::to_fix(2, 10), "0.10");
+    /// assert_eq!(Seth::to_fix(3, 10), "0.010");
+    /// ```
+    pub fn to_fix(decimals: u128, value: u128) -> String {
+        let mut value: String = value.to_string();
+        let decimals = decimals as usize;
+
+        if decimals >= value.len() {
+            // {0}.{0 * (number_of_decimals - value.len())}{value}
+            format!("0.{:0>1$}", value, decimals)
+        } else {
+            // Insert decimal at -idx (i.e 1 => decimal idx = -1)
+            value.insert(value.len() - decimals, '.');
+            value
+        }
+    }
+
     /// Converts decimal input to hex
     ///
     /// ```

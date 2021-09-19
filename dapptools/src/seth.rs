@@ -28,6 +28,9 @@ async fn main() -> eyre::Result<()> {
         Subcommands::ToBytes32 { bytes } => {
             println!("{}", SimpleSeth::to_bytes32(&bytes)?);
         }
+        Subcommands::ToFix { decimals, value } => {
+            println!("{}", SimpleSeth::to_fix(unwrap_or_stdin(decimals)?, unwrap_or_stdin(value)?));
+        }
         Subcommands::Block {
             rpc_url,
             block,

@@ -23,6 +23,9 @@ pub enum Subcommands {
     #[structopt(name = "--to-bytes32")]
     #[structopt(about = "left-pads a hex bytes string to 32 bytes)")]
     ToBytes32 { bytes: String },
+    #[structopt(name = "--to-fix")]
+    #[structopt(about = "convert integers into fixed point with specified decimals")]
+    ToFix { decimals: Option<u128>, value: Option<u128> },
     #[structopt(name = "block")]
     #[structopt(
         about = "Prints information about <block>. If <field> is given, print only the value of that field"
