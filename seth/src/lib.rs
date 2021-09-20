@@ -142,6 +142,37 @@ where
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
     /// let seth = Seth::new(provider);
+    /// let base_fee = seth.base_fee(13_000_000).await?;
+    /// println!("{}", base_fee);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn base_fee<T: Into<BlockId>>(&self, block: T) -> Result<U256> {
+        let block = block.into();
+        let base_fee_hex = Seth::block(
+            &self,
+            block,
+            false,
+            // Select only baseFee field
+            Some(String::from("baseFeePerGas")),
+            false
+        ).await?;
+        let base_fee_num = U256::from_str_radix(
+            strip_0x(&base_fee_hex),
+            16
+        ).expect("Unable to convert baseFee hexadecimal to U256");
+
+        Ok(base_fee_num)
+    }
+
+    /// ```no_run
+    /// use seth::Seth;
+    /// use ethers_providers::{Provider, Http};
+    /// use std::convert::TryFrom;
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
+    /// let seth = Seth::new(provider);
     /// let block = seth.block(5, true, None, false).await?;
     /// println!("{}", block);
     /// # Ok(())

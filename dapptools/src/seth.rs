@@ -2,13 +2,7 @@ mod seth_opts;
 use seth_opts::{Opts, Subcommands};
 
 use seth::{Seth, SimpleSeth};
-
-use ethers::{
-    middleware::SignerMiddleware,
-    providers::{Middleware, Provider},
-    signers::Signer,
-    types::NameOrAddress,
-};
+use ethers::{core::types::{BlockId, BlockNumber::{Latest}}, middleware::SignerMiddleware, providers::{Middleware, Provider}, signers::Signer, types::NameOrAddress};
 use std::{convert::TryFrom, str::FromStr};
 use structopt::StructOpt;
 
@@ -78,6 +72,14 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Seth::new(provider).balance(who, block).await?);
         }
+        Subcommands::BaseFee {
+            block,
+            rpc_url,
+        } => {
+            let provider = Provider::try_from(rpc_url)?;
+            println!("{}", Seth::new(provider).base_fee(block.unwrap_or(BlockId::Number(Latest))).await?);
+        }
+
         Subcommands::ResolveName {
             who,
             rpc_url,

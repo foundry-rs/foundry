@@ -79,6 +79,14 @@ pub enum Subcommands {
         #[structopt(short, long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
+    #[structopt(name = "basefee")]
+    #[structopt(about = "Print the block basefee")]
+    BaseFee {
+        #[structopt(global = true, help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
+        block: Option<BlockId>,
+        #[structopt(short, long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+    },
     #[structopt(name = "resolve-name")]
     #[structopt(about = "Returns the address the provided ENS name resolves to")]
     ResolveName {
