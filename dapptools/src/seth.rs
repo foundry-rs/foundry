@@ -19,11 +19,14 @@ async fn main() -> eyre::Result<()> {
         Subcommands::ToCheckSumAddress { address } => {
             println!("{}", SimpleSeth::to_checksum_address(&address)?);
         }
+        Subcommands::ToAscii { hexdata } => {
+            println!("{}", SimpleSeth::to_ascii(&hexdata));
+        }
         Subcommands::ToBytes32 { bytes } => {
             println!("{}", SimpleSeth::to_bytes32(&bytes)?);
         }
         Subcommands::ToDec { hexvalue } => {
-            println!("{}", SimpleSeth::to_dec(hexvalue));
+            println!("{}", SimpleSeth::to_dec(&hexvalue));
         }
         Subcommands::ToFix { decimals, value } => {
             println!("{}", SimpleSeth::to_fix(unwrap_or_stdin(decimals)?, unwrap_or_stdin(value)?));

@@ -4,7 +4,7 @@
 use ethers_core::{types::*, utils::{self, keccak256}};
 use ethers_providers::{Middleware, PendingTransaction};
 use eyre::Result;
-use rustc_hex::ToHex;
+use rustc_hex::{ToHex, FromHexIter};
 use std::str::FromStr;
 use chrono::NaiveDateTime;
 
@@ -303,6 +303,25 @@ impl SimpleSeth {
         format!("0x{}", s)
     }
 
+
+    /// Converts hex data into text data
+    ///
+    /// ```
+    /// use seth::SimpleSeth as Seth;
+    ///
+    /// assert_eq!("Hello, World!", Seth::to_ascii("48656c6c6f2c20576f726c6421".to_string()));
+    /// assert_eq!("TurboDappTools", Seth::to_ascii("0x547572626f44617070546f6f6c73".to_string()));
+    /// ```
+    pub fn to_ascii(hex: &str) -> String {
+        let hex_trimmed = hex.trim_start_matches("0x");
+        let iter = FromHexIter::new(hex_trimmed);
+        let mut ascii = String::new();
+        for letter in iter.collect::<Vec<_>>() {
+            ascii.push(letter.unwrap() as char);
+        }
+        ascii
+    }
+
     /// Converts hex input to decimal
     ///
     /// ```
@@ -311,7 +330,7 @@ impl SimpleSeth {
     /// assert_eq!(424242, Seth::to_dec("0x67932"));
     /// assert_eq!(1234, Seth::to_dec("0x4d2"));
     /// ```
-    pub fn to_dec(hex: String) -> u128 {
+    pub fn to_dec(hex: &str) -> u128 {
         let hex_trimmed = hex.trim_start_matches("0x");
         u128::from_str_radix(&hex_trimmed, 16).expect("Could not parse hex")
     }
