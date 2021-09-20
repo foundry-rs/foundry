@@ -309,8 +309,8 @@ impl SimpleSeth {
     /// ```
     /// use seth::SimpleSeth as Seth;
     ///
-    /// assert_eq!("Hello, World!", Seth::to_ascii("48656c6c6f2c20576f726c6421".to_string()));
-    /// assert_eq!("TurboDappTools", Seth::to_ascii("0x547572626f44617070546f6f6c73".to_string()));
+    /// assert_eq!("Hello, World!", Seth::to_ascii("48656c6c6f2c20576f726c6421"));
+    /// assert_eq!("TurboDappTools", Seth::to_ascii("0x547572626f44617070546f6f6c73"));
     /// ```
     pub fn to_ascii(hex: &str) -> String {
         let hex_trimmed = hex.trim_start_matches("0x");
