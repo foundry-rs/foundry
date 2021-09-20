@@ -303,6 +303,19 @@ impl SimpleSeth {
         format!("0x{}", s)
     }
 
+    /// Converts hex input to decimal
+    ///
+    /// ```
+    /// use seth::SimpleSeth as Seth;
+    ///
+    /// assert_eq!(424242, Seth::to_dec("0x67932"));
+    /// assert_eq!(1234, Seth::to_dec("0x4d2"));
+    /// ```
+    pub fn to_dec(hex: String) -> u128 {
+        let hex_trimmed = hex.trim_start_matches("0x");
+        u128::from_str_radix(&hex_trimmed, 16).expect("Could not parse hex")
+    }
+
     /// Converts integers with specified decimals into fixed point numbers
     ///
     /// ```
