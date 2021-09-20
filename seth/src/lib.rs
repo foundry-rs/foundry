@@ -244,6 +244,10 @@ where
     pub async fn block_number(&self) -> Result<U64> {
         Ok(self.provider.get_block_number().await?)
     }
+
+    pub async fn gas_price(&self) -> Result<U256> {
+        Ok(self.provider.get_gas_price().await?)
+    }
 }
 
 pub struct SimpleSeth;

@@ -104,6 +104,12 @@ pub enum Subcommands {
         #[structopt(short, long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
+    #[structopt(name = "gas-price")]
+    #[structopt(about = "current gas price of target chain")]
+    GasPrice { 
+        #[structopt(short, long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+    },
     #[structopt(name = "keccak")]
     #[structopt(about = "Keccak-256 hash arbitrary data")]
     Keccak { data: String },
