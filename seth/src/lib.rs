@@ -202,7 +202,7 @@ where
         field: String
     ) -> Result<U256> {
         let block = block.into();
-        let base_fee_hex = Seth::block(
+        let block_field = Seth::block(
             &self,
             block,
             false,
@@ -211,7 +211,7 @@ where
             false
         ).await?;
         Ok(U256::from_str_radix(
-            strip_0x(&base_fee_hex),
+            strip_0x(&block_field),
             16
         ).expect("Unable to convert hexadecimal to U256"))
     }
@@ -337,6 +337,25 @@ impl SimpleSeth {
     /// ```
     pub fn to_hex(u: u128) -> String {
         format!("{:#x}", u)
+    }
+
+    /// Converts an eth amount into wei
+    ///
+    /// ```
+    /// use seth::SimpleSeth as Seth;
+    ///
+    /// assert_eq!(Seth::to_wei(1, "".to_string()), "1");
+    /// assert_eq!(Seth::to_wei(100, "gwei".to_string()), "100000000000");
+    /// assert_eq!(Seth::to_wei(100, "eth".to_string()), "100000000000000000000");
+    /// assert_eq!(Seth::to_wei(1000, "ether".to_string()), "1000000000000000000000");
+    /// ```
+    pub fn to_wei(value: u128, unit: String) -> String {
+        let value = value.to_string();
+        match &unit[..] {
+            "gwei" => format!("{:0<1$}", value, 9 + value.len()),
+            "eth" | "ether" => format!("{:0<1$}", value, 18 + value.len()),
+            _ => value,
+        }
     }
 
     /// Converts an Ethereum address to its checksum format

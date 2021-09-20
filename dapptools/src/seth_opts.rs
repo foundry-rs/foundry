@@ -26,6 +26,9 @@ pub enum Subcommands {
     #[structopt(name = "--to-fix")]
     #[structopt(about = "convert integers into fixed point with specified decimals")]
     ToFix { decimals: Option<u128>, value: Option<u128> },
+    #[structopt(name = "--to-wei")]
+    #[structopt(about = "convert an ETH amount into wei")]
+    ToWei { value: Option<u128>, unit: Option<String> },
     #[structopt(name = "block")]
     #[structopt(
         about = "Prints information about <block>. If <field> is given, print only the value of that field"
