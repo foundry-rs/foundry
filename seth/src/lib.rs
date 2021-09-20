@@ -227,21 +227,12 @@ where
         Ok(block)
     }
 
-    /// ```no_run
-    /// use seth::Seth;
-    /// use ethers_providers::{Provider, Http};
-    /// use std::convert::TryFrom;
-    ///
-    /// # async fn foo() -> eyre::Result<()> {
-    /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
-    /// let seth = Seth::new(provider);
-    /// let latest_block_number = seth.block_number().await?;
-    /// println!("{}", latest_block_number);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn block_number(&self) -> Result<U64, M::Error> {
-        self.provider.get_block_number().await
+    pub async fn chain_id(&self) -> Result<U256> {
+        Ok(self.provider.get_chainid().await?)
+    }
+
+    pub async fn block_number(&self) -> Result<U64> {
+        Ok(self.provider.get_block_number().await?)
     }
 }
 

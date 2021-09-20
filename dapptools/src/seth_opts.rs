@@ -57,6 +57,12 @@ pub enum Subcommands {
         #[structopt(long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
+    #[structopt(name = "chain-id")]
+    #[structopt(about = "returns ethereum chain id")]
+    ChainId {
+        #[structopt(long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+    },
     #[structopt(name = "send")]
     #[structopt(about = "Publish a transaction signed by <from> to call <to> with <data>")]
     SendTx {
