@@ -237,6 +237,44 @@ where
         Ok(datetime.format("%a %b %e %H:%M:%S %Y").to_string())
     }
 
+    pub async fn chain(&self) -> Result<&str> {
+        let genesis_hash = Seth::block(
+            &self,
+            0,
+            false,
+            // Select only block hash
+            Some(String::from("hash")),
+            false
+        ).await?;
+
+        Ok(match &genesis_hash[..] {
+            "0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3" => {
+                match &(Seth::block(
+                    &self, 
+                    1920000, 
+                    false, 
+                    Some(String::from("hash")),
+                    false
+                ).await?)[..] {
+                    "0x94365e3a8c0b35089c1d1195081fe7489b528a84b22199c916180db8b28ade7f" => "etclive",
+                    _ => "ethlive",
+                }
+            },
+            "0xa3c565fc15c7478862d50ccd6561e3c06b24cc509bf388941c25ea985ce32cb9" => "kovan",
+            "0x41941023680923e0fe4d74a34bdac8141f2540e3ae90623718e47d66d1ca4a2d" => "ropsten",
+            "0x39e1b9259598b65c8c71d1ea153de17e89222e64e8b271213dfb92c231f7fb88" => "optimism-mainnet",
+            "0x2510549c5c30f15472b55dbae139122e2e593f824217eefc7a53f78698ac5c1e" => "optimism-kovan",
+            "0x7ee576b35482195fc49205cec9af72ce14f003b9ae69f6ba0faef4514be8b442" => "arbitrum-mainnet",
+            "0x0cd786a2425d16f152c658316c423e6ce1181e15c3295826d7c9904cba9ce303" => "morden",
+            "0x6341fd3daf94b748c72ced5a5b26028f2474f5f00d824504e4fa37a75767e177" => "rinkeby",
+            "0xbf7e331f7f7c1dd2e05159666b3bf8bc7a8a3a9eb1d518969eab529dd9b88c1a" => "goerli",
+            "0x14c2283285a88fe5fce9bf5c573ab03d6616695d717b12a127188bcacfc743c4" => "kotti",
+            "0x6d3c66c5357ec91d5c43af47e234a939b22557cbb552dc45bebbceeed90fbe34" => "bsctest",
+            "0x0d21840abff46b96c84b2ac9e10e4f5cdaeb5693cb665db62a2f3b02d2d57b5b" => "bsc",
+            _ => "unknown",
+        })
+    }
+
     pub async fn chain_id(&self) -> Result<U256> {
         Ok(self.provider.get_chainid().await?)
     }

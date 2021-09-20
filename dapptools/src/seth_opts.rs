@@ -57,6 +57,12 @@ pub enum Subcommands {
         #[structopt(long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
+    #[structopt(name = "chain")]
+    #[structopt(about = "Prints symbolic name of current blockchain by checking genesis hash")]
+    Chain {
+        #[structopt(long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+    },
     #[structopt(name = "chain-id")]
     #[structopt(about = "returns ethereum chain id")]
     ChainId {

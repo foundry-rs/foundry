@@ -53,6 +53,10 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Seth::new(provider).call(address, &sig, args).await?);
         }
+        Subcommands::Chain { rpc_url } => {
+            let provider = Provider::try_from(rpc_url)?;
+            println!("{}", Seth::new(provider).chain().await?);
+        }
         Subcommands::ChainId { rpc_url } => {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Seth::new(provider).chain_id().await?);
