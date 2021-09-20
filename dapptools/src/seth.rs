@@ -25,6 +25,9 @@ async fn main() -> eyre::Result<()> {
         Subcommands::ToFix { decimals, value } => {
             println!("{}", SimpleSeth::to_fix(unwrap_or_stdin(decimals)?, unwrap_or_stdin(value)?));
         }
+        Subcommands::ToUint256 { value } => {
+            println!("{}", SimpleSeth::to_uint256(value));
+        }
         Subcommands::ToWei { value, unit } => {
             println!("{}", SimpleSeth::to_wei(unwrap_or_stdin(value)?, unit.unwrap_or(String::from("wei"))));
         }

@@ -339,6 +339,24 @@ impl SimpleSeth {
         format!("{:#x}", u)
     }
 
+    /// Converts a number into uint256 hex string with 0x prefix
+    ///
+    /// ```
+    /// use seth::SimpleSeth as Seth;
+    ///
+    /// assert_eq!(Seth::to_uint256("100".to_string()), "0x0000000000000000000000000000000000000000000000000000000000000064");
+    /// assert_eq!(Seth::to_uint256("192038293923".to_string()), "0x0000000000000000000000000000000000000000000000000000002cb65fd1a3");
+    /// assert_eq!(
+    ///     Seth::to_uint256("115792089237316195423570985008687907853269984665640564039457584007913129639935".to_string()), 
+    ///     "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    /// );
+    /// ```
+    pub fn to_uint256(value: String) -> String {
+        let num_u256 = U256::from_str_radix(&value, 10).expect("Could not parse string");
+        let num_hex = format!("{:x}", num_u256);
+        format!("0x{}{}", "0".repeat(64 - num_hex.len()), num_hex)
+    }
+
     /// Converts an eth amount into wei
     ///
     /// ```

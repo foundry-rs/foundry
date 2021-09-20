@@ -26,6 +26,9 @@ pub enum Subcommands {
     #[structopt(name = "--to-fix")]
     #[structopt(about = "convert integers into fixed point with specified decimals")]
     ToFix { decimals: Option<u128>, value: Option<u128> },
+    #[structopt(name = "--to-uint256")]
+    #[structopt(about = "convert a number into uint256 hex string with 0x prefix")]
+    ToUint256 { value: String },
     #[structopt(name = "--to-wei")]
     #[structopt(about = "convert an ETH amount into wei")]
     ToWei { value: Option<u128>, unit: Option<String> },
