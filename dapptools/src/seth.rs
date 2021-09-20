@@ -68,6 +68,10 @@ async fn main() -> eyre::Result<()> {
                 seth_send(provider, from, to, sig, args, eth.seth_async).await?;
             }
         }
+        Subcommands::Age { block, rpc_url } => {
+            let provider = Provider::try_from(rpc_url)?;
+            println!("{}", Seth::new(provider).age(block.unwrap_or(BlockId::Number(Latest))).await?);
+        }
         Subcommands::Balance {
             block,
             who,

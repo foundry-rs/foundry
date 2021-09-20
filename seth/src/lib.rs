@@ -6,6 +6,7 @@ use ethers_providers::{Middleware, PendingTransaction};
 use eyre::Result;
 use rustc_hex::ToHex;
 use std::str::FromStr;
+use chrono::NaiveDateTime;
 
 use dapp_utils::{encode_args, get_func, to_table};
 
@@ -142,37 +143,6 @@ where
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
     /// let seth = Seth::new(provider);
-    /// let base_fee = seth.base_fee(13_000_000).await?;
-    /// println!("{}", base_fee);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn base_fee<T: Into<BlockId>>(&self, block: T) -> Result<U256> {
-        let block = block.into();
-        let base_fee_hex = Seth::block(
-            &self,
-            block,
-            false,
-            // Select only baseFee field
-            Some(String::from("baseFeePerGas")),
-            false
-        ).await?;
-        let base_fee_num = U256::from_str_radix(
-            strip_0x(&base_fee_hex),
-            16
-        ).expect("Unable to convert baseFee hexadecimal to U256");
-
-        Ok(base_fee_num)
-    }
-
-    /// ```no_run
-    /// use seth::Seth;
-    /// use ethers_providers::{Provider, Http};
-    /// use std::convert::TryFrom;
-    ///
-    /// # async fn foo() -> eyre::Result<()> {
-    /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
-    /// let seth = Seth::new(provider);
     /// let block = seth.block(5, true, None, false).await?;
     /// println!("{}", block);
     /// # Ok(())
@@ -225,6 +195,46 @@ where
         };
 
         Ok(block)
+    }
+
+    async fn block_field_as_num<T: Into<BlockId>>(
+        &self, block: T, 
+        field: String
+    ) -> Result<U256> {
+        let block = block.into();
+        let base_fee_hex = Seth::block(
+            &self,
+            block,
+            false,
+            // Select only select field
+            Some(field),
+            false
+        ).await?;
+        Ok(U256::from_str_radix(
+            strip_0x(&base_fee_hex),
+            16
+        ).expect("Unable to convert hexadecimal to U256"))
+    }
+
+    pub async fn base_fee<T: Into<BlockId>>(&self, block: T) -> Result<U256> {
+        Ok(Seth::block_field_as_num(
+            &self, 
+            block, 
+            String::from("baseFeePerGas")
+        ).await?)
+    }
+
+    pub async fn age<T: Into<BlockId>>(&self, block: T) -> Result<String> {
+        let timestamp_str = Seth::block_field_as_num(
+            &self,
+            block,
+            String::from("timestamp")
+        ).await?.to_string();
+        let datetime = NaiveDateTime::from_timestamp(
+            timestamp_str.parse::<i64>().unwrap(), 
+            0
+        );
+        Ok(datetime.format("%a %b %e %H:%M:%S %Y").to_string())
     }
 
     pub async fn chain_id(&self) -> Result<U256> {

@@ -75,6 +75,14 @@ pub enum Subcommands {
         #[structopt(flatten)]
         eth: EthereumOpts,
     },
+    #[structopt(name = "age")]
+    #[structopt(about = "Print the timestamp of a block")]
+    Age {
+        #[structopt(global = true, help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
+        block: Option<BlockId>,
+        #[structopt(short, long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+    },
     #[structopt(name = "balance")]
     #[structopt(about = "Print the balance of <account> in wei")]
     Balance {
