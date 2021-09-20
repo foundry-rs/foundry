@@ -310,17 +310,21 @@ impl SimpleSeth {
     /// ```
     /// use seth::SimpleSeth as Seth;
     ///
-    /// assert_eq!("Hello, World!", Seth::to_ascii("48656c6c6f2c20576f726c6421"));
-    /// assert_eq!("TurboDappTools", Seth::to_ascii("0x547572626f44617070546f6f6c73"));
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!("Hello, World!", Seth::to_ascii("48656c6c6f2c20576f726c6421")?);
+    ///     assert_eq!("TurboDappTools", Seth::to_ascii("0x547572626f44617070546f6f6c73")?);
+    ///
+    ///     Ok(())
+    /// }
     /// ```
-    pub fn to_ascii(hex: &str) -> String {
+    pub fn to_ascii(hex: &str) -> Result<String> {
         let hex_trimmed = hex.trim_start_matches("0x");
         let iter = FromHexIter::new(hex_trimmed);
         let mut ascii = String::new();
         for letter in iter.collect::<Vec<_>>() {
             ascii.push(letter.unwrap() as char);
         }
-        ascii
+        Ok(ascii)
     }
 
     /// Converts hex input to decimal
@@ -328,12 +332,15 @@ impl SimpleSeth {
     /// ```
     /// use seth::SimpleSeth as Seth;
     ///
-    /// assert_eq!(424242, Seth::to_dec("0x67932"));
-    /// assert_eq!(1234, Seth::to_dec("0x4d2"));
-    /// ```
-    pub fn to_dec(hex: &str) -> u128 {
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(424242, Seth::to_dec("0x67932")?);
+    ///     assert_eq!(1234, Seth::to_dec("0x4d2")?);
+    ///
+    ///     Ok(())
+    /// }
+    pub fn to_dec(hex: &str) -> Result<u128> {
         let hex_trimmed = hex.trim_start_matches("0x");
-        u128::from_str_radix(&hex_trimmed, 16).expect("Could not parse hex")
+        Ok(u128::from_str_radix(&hex_trimmed, 16)?)
     }
 
     /// Converts integers with specified decimals into fixed point numbers
@@ -341,22 +348,26 @@ impl SimpleSeth {
     /// ```
     /// use seth::SimpleSeth as Seth;
     ///
-    /// assert_eq!(Seth::to_fix(0, 10), "10.");
-    /// assert_eq!(Seth::to_fix(1, 10), "1.0");
-    /// assert_eq!(Seth::to_fix(2, 10), "0.10");
-    /// assert_eq!(Seth::to_fix(3, 10), "0.010");
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(Seth::to_fix(0, 10)?, "10.");
+    ///     assert_eq!(Seth::to_fix(1, 10)?, "1.0");
+    ///     assert_eq!(Seth::to_fix(2, 10)?, "0.10");
+    ///     assert_eq!(Seth::to_fix(3, 10)?, "0.010");
+    ///
+    ///     Ok(())
+    /// }
     /// ```
-    pub fn to_fix(decimals: u128, value: u128) -> String {
+    pub fn to_fix(decimals: u128, value: u128) -> Result<String> {
         let mut value: String = value.to_string();
         let decimals = decimals as usize;
 
         if decimals >= value.len() {
             // {0}.{0 * (number_of_decimals - value.len())}{value}
-            format!("0.{:0>1$}", value, decimals)
+            Ok(format!("0.{:0>1$}", value, decimals))
         } else {
             // Insert decimal at -idx (i.e 1 => decimal idx = -1)
             value.insert(value.len() - decimals, '.');
-            value
+            Ok(value)
         }
     }
 
@@ -377,17 +388,21 @@ impl SimpleSeth {
     /// ```
     /// use seth::SimpleSeth as Seth;
     ///
-    /// assert_eq!(Seth::to_uint256("100".to_string()), "0x0000000000000000000000000000000000000000000000000000000000000064");
-    /// assert_eq!(Seth::to_uint256("192038293923".to_string()), "0x0000000000000000000000000000000000000000000000000000002cb65fd1a3");
-    /// assert_eq!(
-    ///     Seth::to_uint256("115792089237316195423570985008687907853269984665640564039457584007913129639935".to_string()), 
-    ///     "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
-    /// );
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(Seth::to_uint256("100".to_string())?, "0x0000000000000000000000000000000000000000000000000000000000000064");
+    ///     assert_eq!(Seth::to_uint256("192038293923".to_string())?, "0x0000000000000000000000000000000000000000000000000000002cb65fd1a3");
+    ///     assert_eq!(
+    ///         Seth::to_uint256("115792089237316195423570985008687907853269984665640564039457584007913129639935".to_string())?, 
+    ///         "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    ///     );
+    ///
+    ///     Ok(())
+    /// }
     /// ```
-    pub fn to_uint256(value: String) -> String {
-        let num_u256 = U256::from_str_radix(&value, 10).expect("Could not parse string");
+    pub fn to_uint256(value: String) -> Result<String> {
+        let num_u256 = U256::from_str_radix(&value, 10)?;
         let num_hex = format!("{:x}", num_u256);
-        format!("0x{}{}", "0".repeat(64 - num_hex.len()), num_hex)
+        Ok(format!("0x{}{}", "0".repeat(64 - num_hex.len()), num_hex))
     }
 
     /// Converts an eth amount into wei
@@ -395,18 +410,22 @@ impl SimpleSeth {
     /// ```
     /// use seth::SimpleSeth as Seth;
     ///
-    /// assert_eq!(Seth::to_wei(1, "".to_string()), "1");
-    /// assert_eq!(Seth::to_wei(100, "gwei".to_string()), "100000000000");
-    /// assert_eq!(Seth::to_wei(100, "eth".to_string()), "100000000000000000000");
-    /// assert_eq!(Seth::to_wei(1000, "ether".to_string()), "1000000000000000000000");
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(Seth::to_wei(1, "".to_string())?, "1");
+    ///     assert_eq!(Seth::to_wei(100, "gwei".to_string())?, "100000000000");
+    ///     assert_eq!(Seth::to_wei(100, "eth".to_string())?, "100000000000000000000");
+    ///     assert_eq!(Seth::to_wei(1000, "ether".to_string())?, "1000000000000000000000");
+    ///
+    ///     Ok(())
+    /// }
     /// ```
-    pub fn to_wei(value: u128, unit: String) -> String {
+    pub fn to_wei(value: u128, unit: String) -> Result<String> {
         let value = value.to_string();
-        match &unit[..] {
+        Ok(match &unit[..] {
             "gwei" => format!("{:0<1$}", value, 9 + value.len()),
             "eth" | "ether" => format!("{:0<1$}", value, 18 + value.len()),
             _ => value,
-        }
+        })
     }
 
     /// Converts an Ethereum address to its checksum format
@@ -461,12 +480,16 @@ impl SimpleSeth {
     /// ```
     /// use seth::SimpleSeth as Seth;
     ///
-    /// assert_eq!(Seth::keccak("foo"), "0x41b1a0649752af1b28b3dc29a1556eee781e4a4c3a1f7f53f90fa834de098c4d");
-    /// assert_eq!(Seth::keccak("123abc"), "0xb1f1c74a1ba56f07a892ea1110a39349d40f66ca01d245e704621033cb7046a4");
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(Seth::keccak("foo")?, "0x41b1a0649752af1b28b3dc29a1556eee781e4a4c3a1f7f53f90fa834de098c4d");
+    ///     assert_eq!(Seth::keccak("123abc")?, "0xb1f1c74a1ba56f07a892ea1110a39349d40f66ca01d245e704621033cb7046a4");
+    ///
+    ///     Ok(())
+    /// }
     /// ```
-    pub fn keccak(data: &str) -> String {
+    pub fn keccak(data: &str) -> Result<String> {
         let hash: String = keccak256(data.as_bytes()).to_hex();
-        format!("0x{}", hash)
+        Ok(format!("0x{}", hash))
     }
 
     /// Converts ENS names to their namehash representation
@@ -476,12 +499,16 @@ impl SimpleSeth {
     /// ```
     /// use seth::SimpleSeth as Seth;
     ///
-    /// assert_eq!(Seth::namehash(""), "0x0000000000000000000000000000000000000000000000000000000000000000");
-    /// assert_eq!(Seth::namehash("eth"), "0x93cdeb708b7545dc668eb9280176169d1c33cfd8ed6f04690a0bcc88a93fc4ae");
-    /// assert_eq!(Seth::namehash("foo.eth"), "0xde9b09fd7c5f901e23a3f19fecc54828e9c848539801e86591bd9801b019f84f");
-    /// assert_eq!(Seth::namehash("sub.foo.eth"), "0x500d86f9e663479e5aaa6e99276e55fc139c597211ee47d17e1e92da16a83402");
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(Seth::namehash("")?, "0x0000000000000000000000000000000000000000000000000000000000000000");
+    ///     assert_eq!(Seth::namehash("eth")?, "0x93cdeb708b7545dc668eb9280176169d1c33cfd8ed6f04690a0bcc88a93fc4ae");
+    ///     assert_eq!(Seth::namehash("foo.eth")?, "0xde9b09fd7c5f901e23a3f19fecc54828e9c848539801e86591bd9801b019f84f");
+    ///     assert_eq!(Seth::namehash("sub.foo.eth")?, "0x500d86f9e663479e5aaa6e99276e55fc139c597211ee47d17e1e92da16a83402");
+    ///
+    ///     Ok(())
+    /// }
     /// ```
-    pub fn namehash(ens: &str) -> String {
+    pub fn namehash(ens: &str) -> Result<String> {
         let mut node = vec![0u8; 32];
 
         if !ens.is_empty() {
@@ -499,7 +526,7 @@ impl SimpleSeth {
         }
 
         let namehash: String = node.to_hex();
-        format!("0x{}", namehash)
+        Ok(format!("0x{}", namehash))
     }
 }
 

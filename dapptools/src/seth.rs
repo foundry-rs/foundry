@@ -26,13 +26,13 @@ async fn main() -> eyre::Result<()> {
             println!("{}", SimpleSeth::to_checksum_address(&address)?);
         }
         Subcommands::ToAscii { hexdata } => {
-            println!("{}", SimpleSeth::to_ascii(&hexdata));
+            println!("{}", SimpleSeth::to_ascii(&hexdata)?);
         }
         Subcommands::ToBytes32 { bytes } => {
             println!("{}", SimpleSeth::to_bytes32(&bytes)?);
         }
         Subcommands::ToDec { hexvalue } => {
-            println!("{}", SimpleSeth::to_dec(&hexvalue));
+            println!("{}", SimpleSeth::to_dec(&hexvalue)?);
         }
         Subcommands::ToFix { decimals, value } => {
             println!(
@@ -40,11 +40,11 @@ async fn main() -> eyre::Result<()> {
                 SimpleSeth::to_fix(
                     unwrap_or_stdin(decimals)?, 
                     unwrap_or_stdin(value)?
-                )
+                )?
             );
         }
         Subcommands::ToUint256 { value } => {
-            println!("{}", SimpleSeth::to_uint256(value));
+            println!("{}", SimpleSeth::to_uint256(value)?);
         }
         Subcommands::ToWei { value, unit } => {
             println!(
@@ -52,7 +52,7 @@ async fn main() -> eyre::Result<()> {
                 SimpleSeth::to_wei(
                     unwrap_or_stdin(value)?, 
                     unit.unwrap_or(String::from("wei"))
-                )
+                )?
             );
         }
         Subcommands::Block {
@@ -92,7 +92,7 @@ async fn main() -> eyre::Result<()> {
             println!("{}", Seth::new(provider).chain_id().await?);
         }
         Subcommands::Namehash { name } => {
-            println!("{}", SimpleSeth::namehash(&name));
+            println!("{}", SimpleSeth::namehash(&name)?);
         }
         Subcommands::SendTx { eth, to, sig, args } => {
             let provider = Provider::try_from(eth.rpc_url.as_str())?;
@@ -139,7 +139,7 @@ async fn main() -> eyre::Result<()> {
             println!("{}", Seth::new(provider).gas_price().await?);
         }
         Subcommands::Keccak { data } => {
-            println!("{}", SimpleSeth::keccak(&data));
+            println!("{}", SimpleSeth::keccak(&data)?);
         }
         Subcommands::ResolveName {
             who,
