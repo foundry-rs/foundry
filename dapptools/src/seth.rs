@@ -2,7 +2,13 @@ mod seth_opts;
 use seth_opts::{Opts, Subcommands};
 
 use seth::{Seth, SimpleSeth};
-use ethers::{core::types::{BlockId, BlockNumber::{Latest}}, middleware::SignerMiddleware, providers::{Middleware, Provider}, signers::Signer, types::NameOrAddress};
+use ethers::{
+    core::types::{BlockId, BlockNumber::{Latest}},
+    middleware::SignerMiddleware,
+    providers::{Middleware, Provider},
+    signers::Signer,
+    types::NameOrAddress
+};
 use std::{convert::TryFrom, str::FromStr};
 use structopt::StructOpt;
 
@@ -29,13 +35,25 @@ async fn main() -> eyre::Result<()> {
             println!("{}", SimpleSeth::to_dec(&hexvalue));
         }
         Subcommands::ToFix { decimals, value } => {
-            println!("{}", SimpleSeth::to_fix(unwrap_or_stdin(decimals)?, unwrap_or_stdin(value)?));
+            println!(
+                "{}", 
+                SimpleSeth::to_fix(
+                    unwrap_or_stdin(decimals)?, 
+                    unwrap_or_stdin(value)?
+                )
+            );
         }
         Subcommands::ToUint256 { value } => {
             println!("{}", SimpleSeth::to_uint256(value));
         }
         Subcommands::ToWei { value, unit } => {
-            println!("{}", SimpleSeth::to_wei(unwrap_or_stdin(value)?, unit.unwrap_or(String::from("wei"))));
+            println!(
+                "{}", 
+                SimpleSeth::to_wei(
+                    unwrap_or_stdin(value)?, 
+                    unit.unwrap_or(String::from("wei"))
+                )
+            );
         }
         Subcommands::Block {
             rpc_url,
@@ -89,7 +107,12 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::Age { block, rpc_url } => {
             let provider = Provider::try_from(rpc_url)?;
-            println!("{}", Seth::new(provider).age(block.unwrap_or(BlockId::Number(Latest))).await?);
+            println!(
+                "{}", 
+                Seth::new(provider)
+                    .age(block.unwrap_or(BlockId::Number(Latest)))
+                    .await?
+            );
         }
         Subcommands::Balance {
             block,
@@ -104,7 +127,12 @@ async fn main() -> eyre::Result<()> {
             rpc_url,
         } => {
             let provider = Provider::try_from(rpc_url)?;
-            println!("{}", Seth::new(provider).base_fee(block.unwrap_or(BlockId::Number(Latest))).await?);
+            println!(
+                "{}", 
+                Seth::new(provider)
+                    .base_fee(block.unwrap_or(BlockId::Number(Latest)))
+                    .await?
+            );
         }
         Subcommands::GasPrice { rpc_url } => {
             let provider = Provider::try_from(rpc_url)?;

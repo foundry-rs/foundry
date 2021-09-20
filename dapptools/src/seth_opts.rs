@@ -27,7 +27,7 @@ pub enum Subcommands {
     #[structopt(about = "left-pads a hex bytes string to 32 bytes)")]
     ToBytes32 { bytes: String },
     #[structopt(name = "--to-dec")]
-    #[structopt(about = "convert hex value into a decimal number")]
+    #[structopt(about = "convert hex value into decimal number")]
     ToDec { hexvalue: String },
     #[structopt(name = "--to-fix")]
     #[structopt(about = "convert integers into fixed point with specified decimals")]
@@ -54,7 +54,7 @@ pub enum Subcommands {
         rpc_url: String,
     },
     #[structopt(name = "block-number")]
-    #[structopt(about = "returns latest block number")]
+    #[structopt(about = "Prints latest block number")]
     BlockNumber {
         #[structopt(long, env = "ETH_RPC_URL")]
         rpc_url: String,
@@ -97,7 +97,7 @@ pub enum Subcommands {
         eth: EthereumOpts,
     },
     #[structopt(name = "age")]
-    #[structopt(about = "Print the timestamp of a block")]
+    #[structopt(about = "Prints the timestamp of a block")]
     Age {
         #[structopt(global = true, help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
         block: Option<BlockId>,
@@ -115,7 +115,7 @@ pub enum Subcommands {
         rpc_url: String,
     },
     #[structopt(name = "basefee")]
-    #[structopt(about = "Print the block basefee")]
+    #[structopt(about = "Print the basefee of a block")]
     BaseFee {
         #[structopt(global = true, help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
         block: Option<BlockId>,
@@ -123,13 +123,13 @@ pub enum Subcommands {
         rpc_url: String,
     },
     #[structopt(name = "gas-price")]
-    #[structopt(about = "current gas price of target chain")]
+    #[structopt(about = "Prints current gas price of target chain")]
     GasPrice { 
         #[structopt(short, long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
     #[structopt(name = "keccak")]
-    #[structopt(about = "Keccak-256 hash arbitrary data")]
+    #[structopt(about = "Keccak-256 hashes arbitrary data")]
     Keccak { data: String },
     #[structopt(name = "resolve-name")]
     #[structopt(about = "Returns the address the provided ENS name resolves to")]
