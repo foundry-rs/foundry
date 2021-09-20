@@ -344,6 +344,19 @@ impl SimpleSeth {
         Ok(format!("{:?}", H256::from_str(&padded)?))
     }
 
+    /// Keccak-256 hashes arbitrary data
+    ///
+    /// ```
+    /// use seth::SimpleSeth as Seth;
+    ///
+    /// assert_eq!(Seth::keccak("foo"), "0x41b1a0649752af1b28b3dc29a1556eee781e4a4c3a1f7f53f90fa834de098c4d");
+    /// assert_eq!(Seth::keccak("123abc"), "0xb1f1c74a1ba56f07a892ea1110a39349d40f66ca01d245e704621033cb7046a4");
+    /// ```
+    pub fn keccak(d: &str) -> String {
+        let hash: String = keccak256(d.as_bytes()).to_hex();
+        format!("0x{}", hash)
+    }
+
     /// Converts ENS names to their namehash representation
     /// [Namehash reference](https://docs.ens.domains/contract-api-reference/name-processing#hashing-names)
     /// [namehash-rust reference](https://github.com/InstateDev/namehash-rust/blob/master/src/lib.rs)

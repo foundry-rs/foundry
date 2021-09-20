@@ -90,7 +90,9 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Seth::new(provider).base_fee(block.unwrap_or(BlockId::Number(Latest))).await?);
         }
-
+        Subcommands::Keccak { data } => {
+            println!("{}", SimpleSeth::keccak(&data));
+        }
         Subcommands::ResolveName {
             who,
             rpc_url,

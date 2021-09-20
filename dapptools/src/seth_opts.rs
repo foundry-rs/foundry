@@ -104,6 +104,9 @@ pub enum Subcommands {
         #[structopt(short, long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
+    #[structopt(name = "keccak")]
+    #[structopt(about = "Keccak-256 hash arbitrary data")]
+    Keccak { data: String },
     #[structopt(name = "resolve-name")]
     #[structopt(about = "Returns the address the provided ENS name resolves to")]
     ResolveName {
