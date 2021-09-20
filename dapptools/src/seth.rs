@@ -57,6 +57,9 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Seth::new(provider).chain_id().await?);
         }
+        Subcommands::Namehash { name } => {
+            println!("{}", SimpleSeth::namehash(&name));
+        }
         Subcommands::SendTx { eth, to, sig, args } => {
             let provider = Provider::try_from(eth.rpc_url.as_str())?;
             if let Some(signer) = eth.signer()? {
