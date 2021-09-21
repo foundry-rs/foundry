@@ -25,7 +25,9 @@ tracing-subscriber = "0.2.20"
 [[bin]]
 name = "seth"
 path = "src/seth.rs"
+doc = false
 
 [[bin]]
 name = "dapp"
 path = "src/dapp.rs"
+doc = false
