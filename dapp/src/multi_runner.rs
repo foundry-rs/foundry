@@ -362,7 +362,7 @@ mod tests {
         };
 
         let res = runner.run_tests(&".*".parse().unwrap()).unwrap();
-        assert!(res.iter().all(|(_, result)| result.success == true));
+        assert!(res.iter().all(|(_, result)| result.success));
     }
 
     #[test]
@@ -390,7 +390,7 @@ mod tests {
         assert_eq!(results["GreeterTest"].len(), 3);
         assert_eq!(results["GmTest"].len(), 1);
         for (_, res) in results {
-            assert!(res.iter().all(|(_, result)| result.success == true));
+            assert!(res.iter().all(|(_, result)| result.success));
         }
 
         let only_gm = runner.test(Regex::new("testGm.*").unwrap()).unwrap();
@@ -418,6 +418,6 @@ mod tests {
         .unwrap();
         let results = runner.test(Regex::new("testFail").unwrap()).unwrap();
         let test = results.get("FooTest").unwrap().get("testFailX").unwrap();
-        assert_eq!(test.success, true);
+        assert!(test.success);
     }
 }
