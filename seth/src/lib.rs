@@ -1,12 +1,15 @@
 //! Seth
 //!
 //! TODO
-use ethers_core::{types::*, utils::{self, keccak256}};
+use chrono::NaiveDateTime;
+use ethers_core::{
+    types::*,
+    utils::{self, keccak256},
+};
 use ethers_providers::{Middleware, PendingTransaction};
 use eyre::Result;
-use rustc_hex::{ToHex, FromHexIter};
+use rustc_hex::{FromHexIter, ToHex};
 use std::str::FromStr;
-use chrono::NaiveDateTime;
 
 use dapp_utils::{encode_args, get_func, to_table};
 
@@ -197,75 +200,66 @@ where
         Ok(block)
     }
 
-    async fn block_field_as_num<T: Into<BlockId>>(
-        &self,
-        block: T,
-        field: String
-    ) -> Result<U256> {
+    async fn block_field_as_num<T: Into<BlockId>>(&self, block: T, field: String) -> Result<U256> {
         let block = block.into();
         let block_field = Seth::block(
-            &self,
+            self,
             block,
             false,
             // Select only select field
             Some(field),
-            false
-        ).await?;
-        Ok(U256::from_str_radix(
-            strip_0x(&block_field),
-            16
-        ).expect("Unable to convert hexadecimal to U256"))
+            false,
+        )
+        .await?;
+        Ok(U256::from_str_radix(strip_0x(&block_field), 16)
+            .expect("Unable to convert hexadecimal to U256"))
     }
 
     pub async fn base_fee<T: Into<BlockId>>(&self, block: T) -> Result<U256> {
-        Ok(Seth::block_field_as_num(
-            &self,
-            block,
-            String::from("baseFeePerGas")
-        ).await?)
+        Ok(Seth::block_field_as_num(self, block, String::from("baseFeePerGas")).await?)
     }
 
     pub async fn age<T: Into<BlockId>>(&self, block: T) -> Result<String> {
-        let timestamp_str = Seth::block_field_as_num(
-            &self,
-            block,
-            String::from("timestamp")
-        ).await?.to_string();
-        let datetime = NaiveDateTime::from_timestamp(
-            timestamp_str.parse::<i64>().unwrap(), 
-            0
-        );
+        let timestamp_str = Seth::block_field_as_num(self, block, String::from("timestamp"))
+            .await?
+            .to_string();
+        let datetime = NaiveDateTime::from_timestamp(timestamp_str.parse::<i64>().unwrap(), 0);
         Ok(datetime.format("%a %b %e %H:%M:%S %Y").to_string())
     }
 
     pub async fn chain(&self) -> Result<&str> {
         let genesis_hash = Seth::block(
-            &self,
+            self,
             0,
             false,
             // Select only block hash
             Some(String::from("hash")),
-            false
-        ).await?;
+            false,
+        )
+        .await?;
 
         Ok(match &genesis_hash[..] {
             "0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3" => {
-                match &(Seth::block(
-                    &self, 
-                    1920000, 
-                    false, 
-                    Some(String::from("hash")),
-                    false
-                ).await?)[..] {
-                    "0x94365e3a8c0b35089c1d1195081fe7489b528a84b22199c916180db8b28ade7f" => "etclive",
+                match &(Seth::block(self, 1920000, false, Some(String::from("hash")), false)
+                    .await?)[..]
+                {
+                    "0x94365e3a8c0b35089c1d1195081fe7489b528a84b22199c916180db8b28ade7f" => {
+                        "etclive"
+                    }
                     _ => "ethlive",
                 }
-            },
+            }
             "0xa3c565fc15c7478862d50ccd6561e3c06b24cc509bf388941c25ea985ce32cb9" => "kovan",
             "0x41941023680923e0fe4d74a34bdac8141f2540e3ae90623718e47d66d1ca4a2d" => "ropsten",
-            "0x39e1b9259598b65c8c71d1ea153de17e89222e64e8b271213dfb92c231f7fb88" => "optimism-mainnet",
-            "0x2510549c5c30f15472b55dbae139122e2e593f824217eefc7a53f78698ac5c1e" => "optimism-kovan",
-            "0x7ee576b35482195fc49205cec9af72ce14f003b9ae69f6ba0faef4514be8b442" => "arbitrum-mainnet",
+            "0x39e1b9259598b65c8c71d1ea153de17e89222e64e8b271213dfb92c231f7fb88" => {
+                "optimism-mainnet"
+            }
+            "0x2510549c5c30f15472b55dbae139122e2e593f824217eefc7a53f78698ac5c1e" => {
+                "optimism-kovan"
+            }
+            "0x7ee576b35482195fc49205cec9af72ce14f003b9ae69f6ba0faef4514be8b442" => {
+                "arbitrum-mainnet"
+            }
             "0x0cd786a2425d16f152c658316c423e6ce1181e15c3295826d7c9904cba9ce303" => "morden",
             "0x6341fd3daf94b748c72ced5a5b26028f2474f5f00d824504e4fa37a75767e177" => "rinkeby",
             "0xbf7e331f7f7c1dd2e05159666b3bf8bc7a8a3a9eb1d518969eab529dd9b88c1a" => "goerli",
@@ -304,7 +298,6 @@ impl SimpleSeth {
         format!("0x{}", s)
     }
 
-
     /// Converts hex data into text data
     ///
     /// ```
@@ -340,7 +333,7 @@ impl SimpleSeth {
     /// }
     pub fn to_dec(hex: &str) -> Result<u128> {
         let hex_trimmed = hex.trim_start_matches("0x");
-        Ok(u128::from_str_radix(&hex_trimmed, 16)?)
+        Ok(u128::from_str_radix(hex_trimmed, 16)?)
     }
 
     /// Converts integers with specified decimals into fixed point numbers
@@ -392,7 +385,7 @@ impl SimpleSeth {
     ///     assert_eq!(Seth::to_uint256("100".to_string())?, "0x0000000000000000000000000000000000000000000000000000000000000064");
     ///     assert_eq!(Seth::to_uint256("192038293923".to_string())?, "0x0000000000000000000000000000000000000000000000000000002cb65fd1a3");
     ///     assert_eq!(
-    ///         Seth::to_uint256("115792089237316195423570985008687907853269984665640564039457584007913129639935".to_string())?, 
+    ///         Seth::to_uint256("115792089237316195423570985008687907853269984665640564039457584007913129639935".to_string())?,
     ///         "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
     ///     );
     ///
@@ -513,7 +506,7 @@ impl SimpleSeth {
 
         if !ens.is_empty() {
             let ens_lower = ens.to_lowercase();
-            let mut labels: Vec<&str> = ens_lower.split(".").collect();
+            let mut labels: Vec<&str> = ens_lower.split('.').collect();
             labels.reverse();
 
             for label in labels {

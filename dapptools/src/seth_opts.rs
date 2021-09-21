@@ -31,13 +31,19 @@ pub enum Subcommands {
     ToDec { hexvalue: String },
     #[structopt(name = "--to-fix")]
     #[structopt(about = "convert integers into fixed point with specified decimals")]
-    ToFix { decimals: Option<u128>, value: Option<u128> },
+    ToFix {
+        decimals: Option<u128>,
+        value: Option<u128>,
+    },
     #[structopt(name = "--to-uint256")]
     #[structopt(about = "convert a number into uint256 hex string with 0x prefix")]
     ToUint256 { value: String },
     #[structopt(name = "--to-wei")]
     #[structopt(about = "convert an ETH amount into wei")]
-    ToWei { value: Option<u128>, unit: Option<String> },
+    ToWei {
+        value: Option<u128>,
+        unit: Option<String>,
+    },
     #[structopt(name = "block")]
     #[structopt(
         about = "Prints information about <block>. If <field> is given, print only the value of that field"
@@ -124,7 +130,7 @@ pub enum Subcommands {
     },
     #[structopt(name = "gas-price")]
     #[structopt(about = "Prints current gas price of target chain")]
-    GasPrice { 
+    GasPrice {
         #[structopt(short, long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },

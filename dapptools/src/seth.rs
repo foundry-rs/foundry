@@ -1,14 +1,14 @@
 mod seth_opts;
 use seth_opts::{Opts, Subcommands};
 
-use seth::{Seth, SimpleSeth};
 use ethers::{
-    core::types::{BlockId, BlockNumber::{Latest}},
+    core::types::{BlockId, BlockNumber::Latest},
     middleware::SignerMiddleware,
     providers::{Middleware, Provider},
     signers::Signer,
-    types::NameOrAddress
+    types::NameOrAddress,
 };
+use seth::{Seth, SimpleSeth};
 use std::{convert::TryFrom, str::FromStr};
 use structopt::StructOpt;
 
@@ -36,11 +36,8 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::ToFix { decimals, value } => {
             println!(
-                "{}", 
-                SimpleSeth::to_fix(
-                    unwrap_or_stdin(decimals)?, 
-                    unwrap_or_stdin(value)?
-                )?
+                "{}",
+                SimpleSeth::to_fix(unwrap_or_stdin(decimals)?, unwrap_or_stdin(value)?)?
             );
         }
         Subcommands::ToUint256 { value } => {
@@ -48,10 +45,10 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::ToWei { value, unit } => {
             println!(
-                "{}", 
+                "{}",
                 SimpleSeth::to_wei(
-                    unwrap_or_stdin(value)?, 
-                    unit.unwrap_or(String::from("wei"))
+                    unwrap_or_stdin(value)?,
+                    unit.unwrap_or_else(|| String::from("wei"))
                 )?
             );
         }
@@ -108,7 +105,7 @@ async fn main() -> eyre::Result<()> {
         Subcommands::Age { block, rpc_url } => {
             let provider = Provider::try_from(rpc_url)?;
             println!(
-                "{}", 
+                "{}",
                 Seth::new(provider)
                     .age(block.unwrap_or(BlockId::Number(Latest)))
                     .await?
@@ -122,13 +119,10 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Seth::new(provider).balance(who, block).await?);
         }
-        Subcommands::BaseFee {
-            block,
-            rpc_url,
-        } => {
+        Subcommands::BaseFee { block, rpc_url } => {
             let provider = Provider::try_from(rpc_url)?;
             println!(
-                "{}", 
+                "{}",
                 Seth::new(provider)
                     .base_fee(block.unwrap_or(BlockId::Number(Latest)))
                     .await?
