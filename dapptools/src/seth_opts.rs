@@ -11,9 +11,10 @@ use structopt::StructOpt;
 #[derive(Debug, StructOpt)]
 #[structopt(about = "Perform Ethereum RPC calls from the comfort of your command line.")]
 pub enum Subcommands {
-    #[structopt(name = "--from-ascii")]
+    #[structopt(aliases = &["--from-ascii"])]
+    #[structopt(name = "--from-utf8")]
     #[structopt(about = "convert text data into hexdata")]
-    FromAscii { text: String },
+    FromUtf8 { text: String },
     #[structopt(name = "--to-hex")]
     #[structopt(about = "convert a decimal number into hex")]
     ToHex { decimal: Option<u128> },
@@ -185,17 +186,12 @@ pub struct Wallet {
 }
 
 impl Wallet {
-    #[allow(clippy::manual_map)]
     pub fn signer(&self) -> Result<Option<LocalWallet>> {
-        Ok(if let Some(wallet) = self.private_key()? {
-            Some(wallet)
-        } else if let Some(wallet) = self.mnemonic()? {
-            Some(wallet)
-        } else if let Some(wallet) = self.keystore()? {
-            Some(wallet)
-        } else {
-            None
-        })
+        self.private_key()
+            .transpose()
+            .or_else(|| self.mnemonic().transpose())
+            .or_else(|| self.keystore().transpose())
+            .transpose()
     }
 
     fn private_key(&self) -> Result<Option<LocalWallet>> {
