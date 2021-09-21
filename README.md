@@ -84,6 +84,10 @@ This repository has been tested against the following DappTools repos:
 
 We use the stable Rust toolchain. Install by running: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
 
+#### Minimum Supported Rust Version
+
+The current minimum supported Rust version is `rustc 1.51.0 (2fd73fabe 2021-03-23)`.
+
 ### Building & testing
 
 ```
@@ -91,9 +95,4 @@ cargo check
 cargo test
 cargo doc --open
 cargo build [--release]
-```
-**Tip**: If you encounter the following error when building the project, please update your Rust toolchain with `rustup update`.
-
-```
-error[E0658]: use of unstable library feature 'map_into_keys_values'
 ```

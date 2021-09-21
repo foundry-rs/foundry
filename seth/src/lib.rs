@@ -199,15 +199,15 @@ where
 
 pub struct SimpleSeth;
 impl SimpleSeth {
-    /// Converts ASCII text input to hex
+    /// Converts UTF-8 text input to hex
     ///
     /// ```
     /// use seth::SimpleSeth as Seth;
     ///
-    /// let bin = Seth::from_ascii("yo");
+    /// let bin = Seth::from_utf8("yo");
     /// assert_eq!(bin, "0x796f")
     /// ```
-    pub fn from_ascii(s: &str) -> String {
+    pub fn from_utf8(s: &str) -> String {
         let s: String = s.as_bytes().to_hex();
         format!("0x{}", s)
     }
@@ -216,10 +216,10 @@ impl SimpleSeth {
     /// ```
     /// use seth::SimpleSeth as Seth;
     ///
-    /// assert_eq!(Seth::to_hex(424242), "0x67932");
-    /// assert_eq!(Seth::to_hex(1234), "0x4d2");
+    /// assert_eq!(Seth::hex(424242), "0x67932");
+    /// assert_eq!(Seth::hex(1234), "0x4d2");
     /// ```
-    pub fn to_hex(u: u128) -> String {
+    pub fn hex(u: u128) -> String {
         format!("{:#x}", u)
     }
 
@@ -233,13 +233,13 @@ impl SimpleSeth {
     ///
     /// # fn main() -> eyre::Result<()> {
     /// let addr = Address::from_str("0xb7e390864a90b7b923c9f9310c6f98aafe43f707")?;
-    /// let addr = Seth::to_checksum_address(&addr)?;
+    /// let addr = Seth::checksum_address(&addr)?;
     /// assert_eq!(addr, "0xB7e390864a90b7b923C9f9310C6F98aafE43F707");
     ///
     /// # Ok(())
     /// # }
     /// ```
-    pub fn to_checksum_address(address: &Address) -> Result<String> {
+    pub fn checksum_address(address: &Address) -> Result<String> {
         Ok(utils::to_checksum(address, None))
     }
 
@@ -248,18 +248,18 @@ impl SimpleSeth {
     /// use seth::SimpleSeth as Seth;
     ///
     /// # fn main() -> eyre::Result<()> {
-    /// let bytes = Seth::to_bytes32("1234")?;
+    /// let bytes = Seth::bytes32("1234")?;
     /// assert_eq!(bytes, "0x1234000000000000000000000000000000000000000000000000000000000000");
     ///
-    /// let bytes = Seth::to_bytes32("0x1234")?;
+    /// let bytes = Seth::bytes32("0x1234")?;
     /// assert_eq!(bytes, "0x1234000000000000000000000000000000000000000000000000000000000000");
     ///
-    /// let err = Seth::to_bytes32("0x123400000000000000000000000000000000000000000000000000000000000011").unwrap_err();
+    /// let err = Seth::bytes32("0x123400000000000000000000000000000000000000000000000000000000000011").unwrap_err();
     /// assert_eq!(err.to_string(), "string >32 bytes");
     ///
     /// # Ok(())
     /// # }
-    pub fn to_bytes32(s: &str) -> Result<String> {
+    pub fn bytes32(s: &str) -> Result<String> {
         let s = strip_0x(s);
         if s.len() > 64 {
             eyre::bail!("string >32 bytes");

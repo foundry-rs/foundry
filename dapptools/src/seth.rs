@@ -16,17 +16,17 @@ use structopt::StructOpt;
 async fn main() -> eyre::Result<()> {
     let opts = Opts::from_args();
     match opts.sub {
-        Subcommands::FromAscii { text } => {
-            println!("{}", SimpleSeth::from_ascii(&text));
+        Subcommands::FromUtf8 { text } => {
+            println!("{}", SimpleSeth::from_utf8(&text));
         }
         Subcommands::ToHex { decimal } => {
-            println!("{}", SimpleSeth::to_hex(unwrap_or_stdin(decimal)?));
+            println!("{}", SimpleSeth::hex(unwrap_or_stdin(decimal)?));
         }
         Subcommands::ToCheckSumAddress { address } => {
-            println!("{}", SimpleSeth::to_checksum_address(&address)?);
+            println!("{}", SimpleSeth::checksum_address(&address)?);
         }
         Subcommands::ToBytes32 { bytes } => {
-            println!("{}", SimpleSeth::to_bytes32(&bytes)?);
+            println!("{}", SimpleSeth::bytes32(&bytes)?);
         }
         Subcommands::Block {
             rpc_url,
