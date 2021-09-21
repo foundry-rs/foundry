@@ -351,12 +351,15 @@ mod tests {
             ("=0.4.14", "0.4.14"),
             // pinned too
             ("0.4.14", "0.4.14"),
-            // Up to later patches
-            ("^0.4.14", "0.4.24"),
-            // any version above 0.5.0
-            (">=0.5.0", "0.8.6"),
+            // The latest patch is 0.4.26
+            ("^0.4.14", "0.4.26"),
+            // latest version above 0.5.0 -> we have to
+            // update this test whenever there's a new sol
+            // version. that's ok! good reminder to check the
+            // patch notes.
+            (">=0.5.0", "0.8.7"),
             // range
-            (">=0.4.0 <0.5.0", "0.4.24"),
+            (">=0.4.0 <0.5.0", "0.4.26"),
         ]
         .iter()
         {
@@ -397,8 +400,8 @@ mod tests {
 
         let versions = builder.contract_versions().unwrap();
         assert_eq!(versions["0.4.14"].len(), 2);
-        assert_eq!(versions["0.4.24"].len(), 2);
-        assert_eq!(versions["0.8.6"].len(), 1);
+        assert_eq!(versions["0.4.26"].len(), 2);
+        assert_eq!(versions["0.8.7"].len(), 1);
 
         rmdir(&dir);
     }
