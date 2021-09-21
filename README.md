@@ -21,7 +21,7 @@ hard to contribute, you don't have a "standard" way to test things, and it happe
 that there are not that many Haskell developers in the Ethereum community.
 
 It is also hard to distribute. It requires installing Nix, and that's a barrier to entry
-to many already because (for whatever reason Nix) doesn't always install properly the first time.
+to many already because (for whatever reason) Nix doesn't always install properly the first time.
 
 The more technical reasons I decided to use it are:
 1. It is easier to write regression tests in Rust vs in Bash
