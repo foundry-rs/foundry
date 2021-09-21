@@ -75,7 +75,7 @@ impl<'a> SolcBuilder<'a> {
             .join(",");
 
         // tracing::trace!(?lib_paths);
-        solc = solc.args(["--allow-paths", &lib_paths]);
+        solc = solc.args(std::array::IntoIter::new(["--allow-paths", &lib_paths]));
 
         // tracing::trace!(?self.remappings);
         if !self.remappings.is_empty() {

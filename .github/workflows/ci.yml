@@ -1,22 +1,43 @@
 on:
   push:
-    branches: 
+    branches:
       - master
   pull_request:
 
 name: Tests
 
 jobs:
-  tests:
+  tests-msrv:
+    name: Tests (MSRV)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
         uses: actions/checkout@v2
-      - name: Install stable toolchain
+
+      - name: Install toolchain
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
+
+      - uses: Swatinem/rust-cache@v1
+        with:
+          cache-on-failure: true
+
+      - name: cargo test
+        run: cargo test --all
+
+  tests-stable:
+    name: Tests (Stable)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+
+      - name: Install toolchain
+        uses: actions-rs/toolchain@v1
+        with:
           toolchain: stable
+          profile: minimal
           override: true
 
       - uses: Swatinem/rust-cache@v1
@@ -24,25 +45,26 @@ jobs:
           cache-on-failure: true
 
       - name: cargo test
-        run: cargo test
+        run: cargo test --all
 
   lint:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
         uses: actions/checkout@v2
-      - name: Install stable toolchain
+
+      - name: Install toolchain
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
-          toolchain: stable
-          override: true
           components: rustfmt, clippy
+
       - uses: Swatinem/rust-cache@v1
         with:
           cache-on-failure: true
 
       - name: cargo fmt
         run: cargo fmt --all -- --check
+
       - name: cargo clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --all -- -D warnings
