@@ -21,9 +21,30 @@ pub enum Subcommands {
     #[structopt(name = "--to-checksum-address")]
     #[structopt(about = "convert an address to a checksummed format (EIP-55)")]
     ToCheckSumAddress { address: Address },
+    #[structopt(name = "--to-ascii")]
+    #[structopt(about = "convert hex data to text data")]
+    ToAscii { hexdata: String },
     #[structopt(name = "--to-bytes32")]
     #[structopt(about = "left-pads a hex bytes string to 32 bytes)")]
     ToBytes32 { bytes: String },
+    #[structopt(name = "--to-dec")]
+    #[structopt(about = "convert hex value into decimal number")]
+    ToDec { hexvalue: String },
+    #[structopt(name = "--to-fix")]
+    #[structopt(about = "convert integers into fixed point with specified decimals")]
+    ToFix {
+        decimals: Option<u128>,
+        value: Option<u128>,
+    },
+    #[structopt(name = "--to-uint256")]
+    #[structopt(about = "convert a number into uint256 hex string with 0x prefix")]
+    ToUint256 { value: String },
+    #[structopt(name = "--to-wei")]
+    #[structopt(about = "convert an ETH amount into wei")]
+    ToWei {
+        value: Option<u128>,
+        unit: Option<String>,
+    },
     #[structopt(name = "block")]
     #[structopt(
         about = "Prints information about <block>. If <field> is given, print only the value of that field"
@@ -39,6 +60,12 @@ pub enum Subcommands {
         #[structopt(long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
+    #[structopt(name = "block-number")]
+    #[structopt(about = "Prints latest block number")]
+    BlockNumber {
+        #[structopt(long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+    },
     #[structopt(name = "call")]
     #[structopt(about = "Perform a local call to <to> without publishing a transaction.")]
     Call {
@@ -49,6 +76,21 @@ pub enum Subcommands {
         #[structopt(long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
+    #[structopt(name = "chain")]
+    #[structopt(about = "Prints symbolic name of current blockchain by checking genesis hash")]
+    Chain {
+        #[structopt(long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+    },
+    #[structopt(name = "chain-id")]
+    #[structopt(about = "returns ethereum chain id")]
+    ChainId {
+        #[structopt(long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+    },
+    #[structopt(name = "namehash")]
+    #[structopt(about = "returns ENS namehash of provided name")]
+    Namehash { name: String },
     #[structopt(name = "send")]
     #[structopt(about = "Publish a transaction signed by <from> to call <to> with <data>")]
     SendTx {
@@ -61,6 +103,14 @@ pub enum Subcommands {
         #[structopt(flatten)]
         eth: EthereumOpts,
     },
+    #[structopt(name = "age")]
+    #[structopt(about = "Prints the timestamp of a block")]
+    Age {
+        #[structopt(global = true, help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
+        block: Option<BlockId>,
+        #[structopt(short, long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+    },
     #[structopt(name = "balance")]
     #[structopt(about = "Print the balance of <account> in wei")]
     Balance {
@@ -71,6 +121,23 @@ pub enum Subcommands {
         #[structopt(short, long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
+    #[structopt(name = "basefee")]
+    #[structopt(about = "Print the basefee of a block")]
+    BaseFee {
+        #[structopt(global = true, help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
+        block: Option<BlockId>,
+        #[structopt(short, long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+    },
+    #[structopt(name = "gas-price")]
+    #[structopt(about = "Prints current gas price of target chain")]
+    GasPrice {
+        #[structopt(short, long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+    },
+    #[structopt(name = "keccak")]
+    #[structopt(about = "Keccak-256 hashes arbitrary data")]
+    Keccak { data: String },
     #[structopt(name = "resolve-name")]
     #[structopt(about = "Returns the address the provided ENS name resolves to")]
     ResolveName {
