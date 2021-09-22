@@ -112,6 +112,8 @@ impl<'a> SolcBuilder<'a> {
         // detects the required solc version
         let sol_version = Self::version_req(&path)?;
 
+        dbg!(&sol_version);
+
         let path_str = path
             .into_os_string()
             .into_string()
@@ -120,6 +122,8 @@ impl<'a> SolcBuilder<'a> {
         // load the local / remote versions
         let local_versions = Self::find_matching_installation(&mut self.versions, &sol_version);
         let remote_versions = Self::find_matching_installation(&mut self.releases, &sol_version);
+
+        dbg!(&local_versions, &remote_versions);
 
         // if there's a better upstream version than the one we have, install it
         let res = match (local_versions, remote_versions) {
