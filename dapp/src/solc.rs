@@ -1,16 +1,17 @@
-use ethers::core::utils::{CompiledContract, Solc};
+use ethers::{core::utils::{CompiledContract, Solc}};
 use eyre::Result;
 use semver::{Version, VersionReq};
-use std::{
-    collections::HashMap,
-    fs::File,
-    io::{BufRead, BufReader},
-    path::{Path, PathBuf},
-    time::Instant,
-};
+use std::{collections::HashMap, fs::File, io::{BufRead, BufReader}, path::{Path, PathBuf}, time::Instant};
+
+#[cfg(test)]
+use std::sync::Mutex;
+#[cfg(test)]
+static LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+#[cfg(test)]
+use ethers::prelude::Lazy;
 
 /// Supports building contracts
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct SolcBuilder<'a> {
     contracts: &'a str,
     remappings: &'a [String],
@@ -141,6 +142,11 @@ impl<'a> SolcBuilder<'a> {
     }
 
     fn install_version(&mut self, version: &Version) -> Result<()> {
+        #[cfg(test)]
+        // take the lock in tests, we use this to enforce that
+        // a test does not run while a compiler version is being installed
+        let _lock = LOCK.lock();
+
         println!("Installing {}", version);
         // Blocking call to install it over RPC.
         install_blocking(&version).expect("could not install solc remotely");
