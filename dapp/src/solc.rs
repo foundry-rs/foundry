@@ -112,8 +112,6 @@ impl<'a> SolcBuilder<'a> {
         // detects the required solc version
         let sol_version = Self::version_req(&path)?;
 
-        dbg!(&sol_version);
-
         let path_str = path
             .into_os_string()
             .into_string()
