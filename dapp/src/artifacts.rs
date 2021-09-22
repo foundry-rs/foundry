@@ -59,3 +59,36 @@ impl DapptoolsArtifact {
         Ok(map)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_dapptools_artifact() {
+        let path = std::fs::canonicalize("testdata/dapp-artifact.json").unwrap();
+        let file = std::fs::File::open(path).unwrap();
+        let data = serde_json::from_reader::<_, DapptoolsArtifact>(file).unwrap();
+        let contracts = data.contracts().unwrap();
+        let mut expected = [
+            "src/test/Greeter.t.sol:Greet",
+            "lib/ds-test/src/test.sol:DSTest",
+            "src/test/utils/Hevm.sol:Hevm",
+            "src/test/Greeter.t.sol:Gm",
+            "src/test/utils/GreeterTest.sol:User",
+            "src/test/utils/GreeterTest.sol:GreeterTest",
+            "lib/openzeppelin-contracts/contracts/access/Ownable.sol:Ownable",
+            "lib/openzeppelin-contracts/contracts/utils/Context.sol:Context",
+            "src/Greeter.sol:Greeter",
+            "src/Greeter.sol:Errors",
+        ]
+        .iter()
+        .map(|x| x.to_string())
+        .collect::<Vec<_>>();
+        expected.sort_by_key(|name| name.to_lowercase());
+
+        let mut got = contracts.keys().cloned().collect::<Vec<_>>();
+        got.sort_by_key(|name| name.to_lowercase());
+        assert_eq!(expected, got);
+    }
+}
