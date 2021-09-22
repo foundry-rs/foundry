@@ -324,33 +324,34 @@ impl SimpleSeth {
     ///
     /// ```
     /// use seth::SimpleSeth as Seth;
+    /// use ethers_core::types::U256;
     ///
     /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(424242, Seth::to_dec("0x67932")?);
-    ///     assert_eq!(1234, Seth::to_dec("0x4d2")?);
+    ///     assert_eq!(U256::from_dec_str("424242")?, Seth::to_dec("0x67932")?);
+    ///     assert_eq!(U256::from_dec_str("1234")?, Seth::to_dec("0x4d2")?);
     ///
     ///     Ok(())
     /// }
-    pub fn to_dec(hex: &str) -> Result<u128> {
-        let hex_trimmed = hex.trim_start_matches("0x");
-        Ok(u128::from_str_radix(hex_trimmed, 16)?)
+    pub fn to_dec(hex: &str) -> Result<U256> {
+        Ok(U256::from_str(hex)?)
     }
 
     /// Converts integers with specified decimals into fixed point numbers
     ///
     /// ```
     /// use seth::SimpleSeth as Seth;
+    /// use ethers_core::types::U256;
     ///
     /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(Seth::to_fix(0, 10)?, "10.");
-    ///     assert_eq!(Seth::to_fix(1, 10)?, "1.0");
-    ///     assert_eq!(Seth::to_fix(2, 10)?, "0.10");
-    ///     assert_eq!(Seth::to_fix(3, 10)?, "0.010");
+    ///     assert_eq!(Seth::to_fix(0, 10.into())?, "10.");
+    ///     assert_eq!(Seth::to_fix(1, 10.into())?, "1.0");
+    ///     assert_eq!(Seth::to_fix(2, 10.into())?, "0.10");
+    ///     assert_eq!(Seth::to_fix(3, 10.into())?, "0.010");
     ///
     ///     Ok(())
     /// }
     /// ```
-    pub fn to_fix(decimals: u128, value: u128) -> Result<String> {
+    pub fn to_fix(decimals: u128, value: U256) -> Result<String> {
         let mut value: String = value.to_string();
         let decimals = decimals as usize;
 
@@ -368,11 +369,17 @@ impl SimpleSeth {
     ///
     /// ```
     /// use seth::SimpleSeth as Seth;
+    /// use ethers_core::types::U256;
     ///
-    /// assert_eq!(Seth::hex(424242), "0x67932");
-    /// assert_eq!(Seth::hex(1234), "0x4d2");
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(Seth::hex(U256::from_dec_str("424242")?), "0x67932");
+    ///     assert_eq!(Seth::hex(U256::from_dec_str("1234")?), "0x4d2");
+    ///     assert_eq!(Seth::hex(U256::from_dec_str("115792089237316195423570985008687907853269984665640564039457584007913129639935")?), "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
+    ///
+    ///     Ok(())
+    /// }
     /// ```
-    pub fn hex(u: u128) -> String {
+    pub fn hex(u: U256) -> String {
         format!("{:#x}", u)
     }
 
@@ -404,15 +411,15 @@ impl SimpleSeth {
     /// use seth::SimpleSeth as Seth;
     ///
     /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(Seth::to_wei(1, "".to_string())?, "1");
-    ///     assert_eq!(Seth::to_wei(100, "gwei".to_string())?, "100000000000");
-    ///     assert_eq!(Seth::to_wei(100, "eth".to_string())?, "100000000000000000000");
-    ///     assert_eq!(Seth::to_wei(1000, "ether".to_string())?, "1000000000000000000000");
+    ///     assert_eq!(Seth::to_wei(1.into(), "".to_string())?, "1");
+    ///     assert_eq!(Seth::to_wei(100.into(), "gwei".to_string())?, "100000000000");
+    ///     assert_eq!(Seth::to_wei(100.into(), "eth".to_string())?, "100000000000000000000");
+    ///     assert_eq!(Seth::to_wei(1000.into(), "ether".to_string())?, "1000000000000000000000");
     ///
     ///     Ok(())
     /// }
     /// ```
-    pub fn to_wei(value: u128, unit: String) -> Result<String> {
+    pub fn to_wei(value: U256, unit: String) -> Result<String> {
         let value = value.to_string();
         Ok(match &unit[..] {
             "gwei" => format!("{:0<1$}", value, 9 + value.len()),
