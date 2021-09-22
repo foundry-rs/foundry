@@ -24,7 +24,7 @@ jobs:
           cache-on-failure: true
 
       - name: cargo test
-        run: cargo test --all
+        run: cargo test --all -- --nocapture
 
   tests-stable:
     name: Tests (Stable)
@@ -45,7 +45,7 @@ jobs:
           cache-on-failure: true
 
       - name: cargo test
-        run: cargo test --all
+        run: cargo test --all -- --nocapture
 
   lint:
     runs-on: ubuntu-latest
