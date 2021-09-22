@@ -7,6 +7,7 @@ use ethers::{
     providers::{Middleware, Provider},
     signers::Signer,
     types::NameOrAddress,
+    types::U256,
 };
 use seth::{Seth, SimpleSeth};
 use std::{convert::TryFrom, str::FromStr};
@@ -20,7 +21,8 @@ async fn main() -> eyre::Result<()> {
             println!("{}", SimpleSeth::from_utf8(&text));
         }
         Subcommands::ToHex { decimal } => {
-            println!("{}", SimpleSeth::hex(unwrap_or_stdin(decimal)?));
+            let val = unwrap_or_stdin(decimal)?;
+            println!("{}", SimpleSeth::hex(U256::from_dec_str(&val)?));
         }
         Subcommands::ToCheckSumAddress { address } => {
             println!("{}", SimpleSeth::checksum_address(&address)?);
@@ -35,19 +37,21 @@ async fn main() -> eyre::Result<()> {
             println!("{}", SimpleSeth::to_dec(&hexvalue)?);
         }
         Subcommands::ToFix { decimals, value } => {
+            let val = unwrap_or_stdin(value)?;
             println!(
                 "{}",
-                SimpleSeth::to_fix(unwrap_or_stdin(decimals)?, unwrap_or_stdin(value)?)?
+                SimpleSeth::to_fix(unwrap_or_stdin(decimals)?, U256::from_dec_str(&val)?)?
             );
         }
         Subcommands::ToUint256 { value } => {
             println!("{}", SimpleSeth::to_uint256(value)?);
         }
         Subcommands::ToWei { value, unit } => {
+            let val = unwrap_or_stdin(value)?;
             println!(
                 "{}",
                 SimpleSeth::to_wei(
-                    unwrap_or_stdin(value)?,
+                    U256::from_dec_str(&val)?,
                     unit.unwrap_or_else(|| String::from("wei"))
                 )?
             );

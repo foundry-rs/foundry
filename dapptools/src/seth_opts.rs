@@ -17,7 +17,7 @@ pub enum Subcommands {
     FromUtf8 { text: String },
     #[structopt(name = "--to-hex")]
     #[structopt(about = "convert a decimal number into hex")]
-    ToHex { decimal: Option<u128> },
+    ToHex { decimal: Option<String> },
     #[structopt(name = "--to-checksum-address")]
     #[structopt(about = "convert an address to a checksummed format (EIP-55)")]
     ToCheckSumAddress { address: Address },
@@ -34,7 +34,7 @@ pub enum Subcommands {
     #[structopt(about = "convert integers into fixed point with specified decimals")]
     ToFix {
         decimals: Option<u128>,
-        value: Option<u128>,
+        value: Option<String>,
     },
     #[structopt(name = "--to-uint256")]
     #[structopt(about = "convert a number into uint256 hex string with 0x prefix")]
@@ -42,7 +42,7 @@ pub enum Subcommands {
     #[structopt(name = "--to-wei")]
     #[structopt(about = "convert an ETH amount into wei")]
     ToWei {
-        value: Option<u128>,
+        value: Option<String>,
         unit: Option<String>,
     },
     #[structopt(name = "block")]
