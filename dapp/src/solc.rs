@@ -119,11 +119,14 @@ impl<'a> SolcBuilder<'a> {
             .into_string()
             .map_err(|_| eyre::eyre!("invalid path, maybe not utf-8?"))?;
 
+        #[cfg(test)]
+        // take the lock in tests, we use this to enforce that
+        // a test does not run while a compiler version is being installed
+        let _lock = LOCK.lock();
+
         // load the local / remote versions
         let local_versions = Self::find_matching_installation(&mut self.versions, &sol_version);
         let remote_versions = Self::find_matching_installation(&mut self.releases, &sol_version);
-
-        dbg!(&local_versions, &remote_versions);
 
         // if there's a better upstream version than the one we have, install it
         let res = match (local_versions, remote_versions) {
@@ -146,10 +149,6 @@ impl<'a> SolcBuilder<'a> {
     }
 
     fn install_version(&mut self, version: &Version) -> Result<()> {
-        #[cfg(test)]
-        // take the lock in tests, we use this to enforce that
-        // a test does not run while a compiler version is being installed
-        let _lock = LOCK.lock();
 
         println!("Installing {}", version);
         // Blocking call to install it over RPC.
