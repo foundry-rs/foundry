@@ -116,22 +116,37 @@ impl<'a> SolcBuilder<'a> {
             .into_string()
             .map_err(|_| eyre::eyre!("invalid path, maybe not utf-8?"))?;
 
-        // use the installed one, install it if it does not exist
-        let res = Self::find_matching_installation(&mut self.versions, &sol_version)
-            .or_else(|| {
-                // Check upstream for a matching install
-                Self::find_matching_installation(&mut self.releases, &sol_version).map(|version| {
-                    println!("Installing {}", version);
-                    // Blocking call to install it over RPC.
-                    install_blocking(&version).expect("could not install solc remotely");
-                    self.versions.push(version.clone());
-                    println!("Done!");
-                    version
-                })
-            })
-            .map(|version| (version, path_str));
+        // load the local / remote versions
+        let local_versions = Self::find_matching_installation(&mut self.versions, &sol_version);
+        let remote_versions = Self::find_matching_installation(&mut self.releases, &sol_version);
+
+        // if there's a better upstream version than the one we have, install it
+        let res = match (local_versions, remote_versions) {
+            (Some(local), Some(remote)) => Some(if remote > local {
+                self.install_version(&remote)?;
+                remote
+            } else {
+                local
+            }),
+            (None, Some(version)) => {
+                self.install_version(&version)?;
+                Some(version)
+            }
+            // do nothing otherwise
+            _ => None,
+        }
+        .map(|version| (version, path_str));
 
         Ok(res)
+    }
+
+    fn install_version(&mut self, version: &Version) -> Result<()> {
+        println!("Installing {}", version);
+        // Blocking call to install it over RPC.
+        install_blocking(&version).expect("could not install solc remotely");
+        self.versions.push(version.clone());
+        println!("Done!");
+        Ok(())
     }
 
     /// Gets a map of compiler version -> vec[contract paths]
