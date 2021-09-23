@@ -145,7 +145,7 @@ impl<'a> SolcBuilder<'a> {
     fn install_version(&mut self, version: &Version) {
         println!("Installing {}", version);
         // Blocking call to install it over RPC.
-        install_blocking(&version).expect("could not install solc remotely");
+        install_blocking(version).expect("could not install solc remotely");
         self.versions.push(version.clone());
         println!("Done!");
     }
