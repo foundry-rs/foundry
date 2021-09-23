@@ -109,7 +109,7 @@ impl<'a> ContractRunner<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
         let gas_after = self.executor.executor.gas_left();
         // We subtract the calldata & base gas cost from our test's
         // gas consumption
-        let gas_used = crate::remove_extra_costs(gas_before - gas_after, &calldata).as_u64();
+        let gas_used = dapp_utils::remove_extra_costs(gas_before - gas_after, &calldata).as_u64();
 
         let duration = Instant::now().duration_since(start);
 

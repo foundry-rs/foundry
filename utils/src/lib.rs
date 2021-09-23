@@ -1,10 +1,29 @@
 use ethers_core::{
-    abi::{parse_abi, Function, ParamType, Token, Tokenizable},
+    abi::{self, parse_abi, Function, ParamType, Token, Tokenizable},
     types::*,
 };
 use eyre::Result;
 use rustc_hex::FromHex;
 use std::str::FromStr;
+
+const BASE_TX_COST: u64 = 21000;
+
+pub fn remove_extra_costs(gas: U256, calldata: &[u8]) -> U256 {
+    let mut calldata_cost = 0;
+    for i in calldata {
+        if *i != 0 {
+            // TODO: Check if EVM pre-eip2028 and charge 64
+            calldata_cost += 16
+        } else {
+            calldata_cost += 8;
+        }
+    }
+    gas - calldata_cost - BASE_TX_COST
+}
+
+pub fn decode_revert(error: &[u8]) -> Result<String> {
+    Ok(abi::decode(&[abi::ParamType::String], &error[4..])?[0].to_string())
+}
 
 pub fn to_table(value: serde_json::Value) -> String {
     match value {
