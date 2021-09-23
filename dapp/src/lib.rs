@@ -1,6 +1,3 @@
-mod solc;
-use solc::SolcBuilder;
-
 mod executor;
 pub use executor::{Executor, MemoryState};
 
@@ -45,7 +42,7 @@ pub mod test_helpers {
     use ethers::{prelude::Lazy, types::H160, utils::CompiledContract};
     use std::collections::HashMap;
 
-    use crate::solc::SolcBuilder;
+    use dapp_solc::SolcBuilder;
 
     use evm::backend::{MemoryBackend, MemoryVicinity};
 

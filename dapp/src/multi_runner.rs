@@ -1,6 +1,6 @@
 use crate::{
     artifacts::DapptoolsArtifact, executor, runner::TestResult, ContractRunner, Executor,
-    MemoryState, SolcBuilder,
+    MemoryState,
 };
 use regex::Regex;
 
@@ -8,6 +8,8 @@ use ethers::{
     types::Address,
     utils::{keccak256, CompiledContract},
 };
+
+use dapp_solc::SolcBuilder;
 
 use evm::{
     backend::{MemoryBackend, MemoryVicinity},

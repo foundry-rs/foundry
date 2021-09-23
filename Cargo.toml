@@ -4,6 +4,7 @@ members = [
     "seth",
     "dapp",
     "dapptools",
+    "solc",
 ]
 
 # Binary size optimizations

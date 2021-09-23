@@ -1,0 +1,20 @@
+[package]
+name = "dapp-solc"
+version = "0.1.0"
+authors = ["Georgios Konstantopoulos <me@gakonst.com>"]
+edition = "2018"
+description = """
+Incremental, parallel and multi-version Solidity compiler abstraction
+"""
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+semver = "1.0.4"
+eyre = "0.6.5"
+# ethers = { version = "0.5.2" }
+ethers = { git = "https://github.com/gakonst/ethers-rs", branch = "master" }
+svm = { package = "svm-rs", git = "https://github.com/roynalnaruto/svm-rs" }
+tracing = "0.1.28"
+glob = "0.3.0"
+tokio = "1.12.0"
