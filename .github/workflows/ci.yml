@@ -59,6 +59,7 @@ jobs:
           toolchain: nightly
           profile: minimal
           components: rustfmt, clippy
+          override: true
 
       - uses: Swatinem/rust-cache@v1
         with:
@@ -68,4 +69,4 @@ jobs:
         run: cargo +nightly fmt --all -- --check
 
       - name: cargo clippy
-        run: cargo clippy --all -- -D warnings
+        run: cargo +nightly clippy --all -- -D warnings
