@@ -4,10 +4,11 @@ use ethers::{
     types::{Address, Bytes, U256},
 };
 
-use evm::backend::{MemoryAccount, MemoryBackend};
-use evm::executor::{MemoryStackState, StackExecutor, StackState, StackSubstateMetadata};
-use evm::ExitReason;
-use evm::{Config, Handler};
+use evm::{
+    backend::{MemoryAccount, MemoryBackend},
+    executor::{MemoryStackState, StackExecutor, StackState, StackSubstateMetadata},
+    Config, ExitReason, Handler,
+};
 use std::collections::BTreeMap;
 
 use eyre::Result;
@@ -39,10 +40,7 @@ impl<'a> Executor<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
         // setup executor
         let executor = StackExecutor::new_with_precompile(state, config, Default::default());
 
-        Self {
-            executor,
-            gas_limit,
-        }
+        Self { executor, gas_limit }
     }
 }
 
@@ -61,8 +59,7 @@ impl<'a, S: StackState<'a>> Executor<'a, S> {
         let gas_before = self.executor.gas_left();
 
         let (status, retdata) =
-            self.executor
-                .transact_call(from, to, value, calldata.to_vec(), self.gas_limit, vec![]);
+            self.executor.transact_call(from, to, value, calldata.to_vec(), self.gas_limit, vec![]);
 
         let gas_after = self.executor.gas_left();
         let gas = remove_extra_costs(gas_before - gas_after, calldata.as_ref());
@@ -109,9 +106,7 @@ mod tests {
         let cfg = Config::istanbul();
         let compiled = COMPILED.get("Greeter").expect("could not find contract");
 
-        let addr = "0x1000000000000000000000000000000000000000"
-            .parse()
-            .unwrap();
+        let addr = "0x1000000000000000000000000000000000000000".parse().unwrap();
         let state = initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
 
         let vicinity = new_vicinity();
@@ -146,13 +141,9 @@ mod tests {
     fn solidity_unit_test() {
         let cfg = Config::istanbul();
 
-        let compiled = COMPILED
-            .get("GreeterTest")
-            .expect("could not find contract");
+        let compiled = COMPILED.get("GreeterTest").expect("could not find contract");
 
-        let addr = "0x1000000000000000000000000000000000000000"
-            .parse()
-            .unwrap();
+        let addr = "0x1000000000000000000000000000000000000000".parse().unwrap();
         let state = initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
 
         let vicinity = new_vicinity();
@@ -187,13 +178,9 @@ mod tests {
     fn failing_with_no_reason_if_no_setup() {
         let cfg = Config::istanbul();
 
-        let compiled = COMPILED
-            .get("GreeterTest")
-            .expect("could not find contract");
+        let compiled = COMPILED.get("GreeterTest").expect("could not find contract");
 
-        let addr = "0x1000000000000000000000000000000000000000"
-            .parse()
-            .unwrap();
+        let addr = "0x1000000000000000000000000000000000000000".parse().unwrap();
         let state = initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
 
         let vicinity = new_vicinity();
@@ -216,13 +203,9 @@ mod tests {
     fn failing_solidity_unit_test() {
         let cfg = Config::istanbul();
 
-        let compiled = COMPILED
-            .get("GreeterTest")
-            .expect("could not find contract");
+        let compiled = COMPILED.get("GreeterTest").expect("could not find contract");
 
-        let addr = "0x1000000000000000000000000000000000000000"
-            .parse()
-            .unwrap();
+        let addr = "0x1000000000000000000000000000000000000000".parse().unwrap();
         let state = initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
 
         let vicinity = new_vicinity();

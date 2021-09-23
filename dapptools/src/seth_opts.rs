@@ -4,8 +4,7 @@ use ethers::{
     types::{Address, BlockId, BlockNumber, NameOrAddress, H256, U64},
 };
 use eyre::Result;
-use std::convert::TryFrom;
-use std::str::FromStr;
+use std::{convert::TryFrom, str::FromStr};
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -32,19 +31,13 @@ pub enum Subcommands {
     ToDec { hexvalue: String },
     #[structopt(name = "--to-fix")]
     #[structopt(about = "convert integers into fixed point with specified decimals")]
-    ToFix {
-        decimals: Option<u128>,
-        value: Option<String>,
-    },
+    ToFix { decimals: Option<u128>, value: Option<String> },
     #[structopt(name = "--to-uint256")]
     #[structopt(about = "convert a number into uint256 hex string with 0x prefix")]
     ToUint256 { value: String },
     #[structopt(name = "--to-wei")]
     #[structopt(about = "convert an ETH amount into wei")]
-    ToWei {
-        value: Option<String>,
-        unit: Option<String>,
-    },
+    ToWei { value: Option<String>, unit: Option<String> },
     #[structopt(name = "block")]
     #[structopt(
         about = "Prints information about <block>. If <field> is given, print only the value of that field"
@@ -233,11 +226,7 @@ pub struct Wallet {
     #[structopt(long = "keystore", help = "Path to your keystore folder / file")]
     pub keystore_path: Option<String>,
 
-    #[structopt(
-        long = "password",
-        help = "Your keystore password",
-        requires = "keystore_path"
-    )]
+    #[structopt(long = "password", help = "Your keystore password", requires = "keystore_path")]
     pub keystore_password: Option<String>,
 
     #[structopt(long = "mnemonic_path", help = "Path to your mnemonic file")]

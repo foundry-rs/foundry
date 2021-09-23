@@ -79,15 +79,7 @@ impl<'a> MultiContractRunner<'a> {
             .collect::<Vec<_>>();
         let state = executor::initialize_contracts(init_state);
 
-        Ok(Self {
-            contracts,
-            addresses,
-            config,
-            env,
-            init_state: state.clone(),
-            state,
-            gas_limit,
-        })
+        Ok(Self { contracts, addresses, config, env, init_state: state.clone(), state, gas_limit })
     }
 
     /// instantiate an executor with the init state
@@ -122,13 +114,7 @@ impl<'a> MultiContractRunner<'a> {
                 Ok((name.clone(), result))
             })
             .filter_map(|x: Result<_>| x.ok())
-            .filter_map(|(name, res)| {
-                if res.is_empty() {
-                    None
-                } else {
-                    Some((name, res))
-                }
-            })
+            .filter_map(|(name, res)| if res.is_empty() { None } else { Some((name, res)) })
             .collect::<HashMap<_, _>>();
 
         Ok(results)
@@ -148,11 +134,7 @@ impl<'a> MultiContractRunner<'a> {
         pattern: &Regex,
     ) -> Result<HashMap<String, TestResult>> {
         let mut dapp = Executor::new(self.gas_limit, self.config, backend);
-        let mut runner = ContractRunner {
-            executor: &mut dapp,
-            contract,
-            address,
-        };
+        let mut runner = ContractRunner { executor: &mut dapp, contract, address };
 
         runner.run_tests(pattern)
     }

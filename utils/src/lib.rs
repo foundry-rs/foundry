@@ -24,14 +24,9 @@ pub fn get_func(sig: &str) -> Result<Function> {
     // TODO: Make human readable ABI better / more minimal
     let abi = parse_abi(&[sig])?;
     // get the function
-    let (_, func) = abi
-        .functions
-        .iter()
-        .next()
-        .ok_or_else(|| eyre::eyre!("function name not found"))?;
-    let func = func
-        .get(0)
-        .ok_or_else(|| eyre::eyre!("functions array empty"))?;
+    let (_, func) =
+        abi.functions.iter().next().ok_or_else(|| eyre::eyre!("function name not found"))?;
+    let func = func.get(0).ok_or_else(|| eyre::eyre!("functions array empty"))?;
     Ok(func.clone())
 }
 
@@ -49,12 +44,10 @@ pub fn encode_input(param: &ParamType, value: &str) -> Result<Token> {
                 3..=4 => u32::from_str_radix(value, radix)?.into_token(),
                 5..=8 => u64::from_str_radix(value, radix)?.into_token(),
                 9..=16 => u128::from_str_radix(value, radix)?.into_token(),
-                17..=32 => if radix == 16 {
-                    U256::from_str(value)?
-                } else {
-                    U256::from_dec_str(value)?
+                17..=32 => {
+                    if radix == 16 { U256::from_str(value)? } else { U256::from_dec_str(value)? }
+                        .into_token()
                 }
-                .into_token(),
                 _ => eyre::bail!("unsupoprted solidity type uint{}", n),
             }
         }
@@ -66,12 +59,10 @@ pub fn encode_input(param: &ParamType, value: &str) -> Result<Token> {
                 3..=4 => i32::from_str_radix(value, radix)?.into_token(),
                 5..=8 => i64::from_str_radix(value, radix)?.into_token(),
                 9..=16 => i128::from_str_radix(value, radix)?.into_token(),
-                17..=32 => if radix == 16 {
-                    I256::from_str(value)?
-                } else {
-                    I256::from_dec_str(value)?
+                17..=32 => {
+                    if radix == 16 { I256::from_str(value)? } else { I256::from_dec_str(value)? }
+                        .into_token()
                 }
-                .into_token(),
                 _ => eyre::bail!("unsupoprted solidity type uint{}", n),
             }
         }

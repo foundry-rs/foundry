@@ -43,7 +43,7 @@ where
     /// Makes a read-only call to the specified address
     ///
     /// ```no_run
-    ///
+    /// 
     /// use seth::Seth;
     /// use ethers_core::types::Address;
     /// use ethers_providers::{Provider, Http};
@@ -191,11 +191,7 @@ where
             }
         };
 
-        let block = if to_json {
-            serde_json::to_string(&block)?
-        } else {
-            to_table(block)
-        };
+        let block = if to_json { serde_json::to_string(&block)? } else { to_table(block) };
 
         Ok(block)
     }
@@ -220,9 +216,8 @@ where
     }
 
     pub async fn age<T: Into<BlockId>>(&self, block: T) -> Result<String> {
-        let timestamp_str = Seth::block_field_as_num(self, block, String::from("timestamp"))
-            .await?
-            .to_string();
+        let timestamp_str =
+            Seth::block_field_as_num(self, block, String::from("timestamp")).await?.to_string();
         let datetime = NaiveDateTime::from_timestamp(timestamp_str.parse::<i64>().unwrap(), 0);
         Ok(datetime.format("%a %b %e %H:%M:%S %Y").to_string())
     }
