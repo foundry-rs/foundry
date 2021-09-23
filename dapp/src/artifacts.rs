@@ -36,9 +36,7 @@ where
 {
     let value = String::deserialize(d)?;
 
-    Ok(hex::decode(&value)
-        .map_err(|e| serde::de::Error::custom(e.to_string()))?
-        .into())
+    Ok(hex::decode(&value).map_err(|e| serde::de::Error::custom(e.to_string()))?.into())
 }
 
 impl DapptoolsArtifact {

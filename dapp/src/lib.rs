@@ -42,20 +42,15 @@ pub fn decode_revert(error: &[u8]) -> Result<String> {
 pub mod test_helpers {
     use super::*;
 
-    use ethers::prelude::Lazy;
-    use ethers::{types::H160, utils::CompiledContract};
+    use ethers::{prelude::Lazy, types::H160, utils::CompiledContract};
     use std::collections::HashMap;
 
     use crate::solc::SolcBuilder;
 
     use evm::backend::{MemoryBackend, MemoryVicinity};
 
-    pub static COMPILED: Lazy<HashMap<String, CompiledContract>> = Lazy::new(|| {
-        SolcBuilder::new("./*.sol", &[], &[])
-            .unwrap()
-            .build_all()
-            .unwrap()
-    });
+    pub static COMPILED: Lazy<HashMap<String, CompiledContract>> =
+        Lazy::new(|| SolcBuilder::new("./*.sol", &[], &[]).unwrap().build_all().unwrap());
 
     pub fn new_backend(vicinity: &MemoryVicinity, state: MemoryState) -> MemoryBackend<'_> {
         MemoryBackend::new(vicinity, state)

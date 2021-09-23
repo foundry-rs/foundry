@@ -6,8 +6,7 @@ use ethers::{
     middleware::SignerMiddleware,
     providers::{Middleware, Provider},
     signers::Signer,
-    types::NameOrAddress,
-    types::U256,
+    types::{NameOrAddress, U256},
 };
 use seth::{Seth, SimpleSeth};
 use std::{convert::TryFrom, str::FromStr};
@@ -28,7 +27,7 @@ async fn main() -> eyre::Result<()> {
             println!("{}", SimpleSeth::checksum_address(&address)?);
         }
         Subcommands::ToAscii { hexdata } => {
-            println!("{}", SimpleSeth::to_ascii(&hexdata)?);
+            println!("{}", SimpleSeth::ascii(&hexdata)?);
         }
         Subcommands::ToBytes32 { bytes } => {
             println!("{}", SimpleSeth::bytes32(&bytes)?);
@@ -56,31 +55,15 @@ async fn main() -> eyre::Result<()> {
                 )?
             );
         }
-        Subcommands::Block {
-            rpc_url,
-            block,
-            full,
-            field,
-            to_json,
-        } => {
+        Subcommands::Block { rpc_url, block, full, field, to_json } => {
             let provider = Provider::try_from(rpc_url)?;
-            println!(
-                "{}",
-                Seth::new(provider)
-                    .block(block, full, field, to_json)
-                    .await?
-            );
+            println!("{}", Seth::new(provider).block(block, full, field, to_json).await?);
         }
         Subcommands::BlockNumber { rpc_url } => {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Seth::new(provider).block_number().await?);
         }
-        Subcommands::Call {
-            rpc_url,
-            address,
-            sig,
-            args,
-        } => {
+        Subcommands::Call { rpc_url, address, sig, args } => {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Seth::new(provider).call(address, &sig, args).await?);
         }
@@ -110,16 +93,10 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(rpc_url)?;
             println!(
                 "{}",
-                Seth::new(provider)
-                    .age(block.unwrap_or(BlockId::Number(Latest)))
-                    .await?
+                Seth::new(provider).age(block.unwrap_or(BlockId::Number(Latest))).await?
             );
         }
-        Subcommands::Balance {
-            block,
-            who,
-            rpc_url,
-        } => {
+        Subcommands::Balance { block, who, rpc_url } => {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Seth::new(provider).balance(who, block).await?);
         }
@@ -127,9 +104,7 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(rpc_url)?;
             println!(
                 "{}",
-                Seth::new(provider)
-                    .base_fee(block.unwrap_or(BlockId::Number(Latest)))
-                    .await?
+                Seth::new(provider).base_fee(block.unwrap_or(BlockId::Number(Latest))).await?
             );
         }
         Subcommands::GasPrice { rpc_url } => {
@@ -139,11 +114,7 @@ async fn main() -> eyre::Result<()> {
         Subcommands::Keccak { data } => {
             println!("{}", SimpleSeth::keccak(&data)?);
         }
-        Subcommands::ResolveName {
-            who,
-            rpc_url,
-            verify,
-        } => {
+        Subcommands::ResolveName { who, rpc_url, verify } => {
             let provider = Provider::try_from(rpc_url)?;
             let who = unwrap_or_stdin(who)?;
             let address = provider.resolve_name(&who).await?;
@@ -157,11 +128,7 @@ async fn main() -> eyre::Result<()> {
             }
             println!("{:?}", address);
         }
-        Subcommands::LookupAddress {
-            who,
-            rpc_url,
-            verify,
-        } => {
+        Subcommands::LookupAddress { who, rpc_url, verify } => {
             let provider = Provider::try_from(rpc_url)?;
             let who = unwrap_or_stdin(who)?;
             let name = provider.lookup_address(who).await?;
@@ -209,25 +176,14 @@ where
     M::Error: 'static,
 {
     let seth = Seth::new(provider);
-    let pending_tx = seth
-        .send(
-            from,
-            to,
-            if !sig.is_empty() {
-                Some((&sig, args))
-            } else {
-                None
-            },
-        )
-        .await?;
+    let pending_tx =
+        seth.send(from, to, if !sig.is_empty() { Some((&sig, args)) } else { None }).await?;
     let tx_hash = *pending_tx;
 
     if seth_async {
         println!("{}", tx_hash);
     } else {
-        let receipt = pending_tx
-            .await?
-            .ok_or_else(|| eyre::eyre!("tx {} not found", tx_hash))?;
+        let receipt = pending_tx.await?.ok_or_else(|| eyre::eyre!("tx {} not found", tx_hash))?;
         println!("Receipt: {:?}", receipt);
     }
 

@@ -15,8 +15,7 @@ use crate::executor::Executor;
 
 use eyre::Result;
 use regex::Regex;
-use std::collections::HashMap;
-use std::time::Instant;
+use std::{collections::HashMap, time::Instant};
 
 use serde::{Deserialize, Serialize};
 
@@ -62,11 +61,7 @@ impl<'a> ContractRunner<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
     /// runs all tests under a contract
     pub fn run_tests(&mut self, regex: &Regex) -> Result<HashMap<String, TestResult>> {
         let start = Instant::now();
-        let needs_setup = self
-            .contract
-            .abi
-            .functions()
-            .any(|func| func.name == "setUp");
+        let needs_setup = self.contract.abi.functions().any(|func| func.name == "setUp");
         let test_fns = self
             .contract
             .abi
@@ -156,24 +151,16 @@ mod tests {
     fn test_runner() {
         let cfg = Config::istanbul();
 
-        let compiled = COMPILED
-            .get("GreeterTest")
-            .expect("could not find contract");
+        let compiled = COMPILED.get("GreeterTest").expect("could not find contract");
 
-        let addr = "0x1000000000000000000000000000000000000000"
-            .parse()
-            .unwrap();
+        let addr = "0x1000000000000000000000000000000000000000".parse().unwrap();
         let state = initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
 
         let vicinity = new_vicinity();
         let backend = new_backend(&vicinity, state);
         let mut dapp = Executor::new(12_000_000, &cfg, &backend);
 
-        let mut runner = ContractRunner {
-            executor: &mut dapp,
-            contract: compiled,
-            address: addr,
-        };
+        let mut runner = ContractRunner { executor: &mut dapp, contract: compiled, address: addr };
 
         let res = runner.run_tests(&".*".parse().unwrap()).unwrap();
         assert!(res.iter().all(|(_, result)| result.success == true));

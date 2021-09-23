@@ -43,7 +43,7 @@ where
     /// Makes a read-only call to the specified address
     ///
     /// ```no_run
-    ///
+    /// 
     /// use seth::Seth;
     /// use ethers_core::types::Address;
     /// use ethers_providers::{Provider, Http};
@@ -191,11 +191,7 @@ where
             }
         };
 
-        let block = if to_json {
-            serde_json::to_string(&block)?
-        } else {
-            to_table(block)
-        };
+        let block = if to_json { serde_json::to_string(&block)? } else { to_table(block) };
 
         Ok(block)
     }
@@ -220,9 +216,8 @@ where
     }
 
     pub async fn age<T: Into<BlockId>>(&self, block: T) -> Result<String> {
-        let timestamp_str = Seth::block_field_as_num(self, block, String::from("timestamp"))
-            .await?
-            .to_string();
+        let timestamp_str =
+            Seth::block_field_as_num(self, block, String::from("timestamp")).await?.to_string();
         let datetime = NaiveDateTime::from_timestamp(timestamp_str.parse::<i64>().unwrap(), 0);
         Ok(datetime.format("%a %b %e %H:%M:%S %Y").to_string())
     }
@@ -304,13 +299,13 @@ impl SimpleSeth {
     /// use seth::SimpleSeth as Seth;
     ///
     /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!("Hello, World!", Seth::to_ascii("48656c6c6f2c20576f726c6421")?);
-    ///     assert_eq!("TurboDappTools", Seth::to_ascii("0x547572626f44617070546f6f6c73")?);
+    ///     assert_eq!("Hello, World!", Seth::ascii("48656c6c6f2c20576f726c6421")?);
+    ///     assert_eq!("TurboDappTools", Seth::ascii("0x547572626f44617070546f6f6c73")?);
     ///
     ///     Ok(())
     /// }
     /// ```
-    pub fn to_ascii(hex: &str) -> Result<String> {
+    pub fn ascii(hex: &str) -> Result<String> {
         let hex_trimmed = hex.trim_start_matches("0x");
         let iter = FromHexIter::new(hex_trimmed);
         let mut ascii = String::new();

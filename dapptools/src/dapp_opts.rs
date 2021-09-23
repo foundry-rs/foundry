@@ -113,11 +113,7 @@ pub struct Env {
     #[structopt(help = "the chainid opcode value", long, default_value = "1")]
     pub chain_id: u64,
 
-    #[structopt(
-        help = "the tx.gasprice value during EVM execution",
-        long,
-        default_value = "0"
-    )]
+    #[structopt(help = "the tx.gasprice value during EVM execution", long, default_value = "0")]
     pub gas_price: u64,
 
     #[structopt(
@@ -141,11 +137,7 @@ pub struct Env {
     )]
     pub block_timestamp: u64,
 
-    #[structopt(
-        help = "the block.number value during EVM execution",
-        long,
-        default_value = "0"
-    )]
+    #[structopt(help = "the block.number value during EVM execution", long, default_value = "0")]
     pub block_number: u64,
 
     #[structopt(

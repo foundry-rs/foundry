@@ -96,3 +96,10 @@ cargo test
 cargo doc --open
 cargo build [--release]
 ```
+
+### Formatting
+
+```
+cargo +nightly fmt
+cargo clippy
+```

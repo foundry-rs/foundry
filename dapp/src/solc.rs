@@ -1,7 +1,13 @@
-use ethers::{core::utils::{CompiledContract, Solc}};
+use ethers::core::utils::{CompiledContract, Solc};
 use eyre::Result;
 use semver::{Version, VersionReq};
-use std::{collections::HashMap, fs::File, io::{BufRead, BufReader}, path::{Path, PathBuf}, time::Instant};
+use std::{
+    collections::HashMap,
+    fs::File,
+    io::{BufRead, BufReader},
+    path::{Path, PathBuf},
+    time::Instant,
+};
 
 #[cfg(test)]
 use std::sync::Mutex;
@@ -35,13 +41,7 @@ impl<'a> SolcBuilder<'a> {
                 Vec::new()
             }
         };
-        Ok(Self {
-            contracts,
-            remappings,
-            lib_paths,
-            versions,
-            releases,
-        })
+        Ok(Self { contracts, remappings, lib_paths, versions, releases })
     }
 
     /// Builds all provided contract files with the specified compiler version.
@@ -64,11 +64,7 @@ impl<'a> SolcBuilder<'a> {
             .iter()
             .filter(|path| PathBuf::from(path).exists())
             .map(|path| {
-                std::fs::canonicalize(path)
-                    .unwrap()
-                    .into_os_string()
-                    .into_string()
-                    .unwrap()
+                std::fs::canonicalize(path).unwrap().into_os_string().into_string().unwrap()
             })
             .collect::<Vec<_>>()
             .join(",");
@@ -129,13 +125,13 @@ impl<'a> SolcBuilder<'a> {
         // if there's a better upstream version than the one we have, install it
         let res = match (local_versions, remote_versions) {
             (Some(local), Some(remote)) => Some(if remote > local {
-                self.install_version(&remote)?;
+                self.install_version(&remote);
                 remote
             } else {
                 local
             }),
             (None, Some(version)) => {
-                self.install_version(&version)?;
+                self.install_version(&version);
                 Some(version)
             }
             // do nothing otherwise
@@ -146,14 +142,12 @@ impl<'a> SolcBuilder<'a> {
         Ok(res)
     }
 
-    fn install_version(&mut self, version: &Version) -> Result<()> {
-
+    fn install_version(&mut self, version: &Version) {
         println!("Installing {}", version);
         // Blocking call to install it over RPC.
-        install_blocking(&version).expect("could not install solc remotely");
+        install_blocking(version).expect("could not install solc remotely");
         self.versions.push(version.clone());
         println!("Done!");
-        Ok(())
     }
 
     /// Gets a map of compiler version -> vec[contract paths]
@@ -210,11 +204,7 @@ impl<'a> SolcBuilder<'a> {
         // sort through them
         versions.sort();
         // iterate in reverse to find the last match
-        versions
-            .iter()
-            .rev()
-            .find(|version| required_version.matches(version))
-            .cloned()
+        versions.iter().rev().find(|version| required_version.matches(version)).cloned()
     }
 }
 
@@ -235,9 +225,7 @@ fn find_installed_version_path(version: &str) -> Result<Option<PathBuf>> {
 
 /// Blocking call to the svm installer for a specified version
 fn install_blocking(version: &Version) -> Result<()> {
-    tokio::runtime::Runtime::new()
-        .unwrap()
-        .block_on(svm::install(version))?;
+    tokio::runtime::Runtime::new().unwrap().block_on(svm::install(version))?;
     Ok(())
 }
 
@@ -311,9 +299,7 @@ mod tests {
 
     // mkdir -p
     fn mkdir() -> PathBuf {
-        let dir = std::env::temp_dir()
-            .join(&random::<u64>().to_string())
-            .join("contracts");
+        let dir = std::env::temp_dir().join(&random::<u64>().to_string()).join("contracts");
         if !dir.exists() {
             std::fs::create_dir_all(&dir).unwrap();
         }
@@ -329,12 +315,8 @@ mod tests {
         fn new(dir: &Path, version: &str) -> Self {
             let path = dir.join(format!("temp-{}-{}.sol", version, random::<u64>()));
             let mut file = File::create(&path).unwrap();
-            file.write(format!("pragma solidity {};\n", version).as_bytes())
-                .unwrap();
-            Self {
-                path,
-                version: version.to_string(),
-            }
+            file.write(format!("pragma solidity {};\n", version).as_bytes()).unwrap();
+            Self { path, version: version.to_string() }
         }
     }
 
@@ -343,9 +325,7 @@ mod tests {
         let dir = mkdir();
 
         let versions = ["=0.1.2", "^0.5.6", ">=0.7.1", ">0.8.0"];
-        let files = versions
-            .iter()
-            .map(|version| TempSolidityFile::new(&dir, version));
+        let files = versions.iter().map(|version| TempSolidityFile::new(&dir, version));
 
         files.for_each(|file| {
             let version_req = SolcBuilder::version_req(&file.path).unwrap();
@@ -463,11 +443,7 @@ mod tests {
     }
 
     fn canonicalized_path(path: &str) -> String {
-        std::fs::canonicalize(path)
-            .unwrap()
-            .into_os_string()
-            .into_string()
-            .unwrap()
+        std::fs::canonicalize(path).unwrap().into_os_string().into_string().unwrap()
     }
 
     #[test]

@@ -18,11 +18,7 @@ pub fn subscriber() {
 
 /// Default to including all files under current directory in the allowed paths
 pub fn default_path(path: Vec<String>) -> eyre::Result<Vec<String>> {
-    Ok(if path.is_empty() {
-        vec![".".to_owned()]
-    } else {
-        path
-    })
+    Ok(if path.is_empty() { vec![".".to_owned()] } else { path })
 }
 
 /// merge the cli-provided remappings vector with the
@@ -55,26 +51,20 @@ pub fn open_file(out_path: PathBuf) -> eyre::Result<File> {
         // otherwise try to create the entire path
 
         // in case it's a directory, we must mkdir it
-        let out_path = if out_path
-            .to_str()
-            .ok_or_else(|| eyre::eyre!("not utf-8 path"))?
-            .ends_with('/')
-        {
-            std::fs::create_dir_all(&out_path)?;
-            out_path.join(DEFAULT_OUT_FILE)
-        } else {
-            // if it's a file path, we must mkdir the parent
-            let parent = out_path
-                .parent()
-                .ok_or_else(|| eyre::eyre!("could not get parent of {:?}", out_path))?;
-            std::fs::create_dir_all(parent)?;
-            out_path
-        };
+        let out_path =
+            if out_path.to_str().ok_or_else(|| eyre::eyre!("not utf-8 path"))?.ends_with('/') {
+                std::fs::create_dir_all(&out_path)?;
+                out_path.join(DEFAULT_OUT_FILE)
+            } else {
+                // if it's a file path, we must mkdir the parent
+                let parent = out_path
+                    .parent()
+                    .ok_or_else(|| eyre::eyre!("could not get parent of {:?}", out_path))?;
+                std::fs::create_dir_all(parent)?;
+                out_path
+            };
 
         // finally we get the handler
-        OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(out_path)?
+        OpenOptions::new().write(true).create_new(true).open(out_path)?
     })
 }
