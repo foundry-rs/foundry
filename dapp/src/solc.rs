@@ -125,13 +125,13 @@ impl<'a> SolcBuilder<'a> {
         // if there's a better upstream version than the one we have, install it
         let res = match (local_versions, remote_versions) {
             (Some(local), Some(remote)) => Some(if remote > local {
-                self.install_version(&remote)?;
+                self.install_version(&remote);
                 remote
             } else {
                 local
             }),
             (None, Some(version)) => {
-                self.install_version(&version)?;
+                self.install_version(&version);
                 Some(version)
             }
             // do nothing otherwise
@@ -142,13 +142,12 @@ impl<'a> SolcBuilder<'a> {
         Ok(res)
     }
 
-    fn install_version(&mut self, version: &Version) -> Result<()> {
+    fn install_version(&mut self, version: &Version) {
         println!("Installing {}", version);
         // Blocking call to install it over RPC.
         install_blocking(&version).expect("could not install solc remotely");
         self.versions.push(version.clone());
         println!("Done!");
-        Ok(())
     }
 
     /// Gets a map of compiler version -> vec[contract paths]

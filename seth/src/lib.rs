@@ -299,13 +299,13 @@ impl SimpleSeth {
     /// use seth::SimpleSeth as Seth;
     ///
     /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!("Hello, World!", Seth::to_ascii("48656c6c6f2c20576f726c6421")?);
-    ///     assert_eq!("TurboDappTools", Seth::to_ascii("0x547572626f44617070546f6f6c73")?);
+    ///     assert_eq!("Hello, World!", Seth::ascii("48656c6c6f2c20576f726c6421")?);
+    ///     assert_eq!("TurboDappTools", Seth::ascii("0x547572626f44617070546f6f6c73")?);
     ///
     ///     Ok(())
     /// }
     /// ```
-    pub fn to_ascii(hex: &str) -> Result<String> {
+    pub fn ascii(hex: &str) -> Result<String> {
         let hex_trimmed = hex.trim_start_matches("0x");
         let iter = FromHexIter::new(hex_trimmed);
         let mut ascii = String::new();

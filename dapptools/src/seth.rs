@@ -27,7 +27,7 @@ async fn main() -> eyre::Result<()> {
             println!("{}", SimpleSeth::checksum_address(&address)?);
         }
         Subcommands::ToAscii { hexdata } => {
-            println!("{}", SimpleSeth::to_ascii(&hexdata)?);
+            println!("{}", SimpleSeth::ascii(&hexdata)?);
         }
         Subcommands::ToBytes32 { bytes } => {
             println!("{}", SimpleSeth::bytes32(&bytes)?);
