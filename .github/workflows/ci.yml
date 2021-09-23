@@ -56,6 +56,7 @@ jobs:
       - name: Install toolchain
         uses: actions-rs/toolchain@v1
         with:
+          toolchain: nightly
           profile: minimal
           components: rustfmt, clippy
 
@@ -64,7 +65,7 @@ jobs:
           cache-on-failure: true
 
       - name: cargo fmt
-        run: cargo fmt --all -- --check
+        run: cargo +nightly fmt --all -- --check
 
       - name: cargo clippy
         run: cargo clippy --all -- -D warnings
