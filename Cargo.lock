@@ -955,6 +955,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "evm-adapters"
+version = "0.1.0"
+dependencies = [
+ "dapp-solc",
+ "dapp-utils",
+ "ethers",
+ "evm",
+ "eyre",
+ "once_cell",
+]
+
+[[package]]
 name = "evm-core"
 version = "0.30.0"
 source = "git+https://github.com/gakonst/evm#5c338f1d6e412b7b0304481a23cc7517682a2f25"

@@ -1,6 +1,3 @@
-mod executor;
-pub use executor::{Executor, MemoryState};
-
 mod artifacts;
 pub use artifacts::DapptoolsArtifact;
 

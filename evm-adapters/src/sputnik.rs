@@ -1,10 +1,12 @@
+use crate::Evm;
+
 use ethers::{
     abi::{Detokenize, Function, Tokenize},
     prelude::{decode_function_data, encode_function_data},
     types::{Address, Bytes, U256},
 };
 
-use evm::{
+use sputnik::{
     backend::{MemoryAccount, MemoryBackend},
     executor::{MemoryStackState, StackExecutor, StackState, StackSubstateMetadata},
     Config, ExitReason, Handler,
@@ -12,8 +14,6 @@ use evm::{
 use std::collections::BTreeMap;
 
 use eyre::Result;
-
-use crate::remove_extra_costs;
 
 pub type MemoryState = BTreeMap<Address, MemoryAccount>;
 
@@ -44,9 +44,11 @@ impl<'a> Executor<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
     }
 }
 
-impl<'a, S: StackState<'a>> Executor<'a, S> {
+impl<'a, S: StackState<'a>> Evm for Executor<'a, S> {
+    type ReturnReason = ExitReason;
+
     /// Runs the selected function
-    pub fn call<D: Detokenize, T: Tokenize>(
+    fn call<D: Detokenize, T: Tokenize>(
         &mut self,
         from: Address,
         to: Address,
@@ -62,7 +64,7 @@ impl<'a, S: StackState<'a>> Executor<'a, S> {
             self.executor.transact_call(from, to, value, calldata.to_vec(), self.gas_limit, vec![]);
 
         let gas_after = self.executor.gas_left();
-        let gas = remove_extra_costs(gas_before - gas_after, calldata.as_ref());
+        let gas = dapp_utils::remove_extra_costs(gas_before - gas_after, calldata.as_ref());
 
         let retdata = decode_function_data(func, retdata, false)?;
 
@@ -89,17 +91,46 @@ pub fn initialize_contracts<T: IntoIterator<Item = (Address, Bytes)>>(contracts:
         .collect::<BTreeMap<_, _>>()
 }
 
+#[cfg(any(test, feature = "sputnik-helpers"))]
+pub mod helpers {
+    use super::*;
+    use dapp_solc::SolcBuilder;
+    use ethers::{prelude::Lazy, types::H160, utils::CompiledContract};
+    use sputnik::backend::{MemoryBackend, MemoryVicinity};
+    use std::collections::HashMap;
+
+    pub static COMPILED: Lazy<HashMap<String, CompiledContract>> =
+        Lazy::new(|| SolcBuilder::new("./testdata/*.sol", &[], &[]).unwrap().build_all().unwrap());
+
+    pub fn new_backend(vicinity: &MemoryVicinity, state: MemoryState) -> MemoryBackend<'_> {
+        MemoryBackend::new(vicinity, state)
+    }
+
+    pub fn new_vicinity() -> MemoryVicinity {
+        MemoryVicinity {
+            gas_price: U256::zero(),
+            origin: H160::default(),
+            block_hashes: Vec::new(),
+            block_number: Default::default(),
+            block_coinbase: Default::default(),
+            block_timestamp: Default::default(),
+            block_difficulty: Default::default(),
+            block_gas_limit: Default::default(),
+            chain_id: U256::one(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{
-        decode_revert,
-        test_helpers::{new_backend, new_vicinity, COMPILED},
+    use super::{
+        helpers::{new_backend, new_vicinity, COMPILED},
+        *,
     };
-    use dapp_utils::get_func;
+    use dapp_utils::{decode_revert, get_func};
 
     use ethers::utils::id;
-    use evm::{ExitReason, ExitRevert, ExitSucceed};
+    use sputnik::{ExitReason, ExitRevert, ExitSucceed};
 
     #[test]
     fn can_call_vm_directly() {
