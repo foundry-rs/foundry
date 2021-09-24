@@ -4,55 +4,56 @@ use ethers::{
     abi::{Detokenize, Function, Tokenize},
     prelude::{decode_function_data, encode_function_data},
     types::{Address, Bytes, U256},
-    utils::CompiledContract,
 };
 
 use evmodin::{tracing::Tracer, AnalyzedCode, CallKind, Host, Message, Revision, StatusCode};
 
-use std::collections::BTreeMap;
-
 use eyre::Result;
-
-// pub type MemoryState = BTreeMap<Address, MemoryAccount>;
 
 // TODO: Check if we can implement this as the base layer of an ethers-provider
 // Middleware stack instead of doing RPC calls.
 pub struct EvmOdin<S, T> {
     pub host: S,
     pub gas_limit: u64,
+    pub call_kind: Option<CallKind>,
     pub revision: Revision,
-    /// The contract must be set in order to be able to instantiate the EVMOdin
-    /// analyzer
-    pub contract: Option<CompiledContract>,
     pub tracer: T,
 }
 
 impl<S: Host, T: Tracer> EvmOdin<S, T> {
     /// Given a gas limit, vm revision, and initialized host state
     pub fn new(host: S, gas_limit: u64, revision: Revision, tracer: T) -> Self {
-        Self { host, gas_limit, revision, contract: None, tracer }
+        Self { host, gas_limit, revision, tracer, call_kind: None }
     }
 }
 
-impl<S: Host, Tr: Tracer> Evm<S> for EvmOdin<S, Tr> {
+/// Helper trait for exposing additional functionality over EVMOdin Hosts
+pub trait HostExt: Host {
+    /// Gets the bytecode at the specified address. `None` if the specified address
+    /// is not a contract account.
+    fn get_code(&self, address: &Address) -> Option<&bytes::Bytes>;
+    /// Sets the bytecode at the specified address to the provided value.
+    fn set_code(&mut self, address: Address, code: bytes::Bytes);
+}
+
+impl<S: HostExt, Tr: Tracer> Evm<S> for EvmOdin<S, Tr> {
     type ReturnReason = StatusCode;
 
-    fn load_contract_info(&mut self, contract: CompiledContract) {
-        self.contract = Some(contract);
+    fn reset(&mut self, state: S) {
+        self.host = state;
     }
 
-    fn reset(&mut self, state: S) {
-        unimplemented!()
-        // let state_ = self.executor.state_mut();
-        // *state_ = state;
+    fn initialize_contracts<I: IntoIterator<Item = (Address, Bytes)>>(&mut self, contracts: I) {
+        contracts.into_iter().for_each(|(address, bytecode)| {
+            self.host.set_code(address, bytecode.0.into());
+        })
     }
 
     fn init_state(&self) -> S
     where
         S: Clone,
     {
-        unimplemented!()
-        // self.executor.state().clone()
+        self.host.clone()
     }
 
     fn check_success(
@@ -87,7 +88,6 @@ impl<S: Host, Tr: Tracer> Evm<S> for EvmOdin<S, Tr> {
         args: T, // derive arbitrary for Tokenize?
         value: U256,
     ) -> Result<(D, Self::ReturnReason, u64)> {
-        //
         let calldata = encode_function_data(func, args)?;
 
         // For the `func.constant` field usage
@@ -97,8 +97,7 @@ impl<S: Host, Tr: Tracer> Evm<S> for EvmOdin<S, Tr> {
             destination: to,
             // What should this be?
             depth: 0,
-            // I think? Should this be configured at the VM constructor?
-            kind: CallKind::Call,
+            kind: self.call_kind.unwrap_or(CallKind::Call),
             input_data: calldata.0.into(),
             value,
             gas: self.gas_limit as i64,
@@ -109,13 +108,10 @@ impl<S: Host, Tr: Tracer> Evm<S> for EvmOdin<S, Tr> {
                 ),
         };
 
-        // None is state_modifier, we may want to use it in the future for cheat codes in a
-        // non-invasive way?
-        let bytecode = self
-            .contract
-            .clone()
-            .map(|c| c.runtime_bytecode)
-            .ok_or_else(|| eyre::eyre!("no bytecode set for evm contract execution"))?;
+        // get the bytecode at the host
+        let bytecode = self.host.get_code(&to).ok_or_else(|| {
+            eyre::eyre!("there should be a smart contract at the destination address")
+        })?;
         let bytecode = AnalyzedCode::analyze(bytecode.as_ref());
         let output =
             bytecode.execute(&mut self.host, &mut self.tracer, None, message, self.revision);
@@ -123,17 +119,44 @@ impl<S: Host, Tr: Tracer> Evm<S> for EvmOdin<S, Tr> {
         // let gas = dapp_utils::remove_extra_costs(gas_before - gas_after, calldata.as_ref());
 
         let retdata = decode_function_data(func, output.output_data, false)?;
+
+        // TODO: Figure out gas accounting.
         let gas = U256::from(0);
 
         Ok((retdata, output.status_code, gas.as_u64()))
     }
 }
 
+#[cfg(any(test, feature = "evmodin-helpers"))]
+mod helpers {
+    use super::*;
+    use ethers::utils::keccak256;
+    use evmodin::util::mocked_host::{Account, MockedHost};
+    impl HostExt for MockedHost {
+        fn get_code(&self, address: &Address) -> Option<&bytes::Bytes> {
+            self.accounts.get(address).map(|acc| &acc.code)
+        }
+
+        fn set_code(&mut self, address: Address, bytecode: bytes::Bytes) {
+            let hash = keccak256(&bytecode);
+            self.accounts.insert(
+                address,
+                Account {
+                    nonce: 0,
+                    balance: 0.into(),
+                    code: bytecode,
+                    code_hash: hash.into(),
+                    storage: Default::default(),
+                },
+            );
+        }
+    }
+}
+
 #[cfg(test)]
-// TODO: Check that the simple unit test passes for evmodin
 mod tests {
     use super::*;
-    use crate::test_helpers::{can_call_vm_directly, COMPILED};
+    use crate::test_helpers::{can_call_vm_directly, solidity_unit_test, COMPILED};
     use evmodin::{tracing::NoopTracer, util::mocked_host::MockedHost};
 
     #[test]
@@ -141,36 +164,26 @@ mod tests {
         let revision = Revision::Istanbul;
         let compiled = COMPILED.get("Greeter").expect("could not find contract");
 
+        let host = MockedHost::default();
         let addr: Address = "0x1000000000000000000000000000000000000000".parse().unwrap();
-        // let state = initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
 
+        let gas_limit = 12_000_000;
+        let evm = EvmOdin::new(host, gas_limit, revision, NoopTracer);
+
+        can_call_vm_directly(evm, addr, compiled);
+    }
+
+    #[test]
+    // TODO: This fails because the cross-contract host does not work.
+    #[ignore]
+    fn evmodin_can_call_solidity_unit_test() {
+        let revision = Revision::Istanbul;
+        let compiled = COMPILED.get("Greeter").expect("could not find contract");
+        let addr: Address = "0x1000000000000000000000000000000000000000".parse().unwrap();
         let host = MockedHost::default();
         let gas_limit = 12_000_000;
-        let mut evm = EvmOdin::new(host, gas_limit, revision, NoopTracer);
-        evm.load_contract_info(compiled.clone());
+        let evm = EvmOdin::new(host, gas_limit, revision, NoopTracer);
 
-        let results = can_call_vm_directly(evm, addr);
-        assert_eq!(results, vec![StatusCode::Success; 2]);
-        // assert_eq!(results[0], ExitReason::Succeed(ExitSucceed::Stopped));
-        // assert_eq!(results[1], ExitReason::Succeed(ExitSucceed::Returned));
+        solidity_unit_test(evm, addr, compiled);
     }
 }
-
-// /// given an iterator of contract address to contract bytecode, initializes
-// /// the state with the contract deployed at the specified address
-// pub fn initialize_contracts<T: IntoIterator<Item = (Address, Bytes)>>(contracts: T) ->
-// MemoryState {     contracts
-//         .into_iter()
-//         .map(|(address, bytecode)| {
-//             (
-//                 address,
-//                 MemoryAccount {
-//                     nonce: U256::one(),
-//                     balance: U256::zero(),
-//                     storage: BTreeMap::new(),
-//                     code: bytecode.to_vec(),
-//                 },
-//             )
-//         })
-//         .collect::<BTreeMap<_, _>>()
-// }
