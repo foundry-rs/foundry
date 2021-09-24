@@ -10,7 +10,6 @@ use ethers::{
     abi::{Detokenize, Function, Tokenize},
     core::types::{Address, U256},
     prelude::Bytes,
-    utils::CompiledContract,
 };
 
 use dapp_utils::get_func;
@@ -19,23 +18,18 @@ use eyre::Result;
 // TODO: Any reason this should be an async trait?
 /// Low-level abstraction layer for interfacing with various EVMs. Once instantiated, one
 /// only needs to specify the transaction parameters
-pub trait Evm<State> // where
-//     State: From<Vec<(Address, Bytes)>>,
-{
+pub trait Evm<State> {
     /// The returned reason type from an EVM (Success / Revert/ Stopped etc.)
     type ReturnReason: std::fmt::Debug;
-    // /// The type of the EVM state (can be an in-memory db, or a state db)
-    // type State;
-    // /// The EVM environment e.g. timestamp, tx.origin etc.
-    // type Environment;
 
-    fn reset(&mut self, state: State);
+    /// Sets the provided contract bytecode at the corresponding addresses
+    fn initialize_contracts<I: IntoIterator<Item = (Address, Bytes)>>(&mut self, contracts: I);
 
     fn init_state(&self) -> State
     where
         State: Clone;
 
-    fn load_contract_info(&mut self, contract: CompiledContract);
+    fn reset(&mut self, state: State);
 
     /// Executes the specified EVM call against the state
     // TODO: Should we just make this take a `TransactionRequest` or other more
@@ -89,17 +83,24 @@ pub trait Evm<State> // where
     // the EVM is instantiated with a DB that includes any needed contracts?
 }
 
+// Test helpers which are generic over EVM implementation
 #[cfg(test)]
 mod test_helpers {
     use super::*;
     use dapp_solc::SolcBuilder;
-    use ethers::prelude::Lazy;
+    use ethers::{prelude::Lazy, utils::CompiledContract};
     use std::collections::HashMap;
 
     pub static COMPILED: Lazy<HashMap<String, CompiledContract>> =
         Lazy::new(|| SolcBuilder::new("./testdata/*.sol", &[], &[]).unwrap().build_all().unwrap());
 
-    pub fn can_call_vm_directly<S, E: Evm<S>>(mut evm: E, addr: Address) -> Vec<E::ReturnReason> {
+    pub fn can_call_vm_directly<S, E: Evm<S>>(
+        mut evm: E,
+        addr: Address,
+        compiled: &CompiledContract,
+    ) {
+        evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
+
         let (_, status1, _) = evm
             .call::<(), _>(
                 Address::zero(),
@@ -120,6 +121,46 @@ mod test_helpers {
             )
             .unwrap();
         assert_eq!(retdata, "hi");
-        return vec![status1, status2]
+
+        vec![status1, status2].into_iter().for_each(|reason| {
+            let res = evm.check_success(addr, reason, false);
+            assert!(res);
+        });
+    }
+
+    pub fn solidity_unit_test<S, E: Evm<S>>(
+        mut evm: E,
+        addr: Address,
+        compiled: &CompiledContract,
+    ) {
+        evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
+
+        // call the setup function to deploy the contracts inside the test
+        let (_, status1, _) = evm
+            .call::<(), _>(
+                Address::zero(),
+                addr,
+                &get_func("function setUp() external").unwrap(),
+                (),
+                0.into(),
+            )
+            .unwrap();
+
+        let (_, status2, _) = evm
+            .call::<(), _>(
+                Address::zero(),
+                addr,
+                &get_func("function testGreeting()").unwrap(),
+                (),
+                0.into(),
+            )
+            .unwrap();
+
+        vec![status1, status2].into_iter().for_each(|reason| {
+            let res = evm.check_success(addr, reason, false);
+            assert!(res);
+        });
+
+        // TODO: Add testFail
     }
 }
