@@ -98,8 +98,8 @@ impl<S: HostExt, Tr: Tracer> Evm<S> for EvmOdin<S, Tr> {
             input_data: calldata.0,
             value,
             gas: self.gas_limit as i64,
-            is_static: func.constant
-                || matches!(
+            is_static: func.constant ||
+                matches!(
                     func.state_mutability,
                     ethers::abi::StateMutability::View | ethers::abi::StateMutability::Pure
                 ),
