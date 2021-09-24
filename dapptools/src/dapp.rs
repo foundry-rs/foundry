@@ -1,6 +1,7 @@
 use structopt::StructOpt;
 
 use dapp::MultiContractRunner;
+use dapp_solc::SolcBuilder;
 
 use ansi_term::Colour;
 
@@ -86,13 +87,7 @@ fn main() -> eyre::Result<()> {
             let lib_paths = utils::default_path(lib_paths)?;
             // TODO: Do we also want to include the file path in the contract map so
             // that we're more compatible with dapptools' artifact?
-            let contracts = MultiContractRunner::build(
-                &contracts,
-                remappings,
-                lib_paths,
-                out_path.clone(),
-                no_compile,
-            )?;
+            let contracts = SolcBuilder::new(&contracts, &remappings, &lib_paths)?.build_all()?;
 
             let out_file = utils::open_file(out_path)?;
 
