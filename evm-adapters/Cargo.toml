@@ -26,7 +26,5 @@ bytes = "1.1.0"
 evmodin = { git = "https://github.com/vorot93/evmodin", features = ["util"] }
 
 [features]
-default = ["sputnik", "evmodin"]
-
 sputnik-helpers = ["sputnik"]
 evmodin-helpers = ["evmodin"]

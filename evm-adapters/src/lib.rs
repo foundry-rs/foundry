@@ -3,7 +3,7 @@
 pub mod sputnik;
 
 /// Abstraction over [evmodin](https://github.com/rust-blockchain/evm)
-// #[cfg(feature = "evmodin")]
+#[cfg(feature = "evmodin")]
 pub mod evmodin;
 
 use ethers::{
