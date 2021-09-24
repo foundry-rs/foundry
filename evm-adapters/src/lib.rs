@@ -3,7 +3,7 @@
 pub mod sputnik;
 
 /// Abstraction over [evmodin](https://github.com/rust-blockchain/evm)
-#[cfg(feature = "evmodin")]
+// #[cfg(feature = "evmodin")]
 pub mod evmodin;
 
 use ethers::{
@@ -25,9 +25,7 @@ pub trait Evm<State> {
     /// Sets the provided contract bytecode at the corresponding addresses
     fn initialize_contracts<I: IntoIterator<Item = (Address, Bytes)>>(&mut self, contracts: I);
 
-    fn init_state(&self) -> State
-    where
-        State: Clone;
+    fn init_state(&self) -> &State;
 
     fn reset(&mut self, state: State);
 

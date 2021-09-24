@@ -51,13 +51,13 @@ impl<'a> Executor<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
 // to be generic across implementations, but we don't want to make it a user-controlled generic.
 impl<'a, S> Evm<S> for Executor<'a, S>
 where
-    S: StackState<'a>, // + From<Vec<(Address, Bytes)>> + Clone,
+    S: StackState<'a>,
 {
     type ReturnReason = ExitReason;
 
     fn reset(&mut self, state: S) {
-        let state_ = self.executor.state_mut();
-        *state_ = state;
+        let mut _state = self.executor.state_mut();
+        *_state = state;
     }
 
     /// given an iterator of contract address to contract bytecode, initializes
@@ -69,11 +69,8 @@ where
         })
     }
 
-    fn init_state(&self) -> S
-    where
-        S: Clone,
-    {
-        self.executor.state().clone()
+    fn init_state(&self) -> &S {
+        self.executor.state()
     }
 
     fn check_success(

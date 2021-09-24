@@ -45,15 +45,12 @@ impl<S: HostExt, Tr: Tracer> Evm<S> for EvmOdin<S, Tr> {
 
     fn initialize_contracts<I: IntoIterator<Item = (Address, Bytes)>>(&mut self, contracts: I) {
         contracts.into_iter().for_each(|(address, bytecode)| {
-            self.host.set_code(address, bytecode.0.into());
+            self.host.set_code(address, bytecode.0);
         })
     }
 
-    fn init_state(&self) -> S
-    where
-        S: Clone,
-    {
-        self.host.clone()
+    fn init_state(&self) -> &S {
+        &self.host
     }
 
     fn check_success(
@@ -98,7 +95,7 @@ impl<S: HostExt, Tr: Tracer> Evm<S> for EvmOdin<S, Tr> {
             // What should this be?
             depth: 0,
             kind: self.call_kind.unwrap_or(CallKind::Call),
-            input_data: calldata.0.into(),
+            input_data: calldata.0,
             value,
             gas: self.gas_limit as i64,
             is_static: func.constant ||
