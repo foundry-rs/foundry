@@ -124,6 +124,7 @@ impl<'a> SolcBuilder<'a> {
 
         // if there's a better upstream version than the one we have, install it
         let res = match (local_versions, remote_versions) {
+            (Some(local), None) => Some(local),
             (Some(local), Some(remote)) => Some(if remote > local {
                 self.install_version(&remote);
                 remote
