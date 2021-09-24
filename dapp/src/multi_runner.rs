@@ -13,6 +13,7 @@ use eyre::Result;
 use std::{collections::HashMap, marker::PhantomData, path::PathBuf};
 
 /// Builder used for instantiating the multi-contract runner
+#[derive(Clone, Debug, Default)]
 pub struct MultiContractRunnerBuilder<'a> {
     /// Glob to the contracts we want compiled
     pub contracts: &'a str,
@@ -52,17 +53,6 @@ impl<'a> MultiContractRunnerBuilder<'a> {
         evm.initialize_contracts(init_state);
 
         Ok(MultiContractRunner { contracts, addresses, evm, state: PhantomData })
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn new() -> Self {
-        Self {
-            contracts: Default::default(),
-            remappings: Default::default(),
-            libraries: Default::default(),
-            out_path: Default::default(),
-            no_compile: false,
-        }
     }
 
     pub fn contracts(mut self, contracts: &'a str) -> Self {
@@ -131,7 +121,6 @@ where
             .filter_map(|(name, res)| if res.is_empty() { None } else { Some((name, res)) })
             .collect::<HashMap<_, _>>();
 
-        dbg!(&results);
         self.contracts = contracts;
         self.addresses = addresses;
 
@@ -160,29 +149,16 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::new_vicinity;
 
-    #[test]
-    fn test_multi_runner() {
-        let contracts = "./GreetTest.sol";
-        let cfg = Config::istanbul();
-        let gas_limit = 12_500_000;
-        let env = new_vicinity();
+    fn test_multi_runner<S, E: Evm<S>>(evm: E) {
+        let mut runner =
+            MultiContractRunnerBuilder::default().contracts("./GreetTest.sol").build(evm).unwrap();
 
-        let runner = MultiContractRunner::new(
-            contracts,
-            vec![],
-            vec![],
-            PathBuf::new(),
-            &cfg,
-            gas_limit,
-            env,
-            false,
-        )
-        .unwrap();
         let results = runner.test(Regex::new(".*").unwrap()).unwrap();
+
         // 2 contracts
         assert_eq!(results.len(), 2);
+
         // 3 tests on greeter 1 on gm
         assert_eq!(results["GreeterTest"].len(), 3);
         assert_eq!(results["GmTest"].len(), 1);
@@ -195,26 +171,42 @@ mod tests {
         assert_eq!(only_gm["GmTest"].len(), 1);
     }
 
-    #[test]
-    fn test_ds_test_fail() {
-        let contracts = "./../FooTest.sol";
-        let cfg = Config::istanbul();
-        let gas_limit = 12_500_000;
-        let env = new_vicinity();
-
-        let runner = MultiContractRunner::new(
-            contracts,
-            vec![],
-            vec![],
-            PathBuf::new(),
-            &cfg,
-            gas_limit,
-            env,
-            false,
-        )
-        .unwrap();
-        let results = runner.test(Regex::new("testFail").unwrap()).unwrap();
+    fn test_ds_test_fail<S, E: Evm<S>>(evm: E) {
+        let mut runner =
+            MultiContractRunnerBuilder::default().contracts("./../FooTest.sol").build(evm).unwrap();
+        let results = runner.test(Regex::new(".*").unwrap()).unwrap();
         let test = results.get("FooTest").unwrap().get("testFailX").unwrap();
         assert!(test.success);
     }
+
+    mod sputnik {
+        use super::*;
+        use evm::Config;
+        use evm_adapters::sputnik::{
+            helpers::{new_backend, new_vicinity},
+            Executor,
+        };
+
+        #[test]
+        fn test_sputnik_multi_runner() {
+            let config = Config::istanbul();
+            let gas_limit = 12_500_000;
+            let env = new_vicinity();
+            let backend = new_backend(&env, Default::default());
+            let evm = Executor::new(gas_limit, &config, &backend);
+            test_multi_runner(evm);
+        }
+
+        #[test]
+        fn test_sputnik_ds_test_fail() {
+            let config = Config::istanbul();
+            let gas_limit = 12_500_000;
+            let env = new_vicinity();
+            let backend = new_backend(&env, Default::default());
+            let evm = Executor::new(gas_limit, &config, &backend);
+            test_ds_test_fail(evm);
+        }
+    }
+
+    // TODO: Add EvmOdin tests once we get the Mocked Host working
 }
