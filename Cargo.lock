@@ -589,8 +589,12 @@ version = "0.1.0"
 dependencies = [
  "ansi_term 0.12.1",
  "dapp",
+ "dapp-solc",
  "dapp-utils",
  "ethers",
+ "evm",
+ "evm-adapters",
+ "evmodin",
  "eyre",
  "regex",
  "rpassword",
@@ -599,6 +603,7 @@ dependencies = [
  "seth",
  "structopt",
  "tokio",
+ "tracing",
  "tracing-subscriber",
 ]
 

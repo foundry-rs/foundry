@@ -11,6 +11,7 @@ use dapp_opts::{BuildOpts, EvmType, Opts, Subcommands};
 
 mod utils;
 
+#[tracing::instrument(err)]
 fn main() -> eyre::Result<()> {
     utils::subscriber();
 
@@ -39,7 +40,7 @@ fn main() -> eyre::Result<()> {
 
             // run the tests depending on the chosen EVM
             match evm_type {
-                #[cfg(feature = "sputnik")]
+                #[cfg(feature = "sputnik-evm")]
                 EvmType::Sputnik => {
                     use evm_adapters::sputnik::Executor;
                     use sputnik::backend::MemoryBackend;
@@ -50,9 +51,19 @@ fn main() -> eyre::Result<()> {
                     let evm = Executor::new(env.gas_limit, &cfg, &backend);
                     test(builder, evm, pattern, json)?;
                 }
-                #[cfg(feature = "evmodin")]
+                #[cfg(feature = "evmodin-evm")]
                 EvmType::EvmOdin => {
-                    todo!()
+                    use evm_adapters::evmodin::EvmOdin;
+                    use evmodin::tracing::NoopTracer;
+
+                    let revision = evm_version.evmodin_cfg();
+
+                    // TODO: Replace this with a proper host. We'll want this to also be
+                    // provided generically when we add the Forking host(s).
+                    let host = env.evmodin_state();
+
+                    let evm = EvmOdin::new(host, env.gas_limit, revision, NoopTracer);
+                    test(builder, evm, pattern, json)?;
                 }
             }
         }
