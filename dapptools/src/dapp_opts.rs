@@ -1,7 +1,5 @@
 use structopt::StructOpt;
 
-use dapp::evm::{backend::MemoryVicinity, Config};
-
 use ethers::types::Address;
 use std::{path::PathBuf, str::FromStr};
 
@@ -31,6 +29,17 @@ pub enum Subcommands {
 
         #[structopt(flatten)]
         opts: BuildOpts,
+
+        #[structopt(
+            long,
+            short,
+            help = "the EVM type you want to use (e.g. sputnik, evmodin)",
+            default_value = "sputnik"
+        )]
+        evm_type: EvmType,
+
+        #[structopt(help = "skip re-compilation", long, short)]
+        no_compile: bool,
     },
     Build {
         #[structopt(flatten)]
@@ -65,11 +74,26 @@ pub struct BuildOpts {
     )]
     pub out_path: PathBuf,
 
-    #[structopt(help = "skip re-compilation", long, short)]
-    pub no_compile: bool,
-
     #[structopt(help = "choose the evm version", long, default_value = "berlin")]
     pub evm_version: EvmVersion,
+}
+
+#[derive(Clone, Debug)]
+pub enum EvmType {
+    Sputnik,
+    EvmOdin,
+}
+
+impl FromStr for EvmType {
+    type Err = eyre::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s.to_lowercase().as_str() {
+            "sputnik" => EvmType::Sputnik,
+            "evmodin" => EvmType::EvmOdin,
+            other => eyre::bail!("unknown EVM type {}", other),
+        })
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -79,8 +103,12 @@ pub enum EvmVersion {
     Berlin,
 }
 
+#[cfg(feature = "sputnik")]
+use sputnik::Config;
+
 impl EvmVersion {
-    pub fn cfg(self) -> Config {
+    #[cfg(feature = "sputnik")]
+    pub fn sputnik_cfg(self) -> Config {
         use EvmVersion::*;
         match self {
             Frontier => Config::frontier(),
@@ -151,10 +179,12 @@ pub struct Env {
     pub block_gas_limit: Option<u64>,
 }
 
+#[cfg(feature = "sputnik")]
+use sputnik::backend::MemoryVicinity;
+
 impl Env {
-    // TODO: Maybe we should allow a way to specify multiple vicinities for use
-    // across tests? Probably not, better to do with HEVM cheat codes.
-    pub fn vicinity(&self) -> MemoryVicinity {
+    #[cfg(feature = "sputnik")]
+    pub fn sputnik_state(&self) -> MemoryVicinity {
         MemoryVicinity {
             chain_id: self.chain_id.into(),
 

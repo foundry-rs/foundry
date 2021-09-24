@@ -1,12 +1,13 @@
+use regex::Regex;
 use structopt::StructOpt;
 
-use dapp::MultiContractRunner;
+use dapp::MultiContractRunnerBuilder;
 use dapp_solc::SolcBuilder;
 
 use ansi_term::Colour;
 
 mod dapp_opts;
-use dapp_opts::{BuildOpts, Opts, Subcommands};
+use dapp_opts::{BuildOpts, EvmType, Opts, Subcommands};
 
 mod utils;
 
@@ -17,70 +18,47 @@ fn main() -> eyre::Result<()> {
     match opts.sub {
         Subcommands::Test {
             opts:
-                BuildOpts {
-                    contracts,
-                    remappings,
-                    remappings_env,
-                    lib_paths,
-                    out_path,
-                    evm_version,
-                    no_compile,
-                },
+                BuildOpts { contracts, remappings, remappings_env, lib_paths, out_path, evm_version },
             env,
             json,
             pattern,
+            evm_type,
+            no_compile,
         } => {
-            let cfg = evm_version.cfg();
+            // get the remappings / paths
             let remappings = utils::merge(remappings, remappings_env);
             let lib_paths = utils::default_path(lib_paths)?;
 
-            let runner = MultiContractRunner::new(
-                &contracts,
-                remappings,
-                lib_paths,
-                out_path,
-                &cfg,
-                env.gas_limit,
-                env.vicinity(),
-                no_compile,
-            )?;
-            let results = runner.test(pattern)?;
+            // prepare the builder
+            let builder = MultiContractRunnerBuilder::default()
+                .contracts(&contracts)
+                .remappings(&remappings)
+                .libraries(&lib_paths)
+                .out_path(out_path)
+                .skip_compilation(no_compile);
 
-            if json {
-                let res = serde_json::to_string(&results)?;
-                println!("{}", res);
-            } else {
-                // Dapptools-style printing
-                for (i, (contract_name, tests)) in results.iter().enumerate() {
-                    if i > 0 {
-                        println!()
-                    }
-                    if !tests.is_empty() {
-                        println!("Running {} tests for {}", tests.len(), contract_name);
-                    }
+            // run the tests depending on the chosen EVM
+            match evm_type {
+                #[cfg(feature = "sputnik")]
+                EvmType::Sputnik => {
+                    use evm_adapters::sputnik::Executor;
+                    use sputnik::backend::MemoryBackend;
 
-                    for (name, result) in tests {
-                        let status = if result.success {
-                            Colour::Green.paint("[PASS]")
-                        } else {
-                            Colour::Red.paint("[FAIL]")
-                        };
-                        println!("{} {} (gas: {})", status, name, result.gas_used);
-                    }
+                    let cfg = evm_version.sputnik_cfg();
+                    let vicinity = env.sputnik_state();
+                    let backend = MemoryBackend::new(&vicinity, Default::default());
+                    let evm = Executor::new(env.gas_limit, &cfg, &backend);
+                    test(builder, evm, pattern, json)?;
+                }
+                #[cfg(feature = "evmodin")]
+                EvmType::EvmOdin => {
+                    todo!()
                 }
             }
         }
         Subcommands::Build {
             opts:
-                BuildOpts {
-                    contracts,
-                    remappings,
-                    remappings_env,
-                    lib_paths,
-                    out_path,
-                    evm_version: _,
-                    no_compile,
-                },
+                BuildOpts { contracts, remappings, remappings_env, lib_paths, out_path, evm_version: _ },
         } => {
             // build the contracts
             let remappings = utils::merge(remappings, remappings_env);
@@ -93,6 +71,43 @@ fn main() -> eyre::Result<()> {
 
             // dump as json
             serde_json::to_writer(out_file, &contracts)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn test<S, E: evm_adapters::Evm<S>>(
+    builder: MultiContractRunnerBuilder,
+    evm: E,
+    pattern: Regex,
+    json: bool,
+) -> eyre::Result<()> {
+    let mut runner = builder.build(evm)?;
+
+    let results = runner.test(pattern)?;
+
+    if json {
+        let res = serde_json::to_string(&results)?;
+        println!("{}", res);
+    } else {
+        // Dapptools-style printing
+        for (i, (contract_name, tests)) in results.iter().enumerate() {
+            if i > 0 {
+                println!()
+            }
+            if !tests.is_empty() {
+                println!("Running {} tests for {}", tests.len(), contract_name);
+            }
+
+            for (name, result) in tests {
+                let status = if result.success {
+                    Colour::Green.paint("[PASS]")
+                } else {
+                    Colour::Red.paint("[FAIL]")
+                };
+                println!("{} {} (gas: {})", status, name, result.gas_used);
+            }
         }
     }
 
