@@ -13,11 +13,16 @@ dapp-solc = { path = "./../solc" }
 # evm = { version = "0.30.1" }
 sputnik = { package = "evm", git = "https://github.com/gakonst/evm",  optional = true }
 
+evmodin = { git = "https://github.com/vorot93/evmodin",  optional = true }
+
 # ethers = { version = "0.5.2" }
 ethers = { git = "https://github.com/gakonst/ethers-rs", branch = "master" }
 eyre = "0.6.5"
 once_cell = "1.8.0"
+tracing = "0.1.28"
 
+[dev-dependencies]
+evmodin = { git = "https://github.com/vorot93/evmodin", features = ["util"] }
 
 [features]
 default = ["sputnik"]

@@ -9,7 +9,7 @@ use ethers::{
 use sputnik::{
     backend::{MemoryAccount, MemoryBackend},
     executor::{MemoryStackState, StackExecutor, StackState, StackSubstateMetadata},
-    Config, ExitReason, Handler,
+    Config, ExitReason, ExitRevert, ExitSucceed, Handler,
 };
 use std::collections::BTreeMap;
 
@@ -44,8 +44,56 @@ impl<'a> Executor<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
     }
 }
 
-impl<'a, S: StackState<'a>> Evm for Executor<'a, S> {
+// Note regarding usage of Generic vs Associated Types in traits:
+//
+// We use StackState as a trait and not as an associated type because we want to
+// allow the developer what the db type should be. Whereas for ReturnReason, we want it
+// to be generic across implementations, but we don't want to make it a user-controlled generic.
+impl<'a, S> Evm<S> for Executor<'a, S>
+where
+    S: StackState<'a>, // + From<Vec<(Address, Bytes)>> + Clone,
+{
     type ReturnReason = ExitReason;
+
+    fn reset(&mut self, state: S) {
+        let state_ = self.executor.state_mut();
+        *state_ = state;
+    }
+
+    fn init_state(&self) -> S
+    where
+        S: Clone,
+    {
+        self.executor.state().clone()
+    }
+
+    /// No-op for Sputnik, until we add tracing support, where we'd load
+    /// the compiled contract's abi, its source map etc. to create nicely
+    /// structured traces
+    fn load_contract_info(&mut self, contract: ethers::utils::CompiledContract) {}
+
+    fn check_success(
+        &mut self,
+        address: Address,
+        result: Self::ReturnReason,
+        should_fail: bool,
+    ) -> bool {
+        if should_fail {
+            match result {
+                // If the function call failed, we're good.
+                ExitReason::Revert(inner) => inner == ExitRevert::Reverted,
+                // If the function call was successful in an expected fail case,
+                // we make a call to the `failed()` function inherited from DS-Test
+                ExitReason::Succeed(ExitSucceed::Stopped) => self.failed(address).unwrap_or(false),
+                err => {
+                    tracing::error!(?err);
+                    false
+                }
+            }
+        } else {
+            result == ExitReason::Succeed(ExitSucceed::Stopped)
+        }
+    }
 
     /// Runs the selected function
     fn call<D: Detokenize, T: Tokenize>(
@@ -99,9 +147,6 @@ pub mod helpers {
     use sputnik::backend::{MemoryBackend, MemoryVicinity};
     use std::collections::HashMap;
 
-    pub static COMPILED: Lazy<HashMap<String, CompiledContract>> =
-        Lazy::new(|| SolcBuilder::new("./testdata/*.sol", &[], &[]).unwrap().build_all().unwrap());
-
     pub fn new_backend(vicinity: &MemoryVicinity, state: MemoryState) -> MemoryBackend<'_> {
         MemoryBackend::new(vicinity, state)
     }
@@ -124,16 +169,17 @@ pub mod helpers {
 #[cfg(test)]
 mod tests {
     use super::{
-        helpers::{new_backend, new_vicinity, COMPILED},
+        helpers::{new_backend, new_vicinity},
         *,
     };
+    use crate::test_helpers::{can_call_vm_directly, COMPILED};
     use dapp_utils::{decode_revert, get_func};
 
     use ethers::utils::id;
     use sputnik::{ExitReason, ExitRevert, ExitSucceed};
 
     #[test]
-    fn can_call_vm_directly() {
+    fn sputnik_can_call_vm_directly() {
         let cfg = Config::istanbul();
         let compiled = COMPILED.get("Greeter").expect("could not find contract");
 
@@ -142,30 +188,11 @@ mod tests {
 
         let vicinity = new_vicinity();
         let backend = new_backend(&vicinity, state);
-        let mut dapp = Executor::new(12_000_000, &cfg, &backend);
+        let dapp = Executor::new(12_000_000, &cfg, &backend);
 
-        let (_, status, _) = dapp
-            .call::<(), _>(
-                Address::zero(),
-                addr,
-                &get_func("function greet(string greeting) external").unwrap(),
-                "hi".to_owned(),
-                0.into(),
-            )
-            .unwrap();
-        assert_eq!(status, ExitReason::Succeed(ExitSucceed::Stopped));
-
-        let (retdata, status, _) = dapp
-            .call::<String, _>(
-                Address::zero(),
-                addr,
-                &get_func("function greeting() public view returns (string)").unwrap(),
-                (),
-                0.into(),
-            )
-            .unwrap();
-        assert_eq!(status, ExitReason::Succeed(ExitSucceed::Returned));
-        assert_eq!(retdata, "hi");
+        let results = can_call_vm_directly(dapp, addr);
+        assert_eq!(results[0], ExitReason::Succeed(ExitSucceed::Stopped));
+        assert_eq!(results[1], ExitReason::Succeed(ExitSucceed::Returned));
     }
 
     #[test]
@@ -234,6 +261,7 @@ mod tests {
     fn failing_solidity_unit_test() {
         let cfg = Config::istanbul();
 
+        let c = COMPILED.clone();
         let compiled = COMPILED.get("GreeterTest").expect("could not find contract");
 
         let addr = "0x1000000000000000000000000000000000000000".parse().unwrap();
