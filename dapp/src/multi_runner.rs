@@ -75,8 +75,9 @@ impl<'a> MultiContractRunnerBuilder<'a> {
         self
     }
 
-    pub fn skip_compilation(mut self, flag: bool) {
+    pub fn skip_compilation(mut self, flag: bool) -> Self {
         self.no_compile = flag;
+        self
     }
 }
 
