@@ -81,7 +81,7 @@ where
         // DAppTools' ds-test will not revert inside its `assertEq`-like functions
         // which allows to test multiple assertions in 1 test function while also
         // preserving logs.
-        let success = self.evm.check_success(self.address, reason, func.name.contains("testFail"));
+        let success = self.evm.check_success(self.address, &reason, func.name.contains("testFail"));
         tracing::trace!(?duration, %success, %gas_used);
 
         Ok(TestResult { success, gas_used })

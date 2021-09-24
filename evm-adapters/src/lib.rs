@@ -20,13 +20,20 @@ use eyre::Result;
 /// only needs to specify the transaction parameters
 pub trait Evm<State> {
     /// The returned reason type from an EVM (Success / Revert/ Stopped etc.)
-    type ReturnReason: std::fmt::Debug;
+    type ReturnReason: std::fmt::Debug + PartialEq;
+
+    /// Whether a return reason should be considered successful
+    fn is_success(reason: &Self::ReturnReason) -> bool;
+    /// Whether a return reason should be considered failing
+    fn is_fail(reason: &Self::ReturnReason) -> bool;
 
     /// Sets the provided contract bytecode at the corresponding addresses
     fn initialize_contracts<I: IntoIterator<Item = (Address, Bytes)>>(&mut self, contracts: I);
 
-    fn init_state(&self) -> &State;
+    /// Gets a reference to the current state of the EVM
+    fn state(&self) -> &State;
 
+    /// Resets the EVM's state to the provided value
     fn reset(&mut self, state: State);
 
     /// Executes the specified EVM call against the state
@@ -73,9 +80,22 @@ pub trait Evm<State> {
     fn check_success(
         &mut self,
         address: Address,
-        reason: Self::ReturnReason,
+        reason: &Self::ReturnReason,
         should_fail: bool,
-    ) -> bool;
+    ) -> bool {
+        if should_fail {
+            if Self::is_success(reason) {
+                self.failed(address).unwrap_or(false)
+            } else if Self::is_fail(reason) {
+                true
+            } else {
+                tracing::error!(?reason);
+                false
+            }
+        } else {
+            Self::is_success(reason)
+        }
+    }
 
     // TODO: Should we add a "deploy contract" function as well, or should we assume that
     // the EVM is instantiated with a DB that includes any needed contracts?
@@ -120,7 +140,7 @@ mod test_helpers {
             .unwrap();
         assert_eq!(retdata, "hi");
 
-        vec![status1, status2].into_iter().for_each(|reason| {
+        vec![status1, status2].iter().for_each(|reason| {
             let res = evm.check_success(addr, reason, false);
             assert!(res);
         });
@@ -154,7 +174,7 @@ mod test_helpers {
             )
             .unwrap();
 
-        vec![status1, status2].into_iter().for_each(|reason| {
+        vec![status1, status2].iter().for_each(|reason| {
             let res = evm.check_success(addr, reason, false);
             assert!(res);
         });

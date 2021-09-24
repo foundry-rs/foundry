@@ -39,6 +39,14 @@ pub trait HostExt: Host {
 impl<S: HostExt, Tr: Tracer> Evm<S> for EvmOdin<S, Tr> {
     type ReturnReason = StatusCode;
 
+    fn is_success(reason: &Self::ReturnReason) -> bool {
+        matches!(reason, StatusCode::Success)
+    }
+
+    fn is_fail(reason: &Self::ReturnReason) -> bool {
+        matches!(reason, StatusCode::Revert)
+    }
+
     fn reset(&mut self, state: S) {
         self.host = state;
     }
@@ -49,31 +57,8 @@ impl<S: HostExt, Tr: Tracer> Evm<S> for EvmOdin<S, Tr> {
         })
     }
 
-    fn init_state(&self) -> &S {
+    fn state(&self) -> &S {
         &self.host
-    }
-
-    fn check_success(
-        &mut self,
-        address: Address,
-        result: Self::ReturnReason,
-        should_fail: bool,
-    ) -> bool {
-        if should_fail {
-            match result {
-                // If the function call reverted, we're good.
-                StatusCode::Revert => true,
-                // If the function call was successful in an expected fail case,
-                // we make a call to the `failed()` function inherited from DS-Test
-                StatusCode::Success => self.failed(address).unwrap_or(false),
-                err => {
-                    tracing::error!(?err);
-                    false
-                }
-            }
-        } else {
-            matches!(result, StatusCode::Success)
-        }
     }
 
     /// Runs the selected function

@@ -9,7 +9,7 @@ use ethers::{
 use sputnik::{
     backend::{MemoryAccount, MemoryBackend},
     executor::{MemoryStackState, StackExecutor, StackState, StackSubstateMetadata},
-    Config, ExitReason, ExitRevert, ExitSucceed, Handler,
+    Config, ExitReason, Handler,
 };
 use std::collections::BTreeMap;
 
@@ -55,6 +55,14 @@ where
 {
     type ReturnReason = ExitReason;
 
+    fn is_success(reason: &Self::ReturnReason) -> bool {
+        matches!(reason, ExitReason::Succeed(_))
+    }
+
+    fn is_fail(reason: &Self::ReturnReason) -> bool {
+        matches!(reason, ExitReason::Revert(_))
+    }
+
     fn reset(&mut self, state: S) {
         let mut _state = self.executor.state_mut();
         *_state = state;
@@ -69,31 +77,8 @@ where
         })
     }
 
-    fn init_state(&self) -> &S {
+    fn state(&self) -> &S {
         self.executor.state()
-    }
-
-    fn check_success(
-        &mut self,
-        address: Address,
-        result: Self::ReturnReason,
-        should_fail: bool,
-    ) -> bool {
-        if should_fail {
-            match result {
-                // If the function call failed, we're good.
-                ExitReason::Revert(inner) => inner == ExitRevert::Reverted,
-                // If the function call was successful in an expected fail case,
-                // we make a call to the `failed()` function inherited from DS-Test
-                ExitReason::Succeed(ExitSucceed::Stopped) => self.failed(address).unwrap_or(false),
-                err => {
-                    tracing::error!(?err);
-                    false
-                }
-            }
-        } else {
-            matches!(result, ExitReason::Succeed(_))
-        }
     }
 
     /// Runs the selected function
