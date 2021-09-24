@@ -1,143 +1,158 @@
-use crate::{
-    artifacts::DapptoolsArtifact, executor, runner::TestResult, ContractRunner, Executor,
-    MemoryState,
-};
-use regex::Regex;
+use crate::{artifacts::DapptoolsArtifact, runner::TestResult, ContractRunner};
+use dapp_solc::SolcBuilder;
+use evm_adapters::Evm;
 
 use ethers::{
     types::Address,
     utils::{keccak256, CompiledContract},
 };
 
-use dapp_solc::SolcBuilder;
-
-use evm::{
-    backend::{MemoryBackend, MemoryVicinity},
-    Config,
-};
+use regex::Regex;
 
 use eyre::Result;
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, marker::PhantomData, path::PathBuf};
 
-pub struct MultiContractRunner<'a> {
-    pub contracts: HashMap<String, CompiledContract>,
-    pub addresses: HashMap<String, Address>,
-    pub config: &'a Config,
-    /// The blockchain environment (chain_id, gas_price, block gas limit etc.)
-    // TODO: The DAPP_XXX env vars should allow instantiating this via the cli
-    pub env: MemoryVicinity,
-    /// The initial blockchain state. All test contracts get inserted here at
-    /// initialization.
-    pub init_state: MemoryState,
-    pub state: MemoryState,
-    pub gas_limit: u64,
+/// Builder used for instantiating the multi-contract runner
+pub struct MultiContractRunnerBuilder<'a> {
+    /// Glob to the contracts we want compiled
+    pub contracts: &'a str,
+    /// Solc remappings
+    pub remappings: &'a [String],
+    /// Solc lib import paths
+    pub libraries: &'a [String],
+    /// The path for the output file
+    pub out_path: PathBuf,
+    pub no_compile: bool,
 }
 
-impl<'a> MultiContractRunner<'a> {
-    pub fn build(
-        contracts: &str,
-        remappings: Vec<String>,
-        lib_paths: Vec<String>,
-        out_path: PathBuf,
-        no_compile: bool,
-    ) -> Result<HashMap<String, CompiledContract>> {
-        // TODO:
+impl<'a> MultiContractRunnerBuilder<'a> {
+    /// Given an EVM, proceeds to return a runner which is able to execute all tests
+    /// against that evm
+    pub fn build<E, S>(&self, mut evm: E) -> Result<MultiContractRunner<E, S>>
+    where
+        E: Evm<S>,
+    {
         // 1. incremental compilation
         // 2. parallel compilation
         // 3. Hardhat / Truffle-style artifacts
-        Ok(if no_compile {
-            let out_file = std::fs::read_to_string(out_path)?;
+        let contracts = if self.no_compile {
+            let out_file = std::fs::read_to_string(&self.out_path)?;
             serde_json::from_str::<DapptoolsArtifact>(&out_file)?.contracts()?
         } else {
-            SolcBuilder::new(contracts, &remappings, &lib_paths)?.build_all()?
-        })
+            SolcBuilder::new(self.contracts, self.remappings, self.libraries)?.build_all()?
+        };
+
+        let mut addresses = HashMap::new();
+        let init_state = contracts.iter().map(|(name, compiled)| {
+            // make a fake address for the contract, maybe anti-pattern
+            let addr = Address::from_slice(&keccak256(&compiled.runtime_bytecode)[..20]);
+            addresses.insert(name.clone(), addr);
+            (addr, compiled.runtime_bytecode.clone())
+        });
+        evm.initialize_contracts(init_state);
+
+        Ok(MultiContractRunner { contracts, addresses, evm, state: PhantomData })
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        contracts: &str,
-        remappings: Vec<String>,
-        lib_paths: Vec<String>,
-        out_path: PathBuf,
-        config: &'a Config,
-        gas_limit: u64,
-        env: MemoryVicinity,
-        no_compile: bool,
-    ) -> Result<Self> {
-        // 1. compile the contracts
-        let contracts = Self::build(contracts, remappings, lib_paths, out_path, no_compile)?;
-
-        // 2. create the initial state
-        // TODO: Allow further overriding perhaps?
-        let mut addresses = HashMap::new();
-        let init_state = contracts
-            .iter()
-            .map(|(name, compiled)| {
-                // make a fake address for the contract, maybe anti-pattern
-                let addr = Address::from_slice(&keccak256(&compiled.runtime_bytecode)[..20]);
-                addresses.insert(name.clone(), addr);
-                (addr, compiled.runtime_bytecode.clone())
-            })
-            .collect::<Vec<_>>();
-        let state = executor::initialize_contracts(init_state);
-
-        Ok(Self { contracts, addresses, config, env, init_state: state.clone(), state, gas_limit })
+    pub fn new() -> Self {
+        Self {
+            contracts: Default::default(),
+            remappings: Default::default(),
+            libraries: Default::default(),
+            out_path: Default::default(),
+            no_compile: false,
+        }
     }
 
-    /// instantiate an executor with the init state
-    // TODO: Is this right? How would we cache results between calls when in
-    // forking mode?
-    fn backend(&self) -> MemoryBackend<'_> {
-        MemoryBackend::new(&self.env, self.init_state.clone())
+    pub fn contracts(mut self, contracts: &'a str) -> Self {
+        self.contracts = contracts;
+        self
     }
 
-    pub fn test(&self, pattern: Regex) -> Result<HashMap<String, HashMap<String, TestResult>>> {
+    pub fn remappings(mut self, remappings: &'a [String]) -> Self {
+        self.remappings = remappings;
+        self
+    }
+
+    pub fn libraries(mut self, libraries: &'a [String]) -> Self {
+        self.libraries = libraries;
+        self
+    }
+
+    pub fn out_path(mut self, out_path: PathBuf) -> Self {
+        self.out_path = out_path;
+        self
+    }
+
+    pub fn skip_compilation(mut self, flag: bool) {
+        self.no_compile = flag;
+    }
+}
+
+pub struct MultiContractRunner<E, S> {
+    /// Mapping of contract name to compiled bytecode
+    contracts: HashMap<String, CompiledContract>,
+    /// Mapping of contract name to the address it's been injected in the EVM state
+    addresses: HashMap<String, Address>,
+    /// The EVM instance used in the test runner
+    evm: E,
+    state: PhantomData<S>,
+}
+
+impl<E, S> MultiContractRunner<E, S>
+where
+    E: Evm<S>,
+{
+    pub fn test(&mut self, pattern: Regex) -> Result<HashMap<String, HashMap<String, TestResult>>> {
         // NB: We also have access to the contract's abi. When running the test.
         // Can this be useful for decorating the stacktrace during a revert?
         // TODO: Check if the function starts with `prove` or `invariant`
         // Filter out for contracts that have at least 1 test function
-        let tests = self
-            .contracts
+        let contracts = std::mem::take(&mut self.contracts);
+        let tests = contracts
             .iter()
             .filter(|(_, contract)| contract.abi.functions().any(|x| x.name.starts_with("test")));
 
+        // TODO: Is this pattern OK? We use the memory and then write it back to avoid any
+        // borrow checker issues. Otherwise, we'd need to clone large vectors.
+        let addresses = std::mem::take(&mut self.addresses);
         let results = tests
             .into_iter()
             .map(|(name, contract)| {
-                let address = *self
-                    .addresses
+                let address = addresses
                     .get(name)
                     .ok_or_else(|| eyre::eyre!("could not find contract address"))?;
 
-                // TODO: Can we re-use the backend in a nice way, instead of re-instantiating
-                // it each time?
-                let backend = self.backend();
-                let result = self.run_tests(name, contract, address, &backend, &pattern)?;
+                let result = self.run_tests(name, contract, *address, &pattern)?;
                 Ok((name.clone(), result))
             })
             .filter_map(|x: Result<_>| x.ok())
             .filter_map(|(name, res)| if res.is_empty() { None } else { Some((name, res)) })
             .collect::<HashMap<_, _>>();
 
+        dbg!(&results);
+        self.contracts = contracts;
+        self.addresses = addresses;
+
         Ok(results)
     }
 
+    // The _name field is unused because we only want it for tracing
     #[tracing::instrument(
         name = "contract",
         skip_all,
+        err,
         fields(name = %_name)
     )]
     fn run_tests(
-        &self,
+        &mut self,
         _name: &str,
         contract: &CompiledContract,
         address: Address,
-        backend: &MemoryBackend<'_>,
         pattern: &Regex,
     ) -> Result<HashMap<String, TestResult>> {
-        let mut dapp = Executor::new(self.gas_limit, self.config, backend);
-        let mut runner = ContractRunner { executor: &mut dapp, contract, address };
-
+        let mut runner = ContractRunner::new(&mut self.evm, contract, address);
         runner.run_tests(pattern)
     }
 }
