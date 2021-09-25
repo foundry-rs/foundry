@@ -235,7 +235,7 @@ impl Env {
         host.tx_context.block_number = self.block_number;
         host.tx_context.block_timestamp = self.block_timestamp;
         host.tx_context.block_difficulty = self.block_difficulty.into();
-        host.tx_context.block_gas_limit = self.block_gas_limit.unwrap_or(self.gas_limit).into();
+        host.tx_context.block_gas_limit = self.block_gas_limit.unwrap_or(self.gas_limit);
 
         host
     }
