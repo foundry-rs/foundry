@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 
 /// Memory backend with ability to fork another chain from an HTTP provider, storing all state
 /// values in a `BTreeMap` in memory.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 // TODO: Add option to easily 1. impersonate accounts, 2. roll back to pinned block
 pub struct ForkMemoryBackend<M> {
     /// ethers middleware for querying on-chain data

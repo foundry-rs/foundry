@@ -105,7 +105,7 @@ fn main() -> eyre::Result<()> {
     Ok(())
 }
 
-fn test<S, E: evm_adapters::Evm<S>>(
+fn test<S, E: Clone + evm_adapters::Evm<S>>(
     builder: MultiContractRunnerBuilder,
     evm: E,
     pattern: Regex,
@@ -134,7 +134,15 @@ fn test<S, E: evm_adapters::Evm<S>>(
                 } else {
                     Colour::Red.paint("[FAIL]")
                 };
-                println!("{} {} (gas: {})", status, name, result.gas_used);
+                println!(
+                    "{} {} (gas: {})",
+                    status,
+                    name,
+                    result
+                        .gas_used
+                        .map(|x| x.to_string())
+                        .unwrap_or_else(|| "[fuzztest]".to_string())
+                );
             }
         }
     }
