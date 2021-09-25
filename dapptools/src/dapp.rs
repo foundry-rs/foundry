@@ -1,3 +1,5 @@
+use ethers::prelude::Provider;
+use evm_adapters::sputnik::ForkMemoryBackend;
 use regex::Regex;
 use structopt::StructOpt;
 
@@ -8,6 +10,8 @@ use ansi_term::Colour;
 
 mod dapp_opts;
 use dapp_opts::{BuildOpts, EvmType, Opts, Subcommands};
+
+use std::convert::TryFrom;
 
 mod utils;
 
@@ -25,6 +29,8 @@ fn main() -> eyre::Result<()> {
             pattern,
             evm_type,
             no_compile,
+            fork_url,
+            fork_block_number,
         } => {
             // get the remappings / paths
             let remappings = utils::merge(remappings, remappings_env);
@@ -44,12 +50,23 @@ fn main() -> eyre::Result<()> {
                 EvmType::Sputnik => {
                     use evm_adapters::sputnik::Executor;
                     use sputnik::backend::MemoryBackend;
-
                     let cfg = evm_version.sputnik_cfg();
-                    let vicinity = env.sputnik_state();
-                    let backend = MemoryBackend::new(&vicinity, Default::default());
-                    let evm = Executor::new(env.gas_limit, &cfg, &backend);
-                    test(builder, evm, pattern, json)?;
+
+                    if let Some(url) = fork_url {
+                        let provider = Provider::try_from(url.as_str())?;
+                        // TODO: Replace Default with something that can be read from disk, e.g.
+                        // some pre-loaded state snapshot from another time?
+                        let backend =
+                            ForkMemoryBackend::new(provider, fork_block_number, Default::default());
+                        let evm = Executor::new(env.gas_limit, &cfg, &backend);
+
+                        test(builder, evm, pattern, json)?;
+                    } else {
+                        let vicinity = env.sputnik_state();
+                        let backend = MemoryBackend::new(&vicinity, Default::default());
+                        let evm = Executor::new(env.gas_limit, &cfg, &backend);
+                        test(builder, evm, pattern, json)?;
+                    }
                 }
                 #[cfg(feature = "evmodin-evm")]
                 EvmType::EvmOdin => {

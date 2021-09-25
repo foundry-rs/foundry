@@ -7,7 +7,7 @@ use ethers::{
 };
 
 use sputnik::{
-    backend::{MemoryAccount, MemoryBackend},
+    backend::{Backend, MemoryAccount},
     executor::{MemoryStackState, StackExecutor, StackState, StackSubstateMetadata},
     Config, ExitReason, Handler,
 };
@@ -25,14 +25,10 @@ pub struct Executor<'a, S> {
 }
 
 // Concrete implementation over the in-memory backend
-impl<'a> Executor<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
+impl<'a, B: Backend> Executor<'a, MemoryStackState<'a, 'a, B>> {
     /// Given a gas limit, vm version, initial chain configuration and initial state
     // TOOD: See if we can make lifetimes better here
-    pub fn new(
-        gas_limit: u64,
-        config: &'a Config,
-        backend: &'a MemoryBackend<'a>,
-    ) -> Executor<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
+    pub fn new(gas_limit: u64, config: &'a Config, backend: &'a B) -> Self {
         // setup gasometer
         let metadata = StackSubstateMetadata::new(gas_limit, config);
         // setup state

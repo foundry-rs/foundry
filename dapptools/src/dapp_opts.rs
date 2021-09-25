@@ -40,6 +40,17 @@ pub enum Subcommands {
 
         #[structopt(help = "skip re-compilation", long, short)]
         no_compile: bool,
+
+        #[structopt(
+            help = "fetch state over a remote instead of starting from empty state",
+            long,
+            short
+        )]
+        #[structopt(alias = "rpc-url")]
+        fork_url: Option<String>,
+
+        #[structopt(help = "pins the block number for the state fork", long)]
+        fork_block_number: Option<u64>,
     },
     Build {
         #[structopt(flatten)]
