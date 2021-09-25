@@ -8,6 +8,7 @@ use eyre::Result;
 
 // TODO: Check if we can implement this as the base layer of an ethers-provider
 // Middleware stack instead of doing RPC calls.
+#[derive(Clone, Debug)]
 pub struct EvmOdin<S, T> {
     pub host: S,
     pub gas_limit: u64,
