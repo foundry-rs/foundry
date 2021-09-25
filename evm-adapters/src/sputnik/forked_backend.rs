@@ -26,11 +26,8 @@ pub struct ForkMemoryBackend<M> {
 impl<M: Middleware> ForkMemoryBackend<M> {
     /// Create a new memory backend given a provider, an optional block to pin state
     /// against and a state tree
-    pub fn new(
-        provider: BlockingProvider<M>,
-        pin_block: Option<u64>,
-        state: BTreeMap<H160, MemoryAccount>,
-    ) -> Self {
+    pub fn new(provider: M, pin_block: Option<u64>, state: BTreeMap<H160, MemoryAccount>) -> Self {
+        let provider = BlockingProvider::new(provider);
         let vicinity = provider
             .vicinity(pin_block)
             .expect("could not instantiate vicinity corresponding to upstream");
@@ -191,7 +188,6 @@ mod tests {
             "https://mainnet.infura.io/v3/c60b0bb42f8a4c6481ecd229eddaca27",
         )
         .unwrap();
-        let provider = BlockingProvider::new(provider);
         let backend = ForkMemoryBackend::new(provider, Some(13292465), Default::default());
         let mut evm = Executor::new(12_000_000, &cfg, &backend);
         evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
