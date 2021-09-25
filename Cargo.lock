@@ -1021,7 +1021,7 @@ dependencies = [
 [[package]]
 name = "evm"
 version = "0.30.1"
-source = "git+https://github.com/gakonst/evm#5c338f1d6e412b7b0304481a23cc7517682a2f25"
+source = "git+https://github.com/gakonst/evm?branch=feat/clone-debug#33a3d5288e8a105c7d1e2b5385937e1d96e6f678"
 dependencies = [
  "environmental",
  "ethereum",
@@ -1055,7 +1055,7 @@ dependencies = [
 [[package]]
 name = "evm-core"
 version = "0.30.0"
-source = "git+https://github.com/gakonst/evm#5c338f1d6e412b7b0304481a23cc7517682a2f25"
+source = "git+https://github.com/gakonst/evm?branch=feat/clone-debug#33a3d5288e8a105c7d1e2b5385937e1d96e6f678"
 dependencies = [
  "funty",
  "parity-scale-codec",
@@ -1066,7 +1066,7 @@ dependencies = [
 [[package]]
 name = "evm-gasometer"
 version = "0.30.0"
-source = "git+https://github.com/gakonst/evm#5c338f1d6e412b7b0304481a23cc7517682a2f25"
+source = "git+https://github.com/gakonst/evm?branch=feat/clone-debug#33a3d5288e8a105c7d1e2b5385937e1d96e6f678"
 dependencies = [
  "environmental",
  "evm-core",
@@ -1077,7 +1077,7 @@ dependencies = [
 [[package]]
 name = "evm-runtime"
 version = "0.30.0"
-source = "git+https://github.com/gakonst/evm#5c338f1d6e412b7b0304481a23cc7517682a2f25"
+source = "git+https://github.com/gakonst/evm?branch=feat/clone-debug#33a3d5288e8a105c7d1e2b5385937e1d96e6f678"
 dependencies = [
  "environmental",
  "evm-core",
