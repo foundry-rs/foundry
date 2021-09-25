@@ -12,7 +12,7 @@ pub use blocking_provider::BlockingProvider;
 use ethers::{
     abi::{Detokenize, Function, Tokenize},
     core::types::{Address, U256},
-    prelude::Bytes,
+    prelude::{decode_function_data, encode_function_data, Bytes},
 };
 
 use dapp_utils::get_func;
@@ -49,7 +49,27 @@ pub trait Evm<State> {
         func: &Function,
         args: T, // derive arbitrary for Tokenize?
         value: U256,
-    ) -> Result<(D, Self::ReturnReason, u64)>;
+    ) -> Result<(D, Self::ReturnReason, u64)> {
+        let calldata = encode_function_data(func, args)?;
+        #[allow(deprecated)]
+        let is_static = func.constant ||
+            matches!(
+                func.state_mutability,
+                ethers::abi::StateMutability::View | ethers::abi::StateMutability::Pure
+            );
+        let (retdata, status, gas) = self.call_raw(from, to, calldata, value, is_static)?;
+        let retdata = decode_function_data(func, retdata, false)?;
+        Ok((retdata, status, gas))
+    }
+
+    fn call_raw(
+        &mut self,
+        from: Address,
+        to: Address,
+        calldata: Bytes,
+        value: U256,
+        is_static: bool,
+    ) -> Result<(Bytes, Self::ReturnReason, u64)>;
 
     /// Runs the `setUp()` function call to instantiate the contract's state
     fn setup(&mut self, address: Address) -> Result<()> {

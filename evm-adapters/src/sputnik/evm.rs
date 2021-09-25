@@ -1,8 +1,6 @@
 use crate::Evm;
 
 use ethers::{
-    abi::{Detokenize, Function, Tokenize},
-    prelude::{decode_function_data, encode_function_data},
     types::{Address, Bytes, U256},
 };
 
@@ -78,16 +76,14 @@ where
     }
 
     /// Runs the selected function
-    fn call<D: Detokenize, T: Tokenize>(
+    fn call_raw(
         &mut self,
         from: Address,
         to: Address,
-        func: &Function,
-        args: T, // derive arbitrary for Tokenize?
+        calldata: Bytes,
         value: U256,
-    ) -> Result<(D, ExitReason, u64)> {
-        let calldata = encode_function_data(func, args)?;
-
+        _is_static: bool,
+    ) -> Result<(Bytes, ExitReason, u64)> {
         let gas_before = self.executor.gas_left();
 
         let (status, retdata) =
@@ -96,9 +92,7 @@ where
         let gas_after = self.executor.gas_left();
         let gas = dapp_utils::remove_extra_costs(gas_before - gas_after, calldata.as_ref());
 
-        let retdata = decode_function_data(func, retdata, false)?;
-
-        Ok((retdata, status, gas.as_u64()))
+        Ok((retdata.into(), status, gas.as_u64()))
     }
 }
 
