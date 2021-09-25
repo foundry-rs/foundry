@@ -29,9 +29,7 @@ fn fuzz_param(param: &ParamType) -> impl Strategy<Value = Token> {
             17..=32 => any::<[u8; 32]>().prop_map(|x| U256::from(&x).into_token()).boxed(),
             _ => panic!("unsupported solidity type uint{}", n),
         },
-        ParamType::String => {
-            any::<String>().prop_map(|x| x.into_token()).boxed()
-        }
+        ParamType::String => any::<String>().prop_map(|x| x.into_token()).boxed(),
         ParamType::Bytes => any::<Vec<u8>>().prop_map(|x| Bytes::from(x).into_token()).boxed(),
         // TODO: Implement the rest of the strategies
         _ => unimplemented!(),
