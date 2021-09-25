@@ -1088,7 +1088,7 @@ dependencies = [
 [[package]]
 name = "evmodin"
 version = "0.1.0"
-source = "git+https://github.com/vorot93/evmodin#ef1bee33aeee962421e32bf23cfb0bb4903a3125"
+source = "git+https://github.com/gakonst/evmodin?branch=feat/clone-debug#15a35271f4e7fda41d88cc78216d4900ea03bace"
 dependencies = [
  "arrayvec",
  "bytes",
