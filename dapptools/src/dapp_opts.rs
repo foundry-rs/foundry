@@ -46,7 +46,7 @@ pub enum Subcommands {
             long,
             short
         )]
-        #[structopt(alias = "--rpc-url")]
+        #[structopt(alias = "rpc-url")]
         fork_url: Option<String>,
 
         #[structopt(help = "pins the block number for the state fork", long)]
