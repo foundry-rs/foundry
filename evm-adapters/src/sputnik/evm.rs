@@ -20,6 +20,23 @@ pub struct Executor<'a, S> {
     pub gas_limit: u64,
 }
 
+// Manual implementation of `Clone` for Clone-able StackStates (typically when the Backend
+// behind them is also clone-able). This is useful to have e.g. when running fuzz
+// tests which we need to take ownership of the EVM and clone it for each run in the
+// test runner's closure.
+impl<'a, S: StackState<'a> + Clone> Clone for Executor<'a, S> {
+    fn clone(&self) -> Self {
+        Self {
+            gas_limit: self.gas_limit,
+            executor: StackExecutor::new_with_precompile(
+                self.executor.state().clone(),
+                self.executor.config(),
+                Default::default(),
+            ),
+        }
+    }
+}
+
 // Concrete implementation over the in-memory backend
 impl<'a, B: Backend> Executor<'a, MemoryStackState<'a, 'a, B>> {
     /// Given a gas limit, vm version, initial chain configuration and initial state
