@@ -1,17 +1,6 @@
-use ethers::{
-    abi::{Function, FunctionExt},
-    types::Address,
-    utils::CompiledContract,
-};
+use ethers::{abi::Function, types::Address, utils::CompiledContract};
 
-use evm::{
-    backend::MemoryBackend, executor::MemoryStackState, ExitReason, ExitRevert, ExitSucceed,
-    Handler,
-};
-
-use dapp_utils::get_func;
-
-use crate::executor::Executor;
+use evm_adapters::Evm;
 
 use eyre::Result;
 use regex::Regex;
@@ -26,39 +15,27 @@ pub struct TestResult {
     pub gas_used: u64,
 }
 
-pub struct ContractRunner<'a, S> {
-    pub executor: &'a mut Executor<'a, S>,
+use std::marker::PhantomData;
+
+pub struct ContractRunner<'a, S, E> {
+    pub evm: &'a mut E,
     pub contract: &'a CompiledContract,
     pub address: Address,
+    // need to constrain the trait generic
+    state: PhantomData<S>,
 }
 
-impl<'a> ContractRunner<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
-    /// Runs the `setUp()` function call to initiate the contract's state
-    fn setup(&mut self) -> Result<()> {
-        let (_, status, _) = self.executor.call::<(), _>(
-            Address::zero(),
-            self.address,
-            &get_func("function setUp() external").unwrap(),
-            (),
-            0.into(),
-        )?;
-        debug_assert_eq!(status, ExitReason::Succeed(ExitSucceed::Stopped));
-        Ok(())
+impl<'a, S, E> ContractRunner<'a, S, E> {
+    pub fn new(evm: &'a mut E, contract: &'a CompiledContract, address: Address) -> Self {
+        Self { evm, contract, address, state: PhantomData }
     }
+}
 
-    /// Runs the `failed()` function call to inspect the test contract's state
-    fn failed(&mut self) -> Result<bool> {
-        let (failed, _, _) = self.executor.call::<bool, _>(
-            Address::zero(),
-            self.address,
-            &get_func("function failed() returns (bool)").unwrap(),
-            (),
-            0.into(),
-        )?;
-        Ok(failed)
-    }
-
-    /// runs all tests under a contract
+impl<'a, S, E: Evm<S>> ContractRunner<'a, S, E>
+where
+    E: Evm<S>,
+{
+    /// Runs all tests for a contract whose names match the provided regular expression
     pub fn run_tests(&mut self, regex: &Regex) -> Result<HashMap<String, TestResult>> {
         let start = Instant::now();
         let needs_setup = self.contract.abi.functions().any(|func| func.name == "setUp");
@@ -76,10 +53,10 @@ impl<'a> ContractRunner<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
                 // call the setup function in each test to reset the test's state.
                 // if we did this outside the map, we'd not have test isolation
                 if needs_setup {
-                    self.setup()?;
+                    self.evm.setup(self.address)?;
                 }
 
-                let result = self.run_test(func);
+                let result = self.run_test(func)?;
                 Ok((func.name.clone(), result))
             })
             .collect::<Result<HashMap<_, _>>>()?;
@@ -92,77 +69,80 @@ impl<'a> ContractRunner<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
     }
 
     #[tracing::instrument(name = "test", skip_all, fields(name = %func.name))]
-    pub fn run_test(&mut self, func: &Function) -> TestResult {
+    pub fn run_test(&mut self, func: &Function) -> Result<TestResult> {
         let start = Instant::now();
 
-        // set the selector & execute the call
-        let calldata = func.selector();
-        let gas_before = self.executor.executor.gas_left();
-        let (result, _) = self.executor.executor.transact_call(
-            Address::zero(),
-            self.address,
-            0.into(),
-            calldata.to_vec(),
-            self.executor.gas_limit,
-            vec![],
-        );
-        let gas_after = self.executor.executor.gas_left();
-        // We subtract the calldata & base gas cost from our test's
-        // gas consumption
-        let gas_used = crate::remove_extra_costs(gas_before - gas_after, &calldata).as_u64();
-
+        // The test result data is not used anywhere.
+        let (_, reason, gas_used) =
+            self.evm.call::<(), _>(Address::zero(), self.address, func, (), 0.into())?;
         let duration = Instant::now().duration_since(start);
 
         // the expected result depends on the function name
         // DAppTools' ds-test will not revert inside its `assertEq`-like functions
         // which allows to test multiple assertions in 1 test function while also
         // preserving logs.
-        let success = if func.name.contains("testFail") {
-            match result {
-                // If the function call failed, we're good.
-                ExitReason::Revert(inner) => inner == ExitRevert::Reverted,
-                // If the function call was successful in an expected fail case,
-                // we make a call to the `failed()` function inherited from DS-Test
-                ExitReason::Succeed(ExitSucceed::Stopped) => self.failed().unwrap_or(false),
-                err => {
-                    tracing::error!(?err);
-                    false
-                }
-            }
-        } else {
-            result == ExitReason::Succeed(ExitSucceed::Stopped)
-        };
+        let success = self.evm.check_success(self.address, &reason, func.name.contains("testFail"));
         tracing::trace!(?duration, %success, %gas_used);
 
-        TestResult { success, gas_used }
+        Ok(TestResult { success, gas_used })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        executor::initialize_contracts,
-        test_helpers::{new_backend, new_vicinity, COMPILED},
-    };
+    use crate::test_helpers::COMPILED;
     use evm::Config;
+    use std::marker::PhantomData;
 
-    #[test]
-    fn test_runner() {
-        let cfg = Config::istanbul();
+    mod sputnik {
+        use evm_adapters::sputnik::{
+            helpers::{new_backend, new_vicinity},
+            Executor,
+        };
 
-        let compiled = COMPILED.get("GreeterTest").expect("could not find contract");
+        use super::*;
 
-        let addr = "0x1000000000000000000000000000000000000000".parse().unwrap();
-        let state = initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
+        #[test]
+        fn test_runner() {
+            let cfg = Config::istanbul();
+            let compiled = COMPILED.get("GreeterTest").expect("could not find contract");
+            let addr = "0x1000000000000000000000000000000000000000".parse().unwrap();
+            let vicinity = new_vicinity();
+            let backend = new_backend(&vicinity, Default::default());
+            let evm = Executor::new(12_000_000, &cfg, &backend);
+            super::test_runner(evm, addr, compiled);
+        }
+    }
 
-        let vicinity = new_vicinity();
-        let backend = new_backend(&vicinity, state);
-        let mut dapp = Executor::new(12_000_000, &cfg, &backend);
+    mod evmodin {
+        use super::*;
+        use ::evmodin::{tracing::NoopTracer, util::mocked_host::MockedHost, Revision};
+        use evm_adapters::evmodin::EvmOdin;
 
-        let mut runner = ContractRunner { executor: &mut dapp, contract: compiled, address: addr };
+        #[test]
+        #[ignore]
+        fn test_runner() {
+            let revision = Revision::Istanbul;
+            let compiled = COMPILED.get("GreeterTest").expect("could not find contract");
+
+            let host = MockedHost::default();
+            let addr: Address = "0x1000000000000000000000000000000000000000".parse().unwrap();
+
+            let gas_limit = 12_000_000;
+            let evm = EvmOdin::new(host, gas_limit, revision, NoopTracer);
+            super::test_runner(evm, addr, compiled);
+        }
+    }
+
+    pub fn test_runner<S, E: Evm<S>>(mut evm: E, addr: Address, compiled: &CompiledContract) {
+        evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
+
+        let mut runner =
+            ContractRunner { evm: &mut evm, contract: compiled, address: addr, state: PhantomData };
 
         let res = runner.run_tests(&".*".parse().unwrap()).unwrap();
+        assert!(res.len() > 0);
         assert!(res.iter().all(|(_, result)| result.success == true));
     }
 }

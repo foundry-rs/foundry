@@ -1,10 +1,12 @@
+use crate::Evm;
+
 use ethers::{
     abi::{Detokenize, Function, Tokenize},
     prelude::{decode_function_data, encode_function_data},
     types::{Address, Bytes, U256},
 };
 
-use evm::{
+use sputnik::{
     backend::{MemoryAccount, MemoryBackend},
     executor::{MemoryStackState, StackExecutor, StackState, StackSubstateMetadata},
     Config, ExitReason, Handler,
@@ -12,8 +14,6 @@ use evm::{
 use std::collections::BTreeMap;
 
 use eyre::Result;
-
-use crate::remove_extra_costs;
 
 pub type MemoryState = BTreeMap<Address, MemoryAccount>;
 
@@ -44,9 +44,45 @@ impl<'a> Executor<'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>> {
     }
 }
 
-impl<'a, S: StackState<'a>> Executor<'a, S> {
+// Note regarding usage of Generic vs Associated Types in traits:
+//
+// We use StackState as a trait and not as an associated type because we want to
+// allow the developer what the db type should be. Whereas for ReturnReason, we want it
+// to be generic across implementations, but we don't want to make it a user-controlled generic.
+impl<'a, S> Evm<S> for Executor<'a, S>
+where
+    S: StackState<'a>,
+{
+    type ReturnReason = ExitReason;
+
+    fn is_success(reason: &Self::ReturnReason) -> bool {
+        matches!(reason, ExitReason::Succeed(_))
+    }
+
+    fn is_fail(reason: &Self::ReturnReason) -> bool {
+        matches!(reason, ExitReason::Revert(_))
+    }
+
+    fn reset(&mut self, state: S) {
+        let mut _state = self.executor.state_mut();
+        *_state = state;
+    }
+
+    /// given an iterator of contract address to contract bytecode, initializes
+    /// the state with the contract deployed at the specified address
+    fn initialize_contracts<T: IntoIterator<Item = (Address, Bytes)>>(&mut self, contracts: T) {
+        let state_ = self.executor.state_mut();
+        contracts.into_iter().for_each(|(address, bytecode)| {
+            state_.set_code(address, bytecode.to_vec());
+        })
+    }
+
+    fn state(&self) -> &S {
+        self.executor.state()
+    }
+
     /// Runs the selected function
-    pub fn call<D: Detokenize, T: Tokenize>(
+    fn call<D: Detokenize, T: Tokenize>(
         &mut self,
         from: Address,
         to: Address,
@@ -62,7 +98,7 @@ impl<'a, S: StackState<'a>> Executor<'a, S> {
             self.executor.transact_call(from, to, value, calldata.to_vec(), self.gas_limit, vec![]);
 
         let gas_after = self.executor.gas_left();
-        let gas = remove_extra_costs(gas_before - gas_after, calldata.as_ref());
+        let gas = dapp_utils::remove_extra_costs(gas_before - gas_after, calldata.as_ref());
 
         let retdata = decode_function_data(func, retdata, false)?;
 
@@ -70,108 +106,72 @@ impl<'a, S: StackState<'a>> Executor<'a, S> {
     }
 }
 
-/// given an iterator of contract address to contract bytecode, initializes
-/// the state with the contract deployed at the specified address
-pub fn initialize_contracts<T: IntoIterator<Item = (Address, Bytes)>>(contracts: T) -> MemoryState {
-    contracts
-        .into_iter()
-        .map(|(address, bytecode)| {
-            (
-                address,
-                MemoryAccount {
-                    nonce: U256::one(),
-                    balance: U256::zero(),
-                    storage: BTreeMap::new(),
-                    code: bytecode.to_vec(),
-                },
-            )
-        })
-        .collect::<BTreeMap<_, _>>()
+#[cfg(any(test, feature = "sputnik-helpers"))]
+pub mod helpers {
+    use super::*;
+    use ethers::types::H160;
+    use sputnik::backend::{MemoryBackend, MemoryVicinity};
+
+    pub fn new_backend(vicinity: &MemoryVicinity, state: MemoryState) -> MemoryBackend<'_> {
+        MemoryBackend::new(vicinity, state)
+    }
+
+    pub fn new_vicinity() -> MemoryVicinity {
+        MemoryVicinity {
+            gas_price: U256::zero(),
+            origin: H160::default(),
+            block_hashes: Vec::new(),
+            block_number: Default::default(),
+            block_coinbase: Default::default(),
+            block_timestamp: Default::default(),
+            block_difficulty: Default::default(),
+            block_gas_limit: Default::default(),
+            chain_id: U256::one(),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{
-        decode_revert,
-        test_helpers::{new_backend, new_vicinity, COMPILED},
+    use super::{
+        helpers::{new_backend, new_vicinity},
+        *,
     };
-    use dapp_utils::get_func;
+    use crate::test_helpers::{can_call_vm_directly, solidity_unit_test, COMPILED};
+    use dapp_utils::{decode_revert, get_func};
 
     use ethers::utils::id;
-    use evm::{ExitReason, ExitRevert, ExitSucceed};
+    use sputnik::{ExitReason, ExitRevert, ExitSucceed};
 
     #[test]
-    fn can_call_vm_directly() {
+    fn sputnik_can_call_vm_directly() {
         let cfg = Config::istanbul();
         let compiled = COMPILED.get("Greeter").expect("could not find contract");
 
         let addr = "0x1000000000000000000000000000000000000000".parse().unwrap();
-        let state = initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
 
         let vicinity = new_vicinity();
-        let backend = new_backend(&vicinity, state);
-        let mut dapp = Executor::new(12_000_000, &cfg, &backend);
+        let backend = new_backend(&vicinity, Default::default());
+        let mut evm = Executor::new(12_000_000, &cfg, &backend);
+        evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
 
-        let (_, status, _) = dapp
-            .call::<(), _>(
-                Address::zero(),
-                addr,
-                &get_func("function greet(string greeting) external").unwrap(),
-                "hi".to_owned(),
-                0.into(),
-            )
-            .unwrap();
-        assert_eq!(status, ExitReason::Succeed(ExitSucceed::Stopped));
-
-        let (retdata, status, _) = dapp
-            .call::<String, _>(
-                Address::zero(),
-                addr,
-                &get_func("function greeting() public view returns (string)").unwrap(),
-                (),
-                0.into(),
-            )
-            .unwrap();
-        assert_eq!(status, ExitReason::Succeed(ExitSucceed::Returned));
-        assert_eq!(retdata, "hi");
+        can_call_vm_directly(evm, addr, compiled);
     }
 
     #[test]
-    fn solidity_unit_test() {
+    fn sputnik_solidity_unit_test() {
         let cfg = Config::istanbul();
 
         let compiled = COMPILED.get("GreeterTest").expect("could not find contract");
 
         let addr = "0x1000000000000000000000000000000000000000".parse().unwrap();
-        let state = initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
 
         let vicinity = new_vicinity();
-        let backend = new_backend(&vicinity, state);
-        let mut dapp = Executor::new(12_000_000, &cfg, &backend);
+        let backend = new_backend(&vicinity, Default::default());
+        let mut evm = Executor::new(12_000_000, &cfg, &backend);
+        evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
 
-        // call the setup function to deploy the contracts inside the test
-        let (_, status, _) = dapp
-            .call::<(), _>(
-                Address::zero(),
-                addr,
-                &get_func("function setUp() external").unwrap(),
-                (),
-                0.into(),
-            )
-            .unwrap();
-        assert_eq!(status, ExitReason::Succeed(ExitSucceed::Stopped));
-
-        let (_, status, _) = dapp
-            .call::<(), _>(
-                Address::zero(),
-                addr,
-                &get_func("function testGreeting()").unwrap(),
-                (),
-                0.into(),
-            )
-            .unwrap();
-        assert_eq!(status, ExitReason::Succeed(ExitSucceed::Stopped));
+        solidity_unit_test(evm, addr, compiled);
     }
 
     #[test]
@@ -181,18 +181,18 @@ mod tests {
         let compiled = COMPILED.get("GreeterTest").expect("could not find contract");
 
         let addr = "0x1000000000000000000000000000000000000000".parse().unwrap();
-        let state = initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
 
         let vicinity = new_vicinity();
-        let backend = new_backend(&vicinity, state);
-        let mut dapp = Executor::new(12_000_000, &cfg, &backend);
+        let backend = new_backend(&vicinity, Default::default());
+        let mut evm = Executor::new(12_000_000, &cfg, &backend);
+        evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
 
-        let (status, res) = dapp.executor.transact_call(
+        let (status, res) = evm.executor.transact_call(
             Address::zero(),
             addr,
             0.into(),
             id("testFailGreeting()").to_vec(),
-            dapp.gas_limit,
+            evm.gas_limit,
             vec![],
         );
         assert_eq!(status, ExitReason::Revert(ExitRevert::Reverted));
@@ -206,14 +206,14 @@ mod tests {
         let compiled = COMPILED.get("GreeterTest").expect("could not find contract");
 
         let addr = "0x1000000000000000000000000000000000000000".parse().unwrap();
-        let state = initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
 
         let vicinity = new_vicinity();
-        let backend = new_backend(&vicinity, state);
-        let mut dapp = Executor::new(12_000_000, &cfg, &backend);
+        let backend = new_backend(&vicinity, Default::default());
+        let mut evm = Executor::new(12_000_000, &cfg, &backend);
+        evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
 
         // call the setup function to deploy the contracts inside the test
-        let (_, status, _) = dapp
+        let (_, status, _) = evm
             .call::<(), _>(
                 Address::zero(),
                 addr,
@@ -224,12 +224,12 @@ mod tests {
             .unwrap();
         assert_eq!(status, ExitReason::Succeed(ExitSucceed::Stopped));
 
-        let (status, res) = dapp.executor.transact_call(
+        let (status, res) = evm.executor.transact_call(
             Address::zero(),
             addr,
             0.into(),
             id("testFailGreeting()").to_vec(),
-            dapp.gas_limit,
+            evm.gas_limit,
             vec![],
         );
         assert_eq!(status, ExitReason::Revert(ExitRevert::Reverted));

@@ -9,9 +9,8 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 dapp-utils = { path = "./../utils" }
 dapp-solc = { path = "./../solc" }
+evm-adapters = { path = "./../evm-adapters", default-features = false }
 
-# evm = { version = "0.30.1" }
-evm = { git = "https://github.com/gakonst/evm" }
 # ethers = { version = "0.5.2" }
 ethers = { git = "https://github.com/gakonst/ethers-rs", branch = "master" }
 svm = { package = "svm-rs", git = "https://github.com/roynalnaruto/svm-rs" }
@@ -27,3 +26,9 @@ glob = "0.3.0"
 tokio = { version = "1.10.1" }
 tracing = "0.1.26"
 tracing-subscriber = "0.2.20"
+
+[dev-dependencies]
+evm-adapters = { path = "./../evm-adapters", features = ["sputnik", "sputnik-helpers", "evmodin", "evmodin-helpers"] }
+evmodin = { git = "https://github.com/vorot93/evmodin", features = ["util"] }
+# evm = { version = "0.30.1" }
+evm = { git = "https://github.com/gakonst/evm" }

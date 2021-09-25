@@ -9,9 +9,10 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 structopt = "0.3.23"
 dapp-utils = { path = "../utils" }
+dapp-solc = { path = "../solc" }
 dapp = { path = "../dapp" }
 seth = { path = "../seth" }
-
+evm-adapters = { path = "../evm-adapters" }
 # ethers = "0.5"
 ethers = { git = "https://github.com/gakonst/ethers-rs", branch = "master" }
 eyre = "0.6.5"
@@ -22,6 +23,29 @@ regex = { version = "1.5.4", default-features = false }
 ansi_term = "0.12.1"
 rpassword = "5.0.1"
 tracing-subscriber = "0.2.20"
+tracing = "0.1.26"
+
+## EVM Implementations
+# evm = { version = "0.30.1" }
+sputnik = { package = "evm", git = "https://github.com/gakonst/evm",  optional = true }
+evmodin = { git = "https://github.com/vorot93/evmodin", optional = true }
+
+[features]
+default = ["sputnik-evm", "evmodin-evm"]
+
+sputnik-evm = [
+    "sputnik",
+    "evm-adapters/sputnik"
+]
+
+evmodin-evm = [
+    "evmodin",
+    "evmodin/util",
+    "evm-adapters/evmodin",
+    # needed to make the `HostExt` implementation for MockedHost accessible
+    # to this package
+    "evm-adapters/evmodin-helpers"
+]
 
 [[bin]]
 name = "seth"

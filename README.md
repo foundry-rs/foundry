@@ -86,7 +86,7 @@ We use the stable Rust toolchain. Install by running: `curl --proto '=https' --t
 
 #### Minimum Supported Rust Version
 
-The current minimum supported Rust version is `rustc 1.51.0 (2fd73fabe 2021-03-23)`.
+The current minimum supported Rust version is `rustc 1.54.0 (a178d0322 2021-07-26)`.
 
 ### Building & testing
 

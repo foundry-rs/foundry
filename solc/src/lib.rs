@@ -102,6 +102,7 @@ impl<'a> SolcBuilder<'a> {
     /// Given a Solidity file, it detects the latest compiler version which can be used
     /// to build it, and returns it along with its canonicalized path. If the required
     /// compiler version is not installed, it also proceeds to install it.
+    #[tracing::instrument(err)]
     fn detect_version(&mut self, fname: &Path) -> Result<Option<(Version, String)>> {
         let path = std::fs::canonicalize(fname)?;
 
@@ -124,6 +125,7 @@ impl<'a> SolcBuilder<'a> {
 
         // if there's a better upstream version than the one we have, install it
         let res = match (local_versions, remote_versions) {
+            (Some(local), None) => Some(local),
             (Some(local), Some(remote)) => Some(if remote > local {
                 self.install_version(&remote);
                 remote
@@ -158,14 +160,22 @@ impl<'a> SolcBuilder<'a> {
         println!("Compiling files under {}", self.contracts);
 
         // get all the corresponding contract versions
-        Ok(files
+        let contracts = files
             .filter_map(|fname| fname.ok())
             .filter_map(|fname| self.detect_version(&fname).ok().flatten())
             .fold(HashMap::new(), |mut map, (version, path)| {
                 let entry = map.entry(version.to_string()).or_insert_with(Vec::new);
                 entry.push(path);
                 map
-            }))
+            });
+
+        if contracts.is_empty() {
+            eyre::bail!(
+                "no contracts were compiled. do you have the correct compiler version installed?"
+            )
+        }
+
+        Ok(contracts)
     }
 
     /// Parses the given Solidity file looking for the `pragma` definition and

@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "evm-adapters",
     "utils",
     "seth",
     "dapp",
