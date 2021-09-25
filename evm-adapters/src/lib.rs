@@ -6,6 +6,9 @@ pub mod sputnik;
 #[cfg(feature = "evmodin")]
 pub mod evmodin;
 
+mod blocking_provider;
+pub use blocking_provider::BlockingProvider;
+
 use ethers::{
     abi::{Detokenize, Function, Tokenize},
     core::types::{Address, U256},
