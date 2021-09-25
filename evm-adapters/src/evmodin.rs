@@ -1,8 +1,6 @@
 use crate::Evm;
 
-use ethers::{
-    types::{Address, Bytes, U256},
-};
+use ethers::types::{Address, Bytes, U256};
 
 use evmodin::{tracing::Tracer, AnalyzedCode, CallKind, Host, Message, Revision, StatusCode};
 

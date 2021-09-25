@@ -1,8 +1,6 @@
 use crate::Evm;
 
-use ethers::{
-    types::{Address, Bytes, U256},
-};
+use ethers::types::{Address, Bytes, U256};
 
 use sputnik::{
     backend::{Backend, MemoryAccount},
