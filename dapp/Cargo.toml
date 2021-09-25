@@ -26,6 +26,7 @@ glob = "0.3.0"
 tokio = { version = "1.10.1" }
 tracing = "0.1.26"
 tracing-subscriber = "0.2.20"
+proptest = "1.0.0"
 
 [dev-dependencies]
 evm-adapters = { path = "./../evm-adapters", features = ["sputnik", "sputnik-helpers", "evmodin", "evmodin-helpers"] }
