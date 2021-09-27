@@ -42,6 +42,7 @@ fn main() -> eyre::Result<()> {
                 .remappings(&remappings)
                 .libraries(&lib_paths)
                 .out_path(out_path)
+                .fuzzer(proptest::test_runner::TestRunner::default())
                 .skip_compilation(no_compile);
 
             // run the tests depending on the chosen EVM

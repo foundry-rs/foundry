@@ -612,6 +612,7 @@ dependencies = [
  "evm-adapters",
  "evmodin",
  "eyre",
+ "proptest",
  "regex",
  "rpassword",
  "rustc-hex",
