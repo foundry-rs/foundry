@@ -13,6 +13,7 @@ use std::{collections::HashMap, time::Instant};
 
 use proptest::test_runner::{TestError, TestRunner};
 use serde::{Deserialize, Serialize};
+use std::{cell::RefCell, rc::Rc};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CounterExample {
@@ -35,7 +36,13 @@ pub struct TestResult {
 use std::marker::PhantomData;
 
 pub struct ContractRunner<'a, S, E> {
-    pub evm: &'a mut E,
+    /// Mutable reference to the EVM type.
+    /// This is a temporary hack to work around the mutability restrictions of
+    /// [`proptest::TestRunnter::run`] which takes a `Fn` preventing interior mutability. [See also](https://github.com/gakonst/dapptools-rs/pull/44).
+    /// Wrapping it like that allows the `test` function to gain mutable access regardless and
+    /// since we don't use any parallelized fuzzing yet the `test` function has exclusive access of
+    /// the mutable reference over time of its existence.
+    pub evm: Rc<RefCell<&'a mut E>>,
     pub contract: &'a CompiledContract,
     pub address: Address,
     // need to constrain the trait generic
@@ -44,14 +51,11 @@ pub struct ContractRunner<'a, S, E> {
 
 impl<'a, S, E> ContractRunner<'a, S, E> {
     pub fn new(evm: &'a mut E, contract: &'a CompiledContract, address: Address) -> Self {
-        Self { evm, contract, address, state: PhantomData }
+        Self { evm: Rc::new(RefCell::new(evm)), contract, address, state: PhantomData }
     }
 }
 
-impl<'a, S, E: Evm<S>> ContractRunner<'a, S, E>
-where
-    E: Evm<S> + Clone,
-{
+impl<'a, S, E: Evm<S>> ContractRunner<'a, S, E> {
     /// Runs all tests for a contract whose names match the provided regular expression
     pub fn run_tests(
         &mut self,
@@ -111,15 +115,19 @@ where
         // which allows to test multiple assertions in 1 test function while also
         // preserving logs.
         let should_fail = func.name.contains("testFail");
-
         // call the setup function in each test to reset the test's state.
         if setup {
-            self.evm.setup(self.address)?;
+            self.evm.borrow_mut().setup(self.address)?;
         }
 
-        let (_, reason, gas_used) =
-            self.evm.call::<(), _>(Address::zero(), self.address, func, (), 0.into())?;
-        let success = self.evm.check_success(self.address, &reason, should_fail);
+        let (_, reason, gas_used) = self.evm.borrow_mut().call::<(), _>(
+            Address::zero(),
+            self.address,
+            func,
+            (),
+            0.into(),
+        )?;
+        let success = self.evm.borrow_mut().check_success(self.address, &reason, should_fail);
         let duration = Instant::now().duration_since(start);
         tracing::trace!(?duration, %success, %gas_used);
 
@@ -135,7 +143,7 @@ where
     ) -> Result<TestResult> {
         // call the setup function in each test to reset the test's state.
         if setup {
-            self.evm.setup(self.address)?;
+            self.evm.borrow_mut().setup(self.address)?;
         }
 
         let start = Instant::now();
@@ -146,7 +154,7 @@ where
 
         // Run the strategy
         let result = runner.run(&strat, |calldata| {
-            let mut evm = self.evm.clone();
+            let mut evm = self.evm.borrow_mut();
 
             let (_, reason, _) = evm
                 .call_raw(Address::zero(), self.address, calldata, 0.into(), false)
@@ -219,7 +227,7 @@ mod tests {
             evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
 
             let mut runner = ContractRunner {
-                evm: &mut evm,
+                evm: Rc::new(RefCell::new(&mut evm)),
                 contract: compiled,
                 address: addr,
                 state: PhantomData,
@@ -275,15 +283,15 @@ mod tests {
         }
     }
 
-    pub fn test_runner<S, E: Clone + Evm<S>>(
-        mut evm: E,
-        addr: Address,
-        compiled: &CompiledContract,
-    ) {
+    pub fn test_runner<S, E: Evm<S>>(mut evm: E, addr: Address, compiled: &CompiledContract) {
         evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
 
-        let mut runner =
-            ContractRunner { evm: &mut evm, contract: compiled, address: addr, state: PhantomData };
+        let mut runner = ContractRunner {
+            evm: Rc::new(RefCell::new(&mut evm)),
+            contract: compiled,
+            address: addr,
+            state: PhantomData,
+        };
 
         let res = runner.run_tests(&".*".parse().unwrap(), None).unwrap();
         assert!(res.len() > 0);

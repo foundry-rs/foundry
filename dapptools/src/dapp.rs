@@ -106,7 +106,7 @@ fn main() -> eyre::Result<()> {
     Ok(())
 }
 
-fn test<S, E: Clone + evm_adapters::Evm<S>>(
+fn test<S, E: evm_adapters::Evm<S>>(
     builder: MultiContractRunnerBuilder,
     evm: E,
     pattern: Regex,

@@ -1024,7 +1024,7 @@ dependencies = [
 [[package]]
 name = "evm"
 version = "0.30.1"
-source = "git+https://github.com/gakonst/evm?branch=feat/clone-debug#33a3d5288e8a105c7d1e2b5385937e1d96e6f678"
+source = "git+https://github.com/rust-blockchain/evm#5ecf36ce393380a89c6f1b09ef79f686fe043624"
 dependencies = [
  "environmental",
  "ethereum",
@@ -1058,7 +1058,7 @@ dependencies = [
 [[package]]
 name = "evm-core"
 version = "0.30.0"
-source = "git+https://github.com/gakonst/evm?branch=feat/clone-debug#33a3d5288e8a105c7d1e2b5385937e1d96e6f678"
+source = "git+https://github.com/rust-blockchain/evm#5ecf36ce393380a89c6f1b09ef79f686fe043624"
 dependencies = [
  "funty",
  "parity-scale-codec",
@@ -1069,7 +1069,7 @@ dependencies = [
 [[package]]
 name = "evm-gasometer"
 version = "0.30.0"
-source = "git+https://github.com/gakonst/evm?branch=feat/clone-debug#33a3d5288e8a105c7d1e2b5385937e1d96e6f678"
+source = "git+https://github.com/rust-blockchain/evm#5ecf36ce393380a89c6f1b09ef79f686fe043624"
 dependencies = [
  "environmental",
  "evm-core",
@@ -1080,7 +1080,7 @@ dependencies = [
 [[package]]
 name = "evm-runtime"
 version = "0.30.0"
-source = "git+https://github.com/gakonst/evm?branch=feat/clone-debug#33a3d5288e8a105c7d1e2b5385937e1d96e6f678"
+source = "git+https://github.com/rust-blockchain/evm#5ecf36ce393380a89c6f1b09ef79f686fe043624"
 dependencies = [
  "environmental",
  "evm-core",
@@ -1091,7 +1091,7 @@ dependencies = [
 [[package]]
 name = "evmodin"
 version = "0.1.0"
-source = "git+https://github.com/gakonst/evmodin?branch=feat/clone-debug#15a35271f4e7fda41d88cc78216d4900ea03bace"
+source = "git+https://github.com/vorot93/evmodin#ef1bee33aeee962421e32bf23cfb0bb4903a3125"
 dependencies = [
  "arrayvec",
  "bytes",
