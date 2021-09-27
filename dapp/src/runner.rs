@@ -13,8 +13,7 @@ use std::{collections::HashMap, time::Instant};
 
 use proptest::test_runner::{TestError, TestRunner};
 use serde::{Deserialize, Serialize};
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CounterExample {
