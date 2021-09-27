@@ -227,28 +227,31 @@ mod tests {
 
             let cfg = FuzzConfig::default();
             let mut fuzzer = TestRunner::new(cfg);
-            let func =
-                get_func("function testFuzzShrinking(string memory someString) public").unwrap();
+            let func = get_func("function testFuzzShrinking(uint256 x, uint256 y) public").unwrap();
             let res = runner.run_fuzz_test(&func, true, &mut fuzzer).unwrap();
             assert!(!res.success);
 
             // get the counterexample with shrinking enabled by default
             let counterexample = res.counterexample.unwrap();
-            let strlen_with_shrinking = counterexample.args[0].clone().into_string().unwrap().len();
-            assert_eq!(strlen_with_shrinking, 70);
+            let product_with_shrinking: u64 =
+                // casting to u64 here is safe because the shrunk result is always gonna be small
+                // enough to fit in a u64, whereas as seen below, that's not possible without
+                // shrinking
+                counterexample.args.into_iter().map(|x| x.into_uint().unwrap().as_u64()).product();
 
             let mut cfg = FuzzConfig::default();
-            // we disable shrinking and see that the result has larger length
-            cfg.max_shrink_iters = 0;
+            // we reduce the shrinking iters and observe a larger result
+            cfg.max_shrink_iters = 5;
             let mut fuzzer = TestRunner::new(cfg);
             let res = runner.run_fuzz_test(&func, true, &mut fuzzer).unwrap();
             assert!(!res.success);
 
             // get the non-shrunk result
             let counterexample = res.counterexample.unwrap();
-            let strlen_without_shrinking =
-                counterexample.args[0].clone().into_string().unwrap().len();
-            assert!(strlen_without_shrinking > strlen_with_shrinking);
+            let args =
+                counterexample.args.into_iter().map(|x| x.into_uint().unwrap()).collect::<Vec<_>>();
+            let product_without_shrinking = args[0].saturating_mul(args[1]);
+            assert!(product_without_shrinking > product_with_shrinking.into());
         }
     }
 

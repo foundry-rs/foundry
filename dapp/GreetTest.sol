@@ -35,10 +35,8 @@ contract GreeterTest is GreeterTestSetup {
         require(keccak256(abi.encodePacked(greeter.greeting())) == keccak256(abi.encodePacked(myGreeting)), "not equal");
     }
 
-    // TODO: Figure out what's the largest string length that we can fuzz for. This
-    // probably works better for non-variable sized types.
-    function testFuzzShrinking(string memory someString) public {
-        require(bytes(someString).length < 70, "too short");
+    function testFuzzShrinking(uint256 x, uint256 y) public {
+        require(x * y <= 100, "product greater than 100");
     }
 
     // check the positive case
