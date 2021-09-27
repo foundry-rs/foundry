@@ -6,6 +6,7 @@ use eyre::Result;
 use regex::Regex;
 use std::{collections::HashMap, time::Instant};
 
+use proptest::test_runner::{TestError, TestRunner};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -36,7 +37,11 @@ where
     E: Evm<S> + Clone,
 {
     /// Runs all tests for a contract whose names match the provided regular expression
-    pub fn run_tests(&mut self, regex: &Regex) -> Result<HashMap<String, TestResult>> {
+    pub fn run_tests(
+        &mut self,
+        regex: &Regex,
+        fuzzer: Option<&mut TestRunner>,
+    ) -> Result<HashMap<String, TestResult>> {
         let start = Instant::now();
         let needs_setup = self.contract.abi.functions().any(|func| func.name == "setUp");
         let test_fns = self
@@ -45,15 +50,35 @@ where
             .functions()
             .into_iter()
             .filter(|func| func.name.starts_with("test"))
-            .filter(|func| regex.is_match(&func.name));
+            .filter(|func| regex.is_match(&func.name))
+            .collect::<Vec<_>>();
 
-        // run all tests
-        let map = test_fns
+        // run all unit tests
+        let unit_tests = test_fns
+            .iter()
+            .filter(|func| func.inputs.is_empty())
             .map(|func| {
                 let result = self.run_test(func, needs_setup)?;
                 Ok((func.name.clone(), result))
             })
             .collect::<Result<HashMap<_, _>>>()?;
+
+        let map = if let Some(mut fuzzer) = fuzzer {
+            let fuzz_tests = test_fns
+                .iter()
+                .filter(|func| !func.inputs.is_empty())
+                .map(|func| {
+                    let result = self.run_fuzz_test(func, needs_setup, &mut fuzzer)?;
+                    Ok((func.name.clone(), result))
+                })
+                .collect::<Result<HashMap<_, _>>>()?;
+
+            let mut map = unit_tests;
+            map.extend(fuzz_tests);
+            map
+        } else {
+            unit_tests
+        };
 
         if !map.is_empty() {
             let duration = Instant::now().duration_since(start);
@@ -65,6 +90,10 @@ where
     #[tracing::instrument(name = "test", skip_all, fields(name = %func.name))]
     pub fn run_test(&mut self, func: &Function, setup: bool) -> Result<TestResult> {
         let start = Instant::now();
+        // the expected result depends on the function name
+        // DAppTools' ds-test will not revert inside its `assertEq`-like functions
+        // which allows to test multiple assertions in 1 test function while also
+        // preserving logs.
         let should_fail = func.name.contains("testFail");
 
         // call the setup function in each test to reset the test's state.
@@ -72,59 +101,62 @@ where
             self.evm.setup(self.address)?;
         }
 
-        let (success, gas_used) = if !func.inputs.is_empty() {
-            use proptest::test_runner::*;
+        let (_, reason, gas_used) =
+            self.evm.call::<(), _>(Address::zero(), self.address, func, (), 0.into())?;
+        let success = self.evm.check_success(self.address, &reason, should_fail);
+        let duration = Instant::now().duration_since(start);
+        tracing::trace!(?duration, %success, %gas_used);
 
-            // Get the calldata generation strategy for the function
-            let strat = crate::fuzz::fuzz_calldata(func);
+        Ok(TestResult { success, gas_used: Some(gas_used) })
+    }
 
-            // Instantiate the test runner
-            // TODO: How can we silence the: `proptest: FileFailurePersistence::SourceParallel set,
-            // but no source file known` error?
-            let mut runner = TestRunner::default();
+    #[tracing::instrument(name = "fuzz-test", skip_all, fields(name = %func.name))]
+    pub fn run_fuzz_test(
+        &mut self,
+        func: &Function,
+        setup: bool,
+        runner: &mut TestRunner,
+    ) -> Result<TestResult> {
+        // call the setup function in each test to reset the test's state.
+        if setup {
+            self.evm.setup(self.address)?;
+        }
 
-            // Run the strategy
-            let result = runner.run(&strat, |calldata| {
-                let mut evm = self.evm.clone();
+        let start = Instant::now();
+        let should_fail = func.name.contains("testFail");
 
-                let (_, reason, _) = evm
-                    .call_raw(Address::zero(), self.address, calldata, 0.into(), false)
-                    .expect("could not make raw evm call");
+        // Get the calldata generation strategy for the function
+        let strat = crate::fuzz::fuzz_calldata(func);
 
-                let success = evm.check_success(self.address, &reason, should_fail);
+        // Run the strategy
+        let result = runner.run(&strat, |calldata| {
+            let mut evm = self.evm.clone();
 
-                // This will panic and get caught by the executor
-                proptest::prop_assert!(success);
+            let (_, reason, _) = evm
+                .call_raw(Address::zero(), self.address, calldata, 0.into(), false)
+                .expect("could not make raw evm call");
 
-                Ok(())
-            });
+            let success = evm.check_success(self.address, &reason, should_fail);
 
-            let success = match result {
-                Ok(_) => true,
-                Err(TestError::Fail(_, value)) => {
-                    tracing::info!("Found minimal failing case: {}", hex::encode(value));
-                    false
-                }
-                result => panic!("Unexpected result: {:?}", result),
-            };
+            // This will panic and get caught by the executor
+            proptest::prop_assert!(success);
 
-            (success, None)
-        } else {
-            let (_, reason, gas_used) =
-                self.evm.call::<(), _>(Address::zero(), self.address, func, (), 0.into())?;
-            // the expected result depends on the function name
-            // DAppTools' ds-test will not revert inside its `assertEq`-like functions
-            // which allows to test multiple assertions in 1 test function while also
-            // preserving logs.
-            let success =
-                self.evm.check_success(self.address, &reason, func.name.contains("testFail"));
-            let duration = Instant::now().duration_since(start);
-            tracing::trace!(?duration, %success, %gas_used);
+            Ok(())
+        });
 
-            (success, Some(gas_used))
+        let success = match result {
+            Ok(_) => true,
+            Err(TestError::Fail(_, value)) => {
+                tracing::info!("Found minimal failing case: {}", hex::encode(value));
+                false
+            }
+            result => panic!("Unexpected result: {:?}", result),
         };
 
-        Ok(TestResult { success, gas_used })
+        let duration = Instant::now().duration_since(start);
+        tracing::trace!(?duration, %success);
+
+        Ok(TestResult { success, gas_used: None })
     }
 }
 
@@ -185,7 +217,10 @@ mod tests {
         let mut runner =
             ContractRunner { evm: &mut evm, contract: compiled, address: addr, state: PhantomData };
 
-        let res = runner.run_tests(&".*".parse().unwrap()).unwrap();
+        let mut fuzzer = TestRunner::default();
+        let fuzzer = Some(&mut fuzzer);
+
+        let res = runner.run_tests(&".*".parse().unwrap(), fuzzer).unwrap();
         assert!(res.len() > 0);
         assert!(res.iter().all(|(_, result)| result.success == true));
     }
