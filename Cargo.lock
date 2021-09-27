@@ -173,6 +173,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "bit-set"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e11e16035ea35e4e5997b393eacbf6f63983188f7a2ad25bfb13465f5ad59de"
+dependencies = [
+ "bit-vec",
+]
+
+[[package]]
+name = "bit-vec"
+version = "0.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "349f9b6a179ed607305526ca489b34ad0a41aed5f7980fa90eb03160b69598fb"
+
+[[package]]
 name = "bitflags"
 version = "1.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -550,6 +565,7 @@ dependencies = [
  "eyre",
  "glob",
  "hex",
+ "proptest",
  "regex",
  "semver 1.0.4",
  "serde",
@@ -596,6 +612,7 @@ dependencies = [
  "evm-adapters",
  "evmodin",
  "eyre",
+ "proptest",
  "regex",
  "rpassword",
  "rustc-hex",
@@ -1005,7 +1022,7 @@ dependencies = [
 [[package]]
 name = "evm"
 version = "0.30.1"
-source = "git+https://github.com/gakonst/evm#5c338f1d6e412b7b0304481a23cc7517682a2f25"
+source = "git+https://github.com/gakonst/evm?branch=feat/clone-debug#33a3d5288e8a105c7d1e2b5385937e1d96e6f678"
 dependencies = [
  "environmental",
  "ethereum",
@@ -1039,7 +1056,7 @@ dependencies = [
 [[package]]
 name = "evm-core"
 version = "0.30.0"
-source = "git+https://github.com/gakonst/evm#5c338f1d6e412b7b0304481a23cc7517682a2f25"
+source = "git+https://github.com/gakonst/evm?branch=feat/clone-debug#33a3d5288e8a105c7d1e2b5385937e1d96e6f678"
 dependencies = [
  "funty",
  "parity-scale-codec",
@@ -1050,7 +1067,7 @@ dependencies = [
 [[package]]
 name = "evm-gasometer"
 version = "0.30.0"
-source = "git+https://github.com/gakonst/evm#5c338f1d6e412b7b0304481a23cc7517682a2f25"
+source = "git+https://github.com/gakonst/evm?branch=feat/clone-debug#33a3d5288e8a105c7d1e2b5385937e1d96e6f678"
 dependencies = [
  "environmental",
  "evm-core",
@@ -1061,7 +1078,7 @@ dependencies = [
 [[package]]
 name = "evm-runtime"
 version = "0.30.0"
-source = "git+https://github.com/gakonst/evm#5c338f1d6e412b7b0304481a23cc7517682a2f25"
+source = "git+https://github.com/gakonst/evm?branch=feat/clone-debug#33a3d5288e8a105c7d1e2b5385937e1d96e6f678"
 dependencies = [
  "environmental",
  "evm-core",
@@ -1072,7 +1089,7 @@ dependencies = [
 [[package]]
 name = "evmodin"
 version = "0.1.0"
-source = "git+https://github.com/vorot93/evmodin#ef1bee33aeee962421e32bf23cfb0bb4903a3125"
+source = "git+https://github.com/gakonst/evmodin?branch=feat/clone-debug#15a35271f4e7fda41d88cc78216d4900ea03bace"
 dependencies = [
  "arrayvec",
  "bytes",
@@ -2153,6 +2170,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "proptest"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e0d9cc07f18492d879586c92b485def06bc850da3118075cd45d50e9c95b0e5"
+dependencies = [
+ "bit-set",
+ "bitflags",
+ "byteorder",
+ "lazy_static",
+ "num-traits",
+ "quick-error 2.0.1",
+ "rand",
+ "rand_chacha",
+ "rand_xorshift",
+ "regex-syntax",
+ "rusty-fork",
+ "tempfile",
+]
+
+[[package]]
+name = "quick-error"
+version = "1.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1d01941d82fa2ab50be1e79e6714289dd7cde78eba4c074bc5a4374f650dfe0"
+
+[[package]]
+name = "quick-error"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a993555f31e5a609f617c12db6250dedcac1b0a85076912c436e6fc9b2c8e6a3"
+
+[[package]]
 name = "quote"
 version = "1.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2209,6 +2258,15 @@ name = "rand_hc"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d51e9f596de227fda2ea6c84607f5558e196eeaf43c986b724ba4fb8fdf497e7"
+dependencies = [
+ "rand_core",
+]
+
+[[package]]
+name = "rand_xorshift"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d25bf25ec5ae4a3f1b92f929810509a2f53d7dca2f50b794ff57e3face536c8f"
 dependencies = [
  "rand_core",
 ]
@@ -2397,6 +2455,18 @@ dependencies = [
  "ring",
  "sct",
  "webpki",
+]
+
+[[package]]
+name = "rusty-fork"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb3dcc6e454c328bb824492db107ab7c0ae8fcffe4ad210136ef014458c1bc4f"
+dependencies = [
+ "fnv",
+ "quick-error 1.2.3",
+ "tempfile",
+ "wait-timeout",
 ]
 
 [[package]]
@@ -3295,6 +3365,15 @@ name = "version_check"
 version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5fecdca9a5291cc2b8dcf7dc02453fee791a280f3743cb0905f8822ae463b3fe"
+
+[[package]]
+name = "wait-timeout"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9f200f5b12eb75f8c1ed65abd4b2db8a6e1b138a20de009dacee265a2498f3f6"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "want"

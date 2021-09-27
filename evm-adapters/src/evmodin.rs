@@ -1,10 +1,6 @@
 use crate::Evm;
 
-use ethers::{
-    abi::{Detokenize, Function, Tokenize},
-    prelude::{decode_function_data, encode_function_data},
-    types::{Address, Bytes, U256},
-};
+use ethers::types::{Address, Bytes, U256};
 
 use evmodin::{tracing::Tracer, AnalyzedCode, CallKind, Host, Message, Revision, StatusCode};
 
@@ -12,6 +8,7 @@ use eyre::Result;
 
 // TODO: Check if we can implement this as the base layer of an ethers-provider
 // Middleware stack instead of doing RPC calls.
+#[derive(Clone, Debug)]
 pub struct EvmOdin<S, T> {
     pub host: S,
     pub gas_limit: u64,
@@ -62,16 +59,14 @@ impl<S: HostExt, Tr: Tracer> Evm<S> for EvmOdin<S, Tr> {
     }
 
     /// Runs the selected function
-    fn call<D: Detokenize, T: Tokenize>(
+    fn call_raw(
         &mut self,
         from: Address,
         to: Address,
-        func: &Function,
-        args: T, // derive arbitrary for Tokenize?
+        calldata: Bytes,
         value: U256,
-    ) -> Result<(D, Self::ReturnReason, u64)> {
-        let calldata = encode_function_data(func, args)?;
-
+        is_static: bool,
+    ) -> Result<(Bytes, Self::ReturnReason, u64)> {
         // For the `func.constant` field usage
         #[allow(deprecated)]
         let message = Message {
@@ -83,11 +78,7 @@ impl<S: HostExt, Tr: Tracer> Evm<S> for EvmOdin<S, Tr> {
             input_data: calldata.0,
             value,
             gas: self.gas_limit as i64,
-            is_static: func.constant ||
-                matches!(
-                    func.state_mutability,
-                    ethers::abi::StateMutability::View | ethers::abi::StateMutability::Pure
-                ),
+            is_static,
         };
 
         // get the bytecode at the host
@@ -98,14 +89,11 @@ impl<S: HostExt, Tr: Tracer> Evm<S> for EvmOdin<S, Tr> {
         let output =
             bytecode.execute(&mut self.host, &mut self.tracer, None, message, self.revision);
 
-        // let gas = dapp_utils::remove_extra_costs(gas_before - gas_after, calldata.as_ref());
-
-        let retdata = decode_function_data(func, output.output_data, false)?;
-
         // TODO: Figure out gas accounting.
+        // let gas = dapp_utils::remove_extra_costs(gas_before - gas_after, calldata.as_ref());
         let gas = U256::from(0);
 
-        Ok((retdata, output.status_code, gas.as_u64()))
+        Ok((output.output_data.to_vec().into(), output.status_code, gas.as_u64()))
     }
 }
 

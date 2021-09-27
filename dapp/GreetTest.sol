@@ -30,6 +30,15 @@ contract GreeterTest is GreeterTestSetup {
         greeter.greet(greeting);
     }
 
+    function testFuzzing(string memory myGreeting) public {
+        greeter.greet(myGreeting);
+        require(keccak256(abi.encodePacked(greeter.greeting())) == keccak256(abi.encodePacked(myGreeting)), "not equal");
+    }
+
+    function testFuzzShrinking(uint256 x, uint256 y) public {
+        require(x * y <= 100, "product greater than 100");
+    }
+
     // check the positive case
     function testGreeting() public {
         greeter.greet("yo");

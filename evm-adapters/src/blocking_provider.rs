@@ -12,6 +12,12 @@ pub struct BlockingProvider<M> {
     runtime: Runtime,
 }
 
+impl<M: Clone> Clone for BlockingProvider<M> {
+    fn clone(&self) -> Self {
+        Self { provider: self.provider.clone(), runtime: Runtime::new().unwrap() }
+    }
+}
+
 #[cfg(feature = "sputnik")]
 use sputnik::backend::MemoryVicinity;
 

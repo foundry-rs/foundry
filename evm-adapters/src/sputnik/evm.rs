@@ -1,10 +1,6 @@
 use crate::Evm;
 
-use ethers::{
-    abi::{Detokenize, Function, Tokenize},
-    prelude::{decode_function_data, encode_function_data},
-    types::{Address, Bytes, U256},
-};
+use ethers::types::{Address, Bytes, U256};
 
 use sputnik::{
     backend::{Backend, MemoryAccount},
@@ -22,6 +18,23 @@ pub type MemoryState = BTreeMap<Address, MemoryAccount>;
 pub struct Executor<'a, S> {
     pub executor: StackExecutor<'a, S>,
     pub gas_limit: u64,
+}
+
+// Manual implementation of `Clone` for Clone-able StackStates (typically when the Backend
+// behind them is also clone-able). This is useful to have e.g. when running fuzz
+// tests which we need to take ownership of the EVM and clone it for each run in the
+// test runner's closure.
+impl<'a, S: StackState<'a> + Clone> Clone for Executor<'a, S> {
+    fn clone(&self) -> Self {
+        Self {
+            gas_limit: self.gas_limit,
+            executor: StackExecutor::new_with_precompile(
+                self.executor.state().clone(),
+                self.executor.config(),
+                Default::default(),
+            ),
+        }
+    }
 }
 
 // Concrete implementation over the in-memory backend
@@ -78,16 +91,14 @@ where
     }
 
     /// Runs the selected function
-    fn call<D: Detokenize, T: Tokenize>(
+    fn call_raw(
         &mut self,
         from: Address,
         to: Address,
-        func: &Function,
-        args: T, // derive arbitrary for Tokenize?
+        calldata: Bytes,
         value: U256,
-    ) -> Result<(D, ExitReason, u64)> {
-        let calldata = encode_function_data(func, args)?;
-
+        _is_static: bool,
+    ) -> Result<(Bytes, ExitReason, u64)> {
         let gas_before = self.executor.gas_left();
 
         let (status, retdata) =
@@ -96,9 +107,7 @@ where
         let gas_after = self.executor.gas_left();
         let gas = dapp_utils::remove_extra_costs(gas_before - gas_after, calldata.as_ref());
 
-        let retdata = decode_function_data(func, retdata, false)?;
-
-        Ok((retdata, status, gas.as_u64()))
+        Ok((retdata.into(), status, gas.as_u64()))
     }
 }
 

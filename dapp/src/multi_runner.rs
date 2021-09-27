@@ -7,6 +7,7 @@ use ethers::{
     utils::{keccak256, CompiledContract},
 };
 
+use proptest::test_runner::TestRunner;
 use regex::Regex;
 
 use eyre::Result;
@@ -24,12 +25,14 @@ pub struct MultiContractRunnerBuilder<'a> {
     /// The path for the output file
     pub out_path: PathBuf,
     pub no_compile: bool,
+    /// The fuzzer to be used for running fuzz tests
+    pub fuzzer: Option<TestRunner>,
 }
 
 impl<'a> MultiContractRunnerBuilder<'a> {
     /// Given an EVM, proceeds to return a runner which is able to execute all tests
     /// against that evm
-    pub fn build<E, S>(&self, mut evm: E) -> Result<MultiContractRunner<E, S>>
+    pub fn build<E, S>(self, mut evm: E) -> Result<MultiContractRunner<E, S>>
     where
         E: Evm<S>,
     {
@@ -52,11 +55,22 @@ impl<'a> MultiContractRunnerBuilder<'a> {
         });
         evm.initialize_contracts(init_state);
 
-        Ok(MultiContractRunner { contracts, addresses, evm, state: PhantomData })
+        Ok(MultiContractRunner {
+            contracts,
+            addresses,
+            evm,
+            state: PhantomData,
+            fuzzer: self.fuzzer,
+        })
     }
 
     pub fn contracts(mut self, contracts: &'a str) -> Self {
         self.contracts = contracts;
+        self
+    }
+
+    pub fn fuzzer(mut self, fuzzer: TestRunner) -> Self {
+        self.fuzzer = Some(fuzzer);
         self
     }
 
@@ -88,12 +102,13 @@ pub struct MultiContractRunner<E, S> {
     addresses: HashMap<String, Address>,
     /// The EVM instance used in the test runner
     evm: E,
+    fuzzer: Option<TestRunner>,
     state: PhantomData<S>,
 }
 
 impl<E, S> MultiContractRunner<E, S>
 where
-    E: Evm<S>,
+    E: Evm<S> + Clone,
 {
     pub fn test(&mut self, pattern: Regex) -> Result<HashMap<String, HashMap<String, TestResult>>> {
         // NB: We also have access to the contract's abi. When running the test.
@@ -143,7 +158,7 @@ where
         pattern: &Regex,
     ) -> Result<HashMap<String, TestResult>> {
         let mut runner = ContractRunner::new(&mut self.evm, contract, address);
-        runner.run_tests(pattern)
+        runner.run_tests(pattern, self.fuzzer.as_mut())
     }
 }
 
@@ -151,7 +166,7 @@ where
 mod tests {
     use super::*;
 
-    fn test_multi_runner<S, E: Evm<S>>(evm: E) {
+    fn test_multi_runner<S, E: Clone + Evm<S>>(evm: E) {
         let mut runner =
             MultiContractRunnerBuilder::default().contracts("./GreetTest.sol").build(evm).unwrap();
 
@@ -172,7 +187,7 @@ mod tests {
         assert_eq!(only_gm["GmTest"].len(), 1);
     }
 
-    fn test_ds_test_fail<S, E: Evm<S>>(evm: E) {
+    fn test_ds_test_fail<S, E: Clone + Evm<S>>(evm: E) {
         let mut runner =
             MultiContractRunnerBuilder::default().contracts("./../FooTest.sol").build(evm).unwrap();
         let results = runner.test(Regex::new(".*").unwrap()).unwrap();

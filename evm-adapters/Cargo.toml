@@ -11,7 +11,7 @@ dapp-utils = { path = "./../utils" }
 dapp-solc = { path = "./../solc" }
 
 # evm = { version = "0.30.1" }
-sputnik = { package = "evm", git = "https://github.com/gakonst/evm",  optional = true }
+sputnik = { package = "evm", git = "https://github.com/rust-blockchain/evm",  optional = true }
 
 evmodin = { git = "https://github.com/vorot93/evmodin",  optional = true }
 
