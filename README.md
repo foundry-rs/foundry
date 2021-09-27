@@ -38,15 +38,27 @@ Benchmarks TBD in the future, but:
 ## Features
 
 * seth
-    * [x] `--from-ascii`
+    * [x] `--from-ascii` / `--from-utf8`
     * [x] `--to-hex`
     * [x] `--to-checksum-address`
+    * [x] `--to-ascii`
     * [x] `--to-bytes32`
+    * [x] `--to-dec`
+    * [x] `--to-fix`
+    * [x] `--to-uint256`
+    * [x] `--to-wei`
     * [x] `block`
+    * [x] `block-number`
+    * [x] `chain-id`
+    * [x] `age`
+    * [x] `basefee`
+    * [x] `gas-price`
     * [x] `call` (partial)
     * [x] `send` (partial)
     * [x] `balance`
     * [x] `ens`
+    * abi encoding
+    * 4byte resolution
 * dapp
     * [ ] test
         * [x] simple unit tests
@@ -55,13 +67,13 @@ Benchmarks TBD in the future, but:
             * [x] JSON test output
             * [x] matching on regex
             * [x] DSTest-style assertions support
-        * [ ] fuzzing
+        * [x] fuzzing
         * [ ] symbolic execution
         * [ ] coverage
         * [ ] HEVM-style Solidity cheatcodes
         * [ ] structured tracing with abi decoding
         * [ ] per-line gas profiling
-        * [ ] forking mode
+        * [x] forking mode
         * [x] automatic solc selection
     * [x] build
         * [x] can read DappTools-style .sol.json artifacts
