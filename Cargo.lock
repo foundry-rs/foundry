@@ -798,8 +798,9 @@ dependencies = [
 
 [[package]]
 name = "ethabi"
-version = "14.1.0"
-source = "git+https://github.com/rust-ethereum/ethabi/?branch=master#8bd90d13956edf18bb47c6e39dcf7ab99bf264c7"
+version = "15.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f76ef192b63e8a44b3d08832acebbb984c3fba154b5c26f70037c860202a0d4b"
 dependencies = [
  "anyhow",
  "ethereum-types",
@@ -858,8 +859,8 @@ dependencies = [
 
 [[package]]
 name = "ethers"
-version = "0.5.1"
-source = "git+https://github.com/gakonst/ethers-rs?branch=master#566f4c1f34d9d049b172a28747926b6099b1544f"
+version = "0.5.3"
+source = "git+https://github.com/gakonst/ethers-rs?branch=master#ede76a2feb28feec247013db2bef2e1a89924fe4"
 dependencies = [
  "ethers-contract",
  "ethers-core",
@@ -870,8 +871,8 @@ dependencies = [
 
 [[package]]
 name = "ethers-contract"
-version = "0.5.1"
-source = "git+https://github.com/gakonst/ethers-rs?branch=master#566f4c1f34d9d049b172a28747926b6099b1544f"
+version = "0.5.3"
+source = "git+https://github.com/gakonst/ethers-rs?branch=master#ede76a2feb28feec247013db2bef2e1a89924fe4"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -888,8 +889,8 @@ dependencies = [
 
 [[package]]
 name = "ethers-contract-abigen"
-version = "0.5.1"
-source = "git+https://github.com/gakonst/ethers-rs?branch=master#566f4c1f34d9d049b172a28747926b6099b1544f"
+version = "0.5.3"
+source = "git+https://github.com/gakonst/ethers-rs?branch=master#ede76a2feb28feec247013db2bef2e1a89924fe4"
 dependencies = [
  "Inflector",
  "anyhow",
@@ -910,8 +911,8 @@ dependencies = [
 
 [[package]]
 name = "ethers-contract-derive"
-version = "0.5.1"
-source = "git+https://github.com/gakonst/ethers-rs?branch=master#566f4c1f34d9d049b172a28747926b6099b1544f"
+version = "0.5.3"
+source = "git+https://github.com/gakonst/ethers-rs?branch=master#ede76a2feb28feec247013db2bef2e1a89924fe4"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -924,23 +925,24 @@ dependencies = [
 
 [[package]]
 name = "ethers-core"
-version = "0.5.2"
-source = "git+https://github.com/gakonst/ethers-rs?branch=master#566f4c1f34d9d049b172a28747926b6099b1544f"
+version = "0.5.4"
+source = "git+https://github.com/gakonst/ethers-rs?branch=master#ede76a2feb28feec247013db2bef2e1a89924fe4"
 dependencies = [
  "arrayvec",
  "bytes",
  "ecdsa",
  "elliptic-curve",
  "ethabi",
- "ethereum-types",
  "futures-util",
  "generic-array 0.14.4",
  "glob",
  "hex",
  "k256",
+ "once_cell",
  "rand",
  "rlp",
  "rlp-derive",
+ "semver 1.0.4",
  "serde",
  "serde_json",
  "thiserror",
@@ -950,8 +952,8 @@ dependencies = [
 
 [[package]]
 name = "ethers-middleware"
-version = "0.5.1"
-source = "git+https://github.com/gakonst/ethers-rs?branch=master#566f4c1f34d9d049b172a28747926b6099b1544f"
+version = "0.5.3"
+source = "git+https://github.com/gakonst/ethers-rs?branch=master#ede76a2feb28feec247013db2bef2e1a89924fe4"
 dependencies = [
  "async-trait",
  "ethers-contract",
@@ -973,8 +975,8 @@ dependencies = [
 
 [[package]]
 name = "ethers-providers"
-version = "0.5.2"
-source = "git+https://github.com/gakonst/ethers-rs?branch=master#566f4c1f34d9d049b172a28747926b6099b1544f"
+version = "0.5.4"
+source = "git+https://github.com/gakonst/ethers-rs?branch=master#ede76a2feb28feec247013db2bef2e1a89924fe4"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -1002,8 +1004,8 @@ dependencies = [
 
 [[package]]
 name = "ethers-signers"
-version = "0.5.1"
-source = "git+https://github.com/gakonst/ethers-rs?branch=master#566f4c1f34d9d049b172a28747926b6099b1544f"
+version = "0.5.3"
+source = "git+https://github.com/gakonst/ethers-rs?branch=master#ede76a2feb28feec247013db2bef2e1a89924fe4"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1636,9 +1638,9 @@ dependencies = [
 
 [[package]]
 name = "instant"
-version = "0.1.10"
+version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bee0328b1209d157ef001c94dd85b4f8f64139adb0eac2659f4b08382b2f474d"
+checksum = "716d3d89f35ac6a34fd0eed635395f4c3b76fa889338a4632e5231a8684216bd"
 dependencies = [
  "cfg-if",
  "js-sys",
