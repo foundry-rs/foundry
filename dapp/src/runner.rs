@@ -282,10 +282,7 @@ mod tests {
         let mut runner =
             ContractRunner { evm: &mut evm, contract: compiled, address: addr, state: PhantomData };
 
-        let mut fuzzer = TestRunner::default();
-        let fuzzer = Some(&mut fuzzer);
-
-        let res = runner.run_tests(&".*".parse().unwrap(), fuzzer).unwrap();
+        let res = runner.run_tests(&".*".parse().unwrap(), None).unwrap();
         assert!(res.len() > 0);
         assert!(res.iter().all(|(_, result)| result.success == true));
     }
