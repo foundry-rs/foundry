@@ -1,4 +1,9 @@
-use ethers::{abi::Function, types::Address, utils::CompiledContract};
+use ethers::{
+    abi::{Function, Token},
+    prelude::Bytes,
+    types::Address,
+    utils::CompiledContract,
+};
 
 use evm_adapters::Evm;
 
@@ -10,10 +15,21 @@ use proptest::test_runner::{TestError, TestRunner};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CounterExample {
+    pub calldata: Bytes,
+    // Token does not implement Serde (lol), so we just serialize the calldata
+    #[serde(skip)]
+    pub args: Vec<Token>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TestResult {
     pub success: bool,
 
     pub gas_used: Option<u64>,
+
+    /// Minimal reproduction test case for failing fuzz tests
+    pub counterexample: Option<CounterExample>,
 }
 
 use std::marker::PhantomData;
@@ -107,7 +123,7 @@ where
         let duration = Instant::now().duration_since(start);
         tracing::trace!(?duration, %success, %gas_used);
 
-        Ok(TestResult { success, gas_used: Some(gas_used) })
+        Ok(TestResult { success, gas_used: Some(gas_used), counterexample: None })
     }
 
     #[tracing::instrument(name = "fuzz-test", skip_all, fields(name = %func.name))]
@@ -144,11 +160,14 @@ where
             Ok(())
         });
 
-        let success = match result {
-            Ok(_) => true,
+        let (success, counterexample) = match result {
+            Ok(_) => (true, None),
             Err(TestError::Fail(_, value)) => {
-                tracing::info!("Found minimal failing case: {}", hex::encode(value));
-                false
+                // skip the function selector when decoding
+                let args = func.decode_input(&value.as_ref()[4..])?;
+                let counterexample = CounterExample { calldata: value.clone(), args };
+                tracing::info!("Found minimal failing case: {}", hex::encode(&value));
+                (false, Some(counterexample))
             }
             result => panic!("Unexpected result: {:?}", result),
         };
@@ -156,7 +175,7 @@ where
         let duration = Instant::now().duration_since(start);
         tracing::trace!(?duration, %success);
 
-        Ok(TestResult { success, gas_used: None })
+        Ok(TestResult { success, gas_used: None, counterexample })
     }
 }
 
@@ -168,10 +187,12 @@ mod tests {
     use std::marker::PhantomData;
 
     mod sputnik {
+        use dapp_utils::get_func;
         use evm_adapters::sputnik::{
             helpers::{new_backend, new_vicinity},
             Executor,
         };
+        use proptest::test_runner::Config as FuzzConfig;
 
         use super::*;
 
@@ -184,6 +205,50 @@ mod tests {
             let backend = new_backend(&vicinity, Default::default());
             let evm = Executor::new(12_000_000, &cfg, &backend);
             super::test_runner(evm, addr, compiled);
+        }
+
+        #[test]
+        fn test_fuzz_shrinking() {
+            let cfg = Config::istanbul();
+            let compiled = COMPILED.get("GreeterTest").expect("could not find contract");
+            let addr = "0x1000000000000000000000000000000000000000".parse().unwrap();
+            let vicinity = new_vicinity();
+            let backend = new_backend(&vicinity, Default::default());
+
+            let mut evm = Executor::new(12_000_000, &cfg, &backend);
+            evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
+
+            let mut runner = ContractRunner {
+                evm: &mut evm,
+                contract: compiled,
+                address: addr,
+                state: PhantomData,
+            };
+
+            let cfg = FuzzConfig::default();
+            let mut fuzzer = TestRunner::new(cfg);
+            let func =
+                get_func("function testFuzzShrinking(string memory someString) public").unwrap();
+            let res = runner.run_fuzz_test(&func, true, &mut fuzzer).unwrap();
+            assert!(!res.success);
+
+            // get the counterexample with shrinking enabled by default
+            let counterexample = res.counterexample.unwrap();
+            let strlen_with_shrinking = counterexample.args[0].clone().into_string().unwrap().len();
+            assert_eq!(strlen_with_shrinking, 70);
+
+            let mut cfg = FuzzConfig::default();
+            // we disable shrinking and see that the result has larger length
+            cfg.max_shrink_iters = 0;
+            let mut fuzzer = TestRunner::new(cfg);
+            let res = runner.run_fuzz_test(&func, true, &mut fuzzer).unwrap();
+            assert!(!res.success);
+
+            // get the non-shrunk result
+            let counterexample = res.counterexample.unwrap();
+            let strlen_without_shrinking =
+                counterexample.args[0].clone().into_string().unwrap().len();
+            assert!(strlen_without_shrinking > strlen_with_shrinking);
         }
     }
 
