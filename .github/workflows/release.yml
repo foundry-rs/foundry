@@ -1,4 +1,4 @@
-name: Dapptools-rs Release
+name: Release
 on:
   push:
     tags:
