@@ -4,7 +4,7 @@ use super::{Executor, SputnikExecutor};
 use sputnik::{
     backend::{Backend, Basic},
     executor::{MemoryStackState, Precompile, StackExecutor, StackState, StackSubstateMetadata},
-    Config, ExitReason, Handler,
+    Config, ExitReason, ExitSucceed, Handler,
 };
 use std::marker::PhantomData;
 
@@ -18,11 +18,11 @@ use ethers::types::{H160, H256, U256};
 #[derive(Clone, Debug, Default)]
 struct CheatcodeState {
     block_number: Option<U256>,
-    block_timestamp: Option<u64>,
+    block_timestamp: Option<U256>,
 }
 
 struct CheatcodeBackend<'a, B> {
-    backend: RefMut<'a, B>,
+    backend: &'a B,
     // TODO: remove.
     #[allow(unused)]
     state: CheatcodeState,
@@ -51,7 +51,7 @@ impl<'a, B: Backend> Backend for CheatcodeBackend<'a, B> {
     }
 
     fn block_timestamp(&self) -> U256 {
-        self.backend.block_timestamp()
+        self.state.block_timestamp.unwrap_or_else(|| self.backend.block_timestamp())
     }
 
     fn block_difficulty(&self) -> U256 {
@@ -88,7 +88,7 @@ impl<'a, B: Backend> Backend for CheatcodeBackend<'a, B> {
 }
 
 impl<'a, B: Backend> CheatcodeBackend<'a, B> {
-    fn new(backend: RefMut<'a, B>) -> Self {
+    fn new(backend: &'a B) -> Self {
         Self { backend, state: Default::default() }
     }
 }
@@ -104,7 +104,7 @@ where
     B: Backend,
 {
     pub fn new_with_precompile(
-        backend: RefMut<'c, B>,
+        backend: &'c B,
         state: S,
         config: &'c Config,
         precompile: Precompile,
@@ -146,8 +146,16 @@ impl<'a, S: StackState<'a>, B: Backend> SputnikExecutor<S, Config>
         gas_limit: u64,
         access_list: Vec<(H160, Vec<H256>)>,
     ) -> (ExitReason, Vec<u8>) {
-        // TODO: Implement cheat code interception logic.
-        self.executor.transact_call(caller, address, value, data, gas_limit, access_list)
+        dbg!("CALLING", address);
+        // TODO: Replace with 'proper' HEVM Address
+        if address == ethers::types::Address::zero() {
+            // TODO: Implement cheat code interception logic.
+            self.backend.state.block_timestamp = Some(1000000.into());
+            dbg!("OK");
+            (ExitReason::Succeed(ExitSucceed::Returned), vec![0])
+        } else {
+            self.executor.transact_call(caller, address, value, data, gas_limit, access_list)
+        }
     }
 }
 
@@ -169,15 +177,10 @@ impl<'a, B: Backend>
 {
     /// Given a gas limit, vm version, initial chain configuration and initial state
     // TOOD: See if we can make lifetimes better here
-    pub fn new_with_cheatcode(
-        gas_limit: u64,
-        config: &'a Config,
-        immutable_backend: &'a B,
-        backend: RefMut<'a, B>,
-    ) -> Self {
+    pub fn new_with_cheatcode(gas_limit: u64, config: &'a Config, backend: &'a B) -> Self {
         // setup gasometer
         let metadata = StackSubstateMetadata::new(gas_limit, config);
-        let state = MemoryStackState::new(metadata, immutable_backend);
+        let state = MemoryStackState::new(metadata, backend);
 
         let executor =
             CheatcodeStackExecutor::new_with_precompile(backend, state, config, Default::default());
@@ -187,7 +190,12 @@ impl<'a, B: Backend>
 }
 #[cfg(test)]
 mod tests {
-    use crate::sputnik::helpers::{new_backend, new_vicinity};
+    use crate::{
+        sputnik::helpers::{new_backend, new_vicinity},
+        test_helpers::COMPILED,
+        Evm,
+    };
+    use ethers::types::Address;
     use sputnik::Config;
 
     use super::*;
@@ -197,17 +205,37 @@ mod tests {
         let cfg = Config::istanbul();
         let vicinity = new_vicinity();
         let backend = new_backend(&vicinity, Default::default());
-        // make it clone-able with interior mutability
-        let backend = Rc::new(RefCell::new(backend));
+        let cheatcode_backend = CheatcodeBackend::new(&backend);
 
-        let b = backend.clone();
-        let used_backend = b.borrow_mut();
+        let mut evm = Executor::new_with_cheatcode(10_000_000, &cfg, &cheatcode_backend);
 
-        // `BorrowMutError` -> already borrowed, obviously wont' work, need to Clone
-        let backend_immut = &*backend.as_ref().borrow();
+        let compiled = COMPILED.get("Greeter").expect("could not find contract");
+        let addr = "0x1000000000000000000000000000000000000000".parse().unwrap();
+        evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
 
-        let evm = Executor::new_with_cheatcode(10_000_000, &cfg, backend_immut, used_backend);
+        let (res, _, _) = evm
+            .call::<ethers::types::Bytes, _>(
+                Address::zero(),
+                Address::zero(),
+                // The function call doesn't matter right now
+                &dapp_utils::get_func("function time() public returns (uint256)").unwrap(),
+                (),
+                0.into(),
+            )
+            .unwrap();
 
-        // run hevm test which sets the context
+        dbg!("DONE");
+
+        let (res, _, _) = evm
+            .call::<U256, _>(
+                Address::zero(),
+                addr,
+                &dapp_utils::get_func("function time() public returns (uint256)").unwrap(),
+                (),
+                0.into(),
+            )
+            .unwrap();
+
+        assert_eq!(res.as_u64(), 100);
     }
 }
