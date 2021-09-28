@@ -82,12 +82,12 @@ jobs:
         id: github_release
         uses: mikepenz/release-changelog-builder-action@v2.4.2
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          G_TOKEN: ${{ secrets.GITHUB_TOKEN }}
      - name: Create Release
        id: create-release
        uses: softprops/action-gh-release@vv0.1.13
        env:
-         GITHUB_TOKEN: ${{ env.GITHUB_TOKEN }}
+         G_TOKEN: ${{ env.GITHUB_TOKEN }}
        with:
          tag_name: ${{ github.ref }}
          release_name: ${{ github.ref }}
