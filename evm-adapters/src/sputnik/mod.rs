@@ -1,6 +1,8 @@
 mod evm;
 pub use evm::*;
 
+mod cheatcode_stack_executor;
+
 mod forked_backend;
 pub use forked_backend::ForkMemoryBackend;
 

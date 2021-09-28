@@ -5,7 +5,7 @@ use ethers::types::{Address, Bytes, U256};
 use sputnik::{
     backend::{Backend, MemoryAccount},
     executor::{MemoryStackState, StackExecutor, StackState, StackSubstateMetadata},
-    Config, ExitReason, Handler,
+    Config, ExitReason,
 };
 use std::{collections::BTreeMap, marker::PhantomData};
 
@@ -20,7 +20,7 @@ pub type MemoryState = BTreeMap<Address, MemoryAccount>;
 pub struct Executor<S, C, E> {
     pub executor: E,
     pub gas_limit: u64,
-    marker: PhantomData<(S, C)>,
+    pub(super) marker: PhantomData<(S, C)>,
 }
 
 // Concrete implementation over the in-memory backend
