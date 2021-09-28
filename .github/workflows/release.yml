@@ -4,11 +4,6 @@ on:
     tags:
       - 'v*.*.*'
   workflow_dispatch:
-env:
-  PACKAGE_NAME:
-  VERSION:
-  ARCHITECTURE:
-  DESCRIPTION:
 jobs:
   build-artifacts:
     runs-on: ${{ matrix.os }}
