@@ -3,7 +3,7 @@ on:
   push:
     tags:
       - 'v*.*.*'
-
+  workflow_dispatch:
 env:
   PACKAGE_NAME:
   VERSION:
