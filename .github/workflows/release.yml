@@ -79,6 +79,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:  [build-linux-packages, build-artifacts]
     steps:
+     - uses: actions/checkout@v2
      - name: Set output
        id: vars
        run: echo ::set-output name=tag::${GITHUB_REF#refs/*/}
