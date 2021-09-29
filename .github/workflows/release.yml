@@ -80,12 +80,12 @@ jobs:
     needs:  [build-linux-packages, build-artifacts]
     steps:
      - name: Set output
-        id: vars
-        run: echo ::set-output name=tag::${GITHUB_REF#refs/*/}
+       id: vars
+       run: echo ::set-output name=tag::${GITHUB_REF#refs/*/}
      - name: Restore artifacts
-        uses: actions/download-artifact@v2
-        with:
-          name: linux-packages
+       uses: actions/download-artifact@v2
+       with:
+        name: linux-packages
       - name: Build Changelog
         id: github_release
         uses: mikepenz/release-changelog-builder-action@v2.4.2
@@ -98,7 +98,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.G_TOKEN }}
         with:
           tag_name:  ${{ steps.vars.outputs.tag }}
-          release_name:  ${{ steps.vars.outputs.tag }}
+          release_name: ${{ github.ref }}
           body: ${{steps.build_changelog.outputs.changelog}}
           files: |
             ./*.deb
