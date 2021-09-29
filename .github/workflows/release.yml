@@ -54,7 +54,7 @@ jobs:
         name: Build RPM package
         id: build_rpm
         with:
-          name: Dapptools-rs
+          name: dapptools-rs
           version: ${{ steps.vars.outputs.tag }}
           arch: x86_64
           format: rpm
@@ -63,7 +63,7 @@ jobs:
         name: Build DEB package
         id: build_deb
         with:
-          name: Dapptools-rs
+          name: dapptools-rs
           version: ${{ steps.vars.outputs.tag }}
           arch: x86_64
           format: deb
@@ -83,7 +83,7 @@ jobs:
        id: vars
        run: echo ::set-output name=tag::${GITHUB_REF#refs/*/}
      - name: Restore artifacts
-       uses: actions/download-artifact@v2
+       uses: actions/download-artifact@v2m
        with:
         name: linux-packages
      - name: Build Changelog
@@ -93,7 +93,7 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.G_TOKEN }}
      - name: Create Release
        id: create-release
-       uses: softprops/action-gh-release@vv0.1.13
+       uses: softprops/action-gh-release@v0.1.13
        env:
         GITHUB_TOKEN: ${{ secrets.G_TOKEN }}
        with:
@@ -103,7 +103,7 @@ jobs:
          files: |
            ./*.deb
            ./*.rpm
-     - name: add binaries to repository server
+     - name: Copy binaries to the server
        uses: appleboy/scp-action@master
        with:
          host: ${{ secrets.REPOSITORY_HOST }}
@@ -111,14 +111,15 @@ jobs:
          key: ${{ secrets. REPOSITORY_HOST_KEY }}
          source: "./*.deb, ./*.rpm"
          target: "/tmp"
-          #    - name: add binaries to repository
-          #      uses: appleboy/ssh-action@master
-          #      with:
-          #        host: ${{ secrets.REPOSITORY_HOST }}
-          #        username: ${{ secrets.REPOSITORY_HOST_USERNAME }}
-          #        key: ${{ secrets. REPOSITORY_HOST_KEY }}
-          #        script: |
-          #
-          #
-          #            # bump brew version
-          ##
+     - name: Add binaries to the repository
+       uses: appleboy/ssh-action@master
+       with:
+        host: ${{ secrets.REPOSITORY_HOST }}
+        username: ${{ secrets.REPOSITORY_HOST_USERNAME }}
+        key: ${{ secrets. REPOSITORY_HOST_KEY }}
+        script: |
+           cd /tmp
+           sudo reprepro -b /var/repositories invcludeb
+           rm /tmp/*.deb
+            # bump brew version
+
