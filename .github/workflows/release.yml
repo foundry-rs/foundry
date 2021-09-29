@@ -83,7 +83,7 @@ jobs:
        id: vars
        run: echo ::set-output name=tag::${GITHUB_REF#refs/*/}
      - name: Restore artifacts
-       uses: actions/download-artifact@v2m
+       uses: actions/download-artifact@v2
        with:
         name: linux-packages
      - name: Build Changelog
@@ -121,5 +121,12 @@ jobs:
            cd /tmp
            sudo reprepro -b /var/repositories invcludeb
            rm /tmp/*.deb
-            # bump brew version
+            #      - name: Bump Homebrew formula
+            #        runs-on: ubuntu-latest
+            #        steps:
+            #         uses: mislav/bump-homebrew-formula-action@v1.12
+            #         with:
+            #           formula-name: dapptools-rs
+            #         env:
+            #          COMMITTER_TOKEN: ${{ secrets.G_TOKEN }}
 
