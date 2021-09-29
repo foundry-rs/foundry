@@ -115,3 +115,9 @@ cargo build [--release]
 cargo +nightly fmt
 cargo clippy
 ```
+## Getting Help
+
+First, see if the answer to your question can be found in the API documentation. If the answer
+is not there, try opening an [issue](https://github.com/gakonst/dapptools-rs/issues/new) with the question.
+
+Join the [turbodapptools telegram](https://t.me/turbodapptools) to chat with the community!
