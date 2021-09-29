@@ -82,7 +82,7 @@ jobs:
      - name: Checkout
        uses: actions/checkout@v2
        with:
-        fetch-depth: 100
+        fetch-depth: 1000
      - name: Set output
        id: vars
        run: echo ::set-output name=tag::${GITHUB_REF#refs/*/}
