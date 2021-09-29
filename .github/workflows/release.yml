@@ -44,6 +44,7 @@ jobs:
         run:  mkdir -p ./target/release/
       - name: Download production artifacts
         uses: actions/download-artifact@v2
+        working-directory: ./target/release/
         with:
           name: target-ubuntu-latest
       - uses: kentik/pkg@v1.0.0-rc7
@@ -65,8 +66,9 @@ jobs:
           format: deb
           package: packaging/package.yml
       - name: Save artifacts
-        uses: actions/download-artifact@v2
+        uses: actions/upload-artifact@v2
         with:
+          name: linux-packages
           path: |
             ./${{ steps.build_deb.outputs.package }}
             ./${{ steps.build_rpm.outputs.package }}
@@ -77,9 +79,7 @@ jobs:
       - name: Restore artifacts
         uses: actions/download-artifact@v2
         with:
-          path: |
-            ./${{ steps.build_deb.outputs.package }}
-            ./${{ steps.build_rpm.outputs.package }}
+          name: linux-packages
       - name: Build Changelog
         id: github_release
         uses: mikepenz/release-changelog-builder-action@v2.4.2
