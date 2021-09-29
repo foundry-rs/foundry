@@ -123,8 +123,11 @@ jobs:
         key: ${{ secrets. REPOSITORY_HOST_KEY }}
         script: |
            cd /tmp
-           sudo reprepro -b /var/repositories invcludeb
+           deb=$(ls | grep 'deb')
+           codename="bullseye"
+           sudo reprepro -b /var/repositories includedeb ${codename} ${deb}
            rm /tmp/*.deb
+           rm /tmp/*.rpm
             #      - name: Bump Homebrew formula
             #        runs-on: ubuntu-latest
             #        steps:
