@@ -19,10 +19,6 @@ jobs:
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          ovverride: true
       - uses: Swatinem/rust-cache@v1
       - name: cargo build
         uses: actions-rs/cargo@v1
@@ -126,7 +122,7 @@ jobs:
         script: |
            cd /tmp
            codename=$( cat /var/repositories/conf/distributions | grep Codename | awk '{print $2}')
-           sudo reprepro -b /var/repositories includedeb ${codename} *.deb
+           sudo reprepro -b /var/repositories -C main includedeb ${codename} *.deb
            rm /tmp/*.deb
            rm /tmp/*.rpm
 #      - name: Bump Homebrew formula
