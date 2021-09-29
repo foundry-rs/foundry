@@ -40,6 +40,8 @@ jobs:
     needs: build-artifacts
     steps:
       - uses: actions/checkout@v2
+      - name: Create target directories
+        run:  mkdir -p ./target/release/
       - name: Download production artifacts
         uses: actions/download-artifact@v2
         with:
