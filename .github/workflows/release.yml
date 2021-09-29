@@ -44,7 +44,7 @@ jobs:
         run:  mkdir -p ./target/release/
       - name: Download production artifacts
         uses: actions/download-artifact@v2
-        working-directory: ./target/release/
+        path: ./target/release/
         with:
           name: target-ubuntu-latest
       - uses: kentik/pkg@v1.0.0-rc7
