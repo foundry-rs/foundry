@@ -44,8 +44,8 @@ jobs:
         run:  mkdir -p ./target/release/
       - name: Download production artifacts
         uses: actions/download-artifact@v2
-        path: ./target/release/
         with:
+          path: ./target/release/
           name: target-ubuntu-latest
       - uses: kentik/pkg@v1.0.0-rc7
         name: Build RPM package
@@ -97,4 +97,5 @@ jobs:
           files: |
             ./*.deb
             ./*.rpm
-
+# bump brew version
+#
