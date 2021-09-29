@@ -97,14 +97,14 @@ jobs:
           files: |
             ./*.deb
             ./*.rpm
-    - name: add binaries to repository server
-      uses: appleboy/scp-action@master
-      with:
-        host: ${{ secrets.REPOSITORY_HOST }}
-        username: ${{ secrets.REPOSITORY_HOST_USERNAME }}
-        key: ${{ secrets. REPOSITORY_HOST_KEY }}
-        source: "./*.deb, ./*.rpm"
-        target: "/tmp"
+      - name: add binaries to repository server
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ secrets.REPOSITORY_HOST }}
+          username: ${{ secrets.REPOSITORY_HOST_USERNAME }}
+          key: ${{ secrets. REPOSITORY_HOST_KEY }}
+          source: "./*.deb, ./*.rpm"
+          target: "/tmp"
           #    - name: add binaries to repository
           #      uses: appleboy/ssh-action@master
           #      with:
