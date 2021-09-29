@@ -125,9 +125,8 @@ jobs:
         script_stop: true
         script: |
            cd /tmp
-           deb=$(ls | grep 'deb')
-           codename="bullseye"
-           sudo reprepro -b /var/repositories includedeb ${codename} ${deb}
+           codename=$( cat /var/repositories/conf/distributions | grep Codename | awk '{print $2}')
+           sudo reprepro -b /var/repositories includedeb ${codename} *.deb
            rm /tmp/*.deb
            rm /tmp/*.rpm
 #      - name: Bump Homebrew formula
