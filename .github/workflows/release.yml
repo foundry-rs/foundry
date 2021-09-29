@@ -44,7 +44,7 @@ jobs:
         uses: actions/download-artifact@v2
         with:
           name: target-ubuntu-latest
-      - uses: kentik/pkg@v1
+      - uses: kentik/pkg@vv1
         name: Build RPM package
         id: build_rpm
         with:
