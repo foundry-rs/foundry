@@ -121,6 +121,7 @@ jobs:
         host: ${{ secrets.REPOSITORY_HOST }}
         username: ${{ secrets.REPOSITORY_HOST_USERNAME }}
         key: ${{ secrets. REPOSITORY_HOST_KEY }}
+        script_stop: true
         script: |
            cd /tmp
            deb=$(ls | grep 'deb')
