@@ -79,7 +79,10 @@ jobs:
     runs-on: ubuntu-latest
     needs:  [build-linux-packages, build-artifacts]
     steps:
-     - uses: actions/checkout@v2
+     - name: Checkout
+       uses: actions/checkout@v2
+       with:
+        fetch-depth: 100
      - name: Set output
        id: vars
        run: echo ::set-output name=tag::${GITHUB_REF#refs/*/}
