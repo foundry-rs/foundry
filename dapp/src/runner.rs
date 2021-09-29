@@ -114,7 +114,7 @@ impl<'a, S, E: Evm<S>> ContractRunner<'a, S, E> {
         // DAppTools' ds-test will not revert inside its `assertEq`-like functions
         // which allows to test multiple assertions in 1 test function while also
         // preserving logs.
-        let should_fail = func.name.contains("testFail");
+        let should_fail = func.name.starts_with("testFail");
         // call the setup function in each test to reset the test's state.
         if setup {
             self.evm.borrow_mut().setup(self.address)?;
@@ -147,7 +147,7 @@ impl<'a, S, E: Evm<S>> ContractRunner<'a, S, E> {
         }
 
         let start = Instant::now();
-        let should_fail = func.name.contains("testFail");
+        let should_fail = func.name.starts_with("testFail");
 
         // Get the calldata generation strategy for the function
         let strat = crate::fuzz::fuzz_calldata(func);
