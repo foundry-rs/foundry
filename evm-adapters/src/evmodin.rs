@@ -89,11 +89,10 @@ impl<S: HostExt, Tr: Tracer> Evm<S> for EvmOdin<S, Tr> {
         let output =
             bytecode.execute(&mut self.host, &mut self.tracer, None, message, self.revision);
 
-        // TODO: Figure out gas accounting.
-        // let gas = dapp_utils::remove_extra_costs(gas_before - gas_after, calldata.as_ref());
-        let gas = U256::from(0);
+        // evmodin doesn't take the BASE_TX_COST and the calldata into account
+        let gas = self.gas_limit - output.gas_left as u64;
 
-        Ok((output.output_data.to_vec().into(), output.status_code, gas.as_u64()))
+        Ok((output.output_data.to_vec().into(), output.status_code, gas))
     }
 }
 
