@@ -87,10 +87,10 @@ jobs:
        with:
         name: linux-packages
      - name: Build Changelog
-        id: github_release
-        uses: mikepenz/release-changelog-builder-action@v2.4.2
-        env:
-          GITHUB_TOKEN: ${{ secrets.G_TOKEN }}
+       id: github_release
+       uses: mikepenz/release-changelog-builder-action@v2.4.2
+       env:
+        GITHUB_TOKEN: ${{ secrets.G_TOKEN }}
      - name: Create Release
        id: create-release
        uses: softprops/action-gh-release@vv0.1.13
