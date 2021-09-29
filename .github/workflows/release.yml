@@ -40,6 +40,9 @@ jobs:
     needs: build-artifacts
     steps:
       - uses: actions/checkout@v2
+      - name: Set output
+        id: vars
+        run: echo ::set-output name=tag::${GITHUB_REF#refs/*/}
       - name: Create target directories
         run:  mkdir -p ./target/release/
       - name: Download production artifacts
@@ -52,7 +55,7 @@ jobs:
         id: build_rpm
         with:
           name: Dapptools-rs
-          version: ${{ github.ref }}
+          version: ${{ steps.vars.outputs.tag }}
           arch: x86_64
           format: rpm
           package: packaging/package.yml
@@ -61,7 +64,7 @@ jobs:
         id: build_deb
         with:
           name: Dapptools-rs
-          version: ${{ github.ref }}
+          version: ${{ steps.vars.outputs.tag }}
           arch: x86_64
           format: deb
           package: packaging/package.yml
@@ -76,7 +79,10 @@ jobs:
     runs-on: ubuntu-latest
     needs:  [build-linux-packages, build-artifacts]
     steps:
-      - name: Restore artifacts
+     - name: Set output
+        id: vars
+        run: echo ::set-output name=tag::${GITHUB_REF#refs/*/}
+     - name: Restore artifacts
         uses: actions/download-artifact@v2
         with:
           name: linux-packages
@@ -91,8 +97,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.G_TOKEN }}
         with:
-          tag_name: ${{ github.ref }}
-          release_name: ${{ github.ref }}
+          tag_name:  ${{ steps.vars.outputs.tag }}
+          release_name:  ${{ steps.vars.outputs.tag }}
           body: ${{steps.build_changelog.outputs.changelog}}
           files: |
             ./*.deb
