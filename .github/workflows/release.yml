@@ -32,7 +32,9 @@ jobs:
         uses: actions/upload-artifact@v2
         with:
             name: target-${{ matrix.os }}
-            path: ./target/release
+            path: |
+              ./target/release/seth
+              ./target/release/dapp
   build-linux-packages:
     runs-on: ubuntu-latest
     needs: build-artifacts
