@@ -1,0 +1,15 @@
+# This file is used by kentik/pkg GitHub Action to create the rpm/deb packages
+#
+#
+meta:
+  description: A drop-in replacement for Dapptools, written in Rust.
+  maintainer: Odysseas Lamtzidis
+files:
+  "/usr/bin/seth":
+    file: target/release/seth
+    mode: "0755"
+    user: "root"
+  "/usr/bin/dapp":
+    file: target/release/dapp
+    mode: "0755"
+    user: "root"

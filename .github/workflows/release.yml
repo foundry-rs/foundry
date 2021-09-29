@@ -74,7 +74,7 @@ jobs:
             ./${{ steps.build_rpm.outputs.package }}
   create-release:
     runs-on: ubuntu-latest
-    needs:  [build-linux-packages, build-artifacts]
+    needs:  [build-linux-packahosges, build-artifacts]
     steps:
       - name: Restore artifacts
         uses: actions/download-artifact@v2
@@ -97,5 +97,22 @@ jobs:
           files: |
             ./*.deb
             ./*.rpm
-# bump brew version
-#
+    - name: add binaries to repository server
+      uses: appleboy/scp-action@master
+      with:
+        host: ${{ secrets.REPOSITORY_HOST }}
+        username: ${{ secrets.REPOSITORY_HOST_USERNAME }}
+        key: ${{ secrets. REPOSITORY_HOST_KEY }}
+        source: "./*.deb, ./*.rpm"
+        target: "/tmp"
+          #    - name: add binaries to repository
+          #      uses: appleboy/ssh-action@master
+          #      with:
+          #        host: ${{ secrets.REPOSITORY_HOST }}
+          #        username: ${{ secrets.REPOSITORY_HOST_USERNAME }}
+          #        key: ${{ secrets. REPOSITORY_HOST_KEY }}
+          #        script: |
+          #
+          #
+          #            # bump brew version
+          ##
