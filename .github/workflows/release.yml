@@ -74,7 +74,7 @@ jobs:
         with:
           path: |
             ./${{ steps.build_deb.outputs.package }}
-        1    ./${{ steps.build_rpm.outputs.package }}
+            ./${{ steps.build_rpm.outputs.package }}
       - name: Build Changelog
         id: github_release
         uses: mikepenz/release-changelog-builder-action@v2.4.2
