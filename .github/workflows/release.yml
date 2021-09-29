@@ -74,22 +74,22 @@ jobs:
         with:
           path: |
             ./${{ steps.build_deb.outputs.package }}
-            ./${{ steps.build_rpm.outputs.package }}
+        1    ./${{ steps.build_rpm.outputs.package }}
       - name: Build Changelog
         id: github_release
         uses: mikepenz/release-changelog-builder-action@v2.4.2
         env:
           GITHUB_TOKEN: ${{ secrets.G_TOKEN }}
-     - name: Create Release
-       id: create-release
-       uses: softprops/action-gh-release@vv0.1.13
-       env:
-         GITHUB_TOKEN: ${{ secrets.G_TOKEN }}
-       with:
-         tag_name: ${{ github.ref }}
-         release_name: ${{ github.ref }}
-         body: ${{steps.build_changelog.outputs.changelog}}
-         files: |
-           ./*.deb
-           ./*.rpm
+      - name: Create Release
+        id: create-release
+        uses: softprops/action-gh-release@vv0.1.13
+        env:
+          GITHUB_TOKEN: ${{ secrets.G_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: ${{ github.ref }}
+          body: ${{steps.build_changelog.outputs.changelog}}
+          files: |
+            ./*.deb
+            ./*.rpm
 
