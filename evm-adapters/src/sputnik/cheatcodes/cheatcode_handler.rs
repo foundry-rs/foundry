@@ -1,4 +1,5 @@
 use sputnik::{
+    gasometer,
     backend::Backend,
     executor::{StackExecutor, StackState},
     Capture, Config, Context, CreateScheme, ExitError, ExitReason, ExitSucceed, Handler, Transfer,
@@ -25,13 +26,6 @@ pub static CHEATCODE_ADDRESS: Lazy<Address> = Lazy::new(|| {
 // etc.
 pub struct CheatcodeHandler<H> {
     handler: H,
-}
-
-impl<H> Deref for CheatcodeHandler<H> {
-    type Target = H;
-    fn deref(&self) -> &Self::Target {
-        &self.handler
-    }
 }
 
 // Forwards everything internally except for the transact_call which is overriden.
@@ -63,36 +57,37 @@ impl<'a, B: Backend> SputnikExecutor<CheatcodeStackState<'a, B>> for CheatcodeSt
         gas_limit: u64,
         access_list: Vec<(H160, Vec<H256>)>,
     ) -> (ExitReason, Vec<u8>) {
-		event!(TransactCall {
-			caller,
-			address,
-			value,
-			data: &data,
-			gas_limit,
-		});
+		// event!(TransactCall {
+		// 	caller,
+		// 	address,
+		// 	value,
+		// 	data: &data,
+		// 	gas_limit,
+		// });
 
 		let transaction_cost = gasometer::call_transaction_cost(&data, &access_list);
-		let gasometer = &mut self.state.metadata_mut().gasometer;
+		let gasometer = &mut self.state().metadata_mut().gasometer();
 		match gasometer.record_transaction(transaction_cost) {
 			Ok(()) => (),
-			Err(e) => return emit_exit!(e.into(), Vec::new()),
+			// Err(e) => return emit_exit!(e.into(), Vec::new()),
+			Err(e) => return (e.into(), Vec::new()),
 		}
 
 		// Initialize initial addresses for EIP-2929
-		if self.config.increase_state_access_gas {
-			let addresses = self
-				.precompile
+		if self.config().increase_state_access_gas {
+			let addresses = self.handler
+				.precompile()
 				.clone()
 				.into_keys()
 				.into_iter()
 				.chain(core::iter::once(caller))
 				.chain(core::iter::once(address));
-			self.state.metadata_mut().access_addresses(addresses);
+			self.state().metadata_mut().access_addresses(addresses);
 
-			self.initialize_with_access_list(access_list);
+			self.handler.initialize_with_access_list(access_list);
 		}
 
-		self.state.inc_nonce(caller);
+		self.state_mut().inc_nonce(caller);
 
 		let context = Context {
 			caller,
@@ -114,7 +109,8 @@ impl<'a, B: Backend> SputnikExecutor<CheatcodeStackState<'a, B>> for CheatcodeSt
 			false,
 			context,
 		) {
-			Capture::Exit((s, v)) => emit_exit!(s, v),
+			// Capture::Exit((s, v)) => emit_exit!(s, v),
+			Capture::Exit((s, v)) => (s, v),
 			Capture::Trap(_) => unreachable!(),
 		}
     }
