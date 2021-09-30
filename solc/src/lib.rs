@@ -1,5 +1,6 @@
 use ethers::core::utils::{CompiledContract, Solc};
 use eyre::Result;
+use rayon::prelude::*;
 use semver::{Version, VersionReq};
 use std::{
     collections::HashMap,
@@ -85,14 +86,25 @@ impl<'a> SolcBuilder<'a> {
     pub fn build_all(&mut self) -> Result<HashMap<String, CompiledContract>> {
         let contracts_by_version = self.contract_versions()?;
         let start = Instant::now();
-        let res = contracts_by_version.into_iter().try_fold(
-            HashMap::new(),
-            |mut map, (version, files)| {
+
+        let res = contracts_by_version
+            .into_par_iter()
+            .try_fold(HashMap::new, |mut map, (version, files)| {
                 let res = self.build(&version, files)?;
                 map.extend(res);
                 Ok::<_, eyre::Error>(map)
-            },
-        );
+            })
+            // Need to define the logic for combining the 2 maps in Rayon after the fold
+            .reduce(
+                || Ok(HashMap::new()),
+                |prev: Result<HashMap<_, _>>, map: Result<HashMap<_, _>>| match (prev, map) {
+                    (Ok(mut prev), Ok(map)) => {
+                        prev.extend(map);
+                        Ok(prev)
+                    }
+                    _ => Err(eyre::eyre!("compilation failed")),
+                },
+            );
         let duration = Instant::now().duration_since(start);
         tracing::info!(compilation_time = ?duration);
 
