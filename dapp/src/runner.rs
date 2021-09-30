@@ -83,12 +83,12 @@ impl<'a, S, E: Evm<S>> ContractRunner<'a, S, E> {
             })
             .collect::<Result<HashMap<_, _>>>()?;
 
-        let map = if let Some(mut fuzzer) = fuzzer {
+        let map = if let Some(fuzzer) = fuzzer {
             let fuzz_tests = test_fns
                 .iter()
                 .filter(|func| !func.inputs.is_empty())
                 .map(|func| {
-                    let result = self.run_fuzz_test(func, needs_setup, &mut fuzzer)?;
+                    let result = self.run_fuzz_test(func, needs_setup, fuzzer)?;
                     Ok((func.name.clone(), result))
                 })
                 .collect::<Result<HashMap<_, _>>>()?;
