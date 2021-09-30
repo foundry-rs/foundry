@@ -1,12 +1,15 @@
 use sputnik::{
-    backend::Backend, executor::StackExecutor, Capture, Context, CreateScheme, ExitError,
-    ExitReason, ExitSucceed, Handler, Transfer,
+    backend::Backend,
+    executor::{StackExecutor, StackState},
+    Capture, Config, Context, CreateScheme, ExitError, ExitReason, ExitSucceed, Handler, Transfer,
 };
 
 use ethers::types::{Address, H160, H256, U256};
 use std::{convert::Infallible, ops::Deref};
 
 use once_cell::sync::Lazy;
+
+use crate::sputnik::SputnikExecutor;
 
 use super::{backend::CheatcodeBackend, memory_stackstate_owned::MemoryStackStateOwned};
 
@@ -31,6 +34,41 @@ impl<H> Deref for CheatcodeHandler<H> {
     }
 }
 
+// Forwards everything internally except for the transact_call which is overriden.
+// TODO: Maybe we can pull this functionality up to the `Evm` trait to avoid having so many traits?
+impl<'a, B: Backend> SputnikExecutor<CheatcodeStackState<'a, B>> for CheatcodeStackExecutor<'a, B> {
+    fn config(&self) -> &Config {
+        self.handler.config()
+    }
+
+    fn state(&self) -> &CheatcodeStackState<'a, B> {
+        self.handler.state()
+    }
+
+    fn state_mut(&mut self) -> &mut CheatcodeStackState<'a, B> {
+        self.handler.state_mut()
+    }
+
+    fn gas_left(&self) -> U256 {
+        // NB: We do this to avoid `function cannot return without recursing`
+        U256::from(self.state().metadata().gasometer().gas())
+    }
+
+    fn transact_call(
+        &mut self,
+        caller: H160,
+        address: H160,
+        value: U256,
+        data: Vec<u8>,
+        gas_limit: u64,
+        access_list: Vec<(H160, Vec<H256>)>,
+    ) -> (ExitReason, Vec<u8>) {
+        // TODO: Replace with our own impl that forwards to our hooked `call` instead of the
+        // vanilla one. May require re-implemeting both this function and `call_inner`.
+        self.handler.transact_call(caller, address, value, data, gas_limit, access_list)
+    }
+}
+
 pub type CheatcodeStackState<'a, B> = MemoryStackStateOwned<'a, CheatcodeBackend<B>>;
 
 pub type CheatcodeStackExecutor<'a, B> =
@@ -39,10 +77,13 @@ pub type CheatcodeStackExecutor<'a, B> =
 impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
     /// Decodes the provided calldata as a
     fn apply_cheatcode(&mut self, _input: Vec<u8>) -> Capture<(ExitReason, Vec<u8>), Infallible> {
-        let state = self.handler.state_mut();
+        // Get a mutable ref to the state so we can apply the cheats
+        let state = self.state_mut();
+
         // TODO: Decode ABI -> if function is not matched, return a Revert with "unknown cheatcode
         // [name]" as the retdata
         state.backend.cheats.block_timestamp = Some(100.into());
+
         Capture::Exit((ExitReason::Succeed(ExitSucceed::Stopped), vec![1; 32]))
     }
 }
@@ -64,7 +105,10 @@ impl<'a, B: Backend> Handler for CheatcodeStackExecutor<'a, B> {
         is_static: bool,
         context: Context,
     ) -> Capture<(ExitReason, Vec<u8>), Self::CallInterrupt> {
-        // We intercept calls to the `CHEATCODE_ADDRESS`,
+        // We intercept calls to the `CHEATCODE_ADDRESS` to apply the cheatcode directly
+        // to the state.
+        // NB: This is very similar to how Optimism's custom intercept logic to "predeploys" work
+        // (e.g. with the StateManager)
         if code_address == *CHEATCODE_ADDRESS {
             self.apply_cheatcode(input)
         } else {
@@ -186,8 +230,6 @@ impl<'a, B: Backend> Handler for CheatcodeStackExecutor<'a, B> {
 
 #[cfg(test)]
 mod tests {
-    use std::marker::PhantomData;
-
     use sputnik::{executor::StackSubstateMetadata, Config};
 
     use crate::{
@@ -207,7 +249,8 @@ mod tests {
         let config = Config::istanbul();
 
         // start w/ no cheatcodes
-        let cheats = Cheatcodes::default();
+        let mut cheats = Cheatcodes::default();
+        cheats.block_timestamp = Some(100.into());
 
         // create backend to instantiate the stack executor with
         let vicinity = new_vicinity();
@@ -225,6 +268,31 @@ mod tests {
 
         let executor = CheatcodeHandler { handler: executor };
 
-        let mut evm = Executor { executor, gas_limit, marker: PhantomData };
+        let mut evm = Executor::from_executor(executor, gas_limit);
+
+        let compiled = COMPILED.get("GreeterTest").expect("could not find contract");
+        let addr = "0x1000000000000000000000000000000000000000".parse().unwrap();
+        evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
+        evm.initialize_contracts([(*CHEATCODE_ADDRESS, vec![1u8; 1000].into())]);
+
+        evm.call::<(), _>(
+            Address::zero(),
+            addr,
+            &dapp_utils::get_func("function setUp()").unwrap(),
+            (),
+            0.into(),
+        )
+        .unwrap();
+
+        let (_, reason, _) = evm
+            .call::<(), _>(
+                Address::zero(),
+                addr,
+                &dapp_utils::get_func("function testHevmTime()").unwrap(),
+                (),
+                0.into(),
+            )
+            .unwrap();
+        assert_eq!(reason, ExitReason::Succeed(ExitSucceed::Stopped));
     }
 }

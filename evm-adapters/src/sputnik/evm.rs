@@ -5,7 +5,7 @@ use ethers::types::{Address, Bytes, U256};
 use sputnik::{
     backend::{Backend, MemoryAccount},
     executor::{MemoryStackState, StackExecutor, StackState, StackSubstateMetadata},
-    Config, ExitReason, Handler,
+    Config, ExitReason,
 };
 use std::{collections::BTreeMap, marker::PhantomData};
 
@@ -21,6 +21,12 @@ pub struct Executor<S, E> {
     pub executor: E,
     pub gas_limit: u64,
     marker: PhantomData<S>,
+}
+
+impl<S, E> Executor<S, E> {
+    pub fn from_executor(executor: E, gas_limit: u64) -> Self {
+        Self { executor, gas_limit, marker: PhantomData }
+    }
 }
 
 // Concrete implementation over the in-memory backend
