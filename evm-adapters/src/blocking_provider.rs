@@ -1,6 +1,6 @@
 use ethers::{
     providers::Middleware,
-    types::{Address, BlockId, Bytes, H256, U256},
+    types::{Address, BlockId, Bytes, H256, U256, U64},
 };
 use tokio::runtime::Runtime;
 
@@ -18,41 +18,17 @@ impl<M: Clone> Clone for BlockingProvider<M> {
     }
 }
 
-#[cfg(feature = "sputnik")]
-use sputnik::backend::MemoryVicinity;
-
 impl<M: Middleware> BlockingProvider<M> {
     pub fn new(provider: M) -> Self {
         Self { provider, runtime: Runtime::new().unwrap() }
     }
 
-    #[cfg(feature = "sputnik")]
-    pub fn vicinity(&self, pin_block: Option<u64>) -> Result<MemoryVicinity, M::Error> {
-        let block_number = if let Some(pin_block) = pin_block {
-            pin_block
-        } else {
-            self.block_on(self.provider.get_block_number())?.as_u64()
-        };
-
-        let gas_price = self.block_on(self.provider.get_gas_price())?;
-        let chain_id = self.block_on(self.provider.get_chainid())?;
-        let block = self.block_on(self.provider.get_block(block_number))?.expect("block not found");
-
-        Ok(MemoryVicinity {
-            origin: Address::default(),
-            chain_id,
-            block_hashes: Vec::new(),
-            block_number: block.number.expect("block number not found").as_u64().into(),
-            block_coinbase: block.author,
-            block_difficulty: block.difficulty,
-            block_gas_limit: block.gas_limit,
-            block_timestamp: block.timestamp,
-            gas_price,
-        })
-    }
-
     fn block_on<F: std::future::Future>(&self, f: F) -> F::Output {
         self.runtime.block_on(f)
+    }
+
+    pub fn get_block_number(&self) -> Result<U64, M::Error> {
+        self.block_on(self.provider.get_block_number())
     }
 
     pub fn get_balance(&self, address: Address, block: Option<BlockId>) -> Result<U256, M::Error> {
