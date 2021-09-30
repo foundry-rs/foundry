@@ -135,7 +135,11 @@ impl<B: Backend, M: Middleware> Backend for ForkMemoryBackend<B, M> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{sputnik::Executor, test_helpers::COMPILED, Evm};
+    use crate::{
+        sputnik::{helpers::new_backend, vicinity, Executor},
+        test_helpers::COMPILED,
+        Evm,
+    };
     use ethers::{
         providers::{Http, Provider},
         types::Address,
