@@ -63,9 +63,60 @@ impl<'a, B: Backend> SputnikExecutor<CheatcodeStackState<'a, B>> for CheatcodeSt
         gas_limit: u64,
         access_list: Vec<(H160, Vec<H256>)>,
     ) -> (ExitReason, Vec<u8>) {
-        // TODO: Replace with our own impl that forwards to our hooked `call` instead of the
-        // vanilla one. May require re-implemeting both this function and `call_inner`.
-        self.handler.transact_call(caller, address, value, data, gas_limit, access_list)
+		event!(TransactCall {
+			caller,
+			address,
+			value,
+			data: &data,
+			gas_limit,
+		});
+
+		let transaction_cost = gasometer::call_transaction_cost(&data, &access_list);
+		let gasometer = &mut self.state.metadata_mut().gasometer;
+		match gasometer.record_transaction(transaction_cost) {
+			Ok(()) => (),
+			Err(e) => return emit_exit!(e.into(), Vec::new()),
+		}
+
+		// Initialize initial addresses for EIP-2929
+		if self.config.increase_state_access_gas {
+			let addresses = self
+				.precompile
+				.clone()
+				.into_keys()
+				.into_iter()
+				.chain(core::iter::once(caller))
+				.chain(core::iter::once(address));
+			self.state.metadata_mut().access_addresses(addresses);
+
+			self.initialize_with_access_list(access_list);
+		}
+
+		self.state.inc_nonce(caller);
+
+		let context = Context {
+			caller,
+			address,
+			apparent_value: value,
+		};
+
+		match self.call_inner(
+			address,
+			Some(Transfer {
+				source: caller,
+				target: address,
+				value,
+			}),
+			data,
+			Some(gas_limit),
+			false,
+			false,
+			false,
+			context,
+		) {
+			Capture::Exit((s, v)) => emit_exit!(s, v),
+			Capture::Trap(_) => unreachable!(),
+		}
     }
 }
 
