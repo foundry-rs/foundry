@@ -1,6 +1,7 @@
 use ethers::prelude::Provider;
 use evm_adapters::sputnik::{vicinity, ForkMemoryBackend};
 use regex::Regex;
+use sputnik::backend::Backend;
 use structopt::StructOpt;
 
 use dapp::MultiContractRunnerBuilder;
@@ -53,24 +54,25 @@ fn main() -> eyre::Result<()> {
                     use sputnik::backend::MemoryBackend;
                     let cfg = evm_version.sputnik_cfg();
 
-                    if let Some(url) = fork_url {
+                    let vicinity = if let Some(ref url) = fork_url {
                         let provider = Provider::try_from(url.as_str())?;
-                        let vicinity = {
-                            let rt =
-                                tokio::runtime::Runtime::new().expect("could not start tokio rt");
-                            rt.block_on(vicinity(&provider, fork_block_number))?
-                        };
-                        let backend = MemoryBackend::new(&vicinity, Default::default());
-                        let backend = ForkMemoryBackend::new(provider, backend);
-                        let evm = Executor::new(env.gas_limit, &cfg, &backend);
-
-                        test(builder, evm, pattern, json)?;
+                        let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
+                        rt.block_on(vicinity(&provider, fork_block_number))?
                     } else {
-                        let vicinity = env.sputnik_state();
-                        let backend = MemoryBackend::new(&vicinity, Default::default());
-                        let evm = Executor::new(env.gas_limit, &cfg, &backend);
-                        test(builder, evm, pattern, json)?;
-                    }
+                        env.sputnik_state()
+                    };
+                    let backend = MemoryBackend::new(&vicinity, Default::default());
+
+                    let backend: Box<dyn Backend> = if let Some(ref url) = fork_url {
+                        let provider = Provider::try_from(url.as_str())?;
+                        let backend = ForkMemoryBackend::new(provider, backend);
+                        Box::new(backend)
+                    } else {
+                        Box::new(backend)
+                    };
+
+                    let evm = Executor::new_with_cheatcodes(backend, env.gas_limit, &cfg);
+                    test(builder, evm, pattern, json)?;
                 }
                 #[cfg(feature = "evmodin-evm")]
                 EvmType::EvmOdin => {
