@@ -110,7 +110,7 @@ jobs:
          host: ${{ secrets.REPOSITORY_HOST }}
          username: ${{ secrets.REPOSITORY_HOST_USERNAME }}
          key: ${{ secrets. REPOSITORY_HOST_KEY }}
-         source: "./*.deb, ./*.rpm"
+         source: "./*.deb"
          target: "/tmp"
      - name: Add binaries to the repository
        uses: appleboy/ssh-action@master
@@ -124,13 +124,12 @@ jobs:
            codename=$( cat /var/repositories/conf/distributions | grep Codename | awk '{print $2}')
            sudo reprepro -b /var/repositories -C main includedeb ${codename} *.deb
            rm /tmp/*.deb
-           rm /tmp/*.rpm
-#      - name: Bump Homebrew formula
-#        runs-on: ubuntu-latest
-#        steps:
-#         uses: mislav/bump-homebrew-formula-action@v1.12
-#         with:
-#           formula-name: dapptools-rs
-#         env:
-#          COMMITTER_TOKEN: ${{ secrets.G_TOKEN }}
+     - name: Bump Homebrew formula
+       runs-on: ubuntu-latest
+       steps:
+        uses: mislav/bump-homebrew-formula-action@v1.12
+        with:
+          formula-name: dapptools-rs
+        env:
+          COMMITTER_TOKEN: ${{ secrets.G_TOKEN }}
 
