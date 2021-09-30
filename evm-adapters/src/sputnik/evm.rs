@@ -5,40 +5,34 @@ use ethers::types::{Address, Bytes, U256};
 use sputnik::{
     backend::{Backend, MemoryAccount},
     executor::{MemoryStackState, StackExecutor, StackState, StackSubstateMetadata},
-    Config, ExitReason, Handler,
+    Config, ExitReason,
 };
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, marker::PhantomData};
 
 use eyre::Result;
+
+use super::SputnikExecutor;
 
 pub type MemoryState = BTreeMap<Address, MemoryAccount>;
 
 // TODO: Check if we can implement this as the base layer of an ethers-provider
 // Middleware stack instead of doing RPC calls.
-pub struct Executor<'a, S> {
-    pub executor: StackExecutor<'a, S>,
+pub struct Executor<S, E> {
+    pub executor: E,
     pub gas_limit: u64,
+    marker: PhantomData<S>,
 }
 
-// Manual implementation of `Clone` for Clone-able StackStates (typically when the Backend
-// behind them is also clone-able). This is useful to have e.g. when running fuzz
-// tests which we need to take ownership of the EVM and clone it for each run in the
-// test runner's closure.
-impl<'a, S: StackState<'a> + Clone> Clone for Executor<'a, S> {
-    fn clone(&self) -> Self {
-        Self {
-            gas_limit: self.gas_limit,
-            executor: StackExecutor::new_with_precompile(
-                self.executor.state().clone(),
-                self.executor.config(),
-                Default::default(),
-            ),
-        }
+impl<S, E> Executor<S, E> {
+    pub fn from_executor(executor: E, gas_limit: u64) -> Self {
+        Self { executor, gas_limit, marker: PhantomData }
     }
 }
 
-// Concrete implementation over the in-memory backend
-impl<'a, B: Backend> Executor<'a, MemoryStackState<'a, 'a, B>> {
+// Concrete implementation over the in-memory backend without cheatcodes
+impl<'a, B: Backend>
+    Executor<MemoryStackState<'a, 'a, B>, StackExecutor<'a, MemoryStackState<'a, 'a, B>>>
+{
     /// Given a gas limit, vm version, initial chain configuration and initial state
     // TOOD: See if we can make lifetimes better here
     pub fn new(gas_limit: u64, config: &'a Config, backend: &'a B) -> Self {
@@ -49,7 +43,7 @@ impl<'a, B: Backend> Executor<'a, MemoryStackState<'a, 'a, B>> {
         // setup executor
         let executor = StackExecutor::new_with_precompile(state, config, Default::default());
 
-        Self { executor, gas_limit }
+        Self { executor, gas_limit, marker: PhantomData }
     }
 }
 
@@ -58,8 +52,9 @@ impl<'a, B: Backend> Executor<'a, MemoryStackState<'a, 'a, B>> {
 // We use StackState as a trait and not as an associated type because we want to
 // allow the developer what the db type should be. Whereas for ReturnReason, we want it
 // to be generic across implementations, but we don't want to make it a user-controlled generic.
-impl<'a, S> Evm<S> for Executor<'a, S>
+impl<'a, S, E> Evm<S> for Executor<S, E>
 where
+    E: SputnikExecutor<S>,
     S: StackState<'a>,
 {
     type ReturnReason = ExitReason;
