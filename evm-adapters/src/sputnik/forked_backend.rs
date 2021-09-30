@@ -1,112 +1,60 @@
 use crate::BlockingProvider;
 
-use sputnik::backend::{Backend, Basic, MemoryAccount, MemoryVicinity};
+use sputnik::backend::{Backend, Basic, MemoryAccount};
 
 use ethers::{
     providers::Middleware,
-    types::{H160, H256, U256},
+    types::{BlockId, H160, H256, U256},
 };
 use std::collections::BTreeMap;
 
-/// Memory backend with ability to fork another chain from an HTTP provider, storing all state
+/// Memory backend with ability to fork another chain from an HTTP provider, storing all cache
 /// values in a `BTreeMap` in memory.
 #[derive(Clone, Debug)]
 // TODO: Add option to easily 1. impersonate accounts, 2. roll back to pinned block
-pub struct ForkMemoryBackend<M> {
+pub struct ForkMemoryBackend<B, M> {
     /// ethers middleware for querying on-chain data
     pub provider: BlockingProvider<M>,
-    /// the global context of the chain
-    pub vicinity: MemoryVicinity,
-    /// state cache
+    /// The internal backend
+    pub backend: B,
+    /// cache state
+    // TODO: Actually cache values in memory.
     // TODO: This should probably be abstracted away into something that efficiently
     // also caches at disk etc.
-    pub state: BTreeMap<H160, MemoryAccount>,
+    pub cache: BTreeMap<H160, MemoryAccount>,
+    /// The block to fetch data from.
+    // This is an `Option` so that we can have less code churn in the functions below
+    pin_block: Option<BlockId>,
 }
 
-impl<M: Middleware> ForkMemoryBackend<M> {
-    /// Create a new memory backend given a provider, an optional block to pin state
-    /// against and a state tree
-    pub fn new(provider: M, pin_block: Option<u64>, state: BTreeMap<H160, MemoryAccount>) -> Self {
+impl<B: Backend, M: Middleware> ForkMemoryBackend<B, M> {
+    pub fn new(provider: M, backend: B) -> Self {
         let provider = BlockingProvider::new(provider);
-        let vicinity = provider
-            .vicinity(pin_block)
-            .expect("could not instantiate vicinity corresponding to upstream");
-        Self { provider, vicinity, state }
+        let pin_block = Some(backend.block_number().as_u64().into());
+        Self { provider, backend, cache: Default::default(), pin_block }
     }
 }
 
-impl<M: Middleware> Backend for ForkMemoryBackend<M> {
-    fn gas_price(&self) -> U256 {
-        self.vicinity.gas_price
-    }
-
-    fn origin(&self) -> H160 {
-        self.vicinity.origin
-    }
-
-    fn block_hash(&self, number: U256) -> H256 {
-        if number >= self.vicinity.block_number ||
-            self.vicinity.block_number - number - U256::one() >=
-                U256::from(self.vicinity.block_hashes.len())
-        {
-            H256::default()
-        } else {
-            let index = (self.vicinity.block_number - number - U256::one()).as_usize();
-            self.vicinity.block_hashes[index]
-        }
-    }
-
-    fn block_number(&self) -> U256 {
-        self.vicinity.block_number
-    }
-
-    fn block_coinbase(&self) -> H160 {
-        self.vicinity.block_coinbase
-    }
-
-    fn block_timestamp(&self) -> U256 {
-        self.vicinity.block_timestamp
-    }
-
-    fn block_difficulty(&self) -> U256 {
-        self.vicinity.block_difficulty
-    }
-
-    fn block_gas_limit(&self) -> U256 {
-        self.vicinity.block_gas_limit
-    }
-
-    fn chain_id(&self) -> U256 {
-        self.vicinity.chain_id
-    }
-
+impl<B: Backend, M: Middleware> Backend for ForkMemoryBackend<B, M> {
     fn exists(&self, address: H160) -> bool {
-        let mut exists = self.state.contains_key(&address);
+        let mut exists = self.cache.contains_key(&address);
 
         // check non-zero balance
         if !exists {
-            let balance = self
-                .provider
-                .get_balance(address, Some(self.vicinity.block_number.as_u64().into()))
-                .unwrap_or_default();
+            let balance = self.provider.get_balance(address, self.pin_block).unwrap_or_default();
             exists = balance != U256::zero();
         }
 
         // check non-zero nonce
         if !exists {
-            let nonce = self
-                .provider
-                .get_transaction_count(address, Some(self.vicinity.block_number.as_u64().into()))
-                .unwrap_or_default();
+            let nonce =
+                self.provider.get_transaction_count(address, self.pin_block).unwrap_or_default();
             exists = nonce != U256::zero();
         }
 
         // check non-empty code
         if !exists {
-            let code = self
-                .provider
-                .get_code(address, Some(self.vicinity.block_number.as_u64().into()))
-                .unwrap_or_default();
+            let code = self.provider.get_code(address, self.pin_block).unwrap_or_default();
             exists = !code.0.is_empty();
         }
 
@@ -114,51 +62,70 @@ impl<M: Middleware> Backend for ForkMemoryBackend<M> {
     }
 
     fn basic(&self, address: H160) -> Basic {
-        self.state
+        self.cache
             .get(&address)
             .map(|a| Basic { balance: a.balance, nonce: a.nonce })
             .unwrap_or_else(|| Basic {
-                balance: self
-                    .provider
-                    .get_balance(address, Some(self.vicinity.block_number.as_u64().into()))
-                    .unwrap_or_default(),
+                balance: self.provider.get_balance(address, self.pin_block).unwrap_or_default(),
                 nonce: self
                     .provider
-                    .get_transaction_count(
-                        address,
-                        Some(self.vicinity.block_number.as_u64().into()),
-                    )
+                    .get_transaction_count(address, self.pin_block)
                     .unwrap_or_default(),
             })
     }
 
     fn code(&self, address: H160) -> Vec<u8> {
-        self.state.get(&address).map(|v| v.code.clone()).unwrap_or_else(|| {
-            self.provider
-                .get_code(address, Some(self.vicinity.block_number.as_u64().into()))
-                .unwrap_or_default()
-                .to_vec()
+        self.cache.get(&address).map(|v| v.code.clone()).unwrap_or_else(|| {
+            self.provider.get_code(address, self.pin_block).unwrap_or_default().to_vec()
         })
     }
 
     fn storage(&self, address: H160, index: H256) -> H256 {
-        if let Some(acct) = self.state.get(&address) {
+        if let Some(acct) = self.cache.get(&address) {
             if let Some(store_data) = acct.storage.get(&index) {
                 *store_data
             } else {
-                self.provider
-                    .get_storage_at(
-                        address,
-                        index,
-                        Some(self.vicinity.block_number.as_u64().into()),
-                    )
-                    .unwrap_or_default()
+                self.provider.get_storage_at(address, index, self.pin_block).unwrap_or_default()
             }
         } else {
-            self.provider
-                .get_storage_at(address, index, Some(self.vicinity.block_number.as_u64().into()))
-                .unwrap_or_default()
+            self.provider.get_storage_at(address, index, self.pin_block).unwrap_or_default()
         }
+    }
+
+    fn gas_price(&self) -> U256 {
+        self.backend.gas_price()
+    }
+
+    fn origin(&self) -> H160 {
+        self.backend.origin()
+    }
+
+    fn block_hash(&self, number: U256) -> H256 {
+        self.backend.block_hash(number)
+    }
+
+    fn block_number(&self) -> U256 {
+        self.backend.block_number()
+    }
+
+    fn block_coinbase(&self) -> H160 {
+        self.backend.block_coinbase()
+    }
+
+    fn block_timestamp(&self) -> U256 {
+        self.backend.block_timestamp()
+    }
+
+    fn block_difficulty(&self) -> U256 {
+        self.backend.block_difficulty()
+    }
+
+    fn block_gas_limit(&self) -> U256 {
+        self.backend.block_gas_limit()
+    }
+
+    fn chain_id(&self) -> U256 {
+        self.backend.chain_id()
     }
 
     fn original_storage(&self, address: H160, index: H256) -> Option<H256> {
@@ -168,13 +135,18 @@ impl<M: Middleware> Backend for ForkMemoryBackend<M> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{sputnik::Executor, test_helpers::COMPILED, Evm};
+    use crate::{
+        sputnik::{helpers::new_backend, vicinity, Executor},
+        test_helpers::COMPILED,
+        Evm,
+    };
     use ethers::{
         providers::{Http, Provider},
         types::Address,
     };
     use sputnik::Config;
     use std::convert::TryFrom;
+    use tokio::runtime::Runtime;
 
     use super::*;
 
@@ -188,7 +160,11 @@ mod tests {
             "https://mainnet.infura.io/v3/c60b0bb42f8a4c6481ecd229eddaca27",
         )
         .unwrap();
-        let backend = ForkMemoryBackend::new(provider, Some(13292465), Default::default());
+        let rt = Runtime::new().unwrap();
+        let vicinity = rt.block_on(vicinity(&provider, Some(13292465))).unwrap();
+        let backend = new_backend(&vicinity, Default::default());
+        let backend = ForkMemoryBackend::new(provider, backend);
+
         let mut evm = Executor::new(12_000_000, &cfg, &backend);
         evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
 

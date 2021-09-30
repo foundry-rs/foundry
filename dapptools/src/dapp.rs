@@ -1,5 +1,5 @@
 use ethers::prelude::Provider;
-use evm_adapters::sputnik::ForkMemoryBackend;
+use evm_adapters::sputnik::{vicinity, ForkMemoryBackend};
 use regex::Regex;
 use structopt::StructOpt;
 
@@ -55,10 +55,13 @@ fn main() -> eyre::Result<()> {
 
                     if let Some(url) = fork_url {
                         let provider = Provider::try_from(url.as_str())?;
-                        // TODO: Replace Default with something that can be read from disk, e.g.
-                        // some pre-loaded state snapshot from another time?
-                        let backend =
-                            ForkMemoryBackend::new(provider, fork_block_number, Default::default());
+                        let vicinity = {
+                            let rt =
+                                tokio::runtime::Runtime::new().expect("could not start tokio rt");
+                            rt.block_on(vicinity(&provider, fork_block_number))?
+                        };
+                        let backend = MemoryBackend::new(&vicinity, Default::default());
+                        let backend = ForkMemoryBackend::new(provider, backend);
                         let evm = Executor::new(env.gas_limit, &cfg, &backend);
 
                         test(builder, evm, pattern, json)?;
