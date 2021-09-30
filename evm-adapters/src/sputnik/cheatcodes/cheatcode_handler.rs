@@ -448,8 +448,7 @@ mod tests {
         let config = Config::istanbul();
 
         // start w/ no cheatcodes
-        let mut cheats = Cheatcodes::default();
-        cheats.block_timestamp = Some(100.into());
+        let cheats = Cheatcodes::default();
 
         // create backend to instantiate the stack executor with
         let vicinity = new_vicinity();
@@ -472,7 +471,10 @@ mod tests {
         let compiled = COMPILED.get("GreeterTest").expect("could not find contract");
         let addr = "0x1000000000000000000000000000000000000000".parse().unwrap();
         evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
-        evm.initialize_contracts([(*CHEATCODE_ADDRESS, vec![1u8; 1000].into())]);
+
+        // Need to create a non-empty contract at the cheat code address so that the EVM backend
+        // thinks that something exists there.
+        evm.initialize_contracts([(*CHEATCODE_ADDRESS, vec![0u8; 1].into())]);
 
         evm.call::<(), _>(
             Address::zero(),

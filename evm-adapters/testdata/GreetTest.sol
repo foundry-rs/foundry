@@ -45,7 +45,7 @@ contract GreeterTest is GreeterTestSetup {
 
     function testHevmTime() public {
         uint256 val = 100;
-        // hevm.roll(100);
+        hevm.roll(100);
         uint256 timestamp = greeter.time();
         require(timestamp == val);
     }
