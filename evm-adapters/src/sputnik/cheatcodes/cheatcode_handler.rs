@@ -1,6 +1,14 @@
+use super::{backend::CheatcodeBackend, memory_stackstate_owned::MemoryStackStateOwned, HEVM};
+use crate::{
+    sputnik::{Executor, SputnikExecutor},
+    Evm,
+};
+
 use sputnik::{
     backend::Backend,
-    executor::{Log, PrecompileOutput, StackExecutor, StackExitKind, StackState},
+    executor::{
+        Log, PrecompileOutput, StackExecutor, StackExitKind, StackState, StackSubstateMetadata,
+    },
     gasometer, Capture, Config, Context, CreateScheme, ExitError, ExitReason, ExitSucceed, Handler,
     Runtime, Transfer,
 };
@@ -10,10 +18,6 @@ use ethers::types::{Address, H160, H256, U256};
 use std::convert::Infallible;
 
 use once_cell::sync::Lazy;
-
-use crate::sputnik::SputnikExecutor;
-
-use super::{backend::CheatcodeBackend, memory_stackstate_owned::MemoryStackStateOwned, HEVM};
 
 // This is now getting us the right hash? Also tried [..20]
 // Lazy::new(|| Address::from_slice(&keccak256("hevm cheat code")[12..]));
@@ -103,6 +107,30 @@ pub type CheatcodeStackState<'a, B> = MemoryStackStateOwned<'a, CheatcodeBackend
 
 pub type CheatcodeStackExecutor<'a, B> =
     CheatcodeHandler<StackExecutor<'a, CheatcodeStackState<'a, B>>>;
+
+impl<'a, B: Backend> Executor<CheatcodeStackState<'a, B>, CheatcodeStackExecutor<'a, B>> {
+    pub fn new_with_cheatcodes(backend: B, gas_limit: u64, config: &'a Config) -> Self {
+        // make this a cheatcode-enabled backend
+        let backend = CheatcodeBackend { backend, cheats: Default::default() };
+
+        // create the memory stack state (owned, so that we can modify the backend via
+        // self.state_mut on the transact_call fn)
+        let metadata = StackSubstateMetadata::new(gas_limit, config);
+        let state = MemoryStackStateOwned::new(metadata, backend);
+
+        // create the executor and wrap it with the cheatcode handler
+        let executor = StackExecutor::new_with_precompile(state, config, Default::default());
+        let executor = CheatcodeHandler { handler: executor };
+
+        let mut evm = Executor::from_executor(executor, gas_limit);
+
+        // Need to create a non-empty contract at the cheat code address so that the EVM backend
+        // thinks that something exists there.
+        evm.initialize_contracts([(*CHEATCODE_ADDRESS, vec![0u8; 1].into())]);
+
+        evm
+    }
+}
 
 impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
     /// Decodes the provided calldata as a
@@ -397,11 +425,10 @@ impl<'a, B: Backend> Handler for CheatcodeStackExecutor<'a, B> {
 
 #[cfg(test)]
 mod tests {
-    use sputnik::{executor::StackSubstateMetadata, Config};
+    use sputnik::Config;
 
     use crate::{
         sputnik::{
-            cheatcodes::{memory_stackstate_owned::MemoryStackStateOwned, Cheatcodes},
             helpers::{new_backend, new_vicinity},
             Executor,
         },
@@ -415,39 +442,23 @@ mod tests {
     fn cheatcodes() {
         let config = Config::istanbul();
 
-        // start w/ no cheatcodes
-        let cheats = Cheatcodes::default();
-
         // create backend to instantiate the stack executor with
         let vicinity = new_vicinity();
         let backend = new_backend(&vicinity, Default::default());
 
-        // make this a cheatcode-enabled backend
-        let backend = CheatcodeBackend { backend, cheats };
-
         // create the memory stack state (owned, so that we can modify the backend via
         // self.state_mut on the transact_call fn)
         let gas_limit = 10_000_000;
-        let metadata = StackSubstateMetadata::new(gas_limit, &config);
-        let state = MemoryStackStateOwned::new(metadata, backend);
-        let executor = StackExecutor::new_with_precompile(state, &config, Default::default());
-
-        let executor = CheatcodeHandler { handler: executor };
-
-        let mut evm = Executor::from_executor(executor, gas_limit);
+        let mut evm = Executor::new_with_cheatcodes(backend, gas_limit, &config);
 
         let compiled = COMPILED.get("GreeterTest").expect("could not find contract");
         let addr = "0x1000000000000000000000000000000000000000".parse().unwrap();
         evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
 
-        // Need to create a non-empty contract at the cheat code address so that the EVM backend
-        // thinks that something exists there.
-        evm.initialize_contracts([(*CHEATCODE_ADDRESS, vec![0u8; 1].into())]);
-
         evm.call::<(), _>(
             Address::zero(),
             addr,
-            &dapp_utils::get_func("function setUp()").unwrap(),
+            &dapp_utils::get_func("setUp()").unwrap(),
             (),
             0.into(),
         )
@@ -457,7 +468,7 @@ mod tests {
             .call::<(), _>(
                 Address::zero(),
                 addr,
-                &dapp_utils::get_func("function testHevmTime()").unwrap(),
+                &dapp_utils::get_func("testHevmTime()").unwrap(),
                 (),
                 0.into(),
             )

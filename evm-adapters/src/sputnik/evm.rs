@@ -29,7 +29,7 @@ impl<S, E> Executor<S, E> {
     }
 }
 
-// Concrete implementation over the in-memory backend
+// Concrete implementation over the in-memory backend without cheatcodes
 impl<'a, B: Backend>
     Executor<MemoryStackState<'a, 'a, B>, StackExecutor<'a, MemoryStackState<'a, 'a, B>>>
 {
