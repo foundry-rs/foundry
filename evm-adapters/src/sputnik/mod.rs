@@ -6,7 +6,10 @@ pub use forked_backend::ForkMemoryBackend;
 
 pub mod cheatcodes;
 
-use ethers::{providers::Middleware, types::{H160, H256, U256}};
+use ethers::{
+    providers::Middleware,
+    types::{H160, H256, U256},
+};
 
 use sputnik::{
     backend::MemoryVicinity,
