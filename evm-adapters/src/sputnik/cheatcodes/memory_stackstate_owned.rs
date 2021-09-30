@@ -1,6 +1,6 @@
 use sputnik::{
     backend::{Backend, Basic},
-    executor::{stack::MemoryStackSubstate, StackState, StackSubstateMetadata},
+    executor::{MemoryStackSubstate, StackState, StackSubstateMetadata},
     ExitError, Transfer,
 };
 

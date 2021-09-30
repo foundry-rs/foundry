@@ -1,14 +1,13 @@
 use sputnik::{
-    Runtime,
-    gasometer,
     backend::Backend,
-    executor::{StackExecutor, StackState, StackExitKind, PrecompileOutput, Log},
-    Capture, Config, Context, CreateScheme, ExitError, ExitReason, ExitSucceed, Handler, Transfer,
+    executor::{Log, PrecompileOutput, StackExecutor, StackExitKind, StackState},
+    gasometer, Capture, Config, Context, CreateScheme, ExitError, ExitReason, ExitSucceed, Handler,
+    Runtime, Transfer,
 };
 use std::rc::Rc;
 
 use ethers::types::{Address, H160, H256, U256};
-use std::{convert::Infallible, ops::Deref};
+use std::convert::Infallible;
 
 use once_cell::sync::Lazy;
 
@@ -59,61 +58,54 @@ impl<'a, B: Backend> SputnikExecutor<CheatcodeStackState<'a, B>> for CheatcodeSt
         gas_limit: u64,
         access_list: Vec<(H160, Vec<H256>)>,
     ) -> (ExitReason, Vec<u8>) {
-		// event!(TransactCall {
-		// 	caller,
-		// 	address,
-		// 	value,
-		// 	data: &data,
-		// 	gas_limit,
-		// });
+        // event!(TransactCall {
+        // 	caller,
+        // 	address,
+        // 	value,
+        // 	data: &data,
+        // 	gas_limit,
+        // });
 
-		let transaction_cost = gasometer::call_transaction_cost(&data, &access_list);
-		match self.state_mut().metadata_mut().gasometer_mut().record_transaction(transaction_cost) {
-			Ok(()) => (),
-			// Err(e) => return emit_exit!(e.into(), Vec::new()),
-			Err(e) => return (e.into(), Vec::new()),
-		}
+        let transaction_cost = gasometer::call_transaction_cost(&data, &access_list);
+        match self.state_mut().metadata_mut().gasometer_mut().record_transaction(transaction_cost) {
+            Ok(()) => (),
+            // Err(e) => return emit_exit!(e.into(), Vec::new()),
+            Err(e) => return (e.into(), Vec::new()),
+        }
 
-		// Initialize initial addresses for EIP-2929
-		if self.config().increase_state_access_gas {
-			let addresses = self.handler
-				.precompile()
-				.clone()
-				.into_keys()
-				.into_iter()
-				.chain(core::iter::once(caller))
-				.chain(core::iter::once(address));
-			self.state_mut().metadata_mut().access_addresses(addresses);
+        // Initialize initial addresses for EIP-2929
+        if self.config().increase_state_access_gas {
+            let addresses = self
+                .handler
+                .precompile()
+                .clone()
+                .into_keys()
+                .into_iter()
+                .chain(core::iter::once(caller))
+                .chain(core::iter::once(address));
+            self.state_mut().metadata_mut().access_addresses(addresses);
 
-			self.handler.initialize_with_access_list(access_list);
-		}
+            self.handler.initialize_with_access_list(access_list);
+        }
 
-		self.state_mut().inc_nonce(caller);
+        self.state_mut().inc_nonce(caller);
 
-		let context = Context {
-			caller,
-			address,
-			apparent_value: value,
-		};
+        let context = Context { caller, address, apparent_value: value };
 
-		match self.call_inner(
-			address,
-			Some(Transfer {
-				source: caller,
-				target: address,
-				value,
-			}),
-			data,
-			Some(gas_limit),
-			false,
-			false,
-			false,
-			context,
-		) {
-			// Capture::Exit((s, v)) => emit_exit!(s, v),
-			Capture::Exit((s, v)) => (s, v),
-			Capture::Trap(_) => unreachable!(),
-		}
+        match self.call_inner(
+            address,
+            Some(Transfer { source: caller, target: address, value }),
+            data,
+            Some(gas_limit),
+            false,
+            false,
+            false,
+            context,
+        ) {
+            // Capture::Exit((s, v)) => emit_exit!(s, v),
+            Capture::Exit((s, v)) => (s, v),
+            Capture::Trap(_) => unreachable!(),
+        }
     }
 }
 
@@ -137,154 +129,143 @@ impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
 
     // NB: This function is copy-pasted from uptream's `execute`, adjusted so that we call the
     // Runtime with our own handler
-	pub fn execute(&mut self, runtime: &mut Runtime) -> ExitReason {
-		match runtime.run(self) {
-			Capture::Exit(s) => s,
-			Capture::Trap(_) => unreachable!("Trap is Infallible"),
-		}
-	}
+    pub fn execute(&mut self, runtime: &mut Runtime) -> ExitReason {
+        match runtime.run(self) {
+            Capture::Exit(s) => s,
+            Capture::Trap(_) => unreachable!("Trap is Infallible"),
+        }
+    }
 
     // NB: This function is copy-pasted from uptream's call_inner
-	#[allow(clippy::too_many_arguments)]
-	fn call_inner(
-		&mut self,
-		code_address: H160,
-		transfer: Option<Transfer>,
-		input: Vec<u8>,
-		target_gas: Option<u64>,
-		is_static: bool,
-		take_l64: bool,
-		take_stipend: bool,
-		context: Context,
-	) -> Capture<(ExitReason, Vec<u8>), Infallible> {
-		macro_rules! try_or_fail {
-			( $e:expr ) => {
-				match $e {
-					Ok(v) => v,
-					Err(e) => return Capture::Exit((e.into(), Vec::new())),
-				}
-			};
-		}
+    #[allow(clippy::too_many_arguments)]
+    fn call_inner(
+        &mut self,
+        code_address: H160,
+        transfer: Option<Transfer>,
+        input: Vec<u8>,
+        target_gas: Option<u64>,
+        is_static: bool,
+        take_l64: bool,
+        take_stipend: bool,
+        context: Context,
+    ) -> Capture<(ExitReason, Vec<u8>), Infallible> {
+        macro_rules! try_or_fail {
+            ( $e:expr ) => {
+                match $e {
+                    Ok(v) => v,
+                    Err(e) => return Capture::Exit((e.into(), Vec::new())),
+                }
+            };
+        }
 
-		fn l64(gas: u64) -> u64 {
-			gas - gas / 64
-		}
+        fn l64(gas: u64) -> u64 {
+            gas - gas / 64
+        }
 
-		// event!(Call {
-		// 	code_address,
-		// 	transfer: &transfer,
-		// 	input: &input,
-		// 	target_gas,
-		// 	is_static,
-		// 	context: &context,
-		// });
+        // event!(Call {
+        // 	code_address,
+        // 	transfer: &transfer,
+        // 	input: &input,
+        // 	target_gas,
+        // 	is_static,
+        // 	context: &context,
+        // });
 
-		let after_gas = if take_l64 && self.config().call_l64_after_gas {
-			if self.config().estimate {
-				let initial_after_gas = self.state().metadata().gasometer().gas();
-				let diff = initial_after_gas - l64(initial_after_gas);
-				try_or_fail!(self.state_mut().metadata_mut().gasometer_mut().record_cost(diff));
-				self.state().metadata().gasometer().gas()
-			} else {
-				l64(self.state().metadata().gasometer().gas())
-			}
-		} else {
-			self.state().metadata().gasometer().gas()
-		};
+        let after_gas = if take_l64 && self.config().call_l64_after_gas {
+            if self.config().estimate {
+                let initial_after_gas = self.state().metadata().gasometer().gas();
+                let diff = initial_after_gas - l64(initial_after_gas);
+                try_or_fail!(self.state_mut().metadata_mut().gasometer_mut().record_cost(diff));
+                self.state().metadata().gasometer().gas()
+            } else {
+                l64(self.state().metadata().gasometer().gas())
+            }
+        } else {
+            self.state().metadata().gasometer().gas()
+        };
 
-		let target_gas = target_gas.unwrap_or(after_gas);
-		let mut gas_limit = std::cmp::min(target_gas, after_gas);
+        let target_gas = target_gas.unwrap_or(after_gas);
+        let mut gas_limit = std::cmp::min(target_gas, after_gas);
 
-		try_or_fail!(self.state_mut().metadata_mut().gasometer_mut().record_cost(gas_limit));
+        try_or_fail!(self.state_mut().metadata_mut().gasometer_mut().record_cost(gas_limit));
 
-		if let Some(transfer) = transfer.as_ref() {
-			if take_stipend && transfer.value != U256::zero() {
-				gas_limit = gas_limit.saturating_add(self.config().call_stipend);
-			}
-		}
+        if let Some(transfer) = transfer.as_ref() {
+            if take_stipend && transfer.value != U256::zero() {
+                gas_limit = gas_limit.saturating_add(self.config().call_stipend);
+            }
+        }
 
-		let code = self.code(code_address);
+        let code = self.code(code_address);
 
-		self.handler.enter_substate(gas_limit, is_static);
-		self.state_mut().touch(context.address);
+        self.handler.enter_substate(gas_limit, is_static);
+        self.state_mut().touch(context.address);
 
-		if let Some(depth) = self.state().metadata().depth() {
-			if depth > self.config().call_stack_limit {
-				let _ = self.handler.exit_substate(StackExitKind::Reverted);
-				return Capture::Exit((ExitError::CallTooDeep.into(), Vec::new()));
-			}
-		}
+        if let Some(depth) = self.state().metadata().depth() {
+            if depth > self.config().call_stack_limit {
+                let _ = self.handler.exit_substate(StackExitKind::Reverted);
+                return Capture::Exit((ExitError::CallTooDeep.into(), Vec::new()))
+            }
+        }
 
-		if let Some(transfer) = transfer {
-			match self.state_mut().transfer(transfer) {
-				Ok(()) => (),
-				Err(e) => {
-					let _ = self.handler.exit_substate(StackExitKind::Reverted);
-					return Capture::Exit((ExitReason::Error(e), Vec::new()));
-				}
-			}
-		}
+        if let Some(transfer) = transfer {
+            match self.state_mut().transfer(transfer) {
+                Ok(()) => (),
+                Err(e) => {
+                    let _ = self.handler.exit_substate(StackExitKind::Reverted);
+                    return Capture::Exit((ExitReason::Error(e), Vec::new()))
+                }
+            }
+        }
 
-		if let Some(precompile) = self.handler.precompile().get(&code_address) {
-			return match (*precompile)(&input, Some(gas_limit), &context, is_static) {
-				Ok(PrecompileOutput {
-					exit_status,
-					output,
-					cost,
-					logs,
-				}) => {
-					for Log {
-						address,
-						topics,
-						data,
-					} in logs
-					{
-						match self.log(address, topics, data) {
-							Ok(_) => continue,
-							Err(error) => {
-								return Capture::Exit((ExitReason::Error(error), output));
-							}
-						}
-					}
+        if let Some(precompile) = self.handler.precompile().get(&code_address) {
+            return match (*precompile)(&input, Some(gas_limit), &context, is_static) {
+                Ok(PrecompileOutput { exit_status, output, cost, logs }) => {
+                    for Log { address, topics, data } in logs {
+                        match self.log(address, topics, data) {
+                            Ok(_) => continue,
+                            Err(error) => return Capture::Exit((ExitReason::Error(error), output)),
+                        }
+                    }
 
-					let _ = self.state_mut().metadata_mut().gasometer_mut().record_cost(cost);
-					let _ = self.handler.exit_substate(StackExitKind::Succeeded);
-					Capture::Exit((ExitReason::Succeed(exit_status), output))
-				}
-				Err(e) => {
-					let _ = self.handler.exit_substate(StackExitKind::Failed);
-					Capture::Exit((ExitReason::Error(e), Vec::new()))
-				}
-			};
-		}
+                    let _ = self.state_mut().metadata_mut().gasometer_mut().record_cost(cost);
+                    let _ = self.handler.exit_substate(StackExitKind::Succeeded);
+                    Capture::Exit((ExitReason::Succeed(exit_status), output))
+                }
+                Err(e) => {
+                    let _ = self.handler.exit_substate(StackExitKind::Failed);
+                    Capture::Exit((ExitReason::Error(e), Vec::new()))
+                }
+            }
+        }
 
         // each cfg is about 200 bytes, is this a lot to clone? why does this error
         // not manfiest upstream?
         let config = self.config().clone();
-		let mut runtime = Runtime::new(Rc::new(code), Rc::new(input), context, &config);
-		let reason = self.execute(&mut runtime);
-		// // log::debug!(target: "evm", "Call execution using address {}: {:?}", code_address, reason);
+        let mut runtime = Runtime::new(Rc::new(code), Rc::new(input), context, &config);
+        let reason = self.execute(&mut runtime);
+        // // log::debug!(target: "evm", "Call execution using address {}: {:?}", code_address,
+        // reason);
 
-		match reason {
-			ExitReason::Succeed(s) => {
-				let _ = self.handler.exit_substate(StackExitKind::Succeeded);
-				Capture::Exit((ExitReason::Succeed(s), runtime.machine().return_value()))
-			}
-			ExitReason::Error(e) => {
-				let _ = self.handler.exit_substate(StackExitKind::Failed);
-				Capture::Exit((ExitReason::Error(e), Vec::new()))
-			}
-			ExitReason::Revert(e) => {
-				let _ = self.handler.exit_substate(StackExitKind::Reverted);
-				Capture::Exit((ExitReason::Revert(e), runtime.machine().return_value()))
-			}
-			ExitReason::Fatal(e) => {
-				self.state_mut().metadata_mut().gasometer_mut().fail();
-				let _ = self.handler.exit_substate(StackExitKind::Failed);
-				Capture::Exit((ExitReason::Fatal(e), Vec::new()))
-			}
-		}
-	}
+        match reason {
+            ExitReason::Succeed(s) => {
+                let _ = self.handler.exit_substate(StackExitKind::Succeeded);
+                Capture::Exit((ExitReason::Succeed(s), runtime.machine().return_value()))
+            }
+            ExitReason::Error(e) => {
+                let _ = self.handler.exit_substate(StackExitKind::Failed);
+                Capture::Exit((ExitReason::Error(e), Vec::new()))
+            }
+            ExitReason::Revert(e) => {
+                let _ = self.handler.exit_substate(StackExitKind::Reverted);
+                Capture::Exit((ExitReason::Revert(e), runtime.machine().return_value()))
+            }
+            ExitReason::Fatal(e) => {
+                self.state_mut().metadata_mut().gasometer_mut().fail();
+                let _ = self.handler.exit_substate(StackExitKind::Failed);
+                Capture::Exit((ExitReason::Fatal(e), Vec::new()))
+            }
+        }
+    }
 }
 
 // Delegates everything internally, except the `call_inner` call, which is hooked
