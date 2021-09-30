@@ -133,6 +133,145 @@ impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
 
         Capture::Exit((ExitReason::Succeed(ExitSucceed::Stopped), vec![1; 32]))
     }
+
+	#[allow(clippy::too_many_arguments)]
+	fn call_inner(
+		&mut self,
+		code_address: H160,
+		transfer: Option<Transfer>,
+		input: Vec<u8>,
+		target_gas: Option<u64>,
+		is_static: bool,
+		take_l64: bool,
+		take_stipend: bool,
+		context: Context,
+	) -> Capture<(ExitReason, Vec<u8>), Infallible> {
+		macro_rules! try_or_fail {
+			( $e:expr ) => {
+				match $e {
+					Ok(v) => v,
+					Err(e) => return Capture::Exit((e.into(), Vec::new())),
+				}
+			};
+		}
+
+		fn l64(gas: u64) -> u64 {
+			gas - gas / 64
+		}
+
+		event!(Call {
+			code_address,
+			transfer: &transfer,
+			input: &input,
+			target_gas,
+			is_static,
+			context: &context,
+		});
+
+		let after_gas = if take_l64 && self.config.call_l64_after_gas {
+			if self.config.estimate {
+				let initial_after_gas = self.state.metadata().gasometer.gas();
+				let diff = initial_after_gas - l64(initial_after_gas);
+				try_or_fail!(self.state.metadata_mut().gasometer.record_cost(diff));
+				self.state.metadata().gasometer.gas()
+			} else {
+				l64(self.state.metadata().gasometer.gas())
+			}
+		} else {
+			self.state.metadata().gasometer.gas()
+		};
+
+		let target_gas = target_gas.unwrap_or(after_gas);
+		let mut gas_limit = min(target_gas, after_gas);
+
+		try_or_fail!(self.state.metadata_mut().gasometer.record_cost(gas_limit));
+
+		if let Some(transfer) = transfer.as_ref() {
+			if take_stipend && transfer.value != U256::zero() {
+				gas_limit = gas_limit.saturating_add(self.config.call_stipend);
+			}
+		}
+
+		let code = self.code(code_address);
+
+		self.enter_substate(gas_limit, is_static);
+		self.state.touch(context.address);
+
+		if let Some(depth) = self.state.metadata().depth {
+			if depth > self.config.call_stack_limit {
+				let _ = self.exit_substate(StackExitKind::Reverted);
+				return Capture::Exit((ExitError::CallTooDeep.into(), Vec::new()));
+			}
+		}
+
+		if let Some(transfer) = transfer {
+			match self.state.transfer(transfer) {
+				Ok(()) => (),
+				Err(e) => {
+					let _ = self.exit_substate(StackExitKind::Reverted);
+					return Capture::Exit((ExitReason::Error(e), Vec::new()));
+				}
+			}
+		}
+
+		if let Some(precompile) = self.precompile.get(&code_address) {
+			return match (*precompile)(&input, Some(gas_limit), &context, is_static) {
+				Ok(PrecompileOutput {
+					exit_status,
+					output,
+					cost,
+					logs,
+				}) => {
+					for Log {
+						address,
+						topics,
+						data,
+					} in logs
+					{
+						match self.log(address, topics, data) {
+							Ok(_) => continue,
+							Err(error) => {
+								return Capture::Exit((ExitReason::Error(error), output));
+							}
+						}
+					}
+
+					let _ = self.state.metadata_mut().gasometer.record_cost(cost);
+					let _ = self.exit_substate(StackExitKind::Succeeded);
+					Capture::Exit((ExitReason::Succeed(exit_status), output))
+				}
+				Err(e) => {
+					let _ = self.exit_substate(StackExitKind::Failed);
+					Capture::Exit((ExitReason::Error(e), Vec::new()))
+				}
+			};
+		}
+
+		let mut runtime = Runtime::new(Rc::new(code), Rc::new(input), context, self.config);
+
+		let reason = self.execute(&mut runtime);
+		log::debug!(target: "evm", "Call execution using address {}: {:?}", code_address, reason);
+
+		match reason {
+			ExitReason::Succeed(s) => {
+				let _ = self.exit_substate(StackExitKind::Succeeded);
+				Capture::Exit((ExitReason::Succeed(s), runtime.machine().return_value()))
+			}
+			ExitReason::Error(e) => {
+				let _ = self.exit_substate(StackExitKind::Failed);
+				Capture::Exit((ExitReason::Error(e), Vec::new()))
+			}
+			ExitReason::Revert(e) => {
+				let _ = self.exit_substate(StackExitKind::Reverted);
+				Capture::Exit((ExitReason::Revert(e), runtime.machine().return_value()))
+			}
+			ExitReason::Fatal(e) => {
+				self.state.metadata_mut().gasometer.fail();
+				let _ = self.exit_substate(StackExitKind::Failed);
+				Capture::Exit((ExitReason::Fatal(e), Vec::new()))
+			}
+		}
+	}
 }
 
 // Delegates everything internally, except the `call_inner` call, which is hooked
