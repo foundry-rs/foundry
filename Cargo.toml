@@ -17,5 +17,5 @@ panic = "abort"
 
 
 [patch."https://github.com/rust-blockchain/evm"]
-# evm = { path = "../evm" }
+# evm = { path = "../evm", features = ["tracing"] }
 evm = { git = "https://github.com/gakonst/evm", branch = "chore/expose-stack-module" }
