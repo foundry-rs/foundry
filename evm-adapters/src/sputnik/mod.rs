@@ -16,10 +16,12 @@ pub async fn vicinity<M: Middleware>(
     } else {
         provider.get_block_number().await?.as_u64()
     };
-
-    let gas_price = provider.get_gas_price().await?;
-    let chain_id = provider.get_chainid().await?;
-    let block = provider.get_block(block_number).await?.expect("block not found");
+    let (gas_price, chain_id, block) = tokio::try_join!(
+        provider.get_gas_price(),
+        provider.get_chainid(),
+        provider.get_block(block_number)
+    )?;
+    let block = block.expect("block not found");
 
     Ok(MemoryVicinity {
         origin: Default::default(),
