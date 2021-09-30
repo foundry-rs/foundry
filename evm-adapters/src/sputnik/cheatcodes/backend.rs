@@ -40,7 +40,6 @@ impl<B: Backend> Backend for CheatcodeBackend<B> {
     }
 
     fn block_timestamp(&self) -> U256 {
-        dbg!("In cheatocde backend timestamp", &self.cheats.block_timestamp);
         self.cheats.block_timestamp.unwrap_or_else(|| self.backend.block_timestamp())
     }
 

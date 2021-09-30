@@ -58,18 +58,9 @@ impl<'a, B: Backend> SputnikExecutor<CheatcodeStackState<'a, B>> for CheatcodeSt
         gas_limit: u64,
         access_list: Vec<(H160, Vec<H256>)>,
     ) -> (ExitReason, Vec<u8>) {
-        // event!(TransactCall {
-        // 	caller,
-        // 	address,
-        // 	value,
-        // 	data: &data,
-        // 	gas_limit,
-        // });
-
         let transaction_cost = gasometer::call_transaction_cost(&data, &access_list);
         match self.state_mut().metadata_mut().gasometer_mut().record_transaction(transaction_cost) {
             Ok(()) => (),
-            // Err(e) => return emit_exit!(e.into(), Vec::new()),
             Err(e) => return (e.into(), Vec::new()),
         }
 
@@ -102,7 +93,6 @@ impl<'a, B: Backend> SputnikExecutor<CheatcodeStackState<'a, B>> for CheatcodeSt
             false,
             context,
         ) {
-            // Capture::Exit((s, v)) => emit_exit!(s, v),
             Capture::Exit((s, v)) => (s, v),
             Capture::Trap(_) => unreachable!(),
         }
@@ -161,15 +151,6 @@ impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
         fn l64(gas: u64) -> u64 {
             gas - gas / 64
         }
-
-        // event!(Call {
-        // 	code_address,
-        // 	transfer: &transfer,
-        // 	input: &input,
-        // 	target_gas,
-        // 	is_static,
-        // 	context: &context,
-        // });
 
         let after_gas = if take_l64 && self.config().call_l64_after_gas {
             if self.config().estimate {
