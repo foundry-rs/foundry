@@ -5,7 +5,11 @@ pub use cheatcode_handler::CheatcodeHandler;
 
 mod backend;
 
-use ethers::types::U256;
+use ethers::{
+    abi::parse_abi,
+    prelude::{BaseContract, Lazy},
+    types::U256,
+};
 
 #[derive(Clone, Debug, Default)]
 /// Cheatcodes can be used to control the EVM context during setup or runtime,
@@ -15,4 +19,15 @@ pub struct Cheatcodes {
     pub block_timestamp: Option<U256>,
 }
 
-// TODO: Add Lazy ethabi instance of the cheatcode function signatures
+// TODO: Add more cheatcodes.
+pub static HEVM: Lazy<BaseContract> = Lazy::new(|| {
+    BaseContract::from(
+        parse_abi(&[
+            // sets the block number to x
+            "roll(uint256)",
+            // sets the block timestamp to x
+            "warp(uint256)",
+        ])
+        .expect("could not parse hevm cheatcode abi"),
+    )
+});

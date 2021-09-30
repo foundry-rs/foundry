@@ -30,7 +30,7 @@ contract GreeterTestSetup {
 }
 
 interface HEVM {
-    function roll(uint256 time) external;
+    function warp(uint256 time) external;
 }
 
 address constant HEVM_ADDRESS =
@@ -45,7 +45,7 @@ contract GreeterTest is GreeterTestSetup {
 
     function testHevmTime() public {
         uint256 val = 100;
-        hevm.roll(100);
+        hevm.warp(100);
         uint256 timestamp = greeter.time();
         require(timestamp == val);
     }

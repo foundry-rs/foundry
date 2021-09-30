@@ -13,7 +13,7 @@ use once_cell::sync::Lazy;
 
 use crate::sputnik::SputnikExecutor;
 
-use super::{backend::CheatcodeBackend, memory_stackstate_owned::MemoryStackStateOwned};
+use super::{backend::CheatcodeBackend, memory_stackstate_owned::MemoryStackStateOwned, HEVM};
 
 // This is now getting us the right hash? Also tried [..20]
 // Lazy::new(|| Address::from_slice(&keccak256("hevm cheat code")[12..]));
@@ -106,13 +106,19 @@ pub type CheatcodeStackExecutor<'a, B> =
 
 impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
     /// Decodes the provided calldata as a
-    fn apply_cheatcode(&mut self, _input: Vec<u8>) -> Capture<(ExitReason, Vec<u8>), Infallible> {
+    fn apply_cheatcode(&mut self, input: Vec<u8>) -> Capture<(ExitReason, Vec<u8>), Infallible> {
         // Get a mutable ref to the state so we can apply the cheats
         let state = self.state_mut();
 
-        // TODO: Decode ABI -> if function is not matched, return a Revert with "unknown cheatcode
-        // [name]" as the retdata
-        state.backend.cheats.block_timestamp = Some(100.into());
+        if let Ok(timestamp) = HEVM.decode::<U256, _>("warp", &input) {
+            state.backend.cheats.block_timestamp = Some(timestamp);
+        }
+
+        if let Ok(block_number) = HEVM.decode::<U256, _>("roll", &input) {
+            state.backend.cheats.block_number = Some(block_number);
+        }
+
+        // TODO: Add more cheat codes.
 
         Capture::Exit((ExitReason::Succeed(ExitSucceed::Stopped), vec![1; 32]))
     }
