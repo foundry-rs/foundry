@@ -10,8 +10,9 @@ pub struct Opts {
 }
 
 #[derive(Debug, StructOpt)]
-#[structopt(about = "Perform Ethereum RPC calls from the comfort of your command line.")]
+#[structopt(about = "Build, test, fuzz, formally verify, debug & deploy solidity contracts.")]
 pub enum Subcommands {
+    #[structopt(about = "test your smart contracts")]
     Test {
         #[structopt(help = "print the test results in json format", long, short)]
         json: bool,
@@ -52,6 +53,7 @@ pub enum Subcommands {
         #[structopt(help = "pins the block number for the state fork", long)]
         fork_block_number: Option<u64>,
     },
+    #[structopt(about = "build your smart contracts")]
     Build {
         #[structopt(flatten)]
         opts: BuildOpts,
@@ -59,7 +61,6 @@ pub enum Subcommands {
 }
 
 #[derive(Debug, StructOpt)]
-#[structopt(about = "build your smart contracts")]
 pub struct BuildOpts {
     #[structopt(
         help = "glob path to your smart contracts",
