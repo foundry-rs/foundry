@@ -1,6 +1,6 @@
-use sputnik::backend::{Backend, Basic};
-use ethers::types::{H160, H256, U256};
 use super::Cheatcodes;
+use ethers::types::{H160, H256, U256};
+use sputnik::backend::{Backend, Basic};
 
 #[derive(Debug, Clone)]
 /// A cheatcode backend is a wrapper around the inner backend which returns the

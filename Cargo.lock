@@ -1050,6 +1050,7 @@ dependencies = [
  "evm",
  "evmodin",
  "eyre",
+ "hex",
  "once_cell",
  "tokio",
  "tracing",

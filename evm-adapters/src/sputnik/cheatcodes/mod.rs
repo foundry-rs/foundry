@@ -1,5 +1,8 @@
 pub mod memory_stackstate_owned;
 
+pub mod cheatcode_handler;
+pub use cheatcode_handler::CheatcodeHandler;
+
 mod backend;
 
 use ethers::types::U256;
