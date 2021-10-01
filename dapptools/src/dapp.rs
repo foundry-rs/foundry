@@ -13,6 +13,7 @@ use dapp_opts::{BuildOpts, EvmType, Opts, Subcommands};
 
 use std::convert::TryFrom;
 
+mod cmd;
 mod utils;
 
 #[tracing::instrument(err)]
@@ -103,6 +104,15 @@ fn main() -> eyre::Result<()> {
 
             // dump as json
             serde_json::to_writer(out_file, &contracts)?;
+        }
+        Subcommands::VerifyContract { contract, address, constructor_args } => {
+            dbg!(contract);
+            dbg!(address);
+            dbg!(constructor_args);
+        }
+        Subcommands::Create { contract, verify } => {
+            dbg!(contract);
+            dbg!(verify);
         }
     }
 

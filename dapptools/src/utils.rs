@@ -1,3 +1,4 @@
+use std::env::VarError;
 use std::{
     fs::{File, OpenOptions},
     path::PathBuf,
@@ -5,6 +6,12 @@ use std::{
 
 /// Default deps path
 const DEFAULT_OUT_FILE: &str = "dapp.sol.json";
+
+/// Default local RPC endpoint
+const LOCAL_RPC_URL:&str = "http://127.0.0.1:8545";
+
+/// Default Path to where the contract artifacts are stored
+pub const DAPP_JSON:&str = "./out/dapp.sol.json";
 
 /// Initializes a tracing Subscriber for logging
 pub fn subscriber() {
@@ -67,4 +74,32 @@ pub fn open_file(out_path: PathBuf) -> eyre::Result<File> {
         // finally we get the handler
         OpenOptions::new().write(true).create_new(true).open(out_path)?
     })
+}
+
+/// Reads the `ETHERSCAN_API_KEY` env variable
+pub fn etherscan_api_key() -> eyre::Result<String> {
+    std::env::var("ETHERSCAN_API_KEY").map_err(|err| match err {
+        VarError::NotPresent => {
+            eyre::eyre!(
+                r#"
+  You need an Etherscan Api Key to verify contracts.
+  Create one at https://etherscan.io/myapikey
+  Then export it with \`export ETHERSCAN_API_KEY=xxxxxxxx'"#
+            )
+        }
+        VarError::NotUnicode(err) => {
+            eyre::eyre!("Invalid `ETHERSCAN_API_KEY`: {:?}", err)
+        }
+    })
+}
+
+/// The rpc url to use
+/// If the `ETH_RPC_URL` is not present, it falls back to the default `http://127.0.0.1:8545`
+pub fn rpc_url() -> String {
+    std::env::var("ETH_RPC_URL").unwrap_or_else(|_| LOCAL_RPC_URL.to_string() )
+}
+
+/// The path to where the contract artifacts are stored
+pub fn dapp_json_path()-> PathBuf {
+    PathBuf::from(DAPP_JSON)
 }
