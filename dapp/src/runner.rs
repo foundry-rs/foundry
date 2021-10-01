@@ -120,10 +120,10 @@ impl<'a, S, E: Evm<S>> ContractRunner<'a, S, E> {
             self.evm.borrow_mut().setup(self.address)?;
         }
 
-        let (_, reason, gas_used) = self.evm.borrow_mut().call::<(), _>(
+        let (_, reason, gas_used) = self.evm.borrow_mut().call::<(), _, _>(
             Address::zero(),
             self.address,
-            func,
+            func.clone(),
             (),
             0.into(),
         )?;
