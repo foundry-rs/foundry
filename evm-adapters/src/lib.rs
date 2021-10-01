@@ -12,12 +12,22 @@ pub use blocking_provider::BlockingProvider;
 use ethers::{
     abi::{Detokenize, Tokenize},
     core::types::{Address, U256},
-    prelude::{decode_function_data, encode_function_data, Bytes},
+    prelude::{decode_function_data, encode_function_data, AbiError, Bytes},
 };
 
 use dapp_utils::IntoFunction;
 
 use eyre::Result;
+
+#[derive(thiserror::Error, Debug)]
+pub enum EvmError {
+    #[error(transparent)]
+    Eyre(#[from] eyre::Error),
+    #[error("Execution reverted: {reason}, (gas: {gas_used})")]
+    Execution { reason: String, gas_used: u64 },
+    #[error(transparent)]
+    AbiError(#[from] ethers::contract::AbiError),
+}
 
 // TODO: Any reason this should be an async trait?
 /// Low-level abstraction layer for interfacing with various EVMs. Once instantiated, one
@@ -25,6 +35,9 @@ use eyre::Result;
 pub trait Evm<State> {
     /// The returned reason type from an EVM (Success / Revert/ Stopped etc.)
     type ReturnReason: std::fmt::Debug + PartialEq;
+
+    /// Gets the revert reason type
+    fn revert() -> Self::ReturnReason;
 
     /// Whether a return reason should be considered successful
     fn is_success(reason: &Self::ReturnReason) -> bool;
@@ -50,7 +63,7 @@ pub trait Evm<State> {
         func: F,
         args: T, // derive arbitrary for Tokenize?
         value: U256,
-    ) -> Result<(D, Self::ReturnReason, u64)> {
+    ) -> std::result::Result<(D, Self::ReturnReason, u64), EvmError> {
         let func = func.into();
         let calldata = encode_function_data(&func, args)?;
         #[allow(deprecated)]
@@ -60,8 +73,14 @@ pub trait Evm<State> {
                 ethers::abi::StateMutability::View | ethers::abi::StateMutability::Pure
             );
         let (retdata, status, gas) = self.call_raw(from, to, calldata, value, is_static)?;
-        let retdata = decode_function_data(&func, retdata, false)?;
-        Ok((retdata, status, gas))
+
+        if Self::is_fail(&status) {
+            let reason = dapp_utils::decode_revert(retdata.as_ref()).map_err(AbiError::from)?;
+            Err(EvmError::Execution { reason, gas_used: gas })
+        } else {
+            let retdata = decode_function_data(&func, retdata, false)?;
+            Ok((retdata, status, gas))
+        }
     }
 
     fn call_raw(

@@ -5,7 +5,7 @@ use ethers::types::{Address, Bytes, U256};
 use sputnik::{
     backend::{Backend, MemoryAccount},
     executor::{MemoryStackState, StackExecutor, StackState, StackSubstateMetadata},
-    Config, ExitReason,
+    Config, ExitReason, ExitRevert,
 };
 use std::{collections::BTreeMap, marker::PhantomData};
 
@@ -58,6 +58,10 @@ where
     S: StackState<'a>,
 {
     type ReturnReason = ExitReason;
+
+    fn revert() -> Self::ReturnReason {
+        ExitReason::Revert(ExitRevert::Reverted)
+    }
 
     fn is_success(reason: &Self::ReturnReason) -> bool {
         matches!(reason, ExitReason::Succeed(_))
@@ -215,16 +219,14 @@ mod tests {
         let status = evm.setup(addr).unwrap();
         assert_eq!(status, ExitReason::Succeed(ExitSucceed::Stopped));
 
-        let (status, res) = evm.executor.transact_call(
-            Address::zero(),
-            addr,
-            0.into(),
-            id("testFailGreeting()").to_vec(),
-            evm.gas_limit,
-            vec![],
-        );
-        assert_eq!(status, ExitReason::Revert(ExitRevert::Reverted));
-        let reason = dapp_utils::decode_revert(&res).unwrap();
-        assert_eq!(reason, "not equal to `hi`");
+        let err = evm
+            .call::<(), _, _>(Address::zero(), addr, "testFailGreeting()", (), 0.into())
+            .unwrap_err();
+        let (reason, gas_used) = match err {
+            crate::EvmError::Execution { reason, gas_used } => (reason, gas_used),
+            _ => panic!("unexpected error variant"),
+        };
+        assert_eq!(reason, "not equal to `hi`".to_string());
+        assert_eq!(gas_used, 30266);
     }
 }

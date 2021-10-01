@@ -53,8 +53,12 @@ pub fn remove_extra_costs(gas: U256, calldata: &[u8]) -> U256 {
     gas - calldata_cost - BASE_TX_COST
 }
 
-pub fn decode_revert(error: &[u8]) -> Result<String> {
-    Ok(abi::decode(&[abi::ParamType::String], &error[4..])?[0].to_string())
+pub fn decode_revert(error: &[u8]) -> std::result::Result<String, ethers_core::abi::Error> {
+    if error.len() > 4 {
+        Ok(abi::decode(&[abi::ParamType::String], &error[4..])?[0].to_string())
+    } else {
+        Ok("No revert reason found".to_owned())
+    }
 }
 
 pub fn to_table(value: serde_json::Value) -> String {

@@ -138,7 +138,12 @@ fn test<S, E: evm_adapters::Evm<S>>(
                 let status = if result.success {
                     Colour::Green.paint("[PASS]")
                 } else {
-                    Colour::Red.paint("[FAIL]")
+                    let txt = if let Some(ref reason) = result.reason {
+                        format!("[FAIL: {}]", reason)
+                    } else {
+                        "[FAIL]".to_string()
+                    };
+                    Colour::Red.paint(txt)
                 };
                 println!(
                     "{} {} (gas: {})",

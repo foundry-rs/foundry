@@ -5,7 +5,7 @@ use ethers::{
     utils::CompiledContract,
 };
 
-use evm_adapters::Evm;
+use evm_adapters::{Evm, EvmError};
 
 use eyre::Result;
 use regex::Regex;
@@ -25,8 +25,16 @@ pub struct CounterExample {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TestResult {
+    /// Whether the test case was successful. This means that the transaction executed
+    /// properly, or that there was a revert and that the test was expected to fail
+    /// (prefixed with `testFail`)
     pub success: bool,
 
+    /// If there was a revert, this field will be populated. Note that the test can
+    /// still be successful (i.e self.success == true) when it's expected to fail.
+    pub reason: Option<String>,
+
+    /// The gas used during execution
     pub gas_used: Option<u64>,
 
     /// Minimal reproduction test case for failing fuzz tests
@@ -120,18 +128,27 @@ impl<'a, S, E: Evm<S>> ContractRunner<'a, S, E> {
             self.evm.borrow_mut().setup(self.address)?;
         }
 
-        let (_, reason, gas_used) = self.evm.borrow_mut().call::<(), _, _>(
+        let (status, reason, gas_used) = match self.evm.borrow_mut().call::<(), _, _>(
             Address::zero(),
             self.address,
             func.clone(),
             (),
             0.into(),
-        )?;
-        let success = self.evm.borrow_mut().check_success(self.address, &reason, should_fail);
+        ) {
+            Ok((_, status, gas_used)) => (status, None, gas_used),
+            Err(err) => match err {
+                EvmError::Execution { reason, gas_used } => (E::revert(), Some(reason), gas_used),
+                err => {
+                    tracing::error!(?err);
+                    return Err(err.into())
+                }
+            },
+        };
+        let success = self.evm.borrow_mut().check_success(self.address, &status, should_fail);
         let duration = Instant::now().duration_since(start);
         tracing::trace!(?duration, %success, %gas_used);
 
-        Ok(TestResult { success, gas_used: Some(gas_used), counterexample: None })
+        Ok(TestResult { success, reason, gas_used: Some(gas_used), counterexample: None })
     }
 
     #[tracing::instrument(name = "fuzz-test", skip_all, fields(name = %func.name))]
@@ -183,7 +200,9 @@ impl<'a, S, E: Evm<S>> ContractRunner<'a, S, E> {
         let duration = Instant::now().duration_since(start);
         tracing::trace!(?duration, %success);
 
-        Ok(TestResult { success, gas_used: None, counterexample })
+        // TODO: How can we have proptest also return us the gas_used and the revert reason
+        // from that call?
+        Ok(TestResult { success, reason: None, gas_used: None, counterexample })
     }
 }
 
