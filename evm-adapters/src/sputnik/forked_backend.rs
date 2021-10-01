@@ -209,15 +209,8 @@ mod tests {
 
         // call the setup function to deploy the contracts inside the test
 
-        let (res, _, _) = evm
-            .call::<U256, _>(
-                Address::zero(),
-                addr,
-                &dapp_utils::get_func("function time() public view returns (uint256)").unwrap(),
-                (),
-                0.into(),
-            )
-            .unwrap();
+        let (res, _, _) =
+            evm.call::<U256, _, _>(Address::zero(), addr, "time()(uint256)", (), 0.into()).unwrap();
 
         // https://etherscan.io/block/13292465
         assert_eq!(res.as_u64(), 1632539668);
