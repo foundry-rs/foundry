@@ -1,5 +1,5 @@
 use ethers_core::{
-    abi::{self, parse_abi, Function, ParamType, Token, Tokenizable},
+    abi::{self, parse_abi, AbiParser, Function, ParamType, Token, Tokenizable},
     types::*,
 };
 use eyre::Result;
@@ -7,6 +7,38 @@ use rustc_hex::FromHex;
 use std::str::FromStr;
 
 const BASE_TX_COST: u64 = 21000;
+
+/// Helper trait for converting types to Functions. Helpful for allowing the `call`
+/// function on the EVM to be generic over `String`, `&str` and `Function`.
+pub trait IntoFunction {
+    /// Consumes self and produces a function
+    ///
+    /// # Panic
+    ///
+    /// This function does not return a Result, so it is expected that the consumer
+    /// uses it correctly so that it does not panic.
+    fn into(self) -> Function;
+}
+
+impl IntoFunction for Function {
+    fn into(self) -> Function {
+        self
+    }
+}
+
+impl IntoFunction for String {
+    fn into(self) -> Function {
+        IntoFunction::into(self.as_str())
+    }
+}
+
+impl<'a> IntoFunction for &'a str {
+    fn into(self) -> Function {
+        AbiParser::default()
+            .parse_function(self)
+            .unwrap_or_else(|_| panic!("could not convert {} to function", self))
+    }
+}
 
 pub fn remove_extra_costs(gas: U256, calldata: &[u8]) -> U256 {
     let mut calldata_cost = 0;
