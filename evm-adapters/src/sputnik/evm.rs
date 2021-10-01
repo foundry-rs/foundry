@@ -138,7 +138,6 @@ mod tests {
         *,
     };
     use crate::test_helpers::{can_call_vm_directly, solidity_unit_test, COMPILED};
-    use dapp_utils::{decode_revert, get_func};
 
     use ethers::utils::id;
     use sputnik::{ExitReason, ExitRevert, ExitSucceed};
@@ -213,15 +212,7 @@ mod tests {
         evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
 
         // call the setup function to deploy the contracts inside the test
-        let (_, status, _) = evm
-            .call::<(), _>(
-                Address::zero(),
-                addr,
-                &get_func("function setUp() external").unwrap(),
-                (),
-                0.into(),
-            )
-            .unwrap();
+        let status = evm.setup(addr).unwrap();
         assert_eq!(status, ExitReason::Succeed(ExitSucceed::Stopped));
 
         let (status, res) = evm.executor.transact_call(
@@ -233,7 +224,7 @@ mod tests {
             vec![],
         );
         assert_eq!(status, ExitReason::Revert(ExitRevert::Reverted));
-        let reason = decode_revert(&res).unwrap();
+        let reason = dapp_utils::decode_revert(&res).unwrap();
         assert_eq!(reason, "not equal to `hi`");
     }
 }
