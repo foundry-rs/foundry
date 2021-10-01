@@ -13,7 +13,7 @@ use std::{
 #[cfg(test)]
 use std::sync::Mutex;
 #[cfg(test)]
-static LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+static LOCK: Lazy<Mutex<()>> = Lazy::new(Mutex::default);
 #[cfg(test)]
 use ethers::prelude::Lazy;
 
@@ -131,6 +131,9 @@ impl<'a> SolcBuilder<'a> {
         // take the lock in tests, we use this to enforce that
         // a test does not run while a compiler version is being installed
         let _lock = LOCK.lock();
+
+        // update the locally found versions, to avoid re-downloading the same versions.
+        self.versions = svm::installed_versions().unwrap_or_default();
 
         // load the local / remote versions
         let local_versions = Self::find_matching_installation(&mut self.versions, &sol_version);
