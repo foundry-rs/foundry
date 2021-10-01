@@ -86,7 +86,7 @@ pub trait Evm<State> {
     /// with dapptools-style DSTest smart contracts to preserve emiting of logs
     fn failed(&mut self, address: Address) -> Result<bool> {
         let (failed, _, _) =
-            self.call::<bool, _, _>(Address::zero(), address, "failed()", (), 0.into())?;
+            self.call::<bool, _, _>(Address::zero(), address, "failed()(bool)", (), 0.into())?;
         Ok(failed)
     }
 
