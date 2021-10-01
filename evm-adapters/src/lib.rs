@@ -60,8 +60,14 @@ pub trait Evm<State> {
                 ethers::abi::StateMutability::View | ethers::abi::StateMutability::Pure
             );
         let (retdata, status, gas) = self.call_raw(from, to, calldata, value, is_static)?;
-        let retdata = decode_function_data(&func, retdata, false)?;
-        Ok((retdata, status, gas))
+
+        if Self::is_fail(&status) {
+            let reason = dapp_utils::decode_revert(retdata.as_ref())?;
+            eyre::bail!("Execution reverted with error: {}", reason)
+        } else {
+            let retdata = decode_function_data(&func, retdata, false)?;
+            Ok((retdata, status, gas))
+        }
     }
 
     fn call_raw(

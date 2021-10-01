@@ -215,16 +215,9 @@ mod tests {
         let status = evm.setup(addr).unwrap();
         assert_eq!(status, ExitReason::Succeed(ExitSucceed::Stopped));
 
-        let (status, res) = evm.executor.transact_call(
-            Address::zero(),
-            addr,
-            0.into(),
-            id("testFailGreeting()").to_vec(),
-            evm.gas_limit,
-            vec![],
-        );
-        assert_eq!(status, ExitReason::Revert(ExitRevert::Reverted));
-        let reason = dapp_utils::decode_revert(&res).unwrap();
-        assert_eq!(reason, "not equal to `hi`");
+        let err = evm
+            .call::<(), _, _>(Address::zero(), addr, "testFailGreeting()", (), 0.into())
+            .unwrap_err();
+        assert_eq!(err.to_string(), "Execution reverted with error: not equal to `hi`");
     }
 }
