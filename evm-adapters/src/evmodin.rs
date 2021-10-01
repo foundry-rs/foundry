@@ -36,6 +36,10 @@ pub trait HostExt: Host {
 impl<S: HostExt, Tr: Tracer> Evm<S> for EvmOdin<S, Tr> {
     type ReturnReason = StatusCode;
 
+    fn revert() -> Self::ReturnReason {
+        StatusCode::Revert
+    }
+
     fn is_success(reason: &Self::ReturnReason) -> bool {
         matches!(reason, StatusCode::Success)
     }

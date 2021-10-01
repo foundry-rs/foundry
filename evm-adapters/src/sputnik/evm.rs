@@ -5,7 +5,7 @@ use ethers::types::{Address, Bytes, U256};
 use sputnik::{
     backend::{Backend, MemoryAccount},
     executor::{MemoryStackState, StackExecutor, StackState, StackSubstateMetadata},
-    Config, ExitReason,
+    Config, ExitReason, ExitRevert,
 };
 use std::{collections::BTreeMap, marker::PhantomData};
 
@@ -58,6 +58,10 @@ where
     S: StackState<'a>,
 {
     type ReturnReason = ExitReason;
+
+    fn revert() -> Self::ReturnReason {
+        ExitReason::Revert(ExitRevert::Reverted)
+    }
 
     fn is_success(reason: &Self::ReturnReason) -> bool {
         matches!(reason, ExitReason::Succeed(_))
