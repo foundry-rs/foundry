@@ -1,17 +1,23 @@
 use crate::BlockingProvider;
 
 use sputnik::backend::{Backend, Basic, MemoryAccount};
+use std::cell::RefCell;
 
 use ethers::{
     providers::Middleware,
-    types::{BlockId, H160, H256, U256},
+    types::{Block, BlockId, BlockNumber, TxHash, H160, H256, U256},
 };
 use std::collections::BTreeMap;
 
 /// Memory backend with ability to fork another chain from an HTTP provider, storing all cache
 /// values in a `BTreeMap` in memory.
-#[derive(Clone, Debug)]
 // TODO: Add option to easily 1. impersonate accounts, 2. roll back to pinned block
+// TODO: In order to improve speed, does it make sense to add a job which pre-fetches
+// accounts speculatively? Or maybe do it for smart contract code which is typically the
+// biggest issue?
+// TODO: In order to improve speed, can we instead write a custom blocking provider which
+// does not block_on in-line, but has a background thread that polls everything in parallel
+// and just returns the results synchronously via some channel?
 pub struct ForkMemoryBackend<B, M> {
     /// ethers middleware for querying on-chain data
     pub provider: BlockingProvider<M>,
@@ -21,75 +27,98 @@ pub struct ForkMemoryBackend<B, M> {
     // TODO: Actually cache values in memory.
     // TODO: This should probably be abstracted away into something that efficiently
     // also caches at disk etc.
-    pub cache: BTreeMap<H160, MemoryAccount>,
+    pub cache: RefCell<BTreeMap<H160, MemoryAccount>>,
     /// The block to fetch data from.
     // This is an `Option` so that we can have less code churn in the functions below
     pin_block: Option<BlockId>,
+    /// The block at which we forked off
+    pin_block_meta: Block<TxHash>,
+    /// The chain id of the forked chain
+    chain_id: U256,
 }
 
-impl<B: Backend, M: Middleware> ForkMemoryBackend<B, M> {
-    pub fn new(provider: M, backend: B) -> Self {
+impl<B: Backend, M: Middleware> ForkMemoryBackend<B, M>
+where
+    M::Error: 'static,
+{
+    pub fn new(provider: M, backend: B, pin_block: Option<u64>) -> Self {
         let provider = BlockingProvider::new(provider);
-        let pin_block = Some(backend.block_number().as_u64().into());
-        Self { provider, backend, cache: Default::default(), pin_block }
+        let pin_block = pin_block.unwrap_or_else(|| backend.block_number().as_u64()).into();
+
+        // get the remaining block metadata
+        let (block, chain_id) =
+            provider.block_and_chainid(pin_block).expect("could not get block meta and chain id");
+
+        Self {
+            provider,
+            backend,
+            cache: Default::default(),
+            pin_block: Some(pin_block),
+            pin_block_meta: block,
+            chain_id,
+        }
     }
 }
 
-impl<B: Backend, M: Middleware> Backend for ForkMemoryBackend<B, M> {
+impl<B: Backend, M: Middleware> Backend for ForkMemoryBackend<B, M>
+where
+    M::Error: 'static,
+{
     fn exists(&self, address: H160) -> bool {
-        let mut exists = self.cache.contains_key(&address);
+        let mut exists = self.cache.borrow().contains_key(&address);
 
         // check non-zero balance
         if !exists {
-            let balance = self.provider.get_balance(address, self.pin_block).unwrap_or_default();
-            exists = balance != U256::zero();
-        }
-
-        // check non-zero nonce
-        if !exists {
-            let nonce =
-                self.provider.get_transaction_count(address, self.pin_block).unwrap_or_default();
-            exists = nonce != U256::zero();
-        }
-
-        // check non-empty code
-        if !exists {
-            let code = self.provider.get_code(address, self.pin_block).unwrap_or_default();
-            exists = !code.0.is_empty();
+            let mut cache = self.cache.borrow_mut();
+            let account = cache.entry(address).or_insert_with(|| {
+                let res = self.provider.get_account(address, self.pin_block).unwrap_or_default();
+                MemoryAccount {
+                    nonce: res.0,
+                    balance: res.1,
+                    code: res.2.to_vec(),
+                    storage: Default::default(),
+                }
+            });
+            exists = account.balance != U256::zero() ||
+                account.nonce != U256::zero() ||
+                !account.code.is_empty();
         }
 
         exists
     }
 
     fn basic(&self, address: H160) -> Basic {
-        self.cache
-            .get(&address)
-            .map(|a| Basic { balance: a.balance, nonce: a.nonce })
-            .unwrap_or_else(|| Basic {
-                balance: self.provider.get_balance(address, self.pin_block).unwrap_or_default(),
-                nonce: self
-                    .provider
-                    .get_transaction_count(address, self.pin_block)
-                    .unwrap_or_default(),
-            })
+        let mut cache = self.cache.borrow_mut();
+        cache.get(&address).map(|a| Basic { balance: a.balance, nonce: a.nonce }).unwrap_or_else(
+            || {
+                let account =
+                    self.provider.get_account(address, self.pin_block).unwrap_or_default();
+                if let Some(acc) = cache.get_mut(&address) {
+                    acc.nonce = account.0;
+                    acc.balance = account.1;
+                }
+                Basic { nonce: account.0, balance: account.1 }
+            },
+        )
     }
 
     fn code(&self, address: H160) -> Vec<u8> {
-        self.cache.get(&address).map(|v| v.code.clone()).unwrap_or_else(|| {
-            self.provider.get_code(address, self.pin_block).unwrap_or_default().to_vec()
+        let mut cache = self.cache.borrow_mut();
+        cache.get(&address).map(|v| v.code.clone()).unwrap_or_else(|| {
+            let code = self.provider.get_code(address, self.pin_block).unwrap_or_default().to_vec();
+            if let Some(acc) = cache.get_mut(&address) {
+                acc.code = code.clone()
+            }
+            code
         })
     }
 
     fn storage(&self, address: H160, index: H256) -> H256 {
-        if let Some(acct) = self.cache.get(&address) {
-            if let Some(store_data) = acct.storage.get(&index) {
-                *store_data
-            } else {
-                self.provider.get_storage_at(address, index, self.pin_block).unwrap_or_default()
-            }
-        } else {
+        let mut cache = self.cache.borrow_mut();
+        let account = cache.get_mut(&address);
+        account.map(|acct| acct.storage.get(&index)).flatten().copied().unwrap_or_else(|| {
             self.provider.get_storage_at(address, index, self.pin_block).unwrap_or_default()
-        }
+        })
     }
 
     fn gas_price(&self) -> U256 {
@@ -105,27 +134,36 @@ impl<B: Backend, M: Middleware> Backend for ForkMemoryBackend<B, M> {
     }
 
     fn block_number(&self) -> U256 {
-        self.backend.block_number()
+        self.pin_block
+            .map(|block| match block {
+                BlockId::Number(num) => match num {
+                    BlockNumber::Number(num) => Some(num.as_u64().into()),
+                    _ => None,
+                },
+                BlockId::Hash(_) => None,
+            })
+            .flatten()
+            .unwrap_or_else(|| self.backend.block_number())
     }
 
     fn block_coinbase(&self) -> H160 {
-        self.backend.block_coinbase()
+        self.pin_block_meta.author
     }
 
     fn block_timestamp(&self) -> U256 {
-        self.backend.block_timestamp()
+        self.pin_block_meta.timestamp
     }
 
     fn block_difficulty(&self) -> U256 {
-        self.backend.block_difficulty()
+        self.pin_block_meta.difficulty
     }
 
     fn block_gas_limit(&self) -> U256 {
-        self.backend.block_gas_limit()
+        self.pin_block_meta.gas_limit
     }
 
     fn chain_id(&self) -> U256 {
-        self.backend.chain_id()
+        self.chain_id
     }
 
     fn original_storage(&self, address: H160, index: H256) -> Option<H256> {
@@ -161,9 +199,10 @@ mod tests {
         )
         .unwrap();
         let rt = Runtime::new().unwrap();
-        let vicinity = rt.block_on(vicinity(&provider, Some(13292465))).unwrap();
+        let blk = Some(13292465);
+        let vicinity = rt.block_on(vicinity(&provider, blk)).unwrap();
         let backend = new_backend(&vicinity, Default::default());
-        let backend = ForkMemoryBackend::new(provider, backend);
+        let backend = ForkMemoryBackend::new(provider, backend, blk);
 
         let mut evm = Executor::new(12_000_000, &cfg, &backend);
         evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);

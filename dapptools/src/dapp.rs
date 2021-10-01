@@ -65,7 +65,7 @@ fn main() -> eyre::Result<()> {
 
                     let backend: Box<dyn Backend> = if let Some(ref url) = fork_url {
                         let provider = Provider::try_from(url.as_str())?;
-                        let backend = ForkMemoryBackend::new(provider, backend);
+                        let backend = ForkMemoryBackend::new(provider, backend, fork_block_number);
                         Box::new(backend)
                     } else {
                         Box::new(backend)
