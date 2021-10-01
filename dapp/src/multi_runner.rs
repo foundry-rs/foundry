@@ -40,8 +40,7 @@ impl<'a> MultiContractRunnerBuilder<'a> {
         // 2. parallel compilation
         // 3. Hardhat / Truffle-style artifacts
         let contracts = if self.no_compile {
-            let out_file = std::fs::read_to_string(&self.out_path)?;
-            serde_json::from_str::<DapptoolsArtifact>(&out_file)?.contracts()?
+            DapptoolsArtifact::read(self.out_path)?.into_contracts()?
         } else {
             SolcBuilder::new(self.contracts, self.remappings, self.libraries)?.build_all()?
         };
