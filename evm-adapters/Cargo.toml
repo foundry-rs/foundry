@@ -11,7 +11,7 @@ dapp-utils = { path = "./../utils" }
 dapp-solc = { path = "./../solc" }
 
 # evm = { version = "0.30.1" }
-sputnik = { package = "evm", git = "https://github.com/rust-blockchain/evm",  optional = true }
+sputnik = { package = "evm", git = "https://github.com/rust-blockchain/evm",  optional = true, features = ["tracing"] }
 
 evmodin = { git = "https://github.com/vorot93/evmodin",  optional = true }
 
@@ -22,6 +22,7 @@ once_cell = "1.8.0"
 tracing = "0.1.28"
 bytes = "1.1.0"
 tokio = { version = "1.12.0", features = ["rt-multi-thread"] }
+hex = "0.4.3"
 
 [dev-dependencies]
 evmodin = { git = "https://github.com/vorot93/evmodin", features = ["util"] }
