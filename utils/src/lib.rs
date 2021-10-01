@@ -53,7 +53,7 @@ pub fn remove_extra_costs(gas: U256, calldata: &[u8]) -> U256 {
     gas - calldata_cost - BASE_TX_COST
 }
 
-pub fn decode_revert(error: &[u8]) -> Result<String> {
+pub fn decode_revert(error: &[u8]) -> std::result::Result<String, ethers_core::abi::Error> {
     Ok(abi::decode(&[abi::ParamType::String], &error[4..])?[0].to_string())
 }
 
