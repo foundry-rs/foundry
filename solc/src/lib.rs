@@ -83,6 +83,7 @@ impl<'a> SolcBuilder<'a> {
     /// Builds all contracts with their corresponding compiler versions
     #[tracing::instrument(skip(self))]
     pub fn build_all(&mut self) -> Result<HashMap<String, CompiledContract>> {
+        tracing::info!("starting compilation");
         let contracts_by_version = self.contract_versions()?;
         let start = Instant::now();
         let res = contracts_by_version.into_iter().try_fold(
