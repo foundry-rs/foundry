@@ -222,6 +222,11 @@ mod tests {
         let err = evm
             .call::<(), _, _>(Address::zero(), addr, "testFailGreeting()", (), 0.into())
             .unwrap_err();
-        assert_eq!(err.to_string(), "Execution reverted with error: not equal to `hi`");
+        let (reason, gas_used) = match err {
+            crate::EvmError::Execution { reason, gas_used } => (reason, gas_used),
+            _ => panic!("unexpected error variant"),
+        };
+        assert_eq!(reason, "not equal to `hi`".to_string());
+        assert_eq!(gas_used, 30266);
     }
 }
