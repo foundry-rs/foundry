@@ -12,6 +12,7 @@ use ansi_term::Colour;
 mod dapp_opts;
 use dapp_opts::{BuildOpts, EvmType, Opts, Subcommands};
 
+use crate::dapp_opts::FullContractInfo;
 use std::convert::TryFrom;
 
 mod cmd;
@@ -108,9 +109,9 @@ fn main() -> eyre::Result<()> {
             serde_json::to_writer(out_file, &contracts)?;
         }
         Subcommands::VerifyContract { contract, address, constructor_args } => {
-            dbg!(contract);
-            dbg!(address);
-            dbg!(constructor_args);
+            let FullContractInfo { path, name } = contract;
+            let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
+            rt.block_on(cmd::verify::run(path, name, constructor_args))?;
         }
         Subcommands::Create { contract, verify } => {
             dbg!(contract);

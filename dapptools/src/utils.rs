@@ -1,5 +1,5 @@
-use std::env::VarError;
 use std::{
+    env::VarError,
     fs::{File, OpenOptions},
     path::PathBuf,
 };
@@ -8,10 +8,10 @@ use std::{
 const DEFAULT_OUT_FILE: &str = "dapp.sol.json";
 
 /// Default local RPC endpoint
-const LOCAL_RPC_URL:&str = "http://127.0.0.1:8545";
+const LOCAL_RPC_URL: &str = "http://127.0.0.1:8545";
 
 /// Default Path to where the contract artifacts are stored
-pub const DAPP_JSON:&str = "./out/dapp.sol.json";
+pub const DAPP_JSON: &str = "./out/dapp.sol.json";
 
 /// Initializes a tracing Subscriber for logging
 pub fn subscriber() {
@@ -96,10 +96,10 @@ pub fn etherscan_api_key() -> eyre::Result<String> {
 /// The rpc url to use
 /// If the `ETH_RPC_URL` is not present, it falls back to the default `http://127.0.0.1:8545`
 pub fn rpc_url() -> String {
-    std::env::var("ETH_RPC_URL").unwrap_or_else(|_| LOCAL_RPC_URL.to_string() )
+    std::env::var("ETH_RPC_URL").unwrap_or_else(|_| LOCAL_RPC_URL.to_string())
 }
 
 /// The path to where the contract artifacts are stored
-pub fn dapp_json_path()-> PathBuf {
+pub fn dapp_json_path() -> PathBuf {
     PathBuf::from(DAPP_JSON)
 }

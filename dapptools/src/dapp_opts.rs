@@ -80,7 +80,8 @@ pub enum Subcommands {
 // conversion function from `&str` to `u8`.
 type Bytes = Vec<u8>;
 
-/// Represents the common dapp argument pattern for `<path>:<contractname>` where `<path>:` is optional.
+/// Represents the common dapp argument pattern for `<path>:<contractname>` where `<path>:` is
+/// optional.
 #[derive(Clone, Debug)]
 pub struct ContractInfo {
     /// Location of the contract
