@@ -390,9 +390,9 @@ mod tests {
         .iter()
         {
             // println!("Checking {}", pragma);
-            let file = TempSolidityFile::new(&dir, &pragma);
+            let file = TempSolidityFile::new(&dir, pragma);
             let res = builder.detect_version(&file.path).unwrap().unwrap();
-            assert_eq!(res.0, Version::from_str(&expected).unwrap());
+            assert_eq!(res.0, Version::from_str(expected).unwrap());
         }
 
         rmdir(&dir);
@@ -445,7 +445,7 @@ mod tests {
         let mut builder = SolcBuilder::new(&path, &[], &[]).unwrap();
         let res = builder.build_all().unwrap();
         // Contracts A to F
-        assert_eq!(res.keys().collect::<Vec<_>>().len(), 5);
+        assert_eq!(res.keys().count(), 5);
     }
 
     #[test]
@@ -463,7 +463,7 @@ mod tests {
         let mut builder = SolcBuilder::new(&path, &remappings, &libs).unwrap();
         let res = builder.build_all().unwrap();
         // Foo & Bar
-        assert_eq!(res.keys().collect::<Vec<_>>().len(), 2);
+        assert_eq!(res.keys().count(), 2);
     }
 
     fn canonicalized_path(path: &str) -> String {
@@ -484,6 +484,6 @@ mod tests {
         let mut builder = SolcBuilder::new(&path, &[], &libs).unwrap();
         let res = builder.build_all().unwrap();
         // Foo & Bar
-        assert_eq!(res.keys().collect::<Vec<_>>().len(), 3);
+        assert_eq!(res.keys().count(), 3);
     }
 }

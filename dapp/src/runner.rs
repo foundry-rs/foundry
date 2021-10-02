@@ -344,7 +344,7 @@ mod tests {
         };
 
         let res = runner.run_tests(&".*".parse().unwrap(), None).unwrap();
-        assert!(res.len() > 0);
-        assert!(res.iter().all(|(_, result)| result.success == true));
+        assert!(!res.is_empty());
+        assert!(res.iter().all(|(_, result)| result.success));
     }
 }

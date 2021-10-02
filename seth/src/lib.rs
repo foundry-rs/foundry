@@ -13,7 +13,7 @@ use rustc_hex::{FromHexIter, ToHex};
 use std::str::FromStr;
 
 use dapp_utils::{encode_args, get_func, to_table};
-use eyre::WrapErr;
+
 
 // TODO: SethContract with common contract initializers? Same for SethProviders?
 

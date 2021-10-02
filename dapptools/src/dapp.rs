@@ -114,7 +114,7 @@ fn main() -> eyre::Result<()> {
             let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
             rt.block_on(cmd::verify::run(path, name, address, constructor_args))?;
         }
-        Subcommands::Create { contract, verify } => {
+        Subcommands::Create { contract: _, verify: _ } => {
             unimplemented!("Not yet implemented")
         }
     }
