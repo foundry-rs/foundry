@@ -214,6 +214,8 @@ mod tests {
     use std::marker::PhantomData;
 
     mod sputnik {
+        use std::str::FromStr;
+
         use dapp_utils::get_func;
         use evm_adapters::sputnik::{
             helpers::{new_backend, new_vicinity},
@@ -232,6 +234,35 @@ mod tests {
             let backend = new_backend(&vicinity, Default::default());
             let evm = Executor::new(12_000_000, &cfg, &backend);
             super::test_runner(evm, addr, compiled);
+        }
+
+        #[test]
+        fn test_fuzzing() {
+            let cfg = Config::istanbul();
+            let compiled = COMPILED.get("GreeterTest").expect("could not find contract");
+            let addr = "0x1000000000000000000000000000000000000000".parse().unwrap();
+            let vicinity = new_vicinity();
+            let backend = new_backend(&vicinity, Default::default());
+
+            let mut evm = Executor::new(12_000_000, &cfg, &backend);
+            evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
+
+            let mut runner = ContractRunner {
+                evm: Rc::new(RefCell::new(&mut evm)),
+                contract: compiled,
+                address: addr,
+                state: PhantomData,
+            };
+
+            let cfg = FuzzConfig::default();
+            let mut fuzzer = TestRunner::new(cfg);
+            let results = runner
+                .run_tests(&Regex::from_str("testFuzz.*").unwrap(), Some(&mut fuzzer))
+                .unwrap();
+            for (_, res) in results {
+                assert!(!res.success);
+                assert!(res.counterexample.is_some());
+            }
         }
 
         #[test]
@@ -254,7 +285,7 @@ mod tests {
 
             let cfg = FuzzConfig::default();
             let mut fuzzer = TestRunner::new(cfg);
-            let func = get_func("function testFuzzShrinking(uint256 x, uint256 y) public").unwrap();
+            let func = get_func("function testShrinking(uint256 x, uint256 y) public").unwrap();
             let res = runner.run_fuzz_test(&func, true, &mut fuzzer).unwrap();
             assert!(!res.success);
 

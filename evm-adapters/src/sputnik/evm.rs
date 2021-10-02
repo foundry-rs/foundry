@@ -104,7 +104,7 @@ where
             self.executor.transact_call(from, to, value, calldata.to_vec(), self.gas_limit, vec![]);
 
         let gas_after = self.executor.gas_left();
-        let gas = dapp_utils::remove_extra_costs(gas_before - gas_after, calldata.as_ref());
+        let gas = gas_before.saturating_sub(gas_after).saturating_sub(21000.into());
 
         Ok((retdata.into(), status, gas.as_u64()))
     }
@@ -227,6 +227,6 @@ mod tests {
             _ => panic!("unexpected error variant"),
         };
         assert_eq!(reason, "not equal to `hi`".to_string());
-        assert_eq!(gas_used, 30266);
+        assert_eq!(gas_used, 30330);
     }
 }
