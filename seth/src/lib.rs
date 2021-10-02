@@ -3,10 +3,7 @@
 //! TODO
 use chrono::NaiveDateTime;
 use ethers_core::{
-    abi::{
-        token::{LenientTokenizer, StrictTokenizer, Tokenizer},
-        AbiParser, ParamType, Token,
-    },
+    abi::AbiParser,
     types::*,
     utils::{self, keccak256},
 };
@@ -16,7 +13,6 @@ use rustc_hex::{FromHexIter, ToHex};
 use std::str::FromStr;
 
 use dapp_utils::{encode_args, get_func, to_table};
-use eyre::WrapErr;
 
 // TODO: SethContract with common contract initializers? Same for SethProviders?
 
@@ -529,21 +525,6 @@ impl SimpleSeth {
         Ok(format!("0x{}", namehash))
     }
 
-    /// Parses string input as Token against the expected ParamType
-    pub fn parse_tokens(params: &[(ParamType, &str)], lenient: bool) -> eyre::Result<Vec<Token>> {
-        params
-            .iter()
-            .map(|&(ref param, value)| {
-                if lenient {
-                    LenientTokenizer::tokenize(param, value)
-                } else {
-                    StrictTokenizer::tokenize(param, value)
-                }
-            })
-            .collect::<Result<_, _>>()
-            .wrap_err("Failed to parse tokens")
-    }
-
     /// Performs ABI encoding to produce the hexadecimal calldata with the given arguments.
     ///
     /// ```
@@ -558,15 +539,8 @@ impl SimpleSeth {
     /// # }
     /// ```
     pub fn calldata(sig: impl AsRef<str>, args: &[impl AsRef<str>]) -> Result<String> {
-        let fun = AbiParser::default().parse_function(sig.as_ref())?;
-        let params: Vec<_> = fun
-            .inputs
-            .iter()
-            .map(|param| param.kind.clone())
-            .zip(args.iter().map(AsRef::as_ref))
-            .collect();
-        let tokens = SimpleSeth::parse_tokens(&params, true)?;
-        let calldata = fun.encode_input(&tokens)?;
+        let func = AbiParser::default().parse_function(sig.as_ref())?;
+        let calldata = dapp_utils::encode_args(&func, args)?;
         Ok(format!("0x{}", calldata.to_hex::<String>()))
     }
 }

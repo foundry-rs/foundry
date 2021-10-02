@@ -1,10 +1,12 @@
 use ethers_core::{
-    abi::{self, parse_abi, AbiParser, Function, ParamType, Token, Tokenizable},
+    abi::{
+        self, parse_abi,
+        token::{LenientTokenizer, StrictTokenizer, Tokenizer},
+        AbiParser, Function, ParamType, Token,
+    },
     types::*,
 };
-use eyre::Result;
-use rustc_hex::FromHex;
-use std::str::FromStr;
+use eyre::{Result, WrapErr};
 
 const BASE_TX_COST: u64 = 21000;
 
@@ -85,64 +87,31 @@ pub fn get_func(sig: &str) -> Result<Function> {
     Ok(func.clone())
 }
 
-pub fn encode_input(param: &ParamType, value: &str) -> Result<Token> {
-    Ok(match param {
-        // TODO: Do the rest of the types
-        ParamType::Address => Address::from_str(value)?.into_token(),
-        ParamType::Bytes => {
-            Bytes::from(value.trim_start_matches("0x").from_hex::<Vec<u8>>()?).into_token()
-        }
-        ParamType::FixedBytes(_) => value.from_hex::<Vec<u8>>()?.into_token(),
-        ParamType::Uint(n) => {
-            let radix = if value.starts_with("0x") { 16 } else { 10 };
-            match n / 8 {
-                1 => u8::from_str_radix(value, radix)?.into_token(),
-                2 => u16::from_str_radix(value, radix)?.into_token(),
-                3..=4 => u32::from_str_radix(value, radix)?.into_token(),
-                5..=8 => u64::from_str_radix(value, radix)?.into_token(),
-                9..=16 => u128::from_str_radix(value, radix)?.into_token(),
-                17..=32 => {
-                    if radix == 16 { U256::from_str(value)? } else { U256::from_dec_str(value)? }
-                        .into_token()
-                }
-                _ => eyre::bail!("unsupoprted solidity type uint{}", n),
+/// Parses string input as Token against the expected ParamType
+pub fn parse_tokens<'a, I: IntoIterator<Item = (&'a ParamType, &'a str)>>(
+    params: I,
+    lenient: bool,
+) -> eyre::Result<Vec<Token>> {
+    params
+        .into_iter()
+        .map(|(param, value)| {
+            if lenient {
+                LenientTokenizer::tokenize(param, value)
+            } else {
+                StrictTokenizer::tokenize(param, value)
             }
-        }
-        ParamType::Int(n) => {
-            let radix = if value.starts_with("0x") { 16 } else { 10 };
-            match n / 8 {
-                1 => i8::from_str_radix(value, radix)?.into_token(),
-                2 => i16::from_str_radix(value, radix)?.into_token(),
-                3..=4 => i32::from_str_radix(value, radix)?.into_token(),
-                5..=8 => i64::from_str_radix(value, radix)?.into_token(),
-                9..=16 => i128::from_str_radix(value, radix)?.into_token(),
-                17..=32 => {
-                    if radix == 16 { I256::from_str(value)? } else { I256::from_dec_str(value)? }
-                        .into_token()
-                }
-                _ => eyre::bail!("unsupoprted solidity type uint{}", n),
-            }
-        }
-        ParamType::Bool => bool::from_str(value)?.into_token(),
-        ParamType::String => value.to_string().into_token(),
-        ParamType::Array(_) => {
-            unimplemented!()
-        }
-        ParamType::FixedArray(_, _) => {
-            unimplemented!()
-        }
-        ParamType::Tuple(_) => {
-            unimplemented!()
-        }
-    })
+        })
+        .collect::<Result<_, _>>()
+        .wrap_err("Failed to parse tokens")
 }
 
-pub fn encode_args(func: &Function, args: &[String]) -> Result<Vec<u8>> {
-    // Dynamically build up the calldata via the function sig
-    let mut inputs = Vec::new();
-    for (i, input) in func.inputs.iter().enumerate() {
-        let input = encode_input(&input.kind, &args[i])?;
-        inputs.push(input);
-    }
-    Ok(func.encode_input(&inputs)?)
+pub fn encode_args(func: &Function, args: &[impl AsRef<str>]) -> Result<Vec<u8>> {
+    let params = func
+        .inputs
+        .iter()
+        .zip(args)
+        .map(|(input, arg)| (&input.kind, arg.as_ref()))
+        .collect::<Vec<_>>();
+    let tokens = parse_tokens(params, true)?;
+    Ok(func.encode_input(&tokens)?)
 }
