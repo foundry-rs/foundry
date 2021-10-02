@@ -199,7 +199,7 @@ impl<'a> SolcBuilder<'a> {
         let version = file
             .lines()
             .map(|line| line.unwrap())
-            .find(|line| line.starts_with("pragma"))
+            .find(|line| line.starts_with("pragma solidity"))
             .ok_or_else(|| eyre::eyre!("{:?} has no version", path))?;
         let version = version
             .replace("pragma solidity ", "")
