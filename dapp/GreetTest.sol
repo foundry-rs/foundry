@@ -63,6 +63,10 @@ contract GreeterTest is GreeterTestSetup {
         require(x == 0);
     }
 
+    function testFuzzI256(int256 x) public {
+        require(x >= 0);
+    }
+
     // check the positive case
     function testGreeting() public {
         greeter.greet("yo");

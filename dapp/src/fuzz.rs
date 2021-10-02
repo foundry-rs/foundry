@@ -1,6 +1,6 @@
 use ethers::{
     abi::{Function, ParamType, Token, Tokenizable},
-    types::{Address, Bytes, U256},
+    types::{Address, Bytes, Sign, I256, U256},
 };
 
 use proptest::prelude::*;
@@ -20,6 +20,21 @@ fn fuzz_param(param: &ParamType) -> impl Strategy<Value = Token> {
             // https://altsysrq.github.io/proptest-book/proptest/tutorial/transforming-strategies.html
             any::<[u8; 20]>().prop_map(|x| Address::from_slice(&x).into_token()).boxed()
         }
+        ParamType::Bytes => any::<Vec<u8>>().prop_map(|x| Bytes::from(x).into_token()).boxed(),
+        ParamType::Int(n) => match n / 8 {
+            1 => any::<i8>().prop_map(|x| x.into_token()).boxed(),
+            2 => any::<i16>().prop_map(|x| x.into_token()).boxed(),
+            3..=4 => any::<i32>().prop_map(|x| x.into_token()).boxed(),
+            5..=8 => any::<i64>().prop_map(|x| x.into_token()).boxed(),
+            9..=16 => any::<i128>().prop_map(|x| x.into_token()).boxed(),
+            17..=32 => (any::<bool>(), any::<[u8; 32]>())
+                .prop_filter_map("i256s cannot overflow", |(sign, bytes)| {
+                    let sign = if sign { Sign::Positive } else { Sign::Negative };
+                    I256::checked_from_sign_and_abs(sign, U256::from(bytes)).map(|x| x.into_token())
+                })
+                .boxed(),
+            _ => panic!("unsupported solidity type int{}", n),
+        },
         ParamType::Uint(n) => match n / 8 {
             1 => any::<u8>().prop_map(|x| x.into_token()).boxed(),
             2 => any::<u16>().prop_map(|x| x.into_token()).boxed(),
@@ -30,7 +45,6 @@ fn fuzz_param(param: &ParamType) -> impl Strategy<Value = Token> {
             _ => panic!("unsupported solidity type uint{}", n),
         },
         ParamType::String => any::<String>().prop_map(|x| x.into_token()).boxed(),
-        ParamType::Bytes => any::<Vec<u8>>().prop_map(|x| Bytes::from(x).into_token()).boxed(),
         ParamType::FixedBytes(size) => (0..*size as u64)
             .map(|_| any::<u8>())
             .collect::<Vec<_>>()
