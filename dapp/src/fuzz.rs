@@ -13,6 +13,9 @@ pub fn fuzz_calldata(func: &Function) -> impl Strategy<Value = Bytes> + '_ {
     strats.prop_map(move |tokens| func.encode_input(&tokens).unwrap().into())
 }
 
+/// The max length of arrays we fuzz for is 256.
+const MAX_ARRAY_LEN: usize = 256;
+
 fn fuzz_param(param: &ParamType) -> impl Strategy<Value = Token> {
     match param {
         ParamType::Address => {
@@ -46,7 +49,7 @@ fn fuzz_param(param: &ParamType) -> impl Strategy<Value = Token> {
         },
         ParamType::Bool => any::<bool>().prop_map(|x| x.into_token()).boxed(),
         ParamType::String => any::<String>().prop_map(|x| x.into_token()).boxed(),
-        ParamType::Array(param) => proptest::collection::vec(fuzz_param(param), 0..10)
+        ParamType::Array(param) => proptest::collection::vec(fuzz_param(param), 0..MAX_ARRAY_LEN)
             .prop_map(|tokens| Token::Array(tokens))
             .boxed(),
         ParamType::FixedBytes(size) => (0..*size as u64)
