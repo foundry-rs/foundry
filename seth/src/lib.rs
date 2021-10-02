@@ -14,7 +14,6 @@ use std::str::FromStr;
 
 use dapp_utils::{encode_args, get_func, to_table};
 
-
 // TODO: SethContract with common contract initializers? Same for SethProviders?
 
 pub struct Seth<M> {
