@@ -214,6 +214,8 @@ mod tests {
     use std::marker::PhantomData;
 
     mod sputnik {
+        use std::str::FromStr;
+
         use dapp_utils::get_func;
         use evm_adapters::sputnik::{
             helpers::{new_backend, new_vicinity},
@@ -235,7 +237,7 @@ mod tests {
         }
 
         #[test]
-        fn test_array() {
+        fn test_dynamic_types() {
             let cfg = Config::istanbul();
             let compiled = COMPILED.get("GreeterTest").expect("could not find contract");
             let addr = "0x1000000000000000000000000000000000000000".parse().unwrap();
@@ -254,10 +256,13 @@ mod tests {
 
             let cfg = FuzzConfig::default();
             let mut fuzzer = TestRunner::new(cfg);
-            let func = get_func("function testFuzzFixedArray(uint256[2] x)").unwrap();
-            let res = runner.run_fuzz_test(&func, true, &mut fuzzer).unwrap();
-            assert!(!res.success);
-            assert!(res.counterexample.is_some());
+            let results = runner
+                .run_tests(&Regex::from_str("testFuzz.*").unwrap(), Some(&mut fuzzer))
+                .unwrap();
+            for (_, res) in results {
+                assert!(!res.success);
+                assert!(res.counterexample.is_some());
+            }
         }
 
         #[test]
@@ -280,7 +285,7 @@ mod tests {
 
             let cfg = FuzzConfig::default();
             let mut fuzzer = TestRunner::new(cfg);
-            let func = get_func("function testFuzzShrinking(uint256 x, uint256 y) public").unwrap();
+            let func = get_func("function testShrinking(uint256 x, uint256 y) public").unwrap();
             let res = runner.run_fuzz_test(&func, true, &mut fuzzer).unwrap();
             assert!(!res.success);
 
