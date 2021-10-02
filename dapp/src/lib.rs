@@ -1,5 +1,5 @@
 mod artifacts;
-pub use artifacts::DapptoolsArtifact;
+pub use artifacts::{Contract, DapptoolsArtifact};
 
 mod runner;
 pub use runner::{ContractRunner, TestResult};
