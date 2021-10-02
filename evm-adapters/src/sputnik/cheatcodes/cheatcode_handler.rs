@@ -455,24 +455,10 @@ mod tests {
         let addr = "0x1000000000000000000000000000000000000000".parse().unwrap();
         evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
 
-        evm.call::<(), _>(
-            Address::zero(),
-            addr,
-            &dapp_utils::get_func("setUp()").unwrap(),
-            (),
-            0.into(),
-        )
-        .unwrap();
+        evm.setup(addr).unwrap();
 
-        let (_, reason, _) = evm
-            .call::<(), _>(
-                Address::zero(),
-                addr,
-                &dapp_utils::get_func("testHevmTime()").unwrap(),
-                (),
-                0.into(),
-            )
-            .unwrap();
+        let (_, reason, _) =
+            evm.call::<(), _, _>(Address::zero(), addr, "testHevmTime()", (), 0.into()).unwrap();
         assert_eq!(reason, ExitReason::Succeed(ExitSucceed::Stopped));
     }
 }

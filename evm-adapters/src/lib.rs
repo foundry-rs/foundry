@@ -10,13 +10,24 @@ mod blocking_provider;
 pub use blocking_provider::BlockingProvider;
 
 use ethers::{
-    abi::{Detokenize, Function, Tokenize},
+    abi::{Detokenize, Tokenize},
     core::types::{Address, U256},
-    prelude::{decode_function_data, encode_function_data, Bytes},
+    prelude::{decode_function_data, encode_function_data, AbiError, Bytes},
 };
 
-use dapp_utils::get_func;
+use dapp_utils::IntoFunction;
+
 use eyre::Result;
+
+#[derive(thiserror::Error, Debug)]
+pub enum EvmError {
+    #[error(transparent)]
+    Eyre(#[from] eyre::Error),
+    #[error("Execution reverted: {reason}, (gas: {gas_used})")]
+    Execution { reason: String, gas_used: u64 },
+    #[error(transparent)]
+    AbiError(#[from] ethers::contract::AbiError),
+}
 
 // TODO: Any reason this should be an async trait?
 /// Low-level abstraction layer for interfacing with various EVMs. Once instantiated, one
@@ -24,6 +35,9 @@ use eyre::Result;
 pub trait Evm<State> {
     /// The returned reason type from an EVM (Success / Revert/ Stopped etc.)
     type ReturnReason: std::fmt::Debug + PartialEq;
+
+    /// Gets the revert reason type
+    fn revert() -> Self::ReturnReason;
 
     /// Whether a return reason should be considered successful
     fn is_success(reason: &Self::ReturnReason) -> bool;
@@ -42,15 +56,16 @@ pub trait Evm<State> {
     /// Executes the specified EVM call against the state
     // TODO: Should we just make this take a `TransactionRequest` or other more
     // ergonomic type?
-    fn call<D: Detokenize, T: Tokenize>(
+    fn call<D: Detokenize, T: Tokenize, F: IntoFunction>(
         &mut self,
         from: Address,
         to: Address,
-        func: &Function,
+        func: F,
         args: T, // derive arbitrary for Tokenize?
         value: U256,
-    ) -> Result<(D, Self::ReturnReason, u64)> {
-        let calldata = encode_function_data(func, args)?;
+    ) -> std::result::Result<(D, Self::ReturnReason, u64), EvmError> {
+        let func = func.into();
+        let calldata = encode_function_data(&func, args)?;
         #[allow(deprecated)]
         let is_static = func.constant ||
             matches!(
@@ -58,8 +73,14 @@ pub trait Evm<State> {
                 ethers::abi::StateMutability::View | ethers::abi::StateMutability::Pure
             );
         let (retdata, status, gas) = self.call_raw(from, to, calldata, value, is_static)?;
-        let retdata = decode_function_data(func, retdata, false)?;
-        Ok((retdata, status, gas))
+
+        if Self::is_fail(&status) {
+            let reason = dapp_utils::decode_revert(retdata.as_ref()).map_err(AbiError::from)?;
+            Err(EvmError::Execution { reason, gas_used: gas })
+        } else {
+            let retdata = decode_function_data(&func, retdata, false)?;
+            Ok((retdata, status, gas))
+        }
     }
 
     fn call_raw(
@@ -72,29 +93,19 @@ pub trait Evm<State> {
     ) -> Result<(Bytes, Self::ReturnReason, u64)>;
 
     /// Runs the `setUp()` function call to instantiate the contract's state
-    fn setup(&mut self, address: Address) -> Result<()> {
-        let (_, _, _) = self.call::<(), _>(
-            Address::zero(),
-            address,
-            &get_func("function setUp() external").unwrap(),
-            (),
-            0.into(),
-        )?;
+    fn setup(&mut self, address: Address) -> Result<Self::ReturnReason> {
+        let (_, status, _) =
+            self.call::<(), _, _>(Address::zero(), address, "setUp()", (), 0.into())?;
         // debug_assert_eq!(status, ExitReason::Succeed(ExitSucceed::Stopped));
-        Ok(())
+        Ok(status)
     }
 
     /// Runs the `failed()` function call to inspect the test contract's state and
     /// see whether the `failed` state var is set. This is to allow compatibility
     /// with dapptools-style DSTest smart contracts to preserve emiting of logs
     fn failed(&mut self, address: Address) -> Result<bool> {
-        let (failed, _, _) = self.call::<bool, _>(
-            Address::zero(),
-            address,
-            &get_func("function failed() returns (bool)").unwrap(),
-            (),
-            0.into(),
-        )?;
+        let (failed, _, _) =
+            self.call::<bool, _, _>(Address::zero(), address, "failed()(bool)", (), 0.into())?;
         Ok(failed)
     }
 
@@ -143,23 +154,11 @@ mod test_helpers {
         evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
 
         let (_, status1, _) = evm
-            .call::<(), _>(
-                Address::zero(),
-                addr,
-                &get_func("function greet(string greeting) external").unwrap(),
-                "hi".to_owned(),
-                0.into(),
-            )
+            .call::<(), _, _>(Address::zero(), addr, "greet(string)", "hi".to_owned(), 0.into())
             .unwrap();
 
         let (retdata, status2, _) = evm
-            .call::<String, _>(
-                Address::zero(),
-                addr,
-                &get_func("function greeting() public view returns (string)").unwrap(),
-                (),
-                0.into(),
-            )
+            .call::<String, _, _>(Address::zero(), addr, "greeting()(string)", (), 0.into())
             .unwrap();
         assert_eq!(retdata, "hi");
 
@@ -177,25 +176,10 @@ mod test_helpers {
         evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
 
         // call the setup function to deploy the contracts inside the test
-        let (_, status1, _) = evm
-            .call::<(), _>(
-                Address::zero(),
-                addr,
-                &get_func("function setUp() external").unwrap(),
-                (),
-                0.into(),
-            )
-            .unwrap();
+        let status1 = evm.setup(addr).unwrap();
 
-        let (_, status2, _) = evm
-            .call::<(), _>(
-                Address::zero(),
-                addr,
-                &get_func("function testGreeting()").unwrap(),
-                (),
-                0.into(),
-            )
-            .unwrap();
+        let (_, status2, _) =
+            evm.call::<(), _, _>(Address::zero(), addr, "testGreeting()", (), 0.into()).unwrap();
 
         vec![status1, status2].iter().for_each(|reason| {
             let res = evm.check_success(addr, reason, false);
