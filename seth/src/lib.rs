@@ -530,14 +530,17 @@ impl SimpleSeth {
     }
 
     /// Parses string input as Token against the expected ParamType
-    pub fn parse_tokens(params: &[(ParamType, &str)], lenient: bool) -> eyre::Result<Vec<Token>> {
+    pub fn parse_tokens(
+        params: &[(ParamType, impl AsRef<str>)],
+        lenient: bool,
+    ) -> eyre::Result<Vec<Token>> {
         params
             .iter()
-            .map(|&(ref param, value)| {
+            .map(|(param, value)| {
                 if lenient {
-                    LenientTokenizer::tokenize(param, value)
+                    LenientTokenizer::tokenize(param, value.as_ref())
                 } else {
-                    StrictTokenizer::tokenize(param, value)
+                    StrictTokenizer::tokenize(param, value.as_ref())
                 }
             })
             .collect::<Result<_, _>>()
