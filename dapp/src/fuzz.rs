@@ -50,23 +50,20 @@ fn fuzz_param(param: &ParamType) -> impl Strategy<Value = Token> {
         ParamType::Bool => any::<bool>().prop_map(|x| x.into_token()).boxed(),
         ParamType::String => any::<String>().prop_map(|x| x.into_token()).boxed(),
         ParamType::Array(param) => proptest::collection::vec(fuzz_param(param), 0..MAX_ARRAY_LEN)
-            .prop_map(|tokens| Token::Array(tokens))
+            .prop_map(Token::Array)
             .boxed(),
         ParamType::FixedBytes(size) => (0..*size as u64)
             .map(|_| any::<u8>())
             .collect::<Vec<_>>()
-            .prop_map(|tokens| Token::FixedBytes(tokens))
+            .prop_map(Token::FixedBytes)
             .boxed(),
         ParamType::FixedArray(param, size) => (0..*size as u64)
             .map(|_| fuzz_param(param).prop_map(|param| param.into_token()))
             .collect::<Vec<_>>()
-            .prop_map(|tokens| Token::FixedArray(tokens))
+            .prop_map(Token::FixedArray)
             .boxed(),
-        ParamType::Tuple(params) => params
-            .iter()
-            .map(|param| fuzz_param(param))
-            .collect::<Vec<_>>()
-            .prop_map(|tokens| Token::Tuple(tokens))
-            .boxed(),
+        ParamType::Tuple(params) => {
+            params.iter().map(fuzz_param).collect::<Vec<_>>().prop_map(Token::Tuple).boxed()
+        }
     }
 }
