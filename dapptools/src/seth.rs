@@ -2,7 +2,6 @@ mod seth_opts;
 use seth_opts::{Opts, Subcommands};
 
 use ethers::{
-    abi::AbiParser,
     core::types::{BlockId, BlockNumber::Latest},
     middleware::SignerMiddleware,
     providers::{Middleware, Provider},
@@ -90,16 +89,7 @@ async fn main() -> eyre::Result<()> {
             println!("{}", Seth::new(provider).call(address, &sig, args).await?);
         }
         Subcommands::Calldata { sig, args } => {
-            let fun = AbiParser::default().parse_function(&sig)?;
-            let params: Vec<_> = fun
-                .inputs
-                .iter()
-                .map(|param| param.kind.clone())
-                .zip(args.iter().map(|s| s.as_str()))
-                .collect();
-            let tokens = utils::parse_tokens(&params, true)?;
-            let calldata = fun.encode_input(&tokens)?;
-            println!("0x{}", calldata.to_hex::<String>());
+            println!("{}", SimpleSeth::calldata(sig, &args)?);
         }
         Subcommands::Chain { rpc_url } => {
             let provider = Provider::try_from(rpc_url)?;
@@ -222,27 +212,4 @@ where
     }
 
     Ok(())
-}
-
-mod utils {
-    use ethers::abi::{
-        token::{LenientTokenizer, StrictTokenizer, Tokenizer},
-        ParamType, Token,
-    };
-    use eyre::WrapErr;
-
-    /// Parses string input as Token against the expected ParamType
-    pub fn parse_tokens(params: &[(ParamType, &str)], lenient: bool) -> eyre::Result<Vec<Token>> {
-        params
-            .iter()
-            .map(|&(ref param, value)| {
-                if lenient {
-                    LenientTokenizer::tokenize(param, value)
-                } else {
-                    StrictTokenizer::tokenize(param, value)
-                }
-            })
-            .collect::<Result<_, _>>()
-            .wrap_err("Failed to parse tokens")
-    }
 }
