@@ -32,6 +32,11 @@ fn fuzz_param(param: &ParamType) -> impl Strategy<Value = Token> {
         ParamType::String => any::<String>().prop_map(|x| x.into_token()).boxed(),
         ParamType::Bytes => any::<Vec<u8>>().prop_map(|x| Bytes::from(x).into_token()).boxed(),
         ParamType::Bool => any::<bool>().prop_map(|x| x.into_token()).boxed(),
+        ParamType::FixedArray(param, size) => (0..*size as u64)
+            .map(|_| fuzz_param(param).prop_map(|param| param.into_token()))
+            .collect::<Vec<_>>()
+            .prop_map(|tokens| Token::FixedArray(tokens))
+            .boxed(),
         // TODO: Implement the rest of the strategies
         _ => unimplemented!(),
     }

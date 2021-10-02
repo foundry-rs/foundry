@@ -235,6 +235,32 @@ mod tests {
         }
 
         #[test]
+        fn test_array() {
+            let cfg = Config::istanbul();
+            let compiled = COMPILED.get("GreeterTest").expect("could not find contract");
+            let addr = "0x1000000000000000000000000000000000000000".parse().unwrap();
+            let vicinity = new_vicinity();
+            let backend = new_backend(&vicinity, Default::default());
+
+            let mut evm = Executor::new(12_000_000, &cfg, &backend);
+            evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
+
+            let mut runner = ContractRunner {
+                evm: Rc::new(RefCell::new(&mut evm)),
+                contract: compiled,
+                address: addr,
+                state: PhantomData,
+            };
+
+            let cfg = FuzzConfig::default();
+            let mut fuzzer = TestRunner::new(cfg);
+            let func = get_func("function testFuzzFixedArray(uint256[2] x)").unwrap();
+            let res = runner.run_fuzz_test(&func, true, &mut fuzzer).unwrap();
+            assert!(!res.success);
+            assert!(res.counterexample.is_some());
+        }
+
+        #[test]
         fn test_fuzz_shrinking() {
             let cfg = Config::istanbul();
             let compiled = COMPILED.get("GreeterTest").expect("could not find contract");

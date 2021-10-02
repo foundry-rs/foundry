@@ -39,6 +39,11 @@ contract GreeterTest is GreeterTestSetup {
         require(x * y <= 100, "product greater than 100");
     }
 
+    function testFuzzFixedArray(uint256[2] memory x) public {
+        if (x[0] == 0) return;
+        require(x[1] / x[1] == 0);
+    }
+
     // check the positive case
     function testGreeting() public {
         greeter.greet("yo");
