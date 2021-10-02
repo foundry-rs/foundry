@@ -104,7 +104,7 @@ where
             self.executor.transact_call(from, to, value, calldata.to_vec(), self.gas_limit, vec![]);
 
         let gas_after = self.executor.gas_left();
-        let gas = dapp_utils::remove_extra_costs(gas_before - gas_after, calldata.as_ref());
+        let gas = gas_before - gas_after;
 
         Ok((retdata.into(), status, gas.as_u64()))
     }
