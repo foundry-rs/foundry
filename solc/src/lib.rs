@@ -103,7 +103,8 @@ impl<'a> SolcBuilder<'a> {
                         prev.extend(map);
                         Ok(prev)
                     }
-                    _ => Err(eyre::eyre!("compilation failed")),
+                    (Err(err), _) => Err(err),
+                    (_, Err(err)) => Err(err),
                 },
             );
         let duration = Instant::now().duration_since(start);
@@ -198,7 +199,7 @@ impl<'a> SolcBuilder<'a> {
         let version = file
             .lines()
             .map(|line| line.unwrap())
-            .find(|line| line.starts_with("pragma"))
+            .find(|line| line.starts_with("pragma solidity"))
             .ok_or_else(|| eyre::eyre!("{:?} has no version", path))?;
         let version = version
             .replace("pragma solidity ", "")
