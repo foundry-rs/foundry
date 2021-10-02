@@ -103,7 +103,8 @@ impl<'a> SolcBuilder<'a> {
                         prev.extend(map);
                         Ok(prev)
                     }
-                    _ => Err(eyre::eyre!("compilation failed")),
+                    (Err(err), _) => Err(err),
+                    (_, Err(err)) => Err(err),
                 },
             );
         let duration = Instant::now().duration_since(start);

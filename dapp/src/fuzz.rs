@@ -44,22 +44,26 @@ fn fuzz_param(param: &ParamType) -> impl Strategy<Value = Token> {
             17..=32 => any::<[u8; 32]>().prop_map(|x| U256::from(&x).into_token()).boxed(),
             _ => panic!("unsupported solidity type uint{}", n),
         },
+        ParamType::Bool => any::<bool>().prop_map(|x| x.into_token()).boxed(),
         ParamType::String => any::<String>().prop_map(|x| x.into_token()).boxed(),
+        ParamType::Array(param) => proptest::collection::vec(fuzz_param(param), 0..10)
+            .prop_map(|tokens| Token::Array(tokens))
+            .boxed(),
         ParamType::FixedBytes(size) => (0..*size as u64)
             .map(|_| any::<u8>())
             .collect::<Vec<_>>()
             .prop_map(|tokens| Token::FixedBytes(tokens))
-            .boxed(),
-        ParamType::Bool => any::<bool>().prop_map(|x| x.into_token()).boxed(),
-        ParamType::Array(param) => proptest::collection::vec(fuzz_param(param), 0..10)
-            .prop_map(|tokens| Token::Array(tokens))
             .boxed(),
         ParamType::FixedArray(param, size) => (0..*size as u64)
             .map(|_| fuzz_param(param).prop_map(|param| param.into_token()))
             .collect::<Vec<_>>()
             .prop_map(|tokens| Token::FixedArray(tokens))
             .boxed(),
-        // TODO: Implement the rest of the strategies
-        _ => unimplemented!(),
+        ParamType::Tuple(params) => params
+            .iter()
+            .map(|param| fuzz_param(param))
+            .collect::<Vec<_>>()
+            .prop_map(|tokens| Token::Tuple(tokens))
+            .boxed(),
     }
 }

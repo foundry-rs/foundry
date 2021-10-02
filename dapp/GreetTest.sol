@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: UNLICENSED
+pragma abicoder v2;
 pragma solidity =0.7.6;
 
 contract Greeter {
@@ -65,6 +66,18 @@ contract GreeterTest is GreeterTestSetup {
 
     function testFuzzI256(int256 x) public {
         require(x >= 0);
+    }
+
+    struct Foo {
+        Bar bar;
+    }
+
+    struct Bar {
+        uint256 baz;
+    }
+
+    function testFuzzAbiCoderV2(Foo memory foo) public {
+        require(foo.bar.baz < 5);
     }
 
     // check the positive case
