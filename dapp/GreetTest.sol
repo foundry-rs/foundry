@@ -51,6 +51,18 @@ contract GreeterTest is GreeterTestSetup {
         require(x[1] / x[1] == 0);
     }
 
+    function testFuzzBytes1(bytes1 x) public {
+        require(x == 0);
+    }
+
+    function testFuzzBytes14(bytes14 x) public {
+        require(x == 0);
+    }
+
+    function testFuzzBytes32(bytes32 x) public {
+        require(x == 0);
+    }
+
     // check the positive case
     function testGreeting() public {
         greeter.greet("yo");
