@@ -64,8 +64,8 @@ pub enum Subcommands {
         contract: FullContractInfo,
         #[structopt(help = "the address of the contract to verify.")]
         address: Address,
-        #[structopt(help = "constructor args calldata.", parse(from_str))]
-        constructor_args: Option<Bytes>,
+        #[structopt(help = "constructor args calldata arguments.")]
+        constructor_args: Vec<String>,
     },
     #[structopt(about = "deploy a compiled contract")]
     Create {
@@ -76,16 +76,12 @@ pub enum Subcommands {
     },
 }
 
-// Note: can't use `Vec<u8>` directly, as structopt would instead look for
-// conversion function from `&str` to `u8`.
-type Bytes = Vec<u8>;
-
 /// Represents the common dapp argument pattern for `<path>:<contractname>` where `<path>:` is
 /// optional.
 #[derive(Clone, Debug)]
 pub struct ContractInfo {
     /// Location of the contract
-    pub path: Option<PathBuf>,
+    pub path: Option<String>,
     /// Name of the contract
     pub name: String,
 }
@@ -96,7 +92,7 @@ impl FromStr for ContractInfo {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut iter = s.rsplit(':');
         let name = iter.next().unwrap().to_string();
-        let path = iter.next().map(PathBuf::from);
+        let path = iter.next().map(str::to_string);
         Ok(Self { path, name })
     }
 }
@@ -105,7 +101,7 @@ impl FromStr for ContractInfo {
 #[derive(Clone, Debug)]
 pub struct FullContractInfo {
     /// Location of the contract
-    pub path: PathBuf,
+    pub path: String,
     /// Name of the contract
     pub name: String,
 }
@@ -117,7 +113,7 @@ impl FromStr for FullContractInfo {
         let (path, name) = s
             .split_once(':')
             .ok_or_else(|| eyre::eyre!("Expected `<path>:<contractname>`, got `{}`", s))?;
-        Ok(Self { path: PathBuf::from(s), name: name.to_string() })
+        Ok(Self { path: path.to_string(), name: name.to_string() })
     }
 }
 

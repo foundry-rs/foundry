@@ -1,14 +1,23 @@
 //! Verify contract source on etherscan
 
-use crate::utils;
-use dapp::DapptoolsArtifact;
-use ethers::prelude::Provider;
-use eyre::WrapErr;
-use seth::Seth;
-use std::{convert::TryFrom, path::PathBuf};
+use crate::{etherscan, utils};
+
+use ethers::{
+    abi::{Address, Function, FunctionExt},
+    prelude::Provider,
+};
+use eyre::ContextCompat;
+use seth::{Seth, SimpleSeth};
+use std::convert::TryFrom;
 
 /// Run the verify command to verify the contract on etherscan
-pub async fn run(path: PathBuf, name: String, calldata: Option<Vec<u8>>) -> eyre::Result<()> {
+pub async fn run(
+    path: String,
+    name: String,
+    address: Address,
+    args: Vec<String>,
+) -> eyre::Result<()> {
+    let etherscan_api_key = utils::etherscan_api_key()?;
     let rpc_url = utils::rpc_url();
     let provider = Seth::new(Provider::try_from(rpc_url)?);
 
@@ -22,41 +31,64 @@ pub async fn run(path: PathBuf, name: String, calldata: Option<Vec<u8>>) -> eyre
         )
     })?;
 
-    let (etherscan_api_url, etherscan_url) = match chain {
-        "ethlive" | "mainnet" => {
-            (
-                "https://api.etherscan.io/api".to_string(),
-                "https://etherscan.io/address".to_string(),
-                )
-        },
-        "ropsten"|"kovan"|"rinkeby"|"goerli" => {
-           (
-               format!("https://api-{}.etherscan.io/api", chain),
-               format!("https://{}.etherscan.io/address", chain),
-               )
+    let contract = utils::find_dapp_json_contract(&path, &name)?;
+    let metadata = contract.metadata.wrap_err("No compiler version found")?;
+    let compiler_version = format!("v{}", metadata.compiler.version);
+    let mut constructor_args = None;
+    if let Some(constructor) = contract.abi.constructor {
+        // convert constructor into function
+        #[allow(deprecated)]
+        let fun = Function {
+            name: "constructor".to_string(),
+            inputs: constructor.inputs,
+            outputs: vec![],
+            constant: false,
+            state_mutability: Default::default(),
+        };
+
+        constructor_args = Some(SimpleSeth::calldata(fun.abi_signature(), &args)?);
+    } else if !args.is_empty() {
+        eyre::bail!("No constructor found but contract arguments provided")
+    }
+
+    let etherscan = etherscan::Client::new(chain, etherscan_api_key)?;
+
+    let source =
+        format!("// Verified using https://dapptools.rs\n\n{}", std::fs::read_to_string(&path)?);
+
+    let contract = etherscan::VerifyContract::new(address, source, compiler_version)
+        .constructor_arguments(constructor_args)
+        .optimization(metadata.settings.optimizer.enabled)
+        .runs(metadata.settings.optimizer.runs);
+
+    let resp = etherscan.submit_contract_verification(contract).await?;
+
+    if resp.status == "0" {
+        if resp.message == "Contract source code already verified" {
+            println!("Contract source code already verified.");
+            return Ok(())
+        } else {
+            eyre::bail!(
+                "Encountered an error verifying this contract:\nResponse: `{}`\nDetails: `{}`",
+                resp.message,
+                resp.result
+            );
         }
-        s => {
-            return Err(
-                eyre::eyre!("Verification only works on mainnet, ropsten, kovan, rinkeby, and goerli, found `{}` chain", s)
-            )
-        }
-    };
+    }
 
-    let value: serde_json::Value =
-        serde_json::from_reader(std::fs::File::open(utils::dapp_json_path())?)
-            .wrap_err("Failed to read DAPP_JSON artifacts")?;
+    // wait some time until contract is verified
+    tokio::time::sleep(std::time::Duration::from_secs(20)).await;
 
-    dbg!(etherscan_api_url);
-    dbg!(etherscan_url);
+    let resp = etherscan.check_verify_status(resp.result).await?;
 
-    // construct(type,type,type)
-    // console.log(`constructor(${(JSON.parse(
-    //     require("fs").readFileSync("/dev/stdin", { encoding: "utf-8" })
-    // ).filter(
-    //     x => x.type == "constructor"
-    //     )[0] || { inputs: [] }).inputs.map(x => x.type).join(",")})`)
-
-    // dbg!(DapptoolsArtifact::read(utils::dapp_json_path()).unwrap());
-
-    Ok(())
+    if resp.status == "1" {
+        println!("{}", resp.result);
+        Ok(())
+    } else {
+        eyre::bail!(
+            "Encountered an checking this contract's status:\nResponse: `{}`\nDetails: `{}`",
+            resp.message,
+            resp.result
+        );
+    }
 }

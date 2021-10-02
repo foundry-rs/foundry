@@ -16,6 +16,7 @@ use crate::dapp_opts::FullContractInfo;
 use std::convert::TryFrom;
 
 mod cmd;
+mod etherscan;
 mod utils;
 
 #[tracing::instrument(err)]
@@ -111,11 +112,10 @@ fn main() -> eyre::Result<()> {
         Subcommands::VerifyContract { contract, address, constructor_args } => {
             let FullContractInfo { path, name } = contract;
             let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
-            rt.block_on(cmd::verify::run(path, name, constructor_args))?;
+            rt.block_on(cmd::verify::run(path, name, address, constructor_args))?;
         }
         Subcommands::Create { contract, verify } => {
-            dbg!(contract);
-            dbg!(verify);
+            unimplemented!("Not yet implemented")
         }
     }
 
