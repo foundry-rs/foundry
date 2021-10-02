@@ -237,7 +237,7 @@ mod tests {
         }
 
         #[test]
-        fn test_dynamic_types() {
+        fn test_fuzzing() {
             let cfg = Config::istanbul();
             let compiled = COMPILED.get("GreeterTest").expect("could not find contract");
             let addr = "0x1000000000000000000000000000000000000000".parse().unwrap();
