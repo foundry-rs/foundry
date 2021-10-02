@@ -99,7 +99,7 @@ pub struct Output {
 pub struct Abi {
     pub inputs: Vec<Item>,
     #[serde(rename = "stateMutability")]
-    pub state_mutability: String,
+    pub state_mutability: Option<String>,
     #[serde(rename = "type")]
     pub abi_type: String,
     pub name: Option<String>,
@@ -142,8 +142,8 @@ pub struct Settings {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompilationTarget {
-    #[serde(rename = "src/FooTest.sol")]
-    pub src_foo_test_sol: String,
+    #[serde(flatten)]
+    pub inner: HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -160,8 +160,8 @@ pub struct Optimizer {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Sources {
-    #[serde(rename = "src/FooTest.sol")]
-    pub src_foo_test_sol: SrcFooTestSol,
+    #[serde(flatten)]
+    pub inner: HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
