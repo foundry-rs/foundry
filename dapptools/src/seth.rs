@@ -2,12 +2,14 @@ mod seth_opts;
 use seth_opts::{Opts, Subcommands};
 
 use ethers::{
+    abi::AbiParser,
     core::types::{BlockId, BlockNumber::Latest},
     middleware::SignerMiddleware,
     providers::{Middleware, Provider},
     signers::Signer,
     types::{NameOrAddress, U256},
 };
+use rustc_hex::ToHex;
 use seth::{Seth, SimpleSeth};
 use std::{convert::TryFrom, str::FromStr};
 use structopt::StructOpt;
@@ -22,6 +24,26 @@ async fn main() -> eyre::Result<()> {
         Subcommands::ToHex { decimal } => {
             let val = unwrap_or_stdin(decimal)?;
             println!("{}", SimpleSeth::hex(U256::from_dec_str(&val)?));
+        }
+        Subcommands::ToHexdata { input } => {
+            let output = match input {
+                s if s.starts_with('@') => {
+                    let var = std::env::var(&s[1..])?;
+                    var.as_bytes().to_hex()
+                }
+                s if s.starts_with('/') => {
+                    let input = std::fs::read(s)?;
+                    input.to_hex()
+                }
+                s => {
+                    let mut output = String::new();
+                    for s in s.split(':') {
+                        output.push_str(&s.trim_start_matches("0x").to_lowercase())
+                    }
+                    output
+                }
+            };
+            println!("0x{}", output);
         }
         Subcommands::ToCheckSumAddress { address } => {
             println!("{}", SimpleSeth::checksum_address(&address)?);
@@ -66,6 +88,18 @@ async fn main() -> eyre::Result<()> {
         Subcommands::Call { rpc_url, address, sig, args } => {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Seth::new(provider).call(address, &sig, args).await?);
+        }
+        Subcommands::Calldata { sig, args } => {
+            let fun = AbiParser::default().parse_function(&sig)?;
+            let params: Vec<_> = fun
+                .inputs
+                .iter()
+                .map(|param| param.kind.clone())
+                .zip(args.iter().map(|s| s.as_str()))
+                .collect();
+            let tokens = utils::parse_tokens(&params, true)?;
+            let calldata = fun.encode_input(&tokens)?;
+            println!("0x{}", calldata.to_hex::<String>());
         }
         Subcommands::Chain { rpc_url } => {
             let provider = Provider::try_from(rpc_url)?;
@@ -188,4 +222,27 @@ where
     }
 
     Ok(())
+}
+
+mod utils {
+    use ethers::abi::{
+        token::{LenientTokenizer, StrictTokenizer, Tokenizer},
+        ParamType, Token,
+    };
+    use eyre::WrapErr;
+
+    /// Parses string input as Token against the expected ParamType
+    pub fn parse_tokens(params: &[(ParamType, &str)], lenient: bool) -> eyre::Result<Vec<Token>> {
+        params
+            .iter()
+            .map(|&(ref param, value)| {
+                if lenient {
+                    LenientTokenizer::tokenize(param, value)
+                } else {
+                    StrictTokenizer::tokenize(param, value)
+                }
+            })
+            .collect::<Result<_, _>>()
+            .wrap_err("Failed to parse tokens")
+    }
 }
