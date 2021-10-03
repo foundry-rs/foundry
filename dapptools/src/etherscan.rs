@@ -51,6 +51,19 @@ impl Client {
         })
     }
 
+    pub fn etherscan_api_url(&self) -> &Url {
+        &self.etherscan_api_url
+    }
+
+    pub fn etherscan_url(&self) -> &Url {
+        &self.etherscan_url
+    }
+
+    /// Return the URL for the given address
+    pub fn address_url(&self, address: Address) -> String {
+        format!("{}/{}", self.etherscan_url, address)
+    }
+
     fn body<T: Serialize>(
         &self,
         module: &'static str,

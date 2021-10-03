@@ -76,8 +76,13 @@ pub async fn run(
         }
     } else {
         println!(
-            "Submitted contract for verification:\nResponse: `{}`\nGUID: `{}`",
-            resp.message, resp.result
+            r#"Submitted contract for verification:
+            Response: `{}`
+            GUID: `{}`
+            url: {}#code"#,
+            resp.message,
+            resp.result,
+            etherscan.address_url(address)
         );
         Ok(())
     }
