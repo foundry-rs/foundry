@@ -33,3 +33,4 @@ evm-adapters = { path = "./../evm-adapters", features = ["sputnik", "sputnik-hel
 evmodin = { git = "https://github.com/vorot93/evmodin", features = ["util"] }
 # evm = { version = "0.30.1" }
 evm = { git = "https://github.com/rust-blockchain/evm" }
+dapp-solc = { path = "./../solc", features = ["sync"] }

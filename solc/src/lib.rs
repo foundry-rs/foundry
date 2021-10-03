@@ -10,11 +10,11 @@ use std::{
     time::Instant,
 };
 
-#[cfg(test)]
+#[cfg(any(test, feature = "sync"))]
 use std::sync::Mutex;
-#[cfg(test)]
+#[cfg(any(test, feature = "sync"))]
 static LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
-#[cfg(test)]
+#[cfg(any(test, feature = "sync"))]
 use ethers::prelude::Lazy;
 
 /// Supports building contracts
@@ -128,7 +128,7 @@ impl<'a> SolcBuilder<'a> {
             .into_string()
             .map_err(|_| eyre::eyre!("invalid path, maybe not utf-8?"))?;
 
-        #[cfg(test)]
+        #[cfg(any(test, feature = "sync"))]
         // take the lock in tests, we use this to enforce that
         // a test does not run while a compiler version is being installed
         let _lock = LOCK.lock();
