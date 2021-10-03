@@ -4,7 +4,7 @@
 
 use ethers::abi::{Abi, Address};
 use reqwest::Url;
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{borrow::Cow, collections::HashMap};
 
 #[derive(Clone)]
@@ -64,6 +64,29 @@ impl Client {
         format!("{}/{}", self.etherscan_url, address)
     }
 
+    /// Execute a api POST request
+    async fn post_json<T: DeserializeOwned, Body: Serialize>(
+        &self,
+        body: &Body,
+    ) -> eyre::Result<Response<T>> {
+        Ok(self.client.post(self.etherscan_api_url.clone()).json(body).send().await?.json().await?)
+    }
+
+    /// Execute a api GET query
+    async fn get_json<T: DeserializeOwned, Q: Serialize>(
+        &self,
+        query: &Q,
+    ) -> eyre::Result<Response<T>> {
+        Ok(self
+            .client
+            .get(self.etherscan_api_url.clone())
+            .query(query)
+            .send()
+            .await?
+            .json()
+            .await?)
+    }
+
     fn body<T: Serialize>(
         &self,
         module: &'static str,
@@ -84,14 +107,7 @@ impl Client {
         contract: VerifyContract,
     ) -> eyre::Result<Response<String>> {
         let body = self.body("contract", "verifysourcecode", contract);
-        Ok(self
-            .client
-            .post(self.etherscan_api_url.clone())
-            .json(&body)
-            .send()
-            .await?
-            .json()
-            .await?)
+        Ok(self.post_json(&body).await?.result)
     }
 
     /// Check Source Code Verification Status with receipt received from
@@ -103,20 +119,13 @@ impl Client {
         let mut map = HashMap::new();
         map.insert("guid", guid.as_ref());
         let body = self.body("contract", "checkverifystatus", map);
-        Ok(self
-            .client
-            .post(self.etherscan_api_url.clone())
-            .json(&body)
-            .send()
-            .await?
-            .json()
-            .await?)
+        Ok(self.post_json(&body).await?.result)
     }
 
     /// Returns the contract ABI of a verified contract
     ///
     /// ```no_run
-    /// use dapptools::etherscan::Client;
+    /// # use dapptools::etherscan::Client;
     ///
     /// # #[tokio::main]
     /// # async fn main() -> eyre::Result<()> {
@@ -132,15 +141,29 @@ impl Client {
         let mut map = HashMap::new();
         map.insert("address", address);
         let query = self.body("contract", "getabi", map);
-        let response: Response<Abi> = self
-            .client
-            .get(self.etherscan_api_url.clone())
-            .query(&query)
-            .send()
-            .await?
-            .json()
-            .await?;
-        Ok(response.result)
+        Ok(self.get_json(&query).await?.result)
+    }
+
+    /// Get Contract Source Code for Verified Contract Source Codes
+    /// ```no_run
+    /// # use dapptools::etherscan::Client;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> eyre::Result<()> {
+    ///     let client = Client::new("mainnet", "API_KEY").unwrap();
+    ///     let meta = client
+    ///         .contract_source_code("0xBB9bc244D798123fDe783fCc1C72d3Bb8C189413".parse().unwrap())
+    ///         .await?;
+    ///     let code = meta.source_code();
+    /// #     Ok(())
+    /// # }
+    /// ```
+    pub async fn contract_source_code(&self, address: Address) -> eyre::Result<ContractMetadata> {
+        let mut map = HashMap::new();
+        map.insert("address", address);
+        let query = self.body("contract", "getsourcecode", map);
+        let response: Response<Vec<Metadata>> = self.get_json(&query).await?;
+        Ok(ContractMetadata { items: response.result })
     }
 }
 
@@ -265,6 +288,68 @@ impl Default for CodeFormat {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ContractMetadata {
+    #[serde(flatten)]
+    pub items: Vec<Metadata>,
+}
+
+impl IntoIterator for ContractMetadata {
+    type Item = Metadata;
+    type IntoIter = std::vec::IntoIter<Metadata>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.items.into_iter()
+    }
+}
+
+impl ContractMetadata {
+    /// All ABI from all contracts in the source file
+    pub fn abis(&self) -> eyre::Result<Vec<Abi>> {
+        let mut abis = Vec::with_capacity(self.items.len());
+        for item in &self.items {
+            abis.push(serde_json::from_str(&item.abi)?);
+        }
+        Ok(abis)
+    }
+
+    /// Combined source code of all contracts
+    pub fn source_code(&self) -> String {
+        self.items.iter().map(|c| c.source_code.as_str()).collect::<Vec<_>>().join("\n")
+    }
+}
+
+/// Etherscan contract metadata
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Metadata {
+    #[serde(rename = "SourceCode")]
+    pub source_code: String,
+    #[serde(rename = "ABI")]
+    pub abi: String,
+    #[serde(rename = "ContractName")]
+    pub contract_name: String,
+    #[serde(rename = "CompilerVersion")]
+    pub compiler_version: String,
+    #[serde(rename = "OptimizationUsed")]
+    pub optimization_used: String,
+    #[serde(rename = "Runs")]
+    pub runs: String,
+    #[serde(rename = "ConstructorArguments")]
+    pub constructor_arguments: String,
+    #[serde(rename = "EVMVersion")]
+    pub evm_version: String,
+    #[serde(rename = "Library")]
+    pub library: String,
+    #[serde(rename = "LicenseType")]
+    pub license_type: String,
+    #[serde(rename = "Proxy")]
+    pub proxy: String,
+    #[serde(rename = "Implementation")]
+    pub implementation: String,
+    #[serde(rename = "SwarmSource")]
+    pub swarm_source: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,6 +363,18 @@ mod tests {
 
         let abi = client
             .contract_abi("0xBB9bc244D798123fDe783fCc1C72d3Bb8C189413".parse().unwrap())
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn can_fetch_contract_source_code() {
+        let api = utils::etherscan_api_key().unwrap();
+        let client = Client::new("mainnet", api).unwrap();
+
+        let meta = client
+            .contract_source_code("0xBB9bc244D798123fDe783fCc1C72d3Bb8C189413".parse().unwrap())
             .await
             .unwrap();
     }
