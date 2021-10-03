@@ -263,6 +263,9 @@ mod tests {
 
     #[test]
     fn test_find_installed_version_path() {
+        // this test does not take the lock by default, so we need to manually
+        // add it here.
+        let _lock = LOCK.lock();
         let ver = "0.8.6";
         let version = Version::from_str(ver).unwrap();
         if !svm::installed_versions().unwrap().contains(&version) {
