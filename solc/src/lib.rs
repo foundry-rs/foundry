@@ -23,7 +23,6 @@ pub struct SolcBuilder<'a> {
     contracts: &'a str,
     remappings: &'a [String],
     lib_paths: &'a [String],
-    versions: Vec<Version>,
     releases: Vec<Version>,
 }
 
@@ -33,7 +32,6 @@ impl<'a> SolcBuilder<'a> {
         remappings: &'a [String],
         lib_paths: &'a [String],
     ) -> Result<Self> {
-        let versions = svm::installed_versions().unwrap_or_default();
         // Try to download the releases, if it fails default to empty
         let releases = match tokio::runtime::Runtime::new()?.block_on(svm::all_versions()) {
             Ok(inner) => inner,
@@ -42,7 +40,7 @@ impl<'a> SolcBuilder<'a> {
                 Vec::new()
             }
         };
-        Ok(Self { contracts, remappings, lib_paths, versions, releases })
+        Ok(Self { contracts, remappings, lib_paths, releases })
     }
 
     /// Builds all provided contract files with the specified compiler version.
@@ -83,7 +81,7 @@ impl<'a> SolcBuilder<'a> {
 
     /// Builds all contracts with their corresponding compiler versions
     #[tracing::instrument(skip(self))]
-    pub fn build_all(&mut self) -> Result<HashMap<String, CompiledContract>> {
+    pub fn build_all(&self) -> Result<HashMap<String, CompiledContract>> {
         tracing::info!("starting compilation");
         let contracts_by_version = self.contract_versions()?;
         let start = Instant::now();
@@ -117,7 +115,7 @@ impl<'a> SolcBuilder<'a> {
     /// to build it, and returns it along with its canonicalized path. If the required
     /// compiler version is not installed, it also proceeds to install it.
     #[tracing::instrument(err)]
-    fn detect_version(&mut self, fname: &Path) -> Result<Option<(Version, String)>> {
+    fn detect_version(&self, fname: &Path) -> Result<Option<(Version, String)>> {
         let path = std::fs::canonicalize(fname)?;
 
         // detects the required solc version
@@ -134,8 +132,9 @@ impl<'a> SolcBuilder<'a> {
         let _lock = LOCK.lock();
 
         // load the local / remote versions
-        let local_versions = Self::find_matching_installation(&mut self.versions, &sol_version);
-        let remote_versions = Self::find_matching_installation(&mut self.releases, &sol_version);
+        let versions = svm::installed_versions().unwrap_or_default();
+        let local_versions = Self::find_matching_installation(&versions, &sol_version);
+        let remote_versions = Self::find_matching_installation(&self.releases, &sol_version);
 
         // if there's a better upstream version than the one we have, install it
         let res = match (local_versions, remote_versions) {
@@ -158,16 +157,15 @@ impl<'a> SolcBuilder<'a> {
         Ok(res)
     }
 
-    fn install_version(&mut self, version: &Version) {
+    fn install_version(&self, version: &Version) {
         println!("Installing {}", version);
         // Blocking call to install it over RPC.
         install_blocking(version).expect("could not install solc remotely");
-        self.versions.push(version.clone());
         println!("Done!");
     }
 
     /// Gets a map of compiler version -> vec[contract paths]
-    fn contract_versions(&mut self) -> Result<HashMap<String, Vec<String>>> {
+    fn contract_versions(&self) -> Result<HashMap<String, Vec<String>>> {
         // Group contracts in the nones with the same version pragma
         let files = glob::glob(self.contracts)?;
         // tracing::trace!("Compiling files under {}", self.contracts);
@@ -222,11 +220,9 @@ impl<'a> SolcBuilder<'a> {
 
     /// Find a matching local installation for the specified required version
     fn find_matching_installation(
-        versions: &mut [Version],
+        versions: &[Version],
         required_version: &VersionReq,
     ) -> Option<Version> {
-        // sort through them
-        versions.sort();
         // iterate in reverse to find the last match
         versions.iter().rev().find(|version| required_version.matches(version)).cloned()
     }
@@ -286,26 +282,26 @@ mod tests {
 
     #[test]
     fn test_find_latest_matching_installation() {
-        let mut versions = ["0.4.24", "0.5.1", "0.5.2"]
+        let versions = ["0.4.24", "0.5.1", "0.5.2"]
             .iter()
             .map(|version| Version::from_str(version).unwrap())
             .collect::<Vec<_>>();
 
         let required = VersionReq::from_str(">=0.4.24").unwrap();
 
-        let got = SolcBuilder::find_matching_installation(&mut versions, &required).unwrap();
+        let got = SolcBuilder::find_matching_installation(&versions, &required).unwrap();
         assert_eq!(got, versions[2]);
     }
 
     #[test]
     fn test_no_matching_installation() {
-        let mut versions = ["0.4.24", "0.5.1", "0.5.2"]
+        let versions = ["0.4.24", "0.5.1", "0.5.2"]
             .iter()
             .map(|version| Version::from_str(version).unwrap())
             .collect::<Vec<_>>();
 
         let required = VersionReq::from_str(">=0.6.0").unwrap();
-        let got = SolcBuilder::find_matching_installation(&mut versions, &required);
+        let got = SolcBuilder::find_matching_installation(&versions, &required);
         assert!(got.is_none());
     }
 
@@ -374,7 +370,7 @@ mod tests {
     fn test_detect_version() {
         let dir = mkdir();
 
-        let mut builder = SolcBuilder::new("", &[], &[]).unwrap();
+        let builder = SolcBuilder::new("", &[], &[]).unwrap();
         for (pragma, expected) in [
             // pinned
             ("=0.4.14", "0.4.14"),
@@ -425,7 +421,7 @@ mod tests {
 
         let dir_str = dir.clone().into_os_string().into_string().unwrap();
         let glob = format!("{}/**/*.sol", dir_str);
-        let mut builder = SolcBuilder::new(&glob, &[], &[]).unwrap();
+        let builder = SolcBuilder::new(&glob, &[], &[]).unwrap();
 
         let versions = builder.contract_versions().unwrap();
         assert_eq!(versions["0.4.14"].len(), 2);
@@ -445,7 +441,7 @@ mod tests {
     #[test]
     fn test_build_all_versions() {
         let path = get_glob("testdata/test-contract-versions");
-        let mut builder = SolcBuilder::new(&path, &[], &[]).unwrap();
+        let builder = SolcBuilder::new(&path, &[], &[]).unwrap();
         let res = builder.build_all().unwrap();
         // Contracts A to F
         assert_eq!(res.keys().collect::<Vec<_>>().len(), 5);
@@ -463,7 +459,7 @@ mod tests {
             .into_string()
             .unwrap();
         let libs = vec![lib];
-        let mut builder = SolcBuilder::new(&path, &remappings, &libs).unwrap();
+        let builder = SolcBuilder::new(&path, &remappings, &libs).unwrap();
         let res = builder.build_all().unwrap();
         // Foo & Bar
         assert_eq!(res.keys().collect::<Vec<_>>().len(), 2);
@@ -484,7 +480,7 @@ mod tests {
             canonicalized_path("testdata/test-contract-libs/lib1"),
             canonicalized_path("testdata/test-contract-libs/lib2"),
         ];
-        let mut builder = SolcBuilder::new(&path, &[], &libs).unwrap();
+        let builder = SolcBuilder::new(&path, &[], &libs).unwrap();
         let res = builder.build_all().unwrap();
         // Foo & Bar
         assert_eq!(res.keys().collect::<Vec<_>>().len(), 3);
