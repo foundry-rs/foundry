@@ -2,7 +2,7 @@
 #![allow(unused)]
 // TODO evaluate moving this to it's own crate eventually
 
-use ethers::abi::Address;
+use ethers::abi::{Abi, Address};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, collections::HashMap};
@@ -82,7 +82,7 @@ impl Client {
     pub async fn submit_contract_verification(
         &self,
         contract: VerifyContract,
-    ) -> eyre::Result<Response> {
+    ) -> eyre::Result<Response<String>> {
         let body = self.body("contract", "verifysourcecode", contract);
         Ok(self
             .client
@@ -96,7 +96,10 @@ impl Client {
 
     /// Check Source Code Verification Status with receipt received from
     /// `[Self::submit_contract_verification]`
-    pub async fn check_verify_status(&self, guid: impl AsRef<str>) -> eyre::Result<Response> {
+    pub async fn check_verify_status(
+        &self,
+        guid: impl AsRef<str>,
+    ) -> eyre::Result<Response<String>> {
         let mut map = HashMap::new();
         map.insert("guid", guid.as_ref());
         let body = self.body("contract", "checkverifystatus", map);
@@ -109,13 +112,43 @@ impl Client {
             .json()
             .await?)
     }
+
+    /// Returns the contract ABI of a verified contract
+    ///
+    /// ```no_run
+    /// use dapptools::etherscan::Client;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> eyre::Result<()> {
+    ///     let client = Client::new("mainnet", "API_KEY").unwrap();
+    ///     let abi = client
+    ///         .contract_abi("0xBB9bc244D798123fDe783fCc1C72d3Bb8C189413".parse().unwrap())
+    ///         .await?;
+    ///
+    /// #     Ok(())
+    /// # }
+    /// ```
+    pub async fn contract_abi(&self, address: Address) -> eyre::Result<Abi> {
+        let mut map = HashMap::new();
+        map.insert("address", address);
+        let query = self.body("contract", "getabi", map);
+        let response: Response<Abi> = self
+            .client
+            .get(self.etherscan_api_url.clone())
+            .query(&query)
+            .send()
+            .await?
+            .json()
+            .await?;
+        Ok(response.result)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct Response {
+pub struct Response<T> {
     pub status: String,
     pub message: String,
-    pub result: String,
+    pub result: T,
 }
 
 #[derive(Debug, Serialize)]
@@ -229,5 +262,23 @@ impl AsRef<str> for CodeFormat {
 impl Default for CodeFormat {
     fn default() -> Self {
         CodeFormat::SingleFile
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::utils;
+
+    #[tokio::test]
+    #[ignore]
+    async fn can_fetch_contract_abi() {
+        let api = utils::etherscan_api_key().unwrap();
+        let client = Client::new("mainnet", api).unwrap();
+
+        let abi = client
+            .contract_abi("0xBB9bc244D798123fDe783fCc1C72d3Bb8C189413".parse().unwrap())
+            .await
+            .unwrap();
     }
 }
