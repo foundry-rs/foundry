@@ -164,13 +164,6 @@ pub struct Sources {
     pub inner: HashMap<String, serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SrcFooTestSol {
-    pub keccak256: String,
-    pub license: String,
-    pub urls: Vec<String>,
-}
-
 fn de_from_json_opt<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
 where
     D: Deserializer<'de>,
