@@ -10,7 +10,7 @@ use eyre::ContextCompat;
 use seth::{Seth, SimpleSeth};
 use std::convert::TryFrom;
 
-/// Run the verify command to verify the contract on etherscan
+/// Run the verify command to submit the contract's source code for verification on etherscan
 pub async fn run(
     path: String,
     name: String,
@@ -32,6 +32,7 @@ pub async fn run(
     })?;
 
     let contract = utils::find_dapp_json_contract(&path, &name)?;
+    std::fs::write("meta.json", serde_json::to_string_pretty(&contract).unwrap()).unwrap();
     let metadata = contract.metadata.wrap_err("No compiler version found")?;
     let compiler_version = format!("v{}", metadata.compiler.version);
     let mut constructor_args = None;
@@ -53,8 +54,7 @@ pub async fn run(
 
     let etherscan = etherscan::Client::new(chain, etherscan_api_key)?;
 
-    let source =
-        format!("// Verified using https://dapptools.rs\n\n{}", std::fs::read_to_string(&path)?);
+    let source = std::fs::read_to_string(&path)?;
 
     let contract = etherscan::VerifyContract::new(address, source, compiler_version)
         .constructor_arguments(constructor_args)
@@ -66,7 +66,7 @@ pub async fn run(
     if resp.status == "0" {
         if resp.message == "Contract source code already verified" {
             println!("Contract source code already verified.");
-            return Ok(())
+            Ok(())
         } else {
             eyre::bail!(
                 "Encountered an error verifying this contract:\nResponse: `{}`\nDetails: `{}`",
@@ -74,21 +74,11 @@ pub async fn run(
                 resp.result
             );
         }
-    }
-
-    // wait some time until contract is verified
-    tokio::time::sleep(std::time::Duration::from_secs(20)).await;
-
-    let resp = etherscan.check_verify_status(resp.result).await?;
-
-    if resp.status == "1" {
-        println!("{}", resp.result);
-        Ok(())
     } else {
-        eyre::bail!(
-            "Encountered an checking this contract's status:\nResponse: `{}`\nDetails: `{}`",
-            resp.message,
-            resp.result
+        println!(
+            "Submitted contract for verification:\nResponse: `{}`\nGUID: `{}`",
+            resp.message, resp.result
         );
+        Ok(())
     }
 }

@@ -1,6 +1,6 @@
 use ethers::core::{types::Bytes, utils::CompiledContract};
 use eyre::Result;
-use serde::{de::DeserializeOwned, Deserialize, Serialize, Serializer};
+use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     collections::{BTreeMap, HashMap},
     path::Path,
@@ -35,17 +35,6 @@ pub struct Evm {
 pub struct Bytecode {
     #[serde(deserialize_with = "deserialize_bytes")]
     pub object: Bytes,
-}
-
-use serde::Deserializer;
-
-pub fn deserialize_bytes<'de, D>(d: D) -> Result<Bytes, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let value = String::deserialize(d)?;
-
-    Ok(hex::decode(&value).map_err(|e| serde::de::Error::custom(e.to_string()))?.into())
 }
 
 impl DapptoolsArtifact {
@@ -162,6 +151,15 @@ pub struct Optimizer {
 pub struct Sources {
     #[serde(flatten)]
     pub inner: HashMap<String, serde_json::Value>,
+}
+
+pub fn deserialize_bytes<'de, D>(d: D) -> Result<Bytes, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = String::deserialize(d)?;
+
+    Ok(hex::decode(&value).map_err(|e| serde::de::Error::custom(e.to_string()))?.into())
 }
 
 fn de_from_json_opt<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
