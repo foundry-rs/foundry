@@ -428,6 +428,7 @@ mod tests {
     use sputnik::Config;
 
     use crate::{
+        fuzz::FuzzedExecutor,
         sputnik::{
             helpers::{new_backend, new_vicinity},
             Executor,
@@ -451,14 +452,23 @@ mod tests {
         let gas_limit = 10_000_000;
         let mut evm = Executor::new_with_cheatcodes(backend, gas_limit, &config);
 
-        let compiled = COMPILED.get("GreeterTest").expect("could not find contract");
+        let compiled = COMPILED.get("CheatCodes").expect("could not find contract");
         let addr = "0x1000000000000000000000000000000000000000".parse().unwrap();
         evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
 
-        evm.setup(addr).unwrap();
+        let mut runner = proptest::test_runner::TestRunner::default();
 
-        let (_, reason, _) =
-            evm.call::<(), _, _>(Address::zero(), addr, "testHevmTime()", (), 0.into()).unwrap();
-        assert_eq!(reason, ExitReason::Succeed(ExitSucceed::Stopped));
+        // evm.setup(addr).unwrap();
+        for func in compiled.abi.functions().filter(|func| func.name.starts_with("test")) {
+            if func.inputs.is_empty() {
+                let (_, reason, _) = evm
+                    .call::<(), _, _>(Address::zero(), addr, func.clone(), (), 0.into())
+                    .unwrap();
+                assert!(matches!(reason, ExitReason::Succeed(_)));
+            } else {
+                let evm = FuzzedExecutor::new(&mut evm, &mut runner);
+                evm.fuzz(func, addr, func.name.starts_with("testFail")).unwrap();
+            }
+        }
     }
 }
