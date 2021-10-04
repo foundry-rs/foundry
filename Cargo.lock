@@ -1098,6 +1098,7 @@ dependencies = [
  "eyre",
  "hex",
  "once_cell",
+ "proptest",
  "thiserror",
  "tokio",
  "tracing",

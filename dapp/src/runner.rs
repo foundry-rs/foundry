@@ -5,7 +5,7 @@ use ethers::{
     utils::CompiledContract,
 };
 
-use evm_adapters::{Evm, EvmError};
+use evm_adapters::{fuzz::FuzzedExecutor, Evm, EvmError};
 
 use eyre::Result;
 use regex::Regex;
@@ -13,7 +13,6 @@ use std::{collections::HashMap, time::Instant};
 
 use proptest::test_runner::{TestError, TestRunner};
 use serde::{Deserialize, Serialize};
-use std::{cell::RefCell, rc::Rc};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CounterExample {
@@ -50,7 +49,7 @@ pub struct ContractRunner<'a, S, E> {
     /// Wrapping it like that allows the `test` function to gain mutable access regardless and
     /// since we don't use any parallelized fuzzing yet the `test` function has exclusive access of
     /// the mutable reference over time of its existence.
-    pub evm: Rc<RefCell<&'a mut E>>,
+    pub evm: &'a mut E,
     pub contract: &'a CompiledContract,
     pub address: Address,
     // need to constrain the trait generic
@@ -59,7 +58,7 @@ pub struct ContractRunner<'a, S, E> {
 
 impl<'a, S, E> ContractRunner<'a, S, E> {
     pub fn new(evm: &'a mut E, contract: &'a CompiledContract, address: Address) -> Self {
-        Self { evm: Rc::new(RefCell::new(evm)), contract, address, state: PhantomData }
+        Self { evm, contract, address, state: PhantomData }
     }
 }
 
@@ -125,10 +124,10 @@ impl<'a, S, E: Evm<S>> ContractRunner<'a, S, E> {
         let should_fail = func.name.starts_with("testFail");
         // call the setup function in each test to reset the test's state.
         if setup {
-            self.evm.borrow_mut().setup(self.address)?;
+            self.evm.setup(self.address)?;
         }
 
-        let (status, reason, gas_used) = match self.evm.borrow_mut().call::<(), _, _>(
+        let (status, reason, gas_used) = match self.evm.call::<(), _, _>(
             Address::zero(),
             self.address,
             func.clone(),
@@ -144,7 +143,7 @@ impl<'a, S, E: Evm<S>> ContractRunner<'a, S, E> {
                 }
             },
         };
-        let success = self.evm.borrow_mut().check_success(self.address, &status, should_fail);
+        let success = self.evm.check_success(self.address, &status, should_fail);
         let duration = Instant::now().duration_since(start);
         tracing::trace!(?duration, %success, %gas_used);
 
@@ -160,30 +159,15 @@ impl<'a, S, E: Evm<S>> ContractRunner<'a, S, E> {
     ) -> Result<TestResult> {
         // call the setup function in each test to reset the test's state.
         if setup {
-            self.evm.borrow_mut().setup(self.address)?;
+            self.evm.setup(self.address)?;
         }
 
         let start = Instant::now();
         let should_fail = func.name.starts_with("testFail");
 
-        // Get the calldata generation strategy for the function
-        let strat = crate::fuzz::fuzz_calldata(func);
-
-        // Run the strategy
-        let result = runner.run(&strat, |calldata| {
-            let mut evm = self.evm.borrow_mut();
-
-            let (_, reason, _) = evm
-                .call_raw(Address::zero(), self.address, calldata, 0.into(), false)
-                .expect("could not make raw evm call");
-
-            let success = evm.check_success(self.address, &reason, should_fail);
-
-            // This will panic and get caught by the executor
-            proptest::prop_assert!(success);
-
-            Ok(())
-        });
+        // instantniate the fuzzzed evm in line
+        let evm = FuzzedExecutor::new(self.evm, runner);
+        let result = evm.fuzz(func, self.address, should_fail);
 
         let (success, counterexample) = match result {
             Ok(_) => (true, None),
@@ -248,7 +232,7 @@ mod tests {
             evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
 
             let mut runner = ContractRunner {
-                evm: Rc::new(RefCell::new(&mut evm)),
+                evm: &mut evm,
                 contract: compiled,
                 address: addr,
                 state: PhantomData,
@@ -277,7 +261,7 @@ mod tests {
             evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
 
             let mut runner = ContractRunner {
-                evm: Rc::new(RefCell::new(&mut evm)),
+                evm: &mut evm,
                 contract: compiled,
                 address: addr,
                 state: PhantomData,
@@ -336,12 +320,8 @@ mod tests {
     pub fn test_runner<S, E: Evm<S>>(mut evm: E, addr: Address, compiled: &CompiledContract) {
         evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
 
-        let mut runner = ContractRunner {
-            evm: Rc::new(RefCell::new(&mut evm)),
-            contract: compiled,
-            address: addr,
-            state: PhantomData,
-        };
+        let mut runner =
+            ContractRunner { evm: &mut evm, contract: compiled, address: addr, state: PhantomData };
 
         let res = runner.run_tests(&".*".parse().unwrap(), None).unwrap();
         assert!(res.len() > 0);
