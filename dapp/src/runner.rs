@@ -320,12 +320,8 @@ mod tests {
     pub fn test_runner<S, E: Evm<S>>(mut evm: E, addr: Address, compiled: &CompiledContract) {
         evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
 
-        let mut runner = ContractRunner {
-            evm: &mut evm,
-            contract: compiled,
-            address: addr,
-            state: PhantomData,
-        };
+        let mut runner =
+            ContractRunner { evm: &mut evm, contract: compiled, address: addr, state: PhantomData };
 
         let res = runner.run_tests(&".*".parse().unwrap(), None).unwrap();
         assert!(res.len() > 0);
