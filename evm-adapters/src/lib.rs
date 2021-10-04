@@ -9,6 +9,8 @@ pub mod evmodin;
 mod blocking_provider;
 pub use blocking_provider::BlockingProvider;
 
+pub mod fuzz;
+
 use ethers::{
     abi::{Detokenize, Tokenize},
     core::types::{Address, U256},

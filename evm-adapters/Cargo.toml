@@ -24,6 +24,7 @@ bytes = "1.1.0"
 tokio = { version = "1.12.0", features = ["rt-multi-thread"] }
 hex = "0.4.3"
 thiserror = "1.0.29"
+proptest = "1.0.0"
 
 [dev-dependencies]
 evmodin = { git = "https://github.com/vorot93/evmodin", features = ["util"] }
