@@ -1096,6 +1096,7 @@ dependencies = [
  "evm",
  "evmodin",
  "eyre",
+ "futures",
  "hex",
  "once_cell",
  "proptest",

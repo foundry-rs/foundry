@@ -2,6 +2,17 @@ use ethers::{
     providers::Middleware,
     types::{Address, Block, BlockId, Bytes, TxHash, H256, U256, U64},
 };
+use futures::{
+    channel::mpsc::{channel, Receiver, Sender},
+    stream::{Fuse, Stream, StreamExt},
+    task::{Context, Poll},
+    Future,
+};
+use proptest::std_facade::HashMap;
+use std::{
+    pin::Pin,
+    sync::mpsc::{channel as oneshot_channel, Sender as OneshotSender},
+};
 use tokio::runtime::Runtime;
 
 #[derive(Debug)]
@@ -83,5 +94,136 @@ where
         block: Option<BlockId>,
     ) -> Result<H256, M::Error> {
         self.block_on(self.provider.get_storage_at(address, slot, block))
+    }
+}
+
+type CommandId = usize;
+
+type ProviderRequestFut<Err> = Pin<Box<dyn Future<Output = ProviderResponse<Err>> + Send>>;
+type ProviderResult<Ok, Err> =
+    Result<OneshotSender<Result<Ok, Err>>, (Err, OneshotSender<Result<Ok, Err>>)>;
+
+/// ProviderHandler internal response type that takes care of the sender until the underlying
+/// provider completes the request so that response can be send via the one shot channel.
+#[derive(Debug)]
+enum ProviderResponse<Err> {
+    GetBlockNumber(ProviderResult<U64, Err>),
+}
+
+/// The Request type the ProviderHandler listens for
+#[derive(Debug)]
+enum ProviderRequest<Err> {
+    GetBlockNumber(OneshotSender<Result<U64, Err>>),
+}
+
+/// Handles an internal provider and listens for commands to delegate to the provider and respond
+/// with the provider's response.
+#[must_use = "ProviderHandler does nothing unless polled."]
+struct ProviderHandler<M: Middleware> {
+    provider: M,
+    /// Commands that are being processed and awaiting a response from the
+    /// provider.
+    pending_requests: HashMap<CommandId, ProviderRequestFut<M::Error>>,
+    /// Incoming commands
+    incoming: Fuse<Receiver<ProviderRequest<M::Error>>>,
+
+    /// The internal identifier for a command
+    next_id: CommandId,
+}
+
+impl<M: Middleware> ProviderHandler<M> {
+    fn new(provider: M, rx: Receiver<ProviderRequest<M::Error>>) -> Self {
+        Self { provider, pending_requests: Default::default(), incoming: rx.fuse(), next_id: 0 }
+    }
+
+    fn next_call_id(&mut self) -> CommandId {
+        let id = self.next_id;
+        self.next_id = self.next_id.wrapping_add(1);
+        id
+    }
+
+    fn on_request(&mut self, cmd: ProviderRequest<M::Error>) {
+        // TODO execute the correct provider function and store the futre
+        dbg!(cmd);
+    }
+}
+
+impl<M> Future for ProviderHandler<M>
+where
+    M: Middleware + Unpin,
+{
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let pin = self.get_mut();
+
+        // receive new commands to delegate to the underlying provider
+        while let Poll::Ready(Some(req)) = Pin::new(&mut pin.incoming).poll_next(cx) {
+            pin.on_request(req)
+        }
+
+        // TODO poll the in progress requests
+
+        // the handler is finished if the command channel was closed and all commands are processed
+        if pin.incoming.is_done() && pin.pending_requests.is_empty() {
+            Poll::Ready(())
+        } else {
+            Poll::Pending
+        }
+    }
+}
+
+/// A blocking alternative to the async `Middleware`.
+#[derive(Debug, Clone)]
+pub struct SyncProvider<M: Middleware> {
+    provider: Sender<ProviderRequest<M::Error>>,
+}
+
+impl<M> SyncProvider<M>
+where
+    M: Middleware + Unpin + 'static,
+{
+    pub fn new(provider: M) -> eyre::Result<Self> {
+        let (tx, rx) = channel(1);
+        let handler = ProviderHandler::new(provider, rx);
+        // spawn the provider handler to background for which we need a new Runtime
+        let rt = Runtime::new()?;
+        std::thread::spawn(move || rt.block_on(handler));
+
+        Ok(Self { provider: tx })
+    }
+
+    pub fn get_block_number(&self) -> eyre::Result<U64> {
+        let (tx, rx) = oneshot_channel();
+        let cmd = ProviderRequest::GetBlockNumber(tx);
+        self.provider.clone().try_send(cmd).map_err(|e| eyre::eyre!("{:?}", e))?;
+        Ok(rx.recv()??)
+    }
+
+    // TODO port all essentiall `Middleware` functions, but sync
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn sync_provider_test_poc() {
+        use std::sync::mpsc::Sender as SyncSender;
+        let (mut tx, mut rx) = channel::<SyncSender<u64>>(1);
+
+        std::thread::spawn(|| {
+            let rt = Runtime::new().unwrap();
+
+            rt.block_on(async move {
+                let x = rx.next().await.unwrap();
+                x.send(69).unwrap();
+            });
+        });
+
+        let (tx2, mut rx2) = std::sync::mpsc::channel();
+        tx.try_send(tx2).unwrap();
+        let received = rx2.recv().unwrap();
+        assert_eq!(received, 69)
     }
 }
