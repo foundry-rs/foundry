@@ -8,7 +8,6 @@ use futures::{
     task::{Context, Poll},
     Future,
 };
-use proptest::std_facade::HashMap;
 use std::{
     pin::Pin,
     sync::mpsc::{channel as oneshot_channel, Sender as OneshotSender},
@@ -97,8 +96,6 @@ where
     }
 }
 
-type CommandId = usize;
-
 type ProviderRequestFut<Err> = Pin<Box<dyn Future<Output = ProviderResponse<Err>> + Send>>;
 type ProviderResult<Ok, Err> =
     Result<OneshotSender<Result<Ok, Err>>, (Err, OneshotSender<Result<Ok, Err>>)>;
@@ -123,23 +120,14 @@ struct ProviderHandler<M: Middleware> {
     provider: M,
     /// Commands that are being processed and awaiting a response from the
     /// provider.
-    pending_requests: HashMap<CommandId, ProviderRequestFut<M::Error>>,
+    pending_requests: Vec<ProviderRequestFut<M::Error>>,
     /// Incoming commands
     incoming: Fuse<Receiver<ProviderRequest<M::Error>>>,
-
-    /// The internal identifier for a command
-    next_id: CommandId,
 }
 
 impl<M: Middleware> ProviderHandler<M> {
     fn new(provider: M, rx: Receiver<ProviderRequest<M::Error>>) -> Self {
-        Self { provider, pending_requests: Default::default(), incoming: rx.fuse(), next_id: 0 }
-    }
-
-    fn next_call_id(&mut self) -> CommandId {
-        let id = self.next_id;
-        self.next_id = self.next_id.wrapping_add(1);
-        id
+        Self { provider, pending_requests: Default::default(), incoming: rx.fuse() }
     }
 
     fn on_request(&mut self, cmd: ProviderRequest<M::Error>) {
@@ -162,7 +150,10 @@ where
             pin.on_request(req)
         }
 
-        // TODO poll the in progress requests
+        for n in (0..pin.pending_requests.len()).rev() {
+            let request = pin.pending_requests.swap_remove(n);
+            // TODO poll the in progress requests
+        }
 
         // the handler is finished if the command channel was closed and all commands are processed
         if pin.incoming.is_done() && pin.pending_requests.is_empty() {
@@ -221,7 +212,7 @@ mod tests {
             });
         });
 
-        let (tx2, mut rx2) = std::sync::mpsc::channel();
+        let (tx2, rx2) = std::sync::mpsc::channel();
         tx.try_send(tx2).unwrap();
         let received = rx2.recv().unwrap();
         assert_eq!(received, 69)
