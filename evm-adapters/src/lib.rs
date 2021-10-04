@@ -6,6 +6,9 @@ pub mod sputnik;
 #[cfg(feature = "evmodin")]
 pub mod evmodin;
 
+pub mod cache;
+pub mod database;
+
 mod blocking_provider;
 pub use blocking_provider::BlockingProvider;
 
