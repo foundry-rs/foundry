@@ -37,20 +37,41 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
         func: &Function,
         address: Address,
         should_fail: bool,
-    ) -> Result<(), TestError<Bytes>> {
+    ) -> Result<(), TestError<Bytes>>
+    where
+        // We need to be able to clone the state so as to snapshot it and reset
+        // it back after every test run, to have isolation of state across each
+        // fuzz test run.
+        S: Clone,
+    {
         let strat = fuzz_calldata(func);
+
+        // Snapshot the state before the test starts running
+        let pre_test_state = self.evm.borrow().state().clone();
 
         let mut runner = self.runner.clone();
         runner.run(&strat, |calldata| {
             let mut evm = self.evm.borrow_mut();
-            let (_, reason, _) = evm
+
+            // Before each test, we must reset to the initial state
+            evm.reset(pre_test_state.clone());
+
+            let (returndata, reason, _) = evm
                 .call_raw(Address::zero(), address, calldata, 0.into(), false)
                 .expect("could not make raw evm call");
 
+            // We must check success before resetting the state, otherwise resetting the state
+            // will also reset the `failed` state variable back to false.
             let success = evm.check_success(address, &reason, should_fail);
 
             // This will panic and get caught by the executor
-            proptest::prop_assert!(success);
+            proptest::prop_assert!(
+                success,
+                "{}, expected failure: {}, reason: '{}'",
+                func.name,
+                should_fail,
+                dapp_utils::decode_revert(returndata.as_ref())?
+            );
 
             Ok(())
         })
