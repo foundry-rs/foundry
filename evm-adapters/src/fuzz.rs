@@ -3,7 +3,7 @@ use ethers::{
     abi::{Function, ParamType, Token, Tokenizable},
     types::{Address, Bytes, Sign, I256, U256},
 };
-use std::{cell::RefCell, marker::PhantomData};
+use std::{cell::{RefCell, RefMut}, marker::PhantomData};
 
 use proptest::{
     prelude::*,
@@ -15,14 +15,18 @@ pub use proptest::test_runner::Config as FuzzConfig;
 #[derive(Debug)]
 pub struct FuzzedExecutor<'a, E, S> {
     evm: RefCell<&'a mut E>,
-    runner: RefCell<&'a mut TestRunner>,
+    runner: TestRunner,
     state: PhantomData<S>,
 }
 
 impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
+    pub fn as_mut(&self) -> RefMut<'_, &'a mut E> {
+        self.evm.borrow_mut()
+    }
+
     /// Instantiates a fuzzed executor EVM given a testrunner
-    pub fn new(evm: &'a mut E, runner: &'a mut TestRunner) -> Self {
-        Self { evm: RefCell::new(evm), runner: RefCell::new(runner), state: PhantomData }
+    pub fn new(evm: &'a mut E, runner: TestRunner) -> Self {
+        Self { evm: RefCell::new(evm), runner, state: PhantomData }
     }
 
     /// Fuzzes the provided function, assuming it is available at the contract at `address`
@@ -35,8 +39,9 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
         should_fail: bool,
     ) -> Result<(), TestError<Bytes>> {
         let strat = fuzz_calldata(func);
-        // Is there a better way to be mutably borrowing here?
-        self.runner.borrow_mut().run(&strat, |calldata| {
+
+        let mut runner = self.runner.clone();
+        runner.run(&strat, |calldata| {
             let mut evm = self.evm.borrow_mut();
             let (_, reason, _) = evm
                 .call_raw(Address::zero(), address, calldata, 0.into(), false)
