@@ -12,7 +12,7 @@ use ansi_term::Colour;
 mod dapp_opts;
 use dapp_opts::{BuildOpts, EvmType, Opts, Subcommands};
 
-use std::convert::TryFrom;
+use std::{convert::TryFrom, sync::Arc};
 
 mod utils;
 
@@ -70,6 +70,7 @@ fn main() -> eyre::Result<()> {
                     } else {
                         Box::new(backend)
                     };
+                    let backend = Arc::new(backend);
 
                     let evm = Executor::new_with_cheatcodes(backend, env.gas_limit, &cfg);
                     test(builder, evm, pattern, json)?;
@@ -111,7 +112,7 @@ fn main() -> eyre::Result<()> {
     Ok(())
 }
 
-fn test<S, E: evm_adapters::Evm<S>>(
+fn test<S: Clone, E: evm_adapters::Evm<S>>(
     builder: MultiContractRunnerBuilder,
     evm: E,
     pattern: Regex,

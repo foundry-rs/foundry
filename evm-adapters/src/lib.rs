@@ -55,9 +55,6 @@ pub trait Evm<State> {
     /// Resets the EVM's state to the provided value
     fn reset(&mut self, state: State);
 
-    /// Executes the specified EVM call against the state
-    // TODO: Should we just make this take a `TransactionRequest` or other more
-    // ergonomic type?
     fn call<D: Detokenize, T: Tokenize, F: IntoFunction>(
         &mut self,
         from: Address,
@@ -67,15 +64,7 @@ pub trait Evm<State> {
         value: U256,
     ) -> std::result::Result<(D, Self::ReturnReason, u64), EvmError> {
         let func = func.into();
-        let calldata = encode_function_data(&func, args)?;
-        #[allow(deprecated)]
-        let is_static = func.constant ||
-            matches!(
-                func.state_mutability,
-                ethers::abi::StateMutability::View | ethers::abi::StateMutability::Pure
-            );
-        let (retdata, status, gas) = self.call_raw(from, to, calldata, value, is_static)?;
-
+        let (retdata, status, gas) = self.call_unchecked(from, to, &func, args, value)?;
         if Self::is_fail(&status) {
             let reason = dapp_utils::decode_revert(retdata.as_ref()).map_err(AbiError::from)?;
             Err(EvmError::Execution { reason, gas_used: gas })
@@ -83,6 +72,27 @@ pub trait Evm<State> {
             let retdata = decode_function_data(&func, retdata, false)?;
             Ok((retdata, status, gas))
         }
+    }
+
+    /// Executes the specified EVM call against the state
+    // TODO: Should we just make this take a `TransactionRequest` or other more
+    // ergonomic type?
+    fn call_unchecked<T: Tokenize>(
+        &mut self,
+        from: Address,
+        to: Address,
+        func: &ethers::abi::Function,
+        args: T, // derive arbitrary for Tokenize?
+        value: U256,
+    ) -> Result<(Bytes, Self::ReturnReason, u64)> {
+        let calldata = encode_function_data(func, args)?;
+        #[allow(deprecated)]
+        let is_static = func.constant ||
+            matches!(
+                func.state_mutability,
+                ethers::abi::StateMutability::View | ethers::abi::StateMutability::Pure
+            );
+        self.call_raw(from, to, calldata, value, is_static)
     }
 
     fn call_raw(
@@ -98,7 +108,6 @@ pub trait Evm<State> {
     fn setup(&mut self, address: Address) -> Result<Self::ReturnReason> {
         let (_, status, _) =
             self.call::<(), _, _>(Address::zero(), address, "setUp()", (), 0.into())?;
-        // debug_assert_eq!(status, ExitReason::Succeed(ExitSucceed::Stopped));
         Ok(status)
     }
 
@@ -119,18 +128,27 @@ pub trait Evm<State> {
         reason: &Self::ReturnReason,
         should_fail: bool,
     ) -> bool {
-        if should_fail {
-            if Self::is_success(reason) {
-                self.failed(address).unwrap_or(false)
-            } else if Self::is_fail(reason) {
-                true
-            } else {
-                tracing::error!(?reason);
-                false
+        // Check if the call is successful
+        let mut success = Self::is_success(reason);
+        // for successful calls, we should also check the ds-test `failed`
+        // value
+        if success {
+            if let Ok(failed) = self.failed(address) {
+                success = !failed;
             }
-        } else {
-            Self::is_success(reason)
         }
+
+        // Check Success output: Should Fail vs Success
+        //
+        //                           Success
+        //                -----------------------
+        //               |       | false | true  |
+        //               | ----------------------|
+        // Should Fail   | false | false | true  |
+        //               | ----------------------|
+        //               | true  | true  | false |
+        //                -----------------------
+        (should_fail && !success) || (!should_fail && success)
     }
 
     // TODO: Should we add a "deploy contract" function as well, or should we assume that

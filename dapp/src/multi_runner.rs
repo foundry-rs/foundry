@@ -108,6 +108,7 @@ pub struct MultiContractRunner<E, S> {
 impl<E, S> MultiContractRunner<E, S>
 where
     E: Evm<S>,
+    S: Clone,
 {
     pub fn test(&mut self, pattern: Regex) -> Result<HashMap<String, HashMap<String, TestResult>>> {
         // NB: We also have access to the contract's abi. When running the test.
@@ -165,7 +166,7 @@ where
 mod tests {
     use super::*;
 
-    fn test_multi_runner<S, E: Evm<S>>(evm: E) {
+    fn test_multi_runner<S: Clone, E: Evm<S>>(evm: E) {
         let mut runner =
             MultiContractRunnerBuilder::default().contracts("./GreetTest.sol").build(evm).unwrap();
 
@@ -186,7 +187,7 @@ mod tests {
         assert_eq!(only_gm["GmTest"].len(), 1);
     }
 
-    fn test_ds_test_fail<S, E: Evm<S>>(evm: E) {
+    fn test_ds_test_fail<S: Clone, E: Evm<S>>(evm: E) {
         let mut runner =
             MultiContractRunnerBuilder::default().contracts("./../FooTest.sol").build(evm).unwrap();
         let results = runner.test(Regex::new(".*").unwrap()).unwrap();
