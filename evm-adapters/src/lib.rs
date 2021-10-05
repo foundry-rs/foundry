@@ -128,18 +128,27 @@ pub trait Evm<State> {
         reason: &Self::ReturnReason,
         should_fail: bool,
     ) -> bool {
-        if should_fail {
-            if Self::is_success(reason) {
-                self.failed(address).unwrap_or(false)
-            } else if Self::is_fail(reason) {
-                true
-            } else {
-                tracing::error!(?reason);
-                false
+        // Check if the call is successful
+        let mut success = Self::is_success(reason);
+        // for successful calls, we should also check the ds-test `failed`
+        // value
+        if success {
+            if let Ok(failed) = self.failed(address) {
+                success = !failed;
             }
-        } else {
-            Self::is_success(reason)
         }
+
+        // Check Success output: Should Fail vs Success
+        //
+        //                           Success
+        //                -----------------------
+        //               |       | false | true  |
+        //               | ----------------------|
+        // Should Fail   | false | false | true  |
+        //               | ----------------------|
+        //               | true  | true  | false |
+        //                -----------------------
+        (should_fail && !success) || (!should_fail && success)
     }
 
     // TODO: Should we add a "deploy contract" function as well, or should we assume that
