@@ -11,6 +11,7 @@ use ethers::types::{H160, H256, U256};
 /// We had to copy it so that we can modify the Stack's internal backend, because
 /// the upstream MemoryStackState only has an immutable reference to `Backend` which
 /// does not allow us to do so.
+#[derive(Clone)]
 pub struct MemoryStackStateOwned<'config, B> {
     pub backend: B,
     substate: MemoryStackSubstate<'config>,

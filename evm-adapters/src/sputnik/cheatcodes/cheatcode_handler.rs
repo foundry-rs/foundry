@@ -428,6 +428,7 @@ mod tests {
     use sputnik::Config;
 
     use crate::{
+        fuzz::FuzzedExecutor,
         sputnik::{
             helpers::{new_backend, new_vicinity},
             Executor,
@@ -441,24 +442,33 @@ mod tests {
     #[test]
     fn cheatcodes() {
         let config = Config::istanbul();
-
-        // create backend to instantiate the stack executor with
         let vicinity = new_vicinity();
         let backend = new_backend(&vicinity, Default::default());
-
-        // create the memory stack state (owned, so that we can modify the backend via
-        // self.state_mut on the transact_call fn)
         let gas_limit = 10_000_000;
         let mut evm = Executor::new_with_cheatcodes(backend, gas_limit, &config);
 
-        let compiled = COMPILED.get("GreeterTest").expect("could not find contract");
+        let compiled = COMPILED.get("CheatCodes").expect("could not find contract");
         let addr = "0x1000000000000000000000000000000000000000".parse().unwrap();
         evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
 
-        evm.setup(addr).unwrap();
+        let state = evm.state().clone();
+        let runner = proptest::test_runner::TestRunner::default();
 
-        let (_, reason, _) =
-            evm.call::<(), _, _>(Address::zero(), addr, "testHevmTime()", (), 0.into()).unwrap();
-        assert_eq!(reason, ExitReason::Succeed(ExitSucceed::Stopped));
+        let evm = FuzzedExecutor::new(&mut evm, runner);
+
+        for func in compiled.abi.functions().filter(|func| func.name.starts_with("test")) {
+            let should_fail = func.name.starts_with("testFail");
+            if func.inputs.is_empty() {
+                let (_, reason, _) =
+                    evm.as_mut().call_unchecked(Address::zero(), addr, func, (), 0.into()).unwrap();
+                assert!(evm.as_mut().check_success(addr, &reason, should_fail));
+                // We NEED to reset the state else there's no isolation
+            } else {
+                // if the unwrap passes then it works
+                evm.fuzz(func, addr, should_fail).unwrap();
+            }
+
+            evm.as_mut().reset(state.clone());
+        }
     }
 }
