@@ -85,7 +85,7 @@ pub trait Evm<State> {
         args: T, // derive arbitrary for Tokenize?
         value: U256,
     ) -> Result<(Bytes, Self::ReturnReason, u64)> {
-        let calldata = encode_function_data(&func, args)?;
+        let calldata = encode_function_data(func, args)?;
         #[allow(deprecated)]
         let is_static = func.constant ||
             matches!(

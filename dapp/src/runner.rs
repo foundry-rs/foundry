@@ -62,7 +62,7 @@ impl<'a, S, E> ContractRunner<'a, S, E> {
     }
 }
 
-impl<'a, S, E: Evm<S>> ContractRunner<'a, S, E> {
+impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
     /// Runs all tests for a contract whose names match the provided regular expression
     pub fn run_tests(
         &mut self,
@@ -95,7 +95,7 @@ impl<'a, S, E: Evm<S>> ContractRunner<'a, S, E> {
                 .iter()
                 .filter(|func| !func.inputs.is_empty())
                 .map(|func| {
-                    let result = self.run_fuzz_test(func, needs_setup, fuzzer)?;
+                    let result = self.run_fuzz_test(func, needs_setup, fuzzer.clone())?;
                     Ok((func.name.clone(), result))
                 })
                 .collect::<Result<HashMap<_, _>>>()?;
@@ -155,7 +155,7 @@ impl<'a, S, E: Evm<S>> ContractRunner<'a, S, E> {
         &mut self,
         func: &Function,
         setup: bool,
-        runner: &mut TestRunner,
+        runner: TestRunner,
     ) -> Result<TestResult> {
         // call the setup function in each test to reset the test's state.
         if setup {
@@ -268,9 +268,9 @@ mod tests {
             };
 
             let cfg = FuzzConfig::default();
-            let mut fuzzer = TestRunner::new(cfg);
+            let fuzzer = TestRunner::new(cfg);
             let func = get_func("function testShrinking(uint256 x, uint256 y) public").unwrap();
-            let res = runner.run_fuzz_test(&func, true, &mut fuzzer).unwrap();
+            let res = runner.run_fuzz_test(&func, true, fuzzer.clone()).unwrap();
             assert!(!res.success);
 
             // get the counterexample with shrinking enabled by default
@@ -284,8 +284,8 @@ mod tests {
             let mut cfg = FuzzConfig::default();
             // we reduce the shrinking iters and observe a larger result
             cfg.max_shrink_iters = 5;
-            let mut fuzzer = TestRunner::new(cfg);
-            let res = runner.run_fuzz_test(&func, true, &mut fuzzer).unwrap();
+            let fuzzer = TestRunner::new(cfg);
+            let res = runner.run_fuzz_test(&func, true, fuzzer).unwrap();
             assert!(!res.success);
 
             // get the non-shrunk result
@@ -317,7 +317,11 @@ mod tests {
         }
     }
 
-    pub fn test_runner<S, E: Evm<S>>(mut evm: E, addr: Address, compiled: &CompiledContract) {
+    pub fn test_runner<S: Clone, E: Evm<S>>(
+        mut evm: E,
+        addr: Address,
+        compiled: &CompiledContract,
+    ) {
         evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
 
         let mut runner =

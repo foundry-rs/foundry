@@ -3,7 +3,10 @@ use ethers::{
     abi::{Function, ParamType, Token, Tokenizable},
     types::{Address, Bytes, Sign, I256, U256},
 };
-use std::{cell::{RefCell, RefMut}, marker::PhantomData};
+use std::{
+    cell::{RefCell, RefMut},
+    marker::PhantomData,
+};
 
 use proptest::{
     prelude::*,
