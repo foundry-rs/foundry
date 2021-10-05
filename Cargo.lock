@@ -1069,7 +1069,7 @@ dependencies = [
 [[package]]
 name = "evm"
 version = "0.30.1"
-source = "git+https://github.com/gakonst/evm?branch=chore/expose-stack-module#bbb1ba18a1efd87b1d578aec5dda9264932ddf2c"
+source = "git+https://github.com/gakonst/evm?branch=chore/expose-stack-module#8e10066971eaf782ac1b5191802925227cecbab1"
 dependencies = [
  "auto_impl",
  "environmental",
@@ -1107,7 +1107,7 @@ dependencies = [
 [[package]]
 name = "evm-core"
 version = "0.30.0"
-source = "git+https://github.com/gakonst/evm?branch=chore/expose-stack-module#bbb1ba18a1efd87b1d578aec5dda9264932ddf2c"
+source = "git+https://github.com/gakonst/evm?branch=chore/expose-stack-module#8e10066971eaf782ac1b5191802925227cecbab1"
 dependencies = [
  "funty",
  "parity-scale-codec",
@@ -1118,7 +1118,7 @@ dependencies = [
 [[package]]
 name = "evm-gasometer"
 version = "0.30.0"
-source = "git+https://github.com/gakonst/evm?branch=chore/expose-stack-module#bbb1ba18a1efd87b1d578aec5dda9264932ddf2c"
+source = "git+https://github.com/gakonst/evm?branch=chore/expose-stack-module#8e10066971eaf782ac1b5191802925227cecbab1"
 dependencies = [
  "environmental",
  "evm-core",
@@ -1129,7 +1129,7 @@ dependencies = [
 [[package]]
 name = "evm-runtime"
 version = "0.30.0"
-source = "git+https://github.com/gakonst/evm?branch=chore/expose-stack-module#bbb1ba18a1efd87b1d578aec5dda9264932ddf2c"
+source = "git+https://github.com/gakonst/evm?branch=chore/expose-stack-module#8e10066971eaf782ac1b5191802925227cecbab1"
 dependencies = [
  "auto_impl",
  "environmental",
