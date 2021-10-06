@@ -238,7 +238,8 @@ mod tests {
                 state: PhantomData,
             };
 
-            let cfg = FuzzConfig::default();
+            let mut cfg = FuzzConfig::default();
+            cfg.failure_persistence = None;
             let mut fuzzer = TestRunner::new(cfg);
             let results = runner
                 .run_tests(&Regex::from_str("testFuzz.*").unwrap(), Some(&mut fuzzer))
@@ -267,7 +268,8 @@ mod tests {
                 state: PhantomData,
             };
 
-            let cfg = FuzzConfig::default();
+            let mut cfg = FuzzConfig::default();
+            cfg.failure_persistence = None;
             let fuzzer = TestRunner::new(cfg);
             let func = get_func("function testShrinking(uint256 x, uint256 y) public").unwrap();
             let res = runner.run_fuzz_test(&func, true, fuzzer.clone()).unwrap();
@@ -282,6 +284,7 @@ mod tests {
                 counterexample.args.into_iter().map(|x| x.into_uint().unwrap().as_u64()).product();
 
             let mut cfg = FuzzConfig::default();
+            cfg.failure_persistence = None;
             // we reduce the shrinking iters and observe a larger result
             cfg.max_shrink_iters = 5;
             let fuzzer = TestRunner::new(cfg);

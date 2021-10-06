@@ -466,7 +466,9 @@ mod tests {
         evm.setup(addr).unwrap();
 
         let state = evm.state().clone();
-        let runner = proptest::test_runner::TestRunner::default();
+        let mut cfg = proptest::test_runner::Config::default();
+        cfg.failure_persistence = None;
+        let runner = proptest::test_runner::TestRunner::new(cfg);
 
         // ensure the storage slot is set at 10 anyway
         let (storage_contract, _, _) = evm
