@@ -477,9 +477,6 @@ mod tests {
         let (addr, _, _) =
             evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
 
-        // call the setup func
-        evm.setup(addr).unwrap();
-
         let state = evm.state().clone();
         let mut cfg = proptest::test_runner::Config::default();
         cfg.failure_persistence = None;
