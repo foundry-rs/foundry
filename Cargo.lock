@@ -1098,6 +1098,7 @@ dependencies = [
  "eyre",
  "hex",
  "once_cell",
+ "parking_lot",
  "proptest",
  "thiserror",
  "tokio",

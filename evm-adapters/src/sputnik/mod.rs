@@ -5,6 +5,7 @@ mod forked_backend;
 pub use forked_backend::ForkMemoryBackend;
 
 pub mod cheatcodes;
+pub mod state;
 
 use ethers::{
     prelude::Address,
