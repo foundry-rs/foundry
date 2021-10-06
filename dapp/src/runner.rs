@@ -80,11 +80,15 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
             .filter(|func| regex.is_match(&func.name))
             .collect::<Vec<_>>();
 
+        let init_state = self.evm.state().clone();
+
         // run all unit tests
         let unit_tests = test_fns
             .iter()
             .filter(|func| func.inputs.is_empty())
             .map(|func| {
+                // Before each test run executes, ensure we're at our initial state.
+                self.evm.reset(init_state.clone());
                 let result = self.run_test(func, needs_setup)?;
                 Ok((func.name.clone(), result))
             })
