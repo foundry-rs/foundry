@@ -213,23 +213,22 @@ mod tests {
         fn test_runner() {
             let cfg = Config::istanbul();
             let compiled = COMPILED.get("GreeterTest").expect("could not find contract");
-            let addr = "0x1000000000000000000000000000000000000000".parse().unwrap();
             let vicinity = new_vicinity();
             let backend = new_backend(&vicinity, Default::default());
             let evm = Executor::new(12_000_000, &cfg, &backend);
-            super::test_runner(evm, addr, compiled);
+            super::test_runner(evm, compiled);
         }
 
         #[test]
         fn test_fuzzing() {
             let cfg = Config::istanbul();
             let compiled = COMPILED.get("GreeterTest").expect("could not find contract");
-            let addr = "0x1000000000000000000000000000000000000000".parse().unwrap();
             let vicinity = new_vicinity();
             let backend = new_backend(&vicinity, Default::default());
 
             let mut evm = Executor::new(12_000_000, &cfg, &backend);
-            evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
+            let (addr, _, _) =
+                evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
 
             let mut runner = ContractRunner {
                 evm: &mut evm,
@@ -254,12 +253,12 @@ mod tests {
         fn test_fuzz_shrinking() {
             let cfg = Config::istanbul();
             let compiled = COMPILED.get("GreeterTest").expect("could not find contract");
-            let addr = "0x1000000000000000000000000000000000000000".parse().unwrap();
             let vicinity = new_vicinity();
             let backend = new_backend(&vicinity, Default::default());
 
             let mut evm = Executor::new(12_000_000, &cfg, &backend);
-            evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
+            let (addr, _, _) =
+                evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
 
             let mut runner = ContractRunner {
                 evm: &mut evm,
@@ -312,20 +311,16 @@ mod tests {
             let compiled = COMPILED.get("GreeterTest").expect("could not find contract");
 
             let host = MockedHost::default();
-            let addr: Address = "0x1000000000000000000000000000000000000000".parse().unwrap();
 
             let gas_limit = 12_000_000;
             let evm = EvmOdin::new(host, gas_limit, revision, NoopTracer);
-            super::test_runner(evm, addr, compiled);
+            super::test_runner(evm, compiled);
         }
     }
 
-    pub fn test_runner<S: Clone, E: Evm<S>>(
-        mut evm: E,
-        addr: Address,
-        compiled: &CompiledContract,
-    ) {
-        evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
+    pub fn test_runner<S: Clone, E: Evm<S>>(mut evm: E, compiled: &CompiledContract) {
+        let (addr, _, _) =
+            evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
 
         let mut runner =
             ContractRunner { evm: &mut evm, contract: compiled, address: addr, state: PhantomData };

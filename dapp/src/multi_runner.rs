@@ -2,10 +2,7 @@ use crate::{artifacts::DapptoolsArtifact, runner::TestResult, ContractRunner};
 use dapp_solc::SolcBuilder;
 use evm_adapters::Evm;
 
-use ethers::{
-    types::Address,
-    utils::{keccak256, CompiledContract},
-};
+use ethers::{types::Address, utils::CompiledContract};
 
 use proptest::test_runner::TestRunner;
 use regex::Regex;
@@ -27,6 +24,8 @@ pub struct MultiContractRunnerBuilder<'a> {
     pub no_compile: bool,
     /// The fuzzer to be used for running fuzz tests
     pub fuzzer: Option<TestRunner>,
+    /// The address which will be used to deploy the initial contracts
+    pub deployer: Address,
 }
 
 impl<'a> MultiContractRunnerBuilder<'a> {
@@ -45,14 +44,14 @@ impl<'a> MultiContractRunnerBuilder<'a> {
             SolcBuilder::new(self.contracts, self.remappings, self.libraries)?.build_all()?
         };
 
-        let mut addresses = HashMap::new();
-        let init_state = contracts.iter().map(|(name, compiled)| {
-            // make a fake address for the contract, maybe anti-pattern
-            let addr = Address::from_slice(&keccak256(&compiled.runtime_bytecode)[..20]);
-            addresses.insert(name.clone(), addr);
-            (addr, compiled.runtime_bytecode.clone())
-        });
-        evm.initialize_contracts(init_state);
+        let deployer = self.deployer;
+        let addresses = contracts
+            .iter()
+            .map(|(name, compiled)| {
+                let (addr, _, _) = evm.deploy(deployer, compiled.bytecode.clone(), 0.into())?;
+                Ok((name.clone(), addr))
+            })
+            .collect::<Result<HashMap<_, _>>>()?;
 
         Ok(MultiContractRunner {
             contracts,
@@ -65,6 +64,11 @@ impl<'a> MultiContractRunnerBuilder<'a> {
 
     pub fn contracts(mut self, contracts: &'a str) -> Self {
         self.contracts = contracts;
+        self
+    }
+
+    pub fn deployer(mut self, deployer: Address) -> Self {
+        self.deployer = deployer;
         self
     }
 

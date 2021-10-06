@@ -37,13 +37,18 @@ fn main() -> eyre::Result<()> {
             let remappings = utils::merge(remappings, remappings_env);
             let lib_paths = utils::default_path(lib_paths)?;
 
+            // TODO: Add CLI Options to modify the persistence
+            let cfg =
+                proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
+            let fuzzer = proptest::test_runner::TestRunner::new(cfg);
+
             // prepare the builder
             let builder = MultiContractRunnerBuilder::default()
                 .contracts(&contracts)
                 .remappings(&remappings)
                 .libraries(&lib_paths)
                 .out_path(out_path)
-                .fuzzer(proptest::test_runner::TestRunner::default())
+                .fuzzer(fuzzer)
                 .skip_compilation(no_compile);
 
             // run the tests depending on the chosen EVM
