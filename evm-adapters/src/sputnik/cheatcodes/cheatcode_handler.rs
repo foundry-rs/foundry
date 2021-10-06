@@ -101,6 +101,21 @@ impl<'a, B: Backend> SputnikExecutor<CheatcodeStackState<'a, B>> for CheatcodeSt
             Capture::Trap(_) => unreachable!(),
         }
     }
+
+    fn transact_create(
+        &mut self,
+        caller: H160,
+        value: U256,
+        init_code: Vec<u8>,
+        gas_limit: u64,
+        access_list: Vec<(H160, Vec<H256>)>,
+    ) -> ExitReason {
+        self.handler.transact_create(caller, value, init_code, gas_limit, access_list)
+    }
+
+    fn create_address(&self, scheme: CreateScheme) -> Address {
+        self.handler.create_address(scheme)
+    }
 }
 
 pub type CheatcodeStackState<'a, B> = MemoryStackStateOwned<'a, CheatcodeBackend<B>>;
@@ -459,11 +474,8 @@ mod tests {
         let mut evm = Executor::new_with_cheatcodes(backend, gas_limit, &config);
 
         let compiled = COMPILED.get("CheatCodes").expect("could not find contract");
-        let addr = "0x1000000000000000000000000000000000000000".parse().unwrap();
-        evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
-
-        // call the setup func
-        evm.setup(addr).unwrap();
+        let (addr, _, _) =
+            evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
 
         let state = evm.state().clone();
         let mut cfg = proptest::test_runner::Config::default();

@@ -62,6 +62,16 @@ impl<S: HostExt, Tr: Tracer> Evm<S> for EvmOdin<S, Tr> {
         &self.host
     }
 
+    #[allow(unused)]
+    fn deploy(
+        &mut self,
+        from: Address,
+        calldata: Bytes,
+        value: U256,
+    ) -> Result<(Address, Self::ReturnReason, u64)> {
+        unimplemented!("Contract deployment is not implemented for evmodin yet")
+    }
+
     /// Runs the selected function
     fn call_raw(
         &mut self,
@@ -133,17 +143,18 @@ mod tests {
     use evmodin::{tracing::NoopTracer, util::mocked_host::MockedHost};
 
     #[test]
+    #[ignore]
+    // TODO: Ignore until we figure out how to deploy stuff in evmodin
     fn evmodin_can_call_vm_directly() {
         let revision = Revision::Istanbul;
         let compiled = COMPILED.get("Greeter").expect("could not find contract");
 
         let host = MockedHost::default();
-        let addr: Address = "0x1000000000000000000000000000000000000000".parse().unwrap();
 
         let gas_limit = 12_000_000;
         let evm = EvmOdin::new(host, gas_limit, revision, NoopTracer);
 
-        can_call_vm_directly(evm, addr, compiled);
+        can_call_vm_directly(evm, compiled);
     }
 
     #[test]
@@ -152,11 +163,10 @@ mod tests {
     fn evmodin_can_call_solidity_unit_test() {
         let revision = Revision::Istanbul;
         let compiled = COMPILED.get("Greeter").expect("could not find contract");
-        let addr: Address = "0x1000000000000000000000000000000000000000".parse().unwrap();
         let host = MockedHost::default();
         let gas_limit = 12_000_000;
         let evm = EvmOdin::new(host, gas_limit, revision, NoopTracer);
 
-        solidity_unit_test(evm, addr, compiled);
+        solidity_unit_test(evm, compiled);
     }
 }
