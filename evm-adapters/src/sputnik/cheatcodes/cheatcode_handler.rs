@@ -101,6 +101,21 @@ impl<'a, B: Backend> SputnikExecutor<CheatcodeStackState<'a, B>> for CheatcodeSt
             Capture::Trap(_) => unreachable!(),
         }
     }
+
+    fn transact_create(
+        &mut self,
+        caller: H160,
+        value: U256,
+        init_code: Vec<u8>,
+        gas_limit: u64,
+        access_list: Vec<(H160, Vec<H256>)>,
+    ) -> ExitReason {
+        self.handler.transact_create(caller, value, init_code, gas_limit, access_list)
+    }
+
+    fn create_address(&self, scheme: CreateScheme) -> Address {
+        self.handler.create_address(scheme)
+    }
 }
 
 pub type CheatcodeStackState<'a, B> = MemoryStackStateOwned<'a, CheatcodeBackend<B>>;

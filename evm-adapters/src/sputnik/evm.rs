@@ -5,7 +5,7 @@ use ethers::types::{Address, Bytes, U256};
 use sputnik::{
     backend::{Backend, MemoryAccount},
     executor::{MemoryStackState, StackExecutor, StackState, StackSubstateMetadata},
-    Config, ExitReason, ExitRevert,
+    Config, CreateScheme, ExitReason, ExitRevert,
 };
 use std::{collections::BTreeMap, marker::PhantomData};
 
@@ -87,6 +87,27 @@ where
 
     fn state(&self) -> &S {
         self.executor.state()
+    }
+
+    /// Deploys the provided contract bytecode
+    fn deploy(
+        &mut self,
+        from: Address,
+        calldata: Bytes,
+        value: U256,
+    ) -> Result<(Address, ExitReason, u64)> {
+        let gas_before = self.executor.gas_left();
+
+        // The account's created contract address is pre-computed by using the account's nonce
+        // before it executes the contract deployment transaction.
+        let address = self.executor.create_address(CreateScheme::Legacy { caller: from });
+        let status =
+            self.executor.transact_create(from, value, calldata.to_vec(), self.gas_limit, vec![]);
+
+        let gas_after = self.executor.gas_left();
+        let gas = gas_before.saturating_sub(gas_after).saturating_sub(21000.into());
+
+        Ok((address, status, gas.as_u64()))
     }
 
     /// Runs the selected function
