@@ -7,7 +7,7 @@ pub mod sputnik;
 pub mod evmodin;
 
 mod blocking_provider;
-pub use blocking_provider::BlockingProvider;
+pub use blocking_provider::{BlockingProvider, SyncProvider};
 
 pub mod fuzz;
 

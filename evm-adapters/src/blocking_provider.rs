@@ -1,12 +1,16 @@
 use ethers::{
     providers::Middleware,
-    types::{Address, Block, BlockId, Bytes, TxHash, H256, U256, U64},
+    types::{
+        transaction::eip2718::TypedTransaction, Address, Block, BlockId, BlockNumber, Bytes,
+        EIP1186ProofResponse, NameOrAddress, Transaction, TransactionReceipt, TxHash, H256, U256,
+        U64,
+    },
 };
 use futures::{
     channel::mpsc::{channel, Receiver, Sender},
     stream::{Fuse, Stream, StreamExt},
     task::{Context, Poll},
-    Future,
+    Future, FutureExt,
 };
 use std::{
     pin::Pin,
@@ -74,6 +78,10 @@ where
         self.block_on(self.provider.get_balance(address, block))
     }
 
+    pub fn get_accounts(&self) -> Result<Vec<Address>, M::Error> {
+        self.block_on(self.provider.get_accounts())
+    }
+
     pub fn get_transaction_count(
         &self,
         address: Address,
@@ -96,22 +104,84 @@ where
     }
 }
 
-type ProviderRequestFut<Err> = Pin<Box<dyn Future<Output = ProviderResponse<Err>> + Send>>;
-type ProviderResult<Ok, Err> =
-    Result<OneshotSender<Result<Ok, Err>>, (Err, OneshotSender<Result<Ok, Err>>)>;
-
-/// ProviderHandler internal response type that takes care of the sender until the underlying
-/// provider completes the request so that response can be send via the one shot channel.
-#[derive(Debug)]
-enum ProviderResponse<Err> {
-    GetBlockNumber(ProviderResult<U64, Err>),
-}
-
 /// The Request type the ProviderHandler listens for
 #[derive(Debug)]
 enum ProviderRequest<Err> {
     GetBlockNumber(OneshotSender<Result<U64, Err>>),
+    ResolveName {
+        ens_name: String,
+        sender: OneshotSender<Result<Address, Err>>,
+    },
+    LookupAddress {
+        address: Address,
+        sender: OneshotSender<Result<String, Err>>,
+    },
+    GetBlock {
+        block: BlockId,
+        sender: OneshotSender<Result<Option<Block<TxHash>>, Err>>,
+    },
+    GetBlockWithTxs {
+        block: BlockId,
+        sender: OneshotSender<Result<Option<Block<Transaction>>, Err>>,
+    },
+    GetUncleCount {
+        block_hash_or_number: BlockId,
+        sender: OneshotSender<Result<U256, Err>>,
+    },
+    GetUncle {
+        block: BlockId,
+        idx: U64,
+        sender: OneshotSender<Result<Option<Block<H256>>, Err>>,
+    },
+    GetTransactionCount {
+        from: NameOrAddress,
+        block: Option<BlockId>,
+        sender: OneshotSender<Result<U256, Err>>,
+    },
+    EstimateGas {
+        tx: TypedTransaction,
+        sender: OneshotSender<Result<U256, Err>>,
+    },
+    Call {
+        tx: TypedTransaction,
+        block: Option<BlockId>,
+        sender: OneshotSender<Result<Bytes, Err>>,
+    },
+    GetChainId(OneshotSender<Result<U256, Err>>),
+    GetBalance {
+        from: NameOrAddress,
+        block: Option<BlockId>,
+        sender: OneshotSender<Result<U256, Err>>,
+    },
+    GetTransaction {
+        transaction_hash: TxHash,
+        sender: OneshotSender<Result<Option<Transaction>, Err>>,
+    },
+    GetTransactionReceipt {
+        transaction_hash: TxHash,
+        sender: OneshotSender<Result<Option<TransactionReceipt>, Err>>,
+    },
+    GetBlockReceipts {
+        block: BlockNumber,
+        sender: OneshotSender<Result<Vec<TransactionReceipt>, Err>>,
+    },
+    GetGasPrice(OneshotSender<Result<U256, Err>>),
+    GetAccounts(OneshotSender<Result<Vec<Address>, Err>>),
+    GetStorageAt {
+        from: NameOrAddress,
+        location: H256,
+        block: Option<BlockId>,
+        sender: OneshotSender<Result<H256, Err>>,
+    },
+    GetProof {
+        from: NameOrAddress,
+        locations: Vec<H256>,
+        block: Option<BlockId>,
+        sender: OneshotSender<Result<EIP1186ProofResponse, Err>>,
+    },
 }
+
+type ProviderRequestFut = Pin<Box<dyn Future<Output = ()> + Send>>;
 
 /// Handles an internal provider and listens for commands to delegate to the provider and respond
 /// with the provider's response.
@@ -120,29 +190,113 @@ struct ProviderHandler<M: Middleware> {
     provider: M,
     /// Commands that are being processed and awaiting a response from the
     /// provider.
-    pending_requests: Vec<ProviderRequestFut<M::Error>>,
+    pending_requests: Vec<ProviderRequestFut>,
     /// Incoming commands
     incoming: Fuse<Receiver<ProviderRequest<M::Error>>>,
 }
 
-impl<M: Middleware> ProviderHandler<M> {
+impl<M> ProviderHandler<M>
+where
+    M: Middleware + Clone + 'static,
+{
     fn new(provider: M, rx: Receiver<ProviderRequest<M::Error>>) -> Self {
         Self { provider, pending_requests: Default::default(), incoming: rx.fuse() }
     }
 
+    /// handle the request in queue in the future
     fn on_request(&mut self, cmd: ProviderRequest<M::Error>) {
-        // TODO execute the correct provider function and store the futre
-        dbg!(cmd);
+        let provider = self.provider.clone();
+        let fut = Box::pin(async move {
+            match cmd {
+                ProviderRequest::GetBlockNumber(sender) => {
+                    let resp = provider.get_block_number().await;
+                    let _ = sender.send(resp);
+                }
+                ProviderRequest::ResolveName { ens_name, sender } => {
+                    let resp = provider.resolve_name(&ens_name).await;
+                    let _ = sender.send(resp);
+                }
+                ProviderRequest::LookupAddress { address, sender } => {
+                    let resp = provider.lookup_address(address).await;
+                    let _ = sender.send(resp);
+                }
+                ProviderRequest::GetBlock { block, sender } => {
+                    let resp = provider.get_block(block).await;
+                    let _ = sender.send(resp);
+                }
+                ProviderRequest::GetBlockWithTxs { block, sender } => {
+                    let resp = provider.get_block_with_txs(block).await;
+                    let _ = sender.send(resp);
+                }
+                ProviderRequest::GetUncleCount { block_hash_or_number, sender } => {
+                    let resp = provider.get_uncle_count(block_hash_or_number).await;
+                    let _ = sender.send(resp);
+                }
+                ProviderRequest::GetUncle { block, idx, sender } => {
+                    let resp = provider.get_uncle(block, idx).await;
+                    let _ = sender.send(resp);
+                }
+                ProviderRequest::GetTransactionCount { from, block, sender } => {
+                    let resp = provider.get_transaction_count(from, block).await;
+                    let _ = sender.send(resp);
+                }
+                ProviderRequest::EstimateGas { tx, sender } => {
+                    let resp = provider.estimate_gas(&tx).await;
+                    let _ = sender.send(resp);
+                }
+                ProviderRequest::Call { tx, block, sender } => {
+                    let resp = provider.call(&tx, block).await;
+                    let _ = sender.send(resp);
+                }
+                ProviderRequest::GetChainId(sender) => {
+                    let resp = provider.get_chainid().await;
+                    let _ = sender.send(resp);
+                }
+                ProviderRequest::GetBalance { from, block, sender } => {
+                    let resp = provider.get_balance(from, block).await;
+                    let _ = sender.send(resp);
+                }
+                ProviderRequest::GetTransaction { transaction_hash, sender } => {
+                    let resp = provider.get_transaction(transaction_hash).await;
+                    let _ = sender.send(resp);
+                }
+                ProviderRequest::GetTransactionReceipt { transaction_hash, sender } => {
+                    let resp = provider.get_transaction_receipt(transaction_hash).await;
+                    let _ = sender.send(resp);
+                }
+                ProviderRequest::GetBlockReceipts { block, sender } => {
+                    let resp = provider.get_block_receipts(block).await;
+                    let _ = sender.send(resp);
+                }
+                ProviderRequest::GetGasPrice(sender) => {
+                    let resp = provider.get_gas_price().await;
+                    let _ = sender.send(resp);
+                }
+                ProviderRequest::GetAccounts(sender) => {
+                    let resp = provider.get_accounts().await;
+                    let _ = sender.send(resp);
+                }
+                ProviderRequest::GetStorageAt { from, location, block, sender } => {
+                    let resp = provider.get_storage_at(from, location, block).await;
+                    let _ = sender.send(resp);
+                }
+                ProviderRequest::GetProof { from, locations, block, sender } => {
+                    let resp = provider.get_proof(from, locations, block).await;
+                    let _ = sender.send(resp);
+                }
+            }
+        });
+        self.pending_requests.push(fut);
     }
 }
 
 impl<M> Future for ProviderHandler<M>
 where
-    M: Middleware + Unpin,
+    M: Middleware + Clone + Unpin + 'static,
 {
     type Output = ();
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let pin = self.get_mut();
 
         // receive new commands to delegate to the underlying provider
@@ -150,9 +304,12 @@ where
             pin.on_request(req)
         }
 
+        // poll all futures
         for n in (0..pin.pending_requests.len()).rev() {
-            let request = pin.pending_requests.swap_remove(n);
-            // TODO poll the in progress requests
+            let mut request = pin.pending_requests.swap_remove(n);
+            if request.poll_unpin(cx).is_pending() {
+                pin.pending_requests.push(request);
+            }
         }
 
         // the handler is finished if the command channel was closed and all commands are processed
@@ -165,15 +322,22 @@ where
 }
 
 /// A blocking alternative to the async `Middleware`.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct SyncProvider<M: Middleware> {
     provider: Sender<ProviderRequest<M::Error>>,
 }
 
+impl<M: Middleware> Clone for SyncProvider<M> {
+    fn clone(&self) -> Self {
+        Self { provider: self.provider.clone() }
+    }
+}
+
 impl<M> SyncProvider<M>
 where
-    M: Middleware + Unpin + 'static,
+    M: Middleware + Unpin + 'static + Clone,
 {
+    /// NOTE: this should be called with `Arc<Provider>`
     pub fn new(provider: M) -> eyre::Result<Self> {
         let (tx, rx) = channel(1);
         let handler = ProviderHandler::new(provider, rx);
@@ -191,30 +355,189 @@ where
         Ok(rx.recv()??)
     }
 
-    // TODO port all essentiall `Middleware` functions, but sync
+    pub fn resolve_name(&self, ens_name: &str) -> eyre::Result<Address> {
+        let (sender, rx) = oneshot_channel();
+        let cmd = ProviderRequest::ResolveName { ens_name: ens_name.to_string(), sender };
+        self.provider.clone().try_send(cmd).map_err(|e| eyre::eyre!("{:?}", e))?;
+        Ok(rx.recv()??)
+    }
+
+    pub fn lookup_address(&self, address: Address) -> eyre::Result<String> {
+        let (sender, rx) = oneshot_channel();
+        let cmd = ProviderRequest::LookupAddress { address, sender };
+        self.provider.clone().try_send(cmd).map_err(|e| eyre::eyre!("{:?}", e))?;
+        Ok(rx.recv()??)
+    }
+
+    pub fn get_block<T: Into<BlockId>>(&self, block: T) -> eyre::Result<Option<Block<TxHash>>> {
+        let (sender, rx) = oneshot_channel();
+        let cmd = ProviderRequest::GetBlock { block: block.into(), sender };
+        self.provider.clone().try_send(cmd).map_err(|e| eyre::eyre!("{:?}", e))?;
+        Ok(rx.recv()??)
+    }
+
+    pub fn get_block_with_txs<T: Into<BlockId>>(
+        &self,
+        block: T,
+    ) -> eyre::Result<Option<Block<Transaction>>> {
+        let (sender, rx) = oneshot_channel();
+        let cmd = ProviderRequest::GetBlockWithTxs { block: block.into(), sender };
+        self.provider.clone().try_send(cmd).map_err(|e| eyre::eyre!("{:?}", e))?;
+        Ok(rx.recv()??)
+    }
+
+    pub fn get_uncle_count<T: Into<BlockId>>(&self, block: T) -> eyre::Result<U256> {
+        let (sender, rx) = oneshot_channel();
+        let cmd = ProviderRequest::GetUncleCount { block_hash_or_number: block.into(), sender };
+        self.provider.clone().try_send(cmd).map_err(|e| eyre::eyre!("{:?}", e))?;
+        Ok(rx.recv()??)
+    }
+
+    pub fn get_uncle<T: Into<BlockId>>(
+        &self,
+        block: T,
+        idx: U64,
+    ) -> eyre::Result<Option<Block<H256>>> {
+        let (sender, rx) = oneshot_channel();
+        let cmd = ProviderRequest::GetUncle { block: block.into(), idx, sender };
+        self.provider.clone().try_send(cmd).map_err(|e| eyre::eyre!("{:?}", e))?;
+        Ok(rx.recv()??)
+    }
+
+    pub fn get_transaction_count<T: Into<NameOrAddress>>(
+        &self,
+        from: T,
+        block: Option<BlockId>,
+    ) -> eyre::Result<U256> {
+        let (sender, rx) = oneshot_channel();
+        let cmd = ProviderRequest::GetTransactionCount { from: from.into(), block, sender };
+        self.provider.clone().try_send(cmd).map_err(|e| eyre::eyre!("{:?}", e))?;
+        Ok(rx.recv()??)
+    }
+
+    pub fn estimate_gas(&self, tx: TypedTransaction) -> eyre::Result<U256> {
+        let (sender, rx) = oneshot_channel();
+        let cmd = ProviderRequest::EstimateGas { tx, sender };
+        self.provider.clone().try_send(cmd).map_err(|e| eyre::eyre!("{:?}", e))?;
+        Ok(rx.recv()??)
+    }
+
+    pub fn call(&self, tx: TypedTransaction, block: Option<BlockId>) -> eyre::Result<Bytes> {
+        let (sender, rx) = oneshot_channel();
+        let cmd = ProviderRequest::Call { tx, block, sender };
+        self.provider.clone().try_send(cmd).map_err(|e| eyre::eyre!("{:?}", e))?;
+        Ok(rx.recv()??)
+    }
+
+    pub fn get_chainid(&self) -> eyre::Result<U256> {
+        let (sender, rx) = oneshot_channel();
+        let cmd = ProviderRequest::GetChainId(sender);
+        self.provider.clone().try_send(cmd).map_err(|e| eyre::eyre!("{:?}", e))?;
+        Ok(rx.recv()??)
+    }
+
+    pub fn get_balance<T: Into<NameOrAddress>>(
+        &self,
+        from: T,
+        block: Option<BlockId>,
+    ) -> eyre::Result<U256> {
+        let (sender, rx) = oneshot_channel();
+        let cmd = ProviderRequest::GetBalance { from: from.into(), block, sender };
+        self.provider.clone().try_send(cmd).map_err(|e| eyre::eyre!("{:?}", e))?;
+        Ok(rx.recv()??)
+    }
+
+    pub fn get_transaction<T: Into<TxHash>>(
+        &self,
+        transaction_hash: T,
+    ) -> eyre::Result<Option<Transaction>> {
+        let (sender, rx) = oneshot_channel();
+        let cmd =
+            ProviderRequest::GetTransaction { transaction_hash: transaction_hash.into(), sender };
+        self.provider.clone().try_send(cmd).map_err(|e| eyre::eyre!("{:?}", e))?;
+        Ok(rx.recv()??)
+    }
+
+    pub fn get_transaction_receipt<T: Into<TxHash>>(
+        &self,
+        transaction_hash: T,
+    ) -> eyre::Result<Option<TransactionReceipt>> {
+        let (sender, rx) = oneshot_channel();
+        let cmd = ProviderRequest::GetTransactionReceipt {
+            transaction_hash: transaction_hash.into(),
+            sender,
+        };
+        self.provider.clone().try_send(cmd).map_err(|e| eyre::eyre!("{:?}", e))?;
+        Ok(rx.recv()??)
+    }
+
+    pub fn get_block_receipts<T: Into<BlockNumber>>(
+        &self,
+        block: T,
+    ) -> eyre::Result<Vec<TransactionReceipt>> {
+        let (sender, rx) = oneshot_channel();
+        let cmd = ProviderRequest::GetBlockReceipts { block: block.into(), sender };
+        self.provider.clone().try_send(cmd).map_err(|e| eyre::eyre!("{:?}", e))?;
+        Ok(rx.recv()??)
+    }
+
+    pub fn get_gas_price(&self) -> eyre::Result<U256> {
+        let (sender, rx) = oneshot_channel();
+        let cmd = ProviderRequest::GetGasPrice(sender);
+        self.provider.clone().try_send(cmd).map_err(|e| eyre::eyre!("{:?}", e))?;
+        Ok(rx.recv()??)
+    }
+
+    pub fn get_accounts(&self) -> eyre::Result<Vec<Address>> {
+        let (sender, rx) = oneshot_channel();
+        let cmd = ProviderRequest::GetAccounts(sender);
+        self.provider.clone().try_send(cmd).map_err(|e| eyre::eyre!("{:?}", e))?;
+        Ok(rx.recv()??)
+    }
+
+    pub fn get_storage_at<T: Into<NameOrAddress>>(
+        &self,
+        from: T,
+        location: H256,
+        block: Option<BlockId>,
+    ) -> eyre::Result<H256> {
+        let (sender, rx) = oneshot_channel();
+        let cmd = ProviderRequest::GetStorageAt { from: from.into(), location, block, sender };
+        self.provider.clone().try_send(cmd).map_err(|e| eyre::eyre!("{:?}", e))?;
+        Ok(rx.recv()??)
+    }
+
+    pub fn get_proof<T: Into<NameOrAddress>>(
+        &self,
+        from: T,
+        locations: Vec<H256>,
+        block: Option<BlockId>,
+    ) -> eyre::Result<EIP1186ProofResponse> {
+        let (sender, rx) = oneshot_channel();
+        let cmd = ProviderRequest::GetProof { from: from.into(), locations, block, sender };
+        self.provider.clone().try_send(cmd).map_err(|e| eyre::eyre!("{:?}", e))?;
+        Ok(rx.recv()??)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ethers::{
+        providers::{Http, Provider},
+        utils::Ganache,
+    };
+    use std::{convert::TryFrom, sync::Arc};
 
-    #[tokio::test]
-    async fn sync_provider_test_poc() {
-        use std::sync::mpsc::Sender as SyncSender;
-        let (mut tx, mut rx) = channel::<SyncSender<u64>>(1);
+    #[test]
+    fn sync_provider_test_poc() {
+        let ganache = Ganache::new().spawn();
 
-        std::thread::spawn(|| {
-            let rt = Runtime::new().unwrap();
+        // connect to the network
+        let provider = Provider::<Http>::try_from(ganache.endpoint()).unwrap();
 
-            rt.block_on(async move {
-                let x = rx.next().await.unwrap();
-                x.send(69).unwrap();
-            });
-        });
+        let provider = SyncProvider::new(Arc::new(provider)).unwrap();
 
-        let (tx2, rx2) = std::sync::mpsc::channel();
-        tx.try_send(tx2).unwrap();
-        let received = rx2.recv().unwrap();
-        assert_eq!(received, 69)
+        let _ = provider.get_accounts().unwrap();
     }
 }
