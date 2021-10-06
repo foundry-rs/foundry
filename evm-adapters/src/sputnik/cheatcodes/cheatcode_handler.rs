@@ -135,6 +135,8 @@ impl<'a, B: Backend> Executor<CheatcodeStackState<'a, B>, CheatcodeStackExecutor
 impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
     /// Decodes the provided calldata as a
     fn apply_cheatcode(&mut self, input: Vec<u8>) -> Capture<(ExitReason, Vec<u8>), Infallible> {
+        let mut res = H256::zero();
+
         // Get a mutable ref to the state so we can apply the cheats
         let state = self.state_mut();
 
@@ -146,9 +148,18 @@ impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
             state.backend.cheats.block_number = Some(block_number);
         }
 
+        if let Ok((address, slot, value)) = HEVM.decode::<(Address, H256, H256), _>("store", &input)
+        {
+            state.set_storage(address, slot, value);
+        }
+
+        if let Ok((address, slot)) = HEVM.decode::<(Address, H256), _>("load", &input) {
+            res = state.storage(address, slot);
+        }
+
         // TODO: Add more cheat codes.
 
-        Capture::Exit((ExitReason::Succeed(ExitSucceed::Stopped), vec![1; 32]))
+        Capture::Exit((ExitReason::Succeed(ExitSucceed::Stopped), res.0.to_vec()))
     }
 
     // NB: This function is copy-pasted from uptream's `execute`, adjusted so that we call the
@@ -451,8 +462,20 @@ mod tests {
         let addr = "0x1000000000000000000000000000000000000000".parse().unwrap();
         evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
 
+        // call the setup func
+        evm.setup(addr).unwrap();
+
         let state = evm.state().clone();
         let runner = proptest::test_runner::TestRunner::default();
+
+        // ensure the storage slot is set at 10 anyway
+        let (storage_contract, _, _) = evm
+            .call::<Address, _, _>(Address::zero(), addr, "store()(address)", (), 0.into())
+            .unwrap();
+        let (slot, _, _) = evm
+            .call::<U256, _, _>(Address::zero(), storage_contract, "slot0()(uint256)", (), 0.into())
+            .unwrap();
+        assert_eq!(slot, 10.into());
 
         let evm = FuzzedExecutor::new(&mut evm, runner);
 

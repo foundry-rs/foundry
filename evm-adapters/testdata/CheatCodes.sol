@@ -16,14 +16,23 @@ interface Hevm {
 }
 
 contract HasStorage {
-    uint slot0 = 10;
+    uint public slot0 = 10;
+
+    function setUp() public {
+        slot0 = 10;
+    }
 }
 
 // We add `assertEq` tests as well to ensure that our test runner checks the
 // `failed` variable.
 contract CheatCodes is DSTest {
-    // address store = address(new HasStorage());
+    address public store;
     Hevm constant hevm = Hevm(HEVM_ADDRESS);
+
+    function setUp() public {
+        store = address(new HasStorage());
+        HasStorage(store).setUp();
+    }
 
     // Warp
 
@@ -71,14 +80,14 @@ contract CheatCodes is DSTest {
     // }
 
 
-    // function test_store_load_concrete(uint x) public {
-    //     uint ten = uint(hevm.load(store, bytes32(0)));
-    //     assertEq(ten, 10);
+    function test_store_load_concrete(uint x) public {
+        uint ten = uint(hevm.load(store, bytes32(0)));
+        assertEq(ten, 10);
 
-    //     hevm.store(store, bytes32(0), bytes32(x));
-    //     uint val = uint(hevm.load(store, bytes32(0)));
-    //     assertEq(val, x);
-    // }
+        hevm.store(store, bytes32(0), bytes32(x));
+        uint val = uint(hevm.load(store, bytes32(0)));
+        assertEq(val, x);
+    }
 
     // function prove_store_load_symbolic(uint x) public {
     //     test_store_load_concrete(x);
