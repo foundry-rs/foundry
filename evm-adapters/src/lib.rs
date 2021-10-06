@@ -104,6 +104,14 @@ pub trait Evm<State> {
         is_static: bool,
     ) -> Result<(Bytes, Self::ReturnReason, u64)>;
 
+    /// Deploys the provided contract bytecode and returns the address
+    fn deploy(
+        &mut self,
+        from: Address,
+        calldata: Bytes,
+        value: U256,
+    ) -> Result<(Address, Self::ReturnReason, u64)>;
+
     /// Runs the `setUp()` function call to instantiate the contract's state
     fn setup(&mut self, address: Address) -> Result<Self::ReturnReason> {
         let (_, status, _) =
@@ -166,12 +174,9 @@ mod test_helpers {
     pub static COMPILED: Lazy<HashMap<String, CompiledContract>> =
         Lazy::new(|| SolcBuilder::new("./testdata/*.sol", &[], &[]).unwrap().build_all().unwrap());
 
-    pub fn can_call_vm_directly<S, E: Evm<S>>(
-        mut evm: E,
-        addr: Address,
-        compiled: &CompiledContract,
-    ) {
-        evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
+    pub fn can_call_vm_directly<S, E: Evm<S>>(mut evm: E, compiled: &CompiledContract) {
+        let (addr, _, _) =
+            evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
 
         let (_, status1, _) = evm
             .call::<(), _, _>(Address::zero(), addr, "greet(string)", "hi".to_owned(), 0.into())
@@ -188,12 +193,9 @@ mod test_helpers {
         });
     }
 
-    pub fn solidity_unit_test<S, E: Evm<S>>(
-        mut evm: E,
-        addr: Address,
-        compiled: &CompiledContract,
-    ) {
-        evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
+    pub fn solidity_unit_test<S, E: Evm<S>>(mut evm: E, compiled: &CompiledContract) {
+        let (addr, _, _) =
+            evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
 
         // call the setup function to deploy the contracts inside the test
         let status1 = evm.setup(addr).unwrap();

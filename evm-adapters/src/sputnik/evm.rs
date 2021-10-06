@@ -151,14 +151,10 @@ mod tests {
         let cfg = Config::istanbul();
         let compiled = COMPILED.get("Greeter").expect("could not find contract");
 
-        let addr = "0x1000000000000000000000000000000000000000".parse().unwrap();
-
         let vicinity = new_vicinity();
         let backend = new_backend(&vicinity, Default::default());
-        let mut evm = Executor::new(12_000_000, &cfg, &backend);
-        evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
-
-        can_call_vm_directly(evm, addr, compiled);
+        let evm = Executor::new(12_000_000, &cfg, &backend);
+        can_call_vm_directly(evm, compiled);
     }
 
     #[test]
@@ -167,14 +163,10 @@ mod tests {
 
         let compiled = COMPILED.get("GreeterTest").expect("could not find contract");
 
-        let addr = "0x1000000000000000000000000000000000000000".parse().unwrap();
-
         let vicinity = new_vicinity();
         let backend = new_backend(&vicinity, Default::default());
-        let mut evm = Executor::new(12_000_000, &cfg, &backend);
-        evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
-
-        solidity_unit_test(evm, addr, compiled);
+        let evm = Executor::new(12_000_000, &cfg, &backend);
+        solidity_unit_test(evm, compiled);
     }
 
     #[test]
@@ -183,12 +175,12 @@ mod tests {
 
         let compiled = COMPILED.get("GreeterTest").expect("could not find contract");
 
-        let addr = "0x1000000000000000000000000000000000000000".parse().unwrap();
-
         let vicinity = new_vicinity();
         let backend = new_backend(&vicinity, Default::default());
         let mut evm = Executor::new(12_000_000, &cfg, &backend);
-        evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
+
+        let (addr, _, _) =
+            evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
 
         let (status, res) = evm.executor.transact_call(
             Address::zero(),
@@ -208,12 +200,12 @@ mod tests {
 
         let compiled = COMPILED.get("GreeterTest").expect("could not find contract");
 
-        let addr = "0x1000000000000000000000000000000000000000".parse().unwrap();
-
         let vicinity = new_vicinity();
         let backend = new_backend(&vicinity, Default::default());
         let mut evm = Executor::new(12_000_000, &cfg, &backend);
-        evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
+
+        let (addr, _, _) =
+            evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
 
         // call the setup function to deploy the contracts inside the test
         let status = evm.setup(addr).unwrap();

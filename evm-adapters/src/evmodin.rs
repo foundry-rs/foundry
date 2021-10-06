@@ -138,12 +138,11 @@ mod tests {
         let compiled = COMPILED.get("Greeter").expect("could not find contract");
 
         let host = MockedHost::default();
-        let addr: Address = "0x1000000000000000000000000000000000000000".parse().unwrap();
 
         let gas_limit = 12_000_000;
         let evm = EvmOdin::new(host, gas_limit, revision, NoopTracer);
 
-        can_call_vm_directly(evm, addr, compiled);
+        can_call_vm_directly(evm, compiled);
     }
 
     #[test]
@@ -152,11 +151,10 @@ mod tests {
     fn evmodin_can_call_solidity_unit_test() {
         let revision = Revision::Istanbul;
         let compiled = COMPILED.get("Greeter").expect("could not find contract");
-        let addr: Address = "0x1000000000000000000000000000000000000000".parse().unwrap();
         let host = MockedHost::default();
         let gas_limit = 12_000_000;
         let evm = EvmOdin::new(host, gas_limit, revision, NoopTracer);
 
-        solidity_unit_test(evm, addr, compiled);
+        solidity_unit_test(evm, compiled);
     }
 }

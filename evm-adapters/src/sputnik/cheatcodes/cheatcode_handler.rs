@@ -459,8 +459,8 @@ mod tests {
         let mut evm = Executor::new_with_cheatcodes(backend, gas_limit, &config);
 
         let compiled = COMPILED.get("CheatCodes").expect("could not find contract");
-        let addr = "0x1000000000000000000000000000000000000000".parse().unwrap();
-        evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
+        let (addr, _, _) =
+            evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
 
         // call the setup func
         evm.setup(addr).unwrap();
