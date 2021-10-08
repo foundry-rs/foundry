@@ -7,6 +7,7 @@ pub use forked_backend::ForkMemoryBackend;
 pub mod cheatcodes;
 
 use ethers::{
+    prelude::Address,
     providers::Middleware,
     types::{H160, H256, U256},
 };
@@ -14,7 +15,7 @@ use ethers::{
 use sputnik::{
     backend::MemoryVicinity,
     executor::{StackExecutor, StackState},
-    Config, ExitReason,
+    Config, CreateScheme, ExitReason,
 };
 
 pub async fn vicinity<M: Middleware>(
@@ -62,6 +63,17 @@ pub trait SputnikExecutor<S> {
         gas_limit: u64,
         access_list: Vec<(H160, Vec<H256>)>,
     ) -> (ExitReason, Vec<u8>);
+
+    fn transact_create(
+        &mut self,
+        caller: H160,
+        value: U256,
+        data: Vec<u8>,
+        gas_limit: u64,
+        access_list: Vec<(H160, Vec<H256>)>,
+    ) -> ExitReason;
+
+    fn create_address(&self, caller: CreateScheme) -> Address;
 }
 
 // The implementation for the base Stack Executor just forwards to the internal methods.
@@ -93,5 +105,20 @@ impl<'a, S: StackState<'a>> SputnikExecutor<S> for StackExecutor<'a, S> {
         access_list: Vec<(H160, Vec<H256>)>,
     ) -> (ExitReason, Vec<u8>) {
         self.transact_call(caller, address, value, data, gas_limit, access_list)
+    }
+
+    fn transact_create(
+        &mut self,
+        caller: H160,
+        value: U256,
+        data: Vec<u8>,
+        gas_limit: u64,
+        access_list: Vec<(H160, Vec<H256>)>,
+    ) -> ExitReason {
+        self.transact_create(caller, value, data, gas_limit, access_list)
+    }
+
+    fn create_address(&self, scheme: CreateScheme) -> Address {
+        self.create_address(scheme)
     }
 }

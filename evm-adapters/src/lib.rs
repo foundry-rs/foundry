@@ -9,6 +9,8 @@ pub mod evmodin;
 mod blocking_provider;
 pub use blocking_provider::BlockingProvider;
 
+pub mod fuzz;
+
 use ethers::{
     abi::{Detokenize, Tokenize},
     core::types::{Address, U256},
@@ -53,9 +55,6 @@ pub trait Evm<State> {
     /// Resets the EVM's state to the provided value
     fn reset(&mut self, state: State);
 
-    /// Executes the specified EVM call against the state
-    // TODO: Should we just make this take a `TransactionRequest` or other more
-    // ergonomic type?
     fn call<D: Detokenize, T: Tokenize, F: IntoFunction>(
         &mut self,
         from: Address,
@@ -65,15 +64,7 @@ pub trait Evm<State> {
         value: U256,
     ) -> std::result::Result<(D, Self::ReturnReason, u64), EvmError> {
         let func = func.into();
-        let calldata = encode_function_data(&func, args)?;
-        #[allow(deprecated)]
-        let is_static = func.constant ||
-            matches!(
-                func.state_mutability,
-                ethers::abi::StateMutability::View | ethers::abi::StateMutability::Pure
-            );
-        let (retdata, status, gas) = self.call_raw(from, to, calldata, value, is_static)?;
-
+        let (retdata, status, gas) = self.call_unchecked(from, to, &func, args, value)?;
         if Self::is_fail(&status) {
             let reason = dapp_utils::decode_revert(retdata.as_ref()).map_err(AbiError::from)?;
             Err(EvmError::Execution { reason, gas_used: gas })
@@ -81,6 +72,27 @@ pub trait Evm<State> {
             let retdata = decode_function_data(&func, retdata, false)?;
             Ok((retdata, status, gas))
         }
+    }
+
+    /// Executes the specified EVM call against the state
+    // TODO: Should we just make this take a `TransactionRequest` or other more
+    // ergonomic type?
+    fn call_unchecked<T: Tokenize>(
+        &mut self,
+        from: Address,
+        to: Address,
+        func: &ethers::abi::Function,
+        args: T, // derive arbitrary for Tokenize?
+        value: U256,
+    ) -> Result<(Bytes, Self::ReturnReason, u64)> {
+        let calldata = encode_function_data(func, args)?;
+        #[allow(deprecated)]
+        let is_static = func.constant ||
+            matches!(
+                func.state_mutability,
+                ethers::abi::StateMutability::View | ethers::abi::StateMutability::Pure
+            );
+        self.call_raw(from, to, calldata, value, is_static)
     }
 
     fn call_raw(
@@ -92,11 +104,18 @@ pub trait Evm<State> {
         is_static: bool,
     ) -> Result<(Bytes, Self::ReturnReason, u64)>;
 
+    /// Deploys the provided contract bytecode and returns the address
+    fn deploy(
+        &mut self,
+        from: Address,
+        calldata: Bytes,
+        value: U256,
+    ) -> Result<(Address, Self::ReturnReason, u64)>;
+
     /// Runs the `setUp()` function call to instantiate the contract's state
     fn setup(&mut self, address: Address) -> Result<Self::ReturnReason> {
         let (_, status, _) =
             self.call::<(), _, _>(Address::zero(), address, "setUp()", (), 0.into())?;
-        // debug_assert_eq!(status, ExitReason::Succeed(ExitSucceed::Stopped));
         Ok(status)
     }
 
@@ -117,18 +136,27 @@ pub trait Evm<State> {
         reason: &Self::ReturnReason,
         should_fail: bool,
     ) -> bool {
-        if should_fail {
-            if Self::is_success(reason) {
-                self.failed(address).unwrap_or(false)
-            } else if Self::is_fail(reason) {
-                true
-            } else {
-                tracing::error!(?reason);
-                false
+        // Check if the call is successful
+        let mut success = Self::is_success(reason);
+        // for successful calls, we should also check the ds-test `failed`
+        // value
+        if success {
+            if let Ok(failed) = self.failed(address) {
+                success = !failed;
             }
-        } else {
-            Self::is_success(reason)
         }
+
+        // Check Success output: Should Fail vs Success
+        //
+        //                           Success
+        //                -----------------------
+        //               |       | false | true  |
+        //               | ----------------------|
+        // Should Fail   | false | false | true  |
+        //               | ----------------------|
+        //               | true  | true  | false |
+        //                -----------------------
+        (should_fail && !success) || (!should_fail && success)
     }
 
     // TODO: Should we add a "deploy contract" function as well, or should we assume that
@@ -146,12 +174,9 @@ mod test_helpers {
     pub static COMPILED: Lazy<HashMap<String, CompiledContract>> =
         Lazy::new(|| SolcBuilder::new("./testdata/*.sol", &[], &[]).unwrap().build_all().unwrap());
 
-    pub fn can_call_vm_directly<S, E: Evm<S>>(
-        mut evm: E,
-        addr: Address,
-        compiled: &CompiledContract,
-    ) {
-        evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
+    pub fn can_call_vm_directly<S, E: Evm<S>>(mut evm: E, compiled: &CompiledContract) {
+        let (addr, _, _) =
+            evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
 
         let (_, status1, _) = evm
             .call::<(), _, _>(Address::zero(), addr, "greet(string)", "hi".to_owned(), 0.into())
@@ -168,12 +193,9 @@ mod test_helpers {
         });
     }
 
-    pub fn solidity_unit_test<S, E: Evm<S>>(
-        mut evm: E,
-        addr: Address,
-        compiled: &CompiledContract,
-    ) {
-        evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
+    pub fn solidity_unit_test<S, E: Evm<S>>(mut evm: E, compiled: &CompiledContract) {
+        let (addr, _, _) =
+            evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
 
         // call the setup function to deploy the contracts inside the test
         let status1 = evm.setup(addr).unwrap();

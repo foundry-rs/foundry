@@ -192,7 +192,6 @@ mod tests {
     fn forked_backend() {
         let cfg = Config::istanbul();
         let compiled = COMPILED.get("Greeter").expect("could not find contract");
-        let addr = "0x1000000000000000000000000000000000000000".parse().unwrap();
 
         let provider = Provider::<Http>::try_from(
             "https://mainnet.infura.io/v3/c60b0bb42f8a4c6481ecd229eddaca27",
@@ -205,9 +204,9 @@ mod tests {
         let backend = ForkMemoryBackend::new(provider, backend, blk);
 
         let mut evm = Executor::new(12_000_000, &cfg, &backend);
-        evm.initialize_contracts(vec![(addr, compiled.runtime_bytecode.clone())]);
 
-        // call the setup function to deploy the contracts inside the test
+        let (addr, _, _) =
+            evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
 
         let (res, _, _) =
             evm.call::<U256, _, _>(Address::zero(), addr, "time()(uint256)", (), 0.into()).unwrap();

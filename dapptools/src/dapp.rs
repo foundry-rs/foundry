@@ -13,7 +13,7 @@ mod dapp_opts;
 use dapp_opts::{BuildOpts, EvmType, Opts, Subcommands};
 
 use crate::dapp_opts::FullContractInfo;
-use std::convert::TryFrom;
+use std::{convert::TryFrom, sync::Arc};
 
 mod cmd;
 mod etherscan;
@@ -40,13 +40,18 @@ fn main() -> eyre::Result<()> {
             let remappings = utils::merge(remappings, remappings_env);
             let lib_paths = utils::default_path(lib_paths)?;
 
+            // TODO: Add CLI Options to modify the persistence
+            let cfg =
+                proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
+            let fuzzer = proptest::test_runner::TestRunner::new(cfg);
+
             // prepare the builder
             let builder = MultiContractRunnerBuilder::default()
                 .contracts(&contracts)
                 .remappings(&remappings)
                 .libraries(&lib_paths)
                 .out_path(out_path)
-                .fuzzer(proptest::test_runner::TestRunner::default())
+                .fuzzer(fuzzer)
                 .skip_compilation(no_compile);
 
             // run the tests depending on the chosen EVM
@@ -73,6 +78,7 @@ fn main() -> eyre::Result<()> {
                     } else {
                         Box::new(backend)
                     };
+                    let backend = Arc::new(backend);
 
                     let evm = Executor::new_with_cheatcodes(backend, env.gas_limit, &cfg);
                     test(builder, evm, pattern, json)?;
@@ -122,7 +128,7 @@ fn main() -> eyre::Result<()> {
     Ok(())
 }
 
-fn test<S, E: evm_adapters::Evm<S>>(
+fn test<S: Clone, E: evm_adapters::Evm<S>>(
     builder: MultiContractRunnerBuilder,
     evm: E,
     pattern: Regex,

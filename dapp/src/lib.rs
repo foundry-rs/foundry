@@ -7,8 +7,6 @@ pub use runner::{ContractRunner, TestResult};
 mod multi_runner;
 pub use multi_runner::{MultiContractRunner, MultiContractRunnerBuilder};
 
-mod fuzz;
-
 use ethers::abi;
 use eyre::Result;
 

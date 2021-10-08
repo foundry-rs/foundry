@@ -1,9 +1,85 @@
+use crate::Evm;
 use ethers::{
     abi::{Function, ParamType, Token, Tokenizable},
     types::{Address, Bytes, Sign, I256, U256},
 };
+use std::{
+    cell::{RefCell, RefMut},
+    marker::PhantomData,
+};
 
-use proptest::prelude::*;
+use proptest::{
+    prelude::*,
+    test_runner::{TestError, TestRunner},
+};
+
+pub use proptest::test_runner::Config as FuzzConfig;
+
+#[derive(Debug)]
+pub struct FuzzedExecutor<'a, E, S> {
+    evm: RefCell<&'a mut E>,
+    runner: TestRunner,
+    state: PhantomData<S>,
+}
+
+impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
+    pub fn as_mut(&self) -> RefMut<'_, &'a mut E> {
+        self.evm.borrow_mut()
+    }
+
+    /// Instantiates a fuzzed executor EVM given a testrunner
+    pub fn new(evm: &'a mut E, runner: TestRunner) -> Self {
+        Self { evm: RefCell::new(evm), runner, state: PhantomData }
+    }
+
+    /// Fuzzes the provided function, assuming it is available at the contract at `address`
+    /// If `should_fail` is set to `true`, then it will stop only when there's a success
+    /// test case.
+    pub fn fuzz(
+        &self,
+        func: &Function,
+        address: Address,
+        should_fail: bool,
+    ) -> Result<(), TestError<Bytes>>
+    where
+        // We need to be able to clone the state so as to snapshot it and reset
+        // it back after every test run, to have isolation of state across each
+        // fuzz test run.
+        S: Clone,
+    {
+        let strat = fuzz_calldata(func);
+
+        // Snapshot the state before the test starts running
+        let pre_test_state = self.evm.borrow().state().clone();
+
+        let mut runner = self.runner.clone();
+        runner.run(&strat, |calldata| {
+            let mut evm = self.evm.borrow_mut();
+
+            // Before each test, we must reset to the initial state
+            evm.reset(pre_test_state.clone());
+
+            let (returndata, reason, _) = evm
+                .call_raw(Address::zero(), address, calldata, 0.into(), false)
+                .expect("could not make raw evm call");
+
+            // We must check success before resetting the state, otherwise resetting the state
+            // will also reset the `failed` state variable back to false.
+            let success = evm.check_success(address, &reason, should_fail);
+
+            // This will panic and get caught by the executor
+            proptest::prop_assert!(
+                success,
+                "{}, expected failure: {}, reason: '{}'",
+                func.name,
+                should_fail,
+                dapp_utils::decode_revert(returndata.as_ref())?
+            );
+
+            Ok(())
+        })
+    }
+}
 
 pub fn fuzz_calldata(func: &Function) -> impl Strategy<Value = Bytes> + '_ {
     // We need to compose all the strategies generated for each parameter in all
