@@ -16,7 +16,6 @@ use crate::dapp_opts::FullContractInfo;
 use std::{convert::TryFrom, sync::Arc};
 
 mod cmd;
-mod etherscan;
 mod utils;
 
 #[tracing::instrument(err)]

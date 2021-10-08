@@ -1,6 +1,6 @@
-use ethers::core::{types::Bytes, utils::CompiledContract};
+use ethers::core::utils::{solc::Contract, CompiledContract};
 use eyre::Result;
-use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap},
     path::Path,
@@ -9,32 +9,6 @@ use std::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DapptoolsArtifact {
     contracts: BTreeMap<String, BTreeMap<String, serde_json::Value>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Contract {
-    pub abi: ethers::abi::Abi,
-    pub evm: Evm,
-    #[serde(
-        deserialize_with = "de_from_json_opt",
-        serialize_with = "ser_to_inner_json",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub metadata: Option<Metadata>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Evm {
-    pub bytecode: Bytecode,
-    pub deployed_bytecode: Bytecode,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Bytecode {
-    #[serde(deserialize_with = "deserialize_bytes")]
-    pub object: Bytes,
 }
 
 impl DapptoolsArtifact {
@@ -61,126 +35,6 @@ impl DapptoolsArtifact {
 
         Ok(map)
     }
-}
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Metadata {
-    pub compiler: Compiler,
-    pub language: String,
-    pub output: Output,
-    pub settings: Settings,
-    pub sources: Sources,
-    pub version: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Compiler {
-    pub version: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Output {
-    pub abi: Vec<Abi>,
-    pub devdoc: Option<Doc>,
-    pub userdoc: Option<Doc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Abi {
-    pub inputs: Vec<Item>,
-    #[serde(rename = "stateMutability")]
-    pub state_mutability: Option<String>,
-    #[serde(rename = "type")]
-    pub abi_type: String,
-    pub name: Option<String>,
-    pub outputs: Option<Vec<Item>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Item {
-    #[serde(rename = "internalType")]
-    pub internal_type: String,
-    pub name: String,
-    #[serde(rename = "type")]
-    pub put_type: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Doc {
-    pub kind: String,
-    pub methods: Libraries,
-    pub version: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Libraries {
-    #[serde(flatten)]
-    pub libs: HashMap<String, serde_json::Value>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Settings {
-    #[serde(rename = "compilationTarget")]
-    pub compilation_target: CompilationTarget,
-    #[serde(rename = "evmVersion")]
-    pub evm_version: String,
-    pub libraries: Libraries,
-    pub metadata: MetadataClass,
-    pub optimizer: Optimizer,
-    pub remappings: Vec<Option<serde_json::Value>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CompilationTarget {
-    #[serde(flatten)]
-    pub inner: HashMap<String, serde_json::Value>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MetadataClass {
-    #[serde(rename = "bytecodeHash")]
-    pub bytecode_hash: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Optimizer {
-    pub enabled: bool,
-    pub runs: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Sources {
-    #[serde(flatten)]
-    pub inner: HashMap<String, serde_json::Value>,
-}
-
-pub fn deserialize_bytes<'de, D>(d: D) -> Result<Bytes, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let value = String::deserialize(d)?;
-
-    Ok(hex::decode(&value).map_err(|e| serde::de::Error::custom(e.to_string()))?.into())
-}
-
-fn de_from_json_opt<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
-where
-    D: Deserializer<'de>,
-    T: DeserializeOwned,
-{
-    if let Some(val) = <Option<String>>::deserialize(deserializer)? {
-        serde_json::from_str(&val).map_err(serde::de::Error::custom)
-    } else {
-        Ok(None)
-    }
-}
-
-fn ser_to_inner_json<S, T>(val: &T, s: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-    T: Serialize,
-{
-    let val = serde_json::to_string(val).map_err(serde::ser::Error::custom)?;
-    s.serialize_str(&val)
 }
 
 #[cfg(test)]

@@ -1,11 +1,12 @@
 //! Verify contract source on etherscan
 
-use crate::{etherscan, utils};
+use crate::utils;
 
 use ethers::{
     abi::{Address, Function, FunctionExt},
     prelude::Provider,
 };
+use ethers_etherscan::{Client, VerifyContract};
 use eyre::ContextCompat;
 use seth::{Seth, SimpleSeth};
 use std::convert::TryFrom;
@@ -52,16 +53,20 @@ pub async fn run(
         eyre::bail!("No constructor found but contract arguments provided")
     }
 
-    let etherscan = etherscan::Client::new(chain, etherscan_api_key)?;
+    let etherscan = Client::new(chain, etherscan_api_key)
+        .map_err(|err| eyre::eyre!("Failed to create etherscan client: {}", err))?;
 
     let source = std::fs::read_to_string(&path)?;
 
-    let contract = etherscan::VerifyContract::new(address, source, compiler_version)
+    let contract = VerifyContract::new(address, source, compiler_version)
         .constructor_arguments(constructor_args)
         .optimization(metadata.settings.optimizer.enabled)
         .runs(metadata.settings.optimizer.runs);
 
-    let resp = etherscan.submit_contract_verification(contract).await?;
+    let resp = etherscan
+        .submit_contract_verification(&contract)
+        .await
+        .map_err(|err| eyre::eyre!("Failed to submit contract verification: {}", err))?;
 
     if resp.status == "0" {
         if resp.message == "Contract source code already verified" {
