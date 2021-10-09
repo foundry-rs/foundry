@@ -242,4 +242,32 @@ mod tests {
         assert_eq!(reason, "not equal to `hi`".to_string());
         assert_eq!(gas_used, 30330);
     }
+
+    #[test]
+    fn test_can_call_large_contract() {
+        let cfg = Config::istanbul();
+
+        use dapp_solc::SolcBuilder;
+
+        let compiled = SolcBuilder::new("./testdata/LargeContract.sol", &[], &[])
+            .unwrap()
+            .build_all()
+            .unwrap();
+        let compiled = compiled.get("LargeContract").unwrap();
+
+        let vicinity = new_vicinity();
+        let backend = new_backend(&vicinity, Default::default());
+        let mut evm = Executor::new(13_000_000, &cfg, &backend);
+
+        let from = Address::random();
+        let (addr, _, _) = evm.deploy(from, compiled.bytecode.clone(), 0.into()).unwrap();
+
+        // makes a call to the contract
+        let sig = ethers::utils::id("foo()").to_vec();
+        let res = evm.call_raw(from, addr, sig.into(), 0.into(), true).unwrap();
+        // the retdata cannot be empty
+        assert!(!res.0.as_ref().is_empty());
+        // the call must be successful
+        assert!(matches!(res.1, ExitReason::Succeed(_)));
+    }
 }
