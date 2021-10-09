@@ -263,6 +263,11 @@ mod tests {
         let (addr, _, _) = evm.deploy(from, compiled.bytecode.clone(), 0.into()).unwrap();
 
         // makes a call to the contract
-        evm.call::<String, _, _>(from, addr, "foo()(string)", (), 0.into()).unwrap();
+        let sig = ethers::utils::id("foo()").to_vec();
+        let res = evm.call_raw(from, addr, sig.into(), 0.into(), true).unwrap();
+        // the retdata cannot be empty
+        assert!(!res.0.as_ref().is_empty());
+        // the call must be successful
+        assert!(matches!(res.1, ExitReason::Succeed(_)));
     }
 }
