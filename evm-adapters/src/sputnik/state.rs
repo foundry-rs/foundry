@@ -215,21 +215,87 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sputnik::helpers::new_vicinity;
-    use ethers::abi::Address;
-    use sputnik::{backend::MemoryBackend, executor::MemoryStackState, Config};
+    use crate::sputnik::{
+        forked_backend::MemCache, helpers::new_vicinity, new_shared_cache, SharedBackend,
+        SharedCache,
+    };
+    use ethers::{
+        abi::Address,
+        prelude::{Http, Provider},
+    };
+    use once_cell::sync::Lazy;
+    use sputnik::{
+        backend::{MemoryBackend, MemoryVicinity},
+        executor::MemoryStackState,
+        Config,
+    };
+    use std::convert::TryFrom;
+
+    static G_CONFIG: Lazy<Config> = Lazy::new(Config::istanbul);
+    static G_VICINITY: Lazy<MemoryVicinity> = Lazy::new(new_vicinity);
+    static G_BACKEND: Lazy<MemoryBackend> =
+        Lazy::new(|| MemoryBackend::new(&*G_VICINITY, Default::default()));
+
+    struct GlobalBackend {
+        cache: SharedCache<MemCache>,
+        backend: SharedBackend,
+    }
+
+    // this is pretty horrible but the sputnik types require 'static lifetime in order to be
+    // shareable
+    static G_FORKED_BACKEND: Lazy<GlobalBackend> = Lazy::new(|| {
+        let cache = new_shared_cache(MemCache::default());
+        let provider = Provider::<Http>::try_from(
+            "https://mainnet.infura.io/v3/c60b0bb42f8a4c6481ecd229eddaca27",
+        )
+        .unwrap();
+        let vicinity = G_VICINITY.clone();
+        let backend = SharedBackend::new(Arc::new(provider), cache.clone(), vicinity);
+        GlobalBackend { cache, backend }
+    });
+
+    #[test]
+    fn forked_shared_state_works() {
+        let gas_limit = 12_000_000;
+        let metadata = StackSubstateMetadata::new(gas_limit, &*G_CONFIG);
+        let state = MemoryStackState::new(metadata.clone(), &G_FORKED_BACKEND.backend);
+
+        let shared_state = new_shared_state(state);
+        let mut forked_state = ForkedState::new(shared_state.clone(), metadata.clone());
+
+        // some rng contract from etherscan
+        let address: Address = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();
+        assert!(!shared_state.read().exists(address));
+        assert!(!forked_state.exists(address));
+
+        let amount = shared_state.read().basic(address).balance;
+        assert_eq!(forked_state.basic(address).balance, amount);
+
+        forked_state.deposit(address, amount);
+        assert_eq!(forked_state.basic(address).balance, amount * 2);
+        // shared state remains the same
+        assert_eq!(shared_state.read().basic(address).balance, amount);
+        assert_eq!(G_FORKED_BACKEND.cache.read().get(&address).unwrap().balance, amount);
+
+        let mut another_forked_state = ForkedState::new(shared_state.clone(), metadata);
+        let t = std::thread::spawn(move || {
+            assert_eq!(another_forked_state.basic(address).balance, amount);
+            another_forked_state.deposit(address, amount * 10);
+        });
+        t.join().unwrap();
+
+        assert_eq!(forked_state.basic(address).balance, amount * 2);
+        assert_eq!(shared_state.read().basic(address).balance, amount);
+    }
 
     #[test]
     fn shared_state_works() {
-        let config = Config::istanbul();
-        let vicinity = new_vicinity();
-        let backend = MemoryBackend::new(&vicinity, Default::default());
         let gas_limit = 12_000_000;
-        let metadata = StackSubstateMetadata::new(gas_limit, &config);
-        let state = MemoryStackState::new(metadata.clone(), &backend);
+        let metadata = StackSubstateMetadata::new(gas_limit, &*G_CONFIG);
+        let state = MemoryStackState::new(metadata.clone(), &*G_BACKEND);
 
         let shared_state = new_shared_state(state);
-        let mut forked_state = ForkedState::new(shared_state.clone(), metadata);
+        let mut forked_state = ForkedState::new(shared_state.clone(), metadata.clone());
 
         // deposit some funds in a new address
         let address = Address::random();
@@ -248,6 +314,16 @@ mod tests {
         forked_state.deposit(address, amount);
         assert_eq!(forked_state.basic(address).balance, amount * 2);
         // shared state remains the same
+        assert_eq!(shared_state.read().basic(address).balance, amount);
+
+        let mut another_forked_state = ForkedState::new(shared_state.clone(), metadata);
+        let t = std::thread::spawn(move || {
+            assert_eq!(another_forked_state.basic(address).balance, amount);
+            another_forked_state.deposit(address, amount * 10);
+        });
+        t.join().unwrap();
+
+        assert_eq!(forked_state.basic(address).balance, amount * 2);
         assert_eq!(shared_state.read().basic(address).balance, amount);
     }
 }

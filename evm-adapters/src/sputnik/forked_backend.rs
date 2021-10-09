@@ -667,7 +667,7 @@ mod tests {
         assert_eq!(mem_acc.storage.len(), 1);
         assert_eq!(mem_acc.storage.get(&idx).copied().unwrap(), value);
 
-        let backend = backend.clone();
+        let backend = backend;
         let max_slots = 5;
         let handle = std::thread::spawn(move || {
             for i in 1..max_slots {
