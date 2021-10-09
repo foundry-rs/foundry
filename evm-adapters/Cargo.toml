@@ -26,6 +26,8 @@ hex = "0.4.3"
 thiserror = "1.0.29"
 proptest = "1.0.0"
 parking_lot = "0.11.2"
+futures = "0.3.17"
+log = "0.4.14"
 
 [dev-dependencies]
 evmodin = { git = "https://github.com/vorot93/evmodin", features = ["util"] }
