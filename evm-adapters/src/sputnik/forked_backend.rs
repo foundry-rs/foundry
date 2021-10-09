@@ -194,6 +194,11 @@ pub type MemCache = BTreeMap<H160, MemoryAccount>;
 /// This can can be used as global state cache.
 pub type SharedCache<T> = Arc<RwLock<T>>;
 
+/// Create a new shareable state cache.
+pub fn new_shared_cache<T>(cache: T) -> SharedCache<T> {
+    Arc::new(RwLock::new(cache))
+}
+
 type AccountFuture<Err> =
     Pin<Box<dyn Future<Output = (Result<(U256, U256, Bytes), Err>, Address)> + Send>>;
 type StorageFuture<Err> = Pin<Box<dyn Future<Output = (Result<H256, Err>, Address, H256)> + Send>>;
@@ -219,8 +224,7 @@ enum AccountListener {
     Code(OneshotSender<Vec<u8>>),
 }
 
-/// Handles an internal provider and listens for
-/// with the provider's response.
+/// Handles an internal provider and listens for requests.
 #[must_use = "BackendHandler does nothing unless polled."]
 struct BackendHandler<M: Middleware> {
     provider: M,
@@ -228,7 +232,8 @@ struct BackendHandler<M: Middleware> {
     cache: SharedCache<MemCache>,
     /// Requests currently in progress
     pending_requests: Vec<ProviderRequest<M::Error>>,
-    /// Listeners that wait for a `get_account` response
+    /// Listeners that wait for a `get_account` related response
+    /// We also store the `get_storage_at` responses until the initial account info is fetched.
     account_requests: HashMap<Address, (Vec<AccountListener>, BTreeMap<H256, H256>)>,
     /// Listeners that wait for a `get_storage_at` response
     storage_requests: HashMap<(Address, H256), Vec<OneshotSender<H256>>>,
@@ -316,18 +321,18 @@ where
                     if let Some(value) = value {
                         let _ = sender.send(value);
                     } else {
-                        // only get the storage
+                        // account present but not storage -> fetch storage
                         self.request_account_storage(addr, idx, sender);
                     }
                 } else {
-                    // get storage and account
+                    // account missing
                     // check if already fetched but not in cache yet
                     if let Some(value) =
                         self.account_requests.get(&addr).and_then(|(_, s)| s.get(&idx).copied())
                     {
                         let _ = sender.send(value);
                     } else {
-                        // only get the storage
+                        // fetch storage
                         self.request_account_storage(addr, idx, sender);
                     }
                 }
@@ -335,6 +340,7 @@ where
         }
     }
 
+    /// process a request for account's storage
     fn request_account_storage(
         &mut self,
         address: Address,
@@ -358,6 +364,7 @@ where
         }
     }
 
+    /// returns the future that fetches the account data
     fn get_account_req(&self, address: Address) -> ProviderRequest<M::Error> {
         let provider = self.provider.clone();
         let block_id = self.block_id;
@@ -371,6 +378,7 @@ where
         ProviderRequest::Account(fut)
     }
 
+    /// process a request for an account
     fn request_account(&mut self, address: Address, listener: AccountListener) {
         match self.account_requests.entry(address) {
             Entry::Occupied(mut entry) => {
@@ -398,6 +406,7 @@ where
             pin.on_request(req)
         }
 
+        // poll all requests in progress
         for n in (0..pin.pending_requests.len()).rev() {
             let mut request = pin.pending_requests.swap_remove(n);
             match &mut request {
@@ -455,7 +464,8 @@ where
                         if let Some(acc) = pin.cache.write().get_mut(&addr) {
                             acc.storage.insert(idx, value);
                         } else {
-                            // account not fetched yet, get it with this storage slot
+                            // the account not fetched yet, we either add this value to the storage
+                            // buffer of the request in progress or start the `get_account` request
                             match pin.account_requests.entry(addr) {
                                 Entry::Occupied(mut entry) => {
                                     entry.get_mut().1.insert(idx, value);
@@ -484,12 +494,16 @@ where
     }
 }
 
+/// A cloneable backend type that shares the backend data with all its clones.
 #[derive(Debug, Clone)]
 pub struct SharedBackend {
     inner: SharedBackendInner,
 }
 
 impl SharedBackend {
+    /// Spawns a new `BackendHandler` on a background thread that listenes for requests from any
+    /// `SharedBackend`. Missing values get inserted in the `cache`.
+    ///
     /// NOTE: this should be called with `Arc<Provider>`
     pub fn new<M>(provider: M, cache: SharedCache<MemCache>, vicinity: MemoryVicinity) -> Self
     where
@@ -627,6 +641,44 @@ mod tests {
     use tokio::runtime::Runtime;
 
     use super::*;
+
+    #[test]
+    fn shared_backend() {
+        let provider = Provider::<Http>::try_from(
+            "https://mainnet.infura.io/v3/c60b0bb42f8a4c6481ecd229eddaca27",
+        )
+        .unwrap();
+        // some rng contract from etherscan
+        let address: Address = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();
+
+        let rt = Runtime::new().unwrap();
+        let vicinity = rt.block_on(vicinity(&provider, None)).unwrap();
+        let cache = new_shared_cache(MemCache::default());
+
+        let backend = SharedBackend::new(Arc::new(provider), cache.clone(), vicinity);
+
+        let idx = H256::from_low_u64_be(0u64);
+        let value = backend.storage(address, idx);
+        let account = backend.basic(address);
+
+        let mem_acc = cache.read().get(&address).unwrap().clone();
+        assert_eq!(account.balance, mem_acc.balance,);
+        assert_eq!(account.nonce, mem_acc.nonce,);
+        assert_eq!(mem_acc.storage.len(), 1);
+        assert_eq!(mem_acc.storage.get(&idx).copied().unwrap(), value);
+
+        let backend = backend.clone();
+        let max_slots = 5;
+        let handle = std::thread::spawn(move || {
+            for i in 1..max_slots {
+                let idx = H256::from_low_u64_be(i);
+                let _ = backend.storage(address, idx);
+            }
+        });
+        handle.join().unwrap();
+        let mem_acc = cache.read().get(&address).unwrap().clone();
+        assert_eq!(mem_acc.storage.len() as u64, max_slots);
+    }
 
     #[test]
     fn forked_backend() {
