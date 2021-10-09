@@ -662,7 +662,7 @@ mod tests {
         let account = backend.basic(address);
 
         let mem_acc = cache.read().get(&address).unwrap().clone();
-        assert_eq!(account.balance, mem_acc.balance,);
+        assert_eq!(account.balance, mem_acc.balance);
         assert_eq!(account.nonce, mem_acc.nonce,);
         assert_eq!(mem_acc.storage.len(), 1);
         assert_eq!(mem_acc.storage.get(&idx).copied().unwrap(), value);
