@@ -257,7 +257,7 @@ mod tests {
 
         let vicinity = new_vicinity();
         let backend = new_backend(&vicinity, Default::default());
-        let mut evm = Executor::new(12_000_000, &cfg, &backend);
+        let mut evm = Executor::new(13_000_000, &cfg, &backend);
 
         let from = Address::random();
         let (addr, _, _) = evm.deploy(from, compiled.bytecode.clone(), 0.into()).unwrap();
