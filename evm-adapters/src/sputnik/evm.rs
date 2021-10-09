@@ -107,6 +107,11 @@ where
         let gas_after = self.executor.gas_left();
         let gas = gas_before.saturating_sub(gas_after).saturating_sub(21000.into());
 
+        if Self::is_fail(&status) {
+            // TODO: Should we be adding more context?
+            return Err(eyre::eyre!("deployment reverted"))
+        }
+
         Ok((address, status, gas.as_u64()))
     }
 

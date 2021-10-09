@@ -7,7 +7,7 @@ use ethers::{types::Address, utils::CompiledContract};
 use proptest::test_runner::TestRunner;
 use regex::Regex;
 
-use eyre::Result;
+use eyre::{Context, Result};
 use std::{collections::HashMap, marker::PhantomData, path::PathBuf};
 
 /// Builder used for instantiating the multi-contract runner
@@ -48,7 +48,9 @@ impl<'a> MultiContractRunnerBuilder<'a> {
         let addresses = contracts
             .iter()
             .map(|(name, compiled)| {
-                let (addr, _, _) = evm.deploy(deployer, compiled.bytecode.clone(), 0.into())?;
+                let (addr, _, _) = evm
+                    .deploy(deployer, compiled.bytecode.clone(), 0.into())
+                    .wrap_err(format!("could not deploy {}", name))?;
                 Ok((name.clone(), addr))
             })
             .collect::<Result<HashMap<_, _>>>()?;
