@@ -9,12 +9,15 @@ use sputnik::{
     executor::{
         Log, PrecompileOutput, StackExecutor, StackExitKind, StackState, StackSubstateMetadata,
     },
-    gasometer, Capture, Config, Context, CreateScheme, ExitError, ExitReason, ExitSucceed, Handler,
-    Runtime, Transfer,
+    gasometer, Capture, Config, Context, CreateScheme, ExitError, ExitReason,
+    ExitRevert, ExitSucceed, Handler, Runtime, Transfer,
 };
-use std::rc::Rc;
+use std::{process::Command, rc::Rc};
 
-use ethers::types::{Address, H160, H256, U256};
+use ethers::{
+    abi::Token,
+    types::{Address, H160, H256, U256},
+};
 use std::convert::Infallible;
 
 use once_cell::sync::Lazy;
@@ -147,10 +150,17 @@ impl<'a, B: Backend> Executor<CheatcodeStackState<'a, B>, CheatcodeStackExecutor
     }
 }
 
+fn evm_error(retdata: &str) -> Capture<(ExitReason, Vec<u8>), Infallible> {
+    Capture::Exit((
+        ExitReason::Revert(ExitRevert::Reverted),
+        ethers::abi::encode(&[Token::String(retdata.to_owned())]),
+    ))
+}
+
 impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
     /// Decodes the provided calldata as a
     fn apply_cheatcode(&mut self, input: Vec<u8>) -> Capture<(ExitReason, Vec<u8>), Infallible> {
-        let mut res = H256::zero();
+        let mut res = vec![];
 
         // Get a mutable ref to the state so we can apply the cheats
         let state = self.state_mut();
@@ -169,12 +179,30 @@ impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
         }
 
         if let Ok((address, slot)) = HEVM.decode::<(Address, H256), _>("load", &input) {
-            res = state.storage(address, slot);
+            res = state.storage(address, slot).0.to_vec();
+        }
+
+        if let Ok(args) = HEVM.decode::<Vec<String>, _>("ffi", &input) {
+            // execute the command & get the stdout
+            let output = match Command::new(&args[0]).args(&args[1..]).output() {
+                Ok(res) => res.stdout,
+                Err(err) => return evm_error(&err.to_string()),
+            };
+
+            // get the hex string & decode it
+            let output = unsafe { std::str::from_utf8_unchecked(&output) };
+            let decoded = match hex::decode(&output[2..]) {
+                Ok(res) => res,
+                Err(err) => return evm_error(&err.to_string()),
+            };
+
+            // encode the data as Bytes
+            res = ethers::abi::encode(&[Token::Bytes(decoded.to_vec())]);
         }
 
         // TODO: Add more cheat codes.
 
-        Capture::Exit((ExitReason::Succeed(ExitSucceed::Stopped), res.0.to_vec()))
+        Capture::Exit((ExitReason::Succeed(ExitSucceed::Stopped), res))
     }
 
     // NB: This function is copy-pasted from uptream's `execute`, adjusted so that we call the
@@ -499,7 +527,6 @@ mod tests {
                 let (_, reason, _) =
                     evm.as_mut().call_unchecked(Address::zero(), addr, func, (), 0.into()).unwrap();
                 assert!(evm.as_mut().check_success(addr, &reason, should_fail));
-                // We NEED to reset the state else there's no isolation
             } else {
                 // if the unwrap passes then it works
                 evm.fuzz(func, addr, should_fail).unwrap();
