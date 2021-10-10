@@ -67,6 +67,9 @@ pub enum Subcommands {
             default_value = "0x0000000000000000000000000000000000000000"
         )]
         deployer: Address,
+
+        #[structopt(help = "enables the FFI cheatcode", long)]
+        ffi: bool,
     },
     #[structopt(about = "build your smart contracts")]
     Build {

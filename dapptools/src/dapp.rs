@@ -40,6 +40,7 @@ fn main() -> eyre::Result<()> {
             fork_block_number,
             initial_balance,
             deployer,
+            ffi,
         } => {
             // get the remappings / paths
             let remappings = utils::merge(remappings, remappings_env);
@@ -95,7 +96,7 @@ fn main() -> eyre::Result<()> {
                     };
                     let backend = Arc::new(backend);
 
-                    let evm = Executor::new_with_cheatcodes(backend, env.gas_limit, &cfg);
+                    let evm = Executor::new_with_cheatcodes(backend, env.gas_limit, &cfg, ffi);
                     test(builder, evm, pattern, json)?;
                 }
                 #[cfg(feature = "evmodin-evm")]

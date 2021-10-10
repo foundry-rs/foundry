@@ -14,7 +14,7 @@ pub mod fuzz;
 use ethers::{
     abi::{Detokenize, Tokenize},
     core::types::{Address, U256},
-    prelude::{decode_function_data, encode_function_data, AbiError, Bytes},
+    prelude::{decode_function_data, encode_function_data, Bytes},
 };
 
 use dapp_utils::IntoFunction;
