@@ -57,7 +57,11 @@ fn main() -> eyre::Result<()> {
                 EvmType::Sputnik => {
                     use evm_adapters::sputnik::Executor;
                     use sputnik::backend::MemoryBackend;
-                    let cfg = evm_version.sputnik_cfg();
+                    let mut cfg = evm_version.sputnik_cfg();
+
+                    // We disable the contract size limit by default, because Solidity
+                    // test smart contracts are likely to be >24kb
+                    cfg.create_contract_limit = None;
 
                     let vicinity = if let Some(ref url) = fork_url {
                         let provider = Provider::try_from(url.as_str())?;
