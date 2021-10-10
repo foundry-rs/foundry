@@ -7,7 +7,7 @@ use ethers::{
 
 use evm_adapters::{fuzz::FuzzedExecutor, Evm, EvmError};
 
-use eyre::Result;
+use eyre::{Context, Result};
 use regex::Regex;
 use std::{collections::HashMap, time::Instant};
 
@@ -128,7 +128,9 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         let should_fail = func.name.starts_with("testFail");
         // call the setup function in each test to reset the test's state.
         if setup {
-            self.evm.setup(self.address)?;
+            self.evm
+                .setup(self.address)
+                .wrap_err(format!("could not setup during {} test", func.name))?;
         }
 
         let (status, reason, gas_used) = match self.evm.call::<(), _, _>(
