@@ -52,6 +52,20 @@ pub enum Subcommands {
 
         #[structopt(help = "pins the block number for the state fork", long)]
         fork_block_number: Option<u64>,
+
+        #[structopt(
+            help = "the initial balance of each deployed test contract",
+            long,
+            default_value = "0xffffffffffffffffffffffff"
+        )]
+        initial_balance: U256,
+
+        #[structopt(
+            help = "the address which will be executing all tests",
+            long,
+            default_value = "0x0000000000000000000000000000000000000000"
+        )]
+        deployer: Address,
     },
     #[structopt(about = "build your smart contracts")]
     Build {

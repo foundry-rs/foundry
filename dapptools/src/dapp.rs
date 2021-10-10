@@ -32,6 +32,8 @@ fn main() -> eyre::Result<()> {
             no_compile,
             fork_url,
             fork_block_number,
+            initial_balance,
+            deployer,
         } => {
             // get the remappings / paths
             let remappings = utils::merge(remappings, remappings_env);
@@ -49,6 +51,8 @@ fn main() -> eyre::Result<()> {
                 .libraries(&lib_paths)
                 .out_path(out_path)
                 .fuzzer(fuzzer)
+                .initial_balance(initial_balance)
+                .deployer(deployer)
                 .skip_compilation(no_compile);
 
             // run the tests depending on the chosen EVM

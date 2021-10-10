@@ -52,6 +52,9 @@ pub trait Evm<State> {
     /// Gets a reference to the current state of the EVM
     fn state(&self) -> &State;
 
+    /// Sets the balance at the specified address
+    fn set_balance(&mut self, address: Address, amount: U256);
+
     /// Resets the EVM's state to the provided value
     fn reset(&mut self, state: State);
 
