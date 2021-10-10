@@ -2,12 +2,15 @@ use crate::{artifacts::DapptoolsArtifact, runner::TestResult, ContractRunner};
 use dapp_solc::SolcBuilder;
 use evm_adapters::Evm;
 
-use ethers::{types::Address, utils::CompiledContract};
+use ethers::{
+    types::{Address, U256},
+    utils::CompiledContract,
+};
 
 use proptest::test_runner::TestRunner;
 use regex::Regex;
 
-use eyre::Result;
+use eyre::{Context, Result};
 use std::{collections::HashMap, marker::PhantomData, path::PathBuf};
 
 /// Builder used for instantiating the multi-contract runner
@@ -26,6 +29,8 @@ pub struct MultiContractRunnerBuilder<'a> {
     pub fuzzer: Option<TestRunner>,
     /// The address which will be used to deploy the initial contracts
     pub deployer: Address,
+    /// The initial balance for each one of the deployed smart contracts
+    pub initial_balance: U256,
 }
 
 impl<'a> MultiContractRunnerBuilder<'a> {
@@ -45,10 +50,24 @@ impl<'a> MultiContractRunnerBuilder<'a> {
         };
 
         let deployer = self.deployer;
+        let initial_balance = self.initial_balance;
         let addresses = contracts
             .iter()
+            .filter(|(_, compiled)| {
+                compiled.abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true)
+            })
+            .filter(|(_, compiled)| {
+                compiled.abi.functions().any(|func| func.name.starts_with("test"))
+            })
             .map(|(name, compiled)| {
-                let (addr, _, _) = evm.deploy(deployer, compiled.bytecode.clone(), 0.into())?;
+                let span = tracing::trace_span!("deploying", ?name);
+                let _enter = span.enter();
+
+                let (addr, _, _) = evm
+                    .deploy(deployer, compiled.bytecode.clone(), 0.into())
+                    .wrap_err(format!("could not deploy {}", name))?;
+
+                evm.set_balance(addr, initial_balance);
                 Ok((name.clone(), addr))
             })
             .collect::<Result<HashMap<_, _>>>()?;
@@ -69,6 +88,11 @@ impl<'a> MultiContractRunnerBuilder<'a> {
 
     pub fn deployer(mut self, deployer: Address) -> Self {
         self.deployer = deployer;
+        self
+    }
+
+    pub fn initial_balance(mut self, initial_balance: U256) -> Self {
+        self.initial_balance = initial_balance;
         self
     }
 

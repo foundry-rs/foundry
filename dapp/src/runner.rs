@@ -7,7 +7,7 @@ use ethers::{
 
 use evm_adapters::{fuzz::FuzzedExecutor, Evm, EvmError};
 
-use eyre::Result;
+use eyre::{Context, Result};
 use regex::Regex;
 use std::{collections::HashMap, time::Instant};
 
@@ -69,6 +69,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         regex: &Regex,
         fuzzer: Option<&mut TestRunner>,
     ) -> Result<HashMap<String, TestResult>> {
+        tracing::info!("starting tests");
         let start = Instant::now();
         let needs_setup = self.contract.abi.functions().any(|func| func.name == "setUp");
         let test_fns = self
@@ -112,8 +113,9 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         };
 
         if !map.is_empty() {
+            let successful = map.iter().filter(|(_, tst)| tst.success).count();
             let duration = Instant::now().duration_since(start);
-            tracing::debug!("total duration: {:?}", duration);
+            tracing::info!(?duration, "done. {}/{} successful", successful, map.len());
         }
         Ok(map)
     }
@@ -126,9 +128,13 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         // which allows to test multiple assertions in 1 test function while also
         // preserving logs.
         let should_fail = func.name.starts_with("testFail");
+        tracing::debug!(func = ?func.name, should_fail, "unit-testing");
+
         // call the setup function in each test to reset the test's state.
         if setup {
-            self.evm.setup(self.address)?;
+            self.evm
+                .setup(self.address)
+                .wrap_err(format!("could not setup during {} test", func.name))?;
         }
 
         let (status, reason, gas_used) = match self.evm.call::<(), _, _>(
@@ -149,7 +155,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         };
         let success = self.evm.check_success(self.address, &status, should_fail);
         let duration = Instant::now().duration_since(start);
-        tracing::trace!(?duration, %success, %gas_used);
+        tracing::debug!(?duration, %success, %gas_used);
 
         Ok(TestResult { success, reason, gas_used: Some(gas_used), counterexample: None })
     }
@@ -161,13 +167,14 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         setup: bool,
         runner: TestRunner,
     ) -> Result<TestResult> {
+        let start = Instant::now();
+        let should_fail = func.name.starts_with("testFail");
+        tracing::debug!(func = ?func.name, should_fail, "fuzzing");
+
         // call the setup function in each test to reset the test's state.
         if setup {
             self.evm.setup(self.address)?;
         }
-
-        let start = Instant::now();
-        let should_fail = func.name.starts_with("testFail");
 
         // instantniate the fuzzzed evm in line
         let evm = FuzzedExecutor::new(self.evm, runner);
@@ -186,7 +193,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         };
 
         let duration = Instant::now().duration_since(start);
-        tracing::trace!(?duration, %success);
+        tracing::debug!(?duration, %success);
 
         // TODO: How can we have proptest also return us the gas_used and the revert reason
         // from that call?
@@ -224,7 +231,7 @@ mod tests {
         }
 
         #[test]
-        fn test_fuzzing() {
+        fn test_fuzzing_counterexamples() {
             let cfg = Config::istanbul();
             let compiled = COMPILED.get("GreeterTest").expect("could not find contract");
             let vicinity = new_vicinity();
@@ -251,6 +258,33 @@ mod tests {
                 assert!(!res.success);
                 assert!(res.counterexample.is_some());
             }
+        }
+
+        #[test]
+        fn test_fuzzing_ok() {
+            let cfg = Config::istanbul();
+            let compiled = COMPILED.get("GreeterTest").expect("could not find contract");
+            let vicinity = new_vicinity();
+            let backend = new_backend(&vicinity, Default::default());
+
+            let mut evm = Executor::new(u64::MAX, &cfg, &backend);
+            let (addr, _, _) =
+                evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
+
+            let mut runner = ContractRunner {
+                evm: &mut evm,
+                contract: compiled,
+                address: addr,
+                state: PhantomData,
+            };
+
+            let mut cfg = FuzzConfig::default();
+            cfg.failure_persistence = None;
+            let fuzzer = TestRunner::new(cfg);
+            let func = get_func("testStringFuzz(string)").unwrap();
+            let res = runner.run_fuzz_test(&func, true, fuzzer.clone()).unwrap();
+            assert!(res.success);
+            assert!(res.counterexample.is_none());
         }
 
         #[test]

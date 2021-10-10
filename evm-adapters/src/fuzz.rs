@@ -53,6 +53,7 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
         let pre_test_state = self.evm.borrow().state().clone();
 
         let mut runner = self.runner.clone();
+        tracing::debug!(func = ?func.name, should_fail, "fuzzing");
         runner.run(&strat, |calldata| {
             let mut evm = self.evm.borrow_mut();
 
@@ -86,7 +87,10 @@ pub fn fuzz_calldata(func: &Function) -> impl Strategy<Value = Bytes> + '_ {
     // possible combinations
     let strats = func.inputs.iter().map(|input| fuzz_param(&input.kind)).collect::<Vec<_>>();
 
-    strats.prop_map(move |tokens| func.encode_input(&tokens).unwrap().into())
+    strats.prop_map(move |tokens| {
+        tracing::trace!(input = ?tokens);
+        func.encode_input(&tokens).unwrap().into()
+    })
 }
 
 /// The max length of arrays we fuzz for is 256.

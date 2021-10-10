@@ -1,6 +1,6 @@
 use structopt::StructOpt;
 
-use ethers::types::Address;
+use ethers::types::{Address, U256};
 use std::{path::PathBuf, str::FromStr};
 
 #[derive(Debug, StructOpt)]
@@ -11,6 +11,7 @@ pub struct Opts {
 
 #[derive(Debug, StructOpt)]
 #[structopt(about = "Build, test, fuzz, formally verify, debug & deploy solidity contracts.")]
+#[allow(clippy::large_enum_variant)]
 pub enum Subcommands {
     #[structopt(about = "test your smart contracts")]
     Test {
@@ -52,6 +53,20 @@ pub enum Subcommands {
 
         #[structopt(help = "pins the block number for the state fork", long)]
         fork_block_number: Option<u64>,
+
+        #[structopt(
+            help = "the initial balance of each deployed test contract",
+            long,
+            default_value = "0xffffffffffffffffffffffff"
+        )]
+        initial_balance: U256,
+
+        #[structopt(
+            help = "the address which will be executing all tests",
+            long,
+            default_value = "0x0000000000000000000000000000000000000000"
+        )]
+        deployer: Address,
     },
     #[structopt(about = "build your smart contracts")]
     Build {
@@ -167,7 +182,9 @@ impl FromStr for EvmVersion {
 
 #[derive(Debug, StructOpt)]
 pub struct Env {
-    #[structopt(help = "the block gas limit", long, default_value = "25000000")]
+    // structopt does not let use `u64::MAX`:
+    // https://doc.rust-lang.org/std/primitive.u64.html#associatedconstant.MAX
+    #[structopt(help = "the block gas limit", long, default_value = "18446744073709551615")]
     pub gas_limit: u64,
 
     #[structopt(help = "the chainid opcode value", long, default_value = "1")]
