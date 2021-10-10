@@ -31,6 +31,8 @@ pub trait HostExt: Host {
     fn get_code(&self, address: &Address) -> Option<&bytes::Bytes>;
     /// Sets the bytecode at the specified address to the provided value.
     fn set_code(&mut self, address: Address, code: bytes::Bytes);
+    /// Sets the account's balance to the provided value.
+    fn set_balance(&mut self, address: Address, balance: U256);
 }
 
 impl<S: HostExt, Tr: Tracer> Evm<S> for EvmOdin<S, Tr> {
@@ -46,6 +48,10 @@ impl<S: HostExt, Tr: Tracer> Evm<S> for EvmOdin<S, Tr> {
 
     fn is_fail(reason: &Self::ReturnReason) -> bool {
         matches!(reason, StatusCode::Revert)
+    }
+
+    fn set_balance(&mut self, address: Address, balance: U256) {
+        self.host.set_balance(address, balance)
     }
 
     fn reset(&mut self, state: S) {
@@ -114,7 +120,7 @@ impl<S: HostExt, Tr: Tracer> Evm<S> for EvmOdin<S, Tr> {
 mod helpers {
     use super::*;
     use ethers::utils::keccak256;
-    use evmodin::util::mocked_host::{Account, MockedHost};
+    use evmodin::util::mocked_host::MockedHost;
     impl HostExt for MockedHost {
         fn get_code(&self, address: &Address) -> Option<&bytes::Bytes> {
             self.accounts.get(address).map(|acc| &acc.code)
@@ -122,16 +128,14 @@ mod helpers {
 
         fn set_code(&mut self, address: Address, bytecode: bytes::Bytes) {
             let hash = keccak256(&bytecode);
-            self.accounts.insert(
-                address,
-                Account {
-                    nonce: 0,
-                    balance: 0.into(),
-                    code: bytecode,
-                    code_hash: hash.into(),
-                    storage: Default::default(),
-                },
-            );
+            let entry = self.accounts.entry(address).or_insert_with(Default::default);
+            entry.code = bytecode;
+            entry.code_hash = hash.into();
+        }
+
+        fn set_balance(&mut self, address: Address, amount: U256) {
+            let entry = self.accounts.entry(address).or_insert_with(Default::default);
+            entry.balance = amount;
         }
     }
 }
