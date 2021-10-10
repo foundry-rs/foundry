@@ -9,8 +9,8 @@ use sputnik::{
     executor::{
         Log, PrecompileOutput, StackExecutor, StackExitKind, StackState, StackSubstateMetadata,
     },
-    gasometer, Capture, Config, Context, CreateScheme, ExitError, ExitReason,
-    ExitRevert, ExitSucceed, Handler, Runtime, Transfer,
+    gasometer, Capture, Config, Context, CreateScheme, ExitError, ExitReason, ExitRevert,
+    ExitSucceed, Handler, Runtime, Transfer,
 };
 use std::{process::Command, rc::Rc};
 
@@ -34,6 +34,7 @@ pub static CHEATCODE_ADDRESS: Lazy<Address> = Lazy::new(|| {
 // etc.
 pub struct CheatcodeHandler<H> {
     handler: H,
+    enable_ffi: bool,
 }
 
 // Forwards everything internally except for the transact_call which is overriden.
@@ -127,7 +128,12 @@ pub type CheatcodeStackExecutor<'a, B> =
     CheatcodeHandler<StackExecutor<'a, CheatcodeStackState<'a, B>>>;
 
 impl<'a, B: Backend> Executor<CheatcodeStackState<'a, B>, CheatcodeStackExecutor<'a, B>> {
-    pub fn new_with_cheatcodes(backend: B, gas_limit: u64, config: &'a Config) -> Self {
+    pub fn new_with_cheatcodes(
+        backend: B,
+        gas_limit: u64,
+        config: &'a Config,
+        enable_ffi: bool,
+    ) -> Self {
         // make this a cheatcode-enabled backend
         let backend = CheatcodeBackend { backend, cheats: Default::default() };
 
@@ -138,7 +144,7 @@ impl<'a, B: Backend> Executor<CheatcodeStackState<'a, B>, CheatcodeStackExecutor
 
         // create the executor and wrap it with the cheatcode handler
         let executor = StackExecutor::new_with_precompile(state, config, Default::default());
-        let executor = CheatcodeHandler { handler: executor };
+        let executor = CheatcodeHandler { handler: executor, enable_ffi };
 
         let mut evm = Executor::from_executor(executor, gas_limit);
 
@@ -183,6 +189,15 @@ impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
         }
 
         if let Ok(args) = HEVM.decode::<Vec<String>, _>("ffi", &input) {
+            // if FFI is not explicitly enabled at runtime, do not let this be called
+            // (we could have an FFI cheatcode executor instead but feels like
+            // over engineering)
+            if !self.enable_ffi {
+                return evm_error(
+                    "ffi disabled: run again with --ffi if you want to allow tests to call external scripts",
+                )
+            }
+
             // execute the command & get the stdout
             let output = match Command::new(&args[0]).args(&args[1..]).output() {
                 Ok(res) => res.stdout,
@@ -499,7 +514,7 @@ mod tests {
         let vicinity = new_vicinity();
         let backend = new_backend(&vicinity, Default::default());
         let gas_limit = 10_000_000;
-        let mut evm = Executor::new_with_cheatcodes(backend, gas_limit, &config);
+        let mut evm = Executor::new_with_cheatcodes(backend, gas_limit, &config, true);
 
         let compiled = COMPILED.get("CheatCodes").expect("could not find contract");
         let (addr, _, _) =
@@ -534,5 +549,26 @@ mod tests {
 
             evm.as_mut().reset(state.clone());
         }
+    }
+
+    #[test]
+    fn ffi_fails_if_disabled() {
+        let config = Config::istanbul();
+        let vicinity = new_vicinity();
+        let backend = new_backend(&vicinity, Default::default());
+        let gas_limit = 10_000_000;
+        let mut evm = Executor::new_with_cheatcodes(backend, gas_limit, &config, false);
+
+        let compiled = COMPILED.get("CheatCodes").expect("could not find contract");
+        let (addr, _, _) =
+            evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
+
+        let err =
+            evm.call::<(), _, _>(Address::zero(), addr, "testFFI()", (), 0.into()).unwrap_err();
+        let reason = match err {
+            crate::EvmError::Execution { reason, .. } => reason,
+            _ => panic!("unexpected error"),
+        };
+        assert_eq!(reason, "ffi disabled: run again with --ffi if you want to allow tests to call external scripts");
     }
 }
