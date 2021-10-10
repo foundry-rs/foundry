@@ -167,7 +167,9 @@ impl FromStr for EvmVersion {
 
 #[derive(Debug, StructOpt)]
 pub struct Env {
-    #[structopt(help = "the block gas limit", long, default_value = "25000000")]
+    // structopt does not let use `u64::MAX`:
+    // https://doc.rust-lang.org/std/primitive.u64.html#associatedconstant.MAX
+    #[structopt(help = "the block gas limit", long, default_value = "18446744073709551615")]
     pub gas_limit: u64,
 
     #[structopt(help = "the chainid opcode value", long, default_value = "1")]
