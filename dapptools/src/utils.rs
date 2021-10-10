@@ -11,8 +11,6 @@ pub fn subscriber() {
     tracing_subscriber::FmtSubscriber::builder()
         // .with_timer(tracing_subscriber::fmt::time::uptime())
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        // don't need the target
-        .with_target(false)
         .init();
 }
 

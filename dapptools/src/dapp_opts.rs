@@ -11,6 +11,7 @@ pub struct Opts {
 
 #[derive(Debug, StructOpt)]
 #[structopt(about = "Build, test, fuzz, formally verify, debug & deploy solidity contracts.")]
+#[allow(clippy::large_enum_variant)]
 pub enum Subcommands {
     #[structopt(about = "test your smart contracts")]
     Test {
