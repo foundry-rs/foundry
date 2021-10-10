@@ -71,6 +71,15 @@ Benchmarks TBD in the future, but:
         * [ ] symbolic execution
         * [ ] coverage
         * [ ] HEVM-style Solidity cheatcodes
+            * [x] roll
+            * [x] warp
+            * [x] ffi
+            * [x] store
+            * [x] load
+            * [ ] sign
+            * [ ] addr
+            * [ ] makeEOA
+            * ...?
         * [ ] structured tracing with abi decoding
         * [ ] per-line gas profiling
         * [x] forking mode
