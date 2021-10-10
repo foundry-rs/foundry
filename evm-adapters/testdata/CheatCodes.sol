@@ -112,13 +112,14 @@ contract CheatCodes is DSTest {
     //     hevm.addr(0);
     // }
 
-    // function testFFI() public {
-    //     string[] memory inputs = new string[](3);
-    //     inputs[0] = "echo";
-    //     inputs[1] = "-n";
-    //     inputs[2] = "0x000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000046163616200000000000000000000000000000000000000000000000000000000";
+    function testFFI() public {
+        string[] memory inputs = new string[](3);
+        inputs[0] = "echo";
+        inputs[1] = "-n";
+        inputs[2] = "0x000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000046163616200000000000000000000000000000000000000000000000000000000";
 
-    //     (string memory output) = abi.decode(hevm.ffi(inputs), (string));
-    //     assertEq(output, "acab");
-    // }
+        bytes memory res = hevm.ffi(inputs);
+        (string memory output) = abi.decode(res, (string));
+        assertEq(output, "acab");
+    }
 }
