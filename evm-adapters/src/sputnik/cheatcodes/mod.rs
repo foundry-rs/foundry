@@ -47,6 +47,10 @@ pub static HEVM: Lazy<BaseContract> = Lazy::new(|| {
             "store(address,bytes32,bytes32)",
             // returns the `value` of the storage `slot` at `address`
             "load(address,bytes32)(bytes32)",
+            // allows Solidity tests to make system calls on the host. Disabled
+            // by default, requires the user to enable it since it can be used
+            // to execute commands on a machine by adversaries
+            "ffi(string[])(bytes)",
         ])
         .expect("could not parse hevm cheatcode abi"),
     )
