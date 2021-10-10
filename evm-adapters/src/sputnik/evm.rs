@@ -68,7 +68,7 @@ where
     }
 
     fn is_fail(reason: &Self::ReturnReason) -> bool {
-        matches!(reason, ExitReason::Revert(_))
+        !Self::is_success(reason)
     }
 
     fn reset(&mut self, state: S) {
