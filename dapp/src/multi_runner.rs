@@ -47,7 +47,16 @@ impl<'a> MultiContractRunnerBuilder<'a> {
         let deployer = self.deployer;
         let addresses = contracts
             .iter()
+            .filter(|(_, compiled)| {
+                compiled.abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true)
+            })
+            .filter(|(_, compiled)| {
+                compiled.abi.functions().any(|func| func.name.starts_with("test"))
+            })
             .map(|(name, compiled)| {
+                let span = tracing::trace_span!("deploying", ?name);
+                let _enter = span.enter();
+
                 let (addr, _, _) = evm
                     .deploy(deployer, compiled.bytecode.clone(), 0.into())
                     .wrap_err(format!("could not deploy {}", name))?;
