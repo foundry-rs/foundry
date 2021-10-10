@@ -73,6 +73,63 @@ pub enum Subcommands {
         #[structopt(flatten)]
         opts: BuildOpts,
     },
+    #[structopt(about = "build your smart contracts. Requires `ETHERSCAN_API_KEY` to be set.")]
+    VerifyContract {
+        #[structopt(help = "contract source info `<path>:<contractname>`")]
+        contract: FullContractInfo,
+        #[structopt(help = "the address of the contract to verify.")]
+        address: Address,
+        #[structopt(help = "constructor args calldata arguments.")]
+        constructor_args: Vec<String>,
+    },
+    #[structopt(about = "deploy a compiled contract")]
+    Create {
+        #[structopt(help = "contract source info `<path>:<contractname>` or `<contractname>`")]
+        contract: ContractInfo,
+        #[structopt(long, help = "verify on Etherscan")]
+        verify: bool,
+    },
+}
+
+/// Represents the common dapp argument pattern for `<path>:<contractname>` where `<path>:` is
+/// optional.
+#[derive(Clone, Debug)]
+pub struct ContractInfo {
+    /// Location of the contract
+    pub path: Option<String>,
+    /// Name of the contract
+    pub name: String,
+}
+
+impl FromStr for ContractInfo {
+    type Err = eyre::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut iter = s.rsplit(':');
+        let name = iter.next().unwrap().to_string();
+        let path = iter.next().map(str::to_string);
+        Ok(Self { path, name })
+    }
+}
+
+/// Represents the common dapp argument pattern `<path>:<contractname>`
+#[derive(Clone, Debug)]
+pub struct FullContractInfo {
+    /// Location of the contract
+    pub path: String,
+    /// Name of the contract
+    pub name: String,
+}
+
+impl FromStr for FullContractInfo {
+    type Err = eyre::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let (path, name) = s
+            .split_once(':')
+            .ok_or_else(|| eyre::eyre!("Expected `<path>:<contractname>`, got `{}`", s))?;
+        Ok(Self { path: path.to_string(), name: name.to_string() })
+    }
 }
 
 #[derive(Debug, StructOpt)]
@@ -97,14 +154,13 @@ pub struct BuildOpts {
         help = "path to where the contract artifacts are stored",
         long = "out",
         short,
-        default_value = "./out/dapp.sol.json"
+        default_value = crate::utils::DAPP_JSON
     )]
     pub out_path: PathBuf,
 
     #[structopt(help = "choose the evm version", long, default_value = "berlin")]
     pub evm_version: EvmVersion,
 }
-
 #[derive(Clone, Debug)]
 pub enum EvmType {
     #[cfg(feature = "sputnik-evm")]

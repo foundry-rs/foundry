@@ -1,4 +1,4 @@
-use ethers::core::{types::Bytes, utils::CompiledContract};
+use ethers::core::utils::{solc::Contract, CompiledContract};
 use eyre::Result;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -9,37 +9,6 @@ use std::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DapptoolsArtifact {
     contracts: BTreeMap<String, BTreeMap<String, serde_json::Value>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Contract {
-    abi: ethers::abi::Abi,
-    evm: Evm,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Evm {
-    bytecode: Bytecode,
-    deployed_bytecode: Bytecode,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Bytecode {
-    #[serde(deserialize_with = "deserialize_bytes")]
-    object: Bytes,
-}
-
-use serde::Deserializer;
-
-pub fn deserialize_bytes<'de, D>(d: D) -> Result<Bytes, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let value = String::deserialize(d)?;
-
-    Ok(hex::decode(&value).map_err(|e| serde::de::Error::custom(e.to_string()))?.into())
 }
 
 impl DapptoolsArtifact {
