@@ -226,7 +226,7 @@ mod tests {
         }
 
         #[test]
-        fn test_fuzzing() {
+        fn test_fuzzing_counterexamples() {
             let cfg = Config::istanbul();
             let compiled = COMPILED.get("GreeterTest").expect("could not find contract");
             let vicinity = new_vicinity();
@@ -253,6 +253,33 @@ mod tests {
                 assert!(!res.success);
                 assert!(res.counterexample.is_some());
             }
+        }
+
+        #[test]
+        fn test_fuzzing_ok() {
+            let cfg = Config::istanbul();
+            let compiled = COMPILED.get("GreeterTest").expect("could not find contract");
+            let vicinity = new_vicinity();
+            let backend = new_backend(&vicinity, Default::default());
+
+            let mut evm = Executor::new(u64::MAX, &cfg, &backend);
+            let (addr, _, _) =
+                evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
+
+            let mut runner = ContractRunner {
+                evm: &mut evm,
+                contract: compiled,
+                address: addr,
+                state: PhantomData,
+            };
+
+            let mut cfg = FuzzConfig::default();
+            cfg.failure_persistence = None;
+            let fuzzer = TestRunner::new(cfg);
+            let func = get_func("testStringFuzz(string)").unwrap();
+            let res = runner.run_fuzz_test(&func, true, fuzzer.clone()).unwrap();
+            assert!(res.success);
+            assert!(res.counterexample.is_none());
         }
 
         #[test]

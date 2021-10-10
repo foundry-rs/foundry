@@ -36,20 +36,20 @@ contract GreeterTest is GreeterTestSetup {
     }
 
 
-    function testFuzzString(string memory myGreeting) public {
+    function testStringFuzz(string memory myGreeting) public {
         greeter.greet(myGreeting);
         require(keccak256(abi.encodePacked(greeter.greeting())) == keccak256(abi.encodePacked(myGreeting)), "not equal");
     }
 
     function testFuzzFixedArray(uint256[2] memory x) public {
-        if (x[0] == 0) return;
+        // filter out x[1] == 0 since it'll drain all our gas in the
+        // division by zero from all future tests
+        if (x[1] == 0) return;
         require(x[1] / x[1] == 0);
     }
 
     function testFuzzVariableArray(uint256[] memory x) public {
-        if (x.length < 2) return;
-        if (x[0] == 0) return;
-        require(x[1] / x[1] == 0);
+        require(x[0] == x[1]);
     }
 
     function testFuzzBytes1(bytes1 x) public {
