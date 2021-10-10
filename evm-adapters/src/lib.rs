@@ -74,7 +74,7 @@ pub trait Evm<State> {
         let func = func.into();
         let (retdata, status, gas) = self.call_unchecked(from, to, &func, args, value)?;
         if Self::is_fail(&status) {
-            let reason = dapp_utils::decode_revert(retdata.as_ref()).map_err(AbiError::from)?;
+            let reason = dapp_utils::decode_revert(retdata.as_ref()).unwrap_or_default();
             Err(EvmError::Execution { reason, gas_used: gas })
         } else {
             let retdata = decode_function_data(&func, retdata, false)?;
