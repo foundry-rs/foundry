@@ -64,11 +64,14 @@ pub trait Evm<State> {
         value: U256,
     ) -> std::result::Result<(D, Self::ReturnReason, u64), EvmError> {
         let func = func.into();
+        tracing::debug!(?from, ?to, func = ?func.name, "calling");
         let (retdata, status, gas) = self.call_unchecked(from, to, &func, args, value)?;
         if Self::is_fail(&status) {
+            tracing::error!(?status, "failed");
             let reason = dapp_utils::decode_revert(retdata.as_ref()).map_err(AbiError::from)?;
             Err(EvmError::Execution { reason, gas_used: gas })
         } else {
+            tracing::trace!(?status, ?retdata, "success");
             let retdata = decode_function_data(&func, retdata, false)?;
             Ok((retdata, status, gas))
         }
@@ -77,6 +80,7 @@ pub trait Evm<State> {
     /// Executes the specified EVM call against the state
     // TODO: Should we just make this take a `TransactionRequest` or other more
     // ergonomic type?
+    #[tracing::instrument(skip_all, fields(from, to, func = %func.name))]
     fn call_unchecked<T: Tokenize>(
         &mut self,
         from: Address,
@@ -114,6 +118,8 @@ pub trait Evm<State> {
 
     /// Runs the `setUp()` function call to instantiate the contract's state
     fn setup(&mut self, address: Address) -> Result<Self::ReturnReason> {
+        let span = tracing::trace_span!("setup", ?address);
+        let _enter = span.enter();
         let (_, status, _) =
             self.call::<(), _, _>(Address::zero(), address, "setUp()", (), 0.into())?;
         Ok(status)

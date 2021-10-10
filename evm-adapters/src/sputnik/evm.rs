@@ -108,11 +108,12 @@ where
         let gas = gas_before.saturating_sub(gas_after).saturating_sub(21000.into());
 
         if Self::is_fail(&status) {
-            // TODO: Should we be adding more context?
-            return Err(eyre::eyre!("deployment reverted"))
+            tracing::trace!(?status, "failed");
+            Err(eyre::eyre!("deployment reverted, reason: {:?}", status))
+        } else {
+            tracing::trace!(?status, ?address, ?gas, "success");
+            Ok((address, status, gas.as_u64()))
         }
-
-        Ok((address, status, gas.as_u64()))
     }
 
     /// Runs the selected function
