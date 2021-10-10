@@ -1,11 +1,11 @@
-use crate::Evm;
+use crate::{Evm, FAUCET_ACCOUNT};
 
 use ethers::types::{Address, Bytes, U256};
 
 use sputnik::{
     backend::{Backend, MemoryAccount},
     executor::{MemoryStackState, StackExecutor, StackState, StackSubstateMetadata},
-    Config, CreateScheme, ExitReason, ExitRevert,
+    Config, CreateScheme, ExitReason, ExitRevert, Transfer,
 };
 use std::{collections::BTreeMap, marker::PhantomData};
 
@@ -83,6 +83,13 @@ where
         contracts.into_iter().for_each(|(address, bytecode)| {
             state_.set_code(address, bytecode.to_vec());
         })
+    }
+
+    fn set_balance(&mut self, address: Address, balance: U256) {
+        self.executor
+            .state_mut()
+            .transfer(Transfer { source: *FAUCET_ACCOUNT, target: address, value: balance })
+            .expect("could not transfer funds")
     }
 
     fn state(&self) -> &S {

@@ -1,5 +1,8 @@
 use ethers::prelude::Provider;
-use evm_adapters::sputnik::{vicinity, ForkMemoryBackend};
+use evm_adapters::{
+    sputnik::{vicinity, ForkMemoryBackend},
+    FAUCET_ACCOUNT,
+};
 use regex::Regex;
 use sputnik::backend::Backend;
 use structopt::StructOpt;
@@ -8,6 +11,7 @@ use dapp::MultiContractRunnerBuilder;
 use dapp_solc::SolcBuilder;
 
 use ansi_term::Colour;
+use ethers::types::U256;
 
 mod dapp_opts;
 use dapp_opts::{BuildOpts, EvmType, Opts, Subcommands};
@@ -74,7 +78,11 @@ fn main() -> eyre::Result<()> {
                     } else {
                         env.sputnik_state()
                     };
-                    let backend = MemoryBackend::new(&vicinity, Default::default());
+                    let mut backend = MemoryBackend::new(&vicinity, Default::default());
+                    // max out the balance of the faucet
+                    let faucet =
+                        backend.state_mut().entry(*FAUCET_ACCOUNT).or_insert_with(Default::default);
+                    faucet.balance = U256::MAX;
 
                     let backend: Box<dyn Backend> = if let Some(ref url) = fork_url {
                         let provider = Provider::try_from(url.as_str())?;

@@ -1,6 +1,6 @@
 use structopt::StructOpt;
 
-use ethers::types::Address;
+use ethers::types::{Address, U256};
 use std::{path::PathBuf, str::FromStr};
 
 #[derive(Debug, StructOpt)]

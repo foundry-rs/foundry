@@ -20,6 +20,11 @@ use ethers::{
 use dapp_utils::IntoFunction;
 
 use eyre::Result;
+use once_cell::sync::Lazy;
+
+// The account that we use to fund all the deployed contracts
+pub static FAUCET_ACCOUNT: Lazy<Address> =
+    Lazy::new(|| Address::from_slice(&ethers::utils::keccak256("turbodapp faucet")[12..]));
 
 #[derive(thiserror::Error, Debug)]
 pub enum EvmError {
