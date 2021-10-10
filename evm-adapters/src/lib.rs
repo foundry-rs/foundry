@@ -72,14 +72,11 @@ pub trait Evm<State> {
         value: U256,
     ) -> std::result::Result<(D, Self::ReturnReason, u64), EvmError> {
         let func = func.into();
-        tracing::debug!(?from, ?to, func = ?func.name, "calling");
         let (retdata, status, gas) = self.call_unchecked(from, to, &func, args, value)?;
         if Self::is_fail(&status) {
             let reason = dapp_utils::decode_revert(retdata.as_ref()).map_err(AbiError::from)?;
-            tracing::error!(?status, ?reason, "failed");
             Err(EvmError::Execution { reason, gas_used: gas })
         } else {
-            tracing::trace!(?status, ?retdata, "success");
             let retdata = decode_function_data(&func, retdata, false)?;
             Ok((retdata, status, gas))
         }
