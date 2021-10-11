@@ -251,7 +251,7 @@ mod tests {
             .call::<(), _, _>(Address::zero(), addr, "testFailGreeting()", (), 0.into())
             .unwrap_err();
         let (reason, gas_used) = match err {
-            crate::EvmError::Execution { reason, gas_used } => (reason, gas_used),
+            crate::EvmError::Execution { reason, gas_used, .. } => (reason, gas_used),
             _ => panic!("unexpected error variant"),
         };
         assert_eq!(reason, "not equal to `hi`".to_string());

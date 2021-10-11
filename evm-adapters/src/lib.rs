@@ -190,11 +190,11 @@ mod test_helpers {
         let (addr, _, _) =
             evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
 
-        let (_, status1, _) = evm
+        let (_, status1, _, _) = evm
             .call::<(), _, _>(Address::zero(), addr, "greet(string)", "hi".to_owned(), 0.into())
             .unwrap();
 
-        let (retdata, status2, _) = evm
+        let (retdata, status2, _, _) = evm
             .call::<String, _, _>(Address::zero(), addr, "greeting()(string)", (), 0.into())
             .unwrap();
         assert_eq!(retdata, "hi");
@@ -212,7 +212,7 @@ mod test_helpers {
         // call the setup function to deploy the contracts inside the test
         let status1 = evm.setup(addr).unwrap();
 
-        let (_, status2, _) =
+        let (_, status2, _, _) =
             evm.call::<(), _, _>(Address::zero(), addr, "testGreeting()", (), 0.into()).unwrap();
 
         vec![status1, status2].iter().for_each(|reason| {

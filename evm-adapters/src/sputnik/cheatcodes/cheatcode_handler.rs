@@ -550,7 +550,7 @@ mod tests {
         fuzz::FuzzedExecutor,
         sputnik::{
             helpers::{new_backend, new_vicinity},
-            Executor,
+            Executor, SputnikExecutor,
         },
         test_helpers::COMPILED,
         Evm,
@@ -572,7 +572,7 @@ mod tests {
 
         // after the evm call is done, we call `logs` and print it all to the user
         evm.call::<(), _, _>(Address::zero(), addr, "test_log()", (), 0.into()).unwrap();
-        let logs = evm.logs();
+        let logs = evm.executor.logs();
         let expected = [
             "Hi",
             "0x1234",
@@ -615,10 +615,10 @@ mod tests {
         let runner = proptest::test_runner::TestRunner::new(cfg);
 
         // ensure the storage slot is set at 10 anyway
-        let (storage_contract, _, _) = evm
+        let (storage_contract, _, _, _) = evm
             .call::<Address, _, _>(Address::zero(), addr, "store()(address)", (), 0.into())
             .unwrap();
-        let (slot, _, _) = evm
+        let (slot, _, _, _) = evm
             .call::<U256, _, _>(Address::zero(), storage_contract, "slot0()(uint256)", (), 0.into())
             .unwrap();
         assert_eq!(slot, 10.into());
@@ -628,7 +628,7 @@ mod tests {
         for func in compiled.abi.functions().filter(|func| func.name.starts_with("test")) {
             let should_fail = func.name.starts_with("testFail");
             if func.inputs.is_empty() {
-                let (_, reason, _) =
+                let (_, reason, _, _) =
                     evm.as_mut().call_unchecked(Address::zero(), addr, func, (), 0.into()).unwrap();
                 assert!(evm.as_mut().check_success(addr, &reason, should_fail));
             } else {

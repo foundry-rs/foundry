@@ -208,7 +208,7 @@ mod tests {
         let (addr, _, _) =
             evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
 
-        let (res, _, _) =
+        let (res, _, _, _1) =
             evm.call::<U256, _, _>(Address::zero(), addr, "time()(uint256)", (), 0.into()).unwrap();
 
         // https://etherscan.io/block/13292465
