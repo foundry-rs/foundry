@@ -1,11 +1,11 @@
-use ethers::prelude::{Address, BlockNumber, TxHash};
+use ethers::prelude::{Address, BlockNumber, Transaction, TxHash, U256};
 use serde::{
     de::DeserializeOwned, ser::SerializeSeq, Deserialize, Deserializer, Serialize, Serializer,
 };
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "method", content = "params")]
-pub enum JsonRpcMethods {
+pub enum EthRequest {
     #[serde(rename = "eth_getBalance")]
     EthGetBalance(Address, BlockNumber),
 
@@ -37,6 +37,13 @@ where
     Ok(seq.pop().expect("length of vector is 1"))
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum EthResponse {
+    EthGetBalance(U256),
+    EthGetTransactionByHash(Transaction),
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -44,20 +51,31 @@ mod tests {
     use rand::Rng;
 
     #[test]
-    fn test_serde() {
+    fn test_serde_req() {
         let mut rng = rand::thread_rng();
 
-        let val = JsonRpcMethods::EthGetBalance(
+        let val = EthRequest::EthGetBalance(
             Address::random(),
             BlockNumber::Number(rng.gen::<u64>().into()),
         );
         let ser = serde_json::to_string(&val).unwrap();
-        let de_val: JsonRpcMethods = serde_json::from_str(&ser).unwrap();
+        let de_val: EthRequest = serde_json::from_str(&ser).unwrap();
         assert_eq!(de_val, val);
 
-        let val = JsonRpcMethods::EthGetTransactionByHash(TxHash::random());
+        let val = EthRequest::EthGetTransactionByHash(TxHash::random());
         let ser = serde_json::to_string(&val).unwrap();
-        let de_val: JsonRpcMethods = serde_json::from_str(&ser).unwrap();
+        let de_val: EthRequest = serde_json::from_str(&ser).unwrap();
         assert_eq!(de_val, val);
+    }
+
+    #[test]
+    fn test_serde_res() {
+        let val = EthResponse::EthGetBalance(U256::from(123u64));
+        let ser = serde_json::to_string(&val).unwrap();
+        dbg!(ser);
+
+        let val = EthResponse::EthGetTransactionByHash(Transaction::default());
+        let ser = serde_json::to_string(&val).unwrap();
+        dbg!(ser);
     }
 }
