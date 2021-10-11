@@ -29,6 +29,41 @@ fn main() -> eyre::Result<()> {
 
     let opts = Opts::from_args();
     match opts.sub {
+        Subcommands::Node { env, evm_type, evm_version } => {
+            match evm_type {
+                #[cfg(feature = "sputnik-evm")]
+                EvmType::Sputnik => {
+                    use evm_adapters::sputnik::Executor;
+                    use sputnik::backend::MemoryBackend;
+                    let cfg = evm_version.sputnik_cfg();
+
+                    let vicinity = env.sputnik_state();
+                    let backend = Box::new(MemoryBackend::new(&vicinity, Default::default()));
+
+                    let node = dapp::Node::new(Executor::new_with_cheatcodes(
+                        backend,
+                        env.gas_limit,
+                        &cfg,
+                    ));
+                    tokio::runtime::Runtime::new().unwrap().block_on(node.run());
+                }
+                #[cfg(feature = "evmodin-evm")]
+                EvmType::EvmOdin => {
+                    use evm_adapters::evmodin::EvmOdin;
+                    use evmodin::tracing::NoopTracer;
+
+                    let revision = evm_version.evmodin_cfg();
+
+                    // TODO: Replace this with a proper host. We'll want this to also be
+                    // provided generically when we add the Forking host(s).
+                    let host = env.evmodin_state();
+
+                    let node =
+                        dapp::Node::new(EvmOdin::new(host, env.gas_limit, revision, NoopTracer));
+                    tokio::runtime::Runtime::new().unwrap().block_on(node.run());
+                }
+            };
+        }
         Subcommands::Test {
             opts:
                 BuildOpts { contracts, remappings, remappings_env, lib_paths, out_path, evm_version },

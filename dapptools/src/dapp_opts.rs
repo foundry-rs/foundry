@@ -13,6 +13,22 @@ pub struct Opts {
 #[structopt(about = "Build, test, fuzz, formally verify, debug & deploy solidity contracts.")]
 #[allow(clippy::large_enum_variant)]
 pub enum Subcommands {
+    #[structopt(about = "run a JSON-RPC node")]
+    Node {
+        #[structopt(flatten)]
+        env: Env,
+
+        #[structopt(
+            long,
+            short,
+            help = "the EVM type you want to use (e.g. sputnik, evmodin)",
+            default_value = "sputnik"
+        )]
+        evm_type: EvmType,
+
+        #[structopt(help = "choose the evm version", long, default_value = "berlin")]
+        evm_version: EvmVersion,
+    },
     #[structopt(about = "test your smart contracts")]
     Test {
         #[structopt(help = "print the test results in json format", long, short)]
