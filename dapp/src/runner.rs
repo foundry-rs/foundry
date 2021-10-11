@@ -38,6 +38,10 @@ pub struct TestResult {
 
     /// Minimal reproduction test case for failing fuzz tests
     pub counterexample: Option<CounterExample>,
+
+    /// Any captured & parsed as strings logs along the test's execution which should
+    /// be printed to the user.
+    pub logs: Vec<String>,
 }
 
 use std::marker::PhantomData;
@@ -137,16 +141,18 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
                 .wrap_err(format!("could not setup during {} test", func.name))?;
         }
 
-        let (status, reason, gas_used) = match self.evm.call::<(), _, _>(
+        let (status, reason, gas_used, logs) = match self.evm.call::<(), _, _>(
             Address::zero(),
             self.address,
             func.clone(),
             (),
             0.into(),
         ) {
-            Ok((_, status, gas_used)) => (status, None, gas_used),
+            Ok((_, status, gas_used, logs)) => (status, None, gas_used, logs),
             Err(err) => match err {
-                EvmError::Execution { reason, gas_used } => (E::revert(), Some(reason), gas_used),
+                EvmError::Execution { reason, gas_used, logs } => {
+                    (E::revert(), Some(reason), gas_used, logs)
+                }
                 err => {
                     tracing::error!(?err);
                     return Err(err.into())
@@ -157,7 +163,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         let duration = Instant::now().duration_since(start);
         tracing::debug!(?duration, %success, %gas_used);
 
-        Ok(TestResult { success, reason, gas_used: Some(gas_used), counterexample: None })
+        Ok(TestResult { success, reason, gas_used: Some(gas_used), counterexample: None, logs })
     }
 
     #[tracing::instrument(name = "fuzz-test", skip_all, fields(name = %func.name))]
@@ -197,7 +203,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
 
         // TODO: How can we have proptest also return us the gas_used and the revert reason
         // from that call?
-        Ok(TestResult { success, reason: None, gas_used: None, counterexample })
+        Ok(TestResult { success, reason: None, gas_used: None, counterexample, logs: vec![] })
     }
 }
 
