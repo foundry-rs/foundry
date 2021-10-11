@@ -1,6 +1,6 @@
 use structopt::StructOpt;
 
-use ethers::types::Address;
+use ethers::types::{Address, U256};
 use std::{path::PathBuf, str::FromStr};
 
 #[derive(Debug, StructOpt)]
@@ -11,6 +11,7 @@ pub struct Opts {
 
 #[derive(Debug, StructOpt)]
 #[structopt(about = "Build, test, fuzz, formally verify, debug & deploy solidity contracts.")]
+#[allow(clippy::large_enum_variant)]
 pub enum Subcommands {
     #[structopt(about = "test your smart contracts")]
     Test {
@@ -52,12 +53,86 @@ pub enum Subcommands {
 
         #[structopt(help = "pins the block number for the state fork", long)]
         fork_block_number: Option<u64>,
+
+        #[structopt(
+            help = "the initial balance of each deployed test contract",
+            long,
+            default_value = "0xffffffffffffffffffffffff"
+        )]
+        initial_balance: U256,
+
+        #[structopt(
+            help = "the address which will be executing all tests",
+            long,
+            default_value = "0x0000000000000000000000000000000000000000"
+        )]
+        deployer: Address,
+
+        #[structopt(help = "enables the FFI cheatcode", long)]
+        ffi: bool,
     },
     #[structopt(about = "build your smart contracts")]
     Build {
         #[structopt(flatten)]
         opts: BuildOpts,
     },
+    #[structopt(about = "build your smart contracts. Requires `ETHERSCAN_API_KEY` to be set.")]
+    VerifyContract {
+        #[structopt(help = "contract source info `<path>:<contractname>`")]
+        contract: FullContractInfo,
+        #[structopt(help = "the address of the contract to verify.")]
+        address: Address,
+        #[structopt(help = "constructor args calldata arguments.")]
+        constructor_args: Vec<String>,
+    },
+    #[structopt(about = "deploy a compiled contract")]
+    Create {
+        #[structopt(help = "contract source info `<path>:<contractname>` or `<contractname>`")]
+        contract: ContractInfo,
+        #[structopt(long, help = "verify on Etherscan")]
+        verify: bool,
+    },
+}
+
+/// Represents the common dapp argument pattern for `<path>:<contractname>` where `<path>:` is
+/// optional.
+#[derive(Clone, Debug)]
+pub struct ContractInfo {
+    /// Location of the contract
+    pub path: Option<String>,
+    /// Name of the contract
+    pub name: String,
+}
+
+impl FromStr for ContractInfo {
+    type Err = eyre::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut iter = s.rsplit(':');
+        let name = iter.next().unwrap().to_string();
+        let path = iter.next().map(str::to_string);
+        Ok(Self { path, name })
+    }
+}
+
+/// Represents the common dapp argument pattern `<path>:<contractname>`
+#[derive(Clone, Debug)]
+pub struct FullContractInfo {
+    /// Location of the contract
+    pub path: String,
+    /// Name of the contract
+    pub name: String,
+}
+
+impl FromStr for FullContractInfo {
+    type Err = eyre::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let (path, name) = s
+            .split_once(':')
+            .ok_or_else(|| eyre::eyre!("Expected `<path>:<contractname>`, got `{}`", s))?;
+        Ok(Self { path: path.to_string(), name: name.to_string() })
+    }
 }
 
 #[derive(Debug, StructOpt)]
@@ -82,14 +157,13 @@ pub struct BuildOpts {
         help = "path to where the contract artifacts are stored",
         long = "out",
         short,
-        default_value = "./out/dapp.sol.json"
+        default_value = crate::utils::DAPP_JSON
     )]
     pub out_path: PathBuf,
 
     #[structopt(help = "choose the evm version", long, default_value = "berlin")]
     pub evm_version: EvmVersion,
 }
-
 #[derive(Clone, Debug)]
 pub enum EvmType {
     #[cfg(feature = "sputnik-evm")]
@@ -167,7 +241,9 @@ impl FromStr for EvmVersion {
 
 #[derive(Debug, StructOpt)]
 pub struct Env {
-    #[structopt(help = "the block gas limit", long, default_value = "25000000")]
+    // structopt does not let use `u64::MAX`:
+    // https://doc.rust-lang.org/std/primitive.u64.html#associatedconstant.MAX
+    #[structopt(help = "the block gas limit", long, default_value = "18446744073709551615")]
     pub gas_limit: u64,
 
     #[structopt(help = "the chainid opcode value", long, default_value = "1")]

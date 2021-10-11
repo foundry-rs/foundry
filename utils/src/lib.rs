@@ -56,8 +56,9 @@ pub fn remove_extra_costs(gas: U256, calldata: &[u8]) -> U256 {
 }
 
 pub fn decode_revert(error: &[u8]) -> std::result::Result<String, ethers_core::abi::Error> {
-    if error.len() > 4 {
-        Ok(abi::decode(&[abi::ParamType::String], &error[4..])?[0].to_string())
+    let error = error.strip_prefix(&ethers_core::utils::id("Error(string)")).unwrap_or(error);
+    if !error.is_empty() {
+        Ok(abi::decode(&[abi::ParamType::String], error)?[0].to_string())
     } else {
         Ok("No revert reason found".to_owned())
     }

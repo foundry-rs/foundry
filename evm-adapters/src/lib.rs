@@ -14,12 +14,17 @@ pub mod fuzz;
 use ethers::{
     abi::{Detokenize, Tokenize},
     core::types::{Address, U256},
-    prelude::{decode_function_data, encode_function_data, AbiError, Bytes},
+    prelude::{decode_function_data, encode_function_data, Bytes},
 };
 
 use dapp_utils::IntoFunction;
 
 use eyre::Result;
+use once_cell::sync::Lazy;
+
+// The account that we use to fund all the deployed contracts
+pub static FAUCET_ACCOUNT: Lazy<Address> =
+    Lazy::new(|| Address::from_slice(&ethers::utils::keccak256("turbodapp faucet")[12..]));
 
 #[derive(thiserror::Error, Debug)]
 pub enum EvmError {
@@ -52,6 +57,9 @@ pub trait Evm<State> {
     /// Gets a reference to the current state of the EVM
     fn state(&self) -> &State;
 
+    /// Sets the balance at the specified address
+    fn set_balance(&mut self, address: Address, amount: U256);
+
     /// Resets the EVM's state to the provided value
     fn reset(&mut self, state: State);
 
@@ -66,7 +74,7 @@ pub trait Evm<State> {
         let func = func.into();
         let (retdata, status, gas) = self.call_unchecked(from, to, &func, args, value)?;
         if Self::is_fail(&status) {
-            let reason = dapp_utils::decode_revert(retdata.as_ref()).map_err(AbiError::from)?;
+            let reason = dapp_utils::decode_revert(retdata.as_ref()).unwrap_or_default();
             Err(EvmError::Execution { reason, gas_used: gas })
         } else {
             let retdata = decode_function_data(&func, retdata, false)?;
@@ -77,6 +85,7 @@ pub trait Evm<State> {
     /// Executes the specified EVM call against the state
     // TODO: Should we just make this take a `TransactionRequest` or other more
     // ergonomic type?
+    #[tracing::instrument(skip_all, fields(from, to, func = %func.name))]
     fn call_unchecked<T: Tokenize>(
         &mut self,
         from: Address,
@@ -114,6 +123,8 @@ pub trait Evm<State> {
 
     /// Runs the `setUp()` function call to instantiate the contract's state
     fn setup(&mut self, address: Address) -> Result<Self::ReturnReason> {
+        let span = tracing::trace_span!("setup", ?address);
+        let _enter = span.enter();
         let (_, status, _) =
             self.call::<(), _, _>(Address::zero(), address, "setUp()", (), 0.into())?;
         Ok(status)

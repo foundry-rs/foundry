@@ -1,5 +1,8 @@
 use ethers::prelude::Provider;
-use evm_adapters::sputnik::{vicinity, ForkMemoryBackend};
+use evm_adapters::{
+    sputnik::{vicinity, ForkMemoryBackend},
+    FAUCET_ACCOUNT,
+};
 use regex::Regex;
 use sputnik::backend::Backend;
 use structopt::StructOpt;
@@ -8,12 +11,15 @@ use dapp::MultiContractRunnerBuilder;
 use dapp_solc::SolcBuilder;
 
 use ansi_term::Colour;
+use ethers::types::U256;
 
 mod dapp_opts;
 use dapp_opts::{BuildOpts, EvmType, Opts, Subcommands};
 
+use crate::dapp_opts::FullContractInfo;
 use std::{convert::TryFrom, sync::Arc};
 
+mod cmd;
 mod utils;
 
 #[tracing::instrument(err)]
@@ -32,6 +38,9 @@ fn main() -> eyre::Result<()> {
             no_compile,
             fork_url,
             fork_block_number,
+            initial_balance,
+            deployer,
+            ffi,
         } => {
             // get the remappings / paths
             let remappings = utils::merge(remappings, remappings_env);
@@ -49,6 +58,8 @@ fn main() -> eyre::Result<()> {
                 .libraries(&lib_paths)
                 .out_path(out_path)
                 .fuzzer(fuzzer)
+                .initial_balance(initial_balance)
+                .deployer(deployer)
                 .skip_compilation(no_compile);
 
             // run the tests depending on the chosen EVM
@@ -57,7 +68,11 @@ fn main() -> eyre::Result<()> {
                 EvmType::Sputnik => {
                     use evm_adapters::sputnik::Executor;
                     use sputnik::backend::MemoryBackend;
-                    let cfg = evm_version.sputnik_cfg();
+                    let mut cfg = evm_version.sputnik_cfg();
+
+                    // We disable the contract size limit by default, because Solidity
+                    // test smart contracts are likely to be >24kb
+                    cfg.create_contract_limit = None;
 
                     let vicinity = if let Some(ref url) = fork_url {
                         let provider = Provider::try_from(url.as_str())?;
@@ -66,7 +81,11 @@ fn main() -> eyre::Result<()> {
                     } else {
                         env.sputnik_state()
                     };
-                    let backend = MemoryBackend::new(&vicinity, Default::default());
+                    let mut backend = MemoryBackend::new(&vicinity, Default::default());
+                    // max out the balance of the faucet
+                    let faucet =
+                        backend.state_mut().entry(*FAUCET_ACCOUNT).or_insert_with(Default::default);
+                    faucet.balance = U256::MAX;
 
                     let backend: Box<dyn Backend> = if let Some(ref url) = fork_url {
                         let provider = Provider::try_from(url.as_str())?;
@@ -77,7 +96,7 @@ fn main() -> eyre::Result<()> {
                     };
                     let backend = Arc::new(backend);
 
-                    let evm = Executor::new_with_cheatcodes(backend, env.gas_limit, &cfg);
+                    let evm = Executor::new_with_cheatcodes(backend, env.gas_limit, &cfg, ffi);
                     test(builder, evm, pattern, json)?;
                 }
                 #[cfg(feature = "evmodin-evm")]
@@ -111,6 +130,14 @@ fn main() -> eyre::Result<()> {
 
             // dump as json
             serde_json::to_writer(out_file, &contracts)?;
+        }
+        Subcommands::VerifyContract { contract, address, constructor_args } => {
+            let FullContractInfo { path, name } = contract;
+            let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
+            rt.block_on(cmd::verify::run(path, name, address, constructor_args))?;
+        }
+        Subcommands::Create { contract: _, verify: _ } => {
+            unimplemented!("Not yet implemented")
         }
     }
 

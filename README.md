@@ -71,6 +71,15 @@ Benchmarks TBD in the future, but:
         * [ ] symbolic execution
         * [ ] coverage
         * [ ] HEVM-style Solidity cheatcodes
+            * [x] roll
+            * [x] warp
+            * [x] ffi
+            * [x] store
+            * [x] load
+            * [ ] sign
+            * [ ] addr
+            * [ ] makeEOA
+            * ...?
         * [ ] structured tracing with abi decoding
         * [ ] per-line gas profiling
         * [x] forking mode
@@ -89,7 +98,9 @@ Benchmarks TBD in the future, but:
 ## Tested Against
 
 This repository has been tested against the following DappTools repos:
-*
+* [LootLoose](https://github.com/gakonst/lootloose/) (minus the FFI tests)
+* [solmate](https://github.com/Rari-Capital/solmate/) (replace all the `prove` symbolic tests with fuzz tests, and skip `invariant` tests for now)
+
 ## Development
 
 ### Rust Toolchain

@@ -1,5 +1,6 @@
 mod artifacts;
 pub use artifacts::DapptoolsArtifact;
+pub use ethers::core::utils::{solc::Contract, CompiledContract};
 
 mod runner;
 pub use runner::{ContractRunner, TestResult};

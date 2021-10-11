@@ -9,12 +9,15 @@ use sputnik::{
     executor::{
         Log, PrecompileOutput, StackExecutor, StackExitKind, StackState, StackSubstateMetadata,
     },
-    gasometer, Capture, Config, Context, CreateScheme, ExitError, ExitReason, ExitSucceed, Handler,
-    Runtime, Transfer,
+    gasometer, Capture, Config, Context, CreateScheme, ExitError, ExitReason, ExitRevert,
+    ExitSucceed, Handler, Runtime, Transfer,
 };
-use std::rc::Rc;
+use std::{process::Command, rc::Rc};
 
-use ethers::types::{Address, H160, H256, U256};
+use ethers::{
+    abi::Token,
+    types::{Address, H160, H256, U256},
+};
 use std::convert::Infallible;
 
 use once_cell::sync::Lazy;
@@ -31,6 +34,7 @@ pub static CHEATCODE_ADDRESS: Lazy<Address> = Lazy::new(|| {
 // etc.
 pub struct CheatcodeHandler<H> {
     handler: H,
+    enable_ffi: bool,
 }
 
 // Forwards everything internally except for the transact_call which is overriden.
@@ -124,7 +128,12 @@ pub type CheatcodeStackExecutor<'a, B> =
     CheatcodeHandler<StackExecutor<'a, CheatcodeStackState<'a, B>>>;
 
 impl<'a, B: Backend> Executor<CheatcodeStackState<'a, B>, CheatcodeStackExecutor<'a, B>> {
-    pub fn new_with_cheatcodes(backend: B, gas_limit: u64, config: &'a Config) -> Self {
+    pub fn new_with_cheatcodes(
+        backend: B,
+        gas_limit: u64,
+        config: &'a Config,
+        enable_ffi: bool,
+    ) -> Self {
         // make this a cheatcode-enabled backend
         let backend = CheatcodeBackend { backend, cheats: Default::default() };
 
@@ -135,7 +144,7 @@ impl<'a, B: Backend> Executor<CheatcodeStackState<'a, B>, CheatcodeStackExecutor
 
         // create the executor and wrap it with the cheatcode handler
         let executor = StackExecutor::new_with_precompile(state, config, Default::default());
-        let executor = CheatcodeHandler { handler: executor };
+        let executor = CheatcodeHandler { handler: executor, enable_ffi };
 
         let mut evm = Executor::from_executor(executor, gas_limit);
 
@@ -147,10 +156,17 @@ impl<'a, B: Backend> Executor<CheatcodeStackState<'a, B>, CheatcodeStackExecutor
     }
 }
 
+fn evm_error(retdata: &str) -> Capture<(ExitReason, Vec<u8>), Infallible> {
+    Capture::Exit((
+        ExitReason::Revert(ExitRevert::Reverted),
+        ethers::abi::encode(&[Token::String(retdata.to_owned())]),
+    ))
+}
+
 impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
     /// Decodes the provided calldata as a
     fn apply_cheatcode(&mut self, input: Vec<u8>) -> Capture<(ExitReason, Vec<u8>), Infallible> {
-        let mut res = H256::zero();
+        let mut res = vec![];
 
         // Get a mutable ref to the state so we can apply the cheats
         let state = self.state_mut();
@@ -169,12 +185,39 @@ impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
         }
 
         if let Ok((address, slot)) = HEVM.decode::<(Address, H256), _>("load", &input) {
-            res = state.storage(address, slot);
+            res = state.storage(address, slot).0.to_vec();
+        }
+
+        if let Ok(args) = HEVM.decode::<Vec<String>, _>("ffi", &input) {
+            // if FFI is not explicitly enabled at runtime, do not let this be called
+            // (we could have an FFI cheatcode executor instead but feels like
+            // over engineering)
+            if !self.enable_ffi {
+                return evm_error(
+                    "ffi disabled: run again with --ffi if you want to allow tests to call external scripts",
+                )
+            }
+
+            // execute the command & get the stdout
+            let output = match Command::new(&args[0]).args(&args[1..]).output() {
+                Ok(res) => res.stdout,
+                Err(err) => return evm_error(&err.to_string()),
+            };
+
+            // get the hex string & decode it
+            let output = unsafe { std::str::from_utf8_unchecked(&output) };
+            let decoded = match hex::decode(&output[2..]) {
+                Ok(res) => res,
+                Err(err) => return evm_error(&err.to_string()),
+            };
+
+            // encode the data as Bytes
+            res = ethers::abi::encode(&[Token::Bytes(decoded.to_vec())]);
         }
 
         // TODO: Add more cheat codes.
 
-        Capture::Exit((ExitReason::Succeed(ExitSucceed::Stopped), res.0.to_vec()))
+        Capture::Exit((ExitReason::Succeed(ExitSucceed::Stopped), res))
     }
 
     // NB: This function is copy-pasted from uptream's `execute`, adjusted so that we call the
@@ -471,7 +514,7 @@ mod tests {
         let vicinity = new_vicinity();
         let backend = new_backend(&vicinity, Default::default());
         let gas_limit = 10_000_000;
-        let mut evm = Executor::new_with_cheatcodes(backend, gas_limit, &config);
+        let mut evm = Executor::new_with_cheatcodes(backend, gas_limit, &config, true);
 
         let compiled = COMPILED.get("CheatCodes").expect("could not find contract");
         let (addr, _, _) =
@@ -499,7 +542,6 @@ mod tests {
                 let (_, reason, _) =
                     evm.as_mut().call_unchecked(Address::zero(), addr, func, (), 0.into()).unwrap();
                 assert!(evm.as_mut().check_success(addr, &reason, should_fail));
-                // We NEED to reset the state else there's no isolation
             } else {
                 // if the unwrap passes then it works
                 evm.fuzz(func, addr, should_fail).unwrap();
@@ -507,5 +549,26 @@ mod tests {
 
             evm.as_mut().reset(state.clone());
         }
+    }
+
+    #[test]
+    fn ffi_fails_if_disabled() {
+        let config = Config::istanbul();
+        let vicinity = new_vicinity();
+        let backend = new_backend(&vicinity, Default::default());
+        let gas_limit = 10_000_000;
+        let mut evm = Executor::new_with_cheatcodes(backend, gas_limit, &config, false);
+
+        let compiled = COMPILED.get("CheatCodes").expect("could not find contract");
+        let (addr, _, _) =
+            evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
+
+        let err =
+            evm.call::<(), _, _>(Address::zero(), addr, "testFFI()", (), 0.into()).unwrap_err();
+        let reason = match err {
+            crate::EvmError::Execution { reason, .. } => reason,
+            _ => panic!("unexpected error"),
+        };
+        assert_eq!(reason, "ffi disabled: run again with --ffi if you want to allow tests to call external scripts");
     }
 }
