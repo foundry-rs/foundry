@@ -8,6 +8,9 @@ pub use runner::{ContractRunner, TestResult};
 mod multi_runner;
 pub use multi_runner::{MultiContractRunner, MultiContractRunnerBuilder};
 
+mod node;
+pub use node::Node;
+
 use ethers::abi;
 use eyre::Result;
 
