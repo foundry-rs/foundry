@@ -124,42 +124,8 @@ impl<'a, B: Backend> SputnikExecutor<CheatcodeStackState<'a, B>> for CheatcodeSt
     fn create_address(&self, scheme: CreateScheme) -> Address {
         self.handler.create_address(scheme)
     }
-}
 
-pub type CheatcodeStackState<'a, B> = MemoryStackStateOwned<'a, CheatcodeBackend<B>>;
-
-pub type CheatcodeStackExecutor<'a, B> =
-    CheatcodeHandler<StackExecutor<'a, CheatcodeStackState<'a, B>>>;
-
-impl<'a, B: Backend> Executor<CheatcodeStackState<'a, B>, CheatcodeStackExecutor<'a, B>> {
-    pub fn new_with_cheatcodes(
-        backend: B,
-        gas_limit: u64,
-        config: &'a Config,
-        enable_ffi: bool,
-    ) -> Self {
-        // make this a cheatcode-enabled backend
-        let backend = CheatcodeBackend { backend, cheats: Default::default() };
-
-        // create the memory stack state (owned, so that we can modify the backend via
-        // self.state_mut on the transact_call fn)
-        let metadata = StackSubstateMetadata::new(gas_limit, config);
-        let state = MemoryStackStateOwned::new(metadata, backend);
-
-        // create the executor and wrap it with the cheatcode handler
-        let executor = StackExecutor::new_with_precompile(state, config, Default::default());
-        let executor = CheatcodeHandler { handler: executor, enable_ffi };
-
-        let mut evm = Executor::from_executor(executor, gas_limit);
-
-        // Need to create a non-empty contract at the cheat code address so that the EVM backend
-        // thinks that something exists there.
-        evm.initialize_contracts([(*CHEATCODE_ADDRESS, vec![0u8; 1].into())]);
-
-        evm
-    }
-
-    pub fn logs(&self) -> Vec<String> {
+    fn logs(&self) -> Vec<String> {
         let logs = self.state().substate.logs().to_vec();
         logs.into_iter()
             .filter_map(|log| {
@@ -203,6 +169,40 @@ impl<'a, B: Backend> Executor<CheatcodeStackState<'a, B>, CheatcodeStackExecutor
                 }
             })
             .collect()
+    }
+}
+
+pub type CheatcodeStackState<'a, B> = MemoryStackStateOwned<'a, CheatcodeBackend<B>>;
+
+pub type CheatcodeStackExecutor<'a, B> =
+    CheatcodeHandler<StackExecutor<'a, CheatcodeStackState<'a, B>>>;
+
+impl<'a, B: Backend> Executor<CheatcodeStackState<'a, B>, CheatcodeStackExecutor<'a, B>> {
+    pub fn new_with_cheatcodes(
+        backend: B,
+        gas_limit: u64,
+        config: &'a Config,
+        enable_ffi: bool,
+    ) -> Self {
+        // make this a cheatcode-enabled backend
+        let backend = CheatcodeBackend { backend, cheats: Default::default() };
+
+        // create the memory stack state (owned, so that we can modify the backend via
+        // self.state_mut on the transact_call fn)
+        let metadata = StackSubstateMetadata::new(gas_limit, config);
+        let state = MemoryStackStateOwned::new(metadata, backend);
+
+        // create the executor and wrap it with the cheatcode handler
+        let executor = StackExecutor::new_with_precompile(state, config, Default::default());
+        let executor = CheatcodeHandler { handler: executor, enable_ffi };
+
+        let mut evm = Executor::from_executor(executor, gas_limit);
+
+        // Need to create a non-empty contract at the cheat code address so that the EVM backend
+        // thinks that something exists there.
+        evm.initialize_contracts([(*CHEATCODE_ADDRESS, vec![0u8; 1].into())]);
+
+        evm
     }
 }
 
