@@ -416,36 +416,27 @@ where
                             log::trace!("Failed to get account for {}", addr);
                             Default::default()
                         });
-                        let basic = Basic { nonce, balance };
                         let code = code.to_vec();
-                        let mut storage = None;
+                        let (listeners, storage) =
+                            pin.account_requests.remove(&addr).unwrap_or_default();
+                        let acc = MemoryAccount { nonce, balance, code: code.clone(), storage };
+                        pin.cache.write().insert(addr, acc);
                         // notify all listeners
-                        if let Some((listeners, s)) = pin.account_requests.remove(&addr) {
-                            for listener in listeners {
-                                match listener {
-                                    AccountListener::Exists(sender) => {
-                                        let exists = !basic.balance.is_zero() ||
-                                            !basic.nonce.is_zero() ||
-                                            !code.is_empty();
-                                        let _ = sender.send(exists);
-                                    }
-                                    AccountListener::Basic(sender) => {
-                                        let _ = sender.send(basic.clone());
-                                    }
-                                    AccountListener::Code(sender) => {
-                                        let _ = sender.send(code.clone());
-                                    }
+                        for listener in listeners {
+                            match listener {
+                                AccountListener::Exists(sender) => {
+                                    let exists =
+                                        !balance.is_zero() || !nonce.is_zero() || !code.is_empty();
+                                    let _ = sender.send(exists);
+                                }
+                                AccountListener::Basic(sender) => {
+                                    let _ = sender.send(Basic { nonce, balance });
+                                }
+                                AccountListener::Code(sender) => {
+                                    let _ = sender.send(code.clone());
                                 }
                             }
-                            storage = Some(s);
                         }
-                        let acc = MemoryAccount {
-                            nonce: basic.nonce,
-                            balance: basic.balance,
-                            code,
-                            storage: storage.unwrap_or_default(),
-                        };
-                        pin.cache.write().insert(addr, acc);
                         continue
                     }
                 }
@@ -455,12 +446,6 @@ where
                             log::trace!("Failed to get storage for {} at {}", addr, idx);
                             Default::default()
                         });
-                        // notify all listeners
-                        if let Some(listeners) = pin.storage_requests.remove(&(addr, idx)) {
-                            listeners.into_iter().for_each(|l| {
-                                let _ = l.send(value);
-                            })
-                        }
                         if let Some(acc) = pin.cache.write().get_mut(&addr) {
                             acc.storage.insert(idx, value);
                         } else {
@@ -477,6 +462,12 @@ where
                                     pin.pending_requests.push(pin.get_account_req(addr));
                                 }
                             }
+                        }
+                        // notify all listeners
+                        if let Some(listeners) = pin.storage_requests.remove(&(addr, idx)) {
+                            listeners.into_iter().for_each(|l| {
+                                let _ = l.send(value);
+                            })
                         }
                         continue
                     }
