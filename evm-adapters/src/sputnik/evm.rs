@@ -131,7 +131,7 @@ where
         calldata: Bytes,
         value: U256,
         _is_static: bool,
-    ) -> Result<(Bytes, ExitReason, u64)> {
+    ) -> Result<(Bytes, ExitReason, u64, Vec<String>)> {
         let gas_before = self.executor.gas_left();
 
         let (status, retdata) =
@@ -140,7 +140,9 @@ where
         let gas_after = self.executor.gas_left();
         let gas = gas_before.saturating_sub(gas_after).saturating_sub(21000.into());
 
-        Ok((retdata.into(), status, gas.as_u64()))
+        let logs = self.executor.logs();
+
+        Ok((retdata.into(), status, gas.as_u64(), logs))
     }
 }
 

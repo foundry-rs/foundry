@@ -74,6 +74,8 @@ pub trait SputnikExecutor<S> {
     ) -> ExitReason;
 
     fn create_address(&self, caller: CreateScheme) -> Address;
+
+    fn logs(&self) -> Vec<String>;
 }
 
 // The implementation for the base Stack Executor just forwards to the internal methods.
@@ -120,5 +122,10 @@ impl<'a, S: StackState<'a>> SputnikExecutor<S> for StackExecutor<'a, S> {
 
     fn create_address(&self, scheme: CreateScheme) -> Address {
         self.create_address(scheme)
+    }
+
+    // Empty impl for non-cheatcode handlers
+    fn logs(&self) -> Vec<String> {
+        vec![]
     }
 }
