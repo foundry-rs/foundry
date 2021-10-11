@@ -1,9 +1,9 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, sync::Arc};
 
 use axum::{
     extract::{rejection::JsonRejection, Json},
     handler::post,
-    Router, Server,
+    AddExtensionLayer, Router, Server,
 };
 use evm_adapters::Evm;
 
@@ -14,20 +14,27 @@ mod types;
 use types::{Error, JsonRpcRequest, JsonRpcResponse, ResponseContent};
 
 pub struct Node<E> {
-    evm: E,
+    evm: Arc<E>,
 }
 
-impl<E> Node<E> {
+impl<E: Send + Sync + 'static> Node<E> {
     pub fn new<S>(evm: E) -> Self
     where
         E: Evm<S>,
     {
-        Self { evm }
+        Self { evm: Arc::new(evm) }
     }
 
     pub async fn run(&self) {
-        let svc = Router::new().route("/", post(handler)).into_make_service();
+        let shared_evm = Arc::clone(&self.evm);
+
+        let svc = Router::new()
+            .route("/", post(handler))
+            .layer(AddExtensionLayer::new(shared_evm))
+            .into_make_service();
+
         let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+
         Server::bind(&addr).serve(svc).await.unwrap();
     }
 }

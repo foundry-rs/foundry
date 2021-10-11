@@ -3,8 +3,8 @@ use evm_adapters::{
     sputnik::{vicinity, ForkMemoryBackend},
     FAUCET_ACCOUNT,
 };
+use once_cell::sync::OnceCell;
 use regex::Regex;
-use sputnik::backend::Backend;
 use structopt::StructOpt;
 
 use dapp::MultiContractRunnerBuilder;
@@ -23,6 +23,10 @@ use std::{collections::HashMap, convert::TryFrom, path::Path, sync::Arc};
 mod cmd;
 mod utils;
 
+static EVM_CONFIG: OnceCell<sputnik::Config> = OnceCell::new();
+static EVM_VICINITY: OnceCell<sputnik::backend::MemoryVicinity> = OnceCell::new();
+static EVM_BACKEND: OnceCell<sputnik::backend::MemoryBackend> = OnceCell::new();
+
 #[tracing::instrument(err)]
 fn main() -> eyre::Result<()> {
     utils::subscriber();
@@ -35,15 +39,22 @@ fn main() -> eyre::Result<()> {
                 EvmType::Sputnik => {
                     use evm_adapters::sputnik::Executor;
                     use sputnik::backend::MemoryBackend;
-                    let cfg = evm_version.sputnik_cfg();
 
-                    let vicinity = env.sputnik_state();
-                    let backend = Box::new(MemoryBackend::new(&vicinity, Default::default()));
+                    EVM_CONFIG.set(evm_version.sputnik_cfg()).expect("could not set EVM_CONFIG");
+
+                    EVM_VICINITY.set(env.sputnik_state()).expect("could not set EVM_VICINITY");
+                    EVM_BACKEND
+                        .set(MemoryBackend::new(
+                            EVM_VICINITY.get().expect("could not get EVM_VICINITY"),
+                            Default::default(),
+                        ))
+                        .expect("could not set EVM_BACKEND");
 
                     let node = dapp::Node::new(Executor::new_with_cheatcodes(
-                        backend,
+                        EVM_BACKEND.get().expect("could not get EVM_BACKEND"),
                         env.gas_limit,
-                        &cfg,
+                        EVM_CONFIG.get().expect("could not get EVM_CONFIG"),
+                        false,
                     ));
                     tokio::runtime::Runtime::new().unwrap().block_on(node.run());
                 }
@@ -109,7 +120,7 @@ fn main() -> eyre::Result<()> {
                 #[cfg(feature = "sputnik-evm")]
                 EvmType::Sputnik => {
                     use evm_adapters::sputnik::Executor;
-                    use sputnik::backend::MemoryBackend;
+                    use sputnik::backend::{Backend, MemoryBackend};
                     let mut cfg = evm_version.sputnik_cfg();
 
                     // We disable the contract size limit by default, because Solidity

@@ -171,7 +171,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
                 }
                 err => {
                     tracing::error!(?err);
-                    return Err(err.into())
+                    return Err(err.into());
                 }
             },
         };
