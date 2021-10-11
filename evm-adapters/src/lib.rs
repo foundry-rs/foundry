@@ -31,7 +31,8 @@ pub enum EvmError {
     #[error(transparent)]
     Eyre(#[from] eyre::Error),
     #[error("Execution reverted: {reason}, (gas: {gas_used})")]
-    Execution { reason: String, gas_used: u64 },
+    // TODO: Add proper log printing.
+    Execution { reason: String, gas_used: u64, logs: Vec<String> },
     #[error(transparent)]
     AbiError(#[from] ethers::contract::AbiError),
 }
@@ -70,15 +71,15 @@ pub trait Evm<State> {
         func: F,
         args: T, // derive arbitrary for Tokenize?
         value: U256,
-    ) -> std::result::Result<(D, Self::ReturnReason, u64), EvmError> {
+    ) -> std::result::Result<(D, Self::ReturnReason, u64, Vec<String>), EvmError> {
         let func = func.into();
-        let (retdata, status, gas) = self.call_unchecked(from, to, &func, args, value)?;
+        let (retdata, status, gas, logs) = self.call_unchecked(from, to, &func, args, value)?;
         if Self::is_fail(&status) {
             let reason = dapp_utils::decode_revert(retdata.as_ref()).unwrap_or_default();
-            Err(EvmError::Execution { reason, gas_used: gas })
+            Err(EvmError::Execution { reason, gas_used: gas, logs })
         } else {
             let retdata = decode_function_data(&func, retdata, false)?;
-            Ok((retdata, status, gas))
+            Ok((retdata, status, gas, logs))
         }
     }
 
@@ -93,7 +94,7 @@ pub trait Evm<State> {
         func: &ethers::abi::Function,
         args: T, // derive arbitrary for Tokenize?
         value: U256,
-    ) -> Result<(Bytes, Self::ReturnReason, u64)> {
+    ) -> Result<(Bytes, Self::ReturnReason, u64, Vec<String>)> {
         let calldata = encode_function_data(func, args)?;
         #[allow(deprecated)]
         let is_static = func.constant ||
@@ -111,7 +112,7 @@ pub trait Evm<State> {
         calldata: Bytes,
         value: U256,
         is_static: bool,
-    ) -> Result<(Bytes, Self::ReturnReason, u64)>;
+    ) -> Result<(Bytes, Self::ReturnReason, u64, Vec<String>)>;
 
     /// Deploys the provided contract bytecode and returns the address
     fn deploy(
@@ -125,7 +126,7 @@ pub trait Evm<State> {
     fn setup(&mut self, address: Address) -> Result<Self::ReturnReason> {
         let span = tracing::trace_span!("setup", ?address);
         let _enter = span.enter();
-        let (_, status, _) =
+        let (_, status, _, _) =
             self.call::<(), _, _>(Address::zero(), address, "setUp()", (), 0.into())?;
         Ok(status)
     }
@@ -134,7 +135,7 @@ pub trait Evm<State> {
     /// see whether the `failed` state var is set. This is to allow compatibility
     /// with dapptools-style DSTest smart contracts to preserve emiting of logs
     fn failed(&mut self, address: Address) -> Result<bool> {
-        let (failed, _, _) =
+        let (failed, _, _, _) =
             self.call::<bool, _, _>(Address::zero(), address, "failed()(bool)", (), 0.into())?;
         Ok(failed)
     }
