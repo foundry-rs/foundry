@@ -571,7 +571,7 @@ mod tests {
         let mut evm = Executor::new_with_cheatcodes(backend, gas_limit, &config, true);
 
         let compiled = COMPILED.get("DebugLogs").expect("could not find contract");
-        let (addr, _, _) =
+        let (addr, _, _, _) =
             evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
 
         // after the evm call is done, we call `logs` and print it all to the user
@@ -610,7 +610,7 @@ mod tests {
         let mut evm = Executor::new_with_cheatcodes(backend, gas_limit, &config, true);
 
         let compiled = COMPILED.get("CheatCodes").expect("could not find contract");
-        let (addr, _, _) =
+        let (addr, _, _, _) =
             evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
 
         let state = evm.state().clone();
@@ -653,7 +653,7 @@ mod tests {
         let mut evm = Executor::new_with_cheatcodes(backend, gas_limit, &config, false);
 
         let compiled = COMPILED.get("CheatCodes").expect("could not find contract");
-        let (addr, _, _) =
+        let (addr, _, _, _) =
             evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
 
         let err =

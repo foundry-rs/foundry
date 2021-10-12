@@ -261,7 +261,7 @@ mod tests {
             let backend = new_backend(&vicinity, Default::default());
 
             let mut evm = Executor::new(12_000_000, &cfg, &backend);
-            let (addr, _, _) =
+            let (addr, _, _, _) =
                 evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
 
             let mut runner = ContractRunner {
@@ -269,6 +269,7 @@ mod tests {
                 contract: compiled,
                 address: addr,
                 state: PhantomData,
+                init_logs: &[],
             };
 
             let mut cfg = FuzzConfig::default();
@@ -291,7 +292,7 @@ mod tests {
             let backend = new_backend(&vicinity, Default::default());
 
             let mut evm = Executor::new(u64::MAX, &cfg, &backend);
-            let (addr, _, _) =
+            let (addr, _, _, _) =
                 evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
 
             let mut runner = ContractRunner {
@@ -299,6 +300,7 @@ mod tests {
                 contract: compiled,
                 address: addr,
                 state: PhantomData,
+                init_logs: &[],
             };
 
             let mut cfg = FuzzConfig::default();
@@ -318,7 +320,7 @@ mod tests {
             let backend = new_backend(&vicinity, Default::default());
 
             let mut evm = Executor::new(12_000_000, &cfg, &backend);
-            let (addr, _, _) =
+            let (addr, _, _, _) =
                 evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
 
             let mut runner = ContractRunner {
@@ -326,6 +328,7 @@ mod tests {
                 contract: compiled,
                 address: addr,
                 state: PhantomData,
+                init_logs: &[],
             };
 
             let mut cfg = FuzzConfig::default();
@@ -380,11 +383,16 @@ mod tests {
     }
 
     pub fn test_runner<S: Clone, E: Evm<S>>(mut evm: E, compiled: &CompiledContract) {
-        let (addr, _, _) =
+        let (addr, _, _, _) =
             evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
 
-        let mut runner =
-            ContractRunner { evm: &mut evm, contract: compiled, address: addr, state: PhantomData };
+        let mut runner = ContractRunner {
+            evm: &mut evm,
+            contract: compiled,
+            address: addr,
+            state: PhantomData,
+            init_logs: &[],
+        };
 
         let res = runner.run_tests(&".*".parse().unwrap(), None).unwrap();
         assert!(!res.is_empty());

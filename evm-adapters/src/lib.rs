@@ -187,7 +187,7 @@ mod test_helpers {
         Lazy::new(|| SolcBuilder::new("./testdata/*.sol", &[], &[]).unwrap().build_all().unwrap());
 
     pub fn can_call_vm_directly<S, E: Evm<S>>(mut evm: E, compiled: &CompiledContract) {
-        let (addr, _, _) =
+        let (addr, _, _, _) =
             evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
 
         let (_, status1, _, _) = evm
@@ -206,11 +206,11 @@ mod test_helpers {
     }
 
     pub fn solidity_unit_test<S, E: Evm<S>>(mut evm: E, compiled: &CompiledContract) {
-        let (addr, _, _) =
+        let (addr, _, _, _) =
             evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
 
         // call the setup function to deploy the contracts inside the test
-        let status1 = evm.setup(addr).unwrap();
+        let status1 = evm.setup(addr).unwrap().0;
 
         let (_, status2, _, _) =
             evm.call::<(), _, _>(Address::zero(), addr, "testGreeting()", (), 0.into()).unwrap();
