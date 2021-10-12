@@ -34,6 +34,8 @@ fn main() -> eyre::Result<()> {
     let opts = Opts::from_args();
     match opts.sub {
         Subcommands::Node { env, evm_type, evm_version, account, balance } => {
+            let node_config = dapp::NodeConfig::new(env.chain_id, vec![account], balance);
+
             match evm_type {
                 #[cfg(feature = "sputnik-evm")]
                 EvmType::Sputnik => {
@@ -54,17 +56,15 @@ fn main() -> eyre::Result<()> {
 
                     EVM_BACKEND.set(backend).expect("could not set EVM_BACKEND");
 
-                    let mut node = dapp::Node::new(
-                        Executor::new_with_cheatcodes(
-                            EVM_BACKEND.get().expect("could not get EVM_BACKEND"),
-                            env.gas_limit,
-                            EVM_CONFIG.get().expect("could not get EVM_CONFIG"),
-                            false,
-                        ),
-                        account,
+                    let evm = Executor::new_with_cheatcodes(
+                        EVM_BACKEND.get().expect("could not get EVM_BACKEND"),
+                        env.gas_limit,
+                        EVM_CONFIG.get().expect("could not get EVM_CONFIG"),
+                        false,
                     );
-                    node.init(balance);
-                    tokio::runtime::Runtime::new().unwrap().block_on(node.run());
+                    tokio::runtime::Runtime::new()
+                        .unwrap()
+                        .block_on(dapp::Node::init_and_run(evm, node_config));
                 }
                 #[cfg(feature = "evmodin-evm")]
                 EvmType::EvmOdin => {
@@ -77,12 +77,10 @@ fn main() -> eyre::Result<()> {
                     // provided generically when we add the Forking host(s).
                     let host = env.evmodin_state();
 
-                    let mut node = dapp::Node::new(
-                        EvmOdin::new(host, env.gas_limit, revision, NoopTracer),
-                        account,
-                    );
-                    node.init(balance);
-                    tokio::runtime::Runtime::new().unwrap().block_on(node.run());
+                    let evm = EvmOdin::new(host, env.gas_limit, revision, NoopTracer);
+                    tokio::runtime::Runtime::new()
+                        .unwrap()
+                        .block_on(dapp::Node::init_and_run(evm, node_config));
                 }
             };
         }

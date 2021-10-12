@@ -9,7 +9,7 @@ mod multi_runner;
 pub use multi_runner::{MultiContractRunner, MultiContractRunnerBuilder};
 
 mod node;
-pub use node::Node;
+pub use node::{Node, NodeConfig};
 
 use ethers::abi;
 use eyre::Result;
