@@ -554,7 +554,7 @@ mod tests {
         fuzz::FuzzedExecutor,
         sputnik::{
             helpers::{new_backend, new_vicinity},
-            Executor, SputnikExecutor,
+            Executor,
         },
         test_helpers::COMPILED,
         Evm,
@@ -575,8 +575,8 @@ mod tests {
             evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
 
         // after the evm call is done, we call `logs` and print it all to the user
-        evm.call::<(), _, _>(Address::zero(), addr, "test_log()", (), 0.into()).unwrap();
-        let logs = evm.executor.logs();
+        let (_, _, _, logs) =
+            evm.call::<(), _, _>(Address::zero(), addr, "test_log()", (), 0.into()).unwrap();
         let expected = [
             "Hi",
             "0x1234",
