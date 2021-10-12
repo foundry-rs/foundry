@@ -123,12 +123,12 @@ pub trait Evm<State> {
     ) -> Result<(Address, Self::ReturnReason, u64)>;
 
     /// Runs the `setUp()` function call to instantiate the contract's state
-    fn setup(&mut self, address: Address) -> Result<Self::ReturnReason> {
+    fn setup(&mut self, address: Address) -> Result<(Self::ReturnReason, Vec<String>)> {
         let span = tracing::trace_span!("setup", ?address);
         let _enter = span.enter();
-        let (_, status, _, _) =
+        let (_, status, _, logs) =
             self.call::<(), _, _>(Address::zero(), address, "setUp()", (), 0.into())?;
-        Ok(status)
+        Ok((status, logs))
     }
 
     /// Runs the `failed()` function call to inspect the test contract's state and
