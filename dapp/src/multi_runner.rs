@@ -233,6 +233,35 @@ mod tests {
         };
 
         #[test]
+        fn test_sputnik_debug_logs() {
+            let config = Config::istanbul();
+            let gas_limit = 12_500_000;
+            let env = new_vicinity();
+            let backend = new_backend(&env, Default::default());
+            let evm = Executor::new_with_cheatcodes(backend, gas_limit, &config, false);
+
+            let mut runner = MultiContractRunnerBuilder::default()
+                .contracts("./testdata/DebugLogsTest.sol")
+                .libraries(&["../evm-adapters/testdata".to_owned()])
+                .build(evm)
+                .unwrap();
+
+            let results = runner.test(Regex::new(".*").unwrap()).unwrap();
+            let reasons = results["DebugLogsTest"]
+                .iter()
+                .map(|(name, res)| (name, res.logs.clone()))
+                .collect::<HashMap<_, _>>();
+            assert_eq!(
+                reasons[&"test1".to_owned()],
+                vec!["constructor".to_owned(), "setUp".to_owned(), "one".to_owned()]
+            );
+            assert_eq!(
+                reasons[&"test2".to_owned()],
+                vec!["constructor".to_owned(), "setUp".to_owned(), "two".to_owned()]
+            );
+        }
+
+        #[test]
         fn test_sputnik_multi_runner() {
             let config = Config::istanbul();
             let gas_limit = 12_500_000;
