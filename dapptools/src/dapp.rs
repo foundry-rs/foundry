@@ -33,7 +33,7 @@ fn main() -> eyre::Result<()> {
 
     let opts = Opts::from_args();
     match opts.sub {
-        Subcommands::Node { env, evm_type, evm_version } => {
+        Subcommands::Node { env, evm_type, evm_version, account, balance } => {
             match evm_type {
                 #[cfg(feature = "sputnik-evm")]
                 EvmType::Sputnik => {
@@ -56,6 +56,7 @@ fn main() -> eyre::Result<()> {
                         EVM_CONFIG.get().expect("could not get EVM_CONFIG"),
                         false,
                     ));
+                    node.init(account, balance);
                     tokio::runtime::Runtime::new().unwrap().block_on(node.run());
                 }
                 #[cfg(feature = "evmodin-evm")]
@@ -71,6 +72,7 @@ fn main() -> eyre::Result<()> {
 
                     let node =
                         dapp::Node::new(EvmOdin::new(host, env.gas_limit, revision, NoopTracer));
+                    node.init(account, balance);
                     tokio::runtime::Runtime::new().unwrap().block_on(node.run());
                 }
             };

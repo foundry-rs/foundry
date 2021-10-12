@@ -1,10 +1,11 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
 use axum::{
     extract::{rejection::JsonRejection, Extension, Json},
     handler::post,
     AddExtensionLayer, Router, Server,
 };
+use ethers::prelude::{Address, Block, Transaction, TxHash, U256};
 use evm_adapters::Evm;
 
 mod methods;
@@ -20,10 +21,19 @@ pub struct Node<E> {
 impl<E: Send + Sync + 'static> Node<E> {
     pub fn new<S>(evm: E) -> Self
     where
-        S: 'static,
         E: Evm<S>,
     {
         Self { evm: Arc::new(evm) }
+    }
+
+    pub fn init<S>(&self, account: Address, balance: U256)
+    where
+        E: Evm<S>,
+    {
+        let mut evm = self.evm.clone();
+        if let Some(evm) = Arc::get_mut(&mut evm) {
+            todo!();
+        }
     }
 
     pub async fn run<S>(&self)
@@ -31,11 +41,12 @@ impl<E: Send + Sync + 'static> Node<E> {
         S: 'static,
         E: Evm<S>,
     {
-        let shared_evm = Arc::clone(&self.evm);
+        let state =
+            Arc::new(State { evm: Arc::clone(&self.evm), blocks: vec![], txs: HashMap::new() });
 
         let svc = Router::new()
             .route("/", post(handler::<E, S>))
-            .layer(AddExtensionLayer::new(shared_evm))
+            .layer(AddExtensionLayer::new(state))
             .into_make_service();
 
         let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
@@ -44,12 +55,18 @@ impl<E: Send + Sync + 'static> Node<E> {
     }
 }
 
+#[allow(dead_code)]
+struct State<E> {
+    evm: Arc<E>,
+    blocks: Vec<Block<TxHash>>,
+    txs: HashMap<TxHash, Transaction>,
+}
+
 async fn handler<E, S>(
     request: Result<Json<JsonRpcRequest>, JsonRejection>,
-    Extension(state): Extension<Arc<E>>,
+    Extension(state): Extension<Arc<State<E>>>,
 ) -> JsonRpcResponse
 where
-    S: 'static,
     E: Evm<S>,
 {
     match request {
@@ -80,12 +97,15 @@ where
     }
 }
 
-fn handle<S, E: Evm<S>>(_evm: Arc<E>, msg: EthRequest) -> EthResponse {
+fn handle<S, E: Evm<S>>(_evm: Arc<State<E>>, msg: EthRequest) -> EthResponse {
     match msg {
         EthRequest::EthGetBalance(_addr, _block) => {
             todo!();
         }
         EthRequest::EthGetTransactionByHash(_tx_hash) => {
+            todo!();
+        }
+        EthRequest::EthSendTransaction(_tx) => {
             todo!();
         }
     }

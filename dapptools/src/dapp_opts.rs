@@ -28,6 +28,20 @@ pub enum Subcommands {
 
         #[structopt(help = "choose the evm version", long, default_value = "berlin")]
         evm_version: EvmVersion,
+
+        #[structopt(
+            long,
+            help = "the initial account created and funded by dapp node",
+            default_value = "0x0000000000000000000000000000000000000000"
+        )]
+        account: Address,
+
+        #[structopt(
+            long,
+            help = "the initial balance of the initial account",
+            default_value = "0xffffffffffffffffffffffff"
+        )]
+        balance: U256,
     },
     #[structopt(about = "test your smart contracts")]
     Test {

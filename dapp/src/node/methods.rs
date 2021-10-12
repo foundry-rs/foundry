@@ -1,4 +1,6 @@
-use ethers::prelude::{Address, BlockNumber, Transaction, TxHash, U256};
+use ethers::prelude::{
+    transaction::eip2718::TypedTransaction, Address, BlockNumber, Transaction, TxHash, U256,
+};
 use serde::{
     de::DeserializeOwned, ser::SerializeSeq, Deserialize, Deserializer, Serialize, Serializer,
 };
@@ -15,6 +17,13 @@ pub enum EthRequest {
         deserialize_with = "de_from_sequence"
     )]
     EthGetTransactionByHash(TxHash),
+
+    #[serde(
+        rename = "eth_sendTransaction",
+        serialize_with = "ser_into_sequence",
+        deserialize_with = "de_from_sequence"
+    )]
+    EthSendTransaction(TypedTransaction),
 }
 
 fn ser_into_sequence<S, T>(val: &T, s: S) -> Result<S::Ok, S::Error>
@@ -39,9 +48,11 @@ where
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(untagged)]
+#[allow(dead_code)]
 pub enum EthResponse {
     EthGetBalance(U256),
     EthGetTransactionByHash(Transaction),
+    EthSendTransaction(TxHash),
 }
 
 #[cfg(test)]
@@ -71,11 +82,9 @@ mod tests {
     #[test]
     fn test_serde_res() {
         let val = EthResponse::EthGetBalance(U256::from(123u64));
-        let ser = serde_json::to_string(&val).unwrap();
-        dbg!(ser);
+        let _ser = serde_json::to_string(&val).unwrap();
 
         let val = EthResponse::EthGetTransactionByHash(Transaction::default());
-        let ser = serde_json::to_string(&val).unwrap();
-        dbg!(ser);
+        let _ser = serde_json::to_string(&val).unwrap();
     }
 }
