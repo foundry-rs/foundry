@@ -1,4 +1,7 @@
-use super::{backend::CheatcodeBackend, memory_stackstate_owned::MemoryStackStateOwned, HEVM};
+use super::{
+    backend::CheatcodeBackend, memory_stackstate_owned::MemoryStackStateOwned, HevmConsoleEvents,
+    HEVM,
+};
 use crate::{
     sputnik::{Executor, SputnikExecutor},
     Evm,
@@ -15,7 +18,8 @@ use sputnik::{
 use std::{process::Command, rc::Rc};
 
 use ethers::{
-    abi::Token,
+    abi::{RawLog, Token},
+    prelude::EthLogDecode,
     types::{Address, H160, H256, U256},
 };
 use std::convert::Infallible;
@@ -119,6 +123,56 @@ impl<'a, B: Backend> SputnikExecutor<CheatcodeStackState<'a, B>> for CheatcodeSt
 
     fn create_address(&self, scheme: CreateScheme) -> Address {
         self.handler.create_address(scheme)
+    }
+
+    fn clear_logs(&mut self) {
+        self.state_mut().substate.logs_mut().clear()
+    }
+
+    fn logs(&self) -> Vec<String> {
+        let logs = self.state().substate.logs().to_vec();
+        logs.into_iter()
+            .filter_map(|log| {
+                // convert to the ethers type
+                let log = RawLog { topics: log.topics, data: log.data };
+                HevmConsoleEvents::decode_log(&log).ok()
+            })
+            .map(|event| {
+                use HevmConsoleEvents::*;
+                match event {
+                    LogFilter(inner) => inner.0,
+                    LogsFilter(inner) => format!("0x{}", hex::encode(inner.0)),
+                    LogAddressFilter(inner) => format!("{:?}", inner.0),
+                    LogBytes32Filter(inner) => format!("0x{}", hex::encode(inner.0)),
+                    LogIntFilter(inner) => format!("{:?}", inner.0),
+                    LogUintFilter(inner) => format!("{:?}", inner.0),
+                    LogBytesFilter(inner) => format!("0x{}", hex::encode(inner.0)),
+                    LogStringFilter(inner) => inner.0,
+                    LogNamedAddressFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
+                    LogNamedBytes32Filter(inner) => {
+                        format!("{}: 0x{}", inner.key, hex::encode(inner.val))
+                    }
+                    LogNamedDecimalIntFilter(inner) => format!(
+                        "{}: {:?}",
+                        inner.key,
+                        ethers::utils::parse_units(inner.val, inner.decimals.as_u32()).unwrap()
+                    ),
+                    LogNamedDecimalUintFilter(inner) => {
+                        format!(
+                            "{}: {:?}",
+                            inner.key,
+                            ethers::utils::parse_units(inner.val, inner.decimals.as_u32()).unwrap()
+                        )
+                    }
+                    LogNamedIntFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
+                    LogNamedUintFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
+                    LogNamedBytesFilter(inner) => {
+                        format!("{}: 0x{}", inner.key, hex::encode(inner.val))
+                    }
+                    LogNamedStringFilter(inner) => format!("{}: {}", inner.key, inner.val),
+                }
+            })
+            .collect()
     }
 }
 
@@ -509,6 +563,45 @@ mod tests {
     use super::*;
 
     #[test]
+    fn debug_logs() {
+        let config = Config::istanbul();
+        let vicinity = new_vicinity();
+        let backend = new_backend(&vicinity, Default::default());
+        let gas_limit = 10_000_000;
+        let mut evm = Executor::new_with_cheatcodes(backend, gas_limit, &config, true);
+
+        let compiled = COMPILED.get("DebugLogs").expect("could not find contract");
+        let (addr, _, _, _) =
+            evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
+
+        // after the evm call is done, we call `logs` and print it all to the user
+        let (_, _, _, logs) =
+            evm.call::<(), _, _>(Address::zero(), addr, "test_log()", (), 0.into()).unwrap();
+        let expected = [
+            "Hi",
+            "0x1234",
+            "0x1111111111111111111111111111111111111111",
+            "0x41b1a0649752af1b28b3dc29a1556eee781e4a4c3a1f7f53f90fa834de098c4d",
+            "123",
+            "1234",
+            "0x4567",
+            "lol",
+            "addr: 0x2222222222222222222222222222222222222222",
+            "key: 0x41b1a0649752af1b28b3dc29a1556eee781e4a4c3a1f7f53f90fa834de098c4d",
+            "key: 123000000000000000000",
+            "key: 1234000000000000000000",
+            "key: 123",
+            "key: 1234",
+            "key: 0x4567",
+            "key: lol",
+        ]
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+        assert_eq!(logs, expected);
+    }
+
+    #[test]
     fn cheatcodes() {
         let config = Config::istanbul();
         let vicinity = new_vicinity();
@@ -517,7 +610,7 @@ mod tests {
         let mut evm = Executor::new_with_cheatcodes(backend, gas_limit, &config, true);
 
         let compiled = COMPILED.get("CheatCodes").expect("could not find contract");
-        let (addr, _, _) =
+        let (addr, _, _, _) =
             evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
 
         let state = evm.state().clone();
@@ -526,10 +619,10 @@ mod tests {
         let runner = proptest::test_runner::TestRunner::new(cfg);
 
         // ensure the storage slot is set at 10 anyway
-        let (storage_contract, _, _) = evm
+        let (storage_contract, _, _, _) = evm
             .call::<Address, _, _>(Address::zero(), addr, "store()(address)", (), 0.into())
             .unwrap();
-        let (slot, _, _) = evm
+        let (slot, _, _, _) = evm
             .call::<U256, _, _>(Address::zero(), storage_contract, "slot0()(uint256)", (), 0.into())
             .unwrap();
         assert_eq!(slot, 10.into());
@@ -539,7 +632,7 @@ mod tests {
         for func in compiled.abi.functions().filter(|func| func.name.starts_with("test")) {
             let should_fail = func.name.starts_with("testFail");
             if func.inputs.is_empty() {
-                let (_, reason, _) =
+                let (_, reason, _, _) =
                     evm.as_mut().call_unchecked(Address::zero(), addr, func, (), 0.into()).unwrap();
                 assert!(evm.as_mut().check_success(addr, &reason, should_fail));
             } else {
@@ -560,7 +653,7 @@ mod tests {
         let mut evm = Executor::new_with_cheatcodes(backend, gas_limit, &config, false);
 
         let compiled = COMPILED.get("CheatCodes").expect("could not find contract");
-        let (addr, _, _) =
+        let (addr, _, _, _) =
             evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
 
         let err =

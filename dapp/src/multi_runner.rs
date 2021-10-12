@@ -63,12 +63,12 @@ impl<'a> MultiContractRunnerBuilder<'a> {
                 let span = tracing::trace_span!("deploying", ?name);
                 let _enter = span.enter();
 
-                let (addr, _, _) = evm
+                let (addr, _, _, logs) = evm
                     .deploy(deployer, compiled.bytecode.clone(), 0.into())
                     .wrap_err(format!("could not deploy {}", name))?;
 
                 evm.set_balance(addr, initial_balance);
-                Ok((name.clone(), addr))
+                Ok((name.clone(), (addr, logs)))
             })
             .collect::<Result<HashMap<_, _>>>()?;
 
@@ -126,7 +126,7 @@ pub struct MultiContractRunner<E, S> {
     /// Mapping of contract name to compiled bytecode
     contracts: HashMap<String, CompiledContract>,
     /// Mapping of contract name to the address it's been injected in the EVM state
-    addresses: HashMap<String, Address>,
+    addresses: HashMap<String, (Address, Vec<String>)>,
     /// The EVM instance used in the test runner
     evm: E,
     fuzzer: Option<TestRunner>,
@@ -154,11 +154,11 @@ where
         let results = tests
             .into_iter()
             .map(|(name, contract)| {
-                let address = addresses
+                let (address, init_logs) = addresses
                     .get(name)
                     .ok_or_else(|| eyre::eyre!("could not find contract address"))?;
 
-                let result = self.run_tests(name, contract, *address, &pattern)?;
+                let result = self.run_tests(name, contract, *address, init_logs, &pattern)?;
                 Ok((name.clone(), result))
             })
             .filter_map(|x: Result<_>| x.ok())
@@ -183,9 +183,10 @@ where
         _name: &str,
         contract: &CompiledContract,
         address: Address,
+        init_logs: &[String],
         pattern: &Regex,
     ) -> Result<HashMap<String, TestResult>> {
-        let mut runner = ContractRunner::new(&mut self.evm, contract, address);
+        let mut runner = ContractRunner::new(&mut self.evm, contract, address, init_logs);
         runner.run_tests(pattern, self.fuzzer.as_mut())
     }
 }

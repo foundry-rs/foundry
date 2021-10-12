@@ -38,6 +38,10 @@ pub struct TestResult {
 
     /// Minimal reproduction test case for failing fuzz tests
     pub counterexample: Option<CounterExample>,
+
+    /// Any captured & parsed as strings logs along the test's execution which should
+    /// be printed to the user.
+    pub logs: Vec<String>,
 }
 
 use std::marker::PhantomData;
@@ -52,13 +56,20 @@ pub struct ContractRunner<'a, S, E> {
     pub evm: &'a mut E,
     pub contract: &'a CompiledContract,
     pub address: Address,
+    /// Any logs emitted in the constructor of the specific contract
+    pub init_logs: &'a [String],
     // need to constrain the trait generic
     state: PhantomData<S>,
 }
 
 impl<'a, S, E> ContractRunner<'a, S, E> {
-    pub fn new(evm: &'a mut E, contract: &'a CompiledContract, address: Address) -> Self {
-        Self { evm, contract, address, state: PhantomData }
+    pub fn new(
+        evm: &'a mut E,
+        contract: &'a CompiledContract,
+        address: Address,
+        init_logs: &'a [String],
+    ) -> Self {
+        Self { evm, contract, address, init_logs, state: PhantomData }
     }
 }
 
@@ -130,23 +141,35 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         let should_fail = func.name.starts_with("testFail");
         tracing::debug!(func = ?func.name, should_fail, "unit-testing");
 
+        let mut logs = self.init_logs.to_vec();
+
         // call the setup function in each test to reset the test's state.
         if setup {
-            self.evm
+            tracing::trace!("setting up");
+            let setup_logs = self
+                .evm
                 .setup(self.address)
-                .wrap_err(format!("could not setup during {} test", func.name))?;
+                .wrap_err(format!("could not setup during {} test", func.name))?
+                .1;
+            logs.extend_from_slice(&setup_logs);
         }
 
-        let (status, reason, gas_used) = match self.evm.call::<(), _, _>(
+        let (status, reason, gas_used, logs) = match self.evm.call::<(), _, _>(
             Address::zero(),
             self.address,
             func.clone(),
             (),
             0.into(),
         ) {
-            Ok((_, status, gas_used)) => (status, None, gas_used),
+            Ok((_, status, gas_used, execution_logs)) => {
+                logs.extend(execution_logs);
+                (status, None, gas_used, logs)
+            }
             Err(err) => match err {
-                EvmError::Execution { reason, gas_used } => (E::revert(), Some(reason), gas_used),
+                EvmError::Execution { reason, gas_used, logs: execution_logs } => {
+                    logs.extend(execution_logs);
+                    (E::revert(), Some(reason), gas_used, logs)
+                }
                 err => {
                     tracing::error!(?err);
                     return Err(err.into())
@@ -157,7 +180,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         let duration = Instant::now().duration_since(start);
         tracing::debug!(?duration, %success, %gas_used);
 
-        Ok(TestResult { success, reason, gas_used: Some(gas_used), counterexample: None })
+        Ok(TestResult { success, reason, gas_used: Some(gas_used), counterexample: None, logs })
     }
 
     #[tracing::instrument(name = "fuzz-test", skip_all, fields(name = %func.name))]
@@ -197,7 +220,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
 
         // TODO: How can we have proptest also return us the gas_used and the revert reason
         // from that call?
-        Ok(TestResult { success, reason: None, gas_used: None, counterexample })
+        Ok(TestResult { success, reason: None, gas_used: None, counterexample, logs: vec![] })
     }
 }
 
@@ -238,7 +261,7 @@ mod tests {
             let backend = new_backend(&vicinity, Default::default());
 
             let mut evm = Executor::new(12_000_000, &cfg, &backend);
-            let (addr, _, _) =
+            let (addr, _, _, _) =
                 evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
 
             let mut runner = ContractRunner {
@@ -246,6 +269,7 @@ mod tests {
                 contract: compiled,
                 address: addr,
                 state: PhantomData,
+                init_logs: &[],
             };
 
             let mut cfg = FuzzConfig::default();
@@ -268,7 +292,7 @@ mod tests {
             let backend = new_backend(&vicinity, Default::default());
 
             let mut evm = Executor::new(u64::MAX, &cfg, &backend);
-            let (addr, _, _) =
+            let (addr, _, _, _) =
                 evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
 
             let mut runner = ContractRunner {
@@ -276,6 +300,7 @@ mod tests {
                 contract: compiled,
                 address: addr,
                 state: PhantomData,
+                init_logs: &[],
             };
 
             let mut cfg = FuzzConfig::default();
@@ -295,7 +320,7 @@ mod tests {
             let backend = new_backend(&vicinity, Default::default());
 
             let mut evm = Executor::new(12_000_000, &cfg, &backend);
-            let (addr, _, _) =
+            let (addr, _, _, _) =
                 evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
 
             let mut runner = ContractRunner {
@@ -303,6 +328,7 @@ mod tests {
                 contract: compiled,
                 address: addr,
                 state: PhantomData,
+                init_logs: &[],
             };
 
             let mut cfg = FuzzConfig::default();
@@ -357,11 +383,16 @@ mod tests {
     }
 
     pub fn test_runner<S: Clone, E: Evm<S>>(mut evm: E, compiled: &CompiledContract) {
-        let (addr, _, _) =
+        let (addr, _, _, _) =
             evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
 
-        let mut runner =
-            ContractRunner { evm: &mut evm, contract: compiled, address: addr, state: PhantomData };
+        let mut runner = ContractRunner {
+            evm: &mut evm,
+            contract: compiled,
+            address: addr,
+            state: PhantomData,
+            init_logs: &[],
+        };
 
         let res = runner.run_tests(&".*".parse().unwrap(), None).unwrap();
         assert!(!res.is_empty());

@@ -74,6 +74,14 @@ pub trait SputnikExecutor<S> {
     ) -> ExitReason;
 
     fn create_address(&self, caller: CreateScheme) -> Address;
+
+    /// Returns a vector of string parsed logs that occurred during the previous VM
+    /// execution
+    fn logs(&self) -> Vec<String>;
+
+    /// Clears all logs in the current EVM instance, so that subsequent calls to
+    /// `logs` do not print duplicate logs on shared EVM instances.
+    fn clear_logs(&mut self);
 }
 
 // The implementation for the base Stack Executor just forwards to the internal methods.
@@ -121,4 +129,10 @@ impl<'a, S: StackState<'a>> SputnikExecutor<S> for StackExecutor<'a, S> {
     fn create_address(&self, scheme: CreateScheme) -> Address {
         self.create_address(scheme)
     }
+
+    // Empty impls for non-cheatcode handlers
+    fn logs(&self) -> Vec<String> {
+        vec![]
+    }
+    fn clear_logs(&mut self) {}
 }

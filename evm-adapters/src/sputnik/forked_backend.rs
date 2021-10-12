@@ -205,10 +205,10 @@ mod tests {
 
         let mut evm = Executor::new(12_000_000, &cfg, &backend);
 
-        let (addr, _, _) =
+        let (addr, _, _, _) =
             evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
 
-        let (res, _, _) =
+        let (res, _, _, _) =
             evm.call::<U256, _, _>(Address::zero(), addr, "time()(uint256)", (), 0.into()).unwrap();
 
         // https://etherscan.io/block/13292465

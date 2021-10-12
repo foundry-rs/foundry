@@ -17,7 +17,7 @@ mod dapp_opts;
 use dapp_opts::{BuildOpts, EvmType, Opts, Subcommands};
 
 use crate::dapp_opts::FullContractInfo;
-use std::{convert::TryFrom, sync::Arc};
+use std::{collections::HashMap, convert::TryFrom, sync::Arc};
 
 mod cmd;
 mod utils;
@@ -97,6 +97,7 @@ fn main() -> eyre::Result<()> {
                     let backend = Arc::new(backend);
 
                     let evm = Executor::new_with_cheatcodes(backend, env.gas_limit, &cfg, ffi);
+
                     test(builder, evm, pattern, json)?;
                 }
                 #[cfg(feature = "evmodin-evm")]
@@ -149,7 +150,7 @@ fn test<S: Clone, E: evm_adapters::Evm<S>>(
     evm: E,
     pattern: Regex,
     json: bool,
-) -> eyre::Result<()> {
+) -> eyre::Result<HashMap<String, HashMap<String, dapp::TestResult>>> {
     let mut runner = builder.build(evm)?;
 
     let results = runner.test(pattern)?;
@@ -158,7 +159,7 @@ fn test<S: Clone, E: evm_adapters::Evm<S>>(
         let res = serde_json::to_string(&results)?;
         println!("{}", res);
     } else {
-        // Dapptools-style printing
+        // Dapptools-style printing of test results
         for (i, (contract_name, tests)) in results.iter().enumerate() {
             if i > 0 {
                 println!()
@@ -188,8 +189,22 @@ fn test<S: Clone, E: evm_adapters::Evm<S>>(
                         .unwrap_or_else(|| "[fuzztest]".to_string())
                 );
             }
+
+            println!();
+
+            for (name, result) in tests {
+                let status = if result.success { "Success" } else { "Failure" };
+                println!("{}: {}", status, name);
+                println!();
+
+                for log in &result.logs {
+                    println!("  {}", log);
+                }
+
+                println!();
+            }
         }
     }
 
-    Ok(())
+    Ok(results)
 }

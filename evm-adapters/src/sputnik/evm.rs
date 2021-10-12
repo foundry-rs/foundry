@@ -102,7 +102,7 @@ where
         from: Address,
         calldata: Bytes,
         value: U256,
-    ) -> Result<(Address, ExitReason, u64)> {
+    ) -> Result<(Address, ExitReason, u64, Vec<String>)> {
         let gas_before = self.executor.gas_left();
 
         // The account's created contract address is pre-computed by using the account's nonce
@@ -110,6 +110,11 @@ where
         let address = self.executor.create_address(CreateScheme::Legacy { caller: from });
         let status =
             self.executor.transact_create(from, value, calldata.to_vec(), self.gas_limit, vec![]);
+
+        // get the deployment logs
+        let logs = self.executor.logs();
+        // and clear them
+        self.executor.clear_logs();
 
         let gas_after = self.executor.gas_left();
         let gas = gas_before.saturating_sub(gas_after).saturating_sub(21000.into());
@@ -119,7 +124,7 @@ where
             Err(eyre::eyre!("deployment reverted, reason: {:?}", status))
         } else {
             tracing::trace!(?status, ?address, ?gas, "success");
-            Ok((address, status, gas.as_u64()))
+            Ok((address, status, gas.as_u64(), logs))
         }
     }
 
@@ -131,16 +136,24 @@ where
         calldata: Bytes,
         value: U256,
         _is_static: bool,
-    ) -> Result<(Bytes, ExitReason, u64)> {
+    ) -> Result<(Bytes, ExitReason, u64, Vec<String>)> {
         let gas_before = self.executor.gas_left();
 
         let (status, retdata) =
             self.executor.transact_call(from, to, value, calldata.to_vec(), self.gas_limit, vec![]);
 
+        tracing::trace!(logs_before = ?self.executor.logs());
+
         let gas_after = self.executor.gas_left();
         let gas = gas_before.saturating_sub(gas_after).saturating_sub(21000.into());
 
-        Ok((retdata.into(), status, gas.as_u64()))
+        // get the logs
+        let logs = self.executor.logs();
+        tracing::trace!(logs_after = ?self.executor.logs());
+        // clear them
+        self.executor.clear_logs();
+
+        Ok((retdata.into(), status, gas.as_u64(), logs))
     }
 }
 
@@ -213,7 +226,7 @@ mod tests {
         let backend = new_backend(&vicinity, Default::default());
         let mut evm = Executor::new(12_000_000, &cfg, &backend);
 
-        let (addr, _, _) =
+        let (addr, _, _, _) =
             evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
 
         let (status, res) = evm.executor.transact_call(
@@ -238,18 +251,18 @@ mod tests {
         let backend = new_backend(&vicinity, Default::default());
         let mut evm = Executor::new(12_000_000, &cfg, &backend);
 
-        let (addr, _, _) =
+        let (addr, _, _, _) =
             evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
 
         // call the setup function to deploy the contracts inside the test
-        let status = evm.setup(addr).unwrap();
+        let status = evm.setup(addr).unwrap().0;
         assert_eq!(status, ExitReason::Succeed(ExitSucceed::Stopped));
 
         let err = evm
             .call::<(), _, _>(Address::zero(), addr, "testFailGreeting()", (), 0.into())
             .unwrap_err();
         let (reason, gas_used) = match err {
-            crate::EvmError::Execution { reason, gas_used } => (reason, gas_used),
+            crate::EvmError::Execution { reason, gas_used, .. } => (reason, gas_used),
             _ => panic!("unexpected error variant"),
         };
         assert_eq!(reason, "not equal to `hi`".to_string());
@@ -273,7 +286,7 @@ mod tests {
         let mut evm = Executor::new(13_000_000, &cfg, &backend);
 
         let from = Address::random();
-        let (addr, _, _) = evm.deploy(from, compiled.bytecode.clone(), 0.into()).unwrap();
+        let (addr, _, _, _) = evm.deploy(from, compiled.bytecode.clone(), 0.into()).unwrap();
 
         // makes a call to the contract
         let sig = ethers::utils::id("foo()").to_vec();
