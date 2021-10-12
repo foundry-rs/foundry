@@ -43,14 +43,18 @@ fn main() -> eyre::Result<()> {
                     EVM_CONFIG.set(evm_version.sputnik_cfg()).expect("could not set EVM_CONFIG");
 
                     EVM_VICINITY.set(env.sputnik_state()).expect("could not set EVM_VICINITY");
-                    EVM_BACKEND
-                        .set(MemoryBackend::new(
-                            EVM_VICINITY.get().expect("could not get EVM_VICINITY"),
-                            Default::default(),
-                        ))
-                        .expect("could not set EVM_BACKEND");
 
-                    let node = dapp::Node::new(Executor::new_with_cheatcodes(
+                    let mut backend = MemoryBackend::new(
+                        EVM_VICINITY.get().expect("could not get EVM_VICINITY"),
+                        Default::default(),
+                    );
+                    let faucet =
+                        backend.state_mut().entry(*FAUCET_ACCOUNT).or_insert_with(Default::default);
+                    faucet.balance = U256::MAX;
+
+                    EVM_BACKEND.set(backend).expect("could not set EVM_BACKEND");
+
+                    let mut node = dapp::Node::new(Executor::new_with_cheatcodes(
                         EVM_BACKEND.get().expect("could not get EVM_BACKEND"),
                         env.gas_limit,
                         EVM_CONFIG.get().expect("could not get EVM_CONFIG"),
@@ -70,7 +74,7 @@ fn main() -> eyre::Result<()> {
                     // provided generically when we add the Forking host(s).
                     let host = env.evmodin_state();
 
-                    let node =
+                    let mut node =
                         dapp::Node::new(EvmOdin::new(host, env.gas_limit, revision, NoopTracer));
                     node.init(account, balance);
                     tokio::runtime::Runtime::new().unwrap().block_on(node.run());

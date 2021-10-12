@@ -85,6 +85,10 @@ where
         })
     }
 
+    fn get_balance(&self, address: Address) -> U256 {
+        self.executor.state().basic(address).balance
+    }
+
     fn set_balance(&mut self, address: Address, balance: U256) {
         self.executor
             .state_mut()

@@ -26,23 +26,21 @@ impl<E: Send + Sync + 'static> Node<E> {
         Self { evm: Arc::new(evm) }
     }
 
-    pub fn init<S>(&self, account: Address, balance: U256)
+    pub fn init<S>(&mut self, account: Address, balance: U256)
     where
         E: Evm<S>,
     {
-        let mut evm = self.evm.clone();
-        if let Some(evm) = Arc::get_mut(&mut evm) {
+        if let Some(evm) = Arc::get_mut(&mut self.evm) {
             evm.set_balance(account, balance);
         }
     }
 
-    pub async fn run<S>(&self)
+    pub async fn run<S>(&mut self)
     where
         S: 'static,
         E: Evm<S>,
     {
-        let state =
-            Arc::new(State { evm: Arc::clone(&self.evm), blocks: vec![], txs: HashMap::new() });
+        let state = Arc::new(State { evm: self.evm.clone(), blocks: vec![], txs: HashMap::new() });
 
         let svc = Router::new()
             .route("/", post(handler::<E, S>))
@@ -97,10 +95,11 @@ where
     }
 }
 
-fn handle<S, E: Evm<S>>(_evm: Arc<State<E>>, msg: EthRequest) -> EthResponse {
+fn handle<S, E: Evm<S>>(state: Arc<State<E>>, msg: EthRequest) -> EthResponse {
     match msg {
-        EthRequest::EthGetBalance(_addr, _block) => {
-            todo!();
+        EthRequest::EthGetBalance(account, _block) => {
+            let balance = state.clone().evm.get_balance(account);
+            EthResponse::EthGetBalance(balance)
         }
         EthRequest::EthGetTransactionByHash(_tx_hash) => {
             todo!();

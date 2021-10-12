@@ -50,6 +50,10 @@ impl<S: HostExt, Tr: Tracer> Evm<S> for EvmOdin<S, Tr> {
         matches!(reason, StatusCode::Revert)
     }
 
+    fn get_balance(&self, address: Address) -> U256 {
+        self.host.get_balance(address)
+    }
+
     fn set_balance(&mut self, address: Address, balance: U256) {
         self.host.set_balance(address, balance)
     }
