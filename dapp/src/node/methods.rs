@@ -46,13 +46,13 @@ where
     Ok(seq.pop().expect("length of vector is 1"))
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Serialize)]
 #[serde(untagged)]
 #[allow(dead_code)]
 pub enum EthResponse {
     EthGetBalance(U256),
-    EthGetTransactionByHash(Transaction),
-    EthSendTransaction(TxHash),
+    EthGetTransactionByHash(Option<Transaction>),
+    EthSendTransaction(Result<TxHash, Box<dyn erased_serde::Serialize>>),
 }
 
 #[cfg(test)]
@@ -84,7 +84,9 @@ mod tests {
         let val = EthResponse::EthGetBalance(U256::from(123u64));
         let _ser = serde_json::to_string(&val).unwrap();
 
-        let val = EthResponse::EthGetTransactionByHash(Transaction::default());
+        let val = EthResponse::EthGetTransactionByHash(Some(Transaction::default()));
+        let _ser = serde_json::to_string(&val).unwrap();
+        let val = EthResponse::EthGetTransactionByHash(None);
         let _ser = serde_json::to_string(&val).unwrap();
     }
 }

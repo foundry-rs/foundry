@@ -36,7 +36,7 @@ pub enum Subcommands {
         #[structopt(
             long,
             help = "the initial account created and funded by dapp node",
-            default_value = "0x0000000000000000000000000000000000000000000000000000000000000000"
+            default_value = "0000000000000000000000000000000000000000000000000000000000000001"
         )]
         account: Wallet<SigningKey>,
 

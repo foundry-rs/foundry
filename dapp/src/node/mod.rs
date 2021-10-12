@@ -1,4 +1,8 @@
-use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    sync::{Arc, RwLock},
+};
 
 use axum::{
     extract::{rejection::JsonRejection, Extension, Json},
@@ -7,7 +11,8 @@ use axum::{
 };
 use ethers::{
     core::k256::ecdsa::SigningKey,
-    prelude::{Block, Signer, Transaction, TxHash, Wallet, U256},
+    prelude::{Block, NameOrAddress, Signer, Transaction, TxHash, Wallet, U256},
+    utils::keccak256,
 };
 use evm_adapters::Evm;
 
@@ -18,36 +23,40 @@ mod types;
 use types::{Error, JsonRpcRequest, JsonRpcResponse, ResponseContent};
 
 pub struct Node<E> {
-    evm: Arc<E>,
+    evm: Arc<RwLock<E>>,
+    sender: Wallet<SigningKey>,
 }
 
 impl<E: Send + Sync + 'static> Node<E> {
-    pub fn new<S>(evm: E) -> Self
+    pub fn new<S>(evm: E, sender: Wallet<SigningKey>) -> Self
     where
         E: Evm<S>,
     {
-        Self { evm: Arc::new(evm) }
+        Self { evm: Arc::new(RwLock::new(evm)), sender }
     }
 
-    pub fn init<S>(&mut self, account: Wallet<SigningKey>, balance: U256)
+    pub fn init<S>(&mut self, balance: U256)
     where
         E: Evm<S>,
     {
-        if let Some(evm) = Arc::get_mut(&mut self.evm) {
-            evm.set_balance(account.address(), balance);
-        }
+        self.evm.write().unwrap().set_balance(self.sender.address(), balance);
     }
 
-    pub async fn run<S>(&mut self)
+    pub async fn run<S>(&self)
     where
         S: 'static,
         E: Evm<S>,
     {
-        let state = Arc::new(State { evm: self.evm.clone(), blocks: vec![], txs: HashMap::new() });
+        let shared_state = Arc::new(RwLock::new(State {
+            evm: self.evm.clone(),
+            sender: self.sender.clone(),
+            blocks: vec![],
+            txs: HashMap::new(),
+        }));
 
         let svc = Router::new()
             .route("/", post(handler::<E, S>))
-            .layer(AddExtensionLayer::new(state))
+            .layer(AddExtensionLayer::new(shared_state))
             .into_make_service();
 
         let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
@@ -58,14 +67,17 @@ impl<E: Send + Sync + 'static> Node<E> {
 
 #[allow(dead_code)]
 struct State<E> {
-    evm: Arc<E>,
+    evm: Arc<RwLock<E>>,
+    sender: Wallet<SigningKey>,
     blocks: Vec<Block<TxHash>>,
     txs: HashMap<TxHash, Transaction>,
 }
 
+type SharedState<E> = Arc<RwLock<State<E>>>;
+
 async fn handler<E, S>(
     request: Result<Json<JsonRpcRequest>, JsonRejection>,
-    Extension(state): Extension<Arc<State<E>>>,
+    Extension(state): Extension<SharedState<E>>,
 ) -> JsonRpcResponse
 where
     E: Evm<S>,
@@ -98,17 +110,67 @@ where
     }
 }
 
-fn handle<S, E: Evm<S>>(state: Arc<State<E>>, msg: EthRequest) -> EthResponse {
+fn handle<S, E: Evm<S>>(state: SharedState<E>, msg: EthRequest) -> EthResponse {
     match msg {
         EthRequest::EthGetBalance(account, _block) => {
-            let balance = state.clone().evm.get_balance(account);
+            let balance = state.read().unwrap().evm.read().unwrap().get_balance(account);
             EthResponse::EthGetBalance(balance)
         }
         EthRequest::EthGetTransactionByHash(_tx_hash) => {
             todo!();
         }
-        EthRequest::EthSendTransaction(_tx) => {
-            todo!();
+        EthRequest::EthSendTransaction(tx) => {
+            let from = if let Some(from) = tx.from() {
+                if state.read().unwrap().sender.address().ne(from) {
+                    unimplemented!("handle: tx.from != node.sender");
+                } else {
+                    *from
+                }
+            } else {
+                state.read().unwrap().sender.address()
+            };
+            let value = *tx.value().unwrap_or(&U256::zero());
+            let calldata = match tx.data() {
+                Some(data) => data.to_vec(),
+                None => vec![],
+            };
+
+            match tx.to() {
+                Some(to) => {
+                    // send tx
+                    let to = match to {
+                        NameOrAddress::Address(addr) => *addr,
+                        NameOrAddress::Name(_) => unimplemented!("handle: tx.to is an ENS name"),
+                    };
+                    // FIXME(rohit): state (and node) must need the chainID
+                    let tx_hash = keccak256(
+                        tx.rlp_signed(1, &state.read().unwrap().sender.sign_transaction_sync(&tx)),
+                    );
+
+                    match state.write().unwrap().evm.write().unwrap().call_raw(
+                        from,
+                        to,
+                        calldata.into(),
+                        value,
+                        false,
+                    ) {
+                        Ok((retdata, status, _gas_used)) => {
+                            if E::is_success(&status) {
+                                EthResponse::EthSendTransaction(Ok(tx_hash.into()))
+                            } else {
+                                EthResponse::EthSendTransaction(Err(Box::new(
+                                    dapp_utils::decode_revert(retdata.as_ref()).unwrap_or_default(),
+                                )))
+                            }
+                        }
+                        Err(e) => EthResponse::EthSendTransaction(Err(Box::new(e.to_string()))),
+                    }
+                }
+                None => {
+                    // deploy a contract
+                    todo!();
+                }
+            }
         }
     }
 }
