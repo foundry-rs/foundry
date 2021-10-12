@@ -98,23 +98,7 @@ fn main() -> eyre::Result<()> {
 
                     let evm = Executor::new_with_cheatcodes(backend, env.gas_limit, &cfg, ffi);
 
-                    let results = test(builder, evm, pattern, json)?;
-
-                    // TODO: Different outputs depending on verbosity.
-                    for (i, (contract_name, tests)) in results.iter().enumerate() {
-                        if i > 0 {
-                            println!()
-                        }
-                        if !tests.is_empty() {
-                            println!("{} logs:", contract_name);
-                        }
-
-                        for (_, result) in tests {
-                            for log in &result.logs {
-                                println!("{}", log);
-                            }
-                        }
-                    }
+                    test(builder, evm, pattern, json)?;
                 }
                 #[cfg(feature = "evmodin-evm")]
                 EvmType::EvmOdin => {
@@ -204,6 +188,20 @@ fn test<S: Clone, E: evm_adapters::Evm<S>>(
                         .map(|x| x.to_string())
                         .unwrap_or_else(|| "[fuzztest]".to_string())
                 );
+            }
+
+            println!();
+
+            for (name, result) in tests {
+                let status = if result.success { "Success" } else { "Failure" };
+                println!("{}: {}", status, name);
+                println!();
+
+                for log in &result.logs {
+                    println!("  {}", log);
+                }
+
+                println!();
             }
         }
     }
