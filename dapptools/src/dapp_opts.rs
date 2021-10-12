@@ -1,6 +1,10 @@
 use structopt::StructOpt;
 
-use ethers::types::{Address, U256};
+use ethers::{
+    core::k256::ecdsa::SigningKey,
+    prelude::Wallet,
+    types::{Address, U256},
+};
 use std::{path::PathBuf, str::FromStr};
 
 #[derive(Debug, StructOpt)]
@@ -32,9 +36,9 @@ pub enum Subcommands {
         #[structopt(
             long,
             help = "the initial account created and funded by dapp node",
-            default_value = "0x0000000000000000000000000000000000000000"
+            default_value = "0x0000000000000000000000000000000000000000000000000000000000000000"
         )]
-        account: Address,
+        account: Wallet<SigningKey>,
 
         #[structopt(
             long,

@@ -5,7 +5,10 @@ use axum::{
     handler::post,
     AddExtensionLayer, Router, Server,
 };
-use ethers::prelude::{Address, Block, Transaction, TxHash, U256};
+use ethers::{
+    core::k256::ecdsa::SigningKey,
+    prelude::{Block, Signer, Transaction, TxHash, Wallet, U256},
+};
 use evm_adapters::Evm;
 
 mod methods;
@@ -26,12 +29,12 @@ impl<E: Send + Sync + 'static> Node<E> {
         Self { evm: Arc::new(evm) }
     }
 
-    pub fn init<S>(&mut self, account: Address, balance: U256)
+    pub fn init<S>(&mut self, account: Wallet<SigningKey>, balance: U256)
     where
         E: Evm<S>,
     {
         if let Some(evm) = Arc::get_mut(&mut self.evm) {
-            evm.set_balance(account, balance);
+            evm.set_balance(account.address(), balance);
         }
     }
 
