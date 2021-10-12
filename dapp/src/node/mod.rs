@@ -104,12 +104,14 @@ where
 
 fn handle<S, E: Evm<S>>(state: SharedState<E>, msg: EthRequest) -> EthResponse {
     match msg {
+        // TODO: think how we can query the EVM state at a past block
         EthRequest::EthGetBalance(account, _block) => {
             let balance = state.read().unwrap().evm.read().unwrap().get_balance(account);
             EthResponse::EthGetBalance(balance)
         }
-        EthRequest::EthGetTransactionByHash(_tx_hash) => {
-            todo!();
+        EthRequest::EthGetTransactionByHash(tx_hash) => {
+            let tx = state.read().unwrap().txs.get(&tx_hash).cloned();
+            EthResponse::EthGetTransactionByHash(tx)
         }
         EthRequest::EthSendTransaction(tx) => match tx.to() {
             Some(_) => helper::send_transaction(state, tx),
