@@ -32,7 +32,7 @@ impl<E: Send + Sync + 'static> Node<E> {
     {
         let mut evm = self.evm.clone();
         if let Some(evm) = Arc::get_mut(&mut evm) {
-            todo!();
+            evm.set_balance(account, balance);
         }
     }
 
