@@ -74,7 +74,7 @@ impl<S: HostExt, Tr: Tracer> Evm<S> for EvmOdin<S, Tr> {
         from: Address,
         calldata: Bytes,
         value: U256,
-    ) -> Result<(Address, Self::ReturnReason, u64)> {
+    ) -> Result<(Address, Self::ReturnReason, u64, Vec<String>)> {
         unimplemented!("Contract deployment is not implemented for evmodin yet")
     }
 

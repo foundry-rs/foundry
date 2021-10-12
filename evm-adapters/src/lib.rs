@@ -120,7 +120,7 @@ pub trait Evm<State> {
         from: Address,
         calldata: Bytes,
         value: U256,
-    ) -> Result<(Address, Self::ReturnReason, u64)>;
+    ) -> Result<(Address, Self::ReturnReason, u64, Vec<String>)>;
 
     /// Runs the `setUp()` function call to instantiate the contract's state
     fn setup(&mut self, address: Address) -> Result<(Self::ReturnReason, Vec<String>)> {

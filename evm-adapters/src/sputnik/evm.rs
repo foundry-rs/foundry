@@ -102,7 +102,7 @@ where
         from: Address,
         calldata: Bytes,
         value: U256,
-    ) -> Result<(Address, ExitReason, u64)> {
+    ) -> Result<(Address, ExitReason, u64, Vec<String>)> {
         let gas_before = self.executor.gas_left();
 
         // The account's created contract address is pre-computed by using the account's nonce
@@ -110,6 +110,11 @@ where
         let address = self.executor.create_address(CreateScheme::Legacy { caller: from });
         let status =
             self.executor.transact_create(from, value, calldata.to_vec(), self.gas_limit, vec![]);
+
+        // get the deployment logs
+        let logs = self.executor.logs();
+        // and clear them
+        self.executor.clear_logs();
 
         let gas_after = self.executor.gas_left();
         let gas = gas_before.saturating_sub(gas_after).saturating_sub(21000.into());
@@ -119,7 +124,7 @@ where
             Err(eyre::eyre!("deployment reverted, reason: {:?}", status))
         } else {
             tracing::trace!(?status, ?address, ?gas, "success");
-            Ok((address, status, gas.as_u64()))
+            Ok((address, status, gas.as_u64(), logs))
         }
     }
 
