@@ -56,13 +56,20 @@ pub struct ContractRunner<'a, S, E> {
     pub evm: &'a mut E,
     pub contract: &'a CompiledContract,
     pub address: Address,
+    /// Any logs emitted in the constructor of the specific contract
+    pub init_logs: &'a [String],
     // need to constrain the trait generic
     state: PhantomData<S>,
 }
 
 impl<'a, S, E> ContractRunner<'a, S, E> {
-    pub fn new(evm: &'a mut E, contract: &'a CompiledContract, address: Address) -> Self {
-        Self { evm, contract, address, state: PhantomData }
+    pub fn new(
+        evm: &'a mut E,
+        contract: &'a CompiledContract,
+        address: Address,
+        init_logs: &'a [String],
+    ) -> Self {
+        Self { evm, contract, address, init_logs, state: PhantomData }
     }
 }
 
@@ -134,15 +141,18 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         let should_fail = func.name.starts_with("testFail");
         tracing::debug!(func = ?func.name, should_fail, "unit-testing");
 
+        let mut logs = self.init_logs.to_vec();
+
         // call the setup function in each test to reset the test's state.
-        let mut logs = if setup {
+        if setup {
             tracing::trace!("setting up");
-            self.evm
+            let setup_logs = self
+                .evm
                 .setup(self.address)
-                .wrap_err(format!("could not setup during {} test", func.name))?.1
-        } else {
-            vec![]
-        };
+                .wrap_err(format!("could not setup during {} test", func.name))?
+                .1;
+            logs.extend_from_slice(&setup_logs);
+        }
 
         let (status, reason, gas_used, logs) = match self.evm.call::<(), _, _>(
             Address::zero(),
