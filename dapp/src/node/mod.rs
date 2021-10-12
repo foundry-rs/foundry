@@ -11,10 +11,12 @@ use axum::{
 };
 use ethers::{
     core::k256::ecdsa::SigningKey,
-    prelude::{Block, NameOrAddress, Signer, Transaction, TxHash, Wallet, U256},
-    utils::keccak256,
+    prelude::{Signer, Wallet, U256},
 };
 use evm_adapters::Evm;
+
+mod helper;
+use helper::{SharedState, State};
 
 mod methods;
 use methods::{EthRequest, EthResponse};
@@ -65,16 +67,6 @@ impl<E: Send + Sync + 'static> Node<E> {
     }
 }
 
-#[allow(dead_code)]
-struct State<E> {
-    evm: Arc<RwLock<E>>,
-    sender: Wallet<SigningKey>,
-    blocks: Vec<Block<TxHash>>,
-    txs: HashMap<TxHash, Transaction>,
-}
-
-type SharedState<E> = Arc<RwLock<State<E>>>;
-
 async fn handler<E, S>(
     request: Result<Json<JsonRpcRequest>, JsonRejection>,
     Extension(state): Extension<SharedState<E>>,
@@ -119,58 +111,9 @@ fn handle<S, E: Evm<S>>(state: SharedState<E>, msg: EthRequest) -> EthResponse {
         EthRequest::EthGetTransactionByHash(_tx_hash) => {
             todo!();
         }
-        EthRequest::EthSendTransaction(tx) => {
-            let from = if let Some(from) = tx.from() {
-                if state.read().unwrap().sender.address().ne(from) {
-                    unimplemented!("handle: tx.from != node.sender");
-                } else {
-                    *from
-                }
-            } else {
-                state.read().unwrap().sender.address()
-            };
-            let value = *tx.value().unwrap_or(&U256::zero());
-            let calldata = match tx.data() {
-                Some(data) => data.to_vec(),
-                None => vec![],
-            };
-
-            match tx.to() {
-                Some(to) => {
-                    // send tx
-                    let to = match to {
-                        NameOrAddress::Address(addr) => *addr,
-                        NameOrAddress::Name(_) => unimplemented!("handle: tx.to is an ENS name"),
-                    };
-                    // FIXME(rohit): state (and node) must need the chainID
-                    let tx_hash = keccak256(
-                        tx.rlp_signed(1, &state.read().unwrap().sender.sign_transaction_sync(&tx)),
-                    );
-
-                    match state.write().unwrap().evm.write().unwrap().call_raw(
-                        from,
-                        to,
-                        calldata.into(),
-                        value,
-                        false,
-                    ) {
-                        Ok((retdata, status, _gas_used)) => {
-                            if E::is_success(&status) {
-                                EthResponse::EthSendTransaction(Ok(tx_hash.into()))
-                            } else {
-                                EthResponse::EthSendTransaction(Err(Box::new(
-                                    dapp_utils::decode_revert(retdata.as_ref()).unwrap_or_default(),
-                                )))
-                            }
-                        }
-                        Err(e) => EthResponse::EthSendTransaction(Err(Box::new(e.to_string()))),
-                    }
-                }
-                None => {
-                    // deploy a contract
-                    todo!();
-                }
-            }
-        }
+        EthRequest::EthSendTransaction(tx) => match tx.to() {
+            Some(_) => helper::send_transaction(state, tx),
+            None => helper::deploy_contract(state, tx),
+        },
     }
 }
