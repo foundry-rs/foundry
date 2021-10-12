@@ -135,11 +135,14 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         tracing::debug!(func = ?func.name, should_fail, "unit-testing");
 
         // call the setup function in each test to reset the test's state.
-        if setup {
+        let mut logs = if setup {
+            tracing::trace!("setting up");
             self.evm
                 .setup(self.address)
-                .wrap_err(format!("could not setup during {} test", func.name))?;
-        }
+                .wrap_err(format!("could not setup during {} test", func.name))?.1
+        } else {
+            vec![]
+        };
 
         let (status, reason, gas_used, logs) = match self.evm.call::<(), _, _>(
             Address::zero(),
@@ -148,9 +151,13 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
             (),
             0.into(),
         ) {
-            Ok((_, status, gas_used, logs)) => (status, None, gas_used, logs),
+            Ok((_, status, gas_used, execution_logs)) => {
+                logs.extend(execution_logs);
+                (status, None, gas_used, logs)
+            }
             Err(err) => match err {
-                EvmError::Execution { reason, gas_used, logs } => {
+                EvmError::Execution { reason, gas_used, logs: execution_logs } => {
+                    logs.extend(execution_logs);
                     (E::revert(), Some(reason), gas_used, logs)
                 }
                 err => {
