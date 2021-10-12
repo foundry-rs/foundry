@@ -125,6 +125,10 @@ impl<'a, B: Backend> SputnikExecutor<CheatcodeStackState<'a, B>> for CheatcodeSt
         self.handler.create_address(scheme)
     }
 
+    fn clear_logs(&mut self) {
+        self.state_mut().substate.logs_mut().clear()
+    }
+
     fn logs(&self) -> Vec<String> {
         let logs = self.state().substate.logs().to_vec();
         logs.into_iter()

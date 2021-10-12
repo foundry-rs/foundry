@@ -140,7 +140,10 @@ where
         let gas_after = self.executor.gas_left();
         let gas = gas_before.saturating_sub(gas_after).saturating_sub(21000.into());
 
+        // get the logs
         let logs = self.executor.logs();
+        // clear them
+        self.executor.clear_logs();
 
         Ok((retdata.into(), status, gas.as_u64(), logs))
     }
