@@ -17,7 +17,7 @@ mod dapp_opts;
 use dapp_opts::{BuildOpts, EvmType, Opts, Subcommands};
 
 use crate::dapp_opts::FullContractInfo;
-use std::{collections::HashMap, convert::TryFrom, sync::Arc};
+use std::{collections::HashMap, convert::TryFrom, path::Path, sync::Arc};
 
 mod cmd;
 mod utils;
@@ -155,13 +155,84 @@ fn main() -> eyre::Result<()> {
                 .update(true, None)?;
             } else {
                 // otherwise just update them all
-                repo.submodules()?.into_iter().try_for_each::<_, eyre::Result<_>>(
-                    |mut submodule| {
+                repo.submodules()?.into_iter().try_for_each(
+                    |mut submodule| -> eyre::Result<_> {
                         println!("Updating submodule {:?}", submodule.path());
                         Ok(submodule.update(true, None)?)
                     },
                 )?;
             }
+        }
+        // TODO: Make it work with updates?
+        Subcommands::Install { dependencies } => {
+            let repo = git2::Repository::open(".")?;
+            let libs = std::path::Path::new("lib");
+
+            dependencies.iter().try_for_each(|dep| -> eyre::Result<_> {
+                let path = libs.join(&dep.name);
+                println!(
+                    "Installing {} in {:?}, (url: {}, tag: {:?})",
+                    dep.name, path, dep.url, dep.tag
+                );
+
+                // get the submodule and clone it
+                let mut submodule = repo.submodule(&dep.url, &path, true)?;
+                submodule.clone(None)?;
+
+                // get the repo & checkout the provided tag if necessary
+                // ref: https://stackoverflow.com/a/67240436
+                let submodule = submodule.open()?;
+                if let Some(ref tag) = dep.tag {
+                    let (object, reference) = submodule.revparse_ext(tag)?;
+                    submodule.checkout_tree(&object, None).expect("Failed to checkout");
+
+                    match reference {
+                        // gref is an actual reference like branches or tags
+                        Some(gref) => submodule.set_head(gref.name().unwrap()),
+                        // this is a commit, not a reference
+                        None => submodule.set_head_detached(object.id()),
+                    }
+                    .expect("Failed to set HEAD");
+                }
+
+                // initialize all the submodules in the cloned submodule
+                submodule.submodules()?.into_iter().try_for_each(
+                    |mut submodule| -> eyre::Result<_> {
+                        submodule.update(true, None)?;
+                        Ok(())
+                    },
+                )?;
+
+                // commit the submodule's installation
+                let sig = repo.signature()?;
+                let mut index = repo.index()?;
+                // stage `.gitmodules` and the lib
+                index.add_path(Path::new(".gitmodules"))?;
+                index.add_path(&path)?;
+                // need to write the index back to disk
+                index.write()?;
+
+                let id = index.write_tree().unwrap();
+                let tree = repo.find_tree(id).unwrap();
+
+                let message = if let Some(ref tag) = dep.tag {
+                    format!("turbodapp install: {}\n\n{}", dep.name, tag)
+                } else {
+                    format!("turbodapp install: {}", dep.name)
+                };
+
+                // committing to the parent may make running the installation step
+                // in parallel challenging..
+                let parent = repo
+                    .head()?
+                    .resolve()?
+                    .peel(git2::ObjectType::Commit)?
+                    .into_commit()
+                    .map_err(|err| eyre::eyre!("cannot get parent commit: {:?}", err))?;
+                repo.commit(Some("HEAD"), &sig, &sig, &message, &tree, &[&parent])?;
+
+                Ok(())
+            })?
         }
     }
 
