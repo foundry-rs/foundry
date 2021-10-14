@@ -76,6 +76,13 @@ pub enum Subcommands {
         #[structopt(flatten)]
         opts: BuildOpts,
     },
+    #[structopt(about = "fetches all upstream lib changes")]
+    Update {
+        #[structopt(
+            help = "the submodule name of the library you want to update (will update all if none is provided)"
+        )]
+        lib: Option<PathBuf>,
+    },
     #[structopt(about = "build your smart contracts. Requires `ETHERSCAN_API_KEY` to be set.")]
     VerifyContract {
         #[structopt(help = "contract source info `<path>:<contractname>`")]

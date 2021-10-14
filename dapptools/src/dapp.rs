@@ -140,6 +140,29 @@ fn main() -> eyre::Result<()> {
         Subcommands::Create { contract: _, verify: _ } => {
             unimplemented!("Not yet implemented")
         }
+        Subcommands::Update { lib } => {
+            // TODO: Should we add some sort of progress bar here? Would be nice
+            // but not a requirement.
+            // open the repo
+            let repo = git2::Repository::open(".")?;
+
+            // if a lib is specified, open it
+            if let Some(lib) = lib {
+                println!("Updating submodule {:?}", lib);
+                repo.find_submodule(
+                    &lib.into_os_string().into_string().expect("invalid submodule path"),
+                )?
+                .update(true, None)?;
+            } else {
+                // otherwise just update them all
+                repo.submodules()?.into_iter().try_for_each::<_, eyre::Result<_>>(
+                    |mut submodule| {
+                        println!("Updating submodule {:?}", submodule.path());
+                        Ok(submodule.update(true, None)?)
+                    },
+                )?;
+            }
+        }
     }
 
     Ok(())
