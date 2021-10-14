@@ -348,9 +348,13 @@ impl Env {
 /// A dependency can be provided as a raw URL, or as a path to a Github repository
 /// e.g. `org-name/repo-name`
 ///
-/// Non Github URLs must be provided with an https:// prefix.
+/// Providing a ref can be done in the following 3 ways:
+/// * branch: master
+/// * tag: v0.1.1
+/// * commit: 8e8128
 ///
-/// Adding dependencies as paths is not supported yet.
+/// Non Github URLs must be provided with an https:// prefix.
+/// Adding dependencies as local paths is not supported yet.
 #[derive(Clone, Debug)]
 pub struct Dependency {
     /// The name of the dependency

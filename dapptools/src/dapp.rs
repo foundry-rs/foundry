@@ -179,8 +179,24 @@ fn main() -> eyre::Result<()> {
                 let mut submodule = repo.submodule(&dep.url, &path, true)?;
                 submodule.clone(None)?;
 
+                // get the repo & checkout the provided tag if necessary
+                // ref: https://stackoverflow.com/a/67240436
+                let submodule = submodule.open()?;
+                if let Some(ref tag) = dep.tag {
+                    let (object, reference) = submodule.revparse_ext(&tag)?;
+                    submodule.checkout_tree(&object, None).expect("Failed to checkout");
+
+                    match reference {
+                        // gref is an actual reference like branches or tags
+                        Some(gref) => submodule.set_head(gref.name().unwrap()),
+                        // this is a commit, not a reference
+                        None => submodule.set_head_detached(object.id()),
+                    }
+                    .expect("Failed to set HEAD");
+                }
+
                 // initialize all the submodules in the cloned submodule
-                submodule.open()?.submodules()?.into_iter().try_for_each::<_, eyre::Result<_>>(
+                submodule.submodules()?.into_iter().try_for_each::<_, eyre::Result<_>>(
                     |mut submodule| {
                         submodule.update(true, None)?;
                         Ok(())
