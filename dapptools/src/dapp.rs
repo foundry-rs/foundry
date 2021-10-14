@@ -163,8 +163,32 @@ fn main() -> eyre::Result<()> {
                 )?;
             }
         }
+        // TODO: Make it work with updates?
         Subcommands::Install { dependencies } => {
-            unimplemented!("not yet implemented");
+            let repo = git2::Repository::open(".")?;
+            let libs = std::path::Path::new("lib");
+
+            dependencies.iter().try_for_each::<_, eyre::Result<_>>(|dep| {
+                let path = libs.join(&dep.name);
+                println!(
+                    "Installing {} in {:?}, (url: {}, tag: {:?})",
+                    dep.name, path, dep.url, dep.tag
+                );
+
+                // get the submodule and clone it
+                let mut submodule = repo.submodule(&dep.url, &path, true)?;
+                submodule.clone(None)?;
+
+                // initialize all the submodules in the cloned submodule
+                submodule.open()?.submodules()?.into_iter().try_for_each::<_, eyre::Result<_>>(
+                    |mut submodule| {
+                        submodule.update(true, None)?;
+                        Ok(())
+                    },
+                )?;
+
+                Ok(())
+            })?
         }
     }
 
