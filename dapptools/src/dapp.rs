@@ -17,7 +17,7 @@ mod dapp_opts;
 use dapp_opts::{BuildOpts, EvmType, Opts, Subcommands};
 
 use crate::dapp_opts::FullContractInfo;
-use std::{collections::HashMap, convert::TryFrom, sync::Arc};
+use std::{collections::HashMap, convert::TryFrom, path::Path, sync::Arc};
 
 mod cmd;
 mod utils;
@@ -202,6 +202,34 @@ fn main() -> eyre::Result<()> {
                         Ok(())
                     },
                 )?;
+
+                // commit the submodule's installation
+                let sig = repo.signature()?;
+                let mut index = repo.index()?;
+                // stage `.gitmodules` and the lib
+                index.add_path(Path::new(".gitmodules"))?;
+                index.add_path(&path)?;
+                // need to write the index back to disk
+                index.write()?;
+
+                let id = index.write_tree().unwrap();
+                let tree = repo.find_tree(id).unwrap();
+
+                let message = if let Some(ref tag) = dep.tag {
+                    format!("turbodapp install: {}\n\n{}", dep.name, tag)
+                } else {
+                    format!("turbodapp install: {}", dep.name)
+                };
+
+                // committing to the parent may make running the installation step
+                // in parallel challenging..
+                let parent = repo
+                    .head()?
+                    .resolve()?
+                    .peel(git2::ObjectType::Commit)?
+                    .into_commit()
+                    .map_err(|err| eyre::eyre!("cannot get parent commit: {:?}", err))?;
+                repo.commit(Some("HEAD"), &sig, &sig, &message, &tree, &[&parent])?;
 
                 Ok(())
             })?
