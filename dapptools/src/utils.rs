@@ -76,6 +76,11 @@ impl Remapping {
         }
     }
 
+    pub fn find_many_str(path: &str) -> eyre::Result<Vec<String>> {
+        let remappings = Self::find_many(path)?;
+        Ok(remappings.iter().map(|mapping| format!("{}={}", mapping.name, mapping.path)).collect())
+    }
+
     /// Gets all the remappings detected
     pub fn find_many(path: &str) -> eyre::Result<Vec<Self>> {
         let path = std::path::Path::new(path);
