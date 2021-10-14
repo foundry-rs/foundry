@@ -382,7 +382,7 @@ impl FromStr for Dependency {
         let url =
             split.next().ok_or_else(|| eyre::eyre!("no dependency path was provided"))?.to_string();
         let name = url
-            .split("/")
+            .split('/')
             .last()
             .ok_or_else(|| eyre::eyre!("no dependency name found"))?
             .to_string();
