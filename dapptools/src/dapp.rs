@@ -155,8 +155,8 @@ fn main() -> eyre::Result<()> {
                 .update(true, None)?;
             } else {
                 // otherwise just update them all
-                repo.submodules()?.into_iter().try_for_each::<_, eyre::Result<_>>(
-                    |mut submodule| {
+                repo.submodules()?.into_iter().try_for_each(
+                    |mut submodule| -> eyre::Result<_> {
                         println!("Updating submodule {:?}", submodule.path());
                         Ok(submodule.update(true, None)?)
                     },
@@ -168,7 +168,7 @@ fn main() -> eyre::Result<()> {
             let repo = git2::Repository::open(".")?;
             let libs = std::path::Path::new("lib");
 
-            dependencies.iter().try_for_each::<_, eyre::Result<_>>(|dep| {
+            dependencies.iter().try_for_each(|dep| -> eyre::Result<_> {
                 let path = libs.join(&dep.name);
                 println!(
                     "Installing {} in {:?}, (url: {}, tag: {:?})",
@@ -183,7 +183,7 @@ fn main() -> eyre::Result<()> {
                 // ref: https://stackoverflow.com/a/67240436
                 let submodule = submodule.open()?;
                 if let Some(ref tag) = dep.tag {
-                    let (object, reference) = submodule.revparse_ext(&tag)?;
+                    let (object, reference) = submodule.revparse_ext(tag)?;
                     submodule.checkout_tree(&object, None).expect("Failed to checkout");
 
                     match reference {
@@ -196,8 +196,8 @@ fn main() -> eyre::Result<()> {
                 }
 
                 // initialize all the submodules in the cloned submodule
-                submodule.submodules()?.into_iter().try_for_each::<_, eyre::Result<_>>(
-                    |mut submodule| {
+                submodule.submodules()?.into_iter().try_for_each(
+                    |mut submodule| -> eyre::Result<_> {
                         submodule.update(true, None)?;
                         Ok(())
                     },
