@@ -335,3 +335,81 @@ impl Env {
         host
     }
 }
+
+/// A git dependency which will be installed as a submodule
+///
+/// A dependency can be provided as a raw URL, or as a path to a Github repository
+/// e.g. `org-name/repo-name`
+///
+/// Non Github URLs must be provided with an https:// prefix.
+///
+/// Adding dependencies as paths is not supported yet.
+#[derive(Clone, Debug)]
+pub struct Dependency {
+    /// The name of the dependency
+    pub name: String,
+    /// The url to the git repository corresponding to the dependency
+    pub url: String,
+    /// Optional tag corresponding to a Git SHA, tag, or branch.
+    pub tag: Option<String>,
+}
+
+const GITHUB: &str = "github.com";
+const VERSION_SEPARATOR: char = '@';
+
+impl FromStr for Dependency {
+    type Err = eyre::Error;
+    fn from_str(dependency: &str) -> Result<Self, Self::Err> {
+        // TODO: Is there a better way to normalize these paths to having a
+        // `https://github.com/` prefix?
+        let path = if dependency.starts_with("https://") {
+            dependency.to_string()
+        } else if dependency.starts_with(GITHUB) {
+            format!("https://{}", dependency)
+        } else {
+            format!("https://{}/{}", GITHUB, dependency)
+        };
+
+        // everything after the "@" should be considered the version
+        let mut split = path.split(VERSION_SEPARATOR);
+        let url =
+            split.next().ok_or_else(|| eyre::eyre!("no dependency path was provided"))?.to_string();
+        let name = url
+            .split("/")
+            .last()
+            .ok_or_else(|| eyre::eyre!("no dependency name found"))?
+            .to_string();
+        let tag = split.next().map(ToString::to_string);
+
+        Ok(Dependency { name, url, tag })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_dependencies() {
+        [
+            ("gakonst/lootloose", "https://github.com/gakonst/lootloose", None),
+            ("github.com/gakonst/lootloose", "https://github.com/gakonst/lootloose", None),
+            ("https://github.com/gakonst/lootloose", "https://github.com/gakonst/lootloose", None),
+            ("https://gitlab.com/gakonst/lootloose", "https://gitlab.com/gakonst/lootloose", None),
+            ("gakonst/lootloose@0.1.0", "https://github.com/gakonst/lootloose", Some("0.1.0")),
+            ("gakonst/lootloose@develop", "https://github.com/gakonst/lootloose", Some("develop")),
+            (
+                "gakonst/lootloose@98369d0edc900c71d0ec33a01dfba1d92111deed",
+                "https://github.com/gakonst/lootloose",
+                Some("98369d0edc900c71d0ec33a01dfba1d92111deed"),
+            ),
+        ]
+        .iter()
+        .for_each(|(input, expected_path, expected_tag)| {
+            let dep = Dependency::from_str(input).unwrap();
+            assert_eq!(dep.url, expected_path.to_string());
+            assert_eq!(dep.tag, expected_tag.map(ToString::to_string));
+            assert_eq!(dep.name, "lootloose");
+        });
+    }
+}
