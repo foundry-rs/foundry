@@ -44,7 +44,7 @@ pub fn merge(mut remappings: Vec<String>, remappings_env: Option<String>) -> Vec
     remappings
 }
 
-#[derive(Clone, Debug, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord)]
 pub struct Remapping {
     pub name: String,
     pub path: String,
@@ -212,19 +212,19 @@ mod tests {
         touch(&contract2).unwrap();
 
         let path = tmp_dir.path().display().to_string();
-        let remappings = Remapping::find_many(&path).unwrap();
-        assert_eq!(
-            remappings,
-            vec![
-                Remapping {
-                    name: "src_repo/".to_string(),
-                    path: format!("{}/", dir1.into_os_string().into_string().unwrap())
-                },
-                Remapping {
-                    name: "contracts_repo/".to_string(),
-                    path: format!("{}/", dir2.into_os_string().into_string().unwrap())
-                },
-            ]
-        );
+        let mut remappings = Remapping::find_many(&path).unwrap();
+        remappings.sort_unstable();
+        let mut expected = vec![
+            Remapping {
+                name: "src_repo/".to_string(),
+                path: format!("{}/", dir1.into_os_string().into_string().unwrap()),
+            },
+            Remapping {
+                name: "contracts_repo/".to_string(),
+                path: format!("{}/", dir2.into_os_string().into_string().unwrap()),
+            },
+        ];
+        expected.sort_unstable();
+        assert_eq!(remappings, expected);
     }
 }
