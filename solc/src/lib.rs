@@ -10,6 +10,9 @@ use std::{
     time::Instant,
 };
 
+// #[cfg(feature = "solang-parse")]
+pub mod solang;
+
 #[cfg(any(test, feature = "sync"))]
 use std::sync::Mutex;
 #[cfg(any(test, feature = "sync"))]
