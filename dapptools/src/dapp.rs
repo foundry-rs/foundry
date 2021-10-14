@@ -163,6 +163,9 @@ fn main() -> eyre::Result<()> {
                 )?;
             }
         }
+        Subcommands::Install { dependencies } => {
+            unimplemented!("not yet implemented");
+        }
     }
 
     Ok(())

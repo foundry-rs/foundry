@@ -83,6 +83,13 @@ pub enum Subcommands {
         )]
         lib: Option<PathBuf>,
     },
+    #[structopt(about = "installs 1 or more dependencies as git submodules")]
+    Install {
+        #[structopt(
+            help = "the submodule name of the library you want to update (will update all if none is provided)"
+        )]
+        dependencies: Vec<Dependency>,
+    },
     #[structopt(about = "build your smart contracts. Requires `ETHERSCAN_API_KEY` to be set.")]
     VerifyContract {
         #[structopt(help = "contract source info `<path>:<contractname>`")]
