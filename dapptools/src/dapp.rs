@@ -42,6 +42,7 @@ fn main() -> eyre::Result<()> {
             initial_balance,
             deployer,
             ffi,
+            verbosity,
         } => {
             // if no env var for remappings is provided, try calculating them on the spot
             let remappings = if remappings_env.is_none() {
@@ -104,7 +105,7 @@ fn main() -> eyre::Result<()> {
 
                     let evm = Executor::new_with_cheatcodes(backend, env.gas_limit, &cfg, ffi);
 
-                    test(builder, evm, pattern, json)?;
+                    test(builder, evm, pattern, json, verbosity)?;
                 }
                 #[cfg(feature = "evmodin-evm")]
                 EvmType::EvmOdin => {
@@ -118,7 +119,7 @@ fn main() -> eyre::Result<()> {
                     let host = env.evmodin_state();
 
                     let evm = EvmOdin::new(host, env.gas_limit, revision, NoopTracer);
-                    test(builder, evm, pattern, json)?;
+                    test(builder, evm, pattern, json, verbosity)?;
                 }
             }
         }
@@ -254,6 +255,7 @@ fn test<S: Clone, E: evm_adapters::Evm<S>>(
     evm: E,
     pattern: Regex,
     json: bool,
+    verbosity: u8,
 ) -> eyre::Result<HashMap<String, HashMap<String, dapp::TestResult>>> {
     let mut runner = builder.build(evm)?;
 
@@ -294,18 +296,20 @@ fn test<S: Clone, E: evm_adapters::Evm<S>>(
                 );
             }
 
-            println!();
-
-            for (name, result) in tests {
-                let status = if result.success { "Success" } else { "Failure" };
-                println!("{}: {}", status, name);
+            if verbosity > 1 {
                 println!();
 
-                for log in &result.logs {
-                    println!("  {}", log);
+                for (name, result) in tests {
+                    let status = if result.success { "Success" } else { "Failure" };
+                    println!("{}: {}", status, name);
+                    println!();
+
+                    for log in &result.logs {
+                        println!("  {}", log);
+                    }
+
+                    println!();
                 }
-
-                println!();
             }
         }
     }
