@@ -15,6 +15,7 @@ use ethers::types::U256;
 
 mod dapp_opts;
 use dapp_opts::{BuildOpts, EvmType, Opts, Subcommands};
+use utils::Remapping;
 
 use crate::dapp_opts::FullContractInfo;
 use std::{collections::HashMap, convert::TryFrom, path::Path, sync::Arc};
@@ -42,7 +43,12 @@ fn main() -> eyre::Result<()> {
             deployer,
             ffi,
         } => {
-            // get the remappings / paths
+            // if no env var for remappings is provided, try calculating them on the spot
+            let remappings = if remappings_env.is_none() {
+                [remappings, utils::Remapping::find_many_str("lib")?].concat()
+            } else {
+                remappings
+            };
             let remappings = utils::merge(remappings, remappings_env);
             let lib_paths = utils::default_path(lib_paths)?;
 
@@ -233,6 +239,10 @@ fn main() -> eyre::Result<()> {
 
                 Ok(())
             })?
+        }
+        Subcommands::Remappings => {
+            let remappings = Remapping::find_many("lib")?;
+            remappings.iter().for_each(|mapping| println!("{}={}", mapping.name, mapping.path))
         }
     }
 

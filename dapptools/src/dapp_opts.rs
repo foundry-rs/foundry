@@ -90,6 +90,8 @@ pub enum Subcommands {
         )]
         dependencies: Vec<Dependency>,
     },
+    #[structopt(about = "prints the automatically inferred remappings for this repository")]
+    Remappings,
     #[structopt(about = "build your smart contracts. Requires `ETHERSCAN_API_KEY` to be set.")]
     VerifyContract {
         #[structopt(help = "contract source info `<path>:<contractname>`")]

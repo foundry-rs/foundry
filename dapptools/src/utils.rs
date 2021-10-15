@@ -44,6 +44,58 @@ pub fn merge(mut remappings: Vec<String>, remappings_env: Option<String>) -> Vec
     remappings
 }
 
+#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord)]
+pub struct Remapping {
+    pub name: String,
+    pub path: String,
+}
+
+const DAPPTOOLS_CONTRACTS_DIR: &str = "src";
+const JS_CONTRACTS_DIR: &str = "contracts";
+
+impl Remapping {
+    fn find(name: &str) -> eyre::Result<Self> {
+        Self::find_with_type(name, DAPPTOOLS_CONTRACTS_DIR)
+            .or_else(|_| Self::find_with_type(name, JS_CONTRACTS_DIR))
+    }
+
+    fn find_with_type(name: &str, source: &str) -> eyre::Result<Self> {
+        let pattern = format!("{}/{}/**/*.sol", name, source);
+        let mut dapptools_contracts = glob::glob(&pattern)?;
+        if dapptools_contracts.next().is_some() {
+            let path = format!("{}/{}/", name, source);
+            let mut name = name
+                .split('/')
+                .last()
+                .ok_or_else(|| eyre::eyre!("repo name not found"))?
+                .to_string();
+            name.push('/');
+            Ok(Remapping { name, path })
+        } else {
+            eyre::bail!("no contracts found under {}", pattern)
+        }
+    }
+
+    pub fn find_many_str(path: &str) -> eyre::Result<Vec<String>> {
+        let remappings = Self::find_many(path)?;
+        Ok(remappings.iter().map(|mapping| format!("{}={}", mapping.name, mapping.path)).collect())
+    }
+
+    /// Gets all the remappings detected
+    pub fn find_many(path: &str) -> eyre::Result<Vec<Self>> {
+        let path = std::path::Path::new(path);
+        let paths = std::fs::read_dir(path)?;
+        let remappings = paths
+            .into_iter()
+            // TODO: Surely there must be a better way to convert to str
+            .map(|path| Self::find(&path?.path().display().to_string()))
+            // Do we want to silently ignore the errors?
+            .filter_map(|x| x.ok())
+            .collect();
+        Ok(remappings)
+    }
+}
+
 /// Opens the file at `out_path` for R/W and creates it if it doesn't exist.
 pub fn open_file(out_path: PathBuf) -> eyre::Result<File> {
     Ok(if out_path.is_file() {
@@ -127,4 +179,52 @@ pub fn find_dapp_json_contract(path: &str, name: &str) -> eyre::Result<Contract>
     };
 
     Ok(serde_json::from_value(contract)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // https://doc.rust-lang.org/rust-by-example/std_misc/fs.html
+    fn touch(path: &std::path::Path) -> std::io::Result<()> {
+        match std::fs::OpenOptions::new().create(true).write(true).open(path) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+
+    #[test]
+    fn remappings() {
+        let tmp_dir = tempdir::TempDir::new("lib").unwrap();
+        let repo1 = tmp_dir.path().join("src_repo");
+        let repo2 = tmp_dir.path().join("contracts_repo");
+
+        let dir1 = repo1.join("src");
+        std::fs::create_dir_all(&dir1).unwrap();
+
+        let dir2 = repo2.join("contracts");
+        std::fs::create_dir_all(&dir2).unwrap();
+
+        let contract1 = dir1.join("contract.sol");
+        touch(&contract1).unwrap();
+
+        let contract2 = dir2.join("contract.sol");
+        touch(&contract2).unwrap();
+
+        let path = tmp_dir.path().display().to_string();
+        let mut remappings = Remapping::find_many(&path).unwrap();
+        remappings.sort_unstable();
+        let mut expected = vec![
+            Remapping {
+                name: "src_repo/".to_string(),
+                path: format!("{}/", dir1.into_os_string().into_string().unwrap()),
+            },
+            Remapping {
+                name: "contracts_repo/".to_string(),
+                path: format!("{}/", dir2.into_os_string().into_string().unwrap()),
+            },
+        ];
+        expected.sort_unstable();
+        assert_eq!(remappings, expected);
+    }
 }
