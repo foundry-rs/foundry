@@ -70,6 +70,9 @@ pub enum Subcommands {
 
         #[structopt(help = "enables the FFI cheatcode", long)]
         ffi: bool,
+
+        #[structopt(help = "verbosity of 'dapp test' output (0-3)", long, default_value = "0")]
+        verbosity: u8,
     },
     #[structopt(about = "build your smart contracts")]
     Build {
