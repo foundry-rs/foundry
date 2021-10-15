@@ -87,11 +87,13 @@ Benchmarks TBD in the future, but:
     * [x] build
         * [x] can read DappTools-style .sol.json artifacts
         * [x] manual remappings
-        * [ ] automatic remappings
+        * [x] automatic remappings
         * [x] multiple compiler versions
         * [ ] incremental compilation
         * [ ] can read Hardhat-style artifacts
         * [ ] can read Truffle-style artifacts
+    * [x] install
+    * [x] update
     * [ ] debug
     * [x] CLI Tracing with `RUST_LOG=dapp=trace`
 
