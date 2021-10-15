@@ -9,7 +9,8 @@ mod backend;
 
 use ethers::{
     abi::parse_abi,
-    prelude::{BaseContract, Lazy},
+    contract::BaseContract,
+    prelude::Lazy,
     types::{Address, H256, U256},
 };
 use sputnik::backend::{Backend, MemoryAccount, MemoryBackend};

@@ -7,9 +7,8 @@ pub use forked_backend::ForkMemoryBackend;
 pub mod cheatcodes;
 
 use ethers::{
-    prelude::Address,
     providers::Middleware,
-    types::{H160, H256, U256},
+    types::{Address, H160, H256, U256},
 };
 
 use sputnik::{

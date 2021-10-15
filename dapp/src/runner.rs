@@ -1,7 +1,6 @@
 use ethers::{
     abi::{Function, Token},
-    prelude::Bytes,
-    types::Address,
+    types::{Address, Bytes},
     utils::CompiledContract,
 };
 

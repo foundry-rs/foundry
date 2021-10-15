@@ -19,7 +19,7 @@ use std::{process::Command, rc::Rc};
 
 use ethers::{
     abi::{RawLog, Token},
-    prelude::EthLogDecode,
+    contract::EthLogDecode,
     types::{Address, H160, H256, U256},
 };
 use std::convert::Infallible;

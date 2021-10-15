@@ -13,8 +13,8 @@ pub mod fuzz;
 
 use ethers::{
     abi::{Detokenize, Tokenize},
-    core::types::{Address, U256},
-    prelude::{decode_function_data, encode_function_data, Bytes},
+    contract::{decode_function_data, encode_function_data},
+    core::types::{Address, Bytes, U256},
 };
 
 use dapp_utils::IntoFunction;
