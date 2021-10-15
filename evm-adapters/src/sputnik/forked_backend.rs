@@ -413,7 +413,7 @@ where
                 ProviderRequest::Account(fut) => {
                     if let Poll::Ready((resp, addr)) = fut.poll_unpin(cx) {
                         let (nonce, balance, code) = resp.unwrap_or_else(|_| {
-                            log::trace!("Failed to get account for {}", addr);
+                            tracing::trace!("Failed to get account for {}", addr);
                             Default::default()
                         });
                         let code = code.to_vec();
@@ -443,7 +443,7 @@ where
                 ProviderRequest::Storage(fut) => {
                     if let Poll::Ready((resp, addr, idx)) = fut.poll_unpin(cx) {
                         let value = resp.unwrap_or_else(|_| {
-                            log::trace!("Failed to get storage for {} at {}", addr, idx);
+                            tracing::trace!("Failed to get storage for {} at {}", addr, idx);
                             Default::default()
                         });
                         if let Some(acc) = pin.cache.write().get_mut(&addr) {
@@ -579,28 +579,28 @@ impl Backend for SharedBackend {
 
     fn exists(&self, address: H160) -> bool {
         self.do_get_exists(address).unwrap_or_else(|_| {
-            log::trace!("Failed to send/recv code for {}", address);
+            tracing::trace!("Failed to send/recv code for {}", address);
             Default::default()
         })
     }
 
     fn basic(&self, address: H160) -> Basic {
         self.do_get_basic(address).unwrap_or_else(|_| {
-            log::trace!("Failed to send/recv code for {}", address);
+            tracing::trace!("Failed to send/recv code for {}", address);
             Default::default()
         })
     }
 
     fn code(&self, address: H160) -> Vec<u8> {
         self.do_get_code(address).unwrap_or_else(|_| {
-            log::trace!("Failed to send/recv code for {}", address);
+            tracing::trace!("Failed to send/recv code for {}", address);
             Default::default()
         })
     }
 
     fn storage(&self, address: H160, index: TxHash) -> TxHash {
         self.do_get_storage(address, index).unwrap_or_else(|_| {
-            log::trace!("Failed to send/recv storage for {} at {}", address, index);
+            tracing::trace!("Failed to send/recv storage for {} at {}", address, index);
             Default::default()
         })
     }
