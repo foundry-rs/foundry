@@ -14,7 +14,7 @@ use ethers::types::{H160, H256, U256};
 #[derive(Clone)]
 pub struct MemoryStackStateOwned<'config, B> {
     pub backend: B,
-    substate: MemoryStackSubstate<'config>,
+    pub substate: MemoryStackSubstate<'config>,
 }
 
 impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {

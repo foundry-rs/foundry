@@ -60,7 +60,7 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
             // Before each test, we must reset to the initial state
             evm.reset(pre_test_state.clone());
 
-            let (returndata, reason, _) = evm
+            let (returndata, reason, _, _) = evm
                 .call_raw(Address::zero(), address, calldata, 0.into(), false)
                 .expect("could not make raw evm call");
 

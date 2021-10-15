@@ -74,7 +74,7 @@ impl<S: HostExt, Tr: Tracer> Evm<S> for EvmOdin<S, Tr> {
         from: Address,
         calldata: Bytes,
         value: U256,
-    ) -> Result<(Address, Self::ReturnReason, u64)> {
+    ) -> Result<(Address, Self::ReturnReason, u64, Vec<String>)> {
         unimplemented!("Contract deployment is not implemented for evmodin yet")
     }
 
@@ -86,7 +86,7 @@ impl<S: HostExt, Tr: Tracer> Evm<S> for EvmOdin<S, Tr> {
         calldata: Bytes,
         value: U256,
         is_static: bool,
-    ) -> Result<(Bytes, Self::ReturnReason, u64)> {
+    ) -> Result<(Bytes, Self::ReturnReason, u64, Vec<String>)> {
         // For the `func.constant` field usage
         #[allow(deprecated)]
         let message = Message {
@@ -112,7 +112,8 @@ impl<S: HostExt, Tr: Tracer> Evm<S> for EvmOdin<S, Tr> {
         // evmodin doesn't take the BASE_TX_COST and the calldata into account
         let gas = self.gas_limit - output.gas_left as u64;
 
-        Ok((output.output_data.to_vec().into(), output.status_code, gas))
+        // TODO: Add emitted event logs.
+        Ok((output.output_data.to_vec().into(), output.status_code, gas, vec![]))
     }
 }
 

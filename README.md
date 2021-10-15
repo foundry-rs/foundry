@@ -3,6 +3,12 @@
 *Rust port of DappTools*
 
 ![Github Actions](https://github.com/gakonst/dapptools-rs/workflows/Tests/badge.svg)
+[![Telegram Chat](https://img.shields.io/endpoint?color=neon&style=flat-square&url=https%3A%2F%2Ftg.sumanjay.workers.dev%2Fturbodapptools)](https://t.me/turbodapptools)
+[![Crates.io][crates-badge]][crates-url]
+
+[crates-badge]: https://img.shields.io/crates/v/turbodapp.svg
+[crates-url]: https://crates.io/crates/turbodapp
+
 
 ## Why?! DappTools is great!
 
@@ -87,11 +93,13 @@ Benchmarks TBD in the future, but:
     * [x] build
         * [x] can read DappTools-style .sol.json artifacts
         * [x] manual remappings
-        * [ ] automatic remappings
+        * [x] automatic remappings
         * [x] multiple compiler versions
         * [ ] incremental compilation
         * [ ] can read Hardhat-style artifacts
         * [ ] can read Truffle-style artifacts
+    * [x] install
+    * [x] update
     * [ ] debug
     * [x] CLI Tracing with `RUST_LOG=dapp=trace`
 

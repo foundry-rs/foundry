@@ -15,9 +15,10 @@ use ethers::types::U256;
 
 mod dapp_opts;
 use dapp_opts::{BuildOpts, EvmType, Opts, Subcommands};
+use utils::Remapping;
 
 use crate::dapp_opts::FullContractInfo;
-use std::{convert::TryFrom, sync::Arc};
+use std::{collections::HashMap, convert::TryFrom, path::Path, sync::Arc};
 
 mod cmd;
 mod utils;
@@ -41,8 +42,14 @@ fn main() -> eyre::Result<()> {
             initial_balance,
             deployer,
             ffi,
+            verbosity,
         } => {
-            // get the remappings / paths
+            // if no env var for remappings is provided, try calculating them on the spot
+            let remappings = if remappings_env.is_none() {
+                [remappings, utils::Remapping::find_many_str("lib")?].concat()
+            } else {
+                remappings
+            };
             let remappings = utils::merge(remappings, remappings_env);
             let lib_paths = utils::default_path(lib_paths)?;
 
@@ -97,7 +104,8 @@ fn main() -> eyre::Result<()> {
                     let backend = Arc::new(backend);
 
                     let evm = Executor::new_with_cheatcodes(backend, env.gas_limit, &cfg, ffi);
-                    test(builder, evm, pattern, json)?;
+
+                    test(builder, evm, pattern, json, verbosity)?;
                 }
                 #[cfg(feature = "evmodin-evm")]
                 EvmType::EvmOdin => {
@@ -111,7 +119,7 @@ fn main() -> eyre::Result<()> {
                     let host = env.evmodin_state();
 
                     let evm = EvmOdin::new(host, env.gas_limit, revision, NoopTracer);
-                    test(builder, evm, pattern, json)?;
+                    test(builder, evm, pattern, json, verbosity)?;
                 }
             }
         }
@@ -139,6 +147,104 @@ fn main() -> eyre::Result<()> {
         Subcommands::Create { contract: _, verify: _ } => {
             unimplemented!("Not yet implemented")
         }
+        Subcommands::Update { lib } => {
+            // TODO: Should we add some sort of progress bar here? Would be nice
+            // but not a requirement.
+            // open the repo
+            let repo = git2::Repository::open(".")?;
+
+            // if a lib is specified, open it
+            if let Some(lib) = lib {
+                println!("Updating submodule {:?}", lib);
+                repo.find_submodule(
+                    &lib.into_os_string().into_string().expect("invalid submodule path"),
+                )?
+                .update(true, None)?;
+            } else {
+                // otherwise just update them all
+                repo.submodules()?.into_iter().try_for_each(
+                    |mut submodule| -> eyre::Result<_> {
+                        println!("Updating submodule {:?}", submodule.path());
+                        Ok(submodule.update(true, None)?)
+                    },
+                )?;
+            }
+        }
+        // TODO: Make it work with updates?
+        Subcommands::Install { dependencies } => {
+            let repo = git2::Repository::open(".")?;
+            let libs = std::path::Path::new("lib");
+
+            dependencies.iter().try_for_each(|dep| -> eyre::Result<_> {
+                let path = libs.join(&dep.name);
+                println!(
+                    "Installing {} in {:?}, (url: {}, tag: {:?})",
+                    dep.name, path, dep.url, dep.tag
+                );
+
+                // get the submodule and clone it
+                let mut submodule = repo.submodule(&dep.url, &path, true)?;
+                submodule.clone(None)?;
+
+                // get the repo & checkout the provided tag if necessary
+                // ref: https://stackoverflow.com/a/67240436
+                let submodule = submodule.open()?;
+                if let Some(ref tag) = dep.tag {
+                    let (object, reference) = submodule.revparse_ext(tag)?;
+                    submodule.checkout_tree(&object, None).expect("Failed to checkout");
+
+                    match reference {
+                        // gref is an actual reference like branches or tags
+                        Some(gref) => submodule.set_head(gref.name().unwrap()),
+                        // this is a commit, not a reference
+                        None => submodule.set_head_detached(object.id()),
+                    }
+                    .expect("Failed to set HEAD");
+                }
+
+                // initialize all the submodules in the cloned submodule
+                submodule.submodules()?.into_iter().try_for_each(
+                    |mut submodule| -> eyre::Result<_> {
+                        submodule.update(true, None)?;
+                        Ok(())
+                    },
+                )?;
+
+                // commit the submodule's installation
+                let sig = repo.signature()?;
+                let mut index = repo.index()?;
+                // stage `.gitmodules` and the lib
+                index.add_path(Path::new(".gitmodules"))?;
+                index.add_path(&path)?;
+                // need to write the index back to disk
+                index.write()?;
+
+                let id = index.write_tree().unwrap();
+                let tree = repo.find_tree(id).unwrap();
+
+                let message = if let Some(ref tag) = dep.tag {
+                    format!("turbodapp install: {}\n\n{}", dep.name, tag)
+                } else {
+                    format!("turbodapp install: {}", dep.name)
+                };
+
+                // committing to the parent may make running the installation step
+                // in parallel challenging..
+                let parent = repo
+                    .head()?
+                    .resolve()?
+                    .peel(git2::ObjectType::Commit)?
+                    .into_commit()
+                    .map_err(|err| eyre::eyre!("cannot get parent commit: {:?}", err))?;
+                repo.commit(Some("HEAD"), &sig, &sig, &message, &tree, &[&parent])?;
+
+                Ok(())
+            })?
+        }
+        Subcommands::Remappings => {
+            let remappings = Remapping::find_many("lib")?;
+            remappings.iter().for_each(|mapping| println!("{}={}", mapping.name, mapping.path))
+        }
     }
 
     Ok(())
@@ -149,7 +255,8 @@ fn test<S: Clone, E: evm_adapters::Evm<S>>(
     evm: E,
     pattern: Regex,
     json: bool,
-) -> eyre::Result<()> {
+    verbosity: u8,
+) -> eyre::Result<HashMap<String, HashMap<String, dapp::TestResult>>> {
     let mut runner = builder.build(evm)?;
 
     let results = runner.test(pattern)?;
@@ -158,7 +265,7 @@ fn test<S: Clone, E: evm_adapters::Evm<S>>(
         let res = serde_json::to_string(&results)?;
         println!("{}", res);
     } else {
-        // Dapptools-style printing
+        // Dapptools-style printing of test results
         for (i, (contract_name, tests)) in results.iter().enumerate() {
             if i > 0 {
                 println!()
@@ -188,8 +295,24 @@ fn test<S: Clone, E: evm_adapters::Evm<S>>(
                         .unwrap_or_else(|| "[fuzztest]".to_string())
                 );
             }
+
+            if verbosity > 1 {
+                println!();
+
+                for (name, result) in tests {
+                    let status = if result.success { "Success" } else { "Failure" };
+                    println!("{}: {}", status, name);
+                    println!();
+
+                    for log in &result.logs {
+                        println!("  {}", log);
+                    }
+
+                    println!();
+                }
+            }
         }
     }
 
-    Ok(())
+    Ok(results)
 }
