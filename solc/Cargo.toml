@@ -12,7 +12,8 @@ Incremental, parallel and multi-version Solidity compiler abstraction
 [dependencies]
 semver = "1.0.4"
 eyre = "0.6.5"
-ethers = { version = "^0.5.0" }
+# ethers = { version = "0.5.2" }
+ethers = { git = "https://github.com/gakonst/ethers-rs", branch = "master" }
 svm = { package = "svm-rs", git = "https://github.com/roynalnaruto/svm-rs" }
 tracing = "0.1.28"
 glob = "0.3.0"
