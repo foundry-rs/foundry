@@ -13,7 +13,8 @@ dapp-solc = { path = "../solc" }
 dapp = { path = "../dapp" }
 seth = { path = "../seth" }
 evm-adapters = { path = "../evm-adapters" }
-ethers = { version = "^0.5.0" }
+# ethers = "0.5"
+ethers = { git = "https://github.com/gakonst/ethers-rs", branch = "master" }
 ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", branch = "master" }
 eyre = "0.6.5"
 rustc-hex = "2.1.0"
