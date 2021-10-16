@@ -140,14 +140,6 @@ impl<'a, B: Backend> SputnikExecutor<CheatcodeStackState<'a, B>> for CheatcodeSt
             .map(|event| {
                 use HevmConsoleEvents::*;
                 match event {
-                    LogFilter(inner) => inner.0,
-                    LogsFilter(inner) => format!("0x{}", hex::encode(inner.0)),
-                    LogAddressFilter(inner) => format!("{:?}", inner.0),
-                    LogBytes32Filter(inner) => format!("0x{}", hex::encode(inner.0)),
-                    LogIntFilter(inner) => format!("{:?}", inner.0),
-                    LogUintFilter(inner) => format!("{:?}", inner.0),
-                    LogBytesFilter(inner) => format!("0x{}", hex::encode(inner.0)),
-                    LogStringFilter(inner) => inner.0,
                     LogNamedAddressFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
                     LogNamedBytes32Filter(inner) => {
                         format!("{}: 0x{}", inner.key, hex::encode(inner.val))
@@ -170,6 +162,8 @@ impl<'a, B: Backend> SputnikExecutor<CheatcodeStackState<'a, B>> for CheatcodeSt
                         format!("{}: 0x{}", inner.key, hex::encode(inner.val))
                     }
                     LogNamedStringFilter(inner) => format!("{}: {}", inner.key, inner.val),
+
+                    e => e.to_string(),
                 }
             })
             .collect()
