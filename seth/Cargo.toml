@@ -8,9 +8,8 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 dapp-utils = { path = "../utils" }
-# ethers = "0.5"
-ethers-core = { git = "https://github.com/gakonst/ethers-rs", branch = "master", default-features = false }
-ethers-providers = { git = "https://github.com/gakonst/ethers-rs", branch = "master", default-features = false }
+ethers-core = "^0.5.0"
+ethers-providers = { version = "^0.5.0", default-features = false }
 eyre = "0.6.5"
 rustc-hex = "2.1.0"
 serde_json = "1.0.67"

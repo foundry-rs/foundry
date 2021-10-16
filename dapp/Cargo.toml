@@ -11,8 +11,7 @@ dapp-utils = { path = "./../utils" }
 dapp-solc = { path = "./../solc" }
 evm-adapters = { path = "./../evm-adapters", default-features = false }
 
-# ethers = { version = "0.5.2" }
-ethers = { git = "https://github.com/gakonst/ethers-rs", branch = "master" }
+ethers = { version = "^0.5.0" }
 svm = { package = "svm-rs", git = "https://github.com/roynalnaruto/svm-rs" }
 
 eyre = "0.6.5"
