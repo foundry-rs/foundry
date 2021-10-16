@@ -250,23 +250,33 @@ mod tests {
         )
         .unwrap();
         let vicinity = G_VICINITY.clone();
-        let backend = SharedBackend::new(Arc::new(provider), cache.clone(), vicinity);
+        let backend = SharedBackend::new(Arc::new(provider), cache.clone(), vicinity, None);
         GlobalBackend { cache, backend }
     });
 
-    #[test]
-    fn forked_shared_state_works() {
+    // this looks horrendous and is due to how sputnik borrows
+    fn setup_states() -> (
+        SharedState<MemoryStackState<'static, 'static, SharedBackend>>,
+        ForkedState<'static, MemoryStackState<'static, 'static, SharedBackend>>,
+    ) {
         let gas_limit = 12_000_000;
         let metadata = StackSubstateMetadata::new(gas_limit, &*G_CONFIG);
         let state = MemoryStackState::new(metadata.clone(), &G_FORKED_BACKEND.backend);
 
         let shared_state = new_shared_state(state);
-        let mut forked_state = ForkedState::new(shared_state.clone(), metadata.clone());
+        let forked_state = ForkedState::new(shared_state.clone(), metadata.clone());
+        (shared_state, forked_state)
+    }
+
+    #[test]
+    fn forked_shared_state_works() {
+        let (shared_state, mut forked_state) = setup_states();
 
         // some rng contract from etherscan
         let address: Address = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();
-        assert!(!shared_state.read().exists(address));
-        assert!(!forked_state.exists(address));
+
+        assert!(shared_state.read().exists(address));
+        assert!(forked_state.exists(address));
 
         let amount = shared_state.read().basic(address).balance;
         assert_eq!(forked_state.basic(address).balance, amount);
@@ -276,15 +286,23 @@ mod tests {
         // shared state remains the same
         assert_eq!(shared_state.read().basic(address).balance, amount);
         assert_eq!(G_FORKED_BACKEND.cache.read().get(&address).unwrap().balance, amount);
+    }
 
-        let mut another_forked_state = ForkedState::new(shared_state.clone(), metadata);
+    #[test]
+    fn can_spawn_state_to_thread() {
+        // some rng contract from etherscan
+        let address: Address = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();
+
+        let (shared_state, mut forked_state) = setup_states();
+
+        let amount = shared_state.read().basic(address).balance;
         let t = std::thread::spawn(move || {
-            assert_eq!(another_forked_state.basic(address).balance, amount);
-            another_forked_state.deposit(address, amount * 10);
+            forked_state.deposit(address, amount);
+            assert_eq!(forked_state.basic(address).balance, amount * 2);
         });
         t.join().unwrap();
 
-        assert_eq!(forked_state.basic(address).balance, amount * 2);
+        // amount remains unchanged
         assert_eq!(shared_state.read().basic(address).balance, amount);
     }
 

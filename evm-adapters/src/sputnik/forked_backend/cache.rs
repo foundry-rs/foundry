@@ -247,7 +247,7 @@ where
             match &mut request {
                 ProviderRequest::Account(fut) => {
                     if let Poll::Ready((resp, addr)) = fut.poll_unpin(cx) {
-                        let (nonce, balance, code) = resp.unwrap_or_else(|_| {
+                        let (balance, nonce, code) = resp.unwrap_or_else(|_| {
                             tracing::trace!("Failed to get account for {}", addr);
                             Default::default()
                         });
@@ -327,17 +327,21 @@ pub struct SharedBackend {
 }
 
 impl SharedBackend {
-    /// Spawns a new `BackendHandler` on a background thread that listenes for requests from any
+    /// Spawns a new `BackendHandler` on a background thread that listens for requests from any
     /// `SharedBackend`. Missing values get inserted in the `cache`.
     ///
     /// NOTE: this should be called with `Arc<Provider>`
-    pub fn new<M>(provider: M, cache: SharedCache<MemCache>, vicinity: MemoryVicinity) -> Self
+    pub fn new<M>(
+        provider: M,
+        cache: SharedCache<MemCache>,
+        vicinity: MemoryVicinity,
+        pin_block: Option<BlockId>,
+    ) -> Self
     where
         M: Middleware + Unpin + 'static + Clone,
     {
         let (tx, rx) = channel(1);
-        let handler =
-            BackendHandler::new(provider, cache, rx, Some(vicinity.block_number.as_u64().into()));
+        let handler = BackendHandler::new(provider, cache, rx, pin_block);
         // spawn the provider handler to background for which we need a new Runtime
         let rt = Runtime::new().expect("Failed to start runtime");
         std::thread::spawn(move || rt.block_on(handler));
@@ -414,28 +418,28 @@ impl Backend for SharedBackend {
 
     fn exists(&self, address: H160) -> bool {
         self.do_get_exists(address).unwrap_or_else(|_| {
-            tracing::trace!("Failed to send/recv code for {}", address);
+            tracing::trace!("Failed to send/recv `exists` for {}", address);
             Default::default()
         })
     }
 
     fn basic(&self, address: H160) -> Basic {
         self.do_get_basic(address).unwrap_or_else(|_| {
-            tracing::trace!("Failed to send/recv code for {}", address);
+            tracing::trace!("Failed to send/recv `basic` for {}", address);
             Default::default()
         })
     }
 
     fn code(&self, address: H160) -> Vec<u8> {
         self.do_get_code(address).unwrap_or_else(|_| {
-            tracing::trace!("Failed to send/recv code for {}", address);
+            tracing::trace!("Failed to send/recv `code` for {}", address);
             Default::default()
         })
     }
 
     fn storage(&self, address: H160, index: TxHash) -> TxHash {
         self.do_get_storage(address, index).unwrap_or_else(|_| {
-            tracing::trace!("Failed to send/recv storage for {} at {}", address, index);
+            tracing::trace!("Failed to send/recv `storage` for {} at {}", address, index);
             Default::default()
         })
     }
@@ -476,7 +480,7 @@ mod tests {
         let vicinity = rt.block_on(vicinity(&provider, None)).unwrap();
         let cache = new_shared_cache(MemCache::default());
 
-        let backend = SharedBackend::new(Arc::new(provider), cache.clone(), vicinity);
+        let backend = SharedBackend::new(Arc::new(provider), cache.clone(), vicinity, None);
 
         let idx = H256::from_low_u64_be(0u64);
         let value = backend.storage(address, idx);
