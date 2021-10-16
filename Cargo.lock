@@ -912,7 +912,7 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "0.5.3"
-source = "git+https://github.com/gakonst/ethers-rs?branch=master#4996fa2ca41b09cb950b716a1e35ea132fc7c9e8"
+source = "git+https://github.com/gakonst/ethers-rs?branch=master#c3528b78db973b41b4033b9cfdb61734d59515df"
 dependencies = [
  "ethers-contract",
  "ethers-core",
@@ -924,7 +924,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "0.5.3"
-source = "git+https://github.com/gakonst/ethers-rs?branch=master#4996fa2ca41b09cb950b716a1e35ea132fc7c9e8"
+source = "git+https://github.com/gakonst/ethers-rs?branch=master#c3528b78db973b41b4033b9cfdb61734d59515df"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -942,7 +942,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "0.5.3"
-source = "git+https://github.com/gakonst/ethers-rs?branch=master#4996fa2ca41b09cb950b716a1e35ea132fc7c9e8"
+source = "git+https://github.com/gakonst/ethers-rs?branch=master#c3528b78db973b41b4033b9cfdb61734d59515df"
 dependencies = [
  "Inflector",
  "anyhow",
@@ -964,7 +964,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "0.5.3"
-source = "git+https://github.com/gakonst/ethers-rs?branch=master#4996fa2ca41b09cb950b716a1e35ea132fc7c9e8"
+source = "git+https://github.com/gakonst/ethers-rs?branch=master#c3528b78db973b41b4033b9cfdb61734d59515df"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -978,7 +978,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "0.5.4"
-source = "git+https://github.com/gakonst/ethers-rs?branch=master#4996fa2ca41b09cb950b716a1e35ea132fc7c9e8"
+source = "git+https://github.com/gakonst/ethers-rs?branch=master#c3528b78db973b41b4033b9cfdb61734d59515df"
 dependencies = [
  "arrayvec",
  "bytes",
@@ -1009,7 +1009,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "0.1.0"
-source = "git+https://github.com/gakonst/ethers-rs?branch=master#4996fa2ca41b09cb950b716a1e35ea132fc7c9e8"
+source = "git+https://github.com/gakonst/ethers-rs?branch=master#c3528b78db973b41b4033b9cfdb61734d59515df"
 dependencies = [
  "anyhow",
  "ethers-core",
@@ -1021,7 +1021,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "0.5.3"
-source = "git+https://github.com/gakonst/ethers-rs?branch=master#4996fa2ca41b09cb950b716a1e35ea132fc7c9e8"
+source = "git+https://github.com/gakonst/ethers-rs?branch=master#c3528b78db973b41b4033b9cfdb61734d59515df"
 dependencies = [
  "async-trait",
  "ethers-contract",
@@ -1044,7 +1044,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "0.5.4"
-source = "git+https://github.com/gakonst/ethers-rs?branch=master#4996fa2ca41b09cb950b716a1e35ea132fc7c9e8"
+source = "git+https://github.com/gakonst/ethers-rs?branch=master#c3528b78db973b41b4033b9cfdb61734d59515df"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -1073,7 +1073,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "0.5.3"
-source = "git+https://github.com/gakonst/ethers-rs?branch=master#4996fa2ca41b09cb950b716a1e35ea132fc7c9e8"
+source = "git+https://github.com/gakonst/ethers-rs?branch=master#c3528b78db973b41b4033b9cfdb61734d59515df"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1092,7 +1092,7 @@ dependencies = [
 [[package]]
 name = "evm"
 version = "0.30.1"
-source = "git+https://github.com/gakonst/evm?branch=feat/events-mut#4bc2782bc3a8a71b81aed9fd4a85d6d766b25f19"
+source = "git+https://github.com/rust-blockchain/evm#b632ef27f9415e7db1b818d39b10ca2228629111"
 dependencies = [
  "auto_impl",
  "environmental",
@@ -1130,7 +1130,7 @@ dependencies = [
 [[package]]
 name = "evm-core"
 version = "0.30.0"
-source = "git+https://github.com/gakonst/evm?branch=feat/events-mut#4bc2782bc3a8a71b81aed9fd4a85d6d766b25f19"
+source = "git+https://github.com/rust-blockchain/evm#b632ef27f9415e7db1b818d39b10ca2228629111"
 dependencies = [
  "funty",
  "parity-scale-codec",
@@ -1141,7 +1141,7 @@ dependencies = [
 [[package]]
 name = "evm-gasometer"
 version = "0.30.0"
-source = "git+https://github.com/gakonst/evm?branch=feat/events-mut#4bc2782bc3a8a71b81aed9fd4a85d6d766b25f19"
+source = "git+https://github.com/rust-blockchain/evm#b632ef27f9415e7db1b818d39b10ca2228629111"
 dependencies = [
  "environmental",
  "evm-core",
@@ -1152,7 +1152,7 @@ dependencies = [
 [[package]]
 name = "evm-runtime"
 version = "0.30.0"
-source = "git+https://github.com/gakonst/evm?branch=feat/events-mut#4bc2782bc3a8a71b81aed9fd4a85d6d766b25f19"
+source = "git+https://github.com/rust-blockchain/evm#b632ef27f9415e7db1b818d39b10ca2228629111"
 dependencies = [
  "auto_impl",
  "environmental",
