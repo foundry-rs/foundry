@@ -27,7 +27,7 @@ regex = { version = "1.5.4", default-features = false }
 hex = "0.4.3"
 glob = "0.3.0"
 # TODO: Trim
-tokio = { version = "1.10.1" }
+tokio = { version = "1.10.1", features = ["time"] }
 tower = "0.4.8"
 tracing = "0.1.26"
 tracing-subscriber = "0.2.20"

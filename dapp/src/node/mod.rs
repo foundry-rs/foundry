@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    marker::PhantomData,
     net::SocketAddr,
     sync::{Arc, RwLock},
 };
@@ -11,15 +12,16 @@ use axum::{
 };
 use ethers::{
     core::k256::ecdsa::SigningKey,
-    prelude::{Address, Signer, Wallet, U256, U64},
+    prelude::{
+        transaction::eip2718::TypedTransaction, Address, Block, NameOrAddress, Signer, Transaction,
+        TransactionReceipt, TxHash, Wallet, H256, U256, U64,
+    },
+    utils::keccak256,
 };
 use evm_adapters::Evm;
 
-mod blockchain;
-use blockchain::Blockchain;
-
 mod methods;
-use methods::{EthRequest, EthResponse};
+use methods::{BoxedError, EthRequest, EthResponse};
 
 mod types;
 use types::{Error, JsonRpcRequest, JsonRpcResponse, ResponseContent};
@@ -46,45 +48,92 @@ impl NodeConfig {
     }
 }
 
-pub struct Node<E> {
+pub struct Node<S, E: Evm<S>> {
     evm: E,
     config: NodeConfig,
     blockchain: Blockchain,
+    _s: PhantomData<S>,
 }
 
-pub type SharedNode<E> = Arc<RwLock<Node<E>>>;
+#[derive(Default)]
+struct Blockchain {
+    blocks_by_number: HashMap<U64, Block<TxHash>>,
+    blocks_by_hash: HashMap<H256, Block<TxHash>>,
+    txs: HashMap<TxHash, Transaction>,
+    tx_receipts: HashMap<TxHash, TransactionReceipt>,
+}
 
-impl<E: Send + Sync + 'static> Node<E> {
-    pub async fn init_and_run<S>(mut evm: E, config: NodeConfig)
-    where
-        E: Evm<S>,
-        S: 'static,
-    {
+type SharedNode<S, E> = Arc<RwLock<Node<S, E>>>;
+
+impl<S, E> Node<S, E>
+where
+    S: Send + Sync + 'static,
+    E: Evm<S> + Send + Sync + 'static,
+{
+    pub async fn init_and_run(mut evm: E, config: NodeConfig) {
         for account in config.genesis_accounts.iter() {
             evm.set_balance(account.address(), config.genesis_balance);
         }
-        let shared_node =
-            Arc::new(RwLock::new(Node { evm, config, blockchain: Blockchain::default() }));
+        let node = Arc::new(RwLock::new(Node {
+            evm,
+            config,
+            blockchain: Blockchain::default(),
+            _s: PhantomData,
+        }));
+
+        // TODO: spawn a new tokio thread with the auto-miner
+        tokio::spawn(async move {
+            // TODO: set the interval based on block-time
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(1));
+            loop {
+                interval.tick().await;
+                // TODO: mine a new block
+            }
+        });
 
         let svc = Router::new()
             .route("/", post(handler::<E, S>))
-            .layer(AddExtensionLayer::new(shared_node))
+            .layer(AddExtensionLayer::new(node))
             .into_make_service();
 
         let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
-
         Server::bind(&addr).serve(svc).await.unwrap();
     }
+}
 
-    pub fn accounts(&self) -> Vec<Wallet<SigningKey>> {
+impl<S, E> Node<S, E>
+where
+    E: Evm<S>,
+{
+    pub fn get_balance(&self, account: Address) -> U256 {
+        self.evm.get_balance(account)
+    }
+
+    pub fn get_transaction(&self, tx_hash: TxHash) -> Option<Transaction> {
+        self.blockchain.txs.get(&tx_hash).cloned()
+    }
+
+    pub fn get_tx_receipt(&self, tx_hash: TxHash) -> Option<TransactionReceipt> {
+        self.blockchain.tx_receipts.get(&tx_hash).cloned()
+    }
+
+    pub fn get_block_by_number(&self, number: U64) -> Option<Block<TxHash>> {
+        self.blockchain.blocks_by_number.get(&number).cloned()
+    }
+
+    pub fn get_block_by_hash(&self, hash: H256) -> Option<Block<TxHash>> {
+        self.blockchain.blocks_by_hash.get(&hash).cloned()
+    }
+
+    fn accounts(&self) -> Vec<Wallet<SigningKey>> {
         self.config.accounts.values().cloned().collect()
     }
 
-    pub fn account(&self, address: Address) -> Option<Wallet<SigningKey>> {
+    fn account(&self, address: Address) -> Option<Wallet<SigningKey>> {
         self.config.accounts.get(&address).cloned()
     }
 
-    pub fn default_sender(&self) -> Wallet<SigningKey> {
+    fn default_sender(&self) -> Wallet<SigningKey> {
         self.config
             .accounts
             .values()
@@ -95,12 +144,98 @@ impl<E: Send + Sync + 'static> Node<E> {
     }
 }
 
+impl<S, E> Node<S, E>
+where
+    E: Evm<S>,
+{
+    pub fn send_transaction(&mut self, tx: TypedTransaction) -> Result<TxHash, BoxedError> {
+        let sender = if let Some(from) = tx.from() {
+            if let Some(sender) = self.account(*from) {
+                sender
+            } else {
+                unimplemented!("handle: tx.from != node.sender");
+            }
+        } else {
+            self.default_sender()
+        };
+        let value = *tx.value().unwrap_or(&U256::zero());
+        let calldata = match tx.data() {
+            Some(data) => data.to_vec(),
+            None => vec![],
+        };
+        let to = tx.to().unwrap();
+
+        let to = match to {
+            NameOrAddress::Address(addr) => *addr,
+            NameOrAddress::Name(_) => unimplemented!("handle: tx.to is an ENS name"),
+        };
+        // FIXME(rohit): node.(and node) must need the chainID
+        let tx_hash = keccak256(tx.rlp_signed(1, &sender.sign_transaction_sync(&tx)));
+
+        match self.evm.call_raw(sender.address(), to, calldata.into(), value, false) {
+            Ok((retdata, status, _gas_used)) => {
+                if E::is_success(&status) {
+                    Ok(tx_hash.into())
+                } else {
+                    Err(Box::new(dapp_utils::decode_revert(retdata.as_ref()).unwrap_or_default()))
+                }
+            }
+            Err(e) => Err(Box::new(e.to_string())),
+        }
+    }
+
+    pub fn deploy_contract(&mut self, tx: TypedTransaction) -> Result<TxHash, BoxedError> {
+        let sender = if let Some(from) = tx.from() {
+            if let Some(sender) = self.account(*from) {
+                sender
+            } else {
+                unimplemented!("handle: tx.from != node.sender");
+            }
+        } else {
+            self.default_sender()
+        };
+        let value = *tx.value().unwrap_or(&U256::zero());
+        let bytecode = match tx.data() {
+            Some(data) => data.to_vec(),
+            None => vec![],
+        };
+        let tx_hash = keccak256(tx.rlp_signed(1, &sender.sign_transaction_sync(&tx)));
+        match self.evm.deploy(sender.address(), bytecode.into(), value) {
+            Ok((retdata, status, _gas_used)) => {
+                if E::is_success(&status) {
+                    Ok(tx_hash.into())
+                } else {
+                    Err(Box::new(dapp_utils::decode_revert(retdata.as_ref()).unwrap_or_default()))
+                }
+            }
+            Err(e) => Err(Box::new(e.to_string())),
+        }
+    }
+
+    pub fn add_block(&mut self, block: Block<TxHash>) {
+        self.blockchain
+            .blocks_by_number
+            .insert(block.number.expect("pending block cannot be added"), block.clone());
+        self.blockchain
+            .blocks_by_hash
+            .insert(block.hash.expect("pending block cannot be added"), block);
+    }
+
+    pub fn add_transaction(&mut self, tx: Transaction) {
+        self.blockchain.txs.insert(tx.hash(), tx);
+    }
+
+    pub fn add_tx_receipt(&mut self, tx_receipt: TransactionReceipt) {
+        self.blockchain.tx_receipts.insert(tx_receipt.transaction_hash, tx_receipt);
+    }
+}
+
 async fn handler<E, S>(
     request: Result<Json<JsonRpcRequest>, JsonRejection>,
-    Extension(state): Extension<SharedNode<E>>,
+    Extension(state): Extension<SharedNode<S, E>>,
 ) -> JsonRpcResponse
 where
-    E: Evm<S> + Send + Sync + 'static,
+    E: Evm<S>,
 {
     match request {
         Err(_) => Error::INVALID_REQUEST.into(),
@@ -130,21 +265,21 @@ where
     }
 }
 
-fn handle<S, E>(state: SharedNode<E>, msg: EthRequest) -> EthResponse
+fn handle<S, E>(state: SharedNode<S, E>, msg: EthRequest) -> EthResponse
 where
-    E: Evm<S> + Send + Sync + 'static,
+    E: Evm<S>,
 {
     match msg {
         // TODO: think how we can query the EVM state at a past block
         EthRequest::EthGetBalance(account, _block) => {
-            EthResponse::EthGetBalance(blockchain::get_balance(state, account))
+            EthResponse::EthGetBalance(state.read().unwrap().get_balance(account))
         }
         EthRequest::EthGetTransactionByHash(tx_hash) => {
-            EthResponse::EthGetTransactionByHash(blockchain::get_transaction(state, tx_hash))
+            EthResponse::EthGetTransactionByHash(state.read().unwrap().get_transaction(tx_hash))
         }
-        EthRequest::EthSendTransaction(tx) => match tx.to() {
-            Some(_) => blockchain::send_transaction(state, tx),
-            None => blockchain::deploy_contract(state, tx),
-        },
+        EthRequest::EthSendTransaction(tx) => EthResponse::EthSendTransaction(match tx.to() {
+            Some(_) => state.write().unwrap().send_transaction(tx),
+            None => state.write().unwrap().deploy_contract(tx),
+        }),
     }
 }

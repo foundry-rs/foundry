@@ -46,13 +46,15 @@ where
     Ok(seq.pop().expect("length of vector is 1"))
 }
 
+pub type BoxedError = Box<dyn erased_serde::Serialize>;
+
 #[derive(Serialize)]
 #[serde(untagged)]
 #[allow(dead_code)]
 pub enum EthResponse {
     EthGetBalance(U256),
     EthGetTransactionByHash(Option<Transaction>),
-    EthSendTransaction(Result<TxHash, Box<dyn erased_serde::Serialize>>),
+    EthSendTransaction(Result<TxHash, BoxedError>),
 }
 
 #[cfg(test)]
