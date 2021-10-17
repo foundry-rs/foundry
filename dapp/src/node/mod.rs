@@ -259,7 +259,7 @@ where
             keccak256(tx.rlp_signed(self.config.chain_id, &sender.sign_transaction_sync(&tx)));
 
         match self.evm.call_raw(sender.address(), to, calldata.into(), value, false) {
-            Ok((retdata, status, _gas_used)) => {
+            Ok((retdata, status, _gas_used, _logs)) => {
                 if E::is_success(&status) {
                     Ok(tx_hash.into())
                 } else {
@@ -286,9 +286,9 @@ where
             Some(data) => data.to_vec(),
             None => vec![],
         };
-        let tx_hash = keccak256(tx.rlp_signed(1, &sender.sign_transaction_sync(&tx)));
+        let tx_hash = keccak256(tx.rlp_signed(self.config.chain_id, &sender.sign_transaction_sync(&tx)));
         match self.evm.deploy(sender.address(), bytecode.into(), value) {
-            Ok((retdata, status, _gas_used)) => {
+            Ok((retdata, status, _gas_used, _logs)) => {
                 if E::is_success(&status) {
                     Ok(tx_hash.into())
                 } else {
