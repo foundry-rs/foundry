@@ -34,7 +34,10 @@ fn main() -> eyre::Result<()> {
     let opts = Opts::from_args();
     match opts.sub {
         Subcommands::Node { env, evm_type, evm_version, account, balance } => {
-            let node_config = dapp::NodeConfig::new(env.chain_id, vec![account], balance);
+            let node_config = dapp::NodeConfig::new()
+                .chain_id(env.chain_id)
+                .genesis_accounts(vec![account])
+                .genesis_balance(balance);
 
             match evm_type {
                 #[cfg(feature = "sputnik-evm")]
