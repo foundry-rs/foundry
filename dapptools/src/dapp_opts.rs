@@ -1,11 +1,10 @@
-use structopt::StructOpt;
-
 use ethers::{
     core::k256::ecdsa::SigningKey,
-    prelude::Wallet,
+    prelude::{coins_bip39::English, MnemonicBuilder, Wallet},
     types::{Address, U256},
 };
 use std::{path::PathBuf, str::FromStr};
+use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
 pub struct Opts {
@@ -35,14 +34,14 @@ pub enum Subcommands {
 
         #[structopt(
             long,
-            help = "the initial account created and funded by dapp node",
-            default_value = "0000000000000000000000000000000000000000000000000000000000000001"
+            help = "either a comma-separated hex-encoded list of private keys, or a mnemonic phrase",
+            default_value = "20,test test test test test test test test test test test junk"
         )]
-        account: Wallet<SigningKey>,
+        accounts: SignerAccounts,
 
         #[structopt(
             long,
-            help = "the initial balance of the initial account",
+            help = "the balance of every genesis account",
             default_value = "0xffffffffffffffffffffffff"
         )]
         balance: U256,
@@ -145,6 +144,70 @@ pub enum Subcommands {
         #[structopt(long, help = "verify on Etherscan")]
         verify: bool,
     },
+}
+
+/// SignerAccounts are the signer accounts that will be initialised in the genesis block
+#[derive(Debug)]
+pub struct SignerAccounts(pub Vec<Wallet<SigningKey>>);
+
+impl FromStr for SignerAccounts {
+    type Err = std::io::Error;
+
+    /// SignerAccounts can be initialised by passing in either a comma-separated list of
+    /// hex-encoded private keys or a mnemonic phrase from the English wordset.
+    ///
+    /// Private Keys:
+    /// --accounts="0000000000000000000000000000000000000000000000000000000000000001,0000000000000000000000000000000000000000000000000000000000000002"
+    ///
+    /// Mnemonic Phrase:
+    /// --accounts="25,fire evolve buddy tenant talent favorite ankle stem regret myth dream fresh"
+    fn from_str(src: &str) -> Result<Self, Self::Err> {
+        if src.contains(" ") {
+            let parts: Vec<&str> = src.split(",").collect();
+            let (num_accounts, mnemonic) = match parts.len() {
+                1 => (20, parts[1]),
+                2 => (
+                    parts[0].parse().map_err(|_| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            "error parsing number of accounts",
+                        )
+                    })?,
+                    parts[1],
+                ),
+                _ => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "error parsing mnemonic",
+                    ))
+                }
+            };
+            let mut accounts = Vec::<Wallet<SigningKey>>::with_capacity(num_accounts);
+            for i in 0..num_accounts {
+                accounts.push(
+                    MnemonicBuilder::<English>::default()
+                        .phrase(mnemonic)
+                        .index(i as u32)
+                        .unwrap()
+                        .build()
+                        .unwrap(),
+                );
+            }
+            Ok(SignerAccounts(accounts))
+        } else {
+            let pks: Vec<&str> = src.split(",").collect();
+            let mut accounts = Vec::<Wallet<SigningKey>>::with_capacity(pks.len());
+            for pk in pks.iter() {
+                accounts.push(pk.parse().map_err(|_| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "error parsing private keys",
+                    )
+                })?);
+            }
+            Ok(SignerAccounts(accounts))
+        }
+    }
 }
 
 /// Represents the common dapp argument pattern for `<path>:<contractname>` where `<path>:` is

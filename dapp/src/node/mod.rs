@@ -239,7 +239,7 @@ where
             if let Some(sender) = self.account(*from) {
                 sender
             } else {
-                unimplemented!("handle: tx.from != node.sender");
+                return Err(Box::new("account has not been initialized on the node"));
             }
         } else {
             self.default_sender()
@@ -249,11 +249,11 @@ where
             Some(data) => data.to_vec(),
             None => vec![],
         };
-        let to = tx.to().unwrap();
+        let to = tx.to().expect("tx.to expected");
 
         let to = match to {
             NameOrAddress::Address(addr) => *addr,
-            NameOrAddress::Name(_) => unimplemented!("handle: tx.to is an ENS name"),
+            NameOrAddress::Name(_) => return Err(Box::new("ENS names unsupported")),
         };
         let tx_hash =
             keccak256(tx.rlp_signed(self.config.chain_id, &sender.sign_transaction_sync(&tx)));
@@ -276,7 +276,7 @@ where
             if let Some(sender) = self.account(*from) {
                 sender
             } else {
-                unimplemented!("handle: tx.from != node.sender");
+                return Err(Box::new("account has not been initialized on the node"));
             }
         } else {
             self.default_sender()

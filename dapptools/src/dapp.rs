@@ -23,9 +23,12 @@ use std::{collections::HashMap, convert::TryFrom, path::Path, sync::Arc};
 mod cmd;
 mod utils;
 
-static EVM_CONFIG: OnceCell<sputnik::Config> = OnceCell::new();
-static EVM_VICINITY: OnceCell<sputnik::backend::MemoryVicinity> = OnceCell::new();
-static EVM_BACKEND: OnceCell<sputnik::backend::MemoryBackend> = OnceCell::new();
+#[cfg(feature = "sputnik-evm")]
+static SPUTNIK_CONFIG: OnceCell<sputnik::Config> = OnceCell::new();
+#[cfg(feature = "sputnik-evm")]
+static SPUTNIK_VICINITY: OnceCell<sputnik::backend::MemoryVicinity> = OnceCell::new();
+#[cfg(feature = "sputnik-evm")]
+static SPUTNIK_BACKEND: OnceCell<sputnik::backend::MemoryBackend> = OnceCell::new();
 
 #[tracing::instrument(err)]
 fn main() -> eyre::Result<()> {
@@ -33,10 +36,10 @@ fn main() -> eyre::Result<()> {
 
     let opts = Opts::from_args();
     match opts.sub {
-        Subcommands::Node { env, evm_type, evm_version, account, balance } => {
+        Subcommands::Node { env, evm_type, evm_version, accounts, balance } => {
             let node_config = dapp::NodeConfig::new()
                 .chain_id(env.chain_id)
-                .genesis_accounts(vec![account])
+                .genesis_accounts(accounts.0)
                 .genesis_balance(balance);
 
             match evm_type {
@@ -45,24 +48,26 @@ fn main() -> eyre::Result<()> {
                     use evm_adapters::sputnik::Executor;
                     use sputnik::backend::MemoryBackend;
 
-                    EVM_CONFIG.set(evm_version.sputnik_cfg()).expect("could not set EVM_CONFIG");
+                    SPUTNIK_CONFIG
+                        .set(evm_version.sputnik_cfg())
+                        .expect("could not set EVM_CONFIG");
 
-                    EVM_VICINITY.set(env.sputnik_state()).expect("could not set EVM_VICINITY");
+                    SPUTNIK_VICINITY.set(env.sputnik_state()).expect("could not set EVM_VICINITY");
 
                     let mut backend = MemoryBackend::new(
-                        EVM_VICINITY.get().expect("could not get EVM_VICINITY"),
+                        SPUTNIK_VICINITY.get().expect("could not get EVM_VICINITY"),
                         Default::default(),
                     );
                     let faucet =
                         backend.state_mut().entry(*FAUCET_ACCOUNT).or_insert_with(Default::default);
                     faucet.balance = U256::MAX;
 
-                    EVM_BACKEND.set(backend).expect("could not set EVM_BACKEND");
+                    SPUTNIK_BACKEND.set(backend).expect("could not set EVM_BACKEND");
 
                     let evm = Executor::new_with_cheatcodes(
-                        EVM_BACKEND.get().expect("could not get EVM_BACKEND"),
+                        SPUTNIK_BACKEND.get().expect("could not get EVM_BACKEND"),
                         env.gas_limit,
-                        EVM_CONFIG.get().expect("could not get EVM_CONFIG"),
+                        SPUTNIK_CONFIG.get().expect("could not get EVM_CONFIG"),
                         false,
                     );
                     tokio::runtime::Runtime::new()
