@@ -72,7 +72,7 @@ impl<'config, B: Backend> Backend for MemoryStackStateOwned<'config, B> {
 
     fn original_storage(&self, address: H160, key: H256) -> Option<H256> {
         if let Some(value) = self.substate.known_original_storage(address, key) {
-            return Some(value)
+            return Some(value);
         }
 
         self.backend.original_storage(address, key)
@@ -106,12 +106,12 @@ impl<'config, B: Backend> StackState<'config> for MemoryStackStateOwned<'config,
 
     fn is_empty(&self, address: H160) -> bool {
         if let Some(known_empty) = self.substate.known_empty(address) {
-            return known_empty
+            return known_empty;
         }
 
-        self.backend.basic(address).balance == U256::zero() &&
-            self.backend.basic(address).nonce == U256::zero() &&
-            self.backend.code(address).len() == 0
+        self.backend.basic(address).balance == U256::zero()
+            && self.backend.basic(address).nonce == U256::zero()
+            && self.backend.code(address).len() == 0
     }
 
     fn deleted(&self, address: H160) -> bool {

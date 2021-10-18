@@ -190,6 +190,11 @@ where
         self.evm.get_balance(account)
     }
 
+    /// Gets the transaction nonce for the account
+    pub fn get_nonce(&self, account: Address) -> U256 {
+        self.evm.get_nonce(account)
+    }
+
     /// Gets the transaction by txhash
     pub fn get_transaction(&self, tx_hash: TxHash) -> Option<Transaction> {
         self.blockchain.tx(tx_hash)
@@ -286,7 +291,8 @@ where
             Some(data) => data.to_vec(),
             None => vec![],
         };
-        let tx_hash = keccak256(tx.rlp_signed(self.config.chain_id, &sender.sign_transaction_sync(&tx)));
+        let tx_hash =
+            keccak256(tx.rlp_signed(self.config.chain_id, &sender.sign_transaction_sync(&tx)));
         match self.evm.deploy(sender.address(), bytecode.into(), value) {
             Ok((retdata, status, _gas_used, _logs)) => {
                 if E::is_success(&status) {

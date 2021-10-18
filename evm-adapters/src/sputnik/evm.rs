@@ -89,6 +89,10 @@ where
         self.executor.state().basic(address).balance
     }
 
+    fn get_nonce(&self, address: Address) -> U256 {
+        self.executor.state().basic(address).nonce
+    }
+
     fn set_balance(&mut self, address: Address, balance: U256) {
         self.executor
             .state_mut()

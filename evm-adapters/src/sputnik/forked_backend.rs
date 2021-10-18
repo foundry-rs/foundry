@@ -79,9 +79,9 @@ where
                     storage: Default::default(),
                 }
             });
-            exists = account.balance != U256::zero() ||
-                account.nonce != U256::zero() ||
-                !account.code.is_empty();
+            exists = account.balance != U256::zero()
+                || account.nonce != U256::zero()
+                || !account.code.is_empty();
         }
 
         exists

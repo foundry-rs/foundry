@@ -29,6 +29,8 @@ pub trait HostExt: Host {
     /// Gets the bytecode at the specified address. `None` if the specified address
     /// is not a contract account.
     fn get_code(&self, address: &Address) -> Option<&bytes::Bytes>;
+    /// Gets the transaction nonce of the specified sender address.
+    fn get_nonce(&self, address: Address) -> U256;
     /// Sets the bytecode at the specified address to the provided value.
     fn set_code(&mut self, address: Address, code: bytes::Bytes);
     /// Sets the account's balance to the provided value.
@@ -52,6 +54,10 @@ impl<S: HostExt, Tr: Tracer> Evm<S> for EvmOdin<S, Tr> {
 
     fn get_balance(&self, address: Address) -> U256 {
         self.host.get_balance(address)
+    }
+
+    fn get_nonce(&self, address: Address) -> U256 {
+        self.host.get_nonce(address)
     }
 
     fn set_balance(&mut self, address: Address, balance: U256) {
@@ -129,6 +135,10 @@ mod helpers {
     impl HostExt for MockedHost {
         fn get_code(&self, address: &Address) -> Option<&bytes::Bytes> {
             self.accounts.get(address).map(|acc| &acc.code)
+        }
+
+        fn get_nonce(&self, address: Address) -> U256 {
+            self.accounts.get(&address).map(|acc| acc.nonce.into()).unwrap_or_default()
         }
 
         fn set_code(&mut self, address: Address, bytecode: bytes::Bytes) {

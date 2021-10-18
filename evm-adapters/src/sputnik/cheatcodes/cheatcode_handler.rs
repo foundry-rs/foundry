@@ -243,7 +243,7 @@ impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
             if !self.enable_ffi {
                 return evm_error(
                     "ffi disabled: run again with --ffi if you want to allow tests to call external scripts",
-                )
+                );
             }
 
             // execute the command & get the stdout
@@ -335,7 +335,7 @@ impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
         if let Some(depth) = self.state().metadata().depth() {
             if depth > self.config().call_stack_limit {
                 let _ = self.handler.exit_substate(StackExitKind::Reverted);
-                return Capture::Exit((ExitError::CallTooDeep.into(), Vec::new()))
+                return Capture::Exit((ExitError::CallTooDeep.into(), Vec::new()));
             }
         }
 
@@ -344,7 +344,7 @@ impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
                 Ok(()) => (),
                 Err(e) => {
                     let _ = self.handler.exit_substate(StackExitKind::Reverted);
-                    return Capture::Exit((ExitReason::Error(e), Vec::new()))
+                    return Capture::Exit((ExitReason::Error(e), Vec::new()));
                 }
             }
         }
@@ -367,7 +367,7 @@ impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
                     let _ = self.handler.exit_substate(StackExitKind::Failed);
                     Capture::Exit((ExitReason::Error(e), Vec::new()))
                 }
-            }
+            };
         }
 
         // each cfg is about 200 bytes, is this a lot to clone? why does this error

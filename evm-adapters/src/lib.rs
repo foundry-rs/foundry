@@ -61,6 +61,9 @@ pub trait Evm<State> {
     /// Gets the balance at the specified address
     fn get_balance(&self, address: Address) -> U256;
 
+    /// Gets the nonce at the specified address
+    fn get_nonce(&self, address: Address) -> U256;
+
     /// Sets the balance at the specified address
     fn set_balance(&mut self, address: Address, amount: U256);
 
@@ -100,8 +103,8 @@ pub trait Evm<State> {
     ) -> Result<(Bytes, Self::ReturnReason, u64, Vec<String>)> {
         let calldata = encode_function_data(func, args)?;
         #[allow(deprecated)]
-        let is_static = func.constant ||
-            matches!(
+        let is_static = func.constant
+            || matches!(
                 func.state_mutability,
                 ethers::abi::StateMutability::View | ethers::abi::StateMutability::Pure
             );
