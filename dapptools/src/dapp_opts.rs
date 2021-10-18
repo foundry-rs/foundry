@@ -163,6 +163,8 @@ pub struct BuildOpts {
         default_value = "./src/**/*.sol"
     )]
     pub contracts: String,
+    #[structopt(env = "DAPP_SRC")]
+    pub contracts_env: Option<String>,
 
     #[structopt(help = "the remappings", long, short)]
     pub remappings: Vec<String>,

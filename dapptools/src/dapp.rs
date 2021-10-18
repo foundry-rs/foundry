@@ -31,7 +31,15 @@ fn main() -> eyre::Result<()> {
     match opts.sub {
         Subcommands::Test {
             opts:
-                BuildOpts { contracts, remappings, remappings_env, lib_paths, out_path, evm_version },
+                BuildOpts {
+                    contracts,
+                    remappings,
+                    remappings_env,
+                    lib_paths,
+                    out_path,
+                    evm_version,
+                    contracts_env,
+                },
             env,
             json,
             pattern,
@@ -50,6 +58,13 @@ fn main() -> eyre::Result<()> {
             } else {
                 remappings
             };
+
+            let contracts = if let Some(env_defined_contracts) = contracts_env {
+                env_defined_contracts
+            } else {
+                contracts
+            };
+
             let remappings = utils::merge(remappings, remappings_env);
             let lib_paths = utils::default_path(lib_paths)?;
 
@@ -125,11 +140,24 @@ fn main() -> eyre::Result<()> {
         }
         Subcommands::Build {
             opts:
-                BuildOpts { contracts, remappings, remappings_env, lib_paths, out_path, evm_version: _ },
+                BuildOpts {
+                    contracts,
+                    remappings,
+                    remappings_env,
+                    lib_paths,
+                    out_path,
+                    evm_version: _,
+                    contracts_env,
+                },
         } => {
             // build the contracts
             let remappings = utils::merge(remappings, remappings_env);
             let lib_paths = utils::default_path(lib_paths)?;
+            let contracts = if let Some(env_defined_contracts) = contracts_env {
+                env_defined_contracts
+            } else {
+                contracts
+            };
             // TODO: Do we also want to include the file path in the contract map so
             // that we're more compatible with dapptools' artifact?
             let contracts = SolcBuilder::new(&contracts, &remappings, &lib_paths)?.build_all()?;
