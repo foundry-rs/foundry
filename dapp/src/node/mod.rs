@@ -14,8 +14,9 @@ use axum::{
 use ethers::{
     core::k256::ecdsa::SigningKey,
     prelude::{
-        transaction::eip2718::TypedTransaction, Address, Block, NameOrAddress, Signer, Transaction,
-        TransactionReceipt, TxHash, Wallet, H256, U256, U64,
+        transaction::{eip2718::TypedTransaction, eip2930::AccessList},
+        Address, Block, Bytes, NameOrAddress, Signer, Transaction, TransactionReceipt, TxHash,
+        Wallet, H256, U256, U64,
     },
     utils::keccak256,
 };
@@ -31,6 +32,10 @@ use types::{Error, JsonRpcRequest, JsonRpcResponse, ResponseContent};
 pub struct NodeConfig {
     /// Chain ID of the EVM chain
     chain_id: U64,
+    /// Default gas limit for all txs
+    gas_limit: U256,
+    /// Default gas price for all txs
+    gas_price: U256,
     /// Signer accounts that will be initialised with `genesis_balance` in the genesis block
     genesis_accounts: Vec<Wallet<SigningKey>>,
     /// Native token balance of every genesis account in the genesis block
@@ -45,6 +50,8 @@ impl Default for NodeConfig {
     fn default() -> Self {
         Self {
             chain_id: U64::one(),
+            gas_limit: U256::from(100_000),
+            gas_price: U256::from(1_000_000_000),
             genesis_accounts: Vec::new(),
             genesis_balance: U256::zero(),
             accounts: HashMap::new(),
@@ -62,6 +69,18 @@ impl NodeConfig {
     /// Sets the chain ID
     pub fn chain_id<U: Into<U64>>(mut self, chain_id: U) -> Self {
         self.chain_id = chain_id.into();
+        self
+    }
+
+    /// Sets the gas limit
+    pub fn gas_limit<U: Into<U256>>(mut self, gas_limit: U) -> Self {
+        self.gas_limit = gas_limit.into();
+        self
+    }
+
+    /// Sets the gas price
+    pub fn gas_price<U: Into<U256>>(mut self, gas_price: U) -> Self {
+        self.gas_price = gas_price.into();
         self
     }
 
@@ -238,8 +257,23 @@ impl<S, E> Node<S, E>
 where
     E: Evm<S>,
 {
-    /// Simulates sending a transaction on the blockchain and returns the txhash
-    pub fn send_transaction(&mut self, tx: TypedTransaction) -> Result<TxHash, BoxedError> {
+    fn get_tx_info(
+        &self,
+        tx: &TypedTransaction,
+    ) -> Result<
+        (
+            Option<U64>,
+            Wallet<SigningKey>,
+            U256,
+            Bytes,
+            U256,
+            Option<AccessList>,
+            Option<U256>,
+            Option<U256>,
+        ),
+        BoxedError,
+    > {
+        // Tx signer/sender
         let sender = if let Some(from) = tx.from() {
             if let Some(sender) = self.account(*from) {
                 sender
@@ -249,24 +283,104 @@ where
         } else {
             self.default_sender()
         };
+
+        // sender nonce
+        let nonce = tx.nonce().cloned().unwrap_or(self.evm.get_nonce(sender.address()));
+
+        // tx value
         let value = *tx.value().unwrap_or(&U256::zero());
-        let calldata = match tx.data() {
+
+        // tx data (calldata or bytecode)
+        let data = match tx.data() {
             Some(data) => data.to_vec(),
             None => vec![],
         };
-        let to = tx.to().expect("tx.to expected");
 
+        // EIP-2930 and EIP-1559 related fields
+        let (tx_type, access_list, max_priority_fee_per_gas, max_fee_per_gas) = match tx {
+            TypedTransaction::Legacy(ref inner) => (
+                None,
+                None,
+                Some(inner.gas_price.unwrap_or(self.config.gas_price)),
+                Some(inner.gas_price.unwrap_or(self.config.gas_price)),
+            ),
+            TypedTransaction::Eip2930(ref inner) => (
+                Some(1.into()),
+                Some(inner.access_list.clone()),
+                Some(inner.tx.gas_price.unwrap_or(self.config.gas_price)),
+                Some(inner.tx.gas_price.unwrap_or(self.config.gas_price)),
+            ),
+            TypedTransaction::Eip1559(ref inner) => (
+                Some(2.into()),
+                Some(inner.access_list.clone()),
+                inner.max_priority_fee_per_gas,
+                inner.max_fee_per_gas,
+            ),
+        };
+
+        Ok((
+            tx_type,
+            sender,
+            value,
+            data.into(),
+            nonce,
+            access_list,
+            max_priority_fee_per_gas,
+            max_fee_per_gas,
+        ))
+    }
+
+    /// Simulates sending a transaction on the blockchain and returns the txhash
+    pub fn send_transaction(&mut self, tx: TypedTransaction) -> Result<Transaction, BoxedError> {
+        let (
+            tx_type,
+            sender,
+            value,
+            calldata,
+            nonce,
+            access_list,
+            max_priority_fee_per_gas,
+            max_fee_per_gas,
+        ) = self.get_tx_info(&tx)?;
+
+        let to = tx.to().expect("tx.to expected");
         let to = match to {
             NameOrAddress::Address(addr) => *addr,
             NameOrAddress::Name(_) => return Err(Box::new("ENS names unsupported")),
         };
-        let tx_hash =
-            keccak256(tx.rlp_signed(self.config.chain_id, &sender.sign_transaction_sync(&tx)));
+        let gas = tx.gas().cloned().unwrap_or(self.config.gas_limit);
 
-        match self.evm.call_raw(sender.address(), to, calldata.into(), value, false) {
-            Ok((retdata, status, _gas_used, _logs)) => {
+        let signature = sender.sign_transaction_sync(&tx);
+        let tx_hash = keccak256(tx.rlp_signed(self.config.chain_id, &signature));
+
+        match self.evm.call_raw(sender.address(), to, calldata.clone().into(), value, false) {
+            Ok((retdata, status, gas_used, _logs)) => {
+                if U256::from(gas_used) > gas {
+                    return Err(Box::new("revert: out-of-gas"));
+                }
                 if E::is_success(&status) {
-                    Ok(tx_hash.into())
+                    let transaction = Transaction {
+                        hash: tx_hash.into(),
+                        nonce,
+                        block_hash: None,
+                        block_number: None,
+                        transaction_index: None,
+                        from: sender.address(),
+                        to: Some(to),
+                        value,
+                        input: calldata.into(),
+                        v: signature.v.into(),
+                        r: signature.r,
+                        s: signature.s,
+                        gas,
+                        gas_price: None,
+                        transaction_type: tx_type,
+                        access_list,
+                        max_priority_fee_per_gas,
+                        max_fee_per_gas,
+                        chain_id: Some(self.config.chain_id.as_u64().into()),
+                    };
+                    Ok(transaction)
                 } else {
                     Err(Box::new(dapp_utils::decode_revert(retdata.as_ref()).unwrap_or_default()))
                 }
@@ -276,27 +390,50 @@ where
     }
 
     /// Sends a transaction that deploys a contract to the blockchain
-    pub fn deploy_contract(&mut self, tx: TypedTransaction) -> Result<TxHash, BoxedError> {
-        let sender = if let Some(from) = tx.from() {
-            if let Some(sender) = self.account(*from) {
-                sender
-            } else {
-                return Err(Box::new("account has not been initialized on the node"));
-            }
-        } else {
-            self.default_sender()
-        };
-        let value = *tx.value().unwrap_or(&U256::zero());
-        let bytecode = match tx.data() {
-            Some(data) => data.to_vec(),
-            None => vec![],
-        };
-        let tx_hash =
-            keccak256(tx.rlp_signed(self.config.chain_id, &sender.sign_transaction_sync(&tx)));
-        match self.evm.deploy(sender.address(), bytecode.into(), value) {
-            Ok((retdata, status, _gas_used, _logs)) => {
+    pub fn deploy_contract(&mut self, tx: TypedTransaction) -> Result<Transaction, BoxedError> {
+        let (
+            tx_type,
+            sender,
+            value,
+            bytecode,
+            nonce,
+            access_list,
+            max_priority_fee_per_gas,
+            max_fee_per_gas,
+        ) = self.get_tx_info(&tx)?;
+        let gas = tx.gas().cloned().unwrap_or(self.config.gas_limit);
+
+        let signature = sender.sign_transaction_sync(&tx);
+        let tx_hash = keccak256(tx.rlp_signed(self.config.chain_id, &signature));
+
+        match self.evm.deploy(sender.address(), bytecode.clone().into(), value) {
+            Ok((retdata, status, gas_used, _logs)) => {
+                if U256::from(gas_used) > gas {
+                    return Err(Box::new("revert: out-of-gas"));
+                }
                 if E::is_success(&status) {
-                    Ok(tx_hash.into())
+                    let transaction = Transaction {
+                        hash: tx_hash.into(),
+                        nonce,
+                        block_hash: None,
+                        block_number: None,
+                        transaction_index: None,
+                        from: sender.address(),
+                        to: None,
+                        value,
+                        input: bytecode.into(),
+                        v: signature.v.into(),
+                        r: signature.r,
+                        s: signature.s,
+                        gas,
+                        gas_price: None,
+                        transaction_type: tx_type,
+                        access_list,
+                        max_priority_fee_per_gas,
+                        max_fee_per_gas,
+                        chain_id: Some(self.config.chain_id.as_u64().into()),
+                    };
+                    Ok(transaction)
                 } else {
                     Err(Box::new(dapp_utils::decode_revert(retdata.as_ref()).unwrap_or_default()))
                 }
@@ -370,15 +507,15 @@ where
             EthResponse::EthGetTransactionByHash(state.read().unwrap().get_transaction(tx_hash))
         }
         EthRequest::EthSendTransaction(tx) => {
-            let response = EthResponse::EthSendTransaction(match tx.to() {
+            let pending_tx = match tx.to() {
                 Some(_) => state.write().unwrap().send_transaction(tx),
                 None => state.write().unwrap().deploy_contract(tx),
-            });
+            };
 
             // TODO: add tx to txpool if automine is enabled
             // TODO: mine a new block if automine is disabled
 
-            response
+            EthResponse::EthSendTransaction(pending_tx.map(|t| t.hash()))
         }
     }
 }

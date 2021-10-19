@@ -39,6 +39,8 @@ fn main() -> eyre::Result<()> {
         Subcommands::Node { env, evm_type, evm_version, accounts, balance } => {
             let node_config = dapp::NodeConfig::new()
                 .chain_id(env.chain_id)
+                .gas_limit(env.gas_limit)
+                .gas_price(env.gas_price)
                 .genesis_accounts(accounts.0)
                 .genesis_balance(balance);
 
