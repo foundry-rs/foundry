@@ -84,7 +84,9 @@ impl Remapping {
     /// Gets all the remappings detected
     pub fn find_many(path: &str) -> eyre::Result<Vec<Self>> {
         let path = std::path::Path::new(path);
-        let paths = std::fs::read_dir(path)?;
+        let paths = std::fs::read_dir(path).wrap_err_with(|| {
+            format!("Failed to read directory `{}` for remappings", path.display())
+        })?;
         let remappings = paths
             .into_iter()
             // TODO: Surely there must be a better way to convert to str

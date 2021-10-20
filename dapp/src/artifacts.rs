@@ -1,5 +1,5 @@
 use ethers::core::utils::{solc::Contract, CompiledContract};
-use eyre::Result;
+use eyre::{Result, WrapErr};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap},
@@ -14,7 +14,9 @@ pub struct DapptoolsArtifact {
 impl DapptoolsArtifact {
     /// Convenience function to read from a file
     pub fn read(file: impl AsRef<Path>) -> Result<Self> {
-        let file = std::fs::File::open(file)?;
+        let file = std::fs::File::open(file.as_ref()).wrap_err_with(|| {
+            format!("Failed to open artifacts file `{}`", file.as_ref().display())
+        })?;
         Ok(serde_json::from_reader::<_, _>(file)?)
     }
 
