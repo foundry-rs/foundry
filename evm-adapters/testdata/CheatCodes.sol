@@ -108,9 +108,16 @@ contract CheatCodes is DSTest {
     //     assertEq(actual, expected);
     // }
 
-    // function testFail_addr_zero_sk() public {
-    //     hevm.addr(0);
-    // }
+    function testFail_addr_zero_sk() public {
+        hevm.addr(0);
+    }
+
+    function test_addr() public {
+        uint sk = 77814517325470205911140941194401928579557062014761831930645393041380819009408;
+        address expected = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
+                           
+        assertEq(hevm.addr(sk), expected);
+    }
 
     function testFFI() public {
         string[] memory inputs = new string[](3);
