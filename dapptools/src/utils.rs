@@ -183,6 +183,25 @@ pub fn find_dapp_json_contract(path: &str, name: &str) -> eyre::Result<Contract>
     Ok(serde_json::from_value(contract)?)
 }
 
+use git2::{Error, Repository};
+pub fn update_submodules(repo: &Repository) -> Result<(), Error> {
+    fn add_subrepos(repo: &Repository, list: &mut Vec<Repository>) -> Result<(), Error> {
+        for mut subm in repo.submodules()? {
+            println!("Updating submodule {:?}", subm.path());
+            subm.update(true, None)?;
+            list.push(subm.open()?);
+        }
+        Ok(())
+    }
+
+    let mut repos = Vec::new();
+    add_subrepos(repo, &mut repos)?;
+    while let Some(repo) = repos.pop() {
+        add_subrepos(&repo, &mut repos)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

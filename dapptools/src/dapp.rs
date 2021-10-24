@@ -165,7 +165,10 @@ fn main() -> eyre::Result<()> {
                 repo.submodules()?.into_iter().try_for_each(
                     |mut submodule| -> eyre::Result<_> {
                         println!("Updating submodule {:?}", submodule.path());
-                        Ok(submodule.update(true, None)?)
+                        submodule.update(true, None)?;
+                        let submodule = submodule.open()?;
+                        utils::update_submodules(&submodule)?;
+                        Ok(())
                     },
                 )?;
             }
@@ -202,13 +205,7 @@ fn main() -> eyre::Result<()> {
                     .expect("Failed to set HEAD");
                 }
 
-                // initialize all the submodules in the cloned submodule
-                submodule.submodules()?.into_iter().try_for_each(
-                    |mut submodule| -> eyre::Result<_> {
-                        submodule.update(true, None)?;
-                        Ok(())
-                    },
-                )?;
+                utils::update_submodules(&submodule)?;
 
                 // commit the submodule's installation
                 let sig = repo.signature()?;
