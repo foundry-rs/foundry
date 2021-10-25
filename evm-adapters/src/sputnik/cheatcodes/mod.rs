@@ -52,6 +52,9 @@ pub static HEVM: Lazy<BaseContract> = Lazy::new(|| {
             // by default, requires the user to enable it since it can be used
             // to execute commands on a machine by adversaries
             "ffi(string[])(bytes)",
+            // Derives an ethereum address from the private key.
+            // Raises error on 0 since it's an invalid private key
+            "addr(uint256)(address)",
         ])
         .expect("could not parse hevm cheatcode abi"),
     )
