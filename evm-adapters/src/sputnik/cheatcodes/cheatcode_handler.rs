@@ -3,7 +3,7 @@ use super::{
     HevmConsoleEvents,
 };
 use crate::{
-    sputnik::{Executor, SputnikExecutor},
+    sputnik::{Executor, SputnikExecutor, PRECOMPILES_MAP},
     Evm,
 };
 
@@ -22,6 +22,7 @@ use ethers::{
     contract::EthLogDecode,
     core::{k256::ecdsa::SigningKey, utils},
     prelude::AbiDecode,
+    signers::{LocalWallet, Signer},
     types::{Address, H160, H256, U256},
 };
 use std::convert::Infallible;
@@ -193,7 +194,7 @@ impl<'a, B: Backend> Executor<CheatcodeStackState<'a, B>, CheatcodeStackExecutor
         let state = MemoryStackStateOwned::new(metadata, backend);
 
         // create the executor and wrap it with the cheatcode handler
-        let executor = StackExecutor::new_with_precompile(state, config, Default::default());
+        let executor = StackExecutor::new_with_precompile(state, config, PRECOMPILES_MAP.clone());
         let executor = CheatcodeHandler { handler: executor, enable_ffi };
 
         let mut evm = Executor::from_executor(executor, gas_limit);
@@ -280,6 +281,38 @@ impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
                 };
                 let addr = utils::secret_key_to_address(&xsk);
                 res = ethers::abi::encode(&[Token::Address(addr)]);
+            }
+            HEVMCalls::Sign(inner) => {
+                let sk = inner.0;
+                let digest = inner.1;
+                if sk.is_zero() {
+                    return evm_error("Bad Cheat Code. Private Key cannot be 0.")
+                }
+                // 256 bit priv key -> 32 byte slice
+                let mut bs: [u8; 32] = [0; 32];
+                sk.to_big_endian(&mut bs);
+
+                let xsk = match SigningKey::from_bytes(&bs) {
+                    Ok(xsk) => xsk,
+                    Err(err) => return evm_error(&err.to_string()),
+                };
+                let wallet = LocalWallet::from(xsk).with_chain_id(self.handler.chain_id().as_u64());
+
+                // The EVM precompile does not use EIP-155
+                let sig = wallet.sign_hash(digest.into(), false);
+
+                let recovered = sig.recover(digest).unwrap();
+                assert_eq!(recovered, wallet.address());
+
+                let mut r_bytes = [0u8; 32];
+                let mut s_bytes = [0u8; 32];
+                sig.r.to_big_endian(&mut r_bytes);
+                sig.s.to_big_endian(&mut s_bytes);
+                res = ethers::abi::encode(&[Token::Tuple(vec![
+                    Token::Uint(sig.v.into()),
+                    Token::FixedBytes(r_bytes.to_vec()),
+                    Token::FixedBytes(s_bytes.to_vec()),
+                ])]);
             }
         };
 
