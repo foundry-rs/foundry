@@ -84,29 +84,29 @@ contract CheatCodes is DSTest {
     //     test_store_load_concrete(x);
     // }
 
-    // function test_sign_addr_digest(uint sk, bytes32 digest) public {
-    //     if (sk == 0) return; // invalid key
+    function test_sign_addr_digest(uint sk, bytes32 digest) public {
+        if (sk == 0) return; // invalid key
 
-    //     (uint8 v, bytes32 r, bytes32 s) = hevm.sign(sk, digest);
-    //     address expected = hevm.addr(sk);
-    //     address actual = ecrecover(digest, v, r, s);
+        (uint8 v, bytes32 r, bytes32 s) = hevm.sign(sk, digest);
+        address expected = hevm.addr(sk);
+        address actual = ecrecover(digest, v, r, s);
 
-    //     assertEq(actual, expected);
-    // }
+        assertEq(actual, expected);
+    }
 
-    // function test_sign_addr_message(uint sk, bytes memory message) public {
-    //     test_sign_addr_digest(sk, keccak256(message));
-    // }
+    function test_sign_addr_message(uint sk, bytes memory message) public {
+        test_sign_addr_digest(sk, keccak256(message));
+    }
 
-    // function testFail_sign_addr(uint sk, bytes32 digest) public {
-    //     uint badKey = sk + 1;
+    function testFail_sign_addr(uint sk, bytes32 digest) public {
+        uint badKey = sk + 1;
 
-    //     (uint8 v, bytes32 r, bytes32 s) = hevm.sign(badKey, digest);
-    //     address expected = hevm.addr(sk);
-    //     address actual = ecrecover(digest, v, r, s);
+        (uint8 v, bytes32 r, bytes32 s) = hevm.sign(badKey, digest);
+        address expected = hevm.addr(sk);
+        address actual = ecrecover(digest, v, r, s);
 
-    //     assertEq(actual, expected);
-    // }
+        assertEq(actual, expected);
+    }
 
     function testFail_addr_zero_sk() public {
         hevm.addr(0);
@@ -115,7 +115,7 @@ contract CheatCodes is DSTest {
     function test_addr() public {
         uint sk = 77814517325470205911140941194401928579557062014761831930645393041380819009408;
         address expected = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
-                           
+
         assertEq(hevm.addr(sk), expected);
     }
 
