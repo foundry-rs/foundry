@@ -161,22 +161,16 @@ fn main() -> eyre::Result<()> {
 
             // if a lib is specified, open it
             if let Some(lib) = lib {
+                println!("FOUND");
                 println!("Updating submodule {:?}", lib);
                 repo.find_submodule(
                     &lib.into_os_string().into_string().expect("invalid submodule path"),
                 )?
                 .update(true, None)?;
             } else {
-                // otherwise just update them all
-                repo.submodules()?.into_iter().try_for_each(
-                    |mut submodule| -> eyre::Result<_> {
-                        println!("Updating submodule {:?}", submodule.path());
-                        submodule.update(true, None)?;
-                        let submodule = submodule.open()?;
-                        utils::update_submodules(&submodule)?;
-                        Ok(())
-                    },
-                )?;
+                std::process::Command::new("git")
+                    .args(&["submodule", "update", "--init", "--recursive"])
+                    .spawn()?;
             }
         }
         // TODO: Make it work with updates?
@@ -211,7 +205,9 @@ fn main() -> eyre::Result<()> {
                     .expect("Failed to set HEAD");
                 }
 
-                utils::update_submodules(&submodule)?;
+                std::process::Command::new("git")
+                    .args(&["submodule", "update", "--init", "--recursive"])
+                    .spawn()?;
 
                 // commit the submodule's installation
                 let sig = repo.signature()?;
