@@ -40,6 +40,7 @@ ethers::contract::abigen!(
             load(address,bytes32)(bytes32)
             ffi(string[])(bytes)
             addr(uint256)(address)
+            sign(uint256,bytes32)(uint8,bytes32,bytes32)
     ]"#,
 );
 pub use hevm_mod::HEVMCalls;

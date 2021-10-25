@@ -281,6 +281,41 @@ impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
                 let addr = utils::secret_key_to_address(&xsk);
                 res = ethers::abi::encode(&[Token::Address(addr)]);
             }
+            HEVMCalls::Sign(inner) => {
+                let sk = inner.0;
+                let digest = inner.1;
+                if sk.is_zero() {
+                    return evm_error("Bad Cheat Code. Private Key cannot be 0.")
+                }
+                // 256 bit priv key -> 32 byte slice
+                let mut bs: [u8; 32] = [0; 32];
+                sk.to_big_endian(&mut bs);
+                println!("Signing digest: {}, with {}", hex::encode(digest), hex::encode(bs));
+
+                let xsk = match SigningKey::from_bytes(&bs) {
+                    Ok(xsk) => xsk,
+                    Err(err) => return evm_error(&err.to_string()),
+                };
+                let wallet = LocalWallet::from(xsk).with_chain_id(self.handler.chain_id().as_u64());
+
+                let sig = wallet.sign_hash(digest.into(), true);
+
+                let recovered = sig.recover(digest).unwrap();
+                assert_eq!(recovered, wallet.address());
+
+                dbg!(&sig);
+                let mut r_bytes = [0u8; 32];
+                let mut s_bytes = [0u8; 32];
+                sig.r.to_big_endian(&mut r_bytes);
+                sig.s.to_big_endian(&mut s_bytes);
+                println!("encoded r: {}", hex::encode(&r_bytes));
+                println!("encoded s: {}", hex::encode(&s_bytes));
+                res = ethers::abi::encode(&[Token::Tuple(vec![
+                    Token::Uint(sig.v.into()),
+                    Token::FixedBytes(r_bytes.to_vec()),
+                    Token::FixedBytes(s_bytes.to_vec()),
+                ])]);
+            }
         };
 
         // TODO: Add more cheat codes.
