@@ -102,26 +102,33 @@ impl Remapping {
             // get all the directories inside a file if it's a valid dir
             if let Ok(dir) = std::fs::read_dir(&path) {
                 for inner in dir.into_iter() {
-                    paths.push(inner);
+                    let inner = inner?;
+                    let path = inner.path().display().to_string();
+                    let path = path.rsplit('/').next().unwrap().to_string();
+                    if path != DAPPTOOLS_CONTRACTS_DIR && path != JS_CONTRACTS_DIR {
+                        paths.push(Ok(inner));
+                    }
                 }
             }
 
             let remapping = Self::find(&path.display().to_string());
             if let Ok(remapping) = remapping {
-                // ignore src/test remappings
-                if remapping.name == "contracts/".to_owned() ||
-                    remapping.name == "src/".to_owned() ||
-                    remapping.name == "test/".to_owned()
+                // skip remappings that exist already
+                if let Some(ref mut found) =
+                    remappings.iter_mut().find(|x: &&mut Remapping| x.name == remapping.name)
                 {
-                    continue
+                    // always replace with the shortest length path
+                    fn depth(path: &str, delim: char) -> usize {
+                        path.matches(delim).count()
+                    }
+                    // if the one which exists is larger, we should replace it
+                    // if not, ignore it
+                    if depth(&found.path, '/') > depth(&remapping.path, '/') {
+                        **found = remapping;
+                    }
+                } else {
+                    remappings.push(remapping);
                 }
-
-                // skip if it exists already
-                if remappings.iter().find(|x: &&Remapping| x.name == remapping.name).is_some() {
-                    continue
-                }
-
-                remappings.push(remapping);
             }
         }
 
