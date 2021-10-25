@@ -13,8 +13,8 @@ use ethers::{
 
 use sputnik::{
     backend::MemoryVicinity,
-    executor::{StackExecutor, StackState},
-    Config, CreateScheme, ExitReason,
+    executor::{PrecompileOutput, StackExecutor, StackState},
+    Config, CreateScheme, ExitError, ExitReason, ExitSucceed,
 };
 
 pub async fn vicinity<M: Middleware>(
@@ -134,4 +134,81 @@ impl<'a, S: StackState<'a>> SputnikExecutor<S> for StackExecutor<'a, S> {
         vec![]
     }
     fn clear_logs(&mut self) {}
+}
+
+use std::borrow::Cow;
+
+type PrecompileFn =
+    fn(&[u8], Option<u64>, &sputnik::Context, bool) -> Result<PrecompileOutput, ExitError>;
+
+pub static PRECOMPILES: Lazy<revm_precompiles::Precompiles> = Lazy::new(|| {
+    // We use the const to immediately choose the latest revision of available
+    // precompiles. Is this wrong maybe?
+    revm_precompiles::Precompiles::new::<3>()
+});
+
+// https://github.com/rust-blockchain/evm-tests/blob/d53b17989db45d76b5876b33db63bcaf367a53fa/jsontests/src/state.rs#L55
+// We need to do this because closures can only be coerced to `fn` types if they do not capture any
+// variables
+macro_rules! precompile_entry {
+    ($map:expr, $index:expr) => {
+        let x: fn(&[u8], Option<u64>, &Context, bool) -> Result<PrecompileOutput, ExitError> =
+            |input: &[u8], gas_limit: Option<u64>, _context: &Context, _is_static: bool| {
+                let precompile = PRECOMPILES.get(&H160::from_low_u64_be($index)).unwrap();
+                crate::sputnik::exec(&precompile, input, gas_limit.unwrap())
+            };
+        $map.insert(H160::from_low_u64_be($index), x);
+    };
+}
+
+use once_cell::sync::Lazy;
+use sputnik::Context;
+use std::collections::BTreeMap;
+pub static PRECOMPILES_MAP: Lazy<BTreeMap<Address, PrecompileFn>> = Lazy::new(|| {
+    let mut map = BTreeMap::new();
+    precompile_entry!(map, 1);
+    precompile_entry!(map, 2);
+    precompile_entry!(map, 3);
+    precompile_entry!(map, 4);
+    precompile_entry!(map, 5);
+    precompile_entry!(map, 6);
+    precompile_entry!(map, 7);
+    precompile_entry!(map, 8);
+    precompile_entry!(map, 9);
+    map
+});
+
+pub fn exec(
+    builtin: &revm_precompiles::Precompile,
+    input: &[u8],
+    gas_limit: u64,
+) -> Result<PrecompileOutput, ExitError> {
+    let res = match builtin {
+        revm_precompiles::Precompile::Standard(func) => func(input, gas_limit),
+        revm_precompiles::Precompile::Custom(func) => func(input, gas_limit),
+    };
+    match res {
+        Ok(res) => {
+            let logs = res
+                .logs
+                .into_iter()
+                .map(|log| sputnik::backend::Log {
+                    topics: log.topics,
+                    data: log.data.to_vec(),
+                    address: log.address,
+                })
+                .collect();
+            Ok(PrecompileOutput {
+                exit_status: ExitSucceed::Stopped,
+                output: res.output,
+                cost: res.cost,
+                logs,
+            })
+        }
+        Err(err) => Err(match err {
+            revm_precompiles::ExitError::Exit => ExitError::Other(Cow::Borrowed("exit")),
+            revm_precompiles::ExitError::OutOfGas => ExitError::OutOfGas,
+            revm_precompiles::ExitError::Other(cow) => ExitError::Other(cow),
+        }),
+    }
 }

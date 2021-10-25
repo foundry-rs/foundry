@@ -3,7 +3,7 @@ use super::{
     HevmConsoleEvents,
 };
 use crate::{
-    sputnik::{Executor, SputnikExecutor},
+    sputnik::{Executor, SputnikExecutor, PRECOMPILES_MAP},
     Evm,
 };
 
@@ -22,6 +22,7 @@ use ethers::{
     contract::EthLogDecode,
     core::{k256::ecdsa::SigningKey, utils},
     prelude::AbiDecode,
+    signers::{LocalWallet, Signer},
     types::{Address, H160, H256, U256},
 };
 use std::convert::Infallible;
@@ -193,7 +194,7 @@ impl<'a, B: Backend> Executor<CheatcodeStackState<'a, B>, CheatcodeStackExecutor
         let state = MemoryStackStateOwned::new(metadata, backend);
 
         // create the executor and wrap it with the cheatcode handler
-        let executor = StackExecutor::new_with_precompile(state, config, Default::default());
+        let executor = StackExecutor::new_with_precompile(state, config, PRECOMPILES_MAP.clone());
         let executor = CheatcodeHandler { handler: executor, enable_ffi };
 
         let mut evm = Executor::from_executor(executor, gas_limit);
@@ -298,7 +299,8 @@ impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
                 };
                 let wallet = LocalWallet::from(xsk).with_chain_id(self.handler.chain_id().as_u64());
 
-                let sig = wallet.sign_hash(digest.into(), true);
+                // The EVM precompile does not use EIP-155
+                let sig = wallet.sign_hash(digest.into(), false);
 
                 let recovered = sig.recover(digest).unwrap();
                 assert_eq!(recovered, wallet.address());
