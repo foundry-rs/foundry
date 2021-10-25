@@ -20,8 +20,8 @@ use std::{process::Command, rc::Rc};
 use ethers::{
     abi::{RawLog, Token},
     contract::EthLogDecode,
+    core::{k256::ecdsa::SigningKey, utils},
     types::{Address, H160, H256, U256},
-    core::{utils, k256::ecdsa::SigningKey}
 };
 use std::convert::Infallible;
 
@@ -271,7 +271,10 @@ impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
             // 256 bit priv key -> 32 byte slice
             let mut bs: [u8; 32] = [0; 32];
             sk.to_big_endian(&mut bs);
-            let xsk = SigningKey::from_bytes(&bs).map_err(|err|  evm_error(&err.to_string())).unwrap();
+            let xsk = match SigningKey::from_bytes(&bs) {
+                Ok(xsk) => xsk,
+                Err(err) => return evm_error(&err.to_string()),
+            };
             let addr = utils::secret_key_to_address(&xsk);
             res = ethers::abi::encode(&[Token::Address(addr)]);
         }
