@@ -128,6 +128,12 @@ fn main() -> eyre::Result<()> {
                 BuildOpts { contracts, remappings, remappings_env, lib_paths, out_path, evm_version: _ },
         } => {
             // build the contracts
+            // if no env var for remappings is provided, try calculating them on the spot
+            let remappings = if remappings_env.is_none() {
+                [remappings, utils::Remapping::find_many_str("lib")?].concat()
+            } else {
+                remappings
+            };
             let remappings = utils::merge(remappings, remappings_env);
             let lib_paths = utils::default_path(lib_paths)?;
             // TODO: Do we also want to include the file path in the contract map so
