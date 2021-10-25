@@ -7,12 +7,7 @@ pub use cheatcode_handler::CheatcodeHandler;
 
 mod backend;
 
-use ethers::{
-    abi::parse_abi,
-    contract::BaseContract,
-    prelude::Lazy,
-    types::{Address, H256, U256},
-};
+use ethers::types::{Address, H256, U256};
 use sputnik::backend::{Backend, MemoryAccount, MemoryBackend};
 
 #[derive(Clone, Debug, Default)]
@@ -36,29 +31,18 @@ impl<'a> BackendExt for MemoryBackend<'a> {
     }
 }
 
-// TODO: Add more cheatcodes.
-pub static HEVM: Lazy<BaseContract> = Lazy::new(|| {
-    BaseContract::from(
-        parse_abi(&[
-            // sets the block number to x
-            "roll(uint256)",
-            // sets the block timestamp to x
-            "warp(uint256)",
-            // sets account at `address`'s storage `slot` to `value`
-            "store(address,bytes32,bytes32)",
-            // returns the `value` of the storage `slot` at `address`
-            "load(address,bytes32)(bytes32)",
-            // allows Solidity tests to make system calls on the host. Disabled
-            // by default, requires the user to enable it since it can be used
-            // to execute commands on a machine by adversaries
-            "ffi(string[])(bytes)",
-            // Derives an ethereum address from the private key.
-            // Raises error on 0 since it's an invalid private key
-            "addr(uint256)(address)",
-        ])
-        .expect("could not parse hevm cheatcode abi"),
-    )
-});
+ethers::contract::abigen!(
+    HEVM,
+    r#"[
+            roll(uint256)
+            warp(uint256)
+            store(address,bytes32,bytes32)
+            load(address,bytes32)(bytes32)
+            ffi(string[])(bytes)
+            addr(uint256)(address)
+    ]"#,
+);
+pub use hevm_mod::HEVMCalls;
 
 ethers::contract::abigen!(
     HevmConsole,

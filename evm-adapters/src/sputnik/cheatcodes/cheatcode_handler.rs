@@ -1,6 +1,6 @@
 use super::{
-    backend::CheatcodeBackend, memory_stackstate_owned::MemoryStackStateOwned, HevmConsoleEvents,
-    HEVM,
+    backend::CheatcodeBackend, memory_stackstate_owned::MemoryStackStateOwned, HEVMCalls,
+    HevmConsoleEvents,
 };
 use crate::{
     sputnik::{Executor, SputnikExecutor},
@@ -21,6 +21,7 @@ use ethers::{
     abi::{RawLog, Token},
     contract::EthLogDecode,
     core::{k256::ecdsa::SigningKey, utils},
+    prelude::AbiDecode,
     types::{Address, H160, H256, U256},
 };
 use std::convert::Infallible;
@@ -220,64 +221,67 @@ impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
         // Get a mutable ref to the state so we can apply the cheats
         let state = self.state_mut();
 
-        if let Ok(timestamp) = HEVM.decode::<U256, _>("warp", &input) {
-            state.backend.cheats.block_timestamp = Some(timestamp);
-        }
+        let decoded = match HEVMCalls::decode(&input) {
+            Ok(inner) => inner,
+            Err(err) => return evm_error(&err.to_string()),
+        };
 
-        if let Ok(block_number) = HEVM.decode::<U256, _>("roll", &input) {
-            state.backend.cheats.block_number = Some(block_number);
-        }
-
-        if let Ok((address, slot, value)) = HEVM.decode::<(Address, H256, H256), _>("store", &input)
-        {
-            state.set_storage(address, slot, value);
-        }
-
-        if let Ok((address, slot)) = HEVM.decode::<(Address, H256), _>("load", &input) {
-            res = state.storage(address, slot).0.to_vec();
-        }
-
-        if let Ok(args) = HEVM.decode::<Vec<String>, _>("ffi", &input) {
-            // if FFI is not explicitly enabled at runtime, do not let this be called
-            // (we could have an FFI cheatcode executor instead but feels like
-            // over engineering)
-            if !self.enable_ffi {
-                return evm_error(
-                    "ffi disabled: run again with --ffi if you want to allow tests to call external scripts",
-                )
+        match decoded {
+            HEVMCalls::Warp(inner) => {
+                state.backend.cheats.block_timestamp = Some(inner.0);
             }
-
-            // execute the command & get the stdout
-            let output = match Command::new(&args[0]).args(&args[1..]).output() {
-                Ok(res) => res.stdout,
-                Err(err) => return evm_error(&err.to_string()),
-            };
-
-            // get the hex string & decode it
-            let output = unsafe { std::str::from_utf8_unchecked(&output) };
-            let decoded = match hex::decode(&output[2..]) {
-                Ok(res) => res,
-                Err(err) => return evm_error(&err.to_string()),
-            };
-
-            // encode the data as Bytes
-            res = ethers::abi::encode(&[Token::Bytes(decoded.to_vec())]);
-        }
-
-        if let Ok(sk) = HEVM.decode::<U256, _>("addr", &input) {
-            if sk.is_zero() {
-                return evm_error("Bad Cheat Code. Private Key cannot be 0.")
+            HEVMCalls::Roll(inner) => {
+                state.backend.cheats.block_number = Some(inner.0);
             }
-            // 256 bit priv key -> 32 byte slice
-            let mut bs: [u8; 32] = [0; 32];
-            sk.to_big_endian(&mut bs);
-            let xsk = match SigningKey::from_bytes(&bs) {
-                Ok(xsk) => xsk,
-                Err(err) => return evm_error(&err.to_string()),
-            };
-            let addr = utils::secret_key_to_address(&xsk);
-            res = ethers::abi::encode(&[Token::Address(addr)]);
-        }
+            HEVMCalls::Store(inner) => {
+                state.set_storage(inner.0, inner.1.into(), inner.2.into());
+            }
+            HEVMCalls::Load(inner) => {
+                res = state.storage(inner.0, inner.1.into()).0.to_vec();
+            }
+            HEVMCalls::Ffi(inner) => {
+                let args = inner.0;
+                // if FFI is not explicitly enabled at runtime, do not let this be called
+                // (we could have an FFI cheatcode executor instead but feels like
+                // over engineering)
+                if !self.enable_ffi {
+                    return evm_error(
+                        "ffi disabled: run again with --ffi if you want to allow tests to call external scripts",
+                    )
+                }
+
+                // execute the command & get the stdout
+                let output = match Command::new(&args[0]).args(&args[1..]).output() {
+                    Ok(res) => res.stdout,
+                    Err(err) => return evm_error(&err.to_string()),
+                };
+
+                // get the hex string & decode it
+                let output = unsafe { std::str::from_utf8_unchecked(&output) };
+                let decoded = match hex::decode(&output[2..]) {
+                    Ok(res) => res,
+                    Err(err) => return evm_error(&err.to_string()),
+                };
+
+                // encode the data as Bytes
+                res = ethers::abi::encode(&[Token::Bytes(decoded.to_vec())]);
+            }
+            HEVMCalls::Addr(inner) => {
+                let sk = inner.0;
+                if sk.is_zero() {
+                    return evm_error("Bad Cheat Code. Private Key cannot be 0.")
+                }
+                // 256 bit priv key -> 32 byte slice
+                let mut bs: [u8; 32] = [0; 32];
+                sk.to_big_endian(&mut bs);
+                let xsk = match SigningKey::from_bytes(&bs) {
+                    Ok(xsk) => xsk,
+                    Err(err) => return evm_error(&err.to_string()),
+                };
+                let addr = utils::secret_key_to_address(&xsk);
+                res = ethers::abi::encode(&[Token::Address(addr)]);
+            }
+        };
 
         // TODO: Add more cheat codes.
 
