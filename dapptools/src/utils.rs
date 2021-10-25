@@ -101,7 +101,7 @@ impl Remapping {
 
             // get all the directories inside a file if it's a valid dir
             if let Ok(dir) = std::fs::read_dir(&path) {
-                for inner in dir.into_iter() {
+                for inner in dir {
                     let inner = inner?;
                     let path = inner.path().display().to_string();
                     let path = path.rsplit('/').next().unwrap().to_string();
