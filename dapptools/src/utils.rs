@@ -60,7 +60,11 @@ impl Remapping {
     }
 
     fn find_with_type(name: &str, source: &str) -> eyre::Result<Self> {
-        let pattern = format!("{}/{}/**/*.sol", name, source);
+        let pattern = if name.contains(source) {
+            format!("{}/**/*.sol", name)
+        } else {
+            format!("{}/{}/**/*.sol", name, source)
+        };
         let mut dapptools_contracts = glob::glob(&pattern)?;
         if dapptools_contracts.next().is_some() {
             let path = format!("{}/{}/", name, source);
@@ -84,16 +88,50 @@ impl Remapping {
     /// Gets all the remappings detected
     pub fn find_many(path: &str) -> eyre::Result<Vec<Self>> {
         let path = std::path::Path::new(path);
-        let paths = std::fs::read_dir(path).wrap_err_with(|| {
-            format!("Failed to read directory `{}` for remappings", path.display())
-        })?;
-        let remappings = paths
+        let mut paths = std::fs::read_dir(path)
+            .wrap_err_with(|| {
+                format!("Failed to read directory `{}` for remappings", path.display())
+            })?
             .into_iter()
-            // TODO: Surely there must be a better way to convert to str
-            .map(|path| Self::find(&path?.path().display().to_string()))
-            // Do we want to silently ignore the errors?
-            .filter_map(|x| x.ok())
-            .collect();
+            .collect::<Vec<_>>();
+
+        let mut remappings = Vec::new();
+        while let Some(path) = paths.pop() {
+            let path = path?.path();
+
+            // get all the directories inside a file if it's a valid dir
+            if let Ok(dir) = std::fs::read_dir(&path) {
+                for inner in dir {
+                    let inner = inner?;
+                    let path = inner.path().display().to_string();
+                    let path = path.rsplit('/').next().unwrap().to_string();
+                    if path != DAPPTOOLS_CONTRACTS_DIR && path != JS_CONTRACTS_DIR {
+                        paths.push(Ok(inner));
+                    }
+                }
+            }
+
+            let remapping = Self::find(&path.display().to_string());
+            if let Ok(remapping) = remapping {
+                // skip remappings that exist already
+                if let Some(ref mut found) =
+                    remappings.iter_mut().find(|x: &&mut Remapping| x.name == remapping.name)
+                {
+                    // always replace with the shortest length path
+                    fn depth(path: &str, delim: char) -> usize {
+                        path.matches(delim).count()
+                    }
+                    // if the one which exists is larger, we should replace it
+                    // if not, ignore it
+                    if depth(&found.path, '/') > depth(&remapping.path, '/') {
+                        **found = remapping;
+                    }
+                } else {
+                    remappings.push(remapping);
+                }
+            }
+        }
+
         Ok(remappings)
     }
 }
@@ -212,6 +250,71 @@ mod tests {
             Ok(_) => Ok(()),
             Err(e) => Err(e),
         }
+    }
+
+    fn mkdir_or_touch(tmp: &std::path::Path, paths: &[&str]) {
+        for path in paths {
+            if path.ends_with(".sol") {
+                let path = tmp.join(path);
+                touch(&path).unwrap();
+            } else {
+                let path = tmp.join(path);
+                std::fs::create_dir_all(&path).unwrap();
+            }
+        }
+    }
+
+    // helper function for converting path bufs to remapping strings
+    fn to_str(p: std::path::PathBuf) -> String {
+        let mut s = p.into_os_string().into_string().unwrap();
+        s.push('/');
+        s
+    }
+
+    #[test]
+    fn recursive_remappings() {
+        //let tmp_dir_path = PathBuf::from("."); // tempdir::TempDir::new("lib").unwrap();
+        let tmp_dir = tempdir::TempDir::new("lib").unwrap();
+        let tmp_dir_path = tmp_dir.path();
+        let paths = [
+            "repo1/src/",
+            "repo1/src/contract.sol",
+            "repo1/lib/",
+            "repo1/lib/ds-math/src/",
+            "repo1/lib/ds-math/src/contract.sol",
+            "repo1/lib/ds-math/lib/ds-test/src/",
+            "repo1/lib/ds-math/lib/ds-test/src/test.sol",
+        ];
+        mkdir_or_touch(&tmp_dir_path, &paths[..]);
+
+        let path = tmp_dir_path.display().to_string();
+        let mut remappings = Remapping::find_many(&path).unwrap();
+        remappings.sort_unstable();
+
+        let mut expected = vec![
+            Remapping {
+                name: "repo1/".to_string(),
+                path: to_str(tmp_dir_path.join("repo1").join("src")),
+            },
+            Remapping {
+                name: "ds-math/".to_string(),
+                path: to_str(tmp_dir_path.join("repo1").join("lib").join("ds-math").join("src")),
+            },
+            Remapping {
+                name: "ds-test/".to_string(),
+                path: to_str(
+                    tmp_dir_path
+                        .join("repo1")
+                        .join("lib")
+                        .join("ds-math")
+                        .join("lib")
+                        .join("ds-test")
+                        .join("src"),
+                ),
+            },
+        ];
+        expected.sort_unstable();
+        assert_eq!(remappings, expected);
     }
 
     #[test]
