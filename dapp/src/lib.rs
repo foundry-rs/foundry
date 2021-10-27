@@ -1,13 +1,12 @@
 mod artifacts;
 pub use artifacts::DapptoolsArtifact;
+pub use ethers::core::utils::{solc::Contract, CompiledContract};
 
 mod runner;
 pub use runner::{ContractRunner, TestResult};
 
 mod multi_runner;
 pub use multi_runner::{MultiContractRunner, MultiContractRunnerBuilder};
-
-mod fuzz;
 
 use ethers::abi;
 use eyre::Result;

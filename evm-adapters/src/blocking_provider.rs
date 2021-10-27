@@ -1,6 +1,6 @@
 use ethers::{
     providers::Middleware,
-    types::{Address, BlockId, Bytes, H256, U256},
+    types::{Address, Block, BlockId, Bytes, TxHash, H256, U256, U64},
 };
 use tokio::runtime::Runtime;
 
@@ -18,41 +18,46 @@ impl<M: Clone> Clone for BlockingProvider<M> {
     }
 }
 
-#[cfg(feature = "sputnik")]
-use sputnik::backend::MemoryVicinity;
-
-impl<M: Middleware> BlockingProvider<M> {
+impl<M: Middleware> BlockingProvider<M>
+where
+    M::Error: 'static,
+{
     pub fn new(provider: M) -> Self {
         Self { provider, runtime: Runtime::new().unwrap() }
     }
 
-    #[cfg(feature = "sputnik")]
-    pub fn vicinity(&self, pin_block: Option<u64>) -> Result<MemoryVicinity, M::Error> {
-        let block_number = if let Some(pin_block) = pin_block {
-            pin_block
-        } else {
-            self.block_on(self.provider.get_block_number())?.as_u64()
-        };
-
-        let gas_price = self.block_on(self.provider.get_gas_price())?;
-        let chain_id = self.block_on(self.provider.get_chainid())?;
-        let block = self.block_on(self.provider.get_block(block_number))?.expect("block not found");
-
-        Ok(MemoryVicinity {
-            origin: Address::default(),
-            chain_id,
-            block_hashes: Vec::new(),
-            block_number: block.number.expect("block number not found").as_u64().into(),
-            block_coinbase: block.author,
-            block_difficulty: block.difficulty,
-            block_gas_limit: block.gas_limit,
-            block_timestamp: block.timestamp,
-            gas_price,
-        })
-    }
-
     fn block_on<F: std::future::Future>(&self, f: F) -> F::Output {
         self.runtime.block_on(f)
+    }
+
+    pub fn block_and_chainid(&self, block_id: BlockId) -> eyre::Result<(Block<TxHash>, U256)> {
+        let f = async {
+            let block = self.provider.get_block(block_id);
+            let chain_id = self.provider.get_chainid();
+            tokio::try_join!(block, chain_id)
+        };
+        let (block, chain_id) = self.block_on(f)?;
+        Ok((block.ok_or_else(|| eyre::eyre!("block {:?} not found", block_id))?, chain_id))
+    }
+
+    pub fn get_account(
+        &self,
+        address: Address,
+        block_id: Option<BlockId>,
+    ) -> eyre::Result<(U256, U256, Bytes)> {
+        let f = async {
+            let balance = self.provider.get_balance(address, block_id);
+            let nonce = self.provider.get_transaction_count(address, block_id);
+            let code = self.provider.get_code(address, block_id);
+            tokio::try_join!(balance, nonce, code)
+        };
+        let (balance, nonce, code) = self.block_on(f)?;
+
+        Ok((nonce, balance, code))
+    }
+
+    pub fn get_block_number(&self) -> Result<U64, M::Error> {
+        self.block_on(self.provider.get_block_number())
     }
 
     pub fn get_balance(&self, address: Address, block: Option<BlockId>) -> Result<U256, M::Error> {

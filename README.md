@@ -3,6 +3,12 @@
 *Rust port of DappTools*
 
 ![Github Actions](https://github.com/gakonst/dapptools-rs/workflows/Tests/badge.svg)
+[![Telegram Chat](https://img.shields.io/endpoint?color=neon&style=flat-square&url=https%3A%2F%2Ftg.sumanjay.workers.dev%2Fturbodapptools)](https://t.me/turbodapptools)
+[![Crates.io][crates-badge]][crates-url]
+
+[crates-badge]: https://img.shields.io/crates/v/turbodapp.svg
+[crates-url]: https://crates.io/crates/turbodapp
+
 
 ## Why?! DappTools is great!
 
@@ -71,6 +77,15 @@ Benchmarks TBD in the future, but:
         * [ ] symbolic execution
         * [ ] coverage
         * [ ] HEVM-style Solidity cheatcodes
+            * [x] roll
+            * [x] warp
+            * [x] ffi
+            * [x] store
+            * [x] load
+            * [ ] sign
+            * [ ] addr
+            * [ ] makeEOA
+            * ...?
         * [ ] structured tracing with abi decoding
         * [ ] per-line gas profiling
         * [x] forking mode
@@ -78,18 +93,22 @@ Benchmarks TBD in the future, but:
     * [x] build
         * [x] can read DappTools-style .sol.json artifacts
         * [x] manual remappings
-        * [ ] automatic remappings
+        * [x] automatic remappings
         * [x] multiple compiler versions
         * [ ] incremental compilation
         * [ ] can read Hardhat-style artifacts
         * [ ] can read Truffle-style artifacts
+    * [x] install
+    * [x] update
     * [ ] debug
     * [x] CLI Tracing with `RUST_LOG=dapp=trace`
 
 ## Tested Against
 
 This repository has been tested against the following DappTools repos:
-*
+* [LootLoose](https://github.com/gakonst/lootloose/) (minus the FFI tests)
+* [solmate](https://github.com/Rari-Capital/solmate/) (replace all the `prove` symbolic tests with fuzz tests, and skip `invariant` tests for now)
+
 ## Development
 
 ### Rust Toolchain
@@ -115,3 +134,9 @@ cargo build [--release]
 cargo +nightly fmt
 cargo clippy
 ```
+## Getting Help
+
+First, see if the answer to your question can be found in the API documentation. If the answer
+is not there, try opening an [issue](https://github.com/gakonst/dapptools-rs/issues/new) with the question.
+
+Join the [turbodapptools telegram](https://t.me/turbodapptools) to chat with the community!

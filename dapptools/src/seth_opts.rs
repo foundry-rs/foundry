@@ -17,6 +17,16 @@ pub enum Subcommands {
     #[structopt(name = "--to-hex")]
     #[structopt(about = "convert a decimal number into hex")]
     ToHex { decimal: Option<String> },
+    #[structopt(name = "--to-hexdata")]
+    #[structopt(about = r#"[<hex>|</path>|<@tag>]
+    Output lowercase, 0x-prefixed hex, converting from the
+    input, which can be:
+      - mixed case hex with or without 0x prefix
+      - 0x prefixed hex, concatenated with a ':'
+      - absolute path to file
+      - @tag, where $TAG is defined in environment variables
+    "#)]
+    ToHexdata { input: String },
     #[structopt(name = "--to-checksum-address")]
     #[structopt(about = "convert an address to a checksummed format (EIP-55)")]
     ToCheckSumAddress { address: Address },
@@ -68,6 +78,17 @@ pub enum Subcommands {
         args: Vec<String>,
         #[structopt(long, env = "ETH_RPC_URL")]
         rpc_url: String,
+    },
+    #[structopt(about = "Pack a signature and an argument list into hexadecimal calldata.")]
+    Calldata {
+        #[structopt(
+            help = r#"When called with <sig> of the form <name>(<types>...), then perform ABI encoding to produce the hexadecimal calldata.
+        If the value given—containing at least one slash character—then treat it as a file name to read, and proceed as if the contents were passed as hexadecimal data.
+        Given data, ensure it is hexadecimal calldata starting with 0x and normalize it to lowercase.
+        "#
+        )]
+        sig: String,
+        args: Vec<String>,
     },
     #[structopt(name = "chain")]
     #[structopt(about = "Prints symbolic name of current blockchain by checking genesis hash")]

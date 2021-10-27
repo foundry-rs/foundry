@@ -1,50 +1,31 @@
-use ethers::core::{types::Bytes, utils::CompiledContract};
-use eyre::Result;
+use ethers::core::utils::{solc::Contract, CompiledContract};
+use eyre::{Result, WrapErr};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::{
+    collections::{BTreeMap, HashMap},
+    path::Path,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DapptoolsArtifact {
-    contracts: HashMap<String, HashMap<String, serde_json::Value>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Contract {
-    abi: ethers::abi::Abi,
-    evm: Evm,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Evm {
-    bytecode: Bytecode,
-    deployed_bytecode: Bytecode,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Bytecode {
-    #[serde(deserialize_with = "deserialize_bytes")]
-    object: Bytes,
-}
-
-use serde::Deserializer;
-
-pub fn deserialize_bytes<'de, D>(d: D) -> Result<Bytes, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let value = String::deserialize(d)?;
-
-    Ok(hex::decode(&value).map_err(|e| serde::de::Error::custom(e.to_string()))?.into())
+    contracts: BTreeMap<String, BTreeMap<String, serde_json::Value>>,
 }
 
 impl DapptoolsArtifact {
-    pub fn contracts(&self) -> Result<HashMap<String, CompiledContract>> {
-        let mut map = HashMap::new();
-        for (key, value) in &self.contracts {
-            for (contract, data) in value.iter() {
-                let data: Contract = serde_json::from_value(data.clone())?;
+    /// Convenience function to read from a file
+    pub fn read(file: impl AsRef<Path>) -> Result<Self> {
+        let file = std::fs::File::open(file.as_ref()).wrap_err_with(|| {
+            format!("Failed to open artifacts file `{}`", file.as_ref().display())
+        })?;
+        Ok(serde_json::from_reader::<_, _>(file)?)
+    }
+
+    /// Returns all the contract from the artifacts
+    pub fn into_contracts(self) -> Result<HashMap<String, CompiledContract>> {
+        let mut map = HashMap::with_capacity(self.contracts.len());
+        for (key, value) in self.contracts {
+            for (contract, data) in value {
+                let data: Contract = serde_json::from_value(data)?;
                 let data = CompiledContract {
                     abi: data.abi,
                     bytecode: data.evm.bytecode.object,
@@ -65,9 +46,8 @@ mod tests {
     #[test]
     fn parses_dapptools_artifact() {
         let path = std::fs::canonicalize("testdata/dapp-artifact.json").unwrap();
-        let file = std::fs::File::open(path).unwrap();
-        let data = serde_json::from_reader::<_, DapptoolsArtifact>(file).unwrap();
-        let contracts = data.contracts().unwrap();
+        let data = DapptoolsArtifact::read(path).unwrap();
+        let contracts = data.into_contracts().unwrap();
         let mut expected = [
             "src/test/Greeter.t.sol:Greet",
             "lib/ds-test/src/test.sol:DSTest",

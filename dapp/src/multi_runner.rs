@@ -3,14 +3,14 @@ use dapp_solc::SolcBuilder;
 use evm_adapters::Evm;
 
 use ethers::{
-    types::Address,
-    utils::{keccak256, CompiledContract},
+    types::{Address, U256},
+    utils::CompiledContract,
 };
 
 use proptest::test_runner::TestRunner;
 use regex::Regex;
 
-use eyre::Result;
+use eyre::{Context, Result};
 use std::{collections::HashMap, marker::PhantomData, path::PathBuf};
 
 /// Builder used for instantiating the multi-contract runner
@@ -27,6 +27,10 @@ pub struct MultiContractRunnerBuilder<'a> {
     pub no_compile: bool,
     /// The fuzzer to be used for running fuzz tests
     pub fuzzer: Option<TestRunner>,
+    /// The address which will be used to deploy the initial contracts
+    pub deployer: Address,
+    /// The initial balance for each one of the deployed smart contracts
+    pub initial_balance: U256,
 }
 
 impl<'a> MultiContractRunnerBuilder<'a> {
@@ -40,20 +44,33 @@ impl<'a> MultiContractRunnerBuilder<'a> {
         // 2. parallel compilation
         // 3. Hardhat / Truffle-style artifacts
         let contracts = if self.no_compile {
-            let out_file = std::fs::read_to_string(&self.out_path)?;
-            serde_json::from_str::<DapptoolsArtifact>(&out_file)?.contracts()?
+            DapptoolsArtifact::read(self.out_path)?.into_contracts()?
         } else {
             SolcBuilder::new(self.contracts, self.remappings, self.libraries)?.build_all()?
         };
 
-        let mut addresses = HashMap::new();
-        let init_state = contracts.iter().map(|(name, compiled)| {
-            // make a fake address for the contract, maybe anti-pattern
-            let addr = Address::from_slice(&keccak256(&compiled.runtime_bytecode)[..20]);
-            addresses.insert(name.clone(), addr);
-            (addr, compiled.runtime_bytecode.clone())
-        });
-        evm.initialize_contracts(init_state);
+        let deployer = self.deployer;
+        let initial_balance = self.initial_balance;
+        let addresses = contracts
+            .iter()
+            .filter(|(_, compiled)| {
+                compiled.abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true)
+            })
+            .filter(|(_, compiled)| {
+                compiled.abi.functions().any(|func| func.name.starts_with("test"))
+            })
+            .map(|(name, compiled)| {
+                let span = tracing::trace_span!("deploying", ?name);
+                let _enter = span.enter();
+
+                let (addr, _, _, logs) = evm
+                    .deploy(deployer, compiled.bytecode.clone(), 0.into())
+                    .wrap_err(format!("could not deploy {}", name))?;
+
+                evm.set_balance(addr, initial_balance);
+                Ok((name.clone(), (addr, logs)))
+            })
+            .collect::<Result<HashMap<_, _>>>()?;
 
         Ok(MultiContractRunner {
             contracts,
@@ -66,6 +83,16 @@ impl<'a> MultiContractRunnerBuilder<'a> {
 
     pub fn contracts(mut self, contracts: &'a str) -> Self {
         self.contracts = contracts;
+        self
+    }
+
+    pub fn deployer(mut self, deployer: Address) -> Self {
+        self.deployer = deployer;
+        self
+    }
+
+    pub fn initial_balance(mut self, initial_balance: U256) -> Self {
+        self.initial_balance = initial_balance;
         self
     }
 
@@ -99,7 +126,7 @@ pub struct MultiContractRunner<E, S> {
     /// Mapping of contract name to compiled bytecode
     contracts: HashMap<String, CompiledContract>,
     /// Mapping of contract name to the address it's been injected in the EVM state
-    addresses: HashMap<String, Address>,
+    addresses: HashMap<String, (Address, Vec<String>)>,
     /// The EVM instance used in the test runner
     evm: E,
     fuzzer: Option<TestRunner>,
@@ -109,6 +136,7 @@ pub struct MultiContractRunner<E, S> {
 impl<E, S> MultiContractRunner<E, S>
 where
     E: Evm<S>,
+    S: Clone,
 {
     pub fn test(&mut self, pattern: Regex) -> Result<HashMap<String, HashMap<String, TestResult>>> {
         // NB: We also have access to the contract's abi. When running the test.
@@ -126,11 +154,11 @@ where
         let results = tests
             .into_iter()
             .map(|(name, contract)| {
-                let address = addresses
+                let (address, init_logs) = addresses
                     .get(name)
                     .ok_or_else(|| eyre::eyre!("could not find contract address"))?;
 
-                let result = self.run_tests(name, contract, *address, &pattern)?;
+                let result = self.run_tests(name, contract, *address, init_logs, &pattern)?;
                 Ok((name.clone(), result))
             })
             .filter_map(|x: Result<_>| x.ok())
@@ -155,9 +183,10 @@ where
         _name: &str,
         contract: &CompiledContract,
         address: Address,
+        init_logs: &[String],
         pattern: &Regex,
     ) -> Result<HashMap<String, TestResult>> {
-        let mut runner = ContractRunner::new(&mut self.evm, contract, address);
+        let mut runner = ContractRunner::new(&mut self.evm, contract, address, init_logs);
         runner.run_tests(pattern, self.fuzzer.as_mut())
     }
 }
@@ -166,7 +195,7 @@ where
 mod tests {
     use super::*;
 
-    fn test_multi_runner<S, E: Evm<S>>(evm: E) {
+    fn test_multi_runner<S: Clone, E: Evm<S>>(evm: E) {
         let mut runner =
             MultiContractRunnerBuilder::default().contracts("./GreetTest.sol").build(evm).unwrap();
 
@@ -187,7 +216,7 @@ mod tests {
         assert_eq!(only_gm["GmTest"].len(), 1);
     }
 
-    fn test_ds_test_fail<S, E: Evm<S>>(evm: E) {
+    fn test_ds_test_fail<S: Clone, E: Evm<S>>(evm: E) {
         let mut runner =
             MultiContractRunnerBuilder::default().contracts("./../FooTest.sol").build(evm).unwrap();
         let results = runner.test(Regex::new(".*").unwrap()).unwrap();
@@ -202,6 +231,35 @@ mod tests {
             helpers::{new_backend, new_vicinity},
             Executor,
         };
+
+        #[test]
+        fn test_sputnik_debug_logs() {
+            let config = Config::istanbul();
+            let gas_limit = 12_500_000;
+            let env = new_vicinity();
+            let backend = new_backend(&env, Default::default());
+            let evm = Executor::new_with_cheatcodes(backend, gas_limit, &config, false);
+
+            let mut runner = MultiContractRunnerBuilder::default()
+                .contracts("./testdata/DebugLogsTest.sol")
+                .libraries(&["../evm-adapters/testdata".to_owned()])
+                .build(evm)
+                .unwrap();
+
+            let results = runner.test(Regex::new(".*").unwrap()).unwrap();
+            let reasons = results["DebugLogsTest"]
+                .iter()
+                .map(|(name, res)| (name, res.logs.clone()))
+                .collect::<HashMap<_, _>>();
+            assert_eq!(
+                reasons[&"test1".to_owned()],
+                vec!["constructor".to_owned(), "setUp".to_owned(), "one".to_owned()]
+            );
+            assert_eq!(
+                reasons[&"test2".to_owned()],
+                vec!["constructor".to_owned(), "setUp".to_owned(), "two".to_owned()]
+            );
+        }
 
         #[test]
         fn test_sputnik_multi_runner() {

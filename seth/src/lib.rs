@@ -3,6 +3,7 @@
 //! TODO
 use chrono::NaiveDateTime;
 use ethers_core::{
+    abi::AbiParser,
     types::*,
     utils::{self, keccak256},
 };
@@ -523,8 +524,48 @@ impl SimpleSeth {
         let namehash: String = node.to_hex();
         Ok(format!("0x{}", namehash))
     }
+
+    /// Performs ABI encoding to produce the hexadecimal calldata with the given arguments.
+    ///
+    /// ```
+    /// # use seth::SimpleSeth as Seth;
+    ///
+    /// # fn main() -> eyre::Result<()> {
+    ///     assert_eq!(
+    ///         "0xb3de648b0000000000000000000000000000000000000000000000000000000000000001",
+    ///         Seth::calldata("f(uint a)", &["1"]).unwrap().as_str()
+    ///     );
+    /// #    Ok(())
+    /// # }
+    /// ```
+    pub fn calldata(sig: impl AsRef<str>, args: &[impl AsRef<str>]) -> Result<String> {
+        let func = AbiParser::default().parse_function(sig.as_ref())?;
+        let calldata = dapp_utils::encode_args(&func, args)?;
+        Ok(format!("0x{}", calldata.to_hex::<String>()))
+    }
 }
 
 fn strip_0x(s: &str) -> &str {
     s.strip_prefix("0x").unwrap_or(s)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SimpleSeth as Seth;
+
+    #[test]
+    fn calldata_uint() {
+        assert_eq!(
+            "0xb3de648b0000000000000000000000000000000000000000000000000000000000000001",
+            Seth::calldata("f(uint a)", &["1"]).unwrap().as_str()
+        );
+    }
+
+    #[test]
+    fn calldata_bool() {
+        assert_eq!(
+            "0x6fae94120000000000000000000000000000000000000000000000000000000000000000",
+            Seth::calldata("bar(bool)", &["false"]).unwrap().as_str()
+        );
+    }
 }

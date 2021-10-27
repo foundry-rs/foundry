@@ -31,10 +31,16 @@ pub trait HostExt: Host {
     fn get_code(&self, address: &Address) -> Option<&bytes::Bytes>;
     /// Sets the bytecode at the specified address to the provided value.
     fn set_code(&mut self, address: Address, code: bytes::Bytes);
+    /// Sets the account's balance to the provided value.
+    fn set_balance(&mut self, address: Address, balance: U256);
 }
 
 impl<S: HostExt, Tr: Tracer> Evm<S> for EvmOdin<S, Tr> {
     type ReturnReason = StatusCode;
+
+    fn revert() -> Self::ReturnReason {
+        StatusCode::Revert
+    }
 
     fn is_success(reason: &Self::ReturnReason) -> bool {
         matches!(reason, StatusCode::Success)
@@ -42,6 +48,10 @@ impl<S: HostExt, Tr: Tracer> Evm<S> for EvmOdin<S, Tr> {
 
     fn is_fail(reason: &Self::ReturnReason) -> bool {
         matches!(reason, StatusCode::Revert)
+    }
+
+    fn set_balance(&mut self, address: Address, balance: U256) {
+        self.host.set_balance(address, balance)
     }
 
     fn reset(&mut self, state: S) {
@@ -58,6 +68,16 @@ impl<S: HostExt, Tr: Tracer> Evm<S> for EvmOdin<S, Tr> {
         &self.host
     }
 
+    #[allow(unused)]
+    fn deploy(
+        &mut self,
+        from: Address,
+        calldata: Bytes,
+        value: U256,
+    ) -> Result<(Address, Self::ReturnReason, u64, Vec<String>)> {
+        unimplemented!("Contract deployment is not implemented for evmodin yet")
+    }
+
     /// Runs the selected function
     fn call_raw(
         &mut self,
@@ -66,7 +86,7 @@ impl<S: HostExt, Tr: Tracer> Evm<S> for EvmOdin<S, Tr> {
         calldata: Bytes,
         value: U256,
         is_static: bool,
-    ) -> Result<(Bytes, Self::ReturnReason, u64)> {
+    ) -> Result<(Bytes, Self::ReturnReason, u64, Vec<String>)> {
         // For the `func.constant` field usage
         #[allow(deprecated)]
         let message = Message {
@@ -89,11 +109,11 @@ impl<S: HostExt, Tr: Tracer> Evm<S> for EvmOdin<S, Tr> {
         let output =
             bytecode.execute(&mut self.host, &mut self.tracer, None, message, self.revision);
 
-        // TODO: Figure out gas accounting.
-        // let gas = dapp_utils::remove_extra_costs(gas_before - gas_after, calldata.as_ref());
-        let gas = U256::from(0);
+        // evmodin doesn't take the BASE_TX_COST and the calldata into account
+        let gas = self.gas_limit - output.gas_left as u64;
 
-        Ok((output.output_data.to_vec().into(), output.status_code, gas.as_u64()))
+        // TODO: Add emitted event logs.
+        Ok((output.output_data.to_vec().into(), output.status_code, gas, vec![]))
     }
 }
 
@@ -101,7 +121,7 @@ impl<S: HostExt, Tr: Tracer> Evm<S> for EvmOdin<S, Tr> {
 mod helpers {
     use super::*;
     use ethers::utils::keccak256;
-    use evmodin::util::mocked_host::{Account, MockedHost};
+    use evmodin::util::mocked_host::MockedHost;
     impl HostExt for MockedHost {
         fn get_code(&self, address: &Address) -> Option<&bytes::Bytes> {
             self.accounts.get(address).map(|acc| &acc.code)
@@ -109,16 +129,14 @@ mod helpers {
 
         fn set_code(&mut self, address: Address, bytecode: bytes::Bytes) {
             let hash = keccak256(&bytecode);
-            self.accounts.insert(
-                address,
-                Account {
-                    nonce: 0,
-                    balance: 0.into(),
-                    code: bytecode,
-                    code_hash: hash.into(),
-                    storage: Default::default(),
-                },
-            );
+            let entry = self.accounts.entry(address).or_insert_with(Default::default);
+            entry.code = bytecode;
+            entry.code_hash = hash.into();
+        }
+
+        fn set_balance(&mut self, address: Address, amount: U256) {
+            let entry = self.accounts.entry(address).or_insert_with(Default::default);
+            entry.balance = amount;
         }
     }
 }
@@ -130,17 +148,18 @@ mod tests {
     use evmodin::{tracing::NoopTracer, util::mocked_host::MockedHost};
 
     #[test]
+    #[ignore]
+    // TODO: Ignore until we figure out how to deploy stuff in evmodin
     fn evmodin_can_call_vm_directly() {
         let revision = Revision::Istanbul;
         let compiled = COMPILED.get("Greeter").expect("could not find contract");
 
         let host = MockedHost::default();
-        let addr: Address = "0x1000000000000000000000000000000000000000".parse().unwrap();
 
         let gas_limit = 12_000_000;
         let evm = EvmOdin::new(host, gas_limit, revision, NoopTracer);
 
-        can_call_vm_directly(evm, addr, compiled);
+        can_call_vm_directly(evm, compiled);
     }
 
     #[test]
@@ -149,11 +168,10 @@ mod tests {
     fn evmodin_can_call_solidity_unit_test() {
         let revision = Revision::Istanbul;
         let compiled = COMPILED.get("Greeter").expect("could not find contract");
-        let addr: Address = "0x1000000000000000000000000000000000000000".parse().unwrap();
         let host = MockedHost::default();
         let gas_limit = 12_000_000;
         let evm = EvmOdin::new(host, gas_limit, revision, NoopTracer);
 
-        solidity_unit_test(evm, addr, compiled);
+        solidity_unit_test(evm, compiled);
     }
 }

@@ -29,9 +29,25 @@ contract GreeterTestSetup {
     }
 }
 
+interface HEVM {
+    function warp(uint256 time) external;
+}
+
+address constant HEVM_ADDRESS =
+    address(bytes20(uint160(uint256(keccak256('hevm cheat code')))));
+
 contract GreeterTest is GreeterTestSetup {
+    HEVM constant hevm = HEVM(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+
     function greet(string memory greeting) public {
         greeter.greet(greeting);
+    }
+
+    function testHevmTime() public {
+        uint256 val = 100;
+        hevm.warp(100);
+        uint256 timestamp = greeter.time();
+        require(timestamp == val);
     }
 
     // check the positive case

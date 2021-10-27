@@ -8,6 +8,7 @@ use ethers::{
     signers::Signer,
     types::{NameOrAddress, U256},
 };
+use rustc_hex::ToHex;
 use seth::{Seth, SimpleSeth};
 use std::{convert::TryFrom, str::FromStr};
 use structopt::StructOpt;
@@ -22,6 +23,26 @@ async fn main() -> eyre::Result<()> {
         Subcommands::ToHex { decimal } => {
             let val = unwrap_or_stdin(decimal)?;
             println!("{}", SimpleSeth::hex(U256::from_dec_str(&val)?));
+        }
+        Subcommands::ToHexdata { input } => {
+            let output = match input {
+                s if s.starts_with('@') => {
+                    let var = std::env::var(&s[1..])?;
+                    var.as_bytes().to_hex()
+                }
+                s if s.starts_with('/') => {
+                    let input = std::fs::read(s)?;
+                    input.to_hex()
+                }
+                s => {
+                    let mut output = String::new();
+                    for s in s.split(':') {
+                        output.push_str(&s.trim_start_matches("0x").to_lowercase())
+                    }
+                    output
+                }
+            };
+            println!("0x{}", output);
         }
         Subcommands::ToCheckSumAddress { address } => {
             println!("{}", SimpleSeth::checksum_address(&address)?);
@@ -66,6 +87,9 @@ async fn main() -> eyre::Result<()> {
         Subcommands::Call { rpc_url, address, sig, args } => {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Seth::new(provider).call(address, &sig, args).await?);
+        }
+        Subcommands::Calldata { sig, args } => {
+            println!("{}", SimpleSeth::calldata(sig, &args)?);
         }
         Subcommands::Chain { rpc_url } => {
             let provider = Provider::try_from(rpc_url)?;
