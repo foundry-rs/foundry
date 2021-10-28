@@ -270,7 +270,14 @@ fn test<S: Clone, E: evm_adapters::Evm<S>>(
                 println!()
             }
             if !tests.is_empty() {
-                println!("Running {} tests for {}", tests.len(), contract_name);
+                let term = String::from("test");
+                let len = tests.len(); 
+
+                if len > 1 {
+                    term.push('s');
+                } 
+
+                println!("Running {} {} for {}", len, term, contract_name);
             }
 
             for (name, result) in tests {
