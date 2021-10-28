@@ -366,7 +366,7 @@ mod tests {
     }
 
     #[test]
-    // This test might be a bit hard t omaintain
+    // This test might be a bit hard to maintain
     fn test_detect_version() {
         let dir = mkdir();
 

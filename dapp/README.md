@@ -25,7 +25,7 @@ Running 3 tests for GreeterTest
 [PASS] testGreeting (gas: 26223)
 ```
 
-You can optionally specify a regular expresion, to only run matching functions:
+You can optionally specify a regular expressions, to only run matching functions:
 
 ```bash
 $ cargo r --bin dapp test --contracts './**/*.sol' -m testG
