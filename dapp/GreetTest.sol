@@ -27,8 +27,8 @@ contract GreeterTestSetup {
 }
 
 contract GreeterTest is GreeterTestSetup {
-    function greet(string memory greeting) public {
-        greeter.greet(greeting);
+    function greet(string memory _greeting) public {
+        greeter.greet(_greeting);
     }
 
     function testShrinking(uint256 x, uint256 y) public {
