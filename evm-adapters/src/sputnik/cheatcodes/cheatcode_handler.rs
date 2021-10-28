@@ -44,7 +44,7 @@ pub struct CheatcodeHandler<H> {
     enable_ffi: bool,
 }
 
-// Forwards everything internally except for the transact_call which is overriden.
+// Forwards everything internally except for the transact_call which is overwritten.
 // TODO: Maybe we can pull this functionality up to the `Evm` trait to avoid having so many traits?
 impl<'a, B: Backend> SputnikExecutor<CheatcodeStackState<'a, B>> for CheatcodeStackExecutor<'a, B> {
     fn config(&self) -> &Config {
@@ -424,7 +424,7 @@ impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
         }
 
         // each cfg is about 200 bytes, is this a lot to clone? why does this error
-        // not manfiest upstream?
+        // not manifest upstream?
         let config = self.config().clone();
         let mut runtime = Runtime::new(Rc::new(code), Rc::new(input), context, &config);
         let reason = self.execute(&mut runtime);
