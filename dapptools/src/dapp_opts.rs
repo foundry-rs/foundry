@@ -86,7 +86,7 @@ pub enum Subcommands {
         )]
         lib: Option<PathBuf>,
     },
-    #[structopt(about = "installs 1 or more dependencies as git submodules")]
+    #[structopt(about = "installs one or more dependencies as git submodules")]
     Install {
         #[structopt(
             help = "the submodule name of the library you want to update (will update all if none is provided)"

@@ -48,7 +48,7 @@ use std::marker::PhantomData;
 pub struct ContractRunner<'a, S, E> {
     /// Mutable reference to the EVM type.
     /// This is a temporary hack to work around the mutability restrictions of
-    /// [`proptest::TestRunnter::run`] which takes a `Fn` preventing interior mutability. [See also](https://github.com/gakonst/dapptools-rs/pull/44).
+    /// [`proptest::TestRunner::run`] which takes a `Fn` preventing interior mutability. [See also](https://github.com/gakonst/dapptools-rs/pull/44).
     /// Wrapping it like that allows the `test` function to gain mutable access regardless and
     /// since we don't use any parallelized fuzzing yet the `test` function has exclusive access of
     /// the mutable reference over time of its existence.
@@ -198,7 +198,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
             self.evm.setup(self.address)?;
         }
 
-        // instantniate the fuzzzed evm in line
+        // instantiate the fuzzed evm in line
         let evm = FuzzedExecutor::new(self.evm, runner);
         let result = evm.fuzz(func, self.address, should_fail);
 
