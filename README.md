@@ -107,7 +107,7 @@ Benchmarks TBD in the future, but:
 
 This repository has been tested against the following DappTools repos:
 * [LootLoose](https://github.com/gakonst/lootloose/) (minus the FFI tests)
-* [solmate](https://github.com/Rari-Capital/solmate/) (replace all the `prove` symbolic tests with fuzz tests, and skip `invariant` tests for now)
+* [solmate](https://github.com/Rari-Capital/solmate/) (skip `invariant` tests for now)
 
 ## Development
 
