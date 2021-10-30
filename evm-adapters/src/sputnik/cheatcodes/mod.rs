@@ -66,3 +66,14 @@ ethers::contract::abigen!(
             event log_named_string       (string key, string val)
             ]"#,
 );
+
+ethers::contract::abigen!(
+    ConsoleLog,
+    r#"[
+            log(address)
+            log(string)
+            log(string, string)
+    ]"#,
+);
+
+pub use ConsoleLogCalls;
