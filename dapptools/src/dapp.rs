@@ -267,7 +267,7 @@ fn test<S: Clone, E: evm_adapters::Evm<S>>(
         // Dapptools-style printing of test results
         for (i, (contract_name, tests)) in results.iter().enumerate() {
             if i > 0 {
-                println!()
+                println!();
             }
             if !tests.is_empty() {
                 let term = if tests.len() > 1 { "tests" } else { "test" }.to_string(); 
