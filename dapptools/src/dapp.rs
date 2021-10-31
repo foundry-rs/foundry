@@ -128,6 +128,12 @@ fn main() -> eyre::Result<()> {
                 BuildOpts { contracts, remappings, remappings_env, lib_paths, out_path, evm_version: _ },
         } => {
             // build the contracts
+            // if no env var for remappings is provided, try calculating them on the spot
+            let remappings = if remappings_env.is_none() {
+                [remappings, utils::Remapping::find_many_str("lib")?].concat()
+            } else {
+                remappings
+            };
             let remappings = utils::merge(remappings, remappings_env);
             let lib_paths = utils::default_path(lib_paths)?;
             // TODO: Do we also want to include the file path in the contract map so
@@ -155,19 +161,16 @@ fn main() -> eyre::Result<()> {
 
             // if a lib is specified, open it
             if let Some(lib) = lib {
+                println!("FOUND");
                 println!("Updating submodule {:?}", lib);
                 repo.find_submodule(
                     &lib.into_os_string().into_string().expect("invalid submodule path"),
                 )?
                 .update(true, None)?;
             } else {
-                // otherwise just update them all
-                repo.submodules()?.into_iter().try_for_each(
-                    |mut submodule| -> eyre::Result<_> {
-                        println!("Updating submodule {:?}", submodule.path());
-                        Ok(submodule.update(true, None)?)
-                    },
-                )?;
+                std::process::Command::new("git")
+                    .args(&["submodule", "update", "--init", "--recursive"])
+                    .spawn()?;
             }
         }
         // TODO: Make it work with updates?
@@ -202,13 +205,9 @@ fn main() -> eyre::Result<()> {
                     .expect("Failed to set HEAD");
                 }
 
-                // initialize all the submodules in the cloned submodule
-                submodule.submodules()?.into_iter().try_for_each(
-                    |mut submodule| -> eyre::Result<_> {
-                        submodule.update(true, None)?;
-                        Ok(())
-                    },
-                )?;
+                std::process::Command::new("git")
+                    .args(&["submodule", "update", "--init", "--recursive"])
+                    .spawn()?;
 
                 // commit the submodule's installation
                 let sig = repo.signature()?;
@@ -271,7 +270,8 @@ fn test<S: Clone, E: evm_adapters::Evm<S>>(
                 println!()
             }
             if !tests.is_empty() {
-                println!("Running {} tests for {}", tests.len(), contract_name);
+                let term = if tests.len() > 1 { "tests" } else { "test" };
+                println!("Running {} {} for {}", tests.len(), term, contract_name);
             }
 
             for (name, result) in tests {

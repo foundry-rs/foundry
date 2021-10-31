@@ -1,9 +1,9 @@
 use super::{
-    backend::CheatcodeBackend, memory_stackstate_owned::MemoryStackStateOwned, HevmConsoleEvents,
-    HEVM,
+    backend::CheatcodeBackend, memory_stackstate_owned::MemoryStackStateOwned, HEVMCalls,
+    HevmConsoleEvents,
 };
 use crate::{
-    sputnik::{Executor, SputnikExecutor},
+    sputnik::{Executor, SputnikExecutor, PRECOMPILES_MAP},
     Evm,
 };
 
@@ -20,6 +20,9 @@ use std::{process::Command, rc::Rc};
 use ethers::{
     abi::{RawLog, Token},
     contract::EthLogDecode,
+    core::{k256::ecdsa::SigningKey, utils},
+    prelude::AbiDecode,
+    signers::{LocalWallet, Signer},
     types::{Address, H160, H256, U256},
 };
 use std::convert::Infallible;
@@ -41,7 +44,7 @@ pub struct CheatcodeHandler<H> {
     enable_ffi: bool,
 }
 
-// Forwards everything internally except for the transact_call which is overriden.
+// Forwards everything internally except for the transact_call which is overwritten.
 // TODO: Maybe we can pull this functionality up to the `Evm` trait to avoid having so many traits?
 impl<'a, B: Backend> SputnikExecutor<CheatcodeStackState<'a, B>> for CheatcodeStackExecutor<'a, B> {
     fn config(&self) -> &Config {
@@ -140,14 +143,6 @@ impl<'a, B: Backend> SputnikExecutor<CheatcodeStackState<'a, B>> for CheatcodeSt
             .map(|event| {
                 use HevmConsoleEvents::*;
                 match event {
-                    LogFilter(inner) => inner.0,
-                    LogsFilter(inner) => format!("0x{}", hex::encode(inner.0)),
-                    LogAddressFilter(inner) => format!("{:?}", inner.0),
-                    LogBytes32Filter(inner) => format!("0x{}", hex::encode(inner.0)),
-                    LogIntFilter(inner) => format!("{:?}", inner.0),
-                    LogUintFilter(inner) => format!("{:?}", inner.0),
-                    LogBytesFilter(inner) => format!("0x{}", hex::encode(inner.0)),
-                    LogStringFilter(inner) => inner.0,
                     LogNamedAddressFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
                     LogNamedBytes32Filter(inner) => {
                         format!("{}: 0x{}", inner.key, hex::encode(inner.val))
@@ -170,6 +165,8 @@ impl<'a, B: Backend> SputnikExecutor<CheatcodeStackState<'a, B>> for CheatcodeSt
                         format!("{}: 0x{}", inner.key, hex::encode(inner.val))
                     }
                     LogNamedStringFilter(inner) => format!("{}: {}", inner.key, inner.val),
+
+                    e => e.to_string(),
                 }
             })
             .collect()
@@ -197,7 +194,7 @@ impl<'a, B: Backend> Executor<CheatcodeStackState<'a, B>, CheatcodeStackExecutor
         let state = MemoryStackStateOwned::new(metadata, backend);
 
         // create the executor and wrap it with the cheatcode handler
-        let executor = StackExecutor::new_with_precompile(state, config, Default::default());
+        let executor = StackExecutor::new_with_precompile(state, config, PRECOMPILES_MAP.clone());
         let executor = CheatcodeHandler { handler: executor, enable_ffi };
 
         let mut evm = Executor::from_executor(executor, gas_limit);
@@ -225,49 +222,99 @@ impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
         // Get a mutable ref to the state so we can apply the cheats
         let state = self.state_mut();
 
-        if let Ok(timestamp) = HEVM.decode::<U256, _>("warp", &input) {
-            state.backend.cheats.block_timestamp = Some(timestamp);
-        }
+        let decoded = match HEVMCalls::decode(&input) {
+            Ok(inner) => inner,
+            Err(err) => return evm_error(&err.to_string()),
+        };
 
-        if let Ok(block_number) = HEVM.decode::<U256, _>("roll", &input) {
-            state.backend.cheats.block_number = Some(block_number);
-        }
-
-        if let Ok((address, slot, value)) = HEVM.decode::<(Address, H256, H256), _>("store", &input)
-        {
-            state.set_storage(address, slot, value);
-        }
-
-        if let Ok((address, slot)) = HEVM.decode::<(Address, H256), _>("load", &input) {
-            res = state.storage(address, slot).0.to_vec();
-        }
-
-        if let Ok(args) = HEVM.decode::<Vec<String>, _>("ffi", &input) {
-            // if FFI is not explicitly enabled at runtime, do not let this be called
-            // (we could have an FFI cheatcode executor instead but feels like
-            // over engineering)
-            if !self.enable_ffi {
-                return evm_error(
-                    "ffi disabled: run again with --ffi if you want to allow tests to call external scripts",
-                )
+        match decoded {
+            HEVMCalls::Warp(inner) => {
+                state.backend.cheats.block_timestamp = Some(inner.0);
             }
+            HEVMCalls::Roll(inner) => {
+                state.backend.cheats.block_number = Some(inner.0);
+            }
+            HEVMCalls::Store(inner) => {
+                state.set_storage(inner.0, inner.1.into(), inner.2.into());
+            }
+            HEVMCalls::Load(inner) => {
+                res = state.storage(inner.0, inner.1.into()).0.to_vec();
+            }
+            HEVMCalls::Ffi(inner) => {
+                let args = inner.0;
+                // if FFI is not explicitly enabled at runtime, do not let this be called
+                // (we could have an FFI cheatcode executor instead but feels like
+                // over engineering)
+                if !self.enable_ffi {
+                    return evm_error(
+                        "ffi disabled: run again with --ffi if you want to allow tests to call external scripts",
+                    )
+                }
 
-            // execute the command & get the stdout
-            let output = match Command::new(&args[0]).args(&args[1..]).output() {
-                Ok(res) => res.stdout,
-                Err(err) => return evm_error(&err.to_string()),
-            };
+                // execute the command & get the stdout
+                let output = match Command::new(&args[0]).args(&args[1..]).output() {
+                    Ok(res) => res.stdout,
+                    Err(err) => return evm_error(&err.to_string()),
+                };
 
-            // get the hex string & decode it
-            let output = unsafe { std::str::from_utf8_unchecked(&output) };
-            let decoded = match hex::decode(&output[2..]) {
-                Ok(res) => res,
-                Err(err) => return evm_error(&err.to_string()),
-            };
+                // get the hex string & decode it
+                let output = unsafe { std::str::from_utf8_unchecked(&output) };
+                let decoded = match hex::decode(&output[2..]) {
+                    Ok(res) => res,
+                    Err(err) => return evm_error(&err.to_string()),
+                };
 
-            // encode the data as Bytes
-            res = ethers::abi::encode(&[Token::Bytes(decoded.to_vec())]);
-        }
+                // encode the data as Bytes
+                res = ethers::abi::encode(&[Token::Bytes(decoded.to_vec())]);
+            }
+            HEVMCalls::Addr(inner) => {
+                let sk = inner.0;
+                if sk.is_zero() {
+                    return evm_error("Bad Cheat Code. Private Key cannot be 0.")
+                }
+                // 256 bit priv key -> 32 byte slice
+                let mut bs: [u8; 32] = [0; 32];
+                sk.to_big_endian(&mut bs);
+                let xsk = match SigningKey::from_bytes(&bs) {
+                    Ok(xsk) => xsk,
+                    Err(err) => return evm_error(&err.to_string()),
+                };
+                let addr = utils::secret_key_to_address(&xsk);
+                res = ethers::abi::encode(&[Token::Address(addr)]);
+            }
+            HEVMCalls::Sign(inner) => {
+                let sk = inner.0;
+                let digest = inner.1;
+                if sk.is_zero() {
+                    return evm_error("Bad Cheat Code. Private Key cannot be 0.")
+                }
+                // 256 bit priv key -> 32 byte slice
+                let mut bs: [u8; 32] = [0; 32];
+                sk.to_big_endian(&mut bs);
+
+                let xsk = match SigningKey::from_bytes(&bs) {
+                    Ok(xsk) => xsk,
+                    Err(err) => return evm_error(&err.to_string()),
+                };
+                let wallet = LocalWallet::from(xsk).with_chain_id(self.handler.chain_id().as_u64());
+
+                // The EVM precompile does not use EIP-155
+                let sig = wallet.sign_hash(digest.into(), false);
+
+                let recovered = sig.recover(digest).unwrap();
+                assert_eq!(recovered, wallet.address());
+
+                let mut r_bytes = [0u8; 32];
+                let mut s_bytes = [0u8; 32];
+                sig.r.to_big_endian(&mut r_bytes);
+                sig.s.to_big_endian(&mut s_bytes);
+                res = ethers::abi::encode(&[Token::Tuple(vec![
+                    Token::Uint(sig.v.into()),
+                    Token::FixedBytes(r_bytes.to_vec()),
+                    Token::FixedBytes(s_bytes.to_vec()),
+                ])]);
+            }
+        };
 
         // TODO: Add more cheat codes.
 
@@ -377,7 +424,7 @@ impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
         }
 
         // each cfg is about 200 bytes, is this a lot to clone? why does this error
-        // not manfiest upstream?
+        // not manifest upstream?
         let config = self.config().clone();
         let mut runtime = Runtime::new(Rc::new(code), Rc::new(input), context, &config);
         let reason = self.execute(&mut runtime);

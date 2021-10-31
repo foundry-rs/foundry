@@ -7,25 +7,6 @@ on:
 name: Tests
 
 jobs:
-  tests-msrv:
-    name: Tests (MSRV)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v2
-
-      - name: Install toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-
-      - uses: Swatinem/rust-cache@v1
-        with:
-          cache-on-failure: true
-
-      - name: cargo test
-        run: cargo test --all --all-features
-
   tests-stable:
     name: Tests (Stable)
     runs-on: ubuntu-latest

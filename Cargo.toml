@@ -14,8 +14,3 @@ opt-level = "z"
 lto = true
 codegen-units = 1
 panic = "abort"
-
-
-[patch."https://github.com/rust-blockchain/evm"]
-# evm = { path = "../evm", features = ["tracing"] }
-evm = { git = "https://github.com/gakonst/evm", branch = "feat/events-mut" }

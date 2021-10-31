@@ -10,13 +10,13 @@ command without being expanded by your shell.
 $ cargo r --bin dapp test --contracts './**/*.sol'
     Finished dev [unoptimized + debuginfo] target(s) in 0.21s
      Running `target/debug/dapp test --contracts './**/*.sol'`
-Running 1 tests for Foo
+Running 1 test for Foo
 [PASS] testX (gas: 267)
 
-Running 1 tests for GmTest
+Running 1 test for GmTest
 [PASS] testGm (gas: 25786)
 
-Running 1 tests for FooBar
+Running 1 test for FooBar
 [PASS] testX (gas: 267)
 
 Running 3 tests for GreeterTest
@@ -25,16 +25,16 @@ Running 3 tests for GreeterTest
 [PASS] testGreeting (gas: 26223)
 ```
 
-You can optionally specify a regular expresion, to only run matching functions:
+You can optionally specify a regular expression, to only run matching functions:
 
 ```bash
 $ cargo r --bin dapp test --contracts './**/*.sol' -m testG
     Finished dev [unoptimized + debuginfo] target(s) in 0.26s
      Running `target/debug/dapp test --contracts './**/*.sol' -m testG`
-Running 1 tests for GreeterTest
+Running 1 test for GreeterTest
 [PASS] testGreeting (gas: 26223)
 
-Running 1 tests for GmTest
+Running 1 test for GmTest
 [PASS] testGm (gas: 25786)
 ```
 

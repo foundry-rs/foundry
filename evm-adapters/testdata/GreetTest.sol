@@ -39,8 +39,8 @@ address constant HEVM_ADDRESS =
 contract GreeterTest is GreeterTestSetup {
     HEVM constant hevm = HEVM(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
 
-    function greet(string memory greeting) public {
-        greeter.greet(greeting);
+    function greet(string memory _greeting) public {
+        greeter.greet(_greeting);
     }
 
     function testHevmTime() public {
