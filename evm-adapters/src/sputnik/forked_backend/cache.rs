@@ -340,6 +340,27 @@ where
 }
 
 /// A cloneable backend type that shares access to the backend data with all its clones.
+///
+/// This backend type is connected to the `BackendHandler` via a mpsc channel. The `BackendHandlers`
+/// is spawned on a background thread and listens for incoming commands on the receiver half of the
+/// channel. A `SharedBackend` holds a sender for that channel, which is `Clone`, so their can be
+/// multiple `SharedBackend`s communicating with the same `BackendHandler`, hence this `Backend`
+/// type is thread safe.
+///
+/// All `Backend` trait functions are delegated as a `BackendRequest` via the channel to the
+/// `BackendHandler`. All `BackendRequest` variants include a sender half of an additional channel
+/// that is used by the `BackendHandler` to send the result of an executed `BackendRequest` back to
+/// `SharedBackend`.
+///
+/// The `BackendHandler` holds an ethers `Provider` to look up missing accounts or storage slots
+/// from remote (e.g. infura). It detects duplicate requests from multiple `SharedBackend`s and
+/// bundles them together, so that always only one provider request is executed. For example, there
+/// are two `SharedBackend`s, `A` and `B`, both request the basic account info of account
+/// `0xasd9sa7d...` at the same time. After the `BackendHandler` receives the request from `A`, it
+/// sends a new provider request to the provider's endpoint, then it reads the identical request
+/// from `B` and simply adds it as an additional listener for the request already in progress,
+/// instead of sending another one. So that after the provider returns the response all listeners
+/// (`A` and `B`) get notified.
 #[derive(Debug, Clone)]
 pub struct SharedBackend {
     inner: SharedBackendInner,
