@@ -1,21 +1,11 @@
 use super::{
-    backend::CheatcodeBackend, memory_stackstate_owned::MemoryStackStateOwned, HEVMCalls,
-    HevmConsoleEvents,
+    backend::CheatcodeBackend, memory_stackstate_owned::MemoryStackStateOwned, ConsoleLogCalls,
+    HEVMCalls, HevmConsoleEvents,
 };
 use crate::{
     sputnik::{Executor, SputnikExecutor, PRECOMPILES_MAP},
     Evm,
 };
-
-use sputnik::{
-    backend::Backend,
-    executor::{
-        Log, PrecompileOutput, StackExecutor, StackExitKind, StackState, StackSubstateMetadata,
-    },
-    gasometer, Capture, Config, Context, CreateScheme, ExitError, ExitReason, ExitRevert,
-    ExitSucceed, Handler, Runtime, Transfer,
-};
-use std::{process::Command, rc::Rc};
 
 use ethers::{
     abi::{RawLog, Token},
@@ -25,7 +15,15 @@ use ethers::{
     signers::{LocalWallet, Signer},
     types::{Address, H160, H256, U256},
 };
-use std::convert::Infallible;
+use sputnik::{
+    backend::Backend,
+    executor::{
+        Log, PrecompileOutput, StackExecutor, StackExitKind, StackState, StackSubstateMetadata,
+    },
+    gasometer, Capture, Config, Context, CreateScheme, ExitError, ExitReason, ExitRevert,
+    ExitSucceed, Handler, Runtime, Transfer,
+};
+use std::{convert::Infallible, process::Command, rc::Rc};
 
 use once_cell::sync::Lazy;
 
@@ -35,6 +33,9 @@ pub static CHEATCODE_ADDRESS: Lazy<Address> = Lazy::new(|| {
     Address::from_slice(&hex::decode("7109709ECfa91a80626fF3989D68f67F5b1DD12D").unwrap())
 });
 
+pub static CONSOLE_LOG_ADDRESS: Lazy<Address> = Lazy::new(|| {
+    Address::from_slice(&hex::decode("000000000000000000636F6e736F6c652e6c6f67").unwrap())
+});
 #[derive(Clone, Debug)]
 // TODO: Should this be called `HookedHandler`? Maybe we could implement other hooks
 // here, e.g. hardhat console.log-style, or dapptools logs, some ad-hoc method for tracing
@@ -44,7 +45,7 @@ pub struct CheatcodeHandler<H> {
     enable_ffi: bool,
 }
 
-// Forwards everything internally except for the transact_call which is overwritten.
+// Forwards everything internally except for the transact_call which is overriden.
 // TODO: Maybe we can pull this functionality up to the `Evm` trait to avoid having so many traits?
 impl<'a, B: Backend> SputnikExecutor<CheatcodeStackState<'a, B>> for CheatcodeStackExecutor<'a, B> {
     fn config(&self) -> &Config {
@@ -202,7 +203,7 @@ impl<'a, B: Backend> Executor<CheatcodeStackState<'a, B>, CheatcodeStackExecutor
         // Need to create a non-empty contract at the cheat code address so that the EVM backend
         // thinks that something exists there.
         evm.initialize_contracts([(*CHEATCODE_ADDRESS, vec![0u8; 1].into())]);
-
+        evm.initialize_contracts([(*CONSOLE_LOG_ADDRESS, vec![0u8; 1].into())]);
         evm
     }
 }
@@ -248,7 +249,7 @@ impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
                 if !self.enable_ffi {
                     return evm_error(
                         "ffi disabled: run again with --ffi if you want to allow tests to call external scripts",
-                    )
+                    );
                 }
 
                 // execute the command & get the stdout
@@ -318,6 +319,26 @@ impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
 
         // TODO: Add more cheat codes.
 
+        Capture::Exit((ExitReason::Succeed(ExitSucceed::Stopped), res))
+    }
+    fn console_log(&mut self, input: Vec<u8>) -> Capture<(ExitReason, Vec<u8>), Infallible> {
+        let decoded = match ConsoleLogCalls::decode(&input) {
+            Ok(inner) => inner,
+            Err(err) => return evm_error(&err.to_string()),
+        };
+        match decoded {
+            ConsoleLogCalls::Log(inner) => {
+                println!("Decoded Data: {:?}", inner);
+            }
+            ConsoleLogCalls::LogWith(inner) => {
+                println!("Decoded Data: {:?}", inner);
+            }
+            ConsoleLogCalls::LogWithAnd(inner) => {
+                let output = str::replace(&inner.0, "%s", &inner.1);
+                println!("{}", output);
+            }
+        }
+        let res = vec![];
         Capture::Exit((ExitReason::Succeed(ExitSucceed::Stopped), res))
     }
 
@@ -424,7 +445,7 @@ impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
         }
 
         // each cfg is about 200 bytes, is this a lot to clone? why does this error
-        // not manifest upstream?
+        // not manfiest upstream?
         let config = self.config().clone();
         let mut runtime = Runtime::new(Rc::new(code), Rc::new(input), context, &config);
         let reason = self.execute(&mut runtime);
@@ -476,6 +497,8 @@ impl<'a, B: Backend> Handler for CheatcodeStackExecutor<'a, B> {
         // (e.g. with the StateManager)
         if code_address == *CHEATCODE_ADDRESS {
             self.apply_cheatcode(input)
+        } else if code_address == *CONSOLE_LOG_ADDRESS {
+            self.console_log(input)
         } else {
             self.handler.call(code_address, transfer, input, target_gas, is_static, context)
         }
@@ -647,7 +670,20 @@ mod tests {
         .collect::<Vec<_>>();
         assert_eq!(logs, expected);
     }
-
+    #[test]
+    fn debug_console_log() {
+        let config = Config::istanbul();
+        let vicinity = new_vicinity();
+        let backend = new_backend(&vicinity, Default::default());
+        let gas_limit = 10_000_000;
+        let mut evm = Executor::new_with_cheatcodes(backend, gas_limit, &config, true);
+        let compiled = COMPILED.get("ConsoleLog").expect("could not find contract");
+        let (addr, _, _, _) =
+            evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
+        let (_, _, _, logs) = evm
+            .call::<(), _, _>(Address::zero(), addr, "test_console_log()", (), 0.into())
+            .unwrap();
+    }
     #[test]
     fn cheatcodes() {
         let config = Config::istanbul();
