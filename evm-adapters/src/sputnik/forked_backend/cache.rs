@@ -21,7 +21,7 @@ use std::{
 };
 use tokio::runtime::Runtime;
 
-/// A basic in memory cache
+/// A basic in memory cache (address -> Account)
 pub type MemCache = BTreeMap<H160, MemoryAccount>;
 
 /// A state cache that can be shared across threads
@@ -30,6 +30,13 @@ pub type MemCache = BTreeMap<H160, MemoryAccount>;
 pub type SharedCache<T> = Arc<RwLock<T>>;
 
 /// Create a new shareable state cache.
+///
+/// # Example
+///
+/// ```rust
+/// use evm_adapters::sputnik::{MemCache,new_shared_cache};
+/// let cache = new_shared_cache(MemCache::default());
+/// ```
 pub fn new_shared_cache<T>(cache: T) -> SharedCache<T> {
     Arc::new(RwLock::new(cache))
 }
@@ -53,6 +60,7 @@ enum BackendRequest {
     Storage(Address, H256, OneshotSender<H256>),
 }
 
+/// Various types of senders waiting for an answer related to get_account request
 enum AccountListener {
     Exists(OneshotSender<bool>),
     Basic(OneshotSender<Basic>),
@@ -60,6 +68,9 @@ enum AccountListener {
 }
 
 /// Handles an internal provider and listens for requests.
+///
+/// This handler will remain active as long as it is reachable (request channel still open) and
+/// requests are in progress.
 #[must_use = "BackendHandler does nothing unless polled."]
 struct BackendHandler<M: Middleware> {
     provider: M,
@@ -69,10 +80,12 @@ struct BackendHandler<M: Middleware> {
     pending_requests: Vec<ProviderRequest<M::Error>>,
     /// Listeners that wait for a `get_account` related response
     /// We also store the `get_storage_at` responses until the initial account info is fetched.
+    /// The reason for that is because of the simple `address -> Account` model of the cache, so we
+    /// only create a new entry for an address of basic info (balance, nonce, code) was fetched.
     account_requests: HashMap<Address, (Vec<AccountListener>, BTreeMap<H256, H256>)>,
     /// Listeners that wait for a `get_storage_at` response
     storage_requests: HashMap<(Address, H256), Vec<OneshotSender<H256>>>,
-    /// Incoming commands
+    /// Incoming commands.
     incoming: Fuse<Receiver<BackendRequest>>,
     /// The block to fetch data from.
     // This is an `Option` so that we can have less code churn in the functions below
@@ -100,7 +113,12 @@ where
         }
     }
 
-    /// handle the request in queue in the future
+    /// handle the request in queue in the future.
+    ///
+    /// We always check:
+    ///  1. if the requested value is already stored in the cache, then answer the sender
+    ///  2. otherwise, fetch it via the provider but check if a request for that value is already in
+    /// progress (e.g. another Sender just requested the same account)
     fn on_request(&mut self, req: BackendRequest) {
         match req {
             BackendRequest::Basic(addr, sender) => {
@@ -153,6 +171,7 @@ where
                 drop(lock);
 
                 if has_account {
+                    // account is already stored in the cache
                     if let Some(value) = value {
                         let _ = sender.send(value);
                     } else {
@@ -160,14 +179,14 @@ where
                         self.request_account_storage(addr, idx, sender);
                     }
                 } else {
-                    // account missing
+                    // account is still missing in the cache
                     // check if already fetched but not in cache yet
                     if let Some(value) =
                         self.account_requests.get(&addr).and_then(|(_, s)| s.get(&idx).copied())
                     {
                         let _ = sender.send(value);
                     } else {
-                        // fetch storage
+                        // fetch storage via provider
                         self.request_account_storage(addr, idx, sender);
                     }
                 }
@@ -320,7 +339,7 @@ where
     }
 }
 
-/// A cloneable backend type that shares the backend data with all its clones.
+/// A cloneable backend type that shares access to the backend data with all its clones.
 #[derive(Debug, Clone)]
 pub struct SharedBackend {
     inner: SharedBackendInner,

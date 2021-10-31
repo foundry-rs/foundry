@@ -41,6 +41,9 @@ impl<'config, S> ForkedState<'config, S>
 where
     S: StackState<'config>,
 {
+    /// Create a new forked state with the `SharedState` as root state
+    /// This will initialize a new, empty substate that will hold all modifications to the
+    /// shared_state, so that the shared state remains untouched.
     pub fn new(shared_state: SharedState<S>, metadata: StackSubstateMetadata<'config>) -> Self {
         Self { shared_state, substate: MemoryStackSubstate::new(metadata) }
     }
@@ -231,11 +234,16 @@ mod tests {
     };
     use std::convert::TryFrom;
 
+    // We need a bunch of global static values in order to satisfy sputnik's lifetime requirements
+    // for `'static` so that we can Send them
     static G_CONFIG: Lazy<Config> = Lazy::new(Config::istanbul);
     static G_VICINITY: Lazy<MemoryVicinity> = Lazy::new(new_vicinity);
+
+    // This is the root `Backend` that stores all root state
     static G_BACKEND: Lazy<MemoryBackend> =
         Lazy::new(|| MemoryBackend::new(&*G_VICINITY, Default::default()));
 
+    // Type that hold the global root storage type and a shareable Backend
     struct GlobalBackend {
         cache: SharedCache<MemCache>,
         backend: SharedBackend,
