@@ -1,13 +1,12 @@
-use crate::BlockingProvider;
-
-use sputnik::backend::{Backend, Basic, MemoryAccount};
-use std::cell::RefCell;
+use std::{cell::RefCell, collections::BTreeMap};
 
 use ethers::{
     providers::Middleware,
     types::{Block, BlockId, BlockNumber, TxHash, H160, H256, U256},
 };
-use std::collections::BTreeMap;
+use sputnik::backend::{Backend, Basic, MemoryAccount};
+
+use crate::BlockingProvider;
 
 /// Memory backend with ability to fork another chain from an HTTP provider, storing all cache
 /// values in a `BTreeMap` in memory.
@@ -64,6 +63,51 @@ impl<B: Backend, M: Middleware> Backend for ForkMemoryBackend<B, M>
 where
     M::Error: 'static,
 {
+    fn gas_price(&self) -> U256 {
+        self.backend.gas_price()
+    }
+
+    fn origin(&self) -> H160 {
+        self.backend.origin()
+    }
+
+    fn block_hash(&self, number: U256) -> H256 {
+        self.backend.block_hash(number)
+    }
+
+    fn block_number(&self) -> U256 {
+        self.pin_block
+            .map(|block| match block {
+                BlockId::Number(num) => match num {
+                    BlockNumber::Number(num) => Some(num.as_u64().into()),
+                    _ => None,
+                },
+                BlockId::Hash(_) => None,
+            })
+            .flatten()
+            .unwrap_or_else(|| self.backend.block_number())
+    }
+
+    fn block_coinbase(&self) -> H160 {
+        self.pin_block_meta.author
+    }
+
+    fn block_timestamp(&self) -> U256 {
+        self.pin_block_meta.timestamp
+    }
+
+    fn block_difficulty(&self) -> U256 {
+        self.pin_block_meta.difficulty
+    }
+
+    fn block_gas_limit(&self) -> U256 {
+        self.pin_block_meta.gas_limit
+    }
+
+    fn chain_id(&self) -> U256 {
+        self.chain_id
+    }
+
     fn exists(&self, address: H160) -> bool {
         let mut exists = self.cache.borrow().contains_key(&address);
 
@@ -121,51 +165,6 @@ where
         })
     }
 
-    fn gas_price(&self) -> U256 {
-        self.backend.gas_price()
-    }
-
-    fn origin(&self) -> H160 {
-        self.backend.origin()
-    }
-
-    fn block_hash(&self, number: U256) -> H256 {
-        self.backend.block_hash(number)
-    }
-
-    fn block_number(&self) -> U256 {
-        self.pin_block
-            .map(|block| match block {
-                BlockId::Number(num) => match num {
-                    BlockNumber::Number(num) => Some(num.as_u64().into()),
-                    _ => None,
-                },
-                BlockId::Hash(_) => None,
-            })
-            .flatten()
-            .unwrap_or_else(|| self.backend.block_number())
-    }
-
-    fn block_coinbase(&self) -> H160 {
-        self.pin_block_meta.author
-    }
-
-    fn block_timestamp(&self) -> U256 {
-        self.pin_block_meta.timestamp
-    }
-
-    fn block_difficulty(&self) -> U256 {
-        self.pin_block_meta.difficulty
-    }
-
-    fn block_gas_limit(&self) -> U256 {
-        self.pin_block_meta.gas_limit
-    }
-
-    fn chain_id(&self) -> U256 {
-        self.chain_id
-    }
-
     fn original_storage(&self, address: H160, index: H256) -> Option<H256> {
         Some(self.storage(address, index))
     }
@@ -173,18 +172,20 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        sputnik::{helpers::new_backend, vicinity, Executor},
-        test_helpers::COMPILED,
-        Evm,
-    };
+    use std::convert::TryFrom;
+
     use ethers::{
         providers::{Http, Provider},
         types::Address,
     };
     use sputnik::Config;
-    use std::convert::TryFrom;
     use tokio::runtime::Runtime;
+
+    use crate::{
+        sputnik::{helpers::new_backend, vicinity, Executor},
+        test_helpers::COMPILED,
+        Evm,
+    };
 
     use super::*;
 
