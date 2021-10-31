@@ -12,7 +12,7 @@ use sputnik::backend::{Backend, MemoryAccount, MemoryBackend};
 
 #[derive(Clone, Debug, Default)]
 /// Cheatcodes can be used to control the EVM context during setup or runtime,
-/// which can be useful for simulations or specialized unit tests
+/// which can be useful for simulations or specialized unti tests
 pub struct Cheatcodes {
     pub block_number: Option<U256>,
     pub block_timestamp: Option<U256>,
@@ -66,3 +66,14 @@ ethers::contract::abigen!(
             event log_named_string       (string key, string val)
             ]"#,
 );
+
+ethers::contract::abigen!(
+    ConsoleLog,
+    r#"[
+            log(address)
+            log(string)
+            log(string, string)
+    ]"#,
+);
+
+pub use ConsoleLogCalls;
