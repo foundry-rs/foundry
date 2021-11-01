@@ -32,7 +32,8 @@ use once_cell::sync::Lazy;
 pub static CHEATCODE_ADDRESS: Lazy<Address> = Lazy::new(|| {
     Address::from_slice(&hex::decode("7109709ECfa91a80626fF3989D68f67F5b1DD12D").unwrap())
 });
-
+// This is the address used by console.sol, vendored by nomiclabs/hardhat:
+// https://github.com/nomiclabs/hardhat/blob/master/packages/hardhat-core/console.sol
 pub static CONSOLE_LOG_ADDRESS: Lazy<Address> = Lazy::new(|| {
     Address::from_slice(&hex::decode("000000000000000000636F6e736F6c652e6c6f67").unwrap())
 });
@@ -202,8 +203,10 @@ impl<'a, B: Backend> Executor<CheatcodeStackState<'a, B>, CheatcodeStackExecutor
 
         // Need to create a non-empty contract at the cheat code address so that the EVM backend
         // thinks that something exists there.
-        evm.initialize_contracts([(*CHEATCODE_ADDRESS, vec![0u8; 1].into())]);
-        evm.initialize_contracts([(*CONSOLE_LOG_ADDRESS, vec![0u8; 1].into())]);
+        evm.initialize_contracts([
+            (*CHEATCODE_ADDRESS, vec![0u8; 1].into()),
+            (*CONSOLE_LOG_ADDRESS, vec![0u8; 1].into()),
+        ]);
         evm
     }
 }
@@ -271,7 +274,7 @@ impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
             HEVMCalls::Addr(inner) => {
                 let sk = inner.0;
                 if sk.is_zero() {
-                    return evm_error("Bad Cheat Code. Private Key cannot be 0.")
+                    return evm_error("Bad Cheat Code. Private Key cannot be 0.");
                 }
                 // 256 bit priv key -> 32 byte slice
                 let mut bs: [u8; 32] = [0; 32];
@@ -287,7 +290,7 @@ impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
                 let sk = inner.0;
                 let digest = inner.1;
                 if sk.is_zero() {
-                    return evm_error("Bad Cheat Code. Private Key cannot be 0.")
+                    return evm_error("Bad Cheat Code. Private Key cannot be 0.");
                 }
                 // 256 bit priv key -> 32 byte slice
                 let mut bs: [u8; 32] = [0; 32];
@@ -321,6 +324,7 @@ impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
 
         Capture::Exit((ExitReason::Succeed(ExitSucceed::Stopped), res))
     }
+
     fn console_log(&mut self, input: Vec<u8>) -> Capture<(ExitReason, Vec<u8>), Infallible> {
         let decoded = match ConsoleLogCalls::decode(&input) {
             Ok(inner) => inner,
@@ -328,10 +332,10 @@ impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
         };
         match decoded {
             ConsoleLogCalls::Log(inner) => {
-                println!("Decoded Data: {:?}", inner);
+                println!("{}", inner);
             }
             ConsoleLogCalls::LogWith(inner) => {
-                println!("Decoded Data: {:?}", inner);
+                println!("{}", inner);
             }
             ConsoleLogCalls::LogWithAnd(inner) => {
                 let output = str::replace(&inner.0, "%s", &inner.1);
@@ -409,7 +413,7 @@ impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
         if let Some(depth) = self.state().metadata().depth() {
             if depth > self.config().call_stack_limit {
                 let _ = self.handler.exit_substate(StackExitKind::Reverted);
-                return Capture::Exit((ExitError::CallTooDeep.into(), Vec::new()))
+                return Capture::Exit((ExitError::CallTooDeep.into(), Vec::new()));
             }
         }
 
@@ -418,7 +422,7 @@ impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
                 Ok(()) => (),
                 Err(e) => {
                     let _ = self.handler.exit_substate(StackExitKind::Reverted);
-                    return Capture::Exit((ExitReason::Error(e), Vec::new()))
+                    return Capture::Exit((ExitReason::Error(e), Vec::new()));
                 }
             }
         }
@@ -441,7 +445,7 @@ impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
                     let _ = self.handler.exit_substate(StackExitKind::Failed);
                     Capture::Exit((ExitReason::Error(e), Vec::new()))
                 }
-            }
+            };
         }
 
         // each cfg is about 200 bytes, is this a lot to clone? why does this error
