@@ -20,7 +20,7 @@ use std::{process::Command, rc::Rc};
 use ethers::{
     abi::{RawLog, Token},
     contract::EthLogDecode,
-    core::{k256::ecdsa::SigningKey, utils, abi::AbiDecode},
+    core::{abi::AbiDecode, k256::ecdsa::SigningKey, utils},
     signers::{LocalWallet, Signer},
     types::{Address, H160, H256, U256},
 };
@@ -618,7 +618,7 @@ mod tests {
 
         let compiled = COMPILED.get("DebugLogs").expect("could not find contract");
         let (addr, _, _, _) =
-            evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
+            evm.deploy(Address::zero(), compiled.bin.clone().unwrap(), 0.into()).unwrap();
 
         // after the evm call is done, we call `logs` and print it all to the user
         let (_, _, _, logs) =
@@ -657,7 +657,7 @@ mod tests {
 
         let compiled = COMPILED.get("CheatCodes").expect("could not find contract");
         let (addr, _, _, _) =
-            evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
+            evm.deploy(Address::zero(), compiled.bin.clone().unwrap(), 0.into()).unwrap();
 
         let state = evm.state().clone();
         let mut cfg = proptest::test_runner::Config::default();
@@ -675,7 +675,8 @@ mod tests {
 
         let evm = FuzzedExecutor::new(&mut evm, runner);
 
-        for func in compiled.abi.functions().filter(|func| func.name.starts_with("test")) {
+        let abi = compiled.abi.as_ref().unwrap();
+        for func in abi.functions().filter(|func| func.name.starts_with("test")) {
             let should_fail = func.name.starts_with("testFail");
             if func.inputs.is_empty() {
                 let (_, reason, _, _) =
@@ -700,7 +701,7 @@ mod tests {
 
         let compiled = COMPILED.get("CheatCodes").expect("could not find contract");
         let (addr, _, _, _) =
-            evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
+            evm.deploy(Address::zero(), compiled.bin.clone().unwrap(), 0.into()).unwrap();
 
         let err =
             evm.call::<(), _, _>(Address::zero(), addr, "testFFI()", (), 0.into()).unwrap_err();

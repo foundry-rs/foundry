@@ -227,7 +227,7 @@ mod tests {
         let mut evm = Executor::new(12_000_000, &cfg, &backend);
 
         let (addr, _, _, _) =
-            evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
+            evm.deploy(Address::zero(), compiled.bin.clone().unwrap(), 0.into()).unwrap();
 
         let (status, res) = evm.executor.transact_call(
             Address::zero(),
@@ -252,7 +252,7 @@ mod tests {
         let mut evm = Executor::new(12_000_000, &cfg, &backend);
 
         let (addr, _, _, _) =
-            evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
+            evm.deploy(Address::zero(), compiled.bin.clone().unwrap().clone(), 0.into()).unwrap();
 
         // call the setup function to deploy the contracts inside the test
         let status = evm.setup(addr).unwrap().0;
@@ -266,27 +266,25 @@ mod tests {
             _ => panic!("unexpected error variant"),
         };
         assert_eq!(reason, "not equal to `hi`".to_string());
-        assert_eq!(gas_used, 30330);
+        assert_eq!(gas_used, 31233);
     }
 
     #[test]
     fn test_can_call_large_contract() {
         let cfg = Config::istanbul();
 
-        use dapp_solc::SolcBuilder;
+        use ethers::solc::Solc;
 
-        let compiled = SolcBuilder::new("./testdata/LargeContract.sol", &[], &[])
-            .unwrap()
-            .build_all()
-            .unwrap();
-        let compiled = compiled.get("LargeContract").unwrap();
+        let path = "./testdata/LargeContract.sol";
+        let compiled = Solc::default().compile_source(path).unwrap();
+        let compiled = compiled.get(path, "LargeContract").unwrap();
 
         let vicinity = new_vicinity();
         let backend = new_backend(&vicinity, Default::default());
         let mut evm = Executor::new(13_000_000, &cfg, &backend);
 
         let from = Address::random();
-        let (addr, _, _, _) = evm.deploy(from, compiled.bytecode.clone(), 0.into()).unwrap();
+        let (addr, _, _, _) = evm.deploy(from, compiled.bin.unwrap().clone(), 0.into()).unwrap();
 
         // makes a call to the contract
         let sig = ethers::utils::id("foo()").to_vec();
