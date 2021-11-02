@@ -20,8 +20,7 @@ use std::{process::Command, rc::Rc};
 use ethers::{
     abi::{RawLog, Token},
     contract::EthLogDecode,
-    core::{k256::ecdsa::SigningKey, utils},
-    prelude::AbiDecode,
+    core::{k256::ecdsa::SigningKey, utils, abi::AbiDecode},
     signers::{LocalWallet, Signer},
     types::{Address, H160, H256, U256},
 };

@@ -1270,7 +1270,6 @@ name = "evm-adapters"
 version = "0.1.0"
 dependencies = [
  "bytes",
- "dapp-solc",
  "dapp-utils",
  "ethers",
  "evm",
