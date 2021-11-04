@@ -1,0 +1,120 @@
+name: Release version
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+jobs:
+  build-artifacts:
+    runs-on:  ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+      - name: Install toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+      - uses: Swatinem/rust-cache@v1
+      - name: cargo build
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release
+      - name: Upload production artifacts
+        uses: actions/upload-artifact@v2
+        with:
+            name: target-ubuntu-latest
+            path: |
+              ./target/release/seth
+              ./target/release/dapp
+  build-linux-packages:
+    runs-on: ubuntu-latest
+    needs: build-artifacts
+    steps:
+      - uses: actions/checkout@v2
+      - name: Set output
+        id: vars
+        run: echo ::set-output name=tag::${GITHUB_REF#refs/*/}
+      - name: Create target directories
+        run:  mkdir -p ./target/release/
+      - name: Download production artifacts
+        uses: actions/download-artifact@v2
+        with:
+          path: ./target/release/
+          name: target-ubuntu-latest
+      - uses: kentik/pkg@v1.0.0-rc7
+        name: Build RPM package
+        id: build_rpm
+        with:
+          name: dapptools-rs
+          version: ${{ steps.vars.outputs.tag }}
+          arch: x86_64
+          format: rpm
+          package: packaging/package.yml
+      - uses: kentik/pkg@v1.0.0-rc7
+        name: Build DEB package
+        id: build_deb
+        with:
+          name: dapptools-rs
+          version: ${{ steps.vars.outputs.tag }}
+          arch: x86_64
+          format: deb
+          package: packaging/package.yml
+      - name: Save artifacts
+        uses: actions/upload-artifact@v2
+        with:
+          name: linux-packages
+          path: |
+            ./${{ steps.build_deb.outputs.package }}
+            ./${{ steps.build_rpm.outputs.package }}
+  create-release:
+    runs-on: ubuntu-latest
+    needs:  [build-linux-packages, build-artifacts]
+    steps:
+     - name: Checkout
+       uses: actions/checkout@v2
+       with:
+        fetch-depth: 1000
+     - name: Set output
+       id: vars
+       run: echo ::set-output name=tag::${GITHUB_REF#refs/*/}
+     - name: Restore artifacts
+       uses: actions/download-artifact@v2
+       with:
+        name: linux-packages
+     - name: Build Changelog
+       id: github_release
+       uses: mikepenz/release-changelog-builder-action@v2.4.2
+       env:
+        GITHUB_TOKEN: ${{ secrets.G_TOKEN }}
+     - name: Create Release
+       id: create-release
+       uses: softprops/action-gh-release@v0.1.13
+       env:
+        GITHUB_TOKEN: ${{ secrets.G_TOKEN }}
+       with:
+         tag_name:  ${{ steps.vars.outputs.tag }}
+         release_name: ${{ github.ref }}
+         body: ${{steps.build_changelog.outputs.changelog}}
+         files: |
+           ./*.deb
+           ./*.rpm
+     - name: Copy binaries to the server
+       uses: appleboy/scp-action@master
+       with:
+         host: ${{ secrets.REPOSITORY_HOST }}
+         username: ${{ secrets.REPOSITORY_HOST_USERNAME }}
+         key: ${{ secrets. REPOSITORY_HOST_KEY }}
+         source: "./*.deb"
+         target: "/tmp"
+     - name: Add binaries to the repository
+       uses: appleboy/ssh-action@master
+       with:
+        host: ${{ secrets.REPOSITORY_HOST }}
+        username: ${{ secrets.REPOSITORY_HOST_USERNAME }}
+        key: ${{ secrets. REPOSITORY_HOST_KEY }}
+        script_stop: true
+        script: |
+           cd /tmp
+           codename=$( cat /var/repositories/conf/distributions | grep Codename | awk '{print $2}')
+           sudo reprepro -b /var/repositories -C main includedeb ${codename} *.deb
+           rm /tmp/*.deb
