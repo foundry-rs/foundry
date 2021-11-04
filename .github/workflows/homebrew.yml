@@ -1,0 +1,15 @@
+name: Bump Homebrew version
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+jobs:
+  bump-version:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create homebrew-core PR
+        uses: mislav/bump-homebrew-formula-action@v1.12
+        with:
+          formula-name: foundry
+        env:
+          COMMITTER_TOKEN: ${{ secrets.G_TOKEN }}
