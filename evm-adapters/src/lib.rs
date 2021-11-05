@@ -179,16 +179,46 @@ pub trait Evm<State> {
 #[cfg(test)]
 mod test_helpers {
     use super::*;
-    use dapp_solc::SolcBuilder;
-    use ethers::{prelude::Lazy, utils::CompiledContract};
+    use ethers::{
+        prelude::Lazy,
+        solc::{
+            artifacts::CompactContract, ArtifactOutput, Project, ProjectCompileOutput,
+            ProjectPathsConfig,
+        },
+    };
     use std::collections::HashMap;
 
-    pub static COMPILED: Lazy<HashMap<String, CompiledContract>> =
-        Lazy::new(|| SolcBuilder::new("./testdata/*.sol", &[], &[]).unwrap().build_all().unwrap());
+    pub static COMPILED: Lazy<HashMap<String, CompactContract>> = Lazy::new(|| {
+        // NB: should we add a test-helper function that makes creating these
+        // ephemeral projects easier?
+        let paths =
+            ProjectPathsConfig::builder().root("testdata").sources("testdata").build().unwrap();
+        let project = Project::builder()
+            .paths(paths)
+            .ephemeral()
+            .artifacts(ArtifactOutput::Nothing)
+            .build()
+            .unwrap();
+        let output = project.compile().unwrap();
+        let compiled = match output {
+            ProjectCompileOutput::Compiled((out, _)) => out,
+            _ => panic!(),
+        };
 
-    pub fn can_call_vm_directly<S, E: Evm<S>>(mut evm: E, compiled: &CompiledContract) {
+        // flatten the output
+        let mut contracts = HashMap::new();
+        for (_, v) in compiled.contracts {
+            for (k, v) in v {
+                contracts.insert(k, CompactContract::from(v));
+            }
+        }
+
+        contracts
+    });
+
+    pub fn can_call_vm_directly<S, E: Evm<S>>(mut evm: E, compiled: &CompactContract) {
         let (addr, _, _, _) =
-            evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
+            evm.deploy(Address::zero(), compiled.bin.clone().unwrap(), 0.into()).unwrap();
 
         let (_, status1, _, _) = evm
             .call::<(), _, _>(Address::zero(), addr, "greet(string)", "hi".to_owned(), 0.into())
@@ -205,9 +235,9 @@ mod test_helpers {
         });
     }
 
-    pub fn solidity_unit_test<S, E: Evm<S>>(mut evm: E, compiled: &CompiledContract) {
+    pub fn solidity_unit_test<S, E: Evm<S>>(mut evm: E, compiled: &CompactContract) {
         let (addr, _, _, _) =
-            evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
+            evm.deploy(Address::zero(), compiled.bin.clone().unwrap(), 0.into()).unwrap();
 
         // call the setup function to deploy the contracts inside the test
         let status1 = evm.setup(addr).unwrap().0;
