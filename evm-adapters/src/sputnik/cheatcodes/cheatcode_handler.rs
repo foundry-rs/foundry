@@ -329,18 +329,7 @@ impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
             Ok(inner) => inner,
             Err(err) => return evm_error(&err.to_string()),
         };
-        match decoded {
-            ConsoleLogCalls::Log(inner) => {
-                println!("{}", inner);
-            }
-            ConsoleLogCalls::LogWith(inner) => {
-                println!("{}", inner);
-            }
-            ConsoleLogCalls::LogWithAnd(inner) => {
-                let output = str::replace(&inner.0, "%s", &inner.1);
-                println!("{}", output);
-            }
-        }
+        println!("{}", decoded);
         let res = vec![];
         Capture::Exit((ExitReason::Succeed(ExitSucceed::Stopped), res))
     }
@@ -682,7 +671,7 @@ mod tests {
         let mut evm = Executor::new_with_cheatcodes(backend, gas_limit, &config, true);
         let compiled = COMPILED.get("ConsoleLog").expect("could not find contract");
         let (addr, _, _, _) =
-            evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
+            evm.deploy(Address::zero(), compiled.bin.clone().unwrap(), 0.into()).unwrap();
         let (_, _, _, logs) = evm
             .call::<(), _, _>(Address::zero(), addr, "test_console_log()", (), 0.into())
             .unwrap();

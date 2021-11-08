@@ -1,4 +1,6 @@
-use ethers::core::utils::{CompiledContract, Solc};
+use ethers::solc::{
+    artifacts::CompactContract, ArtifactOutput, Project, ProjectCompileOutput, ProjectPathsConfig,
+};
 use eyre::Result;
 use rayon::prelude::*;
 use semver::{Version, VersionReq};
@@ -48,11 +50,7 @@ impl<'a> SolcBuilder<'a> {
     /// that the correct compiler version is provided.
     // FIXME: Does NOT support contracts with the same name.
     #[tracing::instrument(skip(self, files))]
-    fn build(
-        &self,
-        version: &str,
-        files: Vec<String>,
-    ) -> Result<HashMap<String, CompiledContract>> {
+    fn build(&self, version: &str, files: Vec<String>) -> Result<HashMap<String, CompactContract>> {
         let compiler_path = find_installed_version_path(version)?
             .ok_or_else(|| eyre::eyre!("version {} not installed", version))?;
 
@@ -81,7 +79,7 @@ impl<'a> SolcBuilder<'a> {
 
     /// Builds all contracts with their corresponding compiler versions
     #[tracing::instrument(skip(self))]
-    pub fn build_all(&self) -> Result<HashMap<String, CompiledContract>> {
+    pub fn build_all(&self) -> Result<HashMap<String, CompactContract>> {
         tracing::info!("starting compilation");
         let contracts_by_version = self.contract_versions()?;
         let start = Instant::now();

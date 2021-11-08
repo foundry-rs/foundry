@@ -97,8 +97,8 @@ pub trait Evm<State> {
     ) -> Result<(Bytes, Self::ReturnReason, u64, Vec<String>)> {
         let calldata = encode_function_data(func, args)?;
         #[allow(deprecated)]
-        let is_static = func.constant ||
-            matches!(
+        let is_static = func.constant
+            || matches!(
                 func.state_mutability,
                 ethers::abi::StateMutability::View | ethers::abi::StateMutability::Pure
             );
@@ -191,19 +191,23 @@ mod test_helpers {
     pub static COMPILED: Lazy<HashMap<String, CompactContract>> = Lazy::new(|| {
         // NB: should we add a test-helper function that makes creating these
         // ephemeral projects easier?
-        let paths =
-            ProjectPathsConfig::builder().root("testdata").sources("testdata").build().unwrap();
+        let paths = ProjectPathsConfig::builder().root("testdata").build().unwrap();
+        // println!("{:?}", paths);
         let project = Project::builder()
             .paths(paths)
             .ephemeral()
             .artifacts(ArtifactOutput::Nothing)
             .build()
             .unwrap();
+        println!("{:?}", project);
+        println!("~~~~~~~~~~~~~~~~~~~~\n\n");
         let output = project.compile().unwrap();
+        println!("{:?}", output);
         let compiled = match output {
             ProjectCompileOutput::Compiled((out, _)) => out,
             _ => panic!(),
         };
+        println!("{:?}", compiled);
 
         // flatten the output
         let mut contracts = HashMap::new();
