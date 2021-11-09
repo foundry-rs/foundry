@@ -44,7 +44,7 @@ where
         provider: M,
         backend: B,
         pin_block: Option<u64>,
-        init_cache: BTreeMap<H160, MemoryAccount>
+        init_cache: BTreeMap<H160, MemoryAccount>,
     ) -> Self {
         let provider = BlockingProvider::new(provider);
         let pin_block = pin_block.unwrap_or_else(|| backend.block_number().as_u64()).into();
