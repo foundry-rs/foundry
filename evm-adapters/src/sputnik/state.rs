@@ -2,7 +2,7 @@ use ethers::abi::ethereum_types::{H160, H256, U256};
 use parking_lot::RwLock;
 use sputnik::{
     backend::{Apply, Backend, Basic, Log},
-    executor::{MemoryStackSubstate, StackState, StackSubstateMetadata},
+    executor::stack::{MemoryStackSubstate, StackState, StackSubstateMetadata},
     ExitError, Transfer,
 };
 use std::{fmt::Debug, ops::Deref, sync::Arc};
@@ -121,7 +121,7 @@ where
 
     fn original_storage(&self, address: H160, key: H256) -> Option<H256> {
         if let Some(value) = self.substate.known_original_storage(address, key) {
-            return Some(value)
+            return Some(value);
         }
         self.shared_state.read().original_storage(address, key)
     }
@@ -157,13 +157,13 @@ where
 
     fn is_empty(&self, address: H160) -> bool {
         if let Some(known_empty) = self.substate.known_empty(address) {
-            return known_empty
+            return known_empty;
         }
 
         let basic = self.shared_state.read().basic(address);
-        basic.balance == U256::zero() &&
-            basic.nonce == U256::zero() &&
-            self.shared_state.read().code(address).is_empty()
+        basic.balance == U256::zero()
+            && basic.nonce == U256::zero()
+            && self.shared_state.read().code(address).is_empty()
     }
 
     fn deleted(&self, address: H160) -> bool {
@@ -229,7 +229,7 @@ mod tests {
     use once_cell::sync::Lazy;
     use sputnik::{
         backend::{MemoryBackend, MemoryVicinity},
-        executor::MemoryStackState,
+        executor::stack::MemoryStackState,
         Config,
     };
     use std::convert::TryFrom;

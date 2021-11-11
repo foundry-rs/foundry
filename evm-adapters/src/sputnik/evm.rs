@@ -4,7 +4,9 @@ use ethers::types::{Address, Bytes, U256};
 
 use sputnik::{
     backend::{Backend, MemoryAccount},
-    executor::{MemoryStackState, StackExecutor, StackState, StackSubstateMetadata},
+    executor::stack::{
+        MemoryStackState, PrecompileSet, StackExecutor, StackState, StackSubstateMetadata,
+    },
     Config, CreateScheme, ExitReason, ExitRevert, Transfer,
 };
 use std::{collections::BTreeMap, marker::PhantomData};
@@ -30,18 +32,26 @@ impl<S, E> Executor<S, E> {
 }
 
 // Concrete implementation over the in-memory backend without cheatcodes
-impl<'a, B: Backend>
-    Executor<MemoryStackState<'a, 'a, B>, StackExecutor<'a, MemoryStackState<'a, 'a, B>>>
+impl<'a, 'b, B: Backend>
+    Executor<
+        MemoryStackState<'a, 'a, B>,
+        StackExecutor<'a, 'b, MemoryStackState<'a, 'a, B>, Box<PrecompileSet>>,
+    >
 {
     /// Given a gas limit, vm version, initial chain configuration and initial state
     // TOOD: See if we can make lifetimes better here
-    pub fn new(gas_limit: u64, config: &'a Config, backend: &'a B) -> Self {
+    pub fn new(
+        gas_limit: u64,
+        config: &'a Config,
+        backend: &'a B,
+        precompiles: &'b PrecompileSet,
+    ) -> Self {
         // setup gasometer
         let metadata = StackSubstateMetadata::new(gas_limit, config);
         // setup state
         let state = MemoryStackState::new(metadata, backend);
         // setup executor
-        let executor = StackExecutor::new_with_precompile(state, config, Default::default());
+        let executor = StackExecutor::new_with_precompiles(state, config, Default::default());
 
         Self { executor, gas_limit, marker: PhantomData }
     }

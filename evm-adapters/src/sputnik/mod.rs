@@ -14,7 +14,7 @@ use ethers::{
 
 use sputnik::{
     backend::MemoryVicinity,
-    executor::{PrecompileOutput, StackExecutor, StackState},
+    executor::stack::{PrecompileOutput, PrecompileSet, StackExecutor, StackState},
     Config, CreateScheme, ExitError, ExitReason, ExitSucceed,
 };
 
@@ -85,7 +85,9 @@ pub trait SputnikExecutor<S> {
 }
 
 // The implementation for the base Stack Executor just forwards to the internal methods.
-impl<'a, S: StackState<'a>> SputnikExecutor<S> for StackExecutor<'a, S> {
+impl<'a, 'b, S: StackState<'a>, P: PrecompileSet> SputnikExecutor<S>
+    for StackExecutor<'a, 'b, P, S>
+{
     fn config(&self) -> &Config {
         self.config()
     }

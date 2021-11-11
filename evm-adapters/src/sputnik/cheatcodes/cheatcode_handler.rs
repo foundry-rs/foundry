@@ -16,8 +16,9 @@ use ethers::{
 };
 use sputnik::{
     backend::Backend,
-    executor::{
-        Log, PrecompileOutput, StackExecutor, StackExitKind, StackState, StackSubstateMetadata,
+    executor::stack::{
+        Log, PrecompileOutput, PrecompileSet, StackExecutor, StackExitKind, StackState,
+        StackSubstateMetadata,
     },
     gasometer, Capture, Config, Context, CreateScheme, ExitError, ExitReason, ExitRevert,
     ExitSucceed, Handler, Runtime, Transfer,
@@ -47,7 +48,9 @@ pub struct CheatcodeHandler<H> {
 
 // Forwards everything internally except for the transact_call which is overriden.
 // TODO: Maybe we can pull this functionality up to the `Evm` trait to avoid having so many traits?
-impl<'a, B: Backend> SputnikExecutor<CheatcodeStackState<'a, B>> for CheatcodeStackExecutor<'a, B> {
+impl<'a, 'b, B: Backend> SputnikExecutor<CheatcodeStackState<'a, B>>
+    for CheatcodeStackExecutor<'a, 'b, B>
+{
     fn config(&self) -> &Config {
         self.handler.config()
     }
@@ -176,10 +179,10 @@ impl<'a, B: Backend> SputnikExecutor<CheatcodeStackState<'a, B>> for CheatcodeSt
 
 pub type CheatcodeStackState<'a, B> = MemoryStackStateOwned<'a, CheatcodeBackend<B>>;
 
-pub type CheatcodeStackExecutor<'a, B> =
-    CheatcodeHandler<StackExecutor<'a, CheatcodeStackState<'a, B>>>;
+pub type CheatcodeStackExecutor<'a, 'b, B> =
+    CheatcodeHandler<StackExecutor<'a, 'b, CheatcodeStackState<'a, B>, PrecompileSet>>;
 
-impl<'a, B: Backend> Executor<CheatcodeStackState<'a, B>, CheatcodeStackExecutor<'a, B>> {
+impl<'a, 'b, B: Backend> Executor<CheatcodeStackState<'a, B>, CheatcodeStackExecutor<'a, 'b, B>> {
     pub fn new_with_cheatcodes(
         backend: B,
         gas_limit: u64,
@@ -195,7 +198,7 @@ impl<'a, B: Backend> Executor<CheatcodeStackState<'a, B>, CheatcodeStackExecutor
         let state = MemoryStackStateOwned::new(metadata, backend);
 
         // create the executor and wrap it with the cheatcode handler
-        let executor = StackExecutor::new_with_precompile(state, config, PRECOMPILES_MAP.clone());
+        let executor = StackExecutor::new_with_precompiles(state, config, PRECOMPILES_MAP.clone());
         let executor = CheatcodeHandler { handler: executor, enable_ffi };
 
         let mut evm = Executor::from_executor(executor, gas_limit);
@@ -217,7 +220,7 @@ fn evm_error(retdata: &str) -> Capture<(ExitReason, Vec<u8>), Infallible> {
     ))
 }
 
-impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
+impl<'a, 'b, B: Backend> CheatcodeStackExecutor<'a, 'b, B> {
     /// Decodes the provided calldata as a
     fn apply_cheatcode(&mut self, input: Vec<u8>) -> Capture<(ExitReason, Vec<u8>), Infallible> {
         let mut res = vec![];
@@ -468,7 +471,7 @@ impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
 
 // Delegates everything internally, except the `call_inner` call, which is hooked
 // so that we can modify
-impl<'a, B: Backend> Handler for CheatcodeStackExecutor<'a, B> {
+impl<'a, 'b, B: Backend> Handler for CheatcodeStackExecutor<'a, 'b, B> {
     type CreateInterrupt = Infallible;
     type CreateFeedback = Infallible;
     type CallInterrupt = Infallible;
