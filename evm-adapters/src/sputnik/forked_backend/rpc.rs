@@ -40,7 +40,12 @@ impl<B: Backend, M: Middleware> ForkMemoryBackend<B, M>
 where
     M::Error: 'static,
 {
-    pub fn new(provider: M, backend: B, pin_block: Option<u64>) -> Self {
+    pub fn new(
+        provider: M,
+        backend: B,
+        pin_block: Option<u64>,
+        init_cache: BTreeMap<H160, MemoryAccount>,
+    ) -> Self {
         let provider = BlockingProvider::new(provider);
         let pin_block = pin_block.unwrap_or_else(|| backend.block_number().as_u64()).into();
 
@@ -51,7 +56,7 @@ where
         Self {
             provider,
             backend,
-            cache: Default::default(),
+            cache: RefCell::new(init_cache),
             pin_block: Some(pin_block),
             pin_block_meta: block,
             chain_id,
@@ -202,7 +207,7 @@ mod tests {
         let blk = Some(13292465);
         let vicinity = rt.block_on(vicinity(&provider, blk)).unwrap();
         let backend = new_backend(&vicinity, Default::default());
-        let backend = ForkMemoryBackend::new(provider, backend, blk);
+        let backend = ForkMemoryBackend::new(provider, backend, blk, Default::default());
 
         let mut evm = Executor::new(12_000_000, &cfg, &backend);
 

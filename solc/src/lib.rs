@@ -382,7 +382,7 @@ mod tests {
             // update this test whenever there's a new sol
             // version. that's ok! good reminder to check the
             // patch notes.
-            (">=0.5.0", "0.8.9"),
+            (">=0.5.0", "0.8.10"),
             // range
             (">=0.4.0 <0.5.0", "0.4.26"),
         ]
@@ -426,7 +426,7 @@ mod tests {
         let versions = builder.contract_versions().unwrap();
         assert_eq!(versions["0.4.14"].len(), 2);
         assert_eq!(versions["0.4.26"].len(), 2);
-        assert_eq!(versions["0.8.9"].len(), 1);
+        assert_eq!(versions["0.8.10"].len(), 1);
 
         rmdir(&dir);
     }
