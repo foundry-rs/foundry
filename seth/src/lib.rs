@@ -247,10 +247,10 @@ where
             }
             "0xa3c565fc15c7478862d50ccd6561e3c06b24cc509bf388941c25ea985ce32cb9" => "kovan",
             "0x41941023680923e0fe4d74a34bdac8141f2540e3ae90623718e47d66d1ca4a2d" => "ropsten",
-            "0x39e1b9259598b65c8c71d1ea153de17e89222e64e8b271213dfb92c231f7fb88" => {
+            "0x7ca38a1916c42007829c55e69d3e9a73265554b586a499015373241b8a3fa48b" => {
                 "optimism-mainnet"
             }
-            "0x2510549c5c30f15472b55dbae139122e2e593f824217eefc7a53f78698ac5c1e" => {
+            "0x02adc9b449ff5f2467b8c674ece7ff9b21319d76c4ad62a67a70d552655927e5" => {
                 "optimism-kovan"
             }
             "0x7ee576b35482195fc49205cec9af72ce14f003b9ae69f6ba0faef4514be8b442" => {
