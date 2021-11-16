@@ -1,6 +1,6 @@
 // Taken from:
 // https://github.com/dapphub/dapptools/blob/e41b6cd9119bbd494aba1236838b859f2136696b/src/dapp-tests/pass/cheatCodes.sol
-pragma solidity ^0.6.7;
+pragma solidity ^0.6.6;
 pragma experimental ABIEncoderV2;
 
 import "./DsTest.sol";
