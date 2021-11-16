@@ -152,7 +152,7 @@ mod tests {
     // TODO: Ignore until we figure out how to deploy stuff in evmodin
     fn evmodin_can_call_vm_directly() {
         let revision = Revision::Istanbul;
-        let compiled = COMPILED.get("Greeter").expect("could not find contract");
+        let compiled = COMPILED.find("Greeter").expect("could not find contract");
 
         let host = MockedHost::default();
 
@@ -167,7 +167,7 @@ mod tests {
     #[ignore]
     fn evmodin_can_call_solidity_unit_test() {
         let revision = Revision::Istanbul;
-        let compiled = COMPILED.get("Greeter").expect("could not find contract");
+        let compiled = COMPILED.find("Greeter").expect("could not find contract");
         let host = MockedHost::default();
         let gas_limit = 12_000_000;
         let evm = EvmOdin::new(host, gas_limit, revision, NoopTracer);

@@ -179,16 +179,21 @@ pub trait Evm<State> {
 #[cfg(test)]
 mod test_helpers {
     use super::*;
-    use dapp_solc::SolcBuilder;
-    use ethers::{prelude::Lazy, utils::CompiledContract};
-    use std::collections::HashMap;
+    use ethers::{
+        prelude::Lazy,
+        solc::{artifacts::CompactContractRef, CompilerOutput, Project, ProjectPathsConfig},
+    };
 
-    pub static COMPILED: Lazy<HashMap<String, CompiledContract>> =
-        Lazy::new(|| SolcBuilder::new("./testdata/*.sol", &[], &[]).unwrap().build_all().unwrap());
+    pub static COMPILED: Lazy<CompilerOutput> = Lazy::new(|| {
+        let paths =
+            ProjectPathsConfig::builder().root("testdata").sources("testdata").build().unwrap();
+        let project = Project::builder().paths(paths).ephemeral().no_artifacts().build().unwrap();
+        project.compile().unwrap().output()
+    });
 
-    pub fn can_call_vm_directly<S, E: Evm<S>>(mut evm: E, compiled: &CompiledContract) {
+    pub fn can_call_vm_directly<S, E: Evm<S>>(mut evm: E, compiled: CompactContractRef) {
         let (addr, _, _, _) =
-            evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
+            evm.deploy(Address::zero(), compiled.bin.unwrap().clone(), 0.into()).unwrap();
 
         let (_, status1, _, _) = evm
             .call::<(), _, _>(Address::zero(), addr, "greet(string)", "hi".to_owned(), 0.into())
@@ -205,9 +210,9 @@ mod test_helpers {
         });
     }
 
-    pub fn solidity_unit_test<S, E: Evm<S>>(mut evm: E, compiled: &CompiledContract) {
+    pub fn solidity_unit_test<S, E: Evm<S>>(mut evm: E, compiled: CompactContractRef) {
         let (addr, _, _, _) =
-            evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
+            evm.deploy(Address::zero(), compiled.bin.unwrap().clone(), 0.into()).unwrap();
 
         // call the setup function to deploy the contracts inside the test
         let status1 = evm.setup(addr).unwrap().0;

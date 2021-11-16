@@ -213,7 +213,7 @@ mod tests {
     #[test]
     fn forked_backend() {
         let cfg = Config::istanbul();
-        let compiled = COMPILED.get("Greeter").expect("could not find contract");
+        let compiled = COMPILED.find("Greeter").expect("could not find contract");
 
         let provider = Provider::<Http>::try_from(
             "https://mainnet.infura.io/v3/c60b0bb42f8a4c6481ecd229eddaca27",
@@ -228,7 +228,7 @@ mod tests {
         let mut evm = Executor::new(12_000_000, &cfg, &backend);
 
         let (addr, _, _, _) =
-            evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
+            evm.deploy(Address::zero(), compiled.bin.unwrap().clone(), 0.into()).unwrap();
 
         let (res, _, _, _) =
             evm.call::<U256, _, _>(Address::zero(), addr, "time()(uint256)", (), 0.into()).unwrap();
