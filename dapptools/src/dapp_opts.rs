@@ -49,6 +49,7 @@ pub enum Subcommands {
             short
         )]
         #[structopt(alias = "rpc-url")]
+        #[structopt(env = "ETH_RPC_URL")]
         fork_url: Option<String>,
 
         #[structopt(help = "pins the block number for the state fork", long)]
