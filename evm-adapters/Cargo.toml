@@ -29,6 +29,7 @@ revm_precompiles = "0.1.0"
 
 [dev-dependencies]
 evmodin = { git = "https://github.com/vorot93/evmodin", features = ["util"] }
+ethers = { git = "https://github.com/gakonst/ethers-rs", features = ["solc-full", "solc-tests"] }
 
 [features]
 sputnik-helpers = ["sputnik"]
