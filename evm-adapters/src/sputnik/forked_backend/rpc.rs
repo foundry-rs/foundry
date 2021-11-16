@@ -138,36 +138,52 @@ where
 
     fn basic(&self, address: H160) -> Basic {
         let mut cache = self.cache.borrow_mut();
-        cache.get(&address).map(|a| Basic { balance: a.balance, nonce: a.nonce }).unwrap_or_else(
-            || {
-                let account =
-                    self.provider.get_account(address, self.pin_block).unwrap_or_default();
-                if let Some(acc) = cache.get_mut(&address) {
-                    acc.nonce = account.0;
-                    acc.balance = account.1;
-                }
-                Basic { nonce: account.0, balance: account.1 }
-            },
-        )
+        let account = cache.entry(address).or_insert_with(|| {
+            let res = self.provider.get_account(address, self.pin_block).unwrap_or_default();
+            MemoryAccount {
+                nonce: res.0,
+                balance: res.1,
+                code: res.2.to_vec(),
+                storage: Default::default(),
+            }
+        });
+        Basic { balance: account.balance, nonce: account.nonce }
     }
 
     fn code(&self, address: H160) -> Vec<u8> {
         let mut cache = self.cache.borrow_mut();
-        cache.get(&address).map(|v| v.code.clone()).unwrap_or_else(|| {
-            let code = self.provider.get_code(address, self.pin_block).unwrap_or_default().to_vec();
-            if let Some(acc) = cache.get_mut(&address) {
-                acc.code = code.clone()
+        let account = cache.entry(address).or_insert_with(|| {
+            // println!("didnt have account code {:?}", address);
+            let res = self.provider.get_account(address, self.pin_block).unwrap_or_default();
+            MemoryAccount {
+                nonce: res.0,
+                balance: res.1,
+                code: res.2.to_vec(),
+                storage: Default::default(),
             }
-            code
-        })
+        });
+        account.code.clone()
     }
 
     fn storage(&self, address: H160, index: H256) -> H256 {
         let mut cache = self.cache.borrow_mut();
-        let account = cache.get_mut(&address);
-        account.map(|acct| acct.storage.get(&index)).flatten().copied().unwrap_or_else(|| {
-            self.provider.get_storage_at(address, index, self.pin_block).unwrap_or_default()
-        })
+        let account = cache.entry(address).or_insert_with(|| {
+            let res = self.provider.get_account(address, self.pin_block).unwrap_or_default();
+            MemoryAccount {
+                nonce: res.0,
+                balance: res.1,
+                code: res.2.to_vec(),
+                storage: Default::default(),
+            }
+        });
+        if let Some(val) = account.storage.get(&index) {
+            *val
+        } else {
+            let ret =
+                self.provider.get_storage_at(address, index, self.pin_block).unwrap_or_default();
+            account.storage.insert(index, ret);
+            ret
+        }
     }
 
     fn original_storage(&self, address: H160, index: H256) -> Option<H256> {
