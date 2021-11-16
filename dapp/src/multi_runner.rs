@@ -161,34 +161,48 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ethers::solc::ProjectPathsConfig;
+    use std::path::PathBuf;
 
-    fn test_multi_runner<S: Clone, E: Evm<S>>(evm: E) {
-        let mut runner =
-            MultiContractRunnerBuilder::default().contracts("./GreetTest.sol").build(evm).unwrap();
+    fn project() -> Project {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata");
 
-        let results = runner.test(Regex::new(".*").unwrap()).unwrap();
+        let paths = ProjectPathsConfig::builder().root(&root).sources(&root).build().unwrap();
 
-        // 2 contracts
-        assert_eq!(results.len(), 2);
+        let project = Project::builder()
+            // need to add the ilb path here. would it be better placed in the ProjectPathsConfig
+            // instead? what is the `libs` modifier useful for then? linked libraries?
+            .allowed_path(root.join("../../evm-adapters/testdata"))
+            .paths(paths)
+            .ephemeral()
+            .no_artifacts()
+            .build()
+            .unwrap();
 
-        // 3 tests on greeter 1 on gm
-        assert_eq!(results["GreeterTest"].len(), 3);
-        assert_eq!(results["GmTest"].len(), 1);
-        for (_, res) in results {
-            assert!(res.iter().all(|(_, result)| result.success));
-        }
-
-        let only_gm = runner.test(Regex::new("testGm.*").unwrap()).unwrap();
-        assert_eq!(only_gm.len(), 1);
-        assert_eq!(only_gm["GmTest"].len(), 1);
+        project
     }
 
-    fn test_ds_test_fail<S: Clone, E: Evm<S>>(evm: E) {
-        let mut runner =
-            MultiContractRunnerBuilder::default().contracts("./../FooTest.sol").build(evm).unwrap();
+    fn runner<S: Clone, E: Evm<S>>(evm: E) -> MultiContractRunner<E, S> {
+        MultiContractRunnerBuilder::default().build(project(), evm).unwrap()
+    }
+
+    fn test_multi_runner<S: Clone, E: Evm<S>>(evm: E) {
+        let mut runner = runner(evm);
         let results = runner.test(Regex::new(".*").unwrap()).unwrap();
-        let test = results.get("FooTest").unwrap().get("testFailX").unwrap();
-        assert!(test.success);
+
+        // 6 contracts being built
+        assert_eq!(results.keys().len(), 5);
+        for (_, contract_tests) in results {
+            assert_ne!(contract_tests.keys().len(), 0);
+            assert!(contract_tests.iter().all(|(_, result)| result.success));
+        }
+
+        // can also filter
+        let only_gm = runner.test(Regex::new("testGm.*").unwrap()).unwrap();
+        assert_eq!(only_gm.len(), 1);
+
+        assert_eq!(only_gm["GmTest"].len(), 1);
+        assert!(only_gm["GmTest"]["testGm"].success);
     }
 
     mod sputnik {
@@ -205,15 +219,12 @@ mod tests {
             let gas_limit = 12_500_000;
             let env = new_vicinity();
             let backend = new_backend(&env, Default::default());
+            // important to instantiate the VM with cheatcodes
             let evm = Executor::new_with_cheatcodes(backend, gas_limit, &config, false);
 
-            let mut runner = MultiContractRunnerBuilder::default()
-                .contracts("./testdata/DebugLogsTest.sol")
-                .libraries(&["../evm-adapters/testdata".to_owned()])
-                .build(evm)
-                .unwrap();
-
+            let mut runner = runner(evm);
             let results = runner.test(Regex::new(".*").unwrap()).unwrap();
+
             let reasons = results["DebugLogsTest"]
                 .iter()
                 .map(|(name, res)| (name, res.logs.clone()))
@@ -236,16 +247,6 @@ mod tests {
             let backend = new_backend(&env, Default::default());
             let evm = Executor::new(gas_limit, &config, &backend);
             test_multi_runner(evm);
-        }
-
-        #[test]
-        fn test_sputnik_ds_test_fail() {
-            let config = Config::istanbul();
-            let gas_limit = 12_500_000;
-            let env = new_vicinity();
-            let backend = new_backend(&env, Default::default());
-            let evm = Executor::new(gas_limit, &config, &backend);
-            test_ds_test_fail(evm);
         }
     }
 
