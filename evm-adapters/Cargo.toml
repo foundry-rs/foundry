@@ -8,20 +8,18 @@ edition = "2018"
 
 [dependencies]
 dapp-utils = { path = "./../utils" }
-dapp-solc = { path = "./../solc" }
 
 # evm = { version = "0.30.1" }
 sputnik = { package = "evm", git = "https://github.com/rust-blockchain/evm",  optional = true, features = ["tracing"] }
 
 evmodin = { git = "https://github.com/vorot93/evmodin",  optional = true }
 
-# ethers = { version = "0.5.2" }
-ethers = { git = "https://github.com/gakonst/ethers-rs" }
+ethers = { git = "https://github.com/gakonst/ethers-rs", features = ["solc-full"] }
 eyre = "0.6.5"
 once_cell = "1.8.0"
 tracing = "0.1.28"
 bytes = "1.1.0"
-tokio = { version = "1.12.0", features = ["rt-multi-thread"] }
+tokio = { version = "1.12.0", features = ["rt-multi-thread", "macros"] }
 hex = "0.4.3"
 thiserror = "1.0.29"
 proptest = "1.0.0"
@@ -31,6 +29,7 @@ revm_precompiles = "0.1.0"
 
 [dev-dependencies]
 evmodin = { git = "https://github.com/vorot93/evmodin", features = ["util"] }
+ethers = { git = "https://github.com/gakonst/ethers-rs", features = ["solc-full", "solc-tests"] }
 
 [features]
 sputnik-helpers = ["sputnik"]

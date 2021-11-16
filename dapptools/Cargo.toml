@@ -9,7 +9,6 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 structopt = "0.3.23"
 dapp-utils = { path = "../utils" }
-dapp-solc = { path = "../solc" }
 dapp = { path = "../dapp" }
 seth = { path = "../seth" }
 evm-adapters = { path = "../evm-adapters" }

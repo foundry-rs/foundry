@@ -1,4 +1,7 @@
-use ethers::prelude::Provider;
+use ethers::{
+    providers::Provider,
+    solc::{remappings::Remapping, ArtifactOutput, Project},
+};
 use evm_adapters::{
     sputnik::{vicinity, ForkMemoryBackend},
     FAUCET_ACCOUNT,
@@ -8,14 +11,12 @@ use sputnik::backend::Backend;
 use structopt::StructOpt;
 
 use dapp::MultiContractRunnerBuilder;
-use dapp_solc::SolcBuilder;
 
 use ansi_term::Colour;
 use ethers::types::U256;
 
 mod dapp_opts;
-use dapp_opts::{BuildOpts, EvmType, Opts, Subcommands};
-use utils::Remapping;
+use dapp_opts::{EvmType, Opts, Subcommands};
 
 use crate::dapp_opts::FullContractInfo;
 use std::{collections::HashMap, convert::TryFrom, path::Path, sync::Arc};
@@ -30,13 +31,11 @@ fn main() -> eyre::Result<()> {
     let opts = Opts::from_args();
     match opts.sub {
         Subcommands::Test {
-            opts:
-                BuildOpts { contracts, remappings, remappings_env, lib_paths, out_path, evm_version },
+            opts,
             env,
             json,
             pattern,
             evm_type,
-            no_compile,
             fork_url,
             fork_block_number,
             initial_balance,
@@ -44,30 +43,20 @@ fn main() -> eyre::Result<()> {
             ffi,
             verbosity,
         } => {
-            // if no env var for remappings is provided, try calculating them on the spot
-            let remappings = if remappings_env.is_none() {
-                [remappings, utils::Remapping::find_many_str("lib")?].concat()
-            } else {
-                remappings
-            };
-            let remappings = utils::merge(remappings, remappings_env);
-            let lib_paths = utils::default_path(lib_paths)?;
-
+            // Setup the fuzzer
             // TODO: Add CLI Options to modify the persistence
             let cfg =
                 proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
             let fuzzer = proptest::test_runner::TestRunner::new(cfg);
 
-            // prepare the builder
+            // Set up the project
+            let project = Project::try_from(&opts)?;
+
+            // prepare the test builder
             let builder = MultiContractRunnerBuilder::default()
-                .contracts(&contracts)
-                .remappings(&remappings)
-                .libraries(&lib_paths)
-                .out_path(out_path)
                 .fuzzer(fuzzer)
                 .initial_balance(initial_balance)
-                .deployer(deployer)
-                .skip_compilation(no_compile);
+                .deployer(deployer);
 
             // run the tests depending on the chosen EVM
             match evm_type {
@@ -75,7 +64,7 @@ fn main() -> eyre::Result<()> {
                 EvmType::Sputnik => {
                     use evm_adapters::sputnik::Executor;
                     use sputnik::backend::MemoryBackend;
-                    let mut cfg = evm_version.sputnik_cfg();
+                    let mut cfg = opts.evm_version.sputnik_cfg();
 
                     // We disable the contract size limit by default, because Solidity
                     // test smart contracts are likely to be >24kb
@@ -111,45 +100,35 @@ fn main() -> eyre::Result<()> {
 
                     let evm = Executor::new_with_cheatcodes(backend, env.gas_limit, &cfg, ffi);
 
-                    test(builder, evm, pattern, json, verbosity)?;
+                    test(builder, project, evm, pattern, json, verbosity)?;
                 }
                 #[cfg(feature = "evmodin-evm")]
                 EvmType::EvmOdin => {
                     use evm_adapters::evmodin::EvmOdin;
                     use evmodin::tracing::NoopTracer;
 
-                    let revision = evm_version.evmodin_cfg();
+                    let revision = opts.evm_version.evmodin_cfg();
 
                     // TODO: Replace this with a proper host. We'll want this to also be
                     // provided generically when we add the Forking host(s).
                     let host = env.evmodin_state();
 
                     let evm = EvmOdin::new(host, env.gas_limit, revision, NoopTracer);
-                    test(builder, evm, pattern, json, verbosity)?;
+                    test(builder, project, evm, pattern, json, verbosity)?;
                 }
             }
         }
-        Subcommands::Build {
-            opts:
-                BuildOpts { contracts, remappings, remappings_env, lib_paths, out_path, evm_version: _ },
-        } => {
-            // build the contracts
-            // if no env var for remappings is provided, try calculating them on the spot
-            let remappings = if remappings_env.is_none() {
-                [remappings, utils::Remapping::find_many_str("lib")?].concat()
+        Subcommands::Build { opts } => {
+            let project = Project::try_from(&opts)?;
+            let output = project.compile()?;
+            if output.is_unchanged() {
+                println!("no files changed, compilation skippped.");
+            } else if output.has_compiler_errors() {
+                // return the diagnostics error back to the user.
+                eyre::bail!(output.to_string())
             } else {
-                remappings
-            };
-            let remappings = utils::merge(remappings, remappings_env);
-            let lib_paths = utils::default_path(lib_paths)?;
-            // TODO: Do we also want to include the file path in the contract map so
-            // that we're more compatible with dapptools' artifact?
-            let contracts = SolcBuilder::new(&contracts, &remappings, &lib_paths)?.build_all()?;
-
-            let out_file = utils::open_file(out_path)?;
-
-            // dump as json
-            serde_json::to_writer(out_file, &contracts)?;
+                println!("success.");
+            }
         }
         Subcommands::VerifyContract { contract, address, constructor_args } => {
             let FullContractInfo { path, name } = contract;
@@ -246,23 +225,32 @@ fn main() -> eyre::Result<()> {
                 Ok(())
             })?
         }
-        Subcommands::Remappings => {
-            let remappings = Remapping::find_many("lib")?;
-            remappings.iter().for_each(|mapping| println!("{}={}", mapping.name, mapping.path))
+        Subcommands::Remappings { lib_paths, root } => {
+            let root = root.unwrap_or_else(|| std::env::current_dir().unwrap());
+            let root = std::fs::canonicalize(root)?;
+
+            let lib_paths = if lib_paths.is_empty() { vec![root.join("lib")] } else { lib_paths };
+            let remappings: Vec<_> = lib_paths
+                .iter()
+                .map(|path| Remapping::find_many(&path).unwrap())
+                .flatten()
+                .collect();
+            remappings.iter().for_each(|x| println!("{}", x));
         }
     }
 
     Ok(())
 }
 
-fn test<S: Clone, E: evm_adapters::Evm<S>>(
+fn test<A: ArtifactOutput + 'static, S: Clone, E: evm_adapters::Evm<S>>(
     builder: MultiContractRunnerBuilder,
+    project: Project<A>,
     evm: E,
     pattern: Regex,
     json: bool,
     verbosity: u8,
 ) -> eyre::Result<HashMap<String, HashMap<String, dapp::TestResult>>> {
-    let mut runner = builder.build(evm)?;
+    let mut runner = builder.build(project, evm)?;
 
     let results = runner.test(pattern)?;
 

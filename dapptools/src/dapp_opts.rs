@@ -1,6 +1,9 @@
 use structopt::StructOpt;
 
-use ethers::types::{Address, U256};
+use ethers::{
+    solc::{remappings::Remapping, Project, ProjectPathsConfig},
+    types::{Address, U256},
+};
 use std::{path::PathBuf, str::FromStr};
 
 #[derive(Debug, StructOpt)]
@@ -39,9 +42,6 @@ pub enum Subcommands {
             default_value = "sputnik"
         )]
         evm_type: EvmType,
-
-        #[structopt(help = "skip re-compilation", long, short)]
-        no_compile: bool,
 
         #[structopt(
             help = "fetch state over a remote instead of starting from empty state",
@@ -94,7 +94,12 @@ pub enum Subcommands {
         dependencies: Vec<Dependency>,
     },
     #[structopt(about = "prints the automatically inferred remappings for this repository")]
-    Remappings,
+    Remappings {
+        #[structopt(help = "the project's root path, default being the current directory", long)]
+        root: Option<PathBuf>,
+        #[structopt(help = "the paths where your libraries are installed", long)]
+        lib_paths: Vec<PathBuf>,
+    },
     #[structopt(about = "build your smart contracts. Requires `ETHERSCAN_API_KEY` to be set.")]
     VerifyContract {
         #[structopt(help = "contract source info `<path>:<contractname>`")]
@@ -154,31 +159,90 @@ impl FromStr for FullContractInfo {
     }
 }
 
+impl std::convert::TryFrom<&BuildOpts> for Project {
+    type Error = eyre::Error;
+
+    /// Defaults to converting to DAppTools-style repo layout, but can be customized.
+    fn try_from(opts: &BuildOpts) -> eyre::Result<Project> {
+        // 1. Set the root dir
+        let root = opts.root.clone().unwrap_or_else(|| std::env::current_dir().unwrap());
+        let root = std::fs::canonicalize(root)?;
+
+        // 2. Set the contracts dir
+        let contracts = if let Some(ref contracts) = opts.contracts {
+            root.join(contracts)
+        } else {
+            root.join("src")
+        };
+
+        // 3. Set the output dir
+        let artifacts = if let Some(ref artifacts) = opts.out_path {
+            root.join(artifacts)
+        } else {
+            root.join("out")
+        };
+
+        // 4. Set where the libraries are going to be read from
+        // default to the lib path being the `lib/` dir
+        let lib_paths =
+            if opts.lib_paths.is_empty() { vec![root.join("lib")] } else { opts.lib_paths.clone() };
+
+        // get all the remappings corresponding to the lib paths
+        let mut remappings: Vec<_> =
+            lib_paths.iter().map(|path| Remapping::find_many(&path).unwrap()).flatten().collect();
+        // extend them with the once manually provided in the opts
+        remappings.extend_from_slice(&opts.remappings);
+        // extend them with the one via the env vars
+        if let Some(ref env) = opts.remappings_env {
+            let remappings_env = env.split('\n').map(|x| {
+                Remapping::from_str(x)
+                    .unwrap_or_else(|_| panic!("could not parse remapping: {}", x))
+            });
+            remappings.extend(remappings_env);
+        }
+        // remove any potential duplicates
+        remappings.sort_unstable();
+        remappings.dedup();
+
+        // build the path
+        let mut paths_builder =
+            ProjectPathsConfig::builder().root(&root).sources(contracts).artifacts(artifacts);
+
+        if !remappings.is_empty() {
+            paths_builder = paths_builder.remappings(remappings);
+        }
+
+        let paths = paths_builder.build()?;
+
+        // build the project w/ allowed paths = root and all the libs
+        let project = Project::builder().paths(paths).allowed_path(root).build()?;
+
+        Ok(project)
+    }
+}
+
 #[derive(Debug, StructOpt)]
 pub struct BuildOpts {
+    #[structopt(help = "the project's root path, default being the current directory", long)]
+    pub root: Option<PathBuf>,
+
     #[structopt(
-        help = "glob path to your smart contracts",
+        help = "the directory relative to the root under which the smart contrats are",
         long,
-        short,
-        default_value = "./src/**/*.sol"
+        short
     )]
-    pub contracts: String,
+    pub contracts: Option<PathBuf>,
 
     #[structopt(help = "the remappings", long, short)]
-    pub remappings: Vec<String>,
+    pub remappings: Vec<ethers::solc::remappings::Remapping>,
     #[structopt(env = "DAPP_REMAPPINGS")]
     pub remappings_env: Option<String>,
 
     #[structopt(help = "the paths where your libraries are installed", long)]
-    pub lib_paths: Vec<String>,
+    pub lib_paths: Vec<PathBuf>,
 
-    #[structopt(
-        help = "path to where the contract artifacts are stored",
-        long = "out",
-        short,
-        default_value = crate::utils::DAPP_JSON
-    )]
-    pub out_path: PathBuf,
+    #[structopt(help = "path to where the contract artifacts are stored", long = "out", short)]
+    pub out_path: Option<PathBuf>,
 
     #[structopt(help = "choose the evm version", long, default_value = "berlin")]
     pub evm_version: EvmVersion,

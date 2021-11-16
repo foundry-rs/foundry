@@ -1,7 +1,3 @@
-mod artifacts;
-pub use artifacts::DapptoolsArtifact;
-pub use ethers::core::utils::{solc::Contract, CompiledContract};
-
 mod runner;
 pub use runner::{ContractRunner, TestResult};
 
@@ -17,12 +13,17 @@ pub fn decode_revert(error: &[u8]) -> Result<String> {
 
 #[cfg(test)]
 pub mod test_helpers {
+    use ethers::{
+        prelude::Lazy,
+        solc::{CompilerOutput, Project, ProjectPathsConfig},
+    };
 
-    use ethers::{prelude::Lazy, utils::CompiledContract};
-    use std::collections::HashMap;
-
-    use dapp_solc::SolcBuilder;
-
-    pub static COMPILED: Lazy<HashMap<String, CompiledContract>> =
-        Lazy::new(|| SolcBuilder::new("./*.sol", &[], &[]).unwrap().build_all().unwrap());
+    pub static COMPILED: Lazy<CompilerOutput> = Lazy::new(|| {
+        // NB: should we add a test-helper function that makes creating these
+        // ephemeral projects easier?
+        let paths =
+            ProjectPathsConfig::builder().root("testdata").sources("testdata").build().unwrap();
+        let project = Project::builder().paths(paths).ephemeral().no_artifacts().build().unwrap();
+        project.compile().unwrap().output()
+    });
 }
