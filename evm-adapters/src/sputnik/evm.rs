@@ -273,11 +273,7 @@ mod tests {
     fn test_can_call_large_contract() {
         let cfg = Config::istanbul();
 
-        use ethers::solc::Solc;
-
-        let path = "./testdata/LargeContract.sol";
-        let compiled = Solc::default().compile_source(path).unwrap();
-        let compiled = compiled.get(path, "LargeContract").unwrap();
+        let compiled = COMPILED.find("LargeContract").expect("could not find contract");
 
         let vicinity = new_vicinity();
         let backend = new_backend(&vicinity, Default::default());
