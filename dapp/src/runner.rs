@@ -1,7 +1,6 @@
 use ethers::{
-    abi::{Function, Token},
+    abi::{Abi, Function, Token},
     types::{Address, Bytes},
-    utils::CompiledContract,
 };
 
 use evm_adapters::{fuzz::FuzzedExecutor, Evm, EvmError};
@@ -53,7 +52,7 @@ pub struct ContractRunner<'a, S, E> {
     /// since we don't use any parallelized fuzzing yet the `test` function has exclusive access of
     /// the mutable reference over time of its existence.
     pub evm: &'a mut E,
-    pub contract: &'a CompiledContract,
+    pub contract: &'a Abi,
     pub address: Address,
     /// Any logs emitted in the constructor of the specific contract
     pub init_logs: &'a [String],
@@ -64,7 +63,7 @@ pub struct ContractRunner<'a, S, E> {
 impl<'a, S, E> ContractRunner<'a, S, E> {
     pub fn new(
         evm: &'a mut E,
-        contract: &'a CompiledContract,
+        contract: &'a Abi,
         address: Address,
         init_logs: &'a [String],
     ) -> Self {
@@ -81,10 +80,9 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
     ) -> Result<HashMap<String, TestResult>> {
         tracing::info!("starting tests");
         let start = Instant::now();
-        let needs_setup = self.contract.abi.functions().any(|func| func.name == "setUp");
+        let needs_setup = self.contract.functions().any(|func| func.name == "setUp");
         let test_fns = self
             .contract
-            .abi
             .functions()
             .into_iter()
             .filter(|func| func.name.starts_with("test"))
@@ -227,6 +225,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
 mod tests {
     use super::*;
     use crate::test_helpers::COMPILED;
+    use ethers::solc::artifacts::CompactContractRef;
     use evm::Config;
     use std::marker::PhantomData;
 
@@ -245,7 +244,7 @@ mod tests {
         #[test]
         fn test_runner() {
             let cfg = Config::istanbul();
-            let compiled = COMPILED.get("GreeterTest").expect("could not find contract");
+            let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
             let vicinity = new_vicinity();
             let backend = new_backend(&vicinity, Default::default());
             let evm = Executor::new(12_000_000, &cfg, &backend);
@@ -255,17 +254,17 @@ mod tests {
         #[test]
         fn test_fuzzing_counterexamples() {
             let cfg = Config::istanbul();
-            let compiled = COMPILED.get("GreeterTest").expect("could not find contract");
+            let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
             let vicinity = new_vicinity();
             let backend = new_backend(&vicinity, Default::default());
 
             let mut evm = Executor::new(12_000_000, &cfg, &backend);
             let (addr, _, _, _) =
-                evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
+                evm.deploy(Address::zero(), compiled.bin.unwrap().clone(), 0.into()).unwrap();
 
             let mut runner = ContractRunner {
                 evm: &mut evm,
-                contract: compiled,
+                contract: compiled.abi.as_ref().unwrap(),
                 address: addr,
                 state: PhantomData,
                 init_logs: &[],
@@ -286,17 +285,17 @@ mod tests {
         #[test]
         fn test_fuzzing_ok() {
             let cfg = Config::istanbul();
-            let compiled = COMPILED.get("GreeterTest").expect("could not find contract");
+            let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
             let vicinity = new_vicinity();
             let backend = new_backend(&vicinity, Default::default());
 
             let mut evm = Executor::new(u64::MAX, &cfg, &backend);
             let (addr, _, _, _) =
-                evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
+                evm.deploy(Address::zero(), compiled.bin.unwrap().clone(), 0.into()).unwrap();
 
             let mut runner = ContractRunner {
                 evm: &mut evm,
-                contract: compiled,
+                contract: compiled.abi.as_ref().unwrap(),
                 address: addr,
                 state: PhantomData,
                 init_logs: &[],
@@ -314,17 +313,17 @@ mod tests {
         #[test]
         fn test_fuzz_shrinking() {
             let cfg = Config::istanbul();
-            let compiled = COMPILED.get("GreeterTest").expect("could not find contract");
+            let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
             let vicinity = new_vicinity();
             let backend = new_backend(&vicinity, Default::default());
 
             let mut evm = Executor::new(12_000_000, &cfg, &backend);
             let (addr, _, _, _) =
-                evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
+                evm.deploy(Address::zero(), compiled.bin.unwrap().clone(), 0.into()).unwrap();
 
             let mut runner = ContractRunner {
                 evm: &mut evm,
-                contract: compiled,
+                contract: compiled.abi.as_ref().unwrap(),
                 address: addr,
                 state: PhantomData,
                 init_logs: &[],
@@ -371,7 +370,7 @@ mod tests {
         #[ignore]
         fn test_runner() {
             let revision = Revision::Istanbul;
-            let compiled = COMPILED.get("GreeterTest").expect("could not find contract");
+            let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
 
             let host = MockedHost::default();
 
@@ -381,13 +380,13 @@ mod tests {
         }
     }
 
-    pub fn test_runner<S: Clone, E: Evm<S>>(mut evm: E, compiled: &CompiledContract) {
+    pub fn test_runner<S: Clone, E: Evm<S>>(mut evm: E, compiled: CompactContractRef) {
         let (addr, _, _, _) =
-            evm.deploy(Address::zero(), compiled.bytecode.clone(), 0.into()).unwrap();
+            evm.deploy(Address::zero(), compiled.bin.unwrap().clone(), 0.into()).unwrap();
 
         let mut runner = ContractRunner {
             evm: &mut evm,
-            contract: compiled,
+            contract: compiled.abi.as_ref().unwrap(),
             address: addr,
             state: PhantomData,
             init_logs: &[],
