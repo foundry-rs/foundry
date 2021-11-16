@@ -45,7 +45,7 @@ pub async fn run(
     let metadata = contract.metadata.wrap_err("No compiler version found")?;
     let compiler_version = format!("v{}", metadata.compiler.version);
     let mut constructor_args = None;
-    if let Some(constructor) = contract.abi.constructor {
+    if let Some(constructor) = contract.abi.unwrap().constructor {
         // convert constructor into function
         #[allow(deprecated)]
         let fun = Function {
@@ -77,8 +77,8 @@ pub async fn run(
 
     let contract = VerifyContract::new(address, source, compiler_version)
         .constructor_arguments(constructor_args)
-        .optimization(metadata.settings.optimizer.enabled)
-        .runs(metadata.settings.optimizer.runs);
+        .optimization(metadata.settings.optimizer.enabled.unwrap_or_default())
+        .runs(metadata.settings.optimizer.runs.unwrap_or_default() as u32);
 
     let resp = etherscan
         .submit_contract_verification(&contract)
