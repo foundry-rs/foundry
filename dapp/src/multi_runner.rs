@@ -221,7 +221,7 @@ mod tests {
         use evm::Config;
         use evm_adapters::sputnik::{
             helpers::{new_backend, new_vicinity},
-            Executor,
+            Executor, PRECOMPILES_MAP,
         };
 
         #[test]
@@ -231,7 +231,9 @@ mod tests {
             let env = new_vicinity();
             let backend = new_backend(&env, Default::default());
             // important to instantiate the VM with cheatcodes
-            let evm = Executor::new_with_cheatcodes(backend, gas_limit, &config, false);
+            let precompiles = PRECOMPILES_MAP.clone();
+            let evm =
+                Executor::new_with_cheatcodes(backend, gas_limit, &config, &precompiles, false);
 
             let mut runner = runner(evm);
             let results = runner.test(Regex::new(".*").unwrap()).unwrap();
@@ -256,7 +258,8 @@ mod tests {
             let gas_limit = 12_500_000;
             let env = new_vicinity();
             let backend = new_backend(&env, Default::default());
-            let evm = Executor::new(gas_limit, &config, &backend);
+            let precompiles = PRECOMPILES_MAP.clone();
+            let evm = Executor::new(gas_limit, &config, &backend, &precompiles);
             test_multi_runner(evm);
         }
     }

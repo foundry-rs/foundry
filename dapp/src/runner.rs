@@ -239,7 +239,7 @@ mod tests {
     use crate::test_helpers::COMPILED;
     use ethers::solc::artifacts::CompactContractRef;
     use evm::Config;
-    use std::marker::PhantomData;
+    use evm_adapters::sputnik::PRECOMPILES_MAP;
 
     mod sputnik {
         use std::str::FromStr;
@@ -259,7 +259,8 @@ mod tests {
             let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
             let vicinity = new_vicinity();
             let backend = new_backend(&vicinity, Default::default());
-            let evm = Executor::new(12_000_000, &cfg, &backend);
+            let precompiles = PRECOMPILES_MAP.clone();
+            let evm = Executor::new(12_000_000, &cfg, &backend, &precompiles);
             super::test_runner(evm, compiled);
         }
 
@@ -270,7 +271,8 @@ mod tests {
             let vicinity = new_vicinity();
             let backend = new_backend(&vicinity, Default::default());
 
-            let mut evm = Executor::new(12_000_000, &cfg, &backend);
+            let precompiles = PRECOMPILES_MAP.clone();
+            let mut evm = Executor::new(12_000_000, &cfg, &backend, &precompiles);
             let (addr, _, _, _) =
                 evm.deploy(Address::zero(), compiled.bin.unwrap().clone(), 0.into()).unwrap();
 
@@ -296,7 +298,8 @@ mod tests {
             let vicinity = new_vicinity();
             let backend = new_backend(&vicinity, Default::default());
 
-            let mut evm = Executor::new(u64::MAX, &cfg, &backend);
+            let precompiles = PRECOMPILES_MAP.clone();
+            let mut evm = Executor::new(u64::MAX, &cfg, &backend, &precompiles);
             let (addr, _, _, _) =
                 evm.deploy(Address::zero(), compiled.bin.unwrap().clone(), 0.into()).unwrap();
 
@@ -319,7 +322,8 @@ mod tests {
             let vicinity = new_vicinity();
             let backend = new_backend(&vicinity, Default::default());
 
-            let mut evm = Executor::new(12_000_000, &cfg, &backend);
+            let precompiles = PRECOMPILES_MAP.clone();
+            let mut evm = Executor::new(12_000_000, &cfg, &backend, &precompiles);
             let (addr, _, _, _) =
                 evm.deploy(Address::zero(), compiled.bin.unwrap().clone(), 0.into()).unwrap();
 
