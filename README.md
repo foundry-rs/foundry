@@ -72,10 +72,9 @@ Benchmarks TBD in the future, but:
 - seth
   - [ ] `--abi-decode`
   - [ ] `--calldata-decode`
-  - [x] `--from-ascii`
+  - [x] `--from-ascii` (with `--from-utf8` alias)
   - [ ] `--from-bin`
   - [ ] `--from-fix`
-  - [x] `--from-utf8`
   - [ ] `--from-wei`
   - [ ] `--max-int`
   - [ ] `--max-uint`
@@ -86,6 +85,7 @@ Benchmarks TBD in the future, but:
   - [x] `--to-dec`
   - [x] `--to-fix`
   - [x] `--to-hex`
+  - [x] `--to-hexdata`
   - [ ] `--to-int256`
   - [x] `--to-uint256`
   - [x] `--to-wei`
@@ -100,27 +100,26 @@ Benchmarks TBD in the future, but:
   - [x] `block-number`
   - [ ] `bundle-source`
   - [x] `call` (partial)
-  - [ ] `calldata`
-  - [ ] `chain`
+  - [x] `calldata`
+  - [x] `chain`
   - [x] `chain-id`
   - [ ] `code`
   - [ ] `debug`
-  - [x] `ens`
   - [ ] `estimate`
   - [ ] `etherscan-source`
   - [ ] `events`
   - [x] `gas-price`
   - [ ] `index`
-  - [ ] `keccak`
+  - [x] `keccak`
   - [ ] `logs`
-  - [ ] `lookup-address`
+  - [x] `lookup-address`
   - [ ] `ls`
   - [ ] `mktx`
-  - [ ] `namehash`
+  - [x] `namehash`
   - [ ] `nonce`
   - [ ] `publish`
   - [ ] `receipt`
-  - [ ] `resolve-name`
+  - [x] `resolve-name`
   - [ ] `run-tx`
   - [x] `send` (partial)
   - [ ] `sign`
