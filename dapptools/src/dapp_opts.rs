@@ -248,7 +248,7 @@ pub struct BuildOpts {
     #[structopt(help = "path to where the contract artifacts are stored", long = "out", short)]
     pub out_path: Option<PathBuf>,
 
-    #[structopt(help = "choose the evm version", long, default_value = "berlin")]
+    #[structopt(help = "choose the evm version", long, default_value = "london")]
     pub evm_version: EvmVersion,
 }
 #[derive(Clone, Debug)]
@@ -295,7 +295,7 @@ impl EvmVersion {
             Frontier => Config::frontier(),
             Istanbul => Config::istanbul(),
             Berlin => Config::berlin(),
-            other => panic!("The {:?} hard fork is unsupported on Sputnik", other),
+            London => Config::london(),
         }
     }
 
