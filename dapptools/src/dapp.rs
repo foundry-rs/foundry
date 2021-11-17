@@ -252,6 +252,8 @@ fn test<A: ArtifactOutput + 'static, S: Clone, E: evm_adapters::Evm<S>>(
 ) -> eyre::Result<HashMap<String, HashMap<String, dapp::TestResult>>> {
     let mut runner = builder.build(project, evm)?;
 
+    let mut exit_code = 0;
+
     let results = runner.test(pattern)?;
 
     if json {
@@ -272,6 +274,8 @@ fn test<A: ArtifactOutput + 'static, S: Clone, E: evm_adapters::Evm<S>>(
                 let status = if result.success {
                     Colour::Green.paint("[PASS]")
                 } else {
+                    // if an error is found, return a -1 exit code
+                    exit_code = -1;
                     let txt = if let Some(ref reason) = result.reason {
                         format!("[FAIL: {}]", reason)
                     } else {
@@ -308,5 +312,5 @@ fn test<A: ArtifactOutput + 'static, S: Clone, E: evm_adapters::Evm<S>>(
         }
     }
 
-    Ok(results)
+    std::process::exit(exit_code);
 }
