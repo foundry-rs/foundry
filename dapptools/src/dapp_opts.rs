@@ -53,6 +53,7 @@ pub enum Subcommands {
         fork_url: Option<String>,
 
         #[structopt(help = "pins the block number for the state fork", long)]
+        #[structopt(env = "DAPP_FORK_BLOCK")]
         fork_block_number: Option<u64>,
 
         #[structopt(
