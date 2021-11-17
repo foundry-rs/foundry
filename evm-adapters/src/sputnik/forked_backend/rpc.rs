@@ -108,6 +108,10 @@ where
         self.pin_block_meta.gas_limit
     }
 
+    fn block_base_fee_per_gas(&self) -> U256 {
+        self.pin_block_meta.base_fee_per_gas.unwrap_or_default()
+    }
+
     fn chain_id(&self) -> U256 {
         self.chain_id
     }
@@ -202,7 +206,7 @@ mod tests {
     use tokio::runtime::Runtime;
 
     use crate::{
-        sputnik::{helpers::new_backend, vicinity, Executor},
+        sputnik::{helpers::new_backend, vicinity, Executor, PRECOMPILES_MAP},
         test_helpers::COMPILED,
         Evm,
     };
@@ -224,7 +228,8 @@ mod tests {
         let backend = new_backend(&vicinity, Default::default());
         let backend = ForkMemoryBackend::new(provider, backend, blk, Default::default());
 
-        let mut evm = Executor::new(12_000_000, &cfg, &backend);
+        let precompiles = PRECOMPILES_MAP.clone();
+        let mut evm = Executor::new(12_000_000, &cfg, &backend, &precompiles);
 
         let (addr, _, _, _) =
             evm.deploy(Address::zero(), compiled.bin.unwrap().clone(), 0.into()).unwrap();

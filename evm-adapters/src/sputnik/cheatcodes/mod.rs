@@ -16,6 +16,7 @@ use sputnik::backend::{Backend, MemoryAccount, MemoryBackend};
 pub struct Cheatcodes {
     pub block_number: Option<U256>,
     pub block_timestamp: Option<U256>,
+    pub block_base_fee_per_gas: Option<U256>,
     pub accounts: HashMap<Address, MemoryAccount>,
 }
 

@@ -2,7 +2,7 @@ use ethers::abi::ethereum_types::{H160, H256, U256};
 use parking_lot::RwLock;
 use sputnik::{
     backend::{Apply, Backend, Basic, Log},
-    executor::{MemoryStackSubstate, StackState, StackSubstateMetadata},
+    executor::stack::{MemoryStackSubstate, StackState, StackSubstateMetadata},
     ExitError, Transfer,
 };
 use std::{fmt::Debug, ops::Deref, sync::Arc};
@@ -94,6 +94,9 @@ where
     }
     fn block_gas_limit(&self) -> U256 {
         self.shared_state.read().block_gas_limit()
+    }
+    fn block_base_fee_per_gas(&self) -> U256 {
+        self.shared_state.read().block_base_fee_per_gas()
     }
     fn chain_id(&self) -> U256 {
         self.shared_state.read().chain_id()
@@ -229,7 +232,7 @@ mod tests {
     use once_cell::sync::Lazy;
     use sputnik::{
         backend::{MemoryBackend, MemoryVicinity},
-        executor::MemoryStackState,
+        executor::stack::MemoryStackState,
         Config,
     };
     use std::convert::TryFrom;

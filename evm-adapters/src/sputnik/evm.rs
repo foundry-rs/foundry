@@ -4,7 +4,9 @@ use ethers::types::{Address, Bytes, U256};
 
 use sputnik::{
     backend::{Backend, MemoryAccount},
-    executor::{MemoryStackState, StackExecutor, StackState, StackSubstateMetadata},
+    executor::stack::{
+        MemoryStackState, PrecompileSet, StackExecutor, StackState, StackSubstateMetadata,
+    },
     Config, CreateScheme, ExitReason, ExitRevert, Transfer,
 };
 use std::{collections::BTreeMap, marker::PhantomData};
@@ -30,18 +32,18 @@ impl<S, E> Executor<S, E> {
 }
 
 // Concrete implementation over the in-memory backend without cheatcodes
-impl<'a, B: Backend>
-    Executor<MemoryStackState<'a, 'a, B>, StackExecutor<'a, MemoryStackState<'a, 'a, B>>>
+impl<'a, 'b, B: Backend, P: PrecompileSet>
+    Executor<MemoryStackState<'a, 'a, B>, StackExecutor<'a, 'b, MemoryStackState<'a, 'a, B>, P>>
 {
     /// Given a gas limit, vm version, initial chain configuration and initial state
     // TOOD: See if we can make lifetimes better here
-    pub fn new(gas_limit: u64, config: &'a Config, backend: &'a B) -> Self {
+    pub fn new(gas_limit: u64, config: &'a Config, backend: &'a B, precompiles: &'b P) -> Self {
         // setup gasometer
         let metadata = StackSubstateMetadata::new(gas_limit, config);
         // setup state
         let state = MemoryStackState::new(metadata, backend);
         // setup executor
-        let executor = StackExecutor::new_with_precompile(state, config, Default::default());
+        let executor = StackExecutor::new_with_precompiles(state, config, precompiles);
 
         Self { executor, gas_limit, marker: PhantomData }
     }
@@ -177,6 +179,7 @@ pub mod helpers {
             block_timestamp: Default::default(),
             block_difficulty: Default::default(),
             block_gas_limit: Default::default(),
+            block_base_fee_per_gas: Default::default(),
             chain_id: U256::one(),
         }
     }
@@ -190,6 +193,7 @@ mod tests {
     };
     use crate::test_helpers::{can_call_vm_directly, solidity_unit_test, COMPILED};
 
+    use crate::sputnik::PRECOMPILES_MAP;
     use ethers::utils::id;
     use sputnik::{ExitReason, ExitRevert, ExitSucceed};
 
@@ -200,7 +204,8 @@ mod tests {
 
         let vicinity = new_vicinity();
         let backend = new_backend(&vicinity, Default::default());
-        let evm = Executor::new(12_000_000, &cfg, &backend);
+        let precompiles = PRECOMPILES_MAP.clone();
+        let evm = Executor::new(12_000_000, &cfg, &backend, &precompiles);
         can_call_vm_directly(evm, compiled);
     }
 
@@ -212,7 +217,8 @@ mod tests {
 
         let vicinity = new_vicinity();
         let backend = new_backend(&vicinity, Default::default());
-        let evm = Executor::new(12_000_000, &cfg, &backend);
+        let precompiles = PRECOMPILES_MAP.clone();
+        let evm = Executor::new(12_000_000, &cfg, &backend, &precompiles);
         solidity_unit_test(evm, compiled);
     }
 
@@ -224,7 +230,8 @@ mod tests {
 
         let vicinity = new_vicinity();
         let backend = new_backend(&vicinity, Default::default());
-        let mut evm = Executor::new(12_000_000, &cfg, &backend);
+        let precompiles = PRECOMPILES_MAP.clone();
+        let mut evm = Executor::new(12_000_000, &cfg, &backend, &precompiles);
 
         let (addr, _, _, _) =
             evm.deploy(Address::zero(), compiled.bin.unwrap().clone(), 0.into()).unwrap();
@@ -249,7 +256,8 @@ mod tests {
 
         let vicinity = new_vicinity();
         let backend = new_backend(&vicinity, Default::default());
-        let mut evm = Executor::new(12_000_000, &cfg, &backend);
+        let precompiles = PRECOMPILES_MAP.clone();
+        let mut evm = Executor::new(12_000_000, &cfg, &backend, &precompiles);
 
         let (addr, _, _, _) =
             evm.deploy(Address::zero(), compiled.bin.clone().unwrap().clone(), 0.into()).unwrap();
@@ -277,7 +285,8 @@ mod tests {
 
         let vicinity = new_vicinity();
         let backend = new_backend(&vicinity, Default::default());
-        let mut evm = Executor::new(13_000_000, &cfg, &backend);
+        let precompiles = PRECOMPILES_MAP.clone();
+        let mut evm = Executor::new(13_000_000, &cfg, &backend, &precompiles);
 
         let from = Address::random();
         let (addr, _, _, _) = evm.deploy(from, compiled.bin.unwrap().clone(), 0.into()).unwrap();

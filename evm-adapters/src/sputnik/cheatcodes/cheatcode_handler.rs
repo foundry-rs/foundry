@@ -3,14 +3,15 @@ use super::{
     HevmConsoleEvents,
 };
 use crate::{
-    sputnik::{Executor, SputnikExecutor, PRECOMPILES_MAP},
+    sputnik::{Executor, SputnikExecutor},
     Evm,
 };
 
 use sputnik::{
     backend::Backend,
-    executor::{
-        Log, PrecompileOutput, StackExecutor, StackExitKind, StackState, StackSubstateMetadata,
+    executor::stack::{
+        Log, PrecompileFailure, PrecompileOutput, PrecompileSet, StackExecutor, StackExitKind,
+        StackState, StackSubstateMetadata,
     },
     gasometer, Capture, Config, Context, CreateScheme, ExitError, ExitReason, ExitRevert,
     ExitSucceed, Handler, Runtime, Transfer,
@@ -45,7 +46,9 @@ pub struct CheatcodeHandler<H> {
 
 // Forwards everything internally except for the transact_call which is overwritten.
 // TODO: Maybe we can pull this functionality up to the `Evm` trait to avoid having so many traits?
-impl<'a, B: Backend> SputnikExecutor<CheatcodeStackState<'a, B>> for CheatcodeStackExecutor<'a, B> {
+impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'a, B>>
+    for CheatcodeStackExecutor<'a, 'b, B, P>
+{
     fn config(&self) -> &Config {
         self.handler.config()
     }
@@ -79,15 +82,9 @@ impl<'a, B: Backend> SputnikExecutor<CheatcodeStackState<'a, B>> for CheatcodeSt
         }
 
         // Initialize initial addresses for EIP-2929
+        // Initialize initial addresses for EIP-2929
         if self.config().increase_state_access_gas {
-            let addresses = self
-                .handler
-                .precompile()
-                .clone()
-                .into_keys()
-                .into_iter()
-                .chain(core::iter::once(caller))
-                .chain(core::iter::once(address));
+            let addresses = core::iter::once(caller).chain(core::iter::once(address));
             self.state_mut().metadata_mut().access_addresses(addresses);
 
             self.handler.initialize_with_access_list(access_list);
@@ -174,14 +171,17 @@ impl<'a, B: Backend> SputnikExecutor<CheatcodeStackState<'a, B>> for CheatcodeSt
 
 pub type CheatcodeStackState<'a, B> = MemoryStackStateOwned<'a, CheatcodeBackend<B>>;
 
-pub type CheatcodeStackExecutor<'a, B> =
-    CheatcodeHandler<StackExecutor<'a, CheatcodeStackState<'a, B>>>;
+pub type CheatcodeStackExecutor<'a, 'b, B, P> =
+    CheatcodeHandler<StackExecutor<'a, 'b, CheatcodeStackState<'a, B>, P>>;
 
-impl<'a, B: Backend> Executor<CheatcodeStackState<'a, B>, CheatcodeStackExecutor<'a, B>> {
+impl<'a, 'b, B: Backend, P: PrecompileSet>
+    Executor<CheatcodeStackState<'a, B>, CheatcodeStackExecutor<'a, 'b, B, P>>
+{
     pub fn new_with_cheatcodes(
         backend: B,
         gas_limit: u64,
         config: &'a Config,
+        precompiles: &'b P,
         enable_ffi: bool,
     ) -> Self {
         // make this a cheatcode-enabled backend
@@ -193,7 +193,7 @@ impl<'a, B: Backend> Executor<CheatcodeStackState<'a, B>, CheatcodeStackExecutor
         let state = MemoryStackStateOwned::new(metadata, backend);
 
         // create the executor and wrap it with the cheatcode handler
-        let executor = StackExecutor::new_with_precompile(state, config, PRECOMPILES_MAP.clone());
+        let executor = StackExecutor::new_with_precompiles(state, config, precompiles);
         let executor = CheatcodeHandler { handler: executor, enable_ffi };
 
         let mut evm = Executor::from_executor(executor, gas_limit);
@@ -213,7 +213,7 @@ fn evm_error(retdata: &str) -> Capture<(ExitReason, Vec<u8>), Infallible> {
     ))
 }
 
-impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
+impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> {
     /// Decodes the provided calldata as a
     fn apply_cheatcode(&mut self, input: Vec<u8>) -> Capture<(ExitReason, Vec<u8>), Infallible> {
         let mut res = vec![];
@@ -401,8 +401,14 @@ impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
             }
         }
 
-        if let Some(precompile) = self.handler.precompile().get(&code_address) {
-            return match (*precompile)(&input, Some(gas_limit), &context, is_static) {
+        if let Some(result) = self.handler.precompiles().execute(
+            code_address,
+            &input,
+            Some(gas_limit),
+            &context,
+            is_static,
+        ) {
+            return match result {
                 Ok(PrecompileOutput { exit_status, output, cost, logs }) => {
                     for Log { address, topics, data } in logs {
                         match self.log(address, topics, data) {
@@ -416,8 +422,15 @@ impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
                     Capture::Exit((ExitReason::Succeed(exit_status), output))
                 }
                 Err(e) => {
+                    let e = match e {
+                        PrecompileFailure::Error { exit_status } => ExitReason::Error(exit_status),
+                        PrecompileFailure::Revert { exit_status, .. } => {
+                            ExitReason::Revert(exit_status)
+                        }
+                        PrecompileFailure::Fatal { exit_status } => ExitReason::Fatal(exit_status),
+                    };
                     let _ = self.handler.exit_substate(StackExitKind::Failed);
-                    Capture::Exit((ExitReason::Error(e), Vec::new()))
+                    Capture::Exit((e, Vec::new()))
                 }
             }
         }
@@ -454,7 +467,7 @@ impl<'a, B: Backend> CheatcodeStackExecutor<'a, B> {
 
 // Delegates everything internally, except the `call_inner` call, which is hooked
 // so that we can modify
-impl<'a, B: Backend> Handler for CheatcodeStackExecutor<'a, B> {
+impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a, 'b, B, P> {
     type CreateInterrupt = Infallible;
     type CreateFeedback = Infallible;
     type CallInterrupt = Infallible;
@@ -543,6 +556,10 @@ impl<'a, B: Backend> Handler for CheatcodeStackExecutor<'a, B> {
         self.handler.block_gas_limit()
     }
 
+    fn block_base_fee_per_gas(&self) -> U256 {
+        self.handler.block_base_fee_per_gas()
+    }
+
     fn chain_id(&self) -> U256 {
         self.handler.chain_id()
     }
@@ -600,7 +617,7 @@ mod tests {
         fuzz::FuzzedExecutor,
         sputnik::{
             helpers::{new_backend, new_vicinity},
-            Executor,
+            Executor, PRECOMPILES_MAP,
         },
         test_helpers::COMPILED,
         Evm,
@@ -614,7 +631,9 @@ mod tests {
         let vicinity = new_vicinity();
         let backend = new_backend(&vicinity, Default::default());
         let gas_limit = 10_000_000;
-        let mut evm = Executor::new_with_cheatcodes(backend, gas_limit, &config, true);
+        let precompiles = PRECOMPILES_MAP.clone();
+        let mut evm =
+            Executor::new_with_cheatcodes(backend, gas_limit, &config, &precompiles, true);
 
         let compiled = COMPILED.find("DebugLogs").expect("could not find contract");
         let (addr, _, _, _) =
@@ -653,7 +672,9 @@ mod tests {
         let vicinity = new_vicinity();
         let backend = new_backend(&vicinity, Default::default());
         let gas_limit = 10_000_000;
-        let mut evm = Executor::new_with_cheatcodes(backend, gas_limit, &config, true);
+        let precompiles = PRECOMPILES_MAP.clone();
+        let mut evm =
+            Executor::new_with_cheatcodes(backend, gas_limit, &config, &precompiles, true);
 
         let compiled = COMPILED.find("CheatCodes").expect("could not find contract");
         let (addr, _, _, _) =
@@ -697,7 +718,9 @@ mod tests {
         let vicinity = new_vicinity();
         let backend = new_backend(&vicinity, Default::default());
         let gas_limit = 10_000_000;
-        let mut evm = Executor::new_with_cheatcodes(backend, gas_limit, &config, false);
+        let precompiles = PRECOMPILES_MAP.clone();
+        let mut evm =
+            Executor::new_with_cheatcodes(backend, gas_limit, &config, &precompiles, false);
 
         let compiled = COMPILED.find("CheatCodes").expect("could not find contract");
         let (addr, _, _, _) =
