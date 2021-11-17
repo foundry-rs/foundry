@@ -232,6 +232,7 @@ pub struct BuildOpts {
         long,
         short
     )]
+    #[structopt(env = "DAPP_SRC")]
     pub contracts: Option<PathBuf>,
 
     #[structopt(help = "the remappings", long, short)]
