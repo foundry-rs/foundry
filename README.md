@@ -70,27 +70,62 @@ Benchmarks TBD in the future, but:
 ## Features
 
 - seth
-  - [x] `--from-ascii` / `--from-utf8`
-  - [x] `--to-hex`
-  - [x] `--to-checksum-address`
+  - [ ] `--abi-decode`
+  - [ ] `--calldata-decode`
+  - [x] `--from-ascii`
+  - [ ] `--from-bin`
+  - [ ] `--from-fix`
+  - [x] `--from-utf8`
+  - [ ] `--from-wei`
+  - [ ] `--max-int`
+  - [ ] `--max-uint`
+  - [ ] `--min-int`
+  - [x] `--to-checksum-address` (`--to-address` in dapptools)
   - [x] `--to-ascii`
   - [x] `--to-bytes32`
   - [x] `--to-dec`
   - [x] `--to-fix`
+  - [x] `--to-hex`
+  - [ ] `--to-int256`
   - [x] `--to-uint256`
   - [x] `--to-wei`
+  - [ ] `4byte`
+  - [ ] `4byte-decode`
+  - [ ] `4byte-event`
+  - [ ] `abi-encode`
+  - [x] `age`
+  - [x] `balance`
+  - [x] `basefee`
   - [x] `block`
   - [x] `block-number`
-  - [x] `chain-id`
-  - [x] `age`
-  - [x] `basefee`
-  - [x] `gas-price`
+  - [ ] `bundle-source`
   - [x] `call` (partial)
-  - [x] `send` (partial)
-  - [x] `balance`
+  - [ ] `calldata`
+  - [ ] `chain`
+  - [x] `chain-id`
+  - [ ] `code`
+  - [ ] `debug`
   - [x] `ens`
-  - abi encoding
-  - 4byte resolution
+  - [ ] `estimate`
+  - [ ] `etherscan-source`
+  - [ ] `events`
+  - [x] `gas-price`
+  - [ ] `index`
+  - [ ] `keccak`
+  - [ ] `logs`
+  - [ ] `lookup-address`
+  - [ ] `ls`
+  - [ ] `mktx`
+  - [ ] `namehash`
+  - [ ] `nonce`
+  - [ ] `publish`
+  - [ ] `receipt`
+  - [ ] `resolve-name`
+  - [ ] `run-tx`
+  - [x] `send` (partial)
+  - [ ] `sign`
+  - [ ] `storage`
+  - [ ] `tx`
 - dapp
   - [ ] test
     - [x] Simple unit tests
