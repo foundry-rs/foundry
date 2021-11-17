@@ -146,7 +146,6 @@ fn main() -> eyre::Result<()> {
 
             // if a lib is specified, open it
             if let Some(lib) = lib {
-                println!("FOUND");
                 println!("Updating submodule {:?}", lib);
                 repo.find_submodule(
                     &lib.into_os_string().into_string().expect("invalid submodule path"),
@@ -155,7 +154,8 @@ fn main() -> eyre::Result<()> {
             } else {
                 std::process::Command::new("git")
                     .args(&["submodule", "update", "--init", "--recursive"])
-                    .spawn()?;
+                    .spawn()?
+                    .wait()?;
             }
         }
         // TODO: Make it work with updates?
@@ -192,7 +192,8 @@ fn main() -> eyre::Result<()> {
 
                 std::process::Command::new("git")
                     .args(&["submodule", "update", "--init", "--recursive"])
-                    .spawn()?;
+                    .spawn()?
+                    .wait()?;
 
                 // commit the submodule's installation
                 let sig = repo.signature()?;
