@@ -121,11 +121,11 @@ fn main() -> eyre::Result<()> {
         Subcommands::Build { opts } => {
             let project = Project::try_from(&opts)?;
             let output = project.compile()?;
-            if output.is_unchanged() {
-                println!("no files changed, compilation skippped.");
-            } else if output.has_compiler_errors() {
+            if output.has_compiler_errors() {
                 // return the diagnostics error back to the user.
                 eyre::bail!(output.to_string())
+            } else if output.is_unchanged() {
+                println!("no files changed, compilation skippped.");
             } else {
                 println!("success.");
             }

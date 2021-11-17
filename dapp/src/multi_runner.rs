@@ -43,11 +43,12 @@ impl MultiContractRunnerBuilder {
         E: Evm<S>,
     {
         let output = project.compile()?;
-        if output.is_unchanged() {
-            println!("no files changed, compilation skippped.");
-        } else if output.has_compiler_errors() {
+        dbg!(&output.has_compiler_errors(), &output.is_unchanged());
+        if output.has_compiler_errors() {
             // return the diagnostics error back to the user.
             eyre::bail!(output.to_string())
+        } else if output.is_unchanged() {
+            println!("no files changed, compilation skippped.");
         } else {
             println!("success.");
         }
