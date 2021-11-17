@@ -43,7 +43,6 @@ impl MultiContractRunnerBuilder {
         E: Evm<S>,
     {
         let output = project.compile()?;
-        dbg!(&output.has_compiler_errors(), &output.is_unchanged());
         if output.has_compiler_errors() {
             // return the diagnostics error back to the user.
             eyre::bail!(output.to_string())
