@@ -1,4 +1,5 @@
 use ethers::{
+    prelude::BlockNumber,
     providers::Middleware,
     types::{Address, Block, BlockId, Bytes, TxHash, H256, U256, U64},
 };
@@ -30,7 +31,11 @@ where
         self.runtime.block_on(f)
     }
 
-    pub fn block_and_chainid(&self, block_id: BlockId) -> eyre::Result<(Block<TxHash>, U256)> {
+    pub fn block_and_chainid(
+        &self,
+        block_id: Option<impl Into<BlockId>>,
+    ) -> eyre::Result<(Block<TxHash>, U256)> {
+        let block_id = block_id.map(Into::into).unwrap_or(BlockId::Number(BlockNumber::Latest));
         let f = async {
             let block = self.provider.get_block(block_id);
             let chain_id = self.provider.get_chainid();
