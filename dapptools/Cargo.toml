@@ -27,7 +27,7 @@ tracing = "0.1.26"
 
 ## EVM Implementations
 # evm = { version = "0.30.1" }
-sputnik = { package = "evm", version = "0.31",  optional = true }
+sputnik = { package = "evm", git = "https://github.com/rust-blockchain/evm",  optional = true }
 evmodin = { git = "https://github.com/vorot93/evmodin", optional = true }
 proptest = "1.0.0"
 git2 = "0.13.22"

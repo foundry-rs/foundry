@@ -238,6 +238,7 @@ pub struct BuildOpts {
 
     #[structopt(help = "the remappings", long, short)]
     pub remappings: Vec<ethers::solc::remappings::Remapping>,
+
     #[structopt(env = "DAPP_REMAPPINGS")]
     pub remappings_env: Option<String>,
 
@@ -247,7 +248,7 @@ pub struct BuildOpts {
     #[structopt(help = "path to where the contract artifacts are stored", long = "out", short)]
     pub out_path: Option<PathBuf>,
 
-    #[structopt(help = "choose the evm version", long, default_value = "berlin")]
+    #[structopt(help = "choose the evm version", long, default_value = "london")]
     pub evm_version: EvmVersion,
 }
 #[derive(Clone, Debug)]
@@ -294,7 +295,7 @@ impl EvmVersion {
             Frontier => Config::frontier(),
             Istanbul => Config::istanbul(),
             Berlin => Config::berlin(),
-            other => panic!("The {:?} hard fork is unsupported on Sputnik", other),
+            London => Config::london(),
         }
     }
 
@@ -337,6 +338,9 @@ pub struct Env {
 
     #[structopt(help = "the tx.gasprice value during EVM execution", long, default_value = "0")]
     pub gas_price: u64,
+
+    #[structopt(help = "the base fee in a block", long, default_value = "0")]
+    pub block_base_fee_per_gas: u64,
 
     #[structopt(
         help = "the tx.origin value during EVM execution",
@@ -395,6 +399,7 @@ impl Env {
             block_number: self.block_number.into(),
             block_timestamp: self.block_timestamp.into(),
             block_difficulty: self.block_difficulty.into(),
+            block_base_fee_per_gas: self.block_base_fee_per_gas.into(),
             block_gas_limit: self.block_gas_limit.unwrap_or(self.gas_limit).into(),
             block_hashes: Vec::new(),
         }
