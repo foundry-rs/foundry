@@ -354,11 +354,13 @@ pub struct Env {
     #[structopt(
         help = "the block.timestamp value during EVM execution",
         long,
-        default_value = "0"
+        default_value = "0",
+        env = "DAPP_TEST_TIMESTAMP",
     )]
     pub block_timestamp: u64,
 
     #[structopt(help = "the block.number value during EVM execution", long, default_value = "0")]
+    #[structopt(env = "DAPP_TEST_NUMBER")]
     pub block_number: u64,
 
     #[structopt(
