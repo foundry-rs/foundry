@@ -515,13 +515,11 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
 
         let address = self.create_address(scheme);
 
-        self.state.metadata_mut().access_address(caller);
-        self.state.metadata_mut().access_address(address);
+        self.state_mut().metadata_mut().access_address(caller);
+        self.state_mut().metadata_mut().access_address(address);
 
-        event!(Create { caller, address, scheme, value, init_code: &init_code, target_gas });
-
-        if let Some(depth) = self.state.metadata().depth {
-            if depth > self.config.call_stack_limit {
+        if let Some(depth) = self.state().metadata().depth() {
+            if depth > self.config().call_stack_limit {
                 return Capture::Exit((ExitError::CallTooDeep.into(), None, Vec::new()))
             }
         }
@@ -530,77 +528,77 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
             return Capture::Exit((ExitError::OutOfFund.into(), None, Vec::new()))
         }
 
-        let after_gas = if take_l64 && self.config.call_l64_after_gas {
-            if self.config.estimate {
-                let initial_after_gas = self.state.metadata().gasometer.gas();
+        let after_gas = if take_l64 && self.config().call_l64_after_gas {
+            if self.config().estimate {
+                let initial_after_gas = self.state().metadata().gasometer().gas();
                 let diff = initial_after_gas - l64(initial_after_gas);
-                try_or_fail!(self.state.metadata_mut().gasometer.record_cost(diff));
-                self.state.metadata().gasometer.gas()
+                try_or_fail!(self.state_mut().metadata_mut().gasometer_mut().record_cost(diff));
+                self.state().metadata().gasometer().gas()
             } else {
-                l64(self.state.metadata().gasometer.gas())
+                l64(self.state().metadata().gasometer().gas())
             }
         } else {
-            self.state.metadata().gasometer.gas()
+            self.state().metadata().gasometer().gas()
         };
 
         let target_gas = target_gas.unwrap_or(after_gas);
 
-        let gas_limit = min(after_gas, target_gas);
-        try_or_fail!(self.state.metadata_mut().gasometer.record_cost(gas_limit));
+        let gas_limit = core::cmp::min(after_gas, target_gas);
+        try_or_fail!(self.state_mut().metadata_mut().gasometer_mut().record_cost(gas_limit));
 
-        self.state.inc_nonce(caller);
+        self.state_mut().inc_nonce(caller);
 
-        self.enter_substate(gas_limit, false);
+        self.handler.enter_substate(gas_limit, false);
 
         {
             if self.code_size(address) != U256::zero() {
-                let _ = self.exit_substate(StackExitKind::Failed);
+                let _ = self.handler.exit_substate(StackExitKind::Failed);
                 return Capture::Exit((ExitError::CreateCollision.into(), None, Vec::new()))
             }
 
-            if self.nonce(address) > U256::zero() {
-                let _ = self.exit_substate(StackExitKind::Failed);
+            if self.handler.nonce(address) > U256::zero() {
+                let _ = self.handler.exit_substate(StackExitKind::Failed);
                 return Capture::Exit((ExitError::CreateCollision.into(), None, Vec::new()))
             }
 
-            self.state.reset_storage(address);
+            self.state_mut().reset_storage(address);
         }
 
         let context = Context { address, caller, apparent_value: value };
         let transfer = Transfer { source: caller, target: address, value };
-        match self.state.transfer(transfer) {
+        match self.state_mut().transfer(transfer) {
             Ok(()) => (),
             Err(e) => {
-                let _ = self.exit_substate(StackExitKind::Reverted);
+                let _ = self.handler.exit_substate(StackExitKind::Reverted);
                 return Capture::Exit((ExitReason::Error(e), None, Vec::new()))
             }
         }
 
-        if self.config.create_increase_nonce {
-            self.state.inc_nonce(address);
+        if self.config().create_increase_nonce {
+            self.state_mut().inc_nonce(address);
         }
 
-        let mut runtime =
-            Runtime::new(Rc::new(init_code), Rc::new(Vec::new()), context, self.config);
+        let config = self.config().clone();
+        let mut runtime = Runtime::new(Rc::new(init_code), Rc::new(Vec::new()), context, &config);
 
         let reason = self.execute(&mut runtime);
-        log::debug!(target: "evm", "Create execution using address {}: {:?}", address, reason);
+        // log::debug!(target: "evm", "Create execution using address {}: {:?}", address, reason);
 
         match reason {
             ExitReason::Succeed(s) => {
                 let out = runtime.machine().return_value();
 
                 // As of EIP-3541 code starting with 0xef cannot be deployed
-                if let Err(e) = check_first_byte(self.config, &out) {
-                    self.state.metadata_mut().gasometer.fail();
-                    let _ = self.exit_substate(StackExitKind::Failed);
+                if let Err(e) = check_first_byte(self.config(), &out) {
+                    self.state_mut().metadata_mut().gasometer_mut().fail();
+                    let _ = self.handler.exit_substate(StackExitKind::Failed);
                     return Capture::Exit((e.into(), None, Vec::new()))
                 }
 
-                if let Some(limit) = self.config.create_contract_limit {
+                if let Some(limit) = self.config().create_contract_limit {
                     if out.len() > limit {
-                        self.state.metadata_mut().gasometer.fail();
-                        let _ = self.exit_substate(StackExitKind::Failed);
+                        self.state_mut().metadata_mut().gasometer_mut().fail();
+                        let _ = self.handler.exit_substate(StackExitKind::Failed);
                         return Capture::Exit((
                             ExitError::CreateContractLimit.into(),
                             None,
@@ -609,31 +607,31 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                     }
                 }
 
-                match self.state.metadata_mut().gasometer.record_deposit(out.len()) {
+                match self.state_mut().metadata_mut().gasometer_mut().record_deposit(out.len()) {
                     Ok(()) => {
-                        let e = self.exit_substate(StackExitKind::Succeeded);
-                        self.state.set_code(address, out);
+                        let e = self.handler.exit_substate(StackExitKind::Succeeded);
+                        self.state_mut().set_code(address, out);
                         try_or_fail!(e);
                         Capture::Exit((ExitReason::Succeed(s), Some(address), Vec::new()))
                     }
                     Err(e) => {
-                        let _ = self.exit_substate(StackExitKind::Failed);
+                        let _ = self.handler.exit_substate(StackExitKind::Failed);
                         Capture::Exit((ExitReason::Error(e), None, Vec::new()))
                     }
                 }
             }
             ExitReason::Error(e) => {
-                self.state.metadata_mut().gasometer.fail();
-                let _ = self.exit_substate(StackExitKind::Failed);
+                self.state_mut().metadata_mut().gasometer_mut().fail();
+                let _ = self.handler.exit_substate(StackExitKind::Failed);
                 Capture::Exit((ExitReason::Error(e), None, Vec::new()))
             }
             ExitReason::Revert(e) => {
-                let _ = self.exit_substate(StackExitKind::Reverted);
+                let _ = self.handler.exit_substate(StackExitKind::Reverted);
                 Capture::Exit((ExitReason::Revert(e), None, runtime.machine().return_value()))
             }
             ExitReason::Fatal(e) => {
-                self.state.metadata_mut().gasometer.fail();
-                let _ = self.exit_substate(StackExitKind::Failed);
+                self.state_mut().metadata_mut().gasometer_mut().fail();
+                let _ = self.handler.exit_substate(StackExitKind::Failed);
                 Capture::Exit((ExitReason::Fatal(e), None, Vec::new()))
             }
         }
