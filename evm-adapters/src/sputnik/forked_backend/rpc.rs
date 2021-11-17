@@ -47,7 +47,6 @@ where
         init_cache: BTreeMap<H160, MemoryAccount>,
     ) -> Self {
         let provider = BlockingProvider::new(provider);
-        let pin_block = pin_block.unwrap_or_else(|| backend.block_number().as_u64()).into();
 
         // get the remaining block metadata
         let (block, chain_id) =
@@ -57,7 +56,7 @@ where
             provider,
             backend,
             cache: RefCell::new(init_cache),
-            pin_block: Some(pin_block),
+            pin_block: pin_block.map(Into::into),
             pin_block_meta: block,
             chain_id,
         }
