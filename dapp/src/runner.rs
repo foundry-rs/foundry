@@ -52,8 +52,12 @@ pub struct ContractRunner<'a, S, E> {
     /// since we don't use any parallelized fuzzing yet the `test` function has exclusive access of
     /// the mutable reference over time of its existence.
     pub evm: &'a mut E,
+    /// The deployed contract's ABI
     pub contract: &'a Abi,
+    /// The deployed contract's address
     pub address: Address,
+    /// The address which will be used as the `from` field in all EVM calls
+    pub sender: Address,
     /// Any logs emitted in the constructor of the specific contract
     pub init_logs: &'a [String],
     // need to constrain the trait generic
@@ -65,9 +69,17 @@ impl<'a, S, E> ContractRunner<'a, S, E> {
         evm: &'a mut E,
         contract: &'a Abi,
         address: Address,
+        sender: Option<Address>,
         init_logs: &'a [String],
     ) -> Self {
-        Self { evm, contract, address, init_logs, state: PhantomData }
+        Self {
+            evm,
+            contract,
+            address,
+            init_logs,
+            state: PhantomData,
+            sender: sender.unwrap_or_default(),
+        }
     }
 }
 
@@ -152,7 +164,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         }
 
         let (status, reason, gas_used, logs) = match self.evm.call::<(), _, _>(
-            Address::zero(),
+            self.sender,
             self.address,
             func.clone(),
             (),
@@ -197,7 +209,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         }
 
         // instantiate the fuzzed evm in line
-        let evm = FuzzedExecutor::new(self.evm, runner);
+        let evm = FuzzedExecutor::new(self.evm, runner, self.sender);
         let result = evm.fuzz(func, self.address, should_fail);
 
         let (success, counterexample) = match result {
@@ -262,13 +274,8 @@ mod tests {
             let (addr, _, _, _) =
                 evm.deploy(Address::zero(), compiled.bin.unwrap().clone(), 0.into()).unwrap();
 
-            let mut runner = ContractRunner {
-                evm: &mut evm,
-                contract: compiled.abi.as_ref().unwrap(),
-                address: addr,
-                state: PhantomData,
-                init_logs: &[],
-            };
+            let mut runner =
+                ContractRunner::new(&mut evm, compiled.abi.as_ref().unwrap(), addr, None, &[]);
 
             let mut cfg = FuzzConfig::default();
             cfg.failure_persistence = None;
@@ -293,13 +300,8 @@ mod tests {
             let (addr, _, _, _) =
                 evm.deploy(Address::zero(), compiled.bin.unwrap().clone(), 0.into()).unwrap();
 
-            let mut runner = ContractRunner {
-                evm: &mut evm,
-                contract: compiled.abi.as_ref().unwrap(),
-                address: addr,
-                state: PhantomData,
-                init_logs: &[],
-            };
+            let mut runner =
+                ContractRunner::new(&mut evm, compiled.abi.as_ref().unwrap(), addr, None, &[]);
 
             let mut cfg = FuzzConfig::default();
             cfg.failure_persistence = None;
@@ -321,13 +323,8 @@ mod tests {
             let (addr, _, _, _) =
                 evm.deploy(Address::zero(), compiled.bin.unwrap().clone(), 0.into()).unwrap();
 
-            let mut runner = ContractRunner {
-                evm: &mut evm,
-                contract: compiled.abi.as_ref().unwrap(),
-                address: addr,
-                state: PhantomData,
-                init_logs: &[],
-            };
+            let mut runner =
+                ContractRunner::new(&mut evm, compiled.abi.as_ref().unwrap(), addr, None, &[]);
 
             let mut cfg = FuzzConfig::default();
             cfg.failure_persistence = None;
@@ -384,13 +381,8 @@ mod tests {
         let (addr, _, _, _) =
             evm.deploy(Address::zero(), compiled.bin.unwrap().clone(), 0.into()).unwrap();
 
-        let mut runner = ContractRunner {
-            evm: &mut evm,
-            contract: compiled.abi.as_ref().unwrap(),
-            address: addr,
-            state: PhantomData,
-            init_logs: &[],
-        };
+        let mut runner =
+            ContractRunner::new(&mut evm, compiled.abi.as_ref().unwrap(), addr, None, &[]);
 
         let res = runner.run_tests(&".*".parse().unwrap(), None).unwrap();
         assert!(!res.is_empty());

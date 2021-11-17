@@ -39,7 +39,7 @@ fn main() -> eyre::Result<()> {
             fork_url,
             fork_block_number,
             initial_balance,
-            deployer,
+            sender,
             ffi,
             verbosity,
         } => {
@@ -56,7 +56,7 @@ fn main() -> eyre::Result<()> {
             let builder = MultiContractRunnerBuilder::default()
                 .fuzzer(fuzzer)
                 .initial_balance(initial_balance)
-                .deployer(deployer);
+                .sender(sender);
 
             // run the tests depending on the chosen EVM
             match evm_type {

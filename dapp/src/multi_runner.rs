@@ -22,8 +22,9 @@ use std::{
 pub struct MultiContractRunnerBuilder {
     /// The fuzzer to be used for running fuzz tests
     pub fuzzer: Option<TestRunner>,
-    /// The address which will be used to deploy the initial contracts
-    pub deployer: Address,
+    /// The address which will be used to deploy the initial contracts and send all
+    /// transactions
+    pub sender: Option<Address>,
     /// The initial balance for each one of the deployed smart contracts
     pub initial_balance: U256,
 }
@@ -51,7 +52,7 @@ impl MultiContractRunnerBuilder {
             println!("success.");
         }
 
-        let deployer = self.deployer;
+        let sender = self.sender.unwrap_or_default();
         let initial_balance = self.initial_balance;
 
         // This is just the contracts compiled, but we need to merge this with the read cached
@@ -74,7 +75,7 @@ impl MultiContractRunnerBuilder {
                 let _enter = span.enter();
 
                 let (addr, _, _, logs) = evm
-                    .deploy(deployer, bytecode, 0.into())
+                    .deploy(sender, bytecode, 0.into())
                     .wrap_err(format!("could not deploy {}", name))?;
 
                 evm.set_balance(addr, initial_balance);
@@ -82,11 +83,17 @@ impl MultiContractRunnerBuilder {
             })
             .collect::<Result<BTreeMap<_, _>>>()?;
 
-        Ok(MultiContractRunner { contracts, evm, state: PhantomData, fuzzer: self.fuzzer })
+        Ok(MultiContractRunner {
+            contracts,
+            evm,
+            state: PhantomData,
+            sender: self.sender,
+            fuzzer: self.fuzzer,
+        })
     }
 
-    pub fn deployer(mut self, deployer: Address) -> Self {
-        self.deployer = deployer;
+    pub fn sender(mut self, sender: Address) -> Self {
+        self.sender = Some(sender);
         self
     }
 
@@ -111,6 +118,8 @@ pub struct MultiContractRunner<E, S> {
     evm: E,
     /// The fuzzer which will be used to run parametric tests (w/ non-0 solidity args)
     fuzzer: Option<TestRunner>,
+    /// The address which will be used as the `from` field in all EVM calls
+    sender: Option<Address>,
     /// Market type for the EVM state being used
     state: PhantomData<S>,
 }
@@ -153,7 +162,8 @@ where
         init_logs: &[String],
         pattern: &Regex,
     ) -> Result<HashMap<String, TestResult>> {
-        let mut runner = ContractRunner::new(&mut self.evm, contract, address, init_logs);
+        let mut runner =
+            ContractRunner::new(&mut self.evm, contract, address, self.sender, init_logs);
         runner.run_tests(pattern, self.fuzzer.as_mut())
     }
 }

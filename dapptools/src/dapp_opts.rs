@@ -65,9 +65,10 @@ pub enum Subcommands {
         #[structopt(
             help = "the address which will be executing all tests",
             long,
-            default_value = "0x0000000000000000000000000000000000000000"
+            default_value = "0x0000000000000000000000000000000000000000",
+            env = "DAPP_TEST_ADDRESS"
         )]
-        deployer: Address,
+        sender: Address,
 
         #[structopt(help = "enables the FFI cheatcode", long)]
         ffi: bool,
@@ -354,11 +355,13 @@ pub struct Env {
     #[structopt(
         help = "the block.timestamp value during EVM execution",
         long,
-        default_value = "0"
+        default_value = "0",
+        env = "DAPP_TEST_TIMESTAMP"
     )]
     pub block_timestamp: u64,
 
     #[structopt(help = "the block.number value during EVM execution", long, default_value = "0")]
+    #[structopt(env = "DAPP_TEST_NUMBER")]
     pub block_number: u64,
 
     #[structopt(
