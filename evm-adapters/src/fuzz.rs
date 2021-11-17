@@ -20,6 +20,7 @@ pub struct FuzzedExecutor<'a, E, S> {
     evm: RefCell<&'a mut E>,
     runner: TestRunner,
     state: PhantomData<S>,
+    sender: Address,
 }
 
 impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
@@ -28,8 +29,8 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
     }
 
     /// Instantiates a fuzzed executor EVM given a testrunner
-    pub fn new(evm: &'a mut E, runner: TestRunner) -> Self {
-        Self { evm: RefCell::new(evm), runner, state: PhantomData }
+    pub fn new(evm: &'a mut E, runner: TestRunner, sender: Address) -> Self {
+        Self { evm: RefCell::new(evm), runner, state: PhantomData, sender }
     }
 
     /// Fuzzes the provided function, assuming it is available at the contract at `address`
@@ -61,7 +62,7 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
             evm.reset(pre_test_state.clone());
 
             let (returndata, reason, _, _) = evm
-                .call_raw(Address::zero(), address, calldata, 0.into(), false)
+                .call_raw(self.sender, address, calldata, 0.into(), false)
                 .expect("could not make raw evm call");
 
             // We must check success before resetting the state, otherwise resetting the state

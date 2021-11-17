@@ -673,7 +673,7 @@ mod tests {
             .unwrap();
         assert_eq!(slot, 10.into());
 
-        let evm = FuzzedExecutor::new(&mut evm, runner);
+        let evm = FuzzedExecutor::new(&mut evm, runner, Address::zero());
 
         let abi = compiled.abi.as_ref().unwrap();
         for func in abi.functions().filter(|func| func.name.starts_with("test")) {
