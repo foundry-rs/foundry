@@ -83,7 +83,13 @@ impl MultiContractRunnerBuilder {
             })
             .collect::<Result<BTreeMap<_, _>>>()?;
 
-        Ok(MultiContractRunner { contracts, evm, state: PhantomData, sender: self.sender, fuzzer: self.fuzzer })
+        Ok(MultiContractRunner {
+            contracts,
+            evm,
+            state: PhantomData,
+            sender: self.sender,
+            fuzzer: self.fuzzer,
+        })
     }
 
     pub fn sender(mut self, sender: Address) -> Self {
@@ -156,7 +162,8 @@ where
         init_logs: &[String],
         pattern: &Regex,
     ) -> Result<HashMap<String, TestResult>> {
-        let mut runner = ContractRunner::new(&mut self.evm, contract, address, self.sender, init_logs);
+        let mut runner =
+            ContractRunner::new(&mut self.evm, contract, address, self.sender, init_logs);
         runner.run_tests(pattern, self.fuzzer.as_mut())
     }
 }

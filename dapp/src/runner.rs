@@ -72,7 +72,14 @@ impl<'a, S, E> ContractRunner<'a, S, E> {
         sender: Option<Address>,
         init_logs: &'a [String],
     ) -> Self {
-        Self { evm, contract, address, init_logs, state: PhantomData, sender: sender.unwrap_or_default() }
+        Self {
+            evm,
+            contract,
+            address,
+            init_logs,
+            state: PhantomData,
+            sender: sender.unwrap_or_default(),
+        }
     }
 }
 
@@ -267,7 +274,8 @@ mod tests {
             let (addr, _, _, _) =
                 evm.deploy(Address::zero(), compiled.bin.unwrap().clone(), 0.into()).unwrap();
 
-            let mut runner = ContractRunner::new(&mut evm, compiled.abi.as_ref().unwrap(), addr, None, &[]);
+            let mut runner =
+                ContractRunner::new(&mut evm, compiled.abi.as_ref().unwrap(), addr, None, &[]);
 
             let mut cfg = FuzzConfig::default();
             cfg.failure_persistence = None;
@@ -292,7 +300,8 @@ mod tests {
             let (addr, _, _, _) =
                 evm.deploy(Address::zero(), compiled.bin.unwrap().clone(), 0.into()).unwrap();
 
-            let mut runner = ContractRunner::new(&mut evm, compiled.abi.as_ref().unwrap(), addr, None, &[]);
+            let mut runner =
+                ContractRunner::new(&mut evm, compiled.abi.as_ref().unwrap(), addr, None, &[]);
 
             let mut cfg = FuzzConfig::default();
             cfg.failure_persistence = None;
@@ -314,7 +323,8 @@ mod tests {
             let (addr, _, _, _) =
                 evm.deploy(Address::zero(), compiled.bin.unwrap().clone(), 0.into()).unwrap();
 
-            let mut runner = ContractRunner::new(&mut evm, compiled.abi.as_ref().unwrap(), addr, None, &[]);
+            let mut runner =
+                ContractRunner::new(&mut evm, compiled.abi.as_ref().unwrap(), addr, None, &[]);
 
             let mut cfg = FuzzConfig::default();
             cfg.failure_persistence = None;
@@ -371,7 +381,8 @@ mod tests {
         let (addr, _, _, _) =
             evm.deploy(Address::zero(), compiled.bin.unwrap().clone(), 0.into()).unwrap();
 
-            let mut runner = ContractRunner::new(&mut evm, compiled.abi.as_ref().unwrap(), addr, None, &[]);
+        let mut runner =
+            ContractRunner::new(&mut evm, compiled.abi.as_ref().unwrap(), addr, None, &[]);
 
         let res = runner.run_tests(&".*".parse().unwrap(), None).unwrap();
         assert!(!res.is_empty());
