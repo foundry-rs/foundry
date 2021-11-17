@@ -150,18 +150,6 @@ dependencies = [
 
 [[package]]
 name = "auto_impl"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42cbf586c80ada5e5ccdecae80d3ef0854f224e2dd74435f8d87e6831b8d0a38"
-dependencies = [
- "proc-macro-error 1.0.4",
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
-name = "auto_impl"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7862e21c893d65a1650125d157eaeec691439379a1cee17ee49031b79236ada4"
@@ -963,16 +951,18 @@ checksum = "bfb684ac8fa8f6c5759f788862bb22ec6fe3cb392f6bfd08e3c64b603661e3f8"
 dependencies = [
  "crunchy",
  "fixed-hash",
+ "impl-codec",
  "impl-rlp",
  "impl-serde",
+ "scale-info",
  "tiny-keccak",
 ]
 
 [[package]]
 name = "ethereum"
-version = "0.8.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42ccff962ede8fe7c3ec53d46b8316f3c53377a701a30c0325918b38ce04a497"
+checksum = "81fb916554a4dba293ea69c69ad5653e21d770a9d0c2496b5fa0a1f5a3946d87"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -981,6 +971,7 @@ dependencies = [
  "parity-scale-codec",
  "rlp",
  "rlp-derive",
+ "scale-info",
  "serde",
  "sha3 0.9.1",
  "triehash",
@@ -994,16 +985,18 @@ checksum = "05136f7057fe789f06e6d41d07b34e6f70d8c86e5693b60f97aaa6553553bdaf"
 dependencies = [
  "ethbloom",
  "fixed-hash",
+ "impl-codec",
  "impl-rlp",
  "impl-serde",
  "primitive-types",
+ "scale-info",
  "uint",
 ]
 
 [[package]]
 name = "ethers"
 version = "0.5.4"
-source = "git+https://github.com/gakonst/ethers-rs#b3fed152a44ecdcc92cf457a5d873d04eddbec33"
+source = "git+https://github.com/gakonst/ethers-rs#8eac1997f4cc09ff4343f94e492aa51f23e51e1f"
 dependencies = [
  "ethers-contract",
  "ethers-core",
@@ -1016,7 +1009,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "0.5.3"
-source = "git+https://github.com/gakonst/ethers-rs#b3fed152a44ecdcc92cf457a5d873d04eddbec33"
+source = "git+https://github.com/gakonst/ethers-rs#8eac1997f4cc09ff4343f94e492aa51f23e51e1f"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1034,7 +1027,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "0.5.3"
-source = "git+https://github.com/gakonst/ethers-rs#b3fed152a44ecdcc92cf457a5d873d04eddbec33"
+source = "git+https://github.com/gakonst/ethers-rs#8eac1997f4cc09ff4343f94e492aa51f23e51e1f"
 dependencies = [
  "Inflector",
  "anyhow",
@@ -1055,7 +1048,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "0.5.3"
-source = "git+https://github.com/gakonst/ethers-rs#b3fed152a44ecdcc92cf457a5d873d04eddbec33"
+source = "git+https://github.com/gakonst/ethers-rs#8eac1997f4cc09ff4343f94e492aa51f23e51e1f"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -1069,7 +1062,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "0.5.5"
-source = "git+https://github.com/gakonst/ethers-rs#b3fed152a44ecdcc92cf457a5d873d04eddbec33"
+source = "git+https://github.com/gakonst/ethers-rs#8eac1997f4cc09ff4343f94e492aa51f23e51e1f"
 dependencies = [
  "arrayvec",
  "bytes",
@@ -1097,7 +1090,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "0.1.1"
-source = "git+https://github.com/gakonst/ethers-rs#b3fed152a44ecdcc92cf457a5d873d04eddbec33"
+source = "git+https://github.com/gakonst/ethers-rs#8eac1997f4cc09ff4343f94e492aa51f23e51e1f"
 dependencies = [
  "ethers-core",
  "reqwest",
@@ -1109,7 +1102,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "0.5.3"
-source = "git+https://github.com/gakonst/ethers-rs#b3fed152a44ecdcc92cf457a5d873d04eddbec33"
+source = "git+https://github.com/gakonst/ethers-rs#8eac1997f4cc09ff4343f94e492aa51f23e51e1f"
 dependencies = [
  "async-trait",
  "ethers-contract",
@@ -1132,10 +1125,10 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "0.5.4"
-source = "git+https://github.com/gakonst/ethers-rs#b3fed152a44ecdcc92cf457a5d873d04eddbec33"
+source = "git+https://github.com/gakonst/ethers-rs#8eac1997f4cc09ff4343f94e492aa51f23e51e1f"
 dependencies = [
  "async-trait",
- "auto_impl 0.5.0",
+ "auto_impl",
  "ethers-core",
  "futures-channel",
  "futures-core",
@@ -1161,7 +1154,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "0.5.3"
-source = "git+https://github.com/gakonst/ethers-rs#b3fed152a44ecdcc92cf457a5d873d04eddbec33"
+source = "git+https://github.com/gakonst/ethers-rs#8eac1997f4cc09ff4343f94e492aa51f23e51e1f"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1181,7 +1174,7 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "0.1.0"
-source = "git+https://github.com/gakonst/ethers-rs#b3fed152a44ecdcc92cf457a5d873d04eddbec33"
+source = "git+https://github.com/gakonst/ethers-rs#8eac1997f4cc09ff4343f94e492aa51f23e51e1f"
 dependencies = [
  "colored",
  "ethers-core",
@@ -1203,11 +1196,10 @@ dependencies = [
 
 [[package]]
 name = "evm"
-version = "0.31.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ddef7d840592ae19c1392fbec54c9b1425c2534a93e9e512afde571e6ca628c9"
+version = "0.33.0"
+source = "git+https://github.com/gakonst/evm?branch=feat/auto-impl#1b5e1c67e0b518a265e44f079f3537f5534a68d2"
 dependencies = [
- "auto_impl 0.4.1",
+ "auto_impl",
  "environmental",
  "ethereum",
  "evm-core",
@@ -1217,6 +1209,7 @@ dependencies = [
  "parity-scale-codec",
  "primitive-types",
  "rlp",
+ "scale-info",
  "serde",
  "sha3 0.8.2",
 ]
@@ -1244,21 +1237,20 @@ dependencies = [
 
 [[package]]
 name = "evm-core"
-version = "0.31.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5bb30090cebf1d85781189859bd6de7a759f6c4cffd7cd2a7b05e7eccb769b60"
+version = "0.33.0"
+source = "git+https://github.com/gakonst/evm?branch=feat/auto-impl#1b5e1c67e0b518a265e44f079f3537f5534a68d2"
 dependencies = [
  "funty",
  "parity-scale-codec",
  "primitive-types",
+ "scale-info",
  "serde",
 ]
 
 [[package]]
 name = "evm-gasometer"
-version = "0.31.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c38e0842db6f66df571675f02018264abf92dbea4d1fb5a92b3a029088663fd"
+version = "0.33.0"
+source = "git+https://github.com/gakonst/evm?branch=feat/auto-impl#1b5e1c67e0b518a265e44f079f3537f5534a68d2"
 dependencies = [
  "environmental",
  "evm-core",
@@ -1268,11 +1260,10 @@ dependencies = [
 
 [[package]]
 name = "evm-runtime"
-version = "0.31.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "86158aeca104c31ef15b67afc80e8e4f32705bd9f98ac55c6911ab6185a234a4"
+version = "0.33.0"
+source = "git+https://github.com/gakonst/evm?branch=feat/auto-impl#1b5e1c67e0b518a265e44f079f3537f5534a68d2"
 dependencies = [
- "auto_impl 0.4.1",
+ "auto_impl",
  "environmental",
  "evm-core",
  "primitive-types",
@@ -2482,6 +2473,7 @@ dependencies = [
  "impl-codec",
  "impl-rlp",
  "impl-serde",
+ "scale-info",
  "uint",
 ]
 
@@ -3080,6 +3072,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "93fc1dc3aaa9bfed95e02e6eadabb4baf7e3078b0bd1b4d7b6b0b68378900502"
 dependencies = [
  "winapi-util",
+]
+
+[[package]]
+name = "scale-info"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c55b744399c25532d63a0d2789b109df8d46fc93752d46b0782991a931a782f"
+dependencies = [
+ "bitvec 0.20.4",
+ "cfg-if",
+ "derive_more",
+ "parity-scale-codec",
+ "scale-info-derive",
+]
+
+[[package]]
+name = "scale-info-derive"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "baeb2780690380592f86205aa4ee49815feb2acad8c2f59e6dd207148c3f1fcd"
+dependencies = [
+ "proc-macro-crate 1.1.0",
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
