@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 pub use cheatcode_handler::CheatcodeHandler;
 
-mod backend;
+pub mod backend;
 
 use ethers::types::{Address, H256, U256};
 use sputnik::backend::{Backend, MemoryAccount, MemoryBackend};
