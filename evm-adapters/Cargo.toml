@@ -9,8 +9,7 @@ edition = "2018"
 [dependencies]
 dapp-utils = { path = "./../utils" }
 
-# evm = { version = "0.30.1" }
-sputnik = { package = "evm", git = "https://github.com/rust-blockchain/evm",  optional = true, features = ["tracing"] }
+sputnik = { package = "evm", version = "0.31",  optional = true, features = ["tracing"] }
 
 evmodin = { git = "https://github.com/vorot93/evmodin",  optional = true }
 

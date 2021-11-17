@@ -3,19 +3,22 @@ use ethers::{
     providers::Middleware,
     types::{Address, Block, BlockId, Bytes, TxHash, H256, U256, U64},
 };
-use tokio::runtime::Runtime;
+use tokio::runtime::{Handle, Runtime};
 
 #[derive(Debug)]
 /// Blocking wrapper around an Ethers middleware, for use in synchronous contexts
 /// (powered by a tokio runtime)
 pub struct BlockingProvider<M> {
     provider: M,
-    runtime: Runtime,
+    runtime: Option<Runtime>,
 }
 
 impl<M: Clone> Clone for BlockingProvider<M> {
     fn clone(&self) -> Self {
-        Self { provider: self.provider.clone(), runtime: Runtime::new().unwrap() }
+        Self {
+            provider: self.provider.clone(),
+            runtime: self.runtime.as_ref().map(|_| Runtime::new().unwrap()),
+        }
     }
 }
 
@@ -24,11 +27,15 @@ where
     M::Error: 'static,
 {
     pub fn new(provider: M) -> Self {
-        Self { provider, runtime: Runtime::new().unwrap() }
+        let runtime = Handle::try_current().is_err().then(|| Runtime::new().unwrap());
+        Self { provider, runtime }
     }
 
     fn block_on<F: std::future::Future>(&self, f: F) -> F::Output {
-        self.runtime.block_on(f)
+        match &self.runtime {
+            Some(runtime) => runtime.block_on(f),
+            None => futures::executor::block_on(f),
+        }
     }
 
     pub fn block_and_chainid(

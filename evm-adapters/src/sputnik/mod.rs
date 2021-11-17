@@ -18,6 +18,8 @@ use sputnik::{
     Config, CreateScheme, ExitError, ExitReason, ExitSucceed,
 };
 
+pub use sputnik as sputnik_evm;
+
 pub async fn vicinity<M: Middleware>(
     provider: &M,
     pin_block: Option<u64>,
