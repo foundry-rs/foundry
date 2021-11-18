@@ -173,6 +173,11 @@ async fn main() -> eyre::Result<()> {
             }
             println!("{}", name);
         }
+        Subcommands::Storage { address, slot, rpc_url, block } => {
+            let provider = Provider::try_from(rpc_url)?;
+            let value = provider.get_storage_at(address, slot, block).await?;
+            println!("{:?}", value);
+        }
     };
 
     Ok(())
