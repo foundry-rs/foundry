@@ -123,7 +123,7 @@ Benchmarks TBD in the future, but:
   - [ ] `run-tx`
   - [x] `send` (partial)
   - [ ] `sign`
-  - [ ] `storage`
+  - [x] `storage`
   - [ ] `tx`
 - dapp
   - [ ] test
