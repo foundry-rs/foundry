@@ -163,7 +163,6 @@ contract Prank is DSTest {
     function checksOriginAndSender(string calldata input) external returns (string memory) {
         string memory expectedInput = "And his name is JOHN CENA!";
         assertEq(input, expectedInput);
-        assertEq(address(1337), tx.origin);
         assertEq(address(1337), msg.sender);
         string memory expectedRetString = "SUPER SLAM!";
         return expectedRetString;

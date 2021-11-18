@@ -330,7 +330,6 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 ])]);
             }
             HEVMCalls::Prank(inner) => {
-                println!("IN PRANK");
                 let caller = inner.0;
                 let address = inner.1;
                 let input = inner.2;
@@ -343,22 +342,33 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
 
                 // change origin
                 let context = Context { caller, address, apparent_value: value };
-                match self.call_inner(
+                let ret = self.call(
                     address,
                     Some(Transfer { source: caller, target: address, value }),
                     input,
                     target_gas,
                     false,
-                    false,
-                    false,
                     context,
-                ) {
-                    Capture::Exit((s, v)) => {
-                        println!("{:?} {:?}", s, v);
-                        res = v.to_vec();
+                );
+                res = match ret {
+                    Capture::Exit((successful, v)) => {
+                        match successful {
+                            ExitReason::Succeed(_) => {
+                                ethers::abi::encode(&[
+                                    Token::Bool(true),
+                                    Token::Bytes(v.to_vec()),
+                                ])
+                            }
+                            _ => {
+                                ethers::abi::encode(&[
+                                    Token::Bool(false),
+                                    Token::Bytes(v.to_vec()),
+                                ])
+                            }
+                        }
                     }
-                    e => panic!("here {:?}", e)
-                }
+                    _ => vec![]
+                };
             }
             HEVMCalls::Deal(inner) => {
                 let who = inner.0;
@@ -370,7 +380,6 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         };
 
         // TODO: Add more cheat codes.
-
         Capture::Exit((ExitReason::Succeed(ExitSucceed::Stopped), res))
     }
 
@@ -496,7 +505,6 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         let reason = self.execute(&mut runtime);
         // // log::debug!(target: "evm", "Call execution using address {}: {:?}", code_address,
         // reason);
-
         match reason {
             ExitReason::Succeed(s) => {
                 let _ = self.handler.exit_substate(StackExitKind::Succeeded);
@@ -910,9 +918,8 @@ mod tests {
         for func in abi.functions().filter(|func| func.name.starts_with("test")) {
             let should_fail = func.name.starts_with("testFail");
             if func.inputs.is_empty() {
-                let (data, reason, num, some_str) =
+                let (_, reason, _, _) =
                     evm.as_mut().call_unchecked(Address::zero(), addr, func, (), 0.into()).unwrap();
-                println!("{:?} {:?} {:?} {:?}", data, reason, num, some_str);
                 assert!(evm.as_mut().check_success(addr, &reason, should_fail));
             } else {
                 // if the unwrap passes then it works
