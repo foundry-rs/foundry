@@ -13,6 +13,8 @@ interface Hevm {
     function sign(uint256,bytes32) external returns (uint8,bytes32,bytes32);
     function addr(uint256) external returns (address);
     function ffi(string[] calldata) external returns (bytes memory);
+    function prank(address,address,bytes calldata) external returns (bool, bytes memory);
+    function deal(address, uint256) external;
 }
 
 contract HasStorage {
@@ -129,5 +131,41 @@ contract CheatCodes is DSTest {
         bytes memory res = hevm.ffi(inputs);
         (string memory output) = abi.decode(res, (string));
         assertEq(output, "acab");
+    }
+
+    function testDeal() public {
+        address addr = address(1337);
+        hevm.deal(addr, 1337);
+        assertEq(addr.balance, 1337);
+    }
+
+    function testPrank() public {
+        Prank prank = new Prank();
+        address new_sender = address(1337);
+        bytes4 sig = prank.checksOriginAndSender.selector;
+        string memory input = "And his name is JOHN CENA!";
+        bytes memory calld = abi.encodePacked(sig, abi.encode(input));
+        address origin = tx.origin;
+        address sender = msg.sender;
+        (bool success, bytes memory ret) = hevm.prank(new_sender, address(prank), calld);
+        assertTrue(success);
+        string memory expectedRetString = "SUPER SLAM!";
+        string memory actualRet = abi.decode(ret, (string));
+        assertEq(actualRet, expectedRetString);
+
+        // make sure we returned back to normal
+        assertEq(origin, tx.origin);
+        assertEq(sender, msg.sender);
+    }
+}
+
+contract Prank is DSTest {
+    function checksOriginAndSender(string calldata input) external returns (string memory) {
+        string memory expectedInput = "And his name is JOHN CENA!";
+        assertEq(input, expectedInput);
+        assertEq(address(1337), tx.origin);
+        assertEq(address(1337), msg.sender);
+        string memory expectedRetString = "SUPER SLAM!";
+        return expectedRetString;
     }
 }
