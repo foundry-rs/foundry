@@ -340,7 +340,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 let input = inner.2;
 
                 let value = if let Some(ref transfer) = transfer {
-                    transfer.value.clone()
+                    transfer.value
                 } else {
                     U256::zero()
                 };
