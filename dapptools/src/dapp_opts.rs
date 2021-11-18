@@ -208,10 +208,8 @@ impl std::convert::TryFrom<&BuildOpts> for Project {
         remappings.dedup();
 
         // build the path
-        let mut paths_builder = ProjectPathsConfig::builder()
-            .root(&root)
-            .sources(contracts)
-            .artifacts(artifacts);
+        let mut paths_builder =
+            ProjectPathsConfig::builder().root(&root).sources(contracts).artifacts(artifacts);
 
         if !remappings.is_empty() {
             paths_builder = paths_builder.remappings(remappings);
