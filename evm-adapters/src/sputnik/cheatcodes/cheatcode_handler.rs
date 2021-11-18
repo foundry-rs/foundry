@@ -264,7 +264,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 if !self.enable_ffi {
                     return evm_error(
                         "ffi disabled: run again with --ffi if you want to allow tests to call external scripts",
-                    )
+                    );
                 }
 
                 // execute the command & get the stdout

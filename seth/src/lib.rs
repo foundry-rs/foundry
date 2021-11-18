@@ -466,7 +466,7 @@ impl SimpleSeth {
             eyre::bail!("string >32 bytes");
         }
 
-        let padded = format!("0x{:0<64}", s);
+        let padded = format!("{:0<64}", s);
         // need to use the Debug implementation
         Ok(format!("{:?}", H256::from_str(&padded)?))
     }

@@ -1,10 +1,11 @@
+use std::{convert::TryFrom, str::FromStr, sync::Arc};
+
 use ethers::{
     providers::{Http, Provider},
     signers::{coins_bip39::English, LocalWallet, MnemonicBuilder},
     types::{Address, BlockId, BlockNumber, NameOrAddress, H256, U64},
 };
 use eyre::Result;
-use std::{convert::TryFrom, str::FromStr};
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -27,6 +28,7 @@ pub enum Subcommands {
       - @tag, where $TAG is defined in environment variables
     "#)]
     ToHexdata { input: Option<String> },
+    #[structopt(aliases = &["--to-checksum"])] // Compatibility with dapptools' seth
     #[structopt(name = "--to-checksum-address")]
     #[structopt(about = "convert an address to a checksummed format (EIP-55)")]
     ToCheckSumAddress { address: Option<Address> },
@@ -180,6 +182,22 @@ pub enum Subcommands {
         )]
         verify: bool,
     },
+    #[structopt(name = "storage", about = "Show the raw value of a contract's storage slot")]
+    Storage {
+        #[structopt(help = "the contract address", parse(try_from_str = parse_name_or_address))]
+        address: NameOrAddress,
+        #[structopt(help = "the storage slot number (hex or number)", parse(try_from_str = parse_slot))]
+        slot: H256,
+        #[structopt(short, long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+        #[structopt(
+            long,
+            short,
+            help = "the block you want to query, can also be earliest/latest/pending",
+            parse(try_from_str = parse_block_id)
+        )]
+        block: Option<BlockId>,
+    },
 }
 
 fn parse_name_or_address(s: &str) -> eyre::Result<NameOrAddress> {
@@ -196,6 +214,15 @@ fn parse_block_id(s: &str) -> eyre::Result<BlockId> {
         "latest" => BlockId::Number(BlockNumber::Latest),
         s if s.starts_with("0x") => BlockId::Hash(H256::from_str(s)?),
         s => BlockId::Number(BlockNumber::Number(U64::from_str(s)?)),
+    })
+}
+
+fn parse_slot(s: &str) -> eyre::Result<H256> {
+    Ok(if s.starts_with("0x") {
+        let padded = format!("{:0>64}", s.strip_prefix("0x").unwrap());
+        H256::from_str(&padded)?
+    } else {
+        H256::from_low_u64_be(u64::from_str(s)?)
     })
 }
 
@@ -226,7 +253,6 @@ pub struct EthereumOpts {
 }
 
 // TODO: Improve these so that we return a middleware trait object
-use std::sync::Arc;
 impl EthereumOpts {
     #[allow(unused)]
     pub fn provider(&self) -> eyre::Result<Arc<Provider<Http>>> {
