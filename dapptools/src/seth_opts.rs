@@ -1,5 +1,4 @@
-use std::sync::Arc;
-use std::{convert::TryFrom, str::FromStr};
+use std::{convert::TryFrom, str::FromStr, sync::Arc};
 
 use ethers::{
     providers::{Http, Provider},
@@ -183,12 +182,11 @@ pub enum Subcommands {
         )]
         verify: bool,
     },
-    #[structopt(name = "storage")]
-    #[structopt(about = "Show the raw value of a contract's storage slot")]
+    #[structopt(name = "storage", about = "Show the raw value of a contract's storage slot")]
     Storage {
         #[structopt(help = "the contract address", parse(try_from_str = parse_name_or_address))]
         address: NameOrAddress,
-        #[structopt(help = "the slot number (hex or number)", parse(try_from_str = parse_slot))]
+        #[structopt(help = "the storage slot number (hex or number)", parse(try_from_str = parse_slot))]
         slot: H256,
         #[structopt(short, long, env = "ETH_RPC_URL")]
         rpc_url: String,
