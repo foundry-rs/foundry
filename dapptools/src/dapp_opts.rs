@@ -218,7 +218,7 @@ impl std::convert::TryFrom<&BuildOpts> for Project {
         let paths = paths_builder.build()?;
 
         // build the project w/ allowed paths = root and all the libs
-        let mut builder = 
+        let mut builder =
             Project::builder().paths(paths).allowed_path(root).allowed_paths(lib_paths);
 
         if opts.no_auto_detect {
