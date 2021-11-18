@@ -1,6 +1,6 @@
 use super::{
     backend::CheatcodeBackend, memory_stackstate_owned::MemoryStackStateOwned, HEVMCalls,
-    HevmConsoleEvents, BackendExt
+    HevmConsoleEvents,
 };
 use crate::{
     sputnik::{Executor, SputnikExecutor},
@@ -232,7 +232,12 @@ fn evm_error(retdata: &str) -> Capture<(ExitReason, Vec<u8>), Infallible> {
 
 impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> {
     /// Decodes the provided calldata as a
-    fn apply_cheatcode(&mut self, input: Vec<u8>, transfer: Option<Transfer>, target_gas: Option<u64>) -> Capture<(ExitReason, Vec<u8>), Infallible> {
+    fn apply_cheatcode(
+        &mut self,
+        input: Vec<u8>,
+        transfer: Option<Transfer>,
+        target_gas: Option<u64>,
+    ) -> Capture<(ExitReason, Vec<u8>), Infallible> {
         let mut res = vec![];
 
         // Get a mutable ref to the state so we can apply the cheats
@@ -263,7 +268,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 if !self.enable_ffi {
                     return evm_error(
                         "ffi disabled: run again with --ffi if you want to allow tests to call external scripts",
-                    )
+                    );
                 }
 
                 // execute the command & get the stdout
@@ -351,23 +356,13 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                     context,
                 );
                 res = match ret {
-                    Capture::Exit((successful, v)) => {
-                        match successful {
-                            ExitReason::Succeed(_) => {
-                                ethers::abi::encode(&[
-                                    Token::Bool(true),
-                                    Token::Bytes(v.to_vec()),
-                                ])
-                            }
-                            _ => {
-                                ethers::abi::encode(&[
-                                    Token::Bool(false),
-                                    Token::Bytes(v.to_vec()),
-                                ])
-                            }
+                    Capture::Exit((successful, v)) => match successful {
+                        ExitReason::Succeed(_) => {
+                            ethers::abi::encode(&[Token::Bool(true), Token::Bytes(v.to_vec())])
                         }
-                    }
-                    _ => vec![]
+                        _ => ethers::abi::encode(&[Token::Bool(false), Token::Bytes(v.to_vec())]),
+                    },
+                    _ => vec![],
                 };
             }
             HEVMCalls::Deal(inner) => {
@@ -376,7 +371,6 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 state.reset_balance(who);
                 state.deposit(who, value);
             }
-
         };
 
         // TODO: Add more cheat codes.
