@@ -146,6 +146,7 @@ Benchmarks TBD in the future, but:
       - [x] prank: Performs a call as another address (changes tx.origin & msg.sender)
       - [x] sign: Signs data
       - [x] addr: Gets address for a private key
+      - [x] etch: Sets the code of an address
       - [ ] makeEOA
       - ...?
     - [ ] Structured tracing with abi decoding
