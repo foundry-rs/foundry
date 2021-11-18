@@ -143,7 +143,7 @@ Benchmarks TBD in the future, but:
       - [x] store: Sets address storage slot
       - [x] load: Loads address storage slot
       - [x] deal: Sets account balance
-      - [x] prank: Performs a call as another address (changes tx.origin & msg.sender)
+      - [x] prank: Performs a call as another address (changes msg.sender for a call)
       - [x] sign: Signs data
       - [x] addr: Gets address for a private key
       - [ ] makeEOA
