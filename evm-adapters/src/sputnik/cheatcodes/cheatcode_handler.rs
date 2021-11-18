@@ -330,6 +330,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 ])]);
             }
             HEVMCalls::Prank(inner) => {
+                println!("IN PRANK");
                 let caller = inner.0;
                 let address = inner.1;
                 let input = inner.2;
@@ -342,15 +343,22 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
 
                 // change origin
                 let context = Context { caller, address, apparent_value: value };
-                let ret = self.call(
+                match self.call_inner(
                     address,
                     Some(Transfer { source: caller, target: address, value }),
                     input,
                     target_gas,
                     false,
+                    false,
+                    false,
                     context,
-                );
-                return ret;
+                ) {
+                    Capture::Exit((s, v)) => {
+                        println!("{:?} {:?}", s, v);
+                        res = v.to_vec();
+                    }
+                    e => panic!("here {:?}", e)
+                }
             }
             HEVMCalls::Deal(inner) => {
                 let who = inner.0;
@@ -904,6 +912,7 @@ mod tests {
             if func.inputs.is_empty() {
                 let (data, reason, num, some_str) =
                     evm.as_mut().call_unchecked(Address::zero(), addr, func, (), 0.into()).unwrap();
+                println!("{:?} {:?} {:?} {:?}", data, reason, num, some_str);
                 assert!(evm.as_mut().check_success(addr, &reason, should_fail));
             } else {
                 // if the unwrap passes then it works
