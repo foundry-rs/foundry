@@ -32,6 +32,7 @@ evmodin = { git = "https://github.com/vorot93/evmodin", optional = true }
 proptest = "1.0.0"
 git2 = "0.13.22"
 glob = "0.3.0"
+semver = "1.0.4"
 
 [dev-dependencies]
 tempdir = "0.3.7"

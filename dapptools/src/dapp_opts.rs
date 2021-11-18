@@ -218,7 +218,13 @@ impl std::convert::TryFrom<&BuildOpts> for Project {
         let paths = paths_builder.build()?;
 
         // build the project w/ allowed paths = root and all the libs
-        let project = Project::builder().paths(paths).allowed_path(root).build()?;
+        let mut builder = Project::builder().paths(paths).allowed_path(root);
+
+        if opts.no_auto_detect {
+            builder = builder.no_auto_detect();
+        }
+
+        let project = builder.build()?;
 
         Ok(project)
     }
@@ -251,6 +257,12 @@ pub struct BuildOpts {
 
     #[structopt(help = "choose the evm version", long, default_value = "london")]
     pub evm_version: EvmVersion,
+
+    #[structopt(
+        help = "if set to true, skips auto-detecting solc and uses what is in the user's $PATH ",
+        long
+    )]
+    pub no_auto_detect: bool,
 }
 #[derive(Clone, Debug)]
 pub enum EvmType {
