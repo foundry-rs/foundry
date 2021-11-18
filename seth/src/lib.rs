@@ -385,18 +385,18 @@ impl SimpleSeth {
     /// use seth::SimpleSeth as Seth;
     ///
     /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(Seth::to_uint256("100".to_string())?, "0x0000000000000000000000000000000000000000000000000000000000000064");
-    ///     assert_eq!(Seth::to_uint256("192038293923".to_string())?, "0x0000000000000000000000000000000000000000000000000000002cb65fd1a3");
+    ///     assert_eq!(Seth::to_uint256("100")?, "0x0000000000000000000000000000000000000000000000000000000000000064");
+    ///     assert_eq!(Seth::to_uint256("192038293923")?, "0x0000000000000000000000000000000000000000000000000000002cb65fd1a3");
     ///     assert_eq!(
-    ///         Seth::to_uint256("115792089237316195423570985008687907853269984665640564039457584007913129639935".to_string())?,
+    ///         Seth::to_uint256("115792089237316195423570985008687907853269984665640564039457584007913129639935")?,
     ///         "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
     ///     );
     ///
     ///     Ok(())
     /// }
     /// ```
-    pub fn to_uint256(value: String) -> Result<String> {
-        let num_u256 = U256::from_str_radix(&value, 10)?;
+    pub fn to_uint256(value: &str) -> Result<String> {
+        let num_u256 = U256::from_str_radix(value, 10)?;
         let num_hex = format!("{:x}", num_u256);
         Ok(format!("0x{}{}", "0".repeat(64 - num_hex.len()), num_hex))
     }

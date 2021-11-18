@@ -451,6 +451,9 @@ impl Backend for SharedBackend {
     fn block_gas_limit(&self) -> U256 {
         self.inner.vicinity.block_gas_limit
     }
+    fn block_base_fee_per_gas(&self) -> U256 {
+        self.inner.vicinity.block_base_fee_per_gas
+    }
 
     fn chain_id(&self) -> U256 {
         self.inner.vicinity.chain_id

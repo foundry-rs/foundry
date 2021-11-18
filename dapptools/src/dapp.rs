@@ -3,7 +3,7 @@ use ethers::{
     solc::{remappings::Remapping, ArtifactOutput, Project},
 };
 use evm_adapters::{
-    sputnik::{vicinity, ForkMemoryBackend},
+    sputnik::{vicinity, ForkMemoryBackend, PRECOMPILES_MAP},
     FAUCET_ACCOUNT,
 };
 use regex::Regex;
@@ -98,7 +98,14 @@ fn main() -> eyre::Result<()> {
                     };
                     let backend = Arc::new(backend);
 
-                    let evm = Executor::new_with_cheatcodes(backend, env.gas_limit, &cfg, ffi);
+                    let precompiles = PRECOMPILES_MAP.clone();
+                    let evm = Executor::new_with_cheatcodes(
+                        backend,
+                        env.gas_limit,
+                        &cfg,
+                        &precompiles,
+                        ffi,
+                    );
 
                     test(builder, project, evm, pattern, json, verbosity)?;
                 }

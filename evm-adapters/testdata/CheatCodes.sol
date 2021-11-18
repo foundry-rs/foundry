@@ -24,6 +24,7 @@ contract HasStorage {
 contract CheatCodes is DSTest {
     address public store = address(new HasStorage());
     Hevm constant hevm = Hevm(HEVM_ADDRESS);
+    address public who = hevm.addr(1);
 
     // Warp
 

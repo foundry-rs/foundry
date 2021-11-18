@@ -1,6 +1,6 @@
 use sputnik::{
     backend::{Backend, Basic},
-    executor::{MemoryStackSubstate, StackState, StackSubstateMetadata},
+    executor::stack::{MemoryStackSubstate, StackState, StackSubstateMetadata},
     ExitError, Transfer,
 };
 
@@ -47,6 +47,9 @@ impl<'config, B: Backend> Backend for MemoryStackStateOwned<'config, B> {
     }
     fn block_gas_limit(&self) -> U256 {
         self.backend.block_gas_limit()
+    }
+    fn block_base_fee_per_gas(&self) -> U256 {
+        self.backend.block_base_fee_per_gas()
     }
     fn chain_id(&self) -> U256 {
         self.backend.chain_id()
