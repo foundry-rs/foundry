@@ -221,7 +221,8 @@ fn parse_block_id(s: &str) -> eyre::Result<BlockId> {
 
 fn parse_slot(s: &str) -> eyre::Result<H256> {
     Ok(if s.starts_with("0x") {
-        H256::from_str(s)? // TODO: currently 0x1 fails with "Invalid input length" error
+        let padded = format!("{:0>64}", s.strip_prefix("0x").unwrap());
+        H256::from_str(&padded)?
     } else {
         H256::from_low_u64_be(u64::from_str(s)?)
     })
