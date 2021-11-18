@@ -13,7 +13,7 @@ interface Hevm {
     function sign(uint256,bytes32) external returns (uint8,bytes32,bytes32);
     function addr(uint256) external returns (address);
     function ffi(string[] calldata) external returns (bytes memory);
-    function prank(address,address,bytes calldata) external returns (bool, bytes memory);
+    function prank(address,address,bytes calldata) external payable returns (bool, bytes memory);
     function deal(address, uint256) external;
 }
 
@@ -157,10 +157,41 @@ contract CheatCodes is DSTest {
         assertEq(origin, tx.origin);
         assertEq(sender, msg.sender);
     }
+
+    function testPrankValue() public {
+        Prank prank = new Prank();
+        // setup the call
+        address new_sender = address(1337);
+        bytes4 sig = prank.checksOriginAndSender.selector;
+        string memory input = "And his name is JOHN CENA!";
+        bytes memory calld = abi.encodePacked(sig, abi.encode(input));
+        address origin = tx.origin;
+        address sender = msg.sender;
+
+        // give the sender some monies
+        hevm.deal(new_sender, 1337);
+
+        // call the function passing in a value. the eth is pulled from the new sender
+        sig = hevm.prank.selector;
+        calld = abi.encodePacked(sig, abi.encode(new_sender, address(prank), calld));
+
+        // this is nested low level calls effectively
+        (bool high_level_success, bytes memory outerRet) = address(hevm).call{value: 1}(calld);
+        assertTrue(high_level_success);
+        (bool success, bytes memory ret) = abi.decode(outerRet, (bool,bytes));
+        assertTrue(success);
+        string memory expectedRetString = "SUPER SLAM!";
+        string memory actualRet = abi.decode(ret, (string));
+        assertEq(actualRet, expectedRetString);
+
+        // make sure we returned back to normal
+        assertEq(origin, tx.origin);
+        assertEq(sender, msg.sender);
+    }
 }
 
 contract Prank is DSTest {
-    function checksOriginAndSender(string calldata input) external returns (string memory) {
+    function checksOriginAndSender(string calldata input) external payable returns (string memory) {
         string memory expectedInput = "And his name is JOHN CENA!";
         assertEq(input, expectedInput);
         assertEq(address(1337), msg.sender);
