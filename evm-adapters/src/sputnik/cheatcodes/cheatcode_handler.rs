@@ -368,6 +368,11 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 state.reset_balance(who);
                 state.deposit(who, value);
             }
+            HEVMCalls::Etch(inner) => {
+                let who = inner.0;
+                let code = inner.1;
+                state.set_code(who, code);
+            }
         };
 
         // TODO: Add more cheat codes.

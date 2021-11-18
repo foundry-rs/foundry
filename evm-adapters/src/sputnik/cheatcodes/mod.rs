@@ -44,6 +44,7 @@ ethers::contract::abigen!(
             sign(uint256,bytes32)(uint8,bytes32,bytes32)
             prank(address,address,bytes)(bool,bytes)
             deal(address,uint256)
+            etch(address,bytes)
     ]"#,
 );
 pub use hevm_mod::HEVMCalls;
