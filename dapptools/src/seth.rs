@@ -18,14 +18,16 @@ async fn main() -> eyre::Result<()> {
     let opts = Opts::from_args();
     match opts.sub {
         Subcommands::FromUtf8 { text } => {
-            println!("{}", SimpleSeth::from_utf8(&text));
+            let val = unwrap_or_stdin(text)?;
+            println!("{}", SimpleSeth::from_utf8(&val));
         }
         Subcommands::ToHex { decimal } => {
             let val = unwrap_or_stdin(decimal)?;
             println!("{}", SimpleSeth::hex(U256::from_dec_str(&val)?));
         }
         Subcommands::ToHexdata { input } => {
-            let output = match input {
+            let val = unwrap_or_stdin(input)?;
+            let output = match val {
                 s if s.starts_with('@') => {
                     let var = std::env::var(&s[1..])?;
                     var.as_bytes().to_hex()
@@ -45,16 +47,20 @@ async fn main() -> eyre::Result<()> {
             println!("0x{}", output);
         }
         Subcommands::ToCheckSumAddress { address } => {
-            println!("{}", SimpleSeth::checksum_address(&address)?);
+            let val = unwrap_or_stdin(address)?;
+            println!("{}", SimpleSeth::checksum_address(&val)?);
         }
         Subcommands::ToAscii { hexdata } => {
-            println!("{}", SimpleSeth::ascii(&hexdata)?);
+            let val = unwrap_or_stdin(hexdata)?;
+            println!("{}", SimpleSeth::ascii(&val)?);
         }
         Subcommands::ToBytes32 { bytes } => {
-            println!("{}", SimpleSeth::bytes32(&bytes)?);
+            let val = unwrap_or_stdin(bytes)?;
+            println!("{}", SimpleSeth::bytes32(&val)?);
         }
         Subcommands::ToDec { hexvalue } => {
-            println!("{}", SimpleSeth::to_dec(&hexvalue)?);
+            let val = unwrap_or_stdin(hexvalue)?;
+            println!("{}", SimpleSeth::to_dec(&val)?);
         }
         Subcommands::ToFix { decimals, value } => {
             let val = unwrap_or_stdin(value)?;
@@ -64,7 +70,8 @@ async fn main() -> eyre::Result<()> {
             );
         }
         Subcommands::ToUint256 { value } => {
-            println!("{}", SimpleSeth::to_uint256(value)?);
+            let val = unwrap_or_stdin(value)?;
+            println!("{}", SimpleSeth::to_uint256(&val)?);
         }
         Subcommands::ToWei { value, unit } => {
             let val = unwrap_or_stdin(value)?;
@@ -179,10 +186,9 @@ where
     Ok(match what {
         Some(what) => what,
         None => {
-            use std::io::Read;
-            let mut input = std::io::stdin();
+            let input = std::io::stdin();
             let mut what = String::new();
-            input.read_to_string(&mut what)?;
+            input.read_line(&mut what)?;
             T::from_str(&what.replace("\n", ""))?
         }
     })

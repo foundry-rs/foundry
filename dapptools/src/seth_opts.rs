@@ -13,7 +13,7 @@ pub enum Subcommands {
     #[structopt(aliases = &["--from-ascii"])]
     #[structopt(name = "--from-utf8")]
     #[structopt(about = "convert text data into hexdata")]
-    FromUtf8 { text: String },
+    FromUtf8 { text: Option<String> },
     #[structopt(name = "--to-hex")]
     #[structopt(about = "convert a decimal number into hex")]
     ToHex { decimal: Option<String> },
@@ -26,25 +26,25 @@ pub enum Subcommands {
       - absolute path to file
       - @tag, where $TAG is defined in environment variables
     "#)]
-    ToHexdata { input: String },
+    ToHexdata { input: Option<String> },
     #[structopt(name = "--to-checksum-address")]
     #[structopt(about = "convert an address to a checksummed format (EIP-55)")]
-    ToCheckSumAddress { address: Address },
+    ToCheckSumAddress { address: Option<Address> },
     #[structopt(name = "--to-ascii")]
     #[structopt(about = "convert hex data to text data")]
-    ToAscii { hexdata: String },
+    ToAscii { hexdata: Option<String> },
     #[structopt(name = "--to-bytes32")]
     #[structopt(about = "left-pads a hex bytes string to 32 bytes)")]
-    ToBytes32 { bytes: String },
+    ToBytes32 { bytes: Option<String> },
     #[structopt(name = "--to-dec")]
     #[structopt(about = "convert hex value into decimal number")]
-    ToDec { hexvalue: String },
+    ToDec { hexvalue: Option<String> },
     #[structopt(name = "--to-fix")]
     #[structopt(about = "convert integers into fixed point with specified decimals")]
     ToFix { decimals: Option<u128>, value: Option<String> },
     #[structopt(name = "--to-uint256")]
     #[structopt(about = "convert a number into uint256 hex string with 0x prefix")]
-    ToUint256 { value: String },
+    ToUint256 { value: Option<String> },
     #[structopt(name = "--to-wei")]
     #[structopt(about = "convert an ETH amount into wei")]
     ToWei { value: Option<String>, unit: Option<String> },
