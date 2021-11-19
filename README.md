@@ -3,6 +3,8 @@
 **Foundry is a blazing fast, portable and modular toolkit for Ethereum
 application development written in Rust.**
 
+![demo](./assets/demo.svg)
+
 ![Github Actions](https://github.com/gakonst/foundry/workflows/Tests/badge.svg)
 [![Telegram Chat](https://img.shields.io/endpoint?color=neon&style=flat-square&url=https%3A%2F%2Ftg.sumanjay.workers.dev%2Ffoundry_rs)](https://t.me/foundry_rs)
 [![Crates.io][crates-badge]][crates-url]
@@ -27,8 +29,8 @@ application development written in Rust.**
 1. Flexible debug logging:
    1. Dapptools-style, using `DsTest`'s emitted logs
    1. Hardhat-style, using the popular `console.sol` contract
-1. Portable (7MB) & easy to install statically linked binary without requiring
-   Nix or any other package manager
+1. Portable (5-10MB) & easy to install statically linked binary without
+   requiring Nix or any other package manager
 1. Abstracted over EVM implementations (currently supported: Sputnik, EvmOdin)
 
 ## Future Features
