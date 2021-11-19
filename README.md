@@ -137,13 +137,15 @@ Benchmarks TBD in the future, but:
     - [ ] Symbolic execution
     - [ ] Coverage
     - [ ] HEVM-style Solidity cheatcodes
-      - [x] roll
-      - [x] warp
-      - [x] ffi
-      - [x] store
-      - [x] load
-      - [ ] sign
-      - [ ] addr
+      - [x] roll: Sets block.number
+      - [x] warp: Sets block.timestamp
+      - [x] ffi: Perform foreign function call to terminal
+      - [x] store: Sets address storage slot
+      - [x] load: Loads address storage slot
+      - [x] deal: Sets account balance
+      - [x] prank: Performs a call as another address (changes msg.sender for a call)
+      - [x] sign: Signs data
+      - [x] addr: Gets address for a private key
       - [ ] makeEOA
       - ...?
     - [ ] Structured tracing with abi decoding

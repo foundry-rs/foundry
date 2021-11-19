@@ -18,6 +18,12 @@ pub struct MemoryStackStateOwned<'config, B> {
 }
 
 impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
+    pub fn deposit(&mut self, address: H160, value: U256) {
+        self.substate.deposit(address, value, &self.backend);
+    }
+}
+
+impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
     pub fn new(metadata: StackSubstateMetadata<'config>, backend: B) -> Self {
         Self { backend, substate: MemoryStackSubstate::new(metadata) }
     }

@@ -232,12 +232,16 @@ fn evm_error(retdata: &str) -> Capture<(ExitReason, Vec<u8>), Infallible> {
 
 impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> {
     /// Decodes the provided calldata as a
-    fn apply_cheatcode(&mut self, input: Vec<u8>) -> Capture<(ExitReason, Vec<u8>), Infallible> {
+    fn apply_cheatcode(
+        &mut self,
+        input: Vec<u8>,
+        transfer: Option<Transfer>,
+        target_gas: Option<u64>,
+    ) -> Capture<(ExitReason, Vec<u8>), Infallible> {
         let mut res = vec![];
 
         // Get a mutable ref to the state so we can apply the cheats
         let state = self.state_mut();
-
         let decoded = match HEVMCalls::decode(&input) {
             Ok(inner) => inner,
             Err(err) => return evm_error(&err.to_string()),
@@ -330,10 +334,46 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                     Token::FixedBytes(s_bytes.to_vec()),
                 ])]);
             }
+            HEVMCalls::Prank(inner) => {
+                let caller = inner.0;
+                let address = inner.1;
+                let input = inner.2;
+
+                let value = if let Some(ref transfer) = transfer {
+                    transfer.value
+                } else {
+                    U256::zero()
+                };
+
+                // change origin
+                let context = Context { caller, address, apparent_value: value };
+                let ret = self.call(
+                    address,
+                    Some(Transfer { source: caller, target: address, value }),
+                    input,
+                    target_gas,
+                    false,
+                    context,
+                );
+                res = match ret {
+                    Capture::Exit((successful, v)) => match successful {
+                        ExitReason::Succeed(_) => {
+                            ethers::abi::encode(&[Token::Bool(true), Token::Bytes(v.to_vec())])
+                        }
+                        _ => ethers::abi::encode(&[Token::Bool(false), Token::Bytes(v.to_vec())]),
+                    },
+                    _ => vec![],
+                };
+            }
+            HEVMCalls::Deal(inner) => {
+                let who = inner.0;
+                let value = inner.1;
+                state.reset_balance(who);
+                state.deposit(who, value);
+            }
         };
 
         // TODO: Add more cheat codes.
-
         Capture::Exit((ExitReason::Succeed(ExitSucceed::Stopped), res))
     }
 
@@ -459,7 +499,6 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         let reason = self.execute(&mut runtime);
         // // log::debug!(target: "evm", "Call execution using address {}: {:?}", code_address,
         // reason);
-
         match reason {
             ExitReason::Succeed(s) => {
                 let _ = self.handler.exit_substate(StackExitKind::Succeeded);
@@ -660,7 +699,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
         // NB: This is very similar to how Optimism's custom intercept logic to "predeploys" work
         // (e.g. with the StateManager)
         if code_address == *CHEATCODE_ADDRESS {
-            self.apply_cheatcode(input)
+            self.apply_cheatcode(input, transfer, target_gas)
         } else {
             self.handler.call(code_address, transfer, input, target_gas, is_static, context)
         }
