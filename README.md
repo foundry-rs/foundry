@@ -21,7 +21,7 @@ Foundry consists of:
 
 ## Forge Quickstart
 
-Forge is a building and testing framework for Ethereum development.
+Forge is a development and testing framework for Ethereum.
 
 ```
 cargo install forge
@@ -37,7 +37,7 @@ More documentation can be found in the [forge package](./forge/README.md).
 1. Fast & flexible compilation pipeline:
    1. Automatic Solidity compiler version detection & installation (under
       `~/.svm`)
-   1. Incremental compilation & caching: Only files changed are re-compiled
+   1. Incremental compilation & caching: Only changed files are re-compiled
    1. Parallel compilation
    1. Non-standard directory structures support (e.g. can build
       [Hardhat repos](https://twitter.com/gakonst/status/1461289225337421829))
@@ -77,10 +77,10 @@ Hardhat compilation took 15.244s, whereas Forge took 9.449 (~4s cached)
 
 ```
 cargo install cast
-cast call 0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48 "totalSupply()" --rpc-url
+cast call 0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48 "totalSupply()" --rpc-url $ETH_RPC_URL
 ```
 
-More documentation can be found in the [cast package](./forge/README.md).
+More documentation can be found in the [cast package](./cast/README.md).
 
 ## Contributing
 
@@ -138,7 +138,7 @@ Join the [foundry telegram](https://t.me/foundry_rs) to chat with the community!
 
 - Foundry is a clean-room rewrite of the testing framework
   [dapptools](https://github.com/dapphub/dapptools). None of this would have
-  been possible without the DappHub team's work over the eyars
+  been possible without the DappHub team's work over the years.
 - [Matthias Seitz](https://twitter.com/mattsse_): Created
   [ethers-solc](https://github.com/gakonst/ethers-rs/tree/master/ethers-solc/)
   which is the backbone of our compilation pipeline, as well as countless
