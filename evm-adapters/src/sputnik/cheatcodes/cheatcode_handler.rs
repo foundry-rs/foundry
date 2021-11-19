@@ -339,11 +339,8 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 let address = inner.1;
                 let input = inner.2;
 
-                let value = if let Some(ref transfer) = transfer {
-                    transfer.value
-                } else {
-                    U256::zero()
-                };
+                let value =
+                    if let Some(ref transfer) = transfer { transfer.value } else { U256::zero() };
 
                 // change origin
                 let context = Context { caller, address, apparent_value: value };
