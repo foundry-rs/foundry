@@ -1,13 +1,49 @@
-# <h1 align="center"> dapptools.rs </h1>
+# <h1 align="center"> foundry </h1>
 
-_Rust port of DappTools_
+**Foundry is a blazing fast, portable and modular toolkit for Ethereum
+application development written in Rust.**
 
-![Github Actions](https://github.com/gakonst/dapptools-rs/workflows/Tests/badge.svg)
-[![Telegram Chat](https://img.shields.io/endpoint?color=neon&style=flat-square&url=https%3A%2F%2Ftg.sumanjay.workers.dev%2Fturbodapptools)](https://t.me/turbodapptools)
+![Github Actions](https://github.com/gakonst/foundry/workflows/Tests/badge.svg)
+[![Telegram Chat](https://img.shields.io/endpoint?color=neon&style=flat-square&url=https%3A%2F%2Ftg.sumanjay.workers.dev%2Ffoundry_rs)](https://t.me/foundry_rs)
 [![Crates.io][crates-badge]][crates-url]
 
-[crates-badge]: https://img.shields.io/crates/v/turbodapp.svg
-[crates-url]: https://crates.io/crates/turbodapp
+[crates-badge]: https://img.shields.io/crates/v/foundry.svg
+[crates-url]: https://crates.io/crates/foundry
+
+## Directory structure
+
+This repository contains several Rust crates:
+
+- [`forge`](forge): Library for building and testing a Solidity repository.
+- [`cast`](cast): Library for interacting with a live Ethereum JSON-RPC
+  compatible node, or for parsing data.
+- [`cli`](cli): Command line interfaces to `cast` and `forge`.
+- [`evm-adapters`](evm-adapters): Unified layer of abstraction over multiple EVM
+  types. Currently supported EVMs:
+  [Sputnik](https://github.com/rust-blockchain/evm/),
+  [Evmodin](https://github.com/vorot93/evmodin).
+- [`utils`](utils): Utilities for parsing ABI data, will eventually be
+  upstreamed to [ethers-rs](https://github.com/gakonst/ethers-rs/).
+- [`ark-serialize`](serialize): Provides efficient serialization and point
+  compression for finite fields and elliptic curves
+
+## How Fast?
+
+Forge is quite fast at both compiling (leveraging the ethers-solc package) and
+testing.
+
+Some benchmarks:
+
+| Project   | Forge | DappTools |
+| --------- | ----- | --------- |
+| Header    | Title |
+| Paragraph | Text  |
+
+It also works with "non-standard" directory structures (i.e. contracts not in
+`src/`, libraries not in `lib/`). When
+[tested](https://twitter.com/gakonst/status/1461289225337421829) with
+[`openzeppelin-contracts`](https://github.com/OpenZeppelin/openzeppelin-contracts),
+Hardhat compilation took 15.244s, whereas Forge took 9.449 (~4s cached)
 
 ## Installing
 
@@ -17,7 +53,7 @@ parameter, which will force the installer to use the checked in `Cargo.lock`
 file.
 
 ```
-cargo install --git https://github.com/gakonst/dapptools-rs --locked
+cargo install --git https://github.com/gakonst/foundry --locked
 ```
 
 Alternatively, clone the repository and run: `cargo build --release`
@@ -67,110 +103,14 @@ Benchmarks TBD in the future, but:
    faster than the JS bindings or even just calling out to the native binary.
 1. `seth` and `dapp` are less than 7mb when built with `cargo build --release`.
 
-## Features
+## Is this actually working?
 
-- seth
-  - [ ] `--abi-decode`
-  - [ ] `--calldata-decode`
-  - [x] `--from-ascii` (with `--from-utf8` alias)
-  - [ ] `--from-bin`
-  - [ ] `--from-fix`
-  - [ ] `--from-wei`
-  - [ ] `--max-int`
-  - [ ] `--max-uint`
-  - [ ] `--min-int`
-  - [x] `--to-checksum-address` (`--to-address` in dapptools)
-  - [x] `--to-ascii`
-  - [x] `--to-bytes32`
-  - [x] `--to-dec`
-  - [x] `--to-fix`
-  - [x] `--to-hex`
-  - [x] `--to-hexdata`
-  - [ ] `--to-int256`
-  - [x] `--to-uint256`
-  - [x] `--to-wei`
-  - [ ] `4byte`
-  - [ ] `4byte-decode`
-  - [ ] `4byte-event`
-  - [ ] `abi-encode`
-  - [x] `age`
-  - [x] `balance`
-  - [x] `basefee`
-  - [x] `block`
-  - [x] `block-number`
-  - [ ] `bundle-source`
-  - [x] `call` (partial)
-  - [x] `calldata`
-  - [x] `chain`
-  - [x] `chain-id`
-  - [ ] `code`
-  - [ ] `debug`
-  - [ ] `estimate`
-  - [ ] `etherscan-source`
-  - [ ] `events`
-  - [x] `gas-price`
-  - [ ] `index`
-  - [x] `keccak`
-  - [ ] `logs`
-  - [x] `lookup-address`
-  - [ ] `ls`
-  - [ ] `mktx`
-  - [x] `namehash`
-  - [ ] `nonce`
-  - [ ] `publish`
-  - [ ] `receipt`
-  - [x] `resolve-name`
-  - [ ] `run-tx`
-  - [x] `send` (partial)
-  - [ ] `sign`
-  - [x] `storage`
-  - [ ] `tx`
-- dapp
-  - [ ] test
-    - [x] Simple unit tests
-      - [x] Gas costs
-      - [x] DappTools style test output
-      - [x] JSON test output
-      - [x] Matching on regex
-      - [x] DSTest-style assertions support
-    - [x] Fuzzing
-    - [ ] Symbolic execution
-    - [ ] Coverage
-    - [ ] HEVM-style Solidity cheatcodes
-      - [x] roll: Sets block.number
-      - [x] warp: Sets block.timestamp
-      - [x] ffi: Perform foreign function call to terminal
-      - [x] store: Sets address storage slot
-      - [x] load: Loads address storage slot
-      - [x] deal: Sets account balance
-      - [x] prank: Performs a call as another address (changes msg.sender for a call)
-      - [x] sign: Signs data
-      - [x] addr: Gets address for a private key
-      - [ ] makeEOA
-      - ...?
-    - [ ] Structured tracing with abi decoding
-    - [ ] Per-line gas profiling
-    - [x] Forking mode
-    - [x] Automatic solc selection
-  - [x] build
-    - [x] Can read DappTools-style .sol.json artifacts
-    - [x] Manual remappings
-    - [x] Automatic remappings
-    - [x] Multiple compiler versions
-    - [ ] Incremental compilation
-    - [ ] Can read Hardhat-style artifacts
-    - [ ] Can read Truffle-style artifacts
-  - [x] install
-  - [x] update
-  - [ ] debug
-  - [x] CLI Tracing with `RUST_LOG=dapp=trace`
-
-## Tested Against
-
-This repository has been tested against a few repositories which you can monitor
-[here](https://github.com/gakonst/dapptools-benchmarks)
+This repository has been tested against a few DappTools repositories which you
+can monitor [here](https://github.com/gakonst/dapptools-benchmarks).
 
 ## Development
+
+The minimum supported rust version is 1.51.
 
 ### Rust Toolchain
 
@@ -201,7 +141,14 @@ cargo clippy
 
 First, see if the answer to your question can be found in the API documentation.
 If the answer is not there, try opening an
-[issue](https://github.com/gakonst/dapptools-rs/issues/new) with the question.
+[issue](https://github.com/gakonst/foundry/issues/new) with the question.
 
-Join the [turbodapptools telegram](https://t.me/turbodapptools) to chat with the
-community!
+Join the [foundry telegram](https://t.me/foundry_rs) to chat with the community!
+
+## Acknowledgements
+
+- Foundry is a clean-room rewrite of the testing framework
+  [dapptools](https://github.com/dapphub/dapptools).
+- Matthias Seitz: Ethers-solc, abigen
+- Rohit Narunkar: SVM
+- ...

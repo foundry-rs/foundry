@@ -17,7 +17,7 @@ use ethers::{
     core::types::{Address, Bytes, U256},
 };
 
-use dapp_utils::IntoFunction;
+use foundry_utils::IntoFunction;
 
 use eyre::Result;
 use once_cell::sync::Lazy;
@@ -75,7 +75,7 @@ pub trait Evm<State> {
         let func = func.into();
         let (retdata, status, gas, logs) = self.call_unchecked(from, to, &func, args, value)?;
         if Self::is_fail(&status) {
-            let reason = dapp_utils::decode_revert(retdata.as_ref()).unwrap_or_default();
+            let reason = foundry_utils::decode_revert(retdata.as_ref()).unwrap_or_default();
             Err(EvmError::Execution { reason, gas_used: gas, logs })
         } else {
             let retdata = decode_function_data(&func, retdata, false)?;

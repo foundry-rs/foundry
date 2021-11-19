@@ -1,5 +1,5 @@
 [package]
-name = "dapp"
+name = "forge"
 version = "0.1.0"
 edition = "2018"
 license = "MIT OR Apache-2.0"
@@ -7,7 +7,7 @@ license = "MIT OR Apache-2.0"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-dapp-utils = { path = "./../utils" }
+foundry-utils = { path = "./../utils" }
 evm-adapters = { path = "./../evm-adapters", default-features = false }
 
 # ethers = { version = "0.5.2" }

@@ -2,6 +2,7 @@
 
 use crate::utils;
 
+use cast::SimpleCast;
 use ethers::{
     abi::{Address, Function, FunctionExt},
     core::types::Chain,
@@ -10,7 +11,6 @@ use ethers::{
 };
 use ethers_etherscan::{contract::VerifyContract, Client};
 use eyre::ContextCompat;
-use seth::SimpleSeth;
 use std::convert::TryFrom;
 
 /// Run the verify command to submit the contract's source code for verification on etherscan
@@ -56,7 +56,7 @@ pub async fn run(
             state_mutability: Default::default(),
         };
 
-        constructor_args = Some(SimpleSeth::calldata(fun.abi_signature(), &args)?);
+        constructor_args = Some(SimpleCast::calldata(fun.abi_signature(), &args)?);
     } else if !args.is_empty() {
         eyre::bail!("No constructor found but contract arguments provided")
     }

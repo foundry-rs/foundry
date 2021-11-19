@@ -7,7 +7,7 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-dapp-utils = { path = "./../utils" }
+foundry-utils = { path = "./../utils" }
 
 sputnik = { package = "evm", git = "https://github.com/rust-blockchain/evm",  optional = true, features = ["tracing"] }
 

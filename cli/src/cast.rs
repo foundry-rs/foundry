@@ -1,5 +1,7 @@
-mod seth_opts;
-use seth_opts::{Opts, Subcommands};
+use cast::{Cast, SimpleCast};
+
+mod cast_opts;
+use cast_opts::{Opts, Subcommands};
 
 use ethers::{
     core::types::{BlockId, BlockNumber::Latest},
@@ -9,7 +11,6 @@ use ethers::{
     types::{NameOrAddress, U256},
 };
 use rustc_hex::ToHex;
-use seth::{Seth, SimpleSeth};
 use std::{convert::TryFrom, str::FromStr};
 use structopt::StructOpt;
 
@@ -19,11 +20,11 @@ async fn main() -> eyre::Result<()> {
     match opts.sub {
         Subcommands::FromUtf8 { text } => {
             let val = unwrap_or_stdin(text)?;
-            println!("{}", SimpleSeth::from_utf8(&val));
+            println!("{}", SimpleCast::from_utf8(&val));
         }
         Subcommands::ToHex { decimal } => {
             let val = unwrap_or_stdin(decimal)?;
-            println!("{}", SimpleSeth::hex(U256::from_dec_str(&val)?));
+            println!("{}", SimpleCast::hex(U256::from_dec_str(&val)?));
         }
         Subcommands::ToHexdata { input } => {
             let val = unwrap_or_stdin(input)?;
@@ -48,36 +49,36 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::ToCheckSumAddress { address } => {
             let val = unwrap_or_stdin(address)?;
-            println!("{}", SimpleSeth::checksum_address(&val)?);
+            println!("{}", SimpleCast::checksum_address(&val)?);
         }
         Subcommands::ToAscii { hexdata } => {
             let val = unwrap_or_stdin(hexdata)?;
-            println!("{}", SimpleSeth::ascii(&val)?);
+            println!("{}", SimpleCast::ascii(&val)?);
         }
         Subcommands::ToBytes32 { bytes } => {
             let val = unwrap_or_stdin(bytes)?;
-            println!("{}", SimpleSeth::bytes32(&val)?);
+            println!("{}", SimpleCast::bytes32(&val)?);
         }
         Subcommands::ToDec { hexvalue } => {
             let val = unwrap_or_stdin(hexvalue)?;
-            println!("{}", SimpleSeth::to_dec(&val)?);
+            println!("{}", SimpleCast::to_dec(&val)?);
         }
         Subcommands::ToFix { decimals, value } => {
             let val = unwrap_or_stdin(value)?;
             println!(
                 "{}",
-                SimpleSeth::to_fix(unwrap_or_stdin(decimals)?, U256::from_dec_str(&val)?)?
+                SimpleCast::to_fix(unwrap_or_stdin(decimals)?, U256::from_dec_str(&val)?)?
             );
         }
         Subcommands::ToUint256 { value } => {
             let val = unwrap_or_stdin(value)?;
-            println!("{}", SimpleSeth::to_uint256(&val)?);
+            println!("{}", SimpleCast::to_uint256(&val)?);
         }
         Subcommands::ToWei { value, unit } => {
             let val = unwrap_or_stdin(value)?;
             println!(
                 "{}",
-                SimpleSeth::to_wei(
+                SimpleCast::to_wei(
                     U256::from_dec_str(&val)?,
                     unit.unwrap_or_else(|| String::from("wei"))
                 )?
@@ -85,65 +86,65 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::Block { rpc_url, block, full, field, to_json } => {
             let provider = Provider::try_from(rpc_url)?;
-            println!("{}", Seth::new(provider).block(block, full, field, to_json).await?);
+            println!("{}", Cast::new(provider).block(block, full, field, to_json).await?);
         }
         Subcommands::BlockNumber { rpc_url } => {
             let provider = Provider::try_from(rpc_url)?;
-            println!("{}", Seth::new(provider).block_number().await?);
+            println!("{}", Cast::new(provider).block_number().await?);
         }
         Subcommands::Call { rpc_url, address, sig, args } => {
             let provider = Provider::try_from(rpc_url)?;
-            println!("{}", Seth::new(provider).call(address, &sig, args).await?);
+            println!("{}", Cast::new(provider).call(address, &sig, args).await?);
         }
         Subcommands::Calldata { sig, args } => {
-            println!("{}", SimpleSeth::calldata(sig, &args)?);
+            println!("{}", SimpleCast::calldata(sig, &args)?);
         }
         Subcommands::Chain { rpc_url } => {
             let provider = Provider::try_from(rpc_url)?;
-            println!("{}", Seth::new(provider).chain().await?);
+            println!("{}", Cast::new(provider).chain().await?);
         }
         Subcommands::ChainId { rpc_url } => {
             let provider = Provider::try_from(rpc_url)?;
-            println!("{}", Seth::new(provider).chain_id().await?);
+            println!("{}", Cast::new(provider).chain_id().await?);
         }
         Subcommands::Namehash { name } => {
-            println!("{}", SimpleSeth::namehash(&name)?);
+            println!("{}", SimpleCast::namehash(&name)?);
         }
         Subcommands::SendTx { eth, to, sig, args } => {
             let provider = Provider::try_from(eth.rpc_url.as_str())?;
             if let Some(signer) = eth.signer()? {
                 let from = eth.from.unwrap_or_else(|| signer.address());
                 let provider = SignerMiddleware::new(provider, signer);
-                seth_send(provider, from, to, sig, args, eth.seth_async).await?;
+                cast_send(provider, from, to, sig, args, eth.cast_async).await?;
             } else {
                 let from = eth.from.expect("No ETH_FROM or signer specified");
-                seth_send(provider, from, to, sig, args, eth.seth_async).await?;
+                cast_send(provider, from, to, sig, args, eth.cast_async).await?;
             }
         }
         Subcommands::Age { block, rpc_url } => {
             let provider = Provider::try_from(rpc_url)?;
             println!(
                 "{}",
-                Seth::new(provider).age(block.unwrap_or(BlockId::Number(Latest))).await?
+                Cast::new(provider).age(block.unwrap_or(BlockId::Number(Latest))).await?
             );
         }
         Subcommands::Balance { block, who, rpc_url } => {
             let provider = Provider::try_from(rpc_url)?;
-            println!("{}", Seth::new(provider).balance(who, block).await?);
+            println!("{}", Cast::new(provider).balance(who, block).await?);
         }
         Subcommands::BaseFee { block, rpc_url } => {
             let provider = Provider::try_from(rpc_url)?;
             println!(
                 "{}",
-                Seth::new(provider).base_fee(block.unwrap_or(BlockId::Number(Latest))).await?
+                Cast::new(provider).base_fee(block.unwrap_or(BlockId::Number(Latest))).await?
             );
         }
         Subcommands::GasPrice { rpc_url } => {
             let provider = Provider::try_from(rpc_url)?;
-            println!("{}", Seth::new(provider).gas_price().await?);
+            println!("{}", Cast::new(provider).gas_price().await?);
         }
         Subcommands::Keccak { data } => {
-            println!("{}", SimpleSeth::keccak(&data)?);
+            println!("{}", SimpleCast::keccak(&data)?);
         }
         Subcommands::ResolveName { who, rpc_url, verify } => {
             let provider = Provider::try_from(rpc_url)?;
@@ -199,23 +200,23 @@ where
     })
 }
 
-async fn seth_send<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
+async fn cast_send<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
     provider: M,
     from: F,
     to: T,
     sig: String,
     args: Vec<String>,
-    seth_async: bool,
+    cast_async: bool,
 ) -> eyre::Result<()>
 where
     M::Error: 'static,
 {
-    let seth = Seth::new(provider);
+    let cast = Cast::new(provider);
     let pending_tx =
-        seth.send(from, to, if !sig.is_empty() { Some((&sig, args)) } else { None }).await?;
+        cast.send(from, to, if !sig.is_empty() { Some((&sig, args)) } else { None }).await?;
     let tx_hash = *pending_tx;
 
-    if seth_async {
+    if cast_async {
         println!("{}", tx_hash);
     } else {
         let receipt = pending_tx.await?.ok_or_else(|| eyre::eyre!("tx {} not found", tx_hash))?;

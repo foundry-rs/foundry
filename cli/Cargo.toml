@@ -1,5 +1,5 @@
 [package]
-name = "dapptools"
+name = "foundry-cli"
 version = "0.1.0"
 edition = "2018"
 license = "MIT OR Apache-2.0"
@@ -8,10 +8,11 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 structopt = "0.3.23"
-dapp-utils = { path = "../utils" }
-dapp = { path = "../dapp" }
-seth = { path = "../seth" }
+foundry-utils = { path = "../utils" }
+forge = { path = "../forge" }
+cast = { path = "../cast" }
 evm-adapters = { path = "../evm-adapters" }
+
 # ethers = "0.5"
 ethers = { git = "https://github.com/gakonst/ethers-rs" }
 ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs" }
@@ -55,11 +56,11 @@ evmodin-evm = [
 ]
 
 [[bin]]
-name = "seth"
-path = "src/seth.rs"
+name = "cast"
+path = "src/cast.rs"
 doc = false
 
 [[bin]]
-name = "dapp"
-path = "src/dapp.rs"
+name = "forge"
+path = "src/forge.rs"
 doc = false

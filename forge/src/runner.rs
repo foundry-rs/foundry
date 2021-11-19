@@ -244,11 +244,11 @@ mod tests {
     mod sputnik {
         use std::str::FromStr;
 
-        use dapp_utils::get_func;
         use evm_adapters::sputnik::{
             helpers::{new_backend, new_vicinity},
             Executor,
         };
+        use foundry_utils::get_func;
         use proptest::test_runner::Config as FuzzConfig;
 
         use super::*;

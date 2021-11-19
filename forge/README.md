@@ -1,10 +1,49 @@
-# `dapp`
+# `forge`
+
+## Features
+
+- [ ] test
+  - [x] Simple unit tests
+    - [x] Gas costs
+    - [x] DappTools style test output
+    - [x] JSON test output
+    - [x] Matching on regex
+    - [x] DSTest-style assertions support
+  - [x] Fuzzing
+  - [ ] Symbolic execution
+  - [ ] Coverage
+  - [x] HEVM-style Solidity cheatcodes
+    - [x] roll: Sets block.number
+    - [x] warp: Sets block.timestamp
+    - [x] ffi: Perform foreign function call to terminal
+    - [x] store: Sets address storage slot
+    - [x] load: Loads address storage slot
+    - [x] sign: Signs data
+    - [x] addr: Gets address for a private key
+    - [x] etch: Sets the contract code at some address
+    - ...?
+  - [ ] Structured tracing with abi decoding
+  - [ ] Per-line gas profiling
+  - [x] Forking mode
+  - [x] Automatic solc selection
+- [x] build
+  - [x] Can read DappTools-style .sol.json artifacts
+  - [x] Manual remappings
+  - [x] Automatic remappings
+  - [x] Multiple compiler versions
+  - [x] Incremental compilation
+  - [ ] Can read Hardhat-style artifacts
+  - [ ] Can read Truffle-style artifacts
+- [x] install
+- [x] update
+- [ ] debug
+- [x] CLI Tracing with `RUST_LOG=dapp=trace`
 
 ## Run Solidity tests
 
-Any contract that contains a function starting with `test` is being tested. The glob
-passed to `--contracts` must be wrapped with quotes so that it gets passed to the internal
-command without being expanded by your shell.
+Any contract that contains a function starting with `test` is being tested. The
+glob passed to `--contracts` must be wrapped with quotes so that it gets passed
+to the internal command without being expanded by your shell.
 
 ```bash
 $ cargo r --bin dapp test --contracts './**/*.sol'
@@ -40,7 +79,8 @@ Running 1 test for GmTest
 
 ### Test output as JSON
 
-In order to compose with other commands, you may print the results as JSON via the `--json` flag
+In order to compose with other commands, you may print the results as JSON via
+the `--json` flag
 
 ```bash
 $ ./target/release/dapp test -c "./**/*.sol" --json
@@ -49,22 +89,24 @@ $ ./target/release/dapp test -c "./**/*.sol" --json
 
 ### Build the contracts
 
-You can build the contracts by running, which will by default output the compilation artifacts
-of all contracts under `src/` at `out/dapp.sol.json`:
+You can build the contracts by running, which will by default output the
+compilation artifacts of all contracts under `src/` at `out/dapp.sol.json`:
 
 ```bash
 $ ./target/release/dapp build
 ```
 
-You can specify an alternative path for your contracts and libraries with `--remappings`, `--lib-path`
-and `--contracts`. We default to importing libraries from `./lib`, but you still need to manually
-set your remappings.
+You can specify an alternative path for your contracts and libraries with
+`--remappings`, `--lib-path` and `--contracts`. We default to importing
+libraries from `./lib`, but you still need to manually set your remappings.
 
-In the example below, we see that this also works for importing libraries from different paths
-(e.g. having a DappTools-style import under `lib/` and an NPM-style import under `node_modules`)
+In the example below, we see that this also works for importing libraries from
+different paths (e.g. having a DappTools-style import under `lib/` and an
+NPM-style import under `node_modules`)
 
-Notably, we need 1 remapping and 1 lib path for each import. Given that this can be tedious,
-you can do set remappings via the env var `DAPP_REMAPPINGS`, by setting your remapping  1 in each line
+Notably, we need 1 remapping and 1 lib path for each import. Given that this can
+be tedious, you can do set remappings via the env var `DAPP_REMAPPINGS`, by
+setting your remapping 1 in each line
 
 ```bash
 $ dapp build --out out.json \
@@ -73,7 +115,6 @@ $ dapp build --out out.json \
     --remappings @openzeppelin/=node_modules/@openzeppelin/ \
     --lib-path ./node_modules/@openzeppelin
 ```
-
 
 ```bash
 $ echo $DAPP_REMAPPINGS
@@ -86,16 +127,16 @@ $ dapp build --out out.json \
 
 ### CLI Help
 
-The CLI options can be seen below. You can fully customize the initial blockchain
-context. As an example, if you pass the flag `--block-number`, then the EVM's `NUMBER`
-opcode will always return the supplied value. This can be useful for testing.
-
+The CLI options can be seen below. You can fully customize the initial
+blockchain context. As an example, if you pass the flag `--block-number`, then
+the EVM's `NUMBER` opcode will always return the supplied value. This can be
+useful for testing.
 
 #### Build
 
 ```bash
-$ cargo r --bin dapp build --help
-   Compiling dapptools v0.1.0
+$ cargo r --bin d build --help
+   Compiling forge v0.1.0
     Finished dev [unoptimized + debuginfo] target(s) in 3.45s
      Running `target/debug/dapp build --help`
 dapp-build 0.1.0
