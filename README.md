@@ -10,22 +10,59 @@ application development written in Rust.**
 [crates-badge]: https://img.shields.io/crates/v/foundry.svg
 [crates-url]: https://crates.io/crates/foundry
 
-## Directory structure
+## Features
 
-This repository contains several Rust crates:
+1. Fast & flexible compilation pipeline:
+   1. Automatic Solidity compiler version detection & installation (under
+      `~/.svm`)
+   1. Incremental compilation & caching: Only files changed are re-compiled
+   1. Parallel compilation
+   1. Non-standard directory structures support (e.g. can build
+      [Hardhat repos](https://twitter.com/gakonst/status/1461289225337421829))
+1. Tests are written in Solidity (like in DappTools)
+1. Fast fuzz Tests with shrinking of inputs & printing of counter-examples
+   1. These tests are ~3x faster than DappTools'
+1. Fast remote RPC forking mode leveraging Rust's async infrastructure like
+   tokio
+1. Flexible debug logging:
+   1. Dapptools-style, using `DsTest`'s emitted logs
+   1. Hardhat-style, using the popular `console.sol` contract
+1. Portable (7MB) & easy to install statically linked binary without requiring
+   Nix or any other package manager
+1. Abstracted over EVM implementations (currently supported: Sputnik, EvmOdin)
 
-- [`forge`](forge): Library for building and testing a Solidity repository.
-- [`cast`](cast): Library for interacting with a live Ethereum JSON-RPC
-  compatible node, or for parsing data.
-- [`cli`](cli): Command line interfaces to `cast` and `forge`.
-- [`evm-adapters`](evm-adapters): Unified layer of abstraction over multiple EVM
-  types. Currently supported EVMs:
-  [Sputnik](https://github.com/rust-blockchain/evm/),
-  [Evmodin](https://github.com/vorot93/evmodin).
-- [`utils`](utils): Utilities for parsing ABI data, will eventually be
-  upstreamed to [ethers-rs](https://github.com/gakonst/ethers-rs/).
-- [`ark-serialize`](serialize): Provides efficient serialization and point
-  compression for finite fields and elliptic curves
+## Future Features
+
+### Dapptools feature parity
+
+Over the next months, we intend to add the following features which are
+available in upstream dapptools:
+
+1. Stack Traces
+1. Symbolic EVM: The holy grail of testing, symbolically executed EVM allows
+1. Invariant Tests
+1. Interactive Debugger
+1. Code coverage
+1. Gas snapshots
+
+### Unique features?
+
+We also intend to add features which are not available in dapptools:
+
+1. Faster tests with parallel EVM execution that produces state diffs instead of
+   modifying the state
+1. Improved UX for assertions:
+   1. Check revert error or reason on a Solidity call
+   1. Check that an event was emitted with expected arguments
+1. Support more EVM backends (revm, geth's evm, hevm etc.) & benchmark
+   performance across them
+1. Declarative deployment system based on a config file
+1. Formatting & Linting powered by [Solang]()
+   1. `dapp fmt`, an automatic code formatter according to standard rules (like
+      `prettier-plugin-solidity`)
+   1. `dapp lint` a linter + static analyzer. think of this as `solhint` +
+      slither + others.
+1. Flamegraphs for gas profiling
 
 ## How Fast?
 
@@ -58,57 +95,22 @@ cargo install --git https://github.com/gakonst/foundry --locked
 
 Alternatively, clone the repository and run: `cargo build --release`
 
-## Why?! DappTools is great!
+## Contributing
 
-Developer experience is the #1 thing we should be optimizing for in development.
-Tests MUST be fast, non-trivial tests (e.g. proptests) MUST be easy to write,
-and compilation MUST be fast.
+### Directory structure
 
-Before getting into technical reasons, my simple answer is: rewriting software
-in Rust is fun. I enjoy it, and that could be the end of the "why" section.
+This repository contains several Rust crates:
 
-DappTools is REALLY great.
-[You should try it](https://github.com/dapphub/dapptools/), especially the
-symbolic execution and step debugger features.
-
-But it has some shortcomings:
-
-It's written in a mix of Bash, Javascript and Haskell. In my opinion, this makes
-it hard to contribute, you don't have a "standard" way to test things, and it
-happens to be that there are not that many Haskell developers in the Ethereum
-community.
-
-It is also hard to distribute. It requires installing Nix, and that's a barrier
-to entry to many already because (for whatever reason) Nix doesn't always
-install properly the first time.
-
-The more technical reasons I decided to use it are:
-
-1. It is easier to write regression tests in Rust than in Bash.
-1. Rust binaries are cross-platform and easy to distribute.
-1. Compilation speed: We can use native bindings to the Solidity compiler
-   (instead of calling out to solcjs or even to the compiled binary) for extra
-   compilation speed.
-1. Testing speed: HEVM tests are really fast, but I believe we can go faster by
-   leveraging Rust's high performance multithreading and resource allocation
-   system.
-1. There seems to be an emerging community of Rust-Ethereum developers.
-
-Benchmarks TBD in the future, but:
-
-1. [Using a Rust EVM w/ forked RPC mode](https://github.com/brockelmore/rust-cevm/#compevm-rust-ethereum-virtual-machine-implementation-designed-for-smart-contract-composability-testing)
-   was claimed to be as high as 10x faster than HEVM's forking mode.
-1. Native bindings to the Solidity compiler have been shown to be
-   [10x](https://forum.openzeppelin.com/t/a-faster-solidity-compiler-cli-in-rust/2546)
-   faster than the JS bindings or even just calling out to the native binary.
-1. `seth` and `dapp` are less than 7mb when built with `cargo build --release`.
-
-## Is this actually working?
-
-This repository has been tested against a few DappTools repositories which you
-can monitor [here](https://github.com/gakonst/dapptools-benchmarks).
-
-## Development
+- [`forge`](forge): Library for building and testing a Solidity repository.
+- [`cast`](cast): Library for interacting with a live Ethereum JSON-RPC
+  compatible node, or for parsing data.
+- [`cli`](cli): Command line interfaces to `cast` and `forge`.
+- [`evm-adapters`](evm-adapters): Unified layer of abstraction over multiple EVM
+  types. Currently supported EVMs:
+  [Sputnik](https://github.com/rust-blockchain/evm/),
+  [Evmodin](https://github.com/vorot93/evmodin).
+- [`utils`](utils): Utilities for parsing ABI data, will eventually be
+  upstreamed to [ethers-rs](https://github.com/gakonst/ethers-rs/).
 
 The minimum supported rust version is 1.51.
 
@@ -148,7 +150,14 @@ Join the [foundry telegram](https://t.me/foundry_rs) to chat with the community!
 ## Acknowledgements
 
 - Foundry is a clean-room rewrite of the testing framework
-  [dapptools](https://github.com/dapphub/dapptools).
-- Matthias Seitz: Ethers-solc, abigen
-- Rohit Narunkar: SVM
-- ...
+  [dapptools](https://github.com/dapphub/dapptools). None of this would have
+  been possible without the DappHub team's work over the eyars
+- [Matthias Seitz](https://twitter.com/mattsse_): Created
+  [ethers-solc](https://github.com/gakonst/ethers-rs/tree/master/ethers-solc/)
+  which is the backbone of our compilation pipeline, as well as countless
+  contributions to ethers, in particular the `abigen` macros.
+- [Rohit Narunkar](https://twitter.com/rohitnarurkar): Created the Rust Solidity
+  version manager [svm-rs](https://github.com/roynalnaruto/svm-rs) which we use
+  to auto-detect and manage multiple Solidity versions
+- All the other contributors to the ethers-rs & foundry repositories and
+  chatrooms.
