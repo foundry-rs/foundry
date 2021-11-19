@@ -1,8 +1,5 @@
 # <h1 align="center"> foundry </h1>
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum
-application development written in Rust.**
-
 ![Github Actions](https://github.com/gakonst/foundry/workflows/Tests/badge.svg)
 [![Telegram Chat](https://img.shields.io/endpoint?color=neon&style=flat-square&url=https%3A%2F%2Ftg.sumanjay.workers.dev%2Ffoundry_rs)](https://t.me/foundry_rs)
 [![Crates.io][crates-badge]][crates-url]
@@ -10,12 +7,26 @@ application development written in Rust.**
 [crates-badge]: https://img.shields.io/crates/v/foundry.svg
 [crates-url]: https://crates.io/crates/foundry-rs
 
+**Foundry is a blazing fast, portable and modular toolkit for Ethereum
+application development written in Rust.**
+
+Foundry consists of:
+
+- [**Forge**](./forge): Ethereum testing framework (like Truffle, Hardhat and
+  Dapptools).
+- [**Cast**](./cast): Swiss army knife for interacting with EVM smart contracts,
+  sending transactions and getting chain data.
+
 ![demo](./assets/demo.svg)
 
 ## Forge Quickstart
 
+Forge is a building and testing framework for Ethereum development.
+
 ```
 cargo install forge
+forge init
+forge build
 forge test
 ```
 

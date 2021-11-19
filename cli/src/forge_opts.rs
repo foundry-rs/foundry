@@ -17,6 +17,7 @@ pub struct Opts {
 #[allow(clippy::large_enum_variant)]
 pub enum Subcommands {
     #[structopt(about = "test your smart contracts")]
+    #[structopt(alias = "t")]
     Test {
         #[structopt(help = "print the test results in json format", long, short)]
         json: bool,
@@ -78,6 +79,7 @@ pub enum Subcommands {
         verbosity: u8,
     },
     #[structopt(about = "build your smart contracts")]
+    #[structopt(alias = "b")]
     Build {
         #[structopt(flatten)]
         opts: BuildOpts,
