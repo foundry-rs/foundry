@@ -21,7 +21,7 @@ Foundry consists of:
 
 ## Forge Quickstart
 
-Forge is a development and testing framework for Ethereum.
+Forge is a development and testing framework for Ethereum applications.
 
 ```
 cargo install forge
@@ -74,6 +74,8 @@ It also works with "non-standard" directory structures (i.e. contracts not in
 Hardhat compilation took 15.244s, whereas Forge took 9.449 (~4s cached)
 
 ## Cast Quickstart
+
+Cast is a swiss army knife for interacting with Ethereum applications from the command line.
 
 ```
 cargo install cast
