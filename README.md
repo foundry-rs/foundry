@@ -71,19 +71,6 @@ cast call 0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48 "totalSupply()" --rpc-url
 
 More documentation can be found in the [cast package](./forge/README.md).
 
-## Installing
-
-We have not published a release yet. Until we do, please use the command below.
-Because our dependencies may not be stable, do not forget the `--locked`
-parameter, which will force the installer to use the checked in `Cargo.lock`
-file.
-
-```
-cargo install --git https://github.com/gakonst/foundry --locked
-```
-
-Alternatively, clone the repository and run: `cargo build --release`
-
 ## Contributing
 
 ### Directory structure
