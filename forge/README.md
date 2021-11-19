@@ -39,6 +39,39 @@
 - [ ] debug
 - [x] CLI Tracing with `RUST_LOG=dapp=trace`
 
+## Future Features
+
+### Dapptools feature parity
+
+Over the next months, we intend to add the following features which are
+available in upstream dapptools:
+
+1. Stack Traces
+1. Symbolic EVM: The holy grail of testing, symbolically executed EVM allows
+1. Invariant Tests
+1. Interactive Debugger
+1. Code coverage
+1. Gas snapshots
+
+### Unique features?
+
+We also intend to add features which are not available in dapptools:
+
+1. Faster tests with parallel EVM execution that produces state diffs instead of
+   modifying the state
+1. Improved UX for assertions:
+   1. Check revert error or reason on a Solidity call
+   1. Check that an event was emitted with expected arguments
+1. Support more EVM backends (revm, geth's evm, hevm etc.) & benchmark
+   performance across them
+1. Declarative deployment system based on a config file
+1. Formatting & Linting powered by [Solang]()
+   1. `dapp fmt`, an automatic code formatter according to standard rules (like
+      `prettier-plugin-solidity`)
+   1. `dapp lint` a linter + static analyzer. think of this as `solhint` +
+      slither + others.
+1. Flamegraphs for gas profiling
+
 ## Run Solidity tests
 
 Any contract that contains a function starting with `test` is being tested. The

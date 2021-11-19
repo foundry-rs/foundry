@@ -3,16 +3,25 @@
 **Foundry is a blazing fast, portable and modular toolkit for Ethereum
 application development written in Rust.**
 
-![demo](./assets/demo.svg)
-
 ![Github Actions](https://github.com/gakonst/foundry/workflows/Tests/badge.svg)
 [![Telegram Chat](https://img.shields.io/endpoint?color=neon&style=flat-square&url=https%3A%2F%2Ftg.sumanjay.workers.dev%2Ffoundry_rs)](https://t.me/foundry_rs)
 [![Crates.io][crates-badge]][crates-url]
 
 [crates-badge]: https://img.shields.io/crates/v/foundry.svg
-[crates-url]: https://crates.io/crates/foundry
+[crates-url]: https://crates.io/crates/foundry-rs
 
-## Features
+![demo](./assets/demo.svg)
+
+## Forge Quickstart
+
+```
+cargo install forge
+forge test
+```
+
+More documentation can be found in the [forge package](./forge/README.md).
+
+### Features
 
 1. Fast & flexible compilation pipeline:
    1. Automatic Solidity compiler version detection & installation (under
@@ -33,39 +42,6 @@ application development written in Rust.**
    requiring Nix or any other package manager
 1. Abstracted over EVM implementations (currently supported: Sputnik, EvmOdin)
 
-## Future Features
-
-### Dapptools feature parity
-
-Over the next months, we intend to add the following features which are
-available in upstream dapptools:
-
-1. Stack Traces
-1. Symbolic EVM: The holy grail of testing, symbolically executed EVM allows
-1. Invariant Tests
-1. Interactive Debugger
-1. Code coverage
-1. Gas snapshots
-
-### Unique features?
-
-We also intend to add features which are not available in dapptools:
-
-1. Faster tests with parallel EVM execution that produces state diffs instead of
-   modifying the state
-1. Improved UX for assertions:
-   1. Check revert error or reason on a Solidity call
-   1. Check that an event was emitted with expected arguments
-1. Support more EVM backends (revm, geth's evm, hevm etc.) & benchmark
-   performance across them
-1. Declarative deployment system based on a config file
-1. Formatting & Linting powered by [Solang]()
-   1. `dapp fmt`, an automatic code formatter according to standard rules (like
-      `prettier-plugin-solidity`)
-   1. `dapp lint` a linter + static analyzer. think of this as `solhint` +
-      slither + others.
-1. Flamegraphs for gas profiling
-
 ## How Fast?
 
 Forge is quite fast at both compiling (leveraging the ethers-solc package) and
@@ -83,6 +59,15 @@ It also works with "non-standard" directory structures (i.e. contracts not in
 [tested](https://twitter.com/gakonst/status/1461289225337421829) with
 [`openzeppelin-contracts`](https://github.com/OpenZeppelin/openzeppelin-contracts),
 Hardhat compilation took 15.244s, whereas Forge took 9.449 (~4s cached)
+
+## Cast Quickstart
+
+```
+cargo install cast
+cast call 0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48 "totalSupply()" --rpc-url
+```
+
+More documentation can be found in the [cast package](./forge/README.md).
 
 ## Installing
 
