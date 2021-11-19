@@ -32,7 +32,6 @@ More documentation can be found in the [forge package](./forge/README.md).
       [Hardhat repos](https://twitter.com/gakonst/status/1461289225337421829))
 1. Tests are written in Solidity (like in DappTools)
 1. Fast fuzz Tests with shrinking of inputs & printing of counter-examples
-   1. These tests are ~3x faster than DappTools'
 1. Fast remote RPC forking mode leveraging Rust's async infrastructure like
    tokio
 1. Flexible debug logging:
@@ -42,17 +41,20 @@ More documentation can be found in the [forge package](./forge/README.md).
    requiring Nix or any other package manager
 1. Abstracted over EVM implementations (currently supported: Sputnik, EvmOdin)
 
-## How Fast?
+### How Fast?
 
-Forge is quite fast at both compiling (leveraging the ethers-solc package) and
-testing.
+Forge is quite fast at both compiling (leveraging the
+[ethers-solc](https://github.com/gakonst/ethers-rs/tree/master/ethers-solc/)
+package) and testing.
 
-Some benchmarks:
+Some benchmarks below:
 
-| Project   | Forge | DappTools |
-| --------- | ----- | --------- |
-| Header    | Title |
-| Paragraph | Text  |
+| Project                                             | Forge | DappTools | Speedup |
+| --------------------------------------------------- | ----- | --------- | ------- |
+| [guni-lev](https://github.com/hexonaut/guni-lev/)   | 28.6s | 2m36s     | 5.45x   |
+| [solmate](https://github.com/Rari-Capital/solmate/) | 6s    | 46s       | 7.66x   |
+| [geb](https://github.com/reflexer-labs/geb)         | 11s   | 40s       | 3.63x   |
+| [vaults](https://github.com/rari-capital/vaults)    | 1.4s  | 5.5s      | 3.9x    |
 
 It also works with "non-standard" directory structures (i.e. contracts not in
 `src/`, libraries not in `lib/`). When
