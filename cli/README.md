@@ -1,6 +1,6 @@
 # Foundry CLIs
 
-The CLIs are written using [structopt](https://docs.rs/structopt)
+The CLIs are written using [structopt](https://docs.rs/structopt).
 
 Debug logs are printed with
 [`tracing`](https://docs.rs/tracing/0.1.29/tracing/). You can configure the
@@ -171,7 +171,7 @@ OPTIONS:
 Here's how the CLI output looks like when used with
 [`dapptools-template`](https://github.com/gakonst/dapptools-template)
 
-````
+```bash
 $ forge test
 success.
 Running 3 tests for "Greet.json":Greet
@@ -186,7 +186,8 @@ Running 3 tests for "Gm.json":Gm
 ```
 
 You can optionally specify a regular expression, to only run matching functions:
-```
+
+```bash
 $ forge test -m Cannot
 $HOME/oss/foundry/target/release/forge test -m Cannot
 no files changed, compilation skippped.
@@ -206,4 +207,7 @@ $ forge test --json
 no files changed, compilation skippped.
 {"\"Gm.json\":Gm":{"testNonOwnerCannotGm":{"success":true,"reason":null,"gas_used":3782,"counterexample":null,"logs":[]},"testOwnerCannotGmOnBadBlocks":{"success":true,"reason":null,"gas_used":7771,"counterexample":null,"logs":[]},"testOwnerCanGmOnGoodBlocks":{"success":true,"reason":null,"gas_used":31696,"counterexample":null,"logs":[]}},"\"Greet.json\":Greet":{"testWorksForAllGreetings":{"success":true,"reason":null,"gas_used":null,"counterexample":null,"logs":[]},"testCannotGm":{"success":true,"reason":null,"gas_used":6819,"counterexample":null,"logs":[]},"testCanSetGreeting":{"success":true,"reason":null,"gas_used":31070,"counterexample":null,"logs":[]}}}
 ```
-````
+
+```
+
+```
