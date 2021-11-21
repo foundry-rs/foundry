@@ -75,7 +75,8 @@ Hardhat compilation took 15.244s, whereas Forge took 9.449 (~4s cached)
 
 ## Cast Quickstart
 
-Cast is a swiss army knife for interacting with Ethereum applications from the command line.
+Cast is a swiss army knife for interacting with Ethereum applications from the
+command line.
 
 ```
 cargo install cast
@@ -147,6 +148,8 @@ Join the [foundry telegram](https://t.me/foundry_rs) to chat with the community!
   contributions to ethers, in particular the `abigen` macros.
 - [Rohit Narunkar](https://twitter.com/rohitnarurkar): Created the Rust Solidity
   version manager [svm-rs](https://github.com/roynalnaruto/svm-rs) which we use
-  to auto-detect and manage multiple Solidity versions
-- All the other contributors to the ethers-rs & foundry repositories and
-  chatrooms.
+  to auto-detect and manage multiple Solidity versions.
+- All the other
+  [contributors](https://github.com/gakonst/foundry/graphs/contributors) to the
+  [ethers-rs](https://github.com/gakonst/ethers-rs) &
+  [foundry](https://github.com/gakonst/foundry) repositories and chatrooms.
