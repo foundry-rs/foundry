@@ -235,7 +235,11 @@ impl std::convert::TryFrom<&BuildOpts> for Project {
 
 #[derive(Debug, StructOpt)]
 pub struct BuildOpts {
-    #[structopt(help = "the project's root path, default being the current directory", long, default_value = "std::env::current_dir().unwrap()")]
+    #[structopt(
+        help = "the project's root path, default being the current directory",
+        long,
+        default_value = "std::env::current_dir().unwrap()"
+    )]
     pub root: PathBuf,
 
     #[structopt(

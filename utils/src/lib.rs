@@ -113,8 +113,8 @@ pub fn parse_tokens<'a, I: IntoIterator<Item = (&'a ParamType, &'a str)>>(
         .wrap_err("Failed to parse tokens")
 }
 
-/// Given a function and a vector of string arguments, it proceeds to convert the args to ethabi Tokens
-/// and then ABI encode them.
+/// Given a function and a vector of string arguments, it proceeds to convert the args to ethabi
+/// Tokens and then ABI encode them.
 pub fn encode_args(func: &Function, args: &[impl AsRef<str>]) -> Result<Vec<u8>> {
     let params = func
         .inputs

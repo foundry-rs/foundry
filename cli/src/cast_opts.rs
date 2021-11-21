@@ -3,7 +3,7 @@ use std::{convert::TryFrom, str::FromStr, sync::Arc};
 use ethers::{
     providers::{Http, Provider},
     signers::{coins_bip39::English, LocalWallet, MnemonicBuilder},
-    types::{Address, BlockId, BlockNumber, NameOrAddress, H256, U64},
+    types::{Address, BlockId, BlockNumber, NameOrAddress, H256},
 };
 use eyre::Result;
 use structopt::StructOpt;
