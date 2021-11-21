@@ -1,4 +1,4 @@
-//! Seth
+//! Cast
 //!
 //! TODO
 use chrono::NaiveDateTime;
@@ -12,28 +12,28 @@ use eyre::Result;
 use rustc_hex::{FromHexIter, ToHex};
 use std::str::FromStr;
 
-use dapp_utils::{encode_args, get_func, to_table};
+use foundry_utils::{encode_args, get_func, to_table};
 
-// TODO: SethContract with common contract initializers? Same for SethProviders?
+// TODO: CastContract with common contract initializers? Same for CastProviders?
 
-pub struct Seth<M> {
+pub struct Cast<M> {
     provider: M,
 }
 
-impl<M: Middleware> Seth<M>
+impl<M: Middleware> Cast<M>
 where
     M::Error: 'static,
 {
     /// Converts ASCII text input to hex
     ///
     /// ```
-    /// use seth::Seth;
+    /// use cast::Cast;
     /// use ethers_providers::{Provider, Http};
     /// use std::convert::TryFrom;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
-    /// let seth = Seth::new(provider);
+    /// let cast = Cast::new(provider);
     /// # Ok(())
     /// # }
     /// ```
@@ -45,18 +45,18 @@ where
     ///
     /// ```no_run
     /// 
-    /// use seth::Seth;
+    /// use cast::Cast;
     /// use ethers_core::types::Address;
     /// use ethers_providers::{Provider, Http};
     /// use std::{str::FromStr, convert::TryFrom};
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
-    /// let seth = Seth::new(provider);
+    /// let cast = Cast::new(provider);
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let sig = "function greeting(uint256 i) public returns (string)";
     /// let args = vec!["5".to_owned()];
-    /// let data = seth.call(to, sig, args).await?;
+    /// let data = cast.call(to, sig, args).await?;
     /// println!("{}", data);
     /// # Ok(())
     /// # }
@@ -98,18 +98,18 @@ where
     /// Sends a transaction to the specified address
     ///
     /// ```no_run
-    /// use seth::Seth;
+    /// use cast::Cast;
     /// use ethers_core::types::Address;
     /// use ethers_providers::{Provider, Http};
     /// use std::{str::FromStr, convert::TryFrom};
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
-    /// let seth = Seth::new(provider);
+    /// let cast = Cast::new(provider);
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let sig = "function greet(string memory) public returns (string)";
     /// let args = vec!["5".to_owned()];
-    /// let data = seth.call(to, sig, args).await?;
+    /// let data = cast.call(to, sig, args).await?;
     /// println!("{}", data);
     /// # Ok(())
     /// # }
@@ -140,14 +140,14 @@ where
     }
 
     /// ```no_run
-    /// use seth::Seth;
+    /// use cast::Cast;
     /// use ethers_providers::{Provider, Http};
     /// use std::convert::TryFrom;
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
-    /// let seth = Seth::new(provider);
-    /// let block = seth.block(5, true, None, false).await?;
+    /// let cast = Cast::new(provider);
+    /// let block = cast.block(5, true, None, false).await?;
     /// println!("{}", block);
     /// # Ok(())
     /// # }
@@ -199,7 +199,7 @@ where
 
     async fn block_field_as_num<T: Into<BlockId>>(&self, block: T, field: String) -> Result<U256> {
         let block = block.into();
-        let block_field = Seth::block(
+        let block_field = Cast::block(
             self,
             block,
             false,
@@ -213,18 +213,18 @@ where
     }
 
     pub async fn base_fee<T: Into<BlockId>>(&self, block: T) -> Result<U256> {
-        Ok(Seth::block_field_as_num(self, block, String::from("baseFeePerGas")).await?)
+        Ok(Cast::block_field_as_num(self, block, String::from("baseFeePerGas")).await?)
     }
 
     pub async fn age<T: Into<BlockId>>(&self, block: T) -> Result<String> {
         let timestamp_str =
-            Seth::block_field_as_num(self, block, String::from("timestamp")).await?.to_string();
+            Cast::block_field_as_num(self, block, String::from("timestamp")).await?.to_string();
         let datetime = NaiveDateTime::from_timestamp(timestamp_str.parse::<i64>().unwrap(), 0);
         Ok(datetime.format("%a %b %e %H:%M:%S %Y").to_string())
     }
 
     pub async fn chain(&self) -> Result<&str> {
-        let genesis_hash = Seth::block(
+        let genesis_hash = Cast::block(
             self,
             0,
             false,
@@ -236,7 +236,7 @@ where
 
         Ok(match &genesis_hash[..] {
             "0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3" => {
-                match &(Seth::block(self, 1920000, false, Some(String::from("hash")), false)
+                match &(Cast::block(self, 1920000, false, Some(String::from("hash")), false)
                     .await?)[..]
                 {
                     "0x94365e3a8c0b35089c1d1195081fe7489b528a84b22199c916180db8b28ade7f" => {
@@ -279,14 +279,14 @@ where
     }
 }
 
-pub struct SimpleSeth;
-impl SimpleSeth {
+pub struct SimpleCast;
+impl SimpleCast {
     /// Converts UTF-8 text input to hex
     ///
     /// ```
-    /// use seth::SimpleSeth as Seth;
+    /// use cast::SimpleCast as Cast;
     ///
-    /// let bin = Seth::from_utf8("yo");
+    /// let bin = Cast::from_utf8("yo");
     /// assert_eq!(bin, "0x796f")
     /// ```
     pub fn from_utf8(s: &str) -> String {
@@ -297,11 +297,11 @@ impl SimpleSeth {
     /// Converts hex data into text data
     ///
     /// ```
-    /// use seth::SimpleSeth as Seth;
+    /// use cast::SimpleCast as Cast;
     ///
     /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!("Hello, World!", Seth::ascii("48656c6c6f2c20576f726c6421")?);
-    ///     assert_eq!("TurboDappTools", Seth::ascii("0x547572626f44617070546f6f6c73")?);
+    ///     assert_eq!("Hello, World!", Cast::ascii("48656c6c6f2c20576f726c6421")?);
+    ///     assert_eq!("TurboDappTools", Cast::ascii("0x547572626f44617070546f6f6c73")?);
     ///
     ///     Ok(())
     /// }
@@ -319,12 +319,12 @@ impl SimpleSeth {
     /// Converts hex input to decimal
     ///
     /// ```
-    /// use seth::SimpleSeth as Seth;
+    /// use cast::SimpleCast as Cast;
     /// use ethers_core::types::U256;
     ///
     /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(U256::from_dec_str("424242")?, Seth::to_dec("0x67932")?);
-    ///     assert_eq!(U256::from_dec_str("1234")?, Seth::to_dec("0x4d2")?);
+    ///     assert_eq!(U256::from_dec_str("424242")?, Cast::to_dec("0x67932")?);
+    ///     assert_eq!(U256::from_dec_str("1234")?, Cast::to_dec("0x4d2")?);
     ///
     ///     Ok(())
     /// }
@@ -335,14 +335,14 @@ impl SimpleSeth {
     /// Converts integers with specified decimals into fixed point numbers
     ///
     /// ```
-    /// use seth::SimpleSeth as Seth;
+    /// use cast::SimpleCast as Cast;
     /// use ethers_core::types::U256;
     ///
     /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(Seth::to_fix(0, 10.into())?, "10.");
-    ///     assert_eq!(Seth::to_fix(1, 10.into())?, "1.0");
-    ///     assert_eq!(Seth::to_fix(2, 10.into())?, "0.10");
-    ///     assert_eq!(Seth::to_fix(3, 10.into())?, "0.010");
+    ///     assert_eq!(Cast::to_fix(0, 10.into())?, "10.");
+    ///     assert_eq!(Cast::to_fix(1, 10.into())?, "1.0");
+    ///     assert_eq!(Cast::to_fix(2, 10.into())?, "0.10");
+    ///     assert_eq!(Cast::to_fix(3, 10.into())?, "0.010");
     ///
     ///     Ok(())
     /// }
@@ -364,13 +364,13 @@ impl SimpleSeth {
     /// Converts decimal input to hex
     ///
     /// ```
-    /// use seth::SimpleSeth as Seth;
+    /// use cast::SimpleCast as Cast;
     /// use ethers_core::types::U256;
     ///
     /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(Seth::hex(U256::from_dec_str("424242")?), "0x67932");
-    ///     assert_eq!(Seth::hex(U256::from_dec_str("1234")?), "0x4d2");
-    ///     assert_eq!(Seth::hex(U256::from_dec_str("115792089237316195423570985008687907853269984665640564039457584007913129639935")?), "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
+    ///     assert_eq!(Cast::hex(U256::from_dec_str("424242")?), "0x67932");
+    ///     assert_eq!(Cast::hex(U256::from_dec_str("1234")?), "0x4d2");
+    ///     assert_eq!(Cast::hex(U256::from_dec_str("115792089237316195423570985008687907853269984665640564039457584007913129639935")?), "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
     ///
     ///     Ok(())
     /// }
@@ -382,13 +382,13 @@ impl SimpleSeth {
     /// Converts a number into uint256 hex string with 0x prefix
     ///
     /// ```
-    /// use seth::SimpleSeth as Seth;
+    /// use cast::SimpleCast as Cast;
     ///
     /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(Seth::to_uint256("100")?, "0x0000000000000000000000000000000000000000000000000000000000000064");
-    ///     assert_eq!(Seth::to_uint256("192038293923")?, "0x0000000000000000000000000000000000000000000000000000002cb65fd1a3");
+    ///     assert_eq!(Cast::to_uint256("100")?, "0x0000000000000000000000000000000000000000000000000000000000000064");
+    ///     assert_eq!(Cast::to_uint256("192038293923")?, "0x0000000000000000000000000000000000000000000000000000002cb65fd1a3");
     ///     assert_eq!(
-    ///         Seth::to_uint256("115792089237316195423570985008687907853269984665640564039457584007913129639935")?,
+    ///         Cast::to_uint256("115792089237316195423570985008687907853269984665640564039457584007913129639935")?,
     ///         "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
     ///     );
     ///
@@ -404,13 +404,13 @@ impl SimpleSeth {
     /// Converts an eth amount into wei
     ///
     /// ```
-    /// use seth::SimpleSeth as Seth;
+    /// use cast::SimpleCast as Cast;
     ///
     /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(Seth::to_wei(1.into(), "".to_string())?, "1");
-    ///     assert_eq!(Seth::to_wei(100.into(), "gwei".to_string())?, "100000000000");
-    ///     assert_eq!(Seth::to_wei(100.into(), "eth".to_string())?, "100000000000000000000");
-    ///     assert_eq!(Seth::to_wei(1000.into(), "ether".to_string())?, "1000000000000000000000");
+    ///     assert_eq!(Cast::to_wei(1.into(), "".to_string())?, "1");
+    ///     assert_eq!(Cast::to_wei(100.into(), "gwei".to_string())?, "100000000000");
+    ///     assert_eq!(Cast::to_wei(100.into(), "eth".to_string())?, "100000000000000000000");
+    ///     assert_eq!(Cast::to_wei(1000.into(), "ether".to_string())?, "1000000000000000000000");
     ///
     ///     Ok(())
     /// }
@@ -428,13 +428,13 @@ impl SimpleSeth {
     /// according to [EIP-55](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-55.md)
     ///
     /// ```
-    /// use seth::SimpleSeth as Seth;
+    /// use cast::SimpleCast as Cast;
     /// use ethers_core::types::Address;
     /// use std::str::FromStr;
     ///
     /// # fn main() -> eyre::Result<()> {
     /// let addr = Address::from_str("0xb7e390864a90b7b923c9f9310c6f98aafe43f707")?;
-    /// let addr = Seth::checksum_address(&addr)?;
+    /// let addr = Cast::checksum_address(&addr)?;
     /// assert_eq!(addr, "0xB7e390864a90b7b923C9f9310C6F98aafE43F707");
     ///
     /// # Ok(())
@@ -446,16 +446,16 @@ impl SimpleSeth {
 
     /// Converts hexdata into bytes32 value
     /// ```
-    /// use seth::SimpleSeth as Seth;
+    /// use cast::SimpleCast as Cast;
     ///
     /// # fn main() -> eyre::Result<()> {
-    /// let bytes = Seth::bytes32("1234")?;
+    /// let bytes = Cast::bytes32("1234")?;
     /// assert_eq!(bytes, "0x1234000000000000000000000000000000000000000000000000000000000000");
     ///
-    /// let bytes = Seth::bytes32("0x1234")?;
+    /// let bytes = Cast::bytes32("0x1234")?;
     /// assert_eq!(bytes, "0x1234000000000000000000000000000000000000000000000000000000000000");
     ///
-    /// let err = Seth::bytes32("0x123400000000000000000000000000000000000000000000000000000000000011").unwrap_err();
+    /// let err = Cast::bytes32("0x123400000000000000000000000000000000000000000000000000000000000011").unwrap_err();
     /// assert_eq!(err.to_string(), "string >32 bytes");
     ///
     /// # Ok(())
@@ -474,11 +474,11 @@ impl SimpleSeth {
     /// Keccak-256 hashes arbitrary data
     ///
     /// ```
-    /// use seth::SimpleSeth as Seth;
+    /// use cast::SimpleCast as Cast;
     ///
     /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(Seth::keccak("foo")?, "0x41b1a0649752af1b28b3dc29a1556eee781e4a4c3a1f7f53f90fa834de098c4d");
-    ///     assert_eq!(Seth::keccak("123abc")?, "0xb1f1c74a1ba56f07a892ea1110a39349d40f66ca01d245e704621033cb7046a4");
+    ///     assert_eq!(Cast::keccak("foo")?, "0x41b1a0649752af1b28b3dc29a1556eee781e4a4c3a1f7f53f90fa834de098c4d");
+    ///     assert_eq!(Cast::keccak("123abc")?, "0xb1f1c74a1ba56f07a892ea1110a39349d40f66ca01d245e704621033cb7046a4");
     ///
     ///     Ok(())
     /// }
@@ -493,13 +493,13 @@ impl SimpleSeth {
     /// [namehash-rust reference](https://github.com/InstateDev/namehash-rust/blob/master/src/lib.rs)
     ///
     /// ```
-    /// use seth::SimpleSeth as Seth;
+    /// use cast::SimpleCast as Cast;
     ///
     /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(Seth::namehash("")?, "0x0000000000000000000000000000000000000000000000000000000000000000");
-    ///     assert_eq!(Seth::namehash("eth")?, "0x93cdeb708b7545dc668eb9280176169d1c33cfd8ed6f04690a0bcc88a93fc4ae");
-    ///     assert_eq!(Seth::namehash("foo.eth")?, "0xde9b09fd7c5f901e23a3f19fecc54828e9c848539801e86591bd9801b019f84f");
-    ///     assert_eq!(Seth::namehash("sub.foo.eth")?, "0x500d86f9e663479e5aaa6e99276e55fc139c597211ee47d17e1e92da16a83402");
+    ///     assert_eq!(Cast::namehash("")?, "0x0000000000000000000000000000000000000000000000000000000000000000");
+    ///     assert_eq!(Cast::namehash("eth")?, "0x93cdeb708b7545dc668eb9280176169d1c33cfd8ed6f04690a0bcc88a93fc4ae");
+    ///     assert_eq!(Cast::namehash("foo.eth")?, "0xde9b09fd7c5f901e23a3f19fecc54828e9c848539801e86591bd9801b019f84f");
+    ///     assert_eq!(Cast::namehash("sub.foo.eth")?, "0x500d86f9e663479e5aaa6e99276e55fc139c597211ee47d17e1e92da16a83402");
     ///
     ///     Ok(())
     /// }
@@ -528,19 +528,19 @@ impl SimpleSeth {
     /// Performs ABI encoding to produce the hexadecimal calldata with the given arguments.
     ///
     /// ```
-    /// # use seth::SimpleSeth as Seth;
+    /// # use cast::SimpleCast as Cast;
     ///
     /// # fn main() -> eyre::Result<()> {
     ///     assert_eq!(
     ///         "0xb3de648b0000000000000000000000000000000000000000000000000000000000000001",
-    ///         Seth::calldata("f(uint a)", &["1"]).unwrap().as_str()
+    ///         Cast::calldata("f(uint a)", &["1"]).unwrap().as_str()
     ///     );
     /// #    Ok(())
     /// # }
     /// ```
     pub fn calldata(sig: impl AsRef<str>, args: &[impl AsRef<str>]) -> Result<String> {
         let func = AbiParser::default().parse_function(sig.as_ref())?;
-        let calldata = dapp_utils::encode_args(&func, args)?;
+        let calldata = encode_args(&func, args)?;
         Ok(format!("0x{}", calldata.to_hex::<String>()))
     }
 }
@@ -551,13 +551,13 @@ fn strip_0x(s: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use super::SimpleSeth as Seth;
+    use super::SimpleCast as Cast;
 
     #[test]
     fn calldata_uint() {
         assert_eq!(
             "0xb3de648b0000000000000000000000000000000000000000000000000000000000000001",
-            Seth::calldata("f(uint a)", &["1"]).unwrap().as_str()
+            Cast::calldata("f(uint a)", &["1"]).unwrap().as_str()
         );
     }
 
@@ -565,7 +565,7 @@ mod tests {
     fn calldata_bool() {
         assert_eq!(
             "0x6fae94120000000000000000000000000000000000000000000000000000000000000000",
-            Seth::calldata("bar(bool)", &["false"]).unwrap().as_str()
+            Cast::calldata("bar(bool)", &["false"]).unwrap().as_str()
         );
     }
 }

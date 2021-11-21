@@ -3,7 +3,7 @@ use std::{convert::TryFrom, str::FromStr, sync::Arc};
 use ethers::{
     providers::{Http, Provider},
     signers::{coins_bip39::English, LocalWallet, MnemonicBuilder},
-    types::{Address, BlockId, BlockNumber, NameOrAddress, H256, U64},
+    types::{Address, BlockId, BlockNumber, NameOrAddress, H256},
 };
 use eyre::Result;
 use structopt::StructOpt;
@@ -28,7 +28,7 @@ pub enum Subcommands {
       - @tag, where $TAG is defined in environment variables
     "#)]
     ToHexdata { input: Option<String> },
-    #[structopt(aliases = &["--to-checksum"])] // Compatibility with dapptools' seth
+    #[structopt(aliases = &["--to-checksum"])] // Compatibility with dapptools' cast
     #[structopt(name = "--to-checksum-address")]
     #[structopt(about = "convert an address to a checksummed format (EIP-55)")]
     ToCheckSumAddress { address: Option<Address> },
@@ -57,7 +57,7 @@ pub enum Subcommands {
     Block {
         #[structopt(help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
         block: BlockId,
-        #[structopt(long, env = "SETH_FULL_BLOCK")]
+        #[structopt(long, env = "CAST_FULL_BLOCK")]
         full: bool,
         field: Option<String>,
         #[structopt(long = "--json", short = "-j")]
@@ -213,7 +213,7 @@ fn parse_block_id(s: &str) -> eyre::Result<BlockId> {
         "earliest" => BlockId::Number(BlockNumber::Earliest),
         "latest" => BlockId::Number(BlockNumber::Latest),
         s if s.starts_with("0x") => BlockId::Hash(H256::from_str(s)?),
-        s => BlockId::Number(BlockNumber::Number(U64::from_str(s)?)),
+        s => BlockId::Number(BlockNumber::Number(u64::from_str(s)?.into())),
     })
 }
 
@@ -245,8 +245,8 @@ pub struct EthereumOpts {
     #[structopt(env = "ETH_FROM", short, long = "from", help = "The sender account")]
     pub from: Option<Address>,
 
-    #[structopt(long, env = "SETH_ASYNC")]
-    pub seth_async: bool,
+    #[structopt(long, env = "CAST_ASYNC")]
+    pub cast_async: bool,
 
     #[structopt(flatten)]
     pub wallet: Wallet,

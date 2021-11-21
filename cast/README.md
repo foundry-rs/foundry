@@ -1,0 +1,59 @@
+# `cast`
+
+## Features
+
+- [ ] `--abi-decode`
+- [ ] `--calldata-decode`
+- [x] `--from-ascii` (with `--from-utf8` alias)
+- [ ] `--from-bin`
+- [ ] `--from-fix`
+- [ ] `--from-wei`
+- [ ] `--max-int`
+- [ ] `--max-uint`
+- [ ] `--min-int`
+- [x] `--to-checksum-address` (`--to-address` in dapptools)
+- [x] `--to-ascii`
+- [x] `--to-bytes32`
+- [x] `--to-dec`
+- [x] `--to-fix`
+- [x] `--to-hex`
+- [x] `--to-hexdata`
+- [ ] `--to-int256`
+- [x] `--to-uint256`
+- [x] `--to-wei`
+- [ ] `4byte`
+- [ ] `4byte-decode`
+- [ ] `4byte-event`
+- [ ] `abi-encode`
+- [x] `age`
+- [x] `balance`
+- [x] `basefee`
+- [x] `block`
+- [x] `block-number`
+- [ ] `bundle-source`
+- [x] `call` (partial)
+- [x] `calldata`
+- [x] `chain`
+- [x] `chain-id`
+- [ ] `code`
+- [ ] `debug`
+- [ ] `estimate`
+- [ ] `etherscan-source`
+- [ ] `events`
+- [x] `gas-price`
+- [ ] `index`
+- [x] `keccak`
+- [ ] `logs`
+- [x] `lookup-address`
+- [ ] `ls`
+- [ ] `mktx`
+- [x] `namehash`
+- [ ] `nonce`
+- [ ] `publish`
+- [ ] `receipt`
+- [x] `resolve-name`
+- [ ] `run-tx`
+- [x] `send` (partial)
+- [ ] `sign`
+- [x] `storage`
+- [ ] `tx`

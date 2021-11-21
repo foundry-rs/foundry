@@ -10,15 +10,15 @@ use regex::Regex;
 use sputnik::backend::Backend;
 use structopt::StructOpt;
 
-use dapp::MultiContractRunnerBuilder;
+use forge::MultiContractRunnerBuilder;
 
 use ansi_term::Colour;
 use ethers::types::U256;
 
-mod dapp_opts;
-use dapp_opts::{EvmType, Opts, Subcommands};
+mod forge_opts;
+use forge_opts::{EvmType, Opts, Subcommands};
 
-use crate::dapp_opts::FullContractInfo;
+use crate::forge_opts::FullContractInfo;
 use std::{collections::HashMap, convert::TryFrom, path::Path, sync::Arc};
 
 mod cmd;
@@ -215,9 +215,9 @@ fn main() -> eyre::Result<()> {
                 let tree = repo.find_tree(id).unwrap();
 
                 let message = if let Some(ref tag) = dep.tag {
-                    format!("turbodapp install: {}\n\n{}", dep.name, tag)
+                    format!("forge install: {}\n\n{}", dep.name, tag)
                 } else {
-                    format!("turbodapp install: {}", dep.name)
+                    format!("forge install: {}", dep.name)
                 };
 
                 // committing to the parent may make running the installation step
@@ -257,7 +257,7 @@ fn test<A: ArtifactOutput + 'static, S: Clone, E: evm_adapters::Evm<S>>(
     pattern: Regex,
     json: bool,
     verbosity: u8,
-) -> eyre::Result<HashMap<String, HashMap<String, dapp::TestResult>>> {
+) -> eyre::Result<HashMap<String, HashMap<String, forge::TestResult>>> {
     let mut runner = builder.build(project, evm)?;
 
     let mut exit_code = 0;

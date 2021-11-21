@@ -75,7 +75,7 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
                 "{}, expected failure: {}, reason: '{}'",
                 func.name,
                 should_fail,
-                dapp_utils::decode_revert(returndata.as_ref())?
+                foundry_utils::decode_revert(returndata.as_ref())?
             );
 
             Ok(())

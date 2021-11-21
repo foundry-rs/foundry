@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 use ethers_core::{
     abi::{
         self, parse_abi,
@@ -42,6 +43,8 @@ impl<'a> IntoFunction for &'a str {
     }
 }
 
+/// Given a gas value and a calldata array, it subtracts the calldata cost from the
+/// gas value, as well as the 21k base gas cost for all transactions.
 pub fn remove_extra_costs(gas: U256, calldata: &[u8]) -> U256 {
     let mut calldata_cost = 0;
     for i in calldata {
@@ -55,6 +58,8 @@ pub fn remove_extra_costs(gas: U256, calldata: &[u8]) -> U256 {
     gas - calldata_cost - BASE_TX_COST
 }
 
+/// Given an ABI encoded error string with the function signature `Error(string)`, it decodes
+/// it and returns the revert error message.
 pub fn decode_revert(error: &[u8]) -> std::result::Result<String, ethers_core::abi::Error> {
     let error = error.strip_prefix(&ethers_core::utils::id("Error(string)")).unwrap_or(error);
     if !error.is_empty() {
@@ -64,6 +69,7 @@ pub fn decode_revert(error: &[u8]) -> std::result::Result<String, ethers_core::a
     }
 }
 
+/// Given a k/v serde object, it pretty prints its keys and values as a table.
 pub fn to_table(value: serde_json::Value) -> String {
     match value {
         serde_json::Value::String(s) => s,
@@ -78,6 +84,7 @@ pub fn to_table(value: serde_json::Value) -> String {
     }
 }
 
+/// Given a function signature string, it tries to parse it as a `Function`
 pub fn get_func(sig: &str) -> Result<Function> {
     // TODO: Make human readable ABI better / more minimal
     let abi = parse_abi(&[sig])?;
@@ -106,6 +113,8 @@ pub fn parse_tokens<'a, I: IntoIterator<Item = (&'a ParamType, &'a str)>>(
         .wrap_err("Failed to parse tokens")
 }
 
+/// Given a function and a vector of string arguments, it proceeds to convert the args to ethabi
+/// Tokens and then ABI encode them.
 pub fn encode_args(func: &Function, args: &[impl AsRef<str>]) -> Result<Vec<u8>> {
     let params = func
         .inputs

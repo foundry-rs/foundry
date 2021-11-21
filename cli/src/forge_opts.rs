@@ -13,10 +13,12 @@ pub struct Opts {
 }
 
 #[derive(Debug, StructOpt)]
+#[structopt(name = "forge")]
 #[structopt(about = "Build, test, fuzz, formally verify, debug & deploy solidity contracts.")]
 #[allow(clippy::large_enum_variant)]
 pub enum Subcommands {
     #[structopt(about = "test your smart contracts")]
+    #[structopt(alias = "t")]
     Test {
         #[structopt(help = "print the test results in json format", long, short)]
         json: bool,
@@ -74,10 +76,11 @@ pub enum Subcommands {
         #[structopt(help = "enables the FFI cheatcode", long)]
         ffi: bool,
 
-        #[structopt(help = "verbosity of 'dapp test' output (0-3)", long, default_value = "0")]
+        #[structopt(help = "verbosity of 'forge test' output (0-3)", long, default_value = "0")]
         verbosity: u8,
     },
     #[structopt(about = "build your smart contracts")]
+    #[structopt(alias = "b")]
     Build {
         #[structopt(flatten)]
         opts: BuildOpts,
@@ -168,8 +171,7 @@ impl std::convert::TryFrom<&BuildOpts> for Project {
     /// Defaults to converting to DAppTools-style repo layout, but can be customized.
     fn try_from(opts: &BuildOpts) -> eyre::Result<Project> {
         // 1. Set the root dir
-        let root = opts.root.clone().unwrap_or_else(|| std::env::current_dir().unwrap());
-        let root = std::fs::canonicalize(root)?;
+        let root = std::fs::canonicalize(&opts.root)?;
 
         // 2. Set the contracts dir
         let contracts = if let Some(ref contracts) = opts.contracts {
@@ -233,8 +235,12 @@ impl std::convert::TryFrom<&BuildOpts> for Project {
 
 #[derive(Debug, StructOpt)]
 pub struct BuildOpts {
-    #[structopt(help = "the project's root path, default being the current directory", long)]
-    pub root: Option<PathBuf>,
+    #[structopt(
+        help = "the project's root path, default being the current directory",
+        long,
+        default_value = "std::env::current_dir().unwrap()"
+    )]
+    pub root: PathBuf,
 
     #[structopt(
         help = "the directory relative to the root under which the smart contrats are",
@@ -246,8 +252,7 @@ pub struct BuildOpts {
 
     #[structopt(help = "the remappings", long, short)]
     pub remappings: Vec<ethers::solc::remappings::Remapping>,
-
-    #[structopt(env = "DAPP_REMAPPINGS")]
+    #[structopt(long = "remappings-env", env = "DAPP_REMAPPINGS")]
     pub remappings_env: Option<String>,
 
     #[structopt(help = "the paths where your libraries are installed", long)]
