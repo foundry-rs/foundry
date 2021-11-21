@@ -7,7 +7,7 @@ use tokio::runtime::{Handle, Runtime};
 
 #[derive(Debug)]
 pub enum RuntimeOrHandle {
-    Runtime(Runtime),
+    Runtime(Box<Runtime>),
     Handle(Handle),
 }
 
@@ -15,7 +15,9 @@ impl RuntimeOrHandle {
     pub fn new() -> RuntimeOrHandle {
         match Handle::try_current() {
             Ok(handle) => RuntimeOrHandle::Handle(handle),
-            Err(_) => RuntimeOrHandle::Runtime(Runtime::new().expect("Failed to start runtime")),
+            Err(_) => {
+                RuntimeOrHandle::Runtime(Box::new(Runtime::new().expect("Failed to start runtime")))
+            }
         }
     }
 }
