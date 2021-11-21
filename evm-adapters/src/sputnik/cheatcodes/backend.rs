@@ -1,3 +1,4 @@
+//! Cheatcode-enabled backend implementation
 use super::Cheatcodes;
 use ethers::types::{H160, H256, U256};
 use sputnik::backend::{Backend, Basic};

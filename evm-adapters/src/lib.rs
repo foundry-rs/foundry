@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 #[cfg(feature = "sputnik")]
 /// Abstraction over [Sputnik EVM](https://github.com/rust-blockchain/evm)
 pub mod sputnik;
@@ -22,19 +23,23 @@ use foundry_utils::IntoFunction;
 use eyre::Result;
 use once_cell::sync::Lazy;
 
-// The account that we use to fund all the deployed contracts
+/// The account that we use to fund all the deployed contracts
 pub static FAUCET_ACCOUNT: Lazy<Address> =
     Lazy::new(|| Address::from_slice(&ethers::utils::keccak256("turbodapp faucet")[12..]));
 
+/// Errors related to the EVM call execution
 #[derive(thiserror::Error, Debug)]
 pub enum EvmError {
-    #[error(transparent)]
-    Eyre(#[from] eyre::Error),
     #[error("Execution reverted: {reason}, (gas: {gas_used})")]
     // TODO: Add proper log printing.
+    /// Error which occured during execution of an EVM transaction
     Execution { reason: String, gas_used: u64, logs: Vec<String> },
     #[error(transparent)]
+    /// Error which occured during ABI encoding / decoding of data
     AbiError(#[from] ethers::contract::AbiError),
+    #[error(transparent)]
+    /// Any other generic error
+    Eyre(#[from] eyre::Error),
 }
 
 // TODO: Any reason this should be an async trait?
@@ -64,6 +69,8 @@ pub trait Evm<State> {
     /// Resets the EVM's state to the provided value
     fn reset(&mut self, state: State);
 
+    /// Performs a [`call_unchecked`](Self::call_unchecked), checks if execution reverted, and
+    /// proceeds to return the decoded response to the user.
     fn call<D: Detokenize, T: Tokenize, F: IntoFunction>(
         &mut self,
         from: Address,

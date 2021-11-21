@@ -19,6 +19,7 @@ pub type MemoryState = BTreeMap<Address, MemoryAccount>;
 
 // TODO: Check if we can implement this as the base layer of an ethers-provider
 // Middleware stack instead of doing RPC calls.
+/// Wrapper around Sputnik Executors which implements the [`Evm`] trait.
 pub struct Executor<S, E> {
     pub executor: E,
     pub gas_limit: u64,
@@ -26,6 +27,7 @@ pub struct Executor<S, E> {
 }
 
 impl<S, E> Executor<S, E> {
+    /// Instantiates the executor given a Sputnik instance.
     pub fn from_executor(executor: E, gas_limit: u64) -> Self {
         Self { executor, gas_limit, marker: PhantomData }
     }

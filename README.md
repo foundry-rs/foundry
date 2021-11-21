@@ -19,18 +19,14 @@ Foundry consists of:
 
 ![demo](./assets/demo.svg)
 
-## Forge Quickstart
-
-Forge is a development and testing framework for Ethereum applications.
+## Forge
 
 ```
-cargo install forge
-forge init
-forge build
-forge test
+cargo install --git https://github.com/gakonst/foundry --bin forge
 ```
 
-More documentation can be found in the [forge package](./forge/README.md).
+More documentation can be found in the [forge package](./forge/README.md) and in
+the [CLI README](./cli/README.md).
 
 ### Features
 
@@ -73,14 +69,15 @@ It also works with "non-standard" directory structures (i.e. contracts not in
 [`openzeppelin-contracts`](https://github.com/OpenZeppelin/openzeppelin-contracts),
 Hardhat compilation took 15.244s, whereas Forge took 9.449 (~4s cached)
 
-## Cast Quickstart
+## Cast
 
 Cast is a swiss army knife for interacting with Ethereum applications from the
 command line.
 
 ```
-cargo install cast
-cast call 0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48 "totalSupply()" --rpc-url $ETH_RPC_URL
+cargo install --git https://github.com/gakonst/foundry --bin cast
+// Get USDC's total supply
+cast call 0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48 "totalSupply()(uint256)" --rpc-url <..your node url>
 ```
 
 More documentation can be found in the [cast package](./cast/README.md).
@@ -102,8 +99,6 @@ This repository contains several Rust crates:
 - [`utils`](utils): Utilities for parsing ABI data, will eventually be
   upstreamed to [ethers-rs](https://github.com/gakonst/ethers-rs/).
 
-The minimum supported rust version is 1.51.
-
 ### Rust Toolchain
 
 We use the stable Rust toolchain. Install by running:
@@ -124,9 +119,11 @@ cargo doc --open
 
 ### Formatting
 
+We use the nightly toolchain for formatting and linting.
+
 ```
 cargo +nightly fmt
-cargo clippy
+cargo +nightly clippy --all-features -- -D warnings
 ```
 
 ## Getting Help
