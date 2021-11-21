@@ -145,12 +145,12 @@ interface Vm {
 }
 
 contract MyTest {
-	Vm vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+    Vm vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
 
-	function testWarp() public {
-		vm.warp(100);
-		require(block.timestamp == 100);
-	}
+    function testWarp() public {
+        vm.warp(100);
+        require(block.timestamp == 100);
+    }
 ```
 
 ## Future Features
