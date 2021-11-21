@@ -6,19 +6,33 @@ use ethers::{
 use tokio::runtime::{Handle, Runtime};
 
 #[derive(Debug)]
+pub enum RuntimeOrHandle {
+    Runtime(Box<Runtime>),
+    Handle(Handle),
+}
+
+impl RuntimeOrHandle {
+    pub fn new() -> RuntimeOrHandle {
+        match Handle::try_current() {
+            Ok(handle) => RuntimeOrHandle::Handle(handle),
+            Err(_) => {
+                RuntimeOrHandle::Runtime(Box::new(Runtime::new().expect("Failed to start runtime")))
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
 /// Blocking wrapper around an Ethers middleware, for use in synchronous contexts
 /// (powered by a tokio runtime)
 pub struct BlockingProvider<M> {
     provider: M,
-    runtime: Option<Runtime>,
+    runtime: RuntimeOrHandle,
 }
 
 impl<M: Clone> Clone for BlockingProvider<M> {
     fn clone(&self) -> Self {
-        Self {
-            provider: self.provider.clone(),
-            runtime: self.runtime.as_ref().map(|_| Runtime::new().unwrap()),
-        }
+        Self { provider: self.provider.clone(), runtime: RuntimeOrHandle::new() }
     }
 }
 
@@ -28,15 +42,14 @@ where
 {
     /// Constructs the provider. If no tokio runtime exists, it instantiates one as well.
     pub fn new(provider: M) -> Self {
-        let runtime = Handle::try_current().is_err().then(|| Runtime::new().unwrap());
-        Self { provider, runtime }
+        Self { provider, runtime: RuntimeOrHandle::new() }
     }
 
     /// Receives a future and runs it to completion.
     fn block_on<F: std::future::Future>(&self, f: F) -> F::Output {
         match &self.runtime {
-            Some(runtime) => runtime.block_on(f),
-            None => futures::executor::block_on(f),
+            RuntimeOrHandle::Runtime(runtime) => runtime.block_on(f),
+            RuntimeOrHandle::Handle(handle) => tokio::task::block_in_place(|| handle.block_on(f)),
         }
     }
 

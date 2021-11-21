@@ -20,7 +20,8 @@ use std::{
         Arc,
     },
 };
-use tokio::runtime::Runtime;
+
+use crate::blocking_provider::RuntimeOrHandle;
 
 /// A basic in memory cache (address -> Account)
 pub type MemCache = BTreeMap<H160, MemoryAccount>;
@@ -383,9 +384,12 @@ impl SharedBackend {
     {
         let (tx, rx) = channel(1);
         let handler = BackendHandler::new(provider, cache, rx, pin_block);
-        // spawn the provider handler to background for which we need a new Runtime
-        let rt = Runtime::new().expect("Failed to start runtime");
-        std::thread::spawn(move || rt.block_on(handler));
+        // spawn the provider handler to background
+        let rt = RuntimeOrHandle::new();
+        std::thread::spawn(move || match rt {
+            RuntimeOrHandle::Runtime(runtime) => runtime.block_on(handler),
+            RuntimeOrHandle::Handle(handle) => handle.block_on(handler),
+        });
 
         Self { inner: SharedBackendInner { vicinity: Arc::new(vicinity), backend: tx } }
     }
