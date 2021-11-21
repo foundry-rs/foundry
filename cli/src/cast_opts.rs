@@ -213,7 +213,7 @@ fn parse_block_id(s: &str) -> eyre::Result<BlockId> {
         "earliest" => BlockId::Number(BlockNumber::Earliest),
         "latest" => BlockId::Number(BlockNumber::Latest),
         s if s.starts_with("0x") => BlockId::Hash(H256::from_str(s)?),
-        s => BlockId::Number(BlockNumber::Number(U64::from_str(s)?)),
+        s => BlockId::Number(BlockNumber::Number(u64::from_str(s)?.into())),
     })
 }
 
