@@ -1,5 +1,8 @@
 # `forge`
 
+For more context on how the package works under the hood, look in the
+[code docs](./src/lib.rs).
+
 ## Why?
 
 ### Write your tests in Solidity to minimize context switching
@@ -105,28 +108,34 @@ function testDoubleWithFuzzing(uint256 x) public {
 Over the next months, we intend to add the following features which are
 available in upstream dapptools:
 
-1. Stack Traces
-1. Symbolic EVM: The holy grail of testing, symbolically executed EVM allows
-1. Invariant Tests
-1. Interactive Debugger
-1. Code coverage
-1. Gas snapshots
+1. Stack Traces: Currently we do not provide any debug information when a call
+   fails. We intend to add a structured printer (something like
+   [this](https://twitter.com/gakonst/status/1434337110111182848) which will
+   show all the calls, logs and arguments passed across intermediate smart
+   contract calls, which should help with debugging.
+1. [Invariant Tests](https://github.com/dapphub/dapptools/blob/master/src/dapp/README.md#invariant-testing)
+1. [Interactive Debugger](https://github.com/dapphub/dapptools/blob/master/src/hevm/README.md#interactive-debugger-key-bindings)
+1. [Code coverage](https://twitter.com/dapptools/status/1435973810545729536)
+1. [Gas snapshots](https://github.com/dapphub/dapptools/pull/850/files)
+1. [Symbolic EVM](https://fv.ethereum.org/2020/07/28/symbolic-hevm-release/)
 
 ### Unique features?
 
 We also intend to add features which are not available in dapptools:
 
-1. Faster tests with parallel EVM execution that produces state diffs instead of
-   modifying the state
+1. Even faster tests with parallel EVM execution that produces state diffs
+   instead of modifying the state
 1. Improved UX for assertions:
    1. Check revert error or reason on a Solidity call
    1. Check that an event was emitted with expected arguments
-1. Support more EVM backends (revm, geth's evm, hevm etc.) & benchmark
-   performance across them
+1. Support more EVM backends ([revm](https://github.com/bluealloy/revm/), geth's
+   evm, hevm etc.) & benchmark performance across them
 1. Declarative deployment system based on a config file
-1. Formatting & Linting powered by [Solang]()
+1. Formatting & Linting (maybe powered by
+   [Solang](https://github.com/hyperledger-labs/solang))
    1. `dapp fmt`, an automatic code formatter according to standard rules (like
-      `prettier-plugin-solidity`)
-   1. `dapp lint` a linter + static analyzer. think of this as `solhint` +
-      slither + others.
+      [`prettier-plugin-solidity`](https://github.com/prettier-solidity/prettier-plugin-solidity))
+   1. `dapp lint`, a linter + static analyzer, like a combination of
+      [`solhint`](https://github.com/protofire/solhint) and
+      [slither](https://github.com/crytic/slither/)
 1. Flamegraphs for gas profiling
