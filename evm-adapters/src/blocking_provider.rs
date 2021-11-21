@@ -5,9 +5,10 @@ use ethers::{
 };
 use tokio::runtime::{Handle, Runtime};
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum RuntimeOrHandle {
-    Runtime(Box<Runtime>),
+    Runtime(Runtime),
     Handle(Handle),
 }
 
@@ -15,9 +16,7 @@ impl RuntimeOrHandle {
     pub fn new() -> RuntimeOrHandle {
         match Handle::try_current() {
             Ok(handle) => RuntimeOrHandle::Handle(handle),
-            Err(_) => {
-                RuntimeOrHandle::Runtime(Box::new(Runtime::new().expect("Failed to start runtime")))
-            }
+            Err(_) => RuntimeOrHandle::Runtime(Runtime::new().expect("Failed to start runtime")),
         }
     }
 }
