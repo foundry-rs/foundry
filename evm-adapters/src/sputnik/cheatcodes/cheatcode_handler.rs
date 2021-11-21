@@ -1,3 +1,4 @@
+//! Hooks to EVM execution
 use super::{
     backend::CheatcodeBackend, memory_stackstate_owned::MemoryStackStateOwned, HEVMCalls,
     HevmConsoleEvents,
@@ -31,10 +32,20 @@ use once_cell::sync::Lazy;
 
 // This is now getting us the right hash? Also tried [..20]
 // Lazy::new(|| Address::from_slice(&keccak256("hevm cheat code")[12..]));
+/// Address where the Vm cheatcodes contract lives
 pub static CHEATCODE_ADDRESS: Lazy<Address> = Lazy::new(|| {
     Address::from_slice(&hex::decode("7109709ECfa91a80626fF3989D68f67F5b1DD12D").unwrap())
 });
 
+/// Hooks on live EVM execution and forwards everything else to a Sputnik [`Handler`].
+///
+/// It allows:
+/// 1. Logging of values for debugging
+/// 2. Modifying chain state live with cheatcodes
+///
+/// The `call_inner` and `create_inner` functions are copy-pasted from upstream, so that
+/// it can hook in the runtime. They may eventually be removed if Sputnik allows bringing in your
+/// own runtime handler.
 #[derive(Clone, Debug)]
 // TODO: Should this be called `HookedHandler`? Maybe we could implement other hooks
 // here, e.g. hardhat console.log-style, or dapptools logs, some ad-hoc method for tracing
@@ -186,14 +197,18 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
     }
 }
 
+/// A [`MemoryStackStateOwned`] state instantiated over a [`CheatcodeBackend`]
 pub type CheatcodeStackState<'a, B> = MemoryStackStateOwned<'a, CheatcodeBackend<B>>;
 
+/// A [`CheatcodeHandler`] which uses a [`CheatcodeStackState`] to store its state and a
+/// [`StackExecutor`] for executing transactions.
 pub type CheatcodeStackExecutor<'a, 'b, B, P> =
     CheatcodeHandler<StackExecutor<'a, 'b, CheatcodeStackState<'a, B>, P>>;
 
 impl<'a, 'b, B: Backend, P: PrecompileSet>
     Executor<CheatcodeStackState<'a, B>, CheatcodeStackExecutor<'a, 'b, B, P>>
 {
+    /// Instantiates a cheatcode-enabled [`Executor`]
     pub fn new_with_cheatcodes(
         backend: B,
         gas_limit: u64,
@@ -223,6 +238,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet>
     }
 }
 
+// helper for creating an exit type
 fn evm_error(retdata: &str) -> Capture<(ExitReason, Vec<u8>), Infallible> {
     Capture::Exit((
         ExitReason::Revert(ExitRevert::Reverted),
@@ -231,7 +247,8 @@ fn evm_error(retdata: &str) -> Capture<(ExitReason, Vec<u8>), Infallible> {
 }
 
 impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> {
-    /// Decodes the provided calldata as a
+    /// Given a transaction's calldata, it tries to parse it as an [`HEVM cheatcode`](super::HEVM)
+    /// call and modify the state accordingly.
     fn apply_cheatcode(
         &mut self,
         input: Vec<u8>,

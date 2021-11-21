@@ -21,6 +21,8 @@ use sputnik::{
 pub use sputnik as sputnik_evm;
 use sputnik_evm::executor::stack::PrecompileSet;
 
+/// Given an ethers provider and a block, it proceeds to construct a [`MemoryVicinity`] from
+/// the live chain data returned by the provider.
 pub async fn vicinity<M: Middleware>(
     provider: &M,
     pin_block: Option<u64>,
@@ -148,6 +150,7 @@ use std::borrow::Cow;
 type PrecompileFn =
     fn(&[u8], Option<u64>, &sputnik::Context, bool) -> Result<PrecompileOutput, PrecompileFailure>;
 
+/// Precompiled contracts which should be provided when instantiating the EVM.
 pub static PRECOMPILES: Lazy<revm_precompiles::Precompiles> = Lazy::new(|| {
     // We use the const to immediately choose the latest revision of available
     // precompiles. Is this wrong maybe?
@@ -176,6 +179,7 @@ macro_rules! precompile_entry {
 use once_cell::sync::Lazy;
 use sputnik::Context;
 use std::collections::BTreeMap;
+/// Map of Address => [Precompile](PRECOMPILES) contracts
 pub static PRECOMPILES_MAP: Lazy<BTreeMap<Address, PrecompileFn>> = Lazy::new(|| {
     let mut map = BTreeMap::new();
     precompile_entry!(map, 1);
@@ -190,6 +194,7 @@ pub static PRECOMPILES_MAP: Lazy<BTreeMap<Address, PrecompileFn>> = Lazy::new(||
     map
 });
 
+/// Runs the provided precompile against the input data.
 pub fn exec(
     builtin: &revm_precompiles::Precompile,
     input: &[u8],
