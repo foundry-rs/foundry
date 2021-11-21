@@ -94,7 +94,7 @@ function testDoubleWithFuzzing(uint256 x) public {
 - [x] install
 - [x] update
 - [ ] debug
-- [x] CLI Tracing with `RUST_LOG=dapp=trace`
+- [x] CLI Tracing with `RUST_LOG=forge=trace`
 
 ### Cheat codes
 
@@ -145,12 +145,12 @@ interface Vm {
 }
 
 contract MyTest {
-	Vm vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+    Vm vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
 
-	function testWarp() public {
-		vm.warp(100);
-		require(block.timestamp == 100);
-	}
+    function testWarp() public {
+        vm.warp(100);
+        require(block.timestamp == 100);
+    }
 ```
 
 ## Future Features
