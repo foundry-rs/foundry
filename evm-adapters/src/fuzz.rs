@@ -1,3 +1,4 @@
+//! Fuzzing support abstracted over the [`Evm`](crate::Evm) used
 use crate::Evm;
 use ethers::{
     abi::{Function, ParamType, Token, Tokenizable},

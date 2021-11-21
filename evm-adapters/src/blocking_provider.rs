@@ -26,11 +26,13 @@ impl<M: Middleware> BlockingProvider<M>
 where
     M::Error: 'static,
 {
+    /// Constructs the provider. If no tokio runtime exists, it instantiates one as well.
     pub fn new(provider: M) -> Self {
         let runtime = Handle::try_current().is_err().then(|| Runtime::new().unwrap());
         Self { provider, runtime }
     }
 
+    /// Receives a future and runs it to completion.
     fn block_on<F: std::future::Future>(&self, f: F) -> F::Output {
         match &self.runtime {
             Some(runtime) => runtime.block_on(f),
@@ -38,6 +40,7 @@ where
         }
     }
 
+    /// Gets the specified block as well as the chain id concurrently.
     pub fn block_and_chainid(
         &self,
         block_id: Option<impl Into<BlockId>>,
@@ -52,6 +55,7 @@ where
         Ok((block.ok_or_else(|| eyre::eyre!("block {:?} not found", block_id))?, chain_id))
     }
 
+    /// Gets the nonce, balance and code associated with an account.
     pub fn get_account(
         &self,
         address: Address,
@@ -68,14 +72,17 @@ where
         Ok((nonce, balance, code))
     }
 
+    /// Gets the current block number.
     pub fn get_block_number(&self) -> Result<U64, M::Error> {
         self.block_on(self.provider.get_block_number())
     }
 
+    /// Gets the account's balance at the specified block.
     pub fn get_balance(&self, address: Address, block: Option<BlockId>) -> Result<U256, M::Error> {
         self.block_on(self.provider.get_balance(address, block))
     }
 
+    /// Gets the account's nonce at the specified block.
     pub fn get_transaction_count(
         &self,
         address: Address,
@@ -84,10 +91,12 @@ where
         self.block_on(self.provider.get_transaction_count(address, block))
     }
 
+    /// Gets the account's code at the specified block.
     pub fn get_code(&self, address: Address, block: Option<BlockId>) -> Result<Bytes, M::Error> {
         self.block_on(self.provider.get_code(address, block))
     }
 
+    /// Gets the value at the specified storage slot & block.
     pub fn get_storage_at(
         &self,
         address: Address,
