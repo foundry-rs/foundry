@@ -19,7 +19,7 @@ Foundry consists of:
 
 ![demo](./assets/demo.svg)
 
-## Installing
+## Forge
 
 ```
 cargo install --git https://github.com/gakonst/foundry --bin forge
@@ -69,7 +69,7 @@ It also works with "non-standard" directory structures (i.e. contracts not in
 [`openzeppelin-contracts`](https://github.com/OpenZeppelin/openzeppelin-contracts),
 Hardhat compilation took 15.244s, whereas Forge took 9.449 (~4s cached)
 
-## Cast Quickstart
+## Cast
 
 Cast is a swiss army knife for interacting with Ethereum applications from the
 command line.
@@ -119,9 +119,11 @@ cargo doc --open
 
 ### Formatting
 
+We use the nightly toolchain for formatting and linting.
+
 ```
 cargo +nightly fmt
-cargo clippy
+cargo +nightly clippy --all-features -- -D warnings
 ```
 
 ## Getting Help
