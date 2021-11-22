@@ -19,3 +19,6 @@
 [submodule "integration-tests/testdata/multicall"]
 	path = integration-tests/testdata/multicall
 	url = https://github.com/makerdao/multicall
+[submodule "integration-tests/testdata/lootloose"]
+	path = integration-tests/testdata/lootloose
+	url = https://github.com/gakonst/lootloose
