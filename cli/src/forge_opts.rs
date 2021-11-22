@@ -171,7 +171,8 @@ impl std::convert::TryFrom<&BuildOpts> for Project {
     /// Defaults to converting to DAppTools-style repo layout, but can be customized.
     fn try_from(opts: &BuildOpts) -> eyre::Result<Project> {
         // 1. Set the root dir
-        let root = std::fs::canonicalize(&opts.root)?;
+        let root = opts.root.clone().unwrap_or_else(|| std::env::current_dir().unwrap());
+        let root = std::fs::canonicalize(&root)?;
 
         // 2. Set the contracts dir
         let contracts = if let Some(ref contracts) = opts.contracts {
@@ -235,12 +236,8 @@ impl std::convert::TryFrom<&BuildOpts> for Project {
 
 #[derive(Debug, StructOpt)]
 pub struct BuildOpts {
-    #[structopt(
-        help = "the project's root path, default being the current directory",
-        long,
-        default_value = "std::env::current_dir().unwrap()"
-    )]
-    pub root: PathBuf,
+    #[structopt(help = "the project's root path, default being the current directory", long)]
+    pub root: Option<PathBuf>,
 
     #[structopt(
         help = "the directory relative to the root under which the smart contrats are",
