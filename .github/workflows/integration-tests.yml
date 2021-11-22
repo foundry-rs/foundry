@@ -1,0 +1,60 @@
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+
+name: e2e tests
+
+env:
+  ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf
+  FORK_BLOCK: 13633752
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # TODO: Can we automatically generate this matrix via `ls` and `fromJSON`?
+        # https://docs.github.com/en/actions/learn-github-actions/expressions#fromjson
+        repo: ["lootloose", "solmate", "vaults", "geb", "solidity-stringutils", "multicall", "guni-lev", "drai"]
+
+    steps:
+      # clone
+      - uses: actions/checkout@v2
+        with:
+          submodules: recursive
+      # some deps require node
+      - uses: actions/setup-node@v2
+      # install rust
+      - name: Install stable toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          components: rustfmt, clippy
+      # ..with caching
+      - uses: Swatinem/rust-cache@v1
+        with:
+          cache-on-failure: true
+
+      # try to load `forge` from cache
+      - name: Cache forge
+        id: cache-forge
+        uses: actions/cache@v2
+        env:
+          cache-name: cache-forge
+        with:
+          path: ./target/debug/forge
+          key: ${{ runner.os }}-build-${{ env.cache-name }}
+
+      # if couldn't get, install forge
+      - name: Install forge
+        if: steps.cache-forge.outputs.cache-hit != 'true'
+        run: cargo build --bin forge
+
+      - name: Test ${{ matrix.repo }}
+        run: ./test.sh ${{ matrix.repo }}
+        env:
+          FORGE_BIN: ./target/debug/forge
