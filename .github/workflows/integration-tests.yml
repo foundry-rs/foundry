@@ -17,7 +17,8 @@ jobs:
       matrix:
         # TODO: Can we automatically generate this matrix via `ls` and `fromJSON`?
         # https://docs.github.com/en/actions/learn-github-actions/expressions#fromjson
-        repo: ["lootloose", "solmate", "vaults", "geb", "solidity-stringutils", "multicall", "guni-lev", "drai"]
+        # repo: ["lootloose", "solmate", "vaults", "geb", "solidity-stringutils", "multicall", "guni-lev", "drai"]
+        repo: ["drai"]
 
     steps:
       # clone
@@ -39,6 +40,10 @@ jobs:
         with:
           cache-on-failure: true
 
+      - name: Get git sha
+        id: vars
+        run: echo "::set-output name=sha_short::$(git rev-parse --short HEAD)"
+
       # try to load `forge` from cache
       - name: Cache forge
         id: cache-forge
@@ -47,7 +52,7 @@ jobs:
           cache-name: cache-forge
         with:
           path: ./target/debug/forge
-          key: ${{ runner.os }}-build-${{ env.cache-name }}
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ steps.vars.outputs.sha_short }}
 
       # if couldn't get, install forge
       - name: Install forge
