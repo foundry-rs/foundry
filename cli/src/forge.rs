@@ -266,31 +266,17 @@ fn main() -> eyre::Result<()> {
 
                 // make the dirs
                 let src = root.join("src");
-                std::fs::create_dir(&src)?;
                 let test = src.join("test");
-                std::fs::create_dir(&test)?;
+                std::fs::create_dir_all(&test)?;
                 let lib = root.join("lib");
                 std::fs::create_dir(&lib)?;
 
-                // write the files
+                // write the contract file
                 let contract_path = src.join("Contract.sol");
-                let contents = r#"// SPDX-License-Identifier: Unlicense
-pragma solidity 0.8.10;
-
-contract Contract {}
-"#;
-                std::fs::write(contract_path, contents)?;
-
+                std::fs::write(contract_path, include_str!("../../assets/ContractTemplate.sol"))?;
                 // write the tests
                 let contract_path = test.join("Contract.t.sol");
-                let contents = r#"// SPDX-License-Identifier: Unlicense
-pragma solidity 0.8.10;
-
-contract ContractTest {
-    function setUp() public {}
-}
-"#;
-                std::fs::write(contract_path, contents)?;
+                std::fs::write(contract_path, include_str!("../../assets/ContractTemplate.t.sol"))?;
 
                 // sets up git
                 std::process::Command::new("git").arg("init").current_dir(&root).spawn()?.wait()?;
