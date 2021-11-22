@@ -1,3 +1,6 @@
 [submodule "integration-tests/testdata/drai"]
 	path = integration-tests/testdata/drai
 	url = git@github.com:mds1/drai.git
+[submodule "integration-tests/testdata/geb"]
+	path = integration-tests/testdata/geb
+	url = https://github.com/reflexer-labs/geb
