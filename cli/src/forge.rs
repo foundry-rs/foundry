@@ -245,6 +245,55 @@ fn main() -> eyre::Result<()> {
                 .collect();
             remappings.iter().for_each(|x| println!("{}", x));
         }
+        Subcommands::Init { root, template } => {
+            let root = root.unwrap_or_else(|| std::env::current_dir().unwrap());
+            // create the root dir if it does not exist
+            if !root.exists() {
+                std::fs::create_dir_all(&root)?;
+            }
+            let root = std::fs::canonicalize(root)?;
+
+            // if a template is provided, then this command is just an alias to `git clone <url>
+            // <path>`
+            if let Some(ref template) = template {
+                println!("Initializing {} from {}...", root.display(), template);
+                std::process::Command::new("git")
+                    .args(&["clone", template, &root.display().to_string()])
+                    .spawn()?
+                    .wait()?;
+            } else {
+                println!("Initializing {}...", root.display());
+
+                // make the dirs
+                let src = root.join("src");
+                let test = src.join("test");
+                std::fs::create_dir_all(&test)?;
+                let lib = root.join("lib");
+                std::fs::create_dir(&lib)?;
+
+                // write the contract file
+                let contract_path = src.join("Contract.sol");
+                std::fs::write(contract_path, include_str!("../../assets/ContractTemplate.sol"))?;
+                // write the tests
+                let contract_path = test.join("Contract.t.sol");
+                std::fs::write(contract_path, include_str!("../../assets/ContractTemplate.t.sol"))?;
+
+                // sets up git
+                std::process::Command::new("git").arg("init").current_dir(&root).spawn()?.wait()?;
+                std::process::Command::new("git")
+                    .args(&["add", "."])
+                    .current_dir(&root)
+                    .spawn()?
+                    .wait()?;
+                std::process::Command::new("git")
+                    .args(&["commit", "-m", "chore: forge init"])
+                    .current_dir(&root)
+                    .spawn()?
+                    .wait()?;
+            }
+
+            println!("Done.");
+        }
     }
 
     Ok(())

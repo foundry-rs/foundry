@@ -122,6 +122,13 @@ pub enum Subcommands {
         #[structopt(long, help = "verify on Etherscan")]
         verify: bool,
     },
+    #[structopt(alias = "i", about = "initializes a new forge repository")]
+    Init {
+        #[structopt(help = "the project's root path, default being the current directory")]
+        root: Option<PathBuf>,
+        #[structopt(help = "optional solidity template to start from", long, short)]
+        template: Option<String>,
+    },
 }
 
 /// Represents the common dapp argument pattern for `<path>:<contractname>` where `<path>:` is
