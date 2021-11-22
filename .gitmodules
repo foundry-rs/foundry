@@ -13,3 +13,6 @@
 [submodule "integration-tests/testdata/solidity-stringutils"]
 	path = integration-tests/testdata/solidity-stringutils
 	url = https://github.com/Arachnid/solidity-stringutils
+[submodule "integration-tests/testdata/vaults"]
+	path = integration-tests/testdata/vaults
+	url = https://github.com/rari-capital/vaults
