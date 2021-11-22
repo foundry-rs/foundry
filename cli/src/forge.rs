@@ -284,11 +284,22 @@ fn test<A: ArtifactOutput + 'static, S: Clone, E: evm_adapters::Evm<S>>(
                 } else {
                     // if an error is found, return a -1 exit code
                     exit_code = -1;
-                    let txt = if let Some(ref reason) = result.reason {
-                        format!("[FAIL: {}]", reason)
-                    } else {
-                        "[FAIL]".to_string()
+                    let txt = match (&result.reason, &result.counterexample) {
+                        (Some(ref reason), Some(ref counterexample)) => {
+                            format!(
+                                "[FAIL. Reason: {}. Counterexample: {}]",
+                                reason, counterexample
+                            )
+                        }
+                        (None, Some(ref counterexample)) => {
+                            format!("[FAIL. Counterexample: {}]", counterexample)
+                        }
+                        (Some(ref reason), None) => {
+                            format!("[FAIL. Reason: {}]", reason)
+                        }
+                        (None, None) => "[FAIL]".to_string(),
                     };
+
                     Colour::Red.paint(txt)
                 };
                 println!(

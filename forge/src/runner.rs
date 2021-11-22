@@ -7,7 +7,7 @@ use evm_adapters::{fuzz::FuzzedExecutor, Evm, EvmError};
 
 use eyre::{Context, Result};
 use regex::Regex;
-use std::{collections::HashMap, time::Instant};
+use std::{collections::HashMap, fmt, time::Instant};
 
 use proptest::test_runner::{TestError, TestRunner};
 use serde::{Deserialize, Serialize};
@@ -18,6 +18,12 @@ pub struct CounterExample {
     // Token does not implement Serde (lol), so we just serialize the calldata
     #[serde(skip)]
     pub args: Vec<Token>,
+}
+
+impl fmt::Display for CounterExample {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "calldata=0x{}, args={:?}", hex::encode(&self.calldata), self.args)
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
