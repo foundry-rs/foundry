@@ -78,3 +78,14 @@ ethers::contract::abigen!(
             event log_named_string       (string key, string val)
             ]"#,
 );
+
+ethers::contract::abigen!(
+    Console,
+    // TODO: Uncomment this when we fix it in abigen
+    // "./evm-adapters/testdata/console.json",
+    r#"[
+        log(address)
+        log(string)
+        log(string, string)
+    ]"#,
+);
