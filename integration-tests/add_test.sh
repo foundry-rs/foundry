@@ -6,3 +6,5 @@ REPO=$1
 
 cd $TESTDATA
 git submodule add $REPO
+
+git commit -m "integration-tests: add $REPO"

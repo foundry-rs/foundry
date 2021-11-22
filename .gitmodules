@@ -10,3 +10,6 @@
 [submodule "integration-tests/testdata/solmate"]
 	path = integration-tests/testdata/solmate
 	url = https://github.com/Rari-Capital/solmate
+[submodule "integration-tests/testdata/solidity-stringutils"]
+	path = integration-tests/testdata/solidity-stringutils
+	url = https://github.com/Arachnid/solidity-stringutils
