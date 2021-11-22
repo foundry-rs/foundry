@@ -92,7 +92,10 @@ impl<S: HostExt, Tr: Tracer> Evm<S> for EvmOdin<S, Tr> {
         #[allow(deprecated)]
         let message = Message {
             sender: from,
-            destination: to,
+            recipient: to,
+            // This is only going to be different from `recipient` if
+            // used in a `CALLCODE` or `DELEGATECALL`, but here we're only doing calls
+            code_address: to,
             // What should this be?
             depth: 0,
             kind: self.call_kind.unwrap_or(CallKind::Call),
