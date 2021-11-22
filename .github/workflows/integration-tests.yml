@@ -17,8 +17,7 @@ jobs:
       matrix:
         # TODO: Can we automatically generate this matrix via `ls` and `fromJSON`?
         # https://docs.github.com/en/actions/learn-github-actions/expressions#fromjson
-        # repo: ["lootloose", "solmate", "vaults", "geb", "solidity-stringutils", "multicall", "guni-lev", "drai"]
-        repo: ["drai"]
+        repo: ["lootloose", "solmate", "vaults", "geb", "solidity-stringutils", "multicall", "guni-lev", "drai"]
 
     steps:
       # clone
@@ -61,5 +60,7 @@ jobs:
 
       - name: Test ${{ matrix.repo }}
         run: ./test.sh ${{ matrix.repo }}
+        working-directory:
+          ./integration-tests
         env:
           FORGE_BIN: ./target/debug/forge
