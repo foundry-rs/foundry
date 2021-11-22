@@ -1,0 +1,3 @@
+[submodule "integration-tests/testdata/drai"]
+	path = integration-tests/testdata/drai
+	url = git@github.com:mds1/drai.git
