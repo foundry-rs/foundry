@@ -1,0 +1,12 @@
+meta:
+  description: A drop-in replacement for Dapptools, written in Rust.
+  maintainer: Odysseas Lamtzidis
+files:
+  "/usr/bin/forge":
+    file: target/release/forge
+    mode: "0755"
+    user: "root"
+  "/usr/bin/cast":
+    file: target/release/cast
+    mode: "0755"
+    user: "root"
