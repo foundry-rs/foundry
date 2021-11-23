@@ -24,8 +24,8 @@ jobs:
         with:
             name: target-ubuntu-latest
             path: |
-              ./target/release/seth
-              ./target/release/dapp
+              ./target/release/forge
+              ./target/release/cast
   build-linux-packages:
     runs-on: ubuntu-latest
     needs: build-artifacts
@@ -45,7 +45,7 @@ jobs:
         name: Build RPM package
         id: build_rpm
         with:
-          name: dapptools-rs
+          name: foundry
           version: ${{ steps.vars.outputs.tag }}
           arch: x86_64
           format: rpm
@@ -54,7 +54,7 @@ jobs:
         name: Build DEB package
         id: build_deb
         with:
-          name: dapptools-rs
+          name: foundry
           version: ${{ steps.vars.outputs.tag }}
           arch: x86_64
           format: deb

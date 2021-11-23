@@ -10,6 +10,6 @@ jobs:
       - name: Create homebrew-core PR
         uses: mislav/bump-homebrew-formula-action@v1.12
         with:
-          formula-name: dapptools-rs
+          formula-name: foundry
         env:
           COMMITTER_TOKEN: ${{ secrets.G_TOKEN }}
