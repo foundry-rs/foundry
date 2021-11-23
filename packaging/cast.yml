@@ -1,0 +1,8 @@
+meta:
+  description: Cast is a swiss army knife for interacting with Ethereum applications from the command line.
+  maintainer: Odysseas Lamtzidis
+files:
+  "/usr/bin/cast":
+    file: target/release/cast
+    mode: "0755"
+    user: "root"

@@ -1,5 +1,5 @@
 meta:
-  description: A drop-in replacement for Dapptools, written in Rust.
+  description: Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.
   maintainer: Odysseas Lamtzidis
 files:
   "/usr/bin/forge":

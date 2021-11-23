@@ -1,0 +1,8 @@
+meta:
+  description: Forge is a fast and flexible Ethereum testing framework, inspired by Dapp.
+  maintainer: Odysseas Lamtzidis
+files:
+  "/usr/bin/forge":
+    file: target/release/forge
+    mode: "0755"
+    user: "root"
