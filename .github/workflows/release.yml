@@ -5,7 +5,10 @@ on:
       - 'v*.*.*'
 jobs:
   build-artifacts:
-    runs-on:  ubuntu-latest
+    runs-on:  ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-latest]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v2
@@ -13,7 +16,11 @@ jobs:
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
+          toolchain: stable
+          override: true
       - uses: Swatinem/rust-cache@v1
+        with:
+          cache-on-failure: true
       - name: cargo build
         uses: actions-rs/cargo@v1
         with:
@@ -22,7 +29,7 @@ jobs:
       - name: Upload production artifacts
         uses: actions/upload-artifact@v2
         with:
-            name: target-ubuntu-latest
+            name: target-${{ matrix.os }}
             path: |
               ./target/release/forge
               ./target/release/cast
@@ -79,8 +86,6 @@ jobs:
        run: echo ::set-output name=tag::${GITHUB_REF#refs/*/}
      - name: Restore artifacts
        uses: actions/download-artifact@v2
-       with:
-        name: linux-packages
      - name: Build Changelog
        id: github_release
        uses: mikepenz/release-changelog-builder-action@v2.4.2
@@ -96,8 +101,10 @@ jobs:
          release_name: ${{ github.ref }}
          body: ${{steps.build_changelog.outputs.changelog}}
          files: |
-           ./*.deb
-           ./*.rpm
+           ./linux-packages/*.deb
+           ./linux-packages/*.rpm
+           ./target-macos-latest/*
+           ./target-linux-latest/*
      - name: Copy binaries to the server
        uses: appleboy/scp-action@master
        with:
