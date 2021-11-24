@@ -19,8 +19,7 @@ mod forge_opts;
 use forge_opts::{EvmType, Opts, Subcommands};
 
 use crate::forge_opts::{Dependency, FullContractInfo};
-use std::{collections::HashMap, convert::TryFrom, sync::Arc};
-use std::str::FromStr;
+use std::{collections::HashMap, convert::TryFrom, process::Command, str::FromStr, sync::Arc};
 
 mod cmd;
 mod utils;
@@ -160,7 +159,7 @@ fn main() -> eyre::Result<()> {
                 )?
                 .update(true, None)?;
             } else {
-                std::process::Command::new("git")
+                Command::new("git")
                     .args(&["submodule", "update", "--init", "--recursive"])
                     .spawn()?
                     .wait()?;
@@ -194,7 +193,7 @@ fn main() -> eyre::Result<()> {
             // <path>`
             if let Some(ref template) = template {
                 println!("Initializing {} from {}...", root.display(), template);
-                std::process::Command::new("git")
+                Command::new("git")
                     .args(&["clone", template, &root.display().to_string()])
                     .spawn()?
                     .wait()?;
@@ -216,13 +215,9 @@ fn main() -> eyre::Result<()> {
                 std::fs::write(contract_path, include_str!("../../assets/ContractTemplate.t.sol"))?;
 
                 // sets up git
-                std::process::Command::new("git").arg("init").current_dir(&root).spawn()?.wait()?;
-                std::process::Command::new("git")
-                    .args(&["add", "."])
-                    .current_dir(&root)
-                    .spawn()?
-                    .wait()?;
-                std::process::Command::new("git")
+                Command::new("git").arg("init").current_dir(&root).spawn()?.wait()?;
+                Command::new("git").args(&["add", "."]).current_dir(&root).spawn()?.wait()?;
+                Command::new("git")
                     .args(&["commit", "-m", "chore: forge init"])
                     .current_dir(&root)
                     .spawn()?
@@ -328,13 +323,10 @@ fn install(root: impl AsRef<std::path::Path>, dependencies: Vec<Dependency>) -> 
 
     dependencies.iter().try_for_each(|dep| -> eyre::Result<_> {
         let path = libs.join(&dep.name);
-        println!(
-            "Installing {} in {:?}, (url: {}, tag: {:?})",
-            dep.name, path, dep.url, dep.tag
-        );
+        println!("Installing {} in {:?}, (url: {}, tag: {:?})", dep.name, path, dep.url, dep.tag);
 
         // install the dep
-        std::process::Command::new("git")
+        Command::new("git")
             .args(&["submodule", "add", &dep.url, &path.display().to_string()])
             .current_dir(&root)
             .spawn()?
@@ -349,16 +341,13 @@ fn install(root: impl AsRef<std::path::Path>, dependencies: Vec<Dependency>) -> 
 
         // checkout the tag if necessary
         let message = if let Some(ref tag) = dep.tag {
-            std::process::Command::new("git")
+            Command::new("git")
                 .args(&["checkout", "--recurse-submodules", tag])
                 .current_dir(&path)
                 .spawn()?
                 .wait()?;
 
-            std::process::Command::new("git")
-                .args(&["add", &path.display().to_string()])
-                .spawn()?
-                .wait()?;
+            Command::new("git").args(&["add", &path.display().to_string()]).spawn()?.wait()?;
 
             format!("forge install: {}\n\n{}", dep.name, tag)
         } else {
