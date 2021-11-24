@@ -168,7 +168,7 @@ fn main() -> eyre::Result<()> {
         }
         // TODO: Make it work with updates?
         Subcommands::Install { dependencies } => {
-            install(dependencies)?;
+            install(std::env::current_dir()?, dependencies)?;
         }
         Subcommands::Remappings { lib_paths, root } => {
             let root = root.unwrap_or_else(|| std::env::current_dir().unwrap());
@@ -229,7 +229,7 @@ fn main() -> eyre::Result<()> {
                     .wait()?;
 
                 Dependency::from_str("https://github.com/dapphub/ds-test")
-                    .and_then(|dependency| install(vec![dependency]))?;
+                    .and_then(|dependency| install(root, vec![dependency]))?;
             }
 
             println!("Done.");
@@ -323,7 +323,7 @@ fn test<A: ArtifactOutput + 'static, S: Clone, E: evm_adapters::Evm<S>>(
     std::process::exit(exit_code);
 }
 
-fn install(dependencies: Vec<Dependency>) -> eyre::Result<()> {
+fn install(root: impl AsRef<std::path::Path>, dependencies: Vec<Dependency>) -> eyre::Result<()> {
     let libs = std::path::Path::new("lib");
 
     dependencies.iter().try_for_each(|dep| -> eyre::Result<_> {
@@ -336,18 +336,14 @@ fn install(dependencies: Vec<Dependency>) -> eyre::Result<()> {
         // install the dep
         std::process::Command::new("git")
             .args(&["submodule", "add", &dep.url, &path.display().to_string()])
+            .current_dir(&root)
             .spawn()?
             .wait()?;
 
         // call update on it
-        std::process::Command::new("git")
-            .args(&[
-                "submodule",
-                "update",
-                "--init",
-                "--recursive",
-                &path.display().to_string(),
-            ])
+        Command::new("git")
+            .args(&["submodule", "update", "--init", "--recursive", &path.display().to_string()])
+            .current_dir(&root)
             .spawn()?
             .wait()?;
 
@@ -369,10 +365,7 @@ fn install(dependencies: Vec<Dependency>) -> eyre::Result<()> {
             format!("forge install: {}", dep.name)
         };
 
-        std::process::Command::new("git")
-            .args(&["commit", "-m", &message])
-            .spawn()?
-            .wait()?;
+        Command::new("git").args(&["commit", "-m", &message]).current_dir(&root).spawn()?.wait()?;
 
         Ok(())
     })
