@@ -364,7 +364,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 let ret = self.call(
                     address,
                     Some(Transfer { source: caller, target: address, value }),
-                    input,
+                    input.to_vec(),
                     target_gas,
                     false,
                     context,
@@ -388,7 +388,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
             HEVMCalls::Etch(inner) => {
                 let who = inner.0;
                 let code = inner.1;
-                state.set_code(who, code);
+                state.set_code(who, code.to_vec());
             }
         };
 
