@@ -22,7 +22,7 @@ Foundry consists of:
 ## Forge
 
 ```
-cargo install --git https://github.com/gakonst/foundry --bin forge
+cargo install --git https://github.com/gakonst/foundry --bin forge --locked
 ```
 
 More documentation can be found in the [forge package](./forge/README.md) and in
