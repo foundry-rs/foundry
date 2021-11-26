@@ -122,9 +122,14 @@ pub struct Blockchain {
     /// Mapping from block hash to the block number
     blocks_by_hash: HashMap<H256, U64>,
     /// Mapping from block number to the block
-    blocks: HashMap<U64, Block<TxHash>>,
-    /// Mapping from txhash to a tuple containing the transaction as well as the transaction receipt
+    blocks: Vec<Block<TxHash>>,
+    /// Mapping from txhash to a tuple containing the transaction as well as the transaction
+    /// receipt
     txs: HashMap<TxHash, (Transaction, TransactionReceipt)>,
+
+    // TODO(rohit): this should be completely moved to a tx pool module
+    /// Pending txs that haven't yet been included in the blockchain
+    pending_txs: Vec<Transaction>,
 }
 
 impl Blockchain {
@@ -141,13 +146,29 @@ impl Blockchain {
     /// Gets block by block hash
     pub fn block_by_hash(&self, hash: H256) -> Option<Block<TxHash>> {
         self.blocks_by_hash.get(&hash).and_then(|i| {
-            Some(self.blocks.get(i).cloned().expect("block should exist if block hash was found"))
+            Some(self.block_by_number(*i).expect("block should exist if block hash was found"))
         })
     }
 
     /// Gets block by block number
     pub fn block_by_number(&self, n: U64) -> Option<Block<TxHash>> {
-        self.blocks.get(&n).cloned()
+        if self.blocks.len() > n.as_usize() {
+            Some(self.blocks[n.as_usize()].clone())
+        } else {
+            None
+        }
+    }
+
+    /// Gets the latest block
+    pub fn latest_block(&self) -> Option<Block<TxHash>> {
+        self.blocks.last().cloned()
+    }
+}
+
+impl Blockchain {
+    /// Add a pending transaction eligible to be included in the next block
+    pub fn insert_pending_tx(&mut self, tx: Transaction) {
+        self.pending_txs.push(tx)
     }
 }
 
@@ -180,12 +201,12 @@ where
 
         // If node is configured to automine blocks, spawn a new thread to periodically mine blocks
         if let Some(block_time) = automine {
-            let _shared_node = node.clone();
+            let shared_node = node.clone();
             tokio::spawn(async move {
                 let mut interval = tokio::time::interval(block_time.into());
                 loop {
                     interval.tick().await;
-                    // TODO: mine a new block
+                    shared_node.write().unwrap().mine_block();
                 }
             });
         }
@@ -278,7 +299,7 @@ where
             if let Some(sender) = self.account(*from) {
                 sender
             } else {
-                return Err(Box::new("account has not been initialized on the node"));
+                return Err(Box::new("account has not been initialized on the node"))
             }
         } else {
             self.default_sender()
@@ -356,7 +377,7 @@ where
         match self.evm.call_raw(sender.address(), to, calldata.clone().into(), value, false) {
             Ok((retdata, status, gas_used, _logs)) => {
                 if U256::from(gas_used) > gas {
-                    return Err(Box::new("revert: out-of-gas"));
+                    return Err(Box::new("revert: out-of-gas"))
                 }
                 if E::is_success(&status) {
                     let transaction = Transaction {
@@ -409,7 +430,7 @@ where
         match self.evm.deploy(sender.address(), bytecode.clone().into(), value) {
             Ok((retdata, status, gas_used, _logs)) => {
                 if U256::from(gas_used) > gas {
-                    return Err(Box::new("revert: out-of-gas"));
+                    return Err(Box::new("revert: out-of-gas"))
                 }
                 if E::is_success(&status) {
                     let transaction = Transaction {
@@ -442,19 +463,27 @@ where
         }
     }
 
-    /// Adds a new block to the blockchain state
-    pub fn add_block(&mut self, block: Block<TxHash>) {
+    /// Mine a new block
+    pub fn mine_block(&mut self) {
+        // TODO(rohit): block builder
+        // TODO(rohit): consume self.blockchain.pending_txs until block gas limit is reached
+        let (block, txs, tx_receipts): (Block<TxHash>, Vec<Transaction>, Vec<TransactionReceipt>) =
+            todo!();
+        self.insert_block(block);
+        for (tx, tx_receipt) in txs.iter().zip(tx_receipts.iter()) {
+            self.insert_tx(tx.clone(), tx_receipt.clone());
+        }
+    }
+
+    fn insert_block(&mut self, block: Block<TxHash>) {
         self.blockchain.blocks_by_hash.insert(
             block.hash.expect("pending block cannot be added"),
             block.number.expect("pending block cannot be added"),
         );
-        self.blockchain
-            .blocks
-            .insert(block.number.expect("pending block cannot be added"), block.clone());
+        self.blockchain.blocks.push(block);
     }
 
-    /// Adds a new tx's data to the blockchain state
-    pub fn add_transaction(&mut self, tx: Transaction, tx_receipt: TransactionReceipt) {
+    fn insert_tx(&mut self, tx: Transaction, tx_receipt: TransactionReceipt) {
         self.blockchain.txs.insert(tx.hash(), (tx, tx_receipt));
     }
 }
@@ -512,8 +541,12 @@ where
                 None => state.write().unwrap().deploy_contract(tx),
             };
 
-            // TODO: add tx to txpool if automine is enabled
-            // TODO: mine a new block if automine is disabled
+            if let Ok(ref pending_tx) = pending_tx {
+                state.write().unwrap().blockchain.insert_pending_tx(pending_tx.clone());
+                if state.read().unwrap().config.automine.is_none() {
+                    state.write().unwrap().mine_block();
+                }
+            }
 
             EthResponse::EthSendTransaction(pending_tx.map(|t| t.hash()))
         }
