@@ -167,6 +167,8 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
             .map(|event| {
                 use HevmConsoleEvents::*;
                 match event {
+                    LogsFilter(inner) => format!("{}", inner.0),
+                    LogBytesFilter(inner) => format!("{}", inner.0),
                     LogNamedAddressFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
                     LogNamedBytes32Filter(inner) => {
                         format!("{}: 0x{}", inner.key, hex::encode(inner.val))
@@ -364,7 +366,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 let ret = self.call(
                     address,
                     Some(Transfer { source: caller, target: address, value }),
-                    input,
+                    input.to_vec(),
                     target_gas,
                     false,
                     context,
@@ -388,7 +390,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
             HEVMCalls::Etch(inner) => {
                 let who = inner.0;
                 let code = inner.1;
-                state.set_code(who, code);
+                state.set_code(who, code.to_vec());
             }
         };
 
