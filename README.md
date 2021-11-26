@@ -143,7 +143,7 @@ Join the [foundry telegram](https://t.me/foundry_rs) to chat with the community!
   [ethers-solc](https://github.com/gakonst/ethers-rs/tree/master/ethers-solc/)
   which is the backbone of our compilation pipeline, as well as countless
   contributions to ethers, in particular the `abigen` macros.
-- [Rohit Narunkar](https://twitter.com/rohitnarurkar): Created the Rust Solidity
+- [Rohit Narurkar](https://twitter.com/rohitnarurkar): Created the Rust Solidity
   version manager [svm-rs](https://github.com/roynalnaruto/svm-rs) which we use
   to auto-detect and manage multiple Solidity versions.
 - All the other
