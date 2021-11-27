@@ -5,6 +5,7 @@ members = [
     "cast",
     "forge",
     "cli",
+    "fmt"
 ]
 
 # Binary size optimizations
