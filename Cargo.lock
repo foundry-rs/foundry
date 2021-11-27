@@ -1528,6 +1528,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "forge-fmt"
+version = "0.1.0"
+
+[[package]]
 name = "form_urlencoded"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
