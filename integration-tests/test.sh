@@ -1,5 +1,7 @@
 #!/bin/bash
 set +x
+set -e
+
 
 # TODO: Add logic for running with all
 REPO=$1
