@@ -968,8 +968,9 @@ mod tests {
             evm.deploy(Address::zero(), compiled.bin.unwrap().clone(), 0.into()).unwrap();
 
         // after the evm call is done, we call `logs` and print it all to the user
-        let (_, _, _, logs) =
-            evm.call::<(), _, _>(Address::zero(), addr, "test_log_elsewhere()", (), 0.into()).unwrap();
+        let (_, _, _, logs) = evm
+            .call::<(), _, _>(Address::zero(), addr, "test_log_elsewhere()", (), 0.into())
+            .unwrap();
         let expected = ["0x1111111111111111111111111111111111111111", "Hi", "Hi, Hi"]
             .iter()
             .map(ToString::to_string)
