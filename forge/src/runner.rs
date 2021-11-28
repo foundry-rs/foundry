@@ -117,7 +117,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
                 // Before each test run executes, ensure we're at our initial state.
                 self.evm.reset(init_state.clone());
                 let result = self.run_test(func, needs_setup)?;
-                Ok((func.name.clone(), result))
+                Ok((func.signature(), result))
             })
             .collect::<Result<HashMap<_, _>>>()?;
 
@@ -127,7 +127,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
                 .filter(|func| !func.inputs.is_empty())
                 .map(|func| {
                     let result = self.run_fuzz_test(func, needs_setup, fuzzer.clone())?;
-                    Ok((func.name.clone(), result))
+                    Ok((func.signature(), result))
                 })
                 .collect::<Result<HashMap<_, _>>>()?;
 
@@ -146,7 +146,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         Ok(map)
     }
 
-    #[tracing::instrument(name = "test", skip_all, fields(name = %func.name))]
+    #[tracing::instrument(name = "test", skip_all, fields(name = %func.signature()))]
     pub fn run_test(&mut self, func: &Function, setup: bool) -> Result<TestResult> {
         let start = Instant::now();
         // the expected result depends on the function name
@@ -154,7 +154,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         // which allows to test multiple assertions in 1 test function while also
         // preserving logs.
         let should_fail = func.name.starts_with("testFail");
-        tracing::debug!(func = ?func.name, should_fail, "unit-testing");
+        tracing::debug!(func = ?func.signature(), should_fail, "unit-testing");
 
         let mut logs = self.init_logs.to_vec();
 
@@ -164,7 +164,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
             let setup_logs = self
                 .evm
                 .setup(self.address)
-                .wrap_err(format!("could not setup during {} test", func.name))?
+                .wrap_err(format!("could not setup during {} test", func.signature()))?
                 .1;
             logs.extend_from_slice(&setup_logs);
         }
@@ -198,7 +198,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         Ok(TestResult { success, reason, gas_used: Some(gas_used), counterexample: None, logs })
     }
 
-    #[tracing::instrument(name = "fuzz-test", skip_all, fields(name = %func.name))]
+    #[tracing::instrument(name = "fuzz-test", skip_all, fields(name = %func.signature()))]
     pub fn run_fuzz_test(
         &mut self,
         func: &Function,
@@ -207,7 +207,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
     ) -> Result<TestResult> {
         let start = Instant::now();
         let should_fail = func.name.starts_with("testFail");
-        tracing::debug!(func = ?func.name, should_fail, "fuzzing");
+        tracing::debug!(func = ?func.signature(), should_fail, "fuzzing");
 
         // call the setup function in each test to reset the test's state.
         if setup {
@@ -268,6 +268,32 @@ mod tests {
             let precompiles = PRECOMPILES_MAP.clone();
             let evm = Executor::new(12_000_000, &cfg, &backend, &precompiles);
             super::test_runner(evm, compiled);
+        }
+
+        #[test]
+        fn test_function_overriding() {
+            let cfg = Config::istanbul();
+            let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
+            let vicinity = new_vicinity();
+            let backend = new_backend(&vicinity, Default::default());
+
+            let precompiles = PRECOMPILES_MAP.clone();
+            let mut evm = Executor::new(12_000_000, &cfg, &backend, &precompiles);
+            let (addr, _, _, _) =
+                evm.deploy(Address::zero(), compiled.bin.unwrap().clone(), 0.into()).unwrap();
+
+            let mut runner =
+                ContractRunner::new(&mut evm, compiled.abi.as_ref().unwrap(), addr, None, &[]);
+
+            let mut cfg = FuzzConfig::default();
+            cfg.failure_persistence = None;
+            let mut fuzzer = TestRunner::new(cfg);
+            let results = runner
+                .run_tests(&Regex::from_str("testGreeting").unwrap(), Some(&mut fuzzer))
+                .unwrap();
+            assert!(results["testGreeting()"].success);
+            assert!(results["testGreeting(string)"].success);
+            assert!(results["testGreeting(string,string)"].success);
         }
 
         #[test]

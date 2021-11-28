@@ -85,6 +85,15 @@ contract GreeterTest is GreeterTestSetup {
         greeter.greet("yo");
         require(keccak256(abi.encodePacked(greeter.greeting())) == keccak256(abi.encodePacked("yo")), "not equal");
     }
+    function testGreeting(string memory message) public {
+        greeter.greet(message);
+        require(keccak256(abi.encodePacked(greeter.greeting())) == keccak256(abi.encodePacked(message)), "not equal");
+    }
+    function testGreeting(string memory message, string memory _message) public {
+        greeter.greet(message);
+        require(keccak256(abi.encodePacked(greeter.greeting())) == keccak256(abi.encodePacked(message)), "not equal");
+    }
+
 
     // check the unhappy case
     function testFailGreeting() public {
