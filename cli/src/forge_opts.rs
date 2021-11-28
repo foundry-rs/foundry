@@ -78,6 +78,13 @@ pub enum Subcommands {
 
         #[structopt(help = "verbosity of 'forge test' output (0-3)", long, default_value = "0")]
         verbosity: u8,
+
+        #[structopt(
+            help = "if set to true, the process will exit with an exit code = 0, even if the tests fail",
+            long,
+            env = "FORGE_ALLOW_FAILURE"
+        )]
+        allow_failure: bool,
     },
     #[structopt(about = "build your smart contracts")]
     #[structopt(alias = "b")]

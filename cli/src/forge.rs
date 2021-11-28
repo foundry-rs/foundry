@@ -42,6 +42,7 @@ fn main() -> eyre::Result<()> {
             sender,
             ffi,
             verbosity,
+            allow_failure,
         } => {
             // Setup the fuzzer
             // TODO: Add CLI Options to modify the persistence
@@ -107,7 +108,7 @@ fn main() -> eyre::Result<()> {
                         ffi,
                     );
 
-                    test(builder, project, evm, pattern, json, verbosity)?;
+                    test(builder, project, evm, pattern, json, verbosity, allow_failure)?;
                 }
                 #[cfg(feature = "evmodin-evm")]
                 EvmType::EvmOdin => {
@@ -121,7 +122,7 @@ fn main() -> eyre::Result<()> {
                     let host = env.evmodin_state();
 
                     let evm = EvmOdin::new(host, env.gas_limit, revision, NoopTracer);
-                    test(builder, project, evm, pattern, json, verbosity)?;
+                    test(builder, project, evm, pattern, json, verbosity, allow_failure)?;
                 }
             }
         }
@@ -241,6 +242,7 @@ fn test<A: ArtifactOutput + 'static, S: Clone, E: evm_adapters::Evm<S>>(
     pattern: Regex,
     json: bool,
     verbosity: u8,
+    allow_failure: bool,
 ) -> eyre::Result<HashMap<String, HashMap<String, forge::TestResult>>> {
     let mut runner = builder.build(project, evm)?;
 
@@ -315,6 +317,9 @@ fn test<A: ArtifactOutput + 'static, S: Clone, E: evm_adapters::Evm<S>>(
         }
     }
 
+    if allow_failure {
+        exit_code = 0;
+    }
     std::process::exit(exit_code);
 }
 

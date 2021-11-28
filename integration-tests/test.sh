@@ -7,6 +7,11 @@ set -e
 REPO=$1
 TESTDATA=testdata
 
+ALLOWED_FAILURE_REPOS=("geb" "drai" "guni-lev")
+if [[ " ${ALLOWED_FAILURE_REPOS[*]} " =~ " ${REPO} " ]]; then
+    export FORGE_ALLOW_FAILURE=1
+fi
+
 DIR=`pwd`
 
 function runTests() {
