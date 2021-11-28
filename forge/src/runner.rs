@@ -107,6 +107,8 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
             .filter(|func| regex.is_match(&func.name))
             .collect::<Vec<_>>();
 
+        dbg!(&test_fns);
+
         let init_state = self.evm.state().clone();
 
         // run all unit tests
@@ -117,7 +119,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
                 // Before each test run executes, ensure we're at our initial state.
                 self.evm.reset(init_state.clone());
                 let result = self.run_test(func, needs_setup)?;
-                Ok((func.name.clone(), result))
+                Ok((func.signature(), result))
             })
             .collect::<Result<HashMap<_, _>>>()?;
 
@@ -127,7 +129,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
                 .filter(|func| !func.inputs.is_empty())
                 .map(|func| {
                     let result = self.run_fuzz_test(func, needs_setup, fuzzer.clone())?;
-                    Ok((func.name.clone(), result))
+                    Ok((func.signature(), result))
                 })
                 .collect::<Result<HashMap<_, _>>>()?;
 
@@ -146,7 +148,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         Ok(map)
     }
 
-    #[tracing::instrument(name = "test", skip_all, fields(name = %func.name))]
+    #[tracing::instrument(name = "test", skip_all, fields(name = %func.signature()))]
     pub fn run_test(&mut self, func: &Function, setup: bool) -> Result<TestResult> {
         let start = Instant::now();
         // the expected result depends on the function name
@@ -154,7 +156,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         // which allows to test multiple assertions in 1 test function while also
         // preserving logs.
         let should_fail = func.name.starts_with("testFail");
-        tracing::debug!(func = ?func.name, should_fail, "unit-testing");
+        tracing::debug!(func = ?func.signature(), should_fail, "unit-testing");
 
         let mut logs = self.init_logs.to_vec();
 
@@ -164,7 +166,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
             let setup_logs = self
                 .evm
                 .setup(self.address)
-                .wrap_err(format!("could not setup during {} test", func.name))?
+                .wrap_err(format!("could not setup during {} test", func.signature()))?
                 .1;
             logs.extend_from_slice(&setup_logs);
         }
@@ -198,7 +200,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         Ok(TestResult { success, reason, gas_used: Some(gas_used), counterexample: None, logs })
     }
 
-    #[tracing::instrument(name = "fuzz-test", skip_all, fields(name = %func.name))]
+    #[tracing::instrument(name = "fuzz-test", skip_all, fields(name = %func.signature()))]
     pub fn run_fuzz_test(
         &mut self,
         func: &Function,
@@ -207,7 +209,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
     ) -> Result<TestResult> {
         let start = Instant::now();
         let should_fail = func.name.starts_with("testFail");
-        tracing::debug!(func = ?func.name, should_fail, "fuzzing");
+        tracing::debug!(func = ?func.signature(), should_fail, "fuzzing");
 
         // call the setup function in each test to reset the test's state.
         if setup {
