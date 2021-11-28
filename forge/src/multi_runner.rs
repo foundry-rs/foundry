@@ -212,7 +212,7 @@ mod tests {
         assert_eq!(only_gm.len(), 1);
 
         assert_eq!(only_gm["GmTest"].len(), 1);
-        assert!(only_gm["GmTest"]["testGm"].success);
+        assert!(only_gm["GmTest"]["testGm()"].success);
     }
 
     mod sputnik {
@@ -241,12 +241,13 @@ mod tests {
                 .iter()
                 .map(|(name, res)| (name, res.logs.clone()))
                 .collect::<HashMap<_, _>>();
+            dbg!(&reasons);
             assert_eq!(
-                reasons[&"test1".to_owned()],
+                reasons[&"test1()".to_owned()],
                 vec!["constructor".to_owned(), "setUp".to_owned(), "one".to_owned()]
             );
             assert_eq!(
-                reasons[&"test2".to_owned()],
+                reasons[&"test2()".to_owned()],
                 vec!["constructor".to_owned(), "setUp".to_owned(), "two".to_owned()]
             );
         }

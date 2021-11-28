@@ -107,8 +107,6 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
             .filter(|func| regex.is_match(&func.name))
             .collect::<Vec<_>>();
 
-        dbg!(&test_fns);
-
         let init_state = self.evm.state().clone();
 
         // run all unit tests
@@ -270,6 +268,32 @@ mod tests {
             let precompiles = PRECOMPILES_MAP.clone();
             let evm = Executor::new(12_000_000, &cfg, &backend, &precompiles);
             super::test_runner(evm, compiled);
+        }
+
+        #[test]
+        fn test_function_overriding() {
+            let cfg = Config::istanbul();
+            let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
+            let vicinity = new_vicinity();
+            let backend = new_backend(&vicinity, Default::default());
+
+            let precompiles = PRECOMPILES_MAP.clone();
+            let mut evm = Executor::new(12_000_000, &cfg, &backend, &precompiles);
+            let (addr, _, _, _) =
+                evm.deploy(Address::zero(), compiled.bin.unwrap().clone(), 0.into()).unwrap();
+
+            let mut runner =
+                ContractRunner::new(&mut evm, compiled.abi.as_ref().unwrap(), addr, None, &[]);
+
+            let mut cfg = FuzzConfig::default();
+            cfg.failure_persistence = None;
+            let mut fuzzer = TestRunner::new(cfg);
+            let results = runner
+                .run_tests(&Regex::from_str("testGreeting").unwrap(), Some(&mut fuzzer))
+                .unwrap();
+            assert!(results["testGreeting()"].success);
+            assert!(results["testGreeting(string)"].success);
+            assert!(results["testGreeting(string,string)"].success);
         }
 
         #[test]
