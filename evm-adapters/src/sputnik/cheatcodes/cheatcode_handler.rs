@@ -541,7 +541,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         }
     }
 
-    // NB: This function is copy-pasted from uptream's call_inner
+    // NB: This function is copy-pasted from uptream's create_inner
     fn create_inner(
         &mut self,
         caller: H160,
@@ -722,7 +722,16 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
         if code_address == *CHEATCODE_ADDRESS {
             self.apply_cheatcode(input, transfer, target_gas)
         } else {
-            self.handler.call(code_address, transfer, input, target_gas, is_static, context)
+            self.call_inner(
+                code_address,
+                transfer,
+                input,
+                target_gas,
+                is_static,
+                true,
+                true,
+                context,
+            )
         }
     }
 
@@ -896,6 +905,31 @@ mod tests {
         .iter()
         .map(ToString::to_string)
         .collect::<Vec<_>>();
+        assert_eq!(logs, expected);
+    }
+
+    #[test]
+    fn logs_external_contract() {
+        let config = Config::istanbul();
+        let vicinity = new_vicinity();
+        let backend = new_backend(&vicinity, Default::default());
+        let gas_limit = 10_000_000;
+        let precompiles = PRECOMPILES_MAP.clone();
+        let mut evm =
+            Executor::new_with_cheatcodes(backend, gas_limit, &config, &precompiles, true);
+
+        let compiled = COMPILED.find("DebugLogs").expect("could not find contract");
+        let (addr, _, _, _) =
+            evm.deploy(Address::zero(), compiled.bin.unwrap().clone(), 0.into()).unwrap();
+
+        // after the evm call is done, we call `logs` and print it all to the user
+        let (_, _, _, logs) = evm
+            .call::<(), _, _>(Address::zero(), addr, "test_log_elsewhere()", (), 0.into())
+            .unwrap();
+        let expected = ["0x1111111111111111111111111111111111111111", "Hi"]
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
         assert_eq!(logs, expected);
     }
 

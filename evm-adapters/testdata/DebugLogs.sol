@@ -21,4 +21,16 @@ contract DebugLogs is DSTest {
         emit log_named_bytes("key", hex"4567");
         emit log_named_string("key", "lol");
     }
+
+    function test_log_elsewhere() public {
+        OtherContract otherContract = new OtherContract();
+        otherContract.test_log();
+    }
+}
+
+contract OtherContract is DSTest {
+    function test_log() public {
+        emit log_address(0x1111111111111111111111111111111111111111);
+        emit log("Hi");
+    }
 }
