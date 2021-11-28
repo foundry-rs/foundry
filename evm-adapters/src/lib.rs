@@ -195,7 +195,11 @@ mod test_helpers {
         let paths =
             ProjectPathsConfig::builder().root("testdata").sources("testdata").build().unwrap();
         let project = Project::builder().paths(paths).ephemeral().no_artifacts().build().unwrap();
-        project.compile().unwrap().output()
+        let res = project.compile().unwrap();
+        if res.has_compiler_errors() {
+            panic!("{}", res);
+        }
+        res.output()
     });
 
     pub fn can_call_vm_directly<S, E: Evm<S>>(mut evm: E, compiled: CompactContractRef) {
