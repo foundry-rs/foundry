@@ -931,6 +931,30 @@ mod tests {
         assert_eq!(logs, expected);
     }
 
+     #[test]
+    fn console_logs() {
+        let config = Config::istanbul();
+        let vicinity = new_vicinity();
+        let backend = new_backend(&vicinity, Default::default());
+        let gas_limit = 10_000_000;
+        let precompiles = PRECOMPILES_MAP.clone();
+        let mut evm =
+            Executor::new_with_cheatcodes(backend, gas_limit, &config, &precompiles, true);
+
+        let compiled = COMPILED.find("ConsoleLogs").expect("could not find contract");
+        let (addr, _, _, _) =
+            evm.deploy(Address::zero(), compiled.bin.unwrap().clone(), 0.into()).unwrap();
+
+        // after the evm call is done, we call `logs` and print it all to the user
+        let (_, _, _, logs) =
+            evm.call::<(), _, _>(Address::zero(), addr, "test_log()", (), 0.into()).unwrap();
+        let expected = ["0x1111111111111111111111111111111111111111", "Hi", "Hi, Hi"]
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert_eq!(logs, expected);
+    }
+
     #[test]
     fn logs_external_contract() {
         let config = Config::istanbul();
