@@ -56,7 +56,7 @@ jobs:
       # if couldn't get, install forge
       - name: Install forge
         if: steps.cache-forge.outputs.cache-hit != 'true'
-        run: cargo build --bin forge
+        run: cargo build --release --bin forge
 
       - name: Test ${{ matrix.repo }}
         run: ./test.sh ${{ matrix.repo }}

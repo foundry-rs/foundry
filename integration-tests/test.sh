@@ -21,9 +21,9 @@ function runTests() {
     make install || true
 
     # update the deps
-    $DIR/../target/debug/forge update
+    $DIR/../target/release/forge update
     # always have the ffi flag turned on
-    $DIR/../target/debug/forge test --ffi
+    $DIR/../target/release/forge test --ffi
 
     cd -
 }
