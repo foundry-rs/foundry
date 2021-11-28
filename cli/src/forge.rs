@@ -230,6 +230,9 @@ fn main() -> eyre::Result<()> {
 
             println!("Done.");
         }
+        Subcommands::Completions { shell } => {
+            Subcommands::clap().gen_completions_to("forge", shell, &mut std::io::stdout())
+        }
     }
 
     Ok(())

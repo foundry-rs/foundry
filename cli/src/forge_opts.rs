@@ -136,6 +136,10 @@ pub enum Subcommands {
         #[structopt(help = "optional solidity template to start from", long, short)]
         template: Option<String>,
     },
+    Completions {
+        #[structopt(help = "the shell you are using")]
+        shell: structopt::clap::Shell,
+    },
 }
 
 /// Represents the common dapp argument pattern for `<path>:<contractname>` where `<path>:` is
