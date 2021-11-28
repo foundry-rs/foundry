@@ -560,7 +560,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         }
     }
 
-    // NB: This function is copy-pasted from uptream's call_inner
+    // NB: This function is copy-pasted from uptream's create_inner
     fn create_inner(
         &mut self,
         caller: H160,
@@ -743,7 +743,16 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
         } else if code_address == *CONSOLE_ADDRESS {
             self.console_log(input)
         } else {
-            self.handler.call(code_address, transfer, input, target_gas, is_static, context)
+            self.call_inner(
+                code_address,
+                transfer,
+                input,
+                target_gas,
+                is_static,
+                true,
+                true,
+                context,
+            )
         }
     }
 
