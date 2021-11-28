@@ -990,7 +990,7 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#0b68227c38a681cc23554779a64b47c2f1ffad5c"
+source = "git+https://github.com/gakonst/ethers-rs#d06bfdc15ca387f5e1327be8e48ef1a695a31ae8"
 dependencies = [
  "ethers-contract",
  "ethers-core",
@@ -1004,7 +1004,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#0b68227c38a681cc23554779a64b47c2f1ffad5c"
+source = "git+https://github.com/gakonst/ethers-rs#d06bfdc15ca387f5e1327be8e48ef1a695a31ae8"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1022,7 +1022,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#0b68227c38a681cc23554779a64b47c2f1ffad5c"
+source = "git+https://github.com/gakonst/ethers-rs#d06bfdc15ca387f5e1327be8e48ef1a695a31ae8"
 dependencies = [
  "Inflector",
  "anyhow",
@@ -1043,7 +1043,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#0b68227c38a681cc23554779a64b47c2f1ffad5c"
+source = "git+https://github.com/gakonst/ethers-rs#d06bfdc15ca387f5e1327be8e48ef1a695a31ae8"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -1057,7 +1057,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#0b68227c38a681cc23554779a64b47c2f1ffad5c"
+source = "git+https://github.com/gakonst/ethers-rs#d06bfdc15ca387f5e1327be8e48ef1a695a31ae8"
 dependencies = [
  "arrayvec",
  "bytes",
@@ -1085,11 +1085,12 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "0.2.0"
-source = "git+https://github.com/gakonst/ethers-rs#0b68227c38a681cc23554779a64b47c2f1ffad5c"
+source = "git+https://github.com/gakonst/ethers-rs#d06bfdc15ca387f5e1327be8e48ef1a695a31ae8"
 dependencies = [
  "ethers-core",
  "reqwest",
  "serde",
+ "serde-aux",
  "serde_json",
  "thiserror",
 ]
@@ -1097,18 +1098,18 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#0b68227c38a681cc23554779a64b47c2f1ffad5c"
+source = "git+https://github.com/gakonst/ethers-rs#d06bfdc15ca387f5e1327be8e48ef1a695a31ae8"
 dependencies = [
  "async-trait",
  "ethers-contract",
  "ethers-core",
+ "ethers-etherscan",
  "ethers-providers",
  "ethers-signers",
  "futures-util",
  "instant",
  "reqwest",
  "serde",
- "serde-aux",
  "serde_json",
  "thiserror",
  "tokio",
@@ -1120,7 +1121,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#0b68227c38a681cc23554779a64b47c2f1ffad5c"
+source = "git+https://github.com/gakonst/ethers-rs#d06bfdc15ca387f5e1327be8e48ef1a695a31ae8"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -1149,7 +1150,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#0b68227c38a681cc23554779a64b47c2f1ffad5c"
+source = "git+https://github.com/gakonst/ethers-rs#d06bfdc15ca387f5e1327be8e48ef1a695a31ae8"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1169,7 +1170,7 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "0.1.0"
-source = "git+https://github.com/gakonst/ethers-rs#0b68227c38a681cc23554779a64b47c2f1ffad5c"
+source = "git+https://github.com/gakonst/ethers-rs#d06bfdc15ca387f5e1327be8e48ef1a695a31ae8"
 dependencies = [
  "colored",
  "ethers-core",
@@ -1187,6 +1188,7 @@ dependencies = [
  "svm-rs",
  "thiserror",
  "tokio",
+ "tracing",
  "walkdir",
 ]
 
@@ -3346,6 +3348,16 @@ dependencies = [
  "cpufeatures",
  "digest 0.9.0",
  "opaque-debug 0.3.0",
+ "sha2-asm",
+]
+
+[[package]]
+name = "sha2-asm"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf27176fb5d15398e3a479c652c20459d9dac830dedd1fa55b42a77dbcdbfcea"
+dependencies = [
+ "cc",
 ]
 
 [[package]]
