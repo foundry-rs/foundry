@@ -210,16 +210,28 @@ impl std::convert::TryFrom<&BuildOpts> for Project {
         // get all the remappings corresponding to the lib paths
         let mut remappings: Vec<_> =
             lib_paths.iter().map(|path| Remapping::find_many(&path).unwrap()).flatten().collect();
+
         // extend them with the once manually provided in the opts
         remappings.extend_from_slice(&opts.remappings);
+
         // extend them with the one via the env vars
         if let Some(ref env) = opts.remappings_env {
-            let remappings_env = env.split('\n').map(|x| {
+            remappings.extend(remappings_from_newline(env))
+        }
+
+        // extend them with the one via the requirements.txt
+        if let Ok(ref remap) = std::fs::read_to_string(root.join("remappings.txt")) {
+            remappings.extend(remappings_from_newline(remap))
+        }
+
+        // helper function for parsing newline-separated remappings
+        fn remappings_from_newline(remappings: &str) -> impl Iterator<Item = Remapping> + '_ {
+            remappings.split('\n').filter(|x| !x.is_empty()).map(|x| {
                 Remapping::from_str(x)
                     .unwrap_or_else(|_| panic!("could not parse remapping: {}", x))
-            });
-            remappings.extend(remappings_env);
+            })
         }
+
         // remove any potential duplicates
         remappings.sort_unstable();
         remappings.dedup();
