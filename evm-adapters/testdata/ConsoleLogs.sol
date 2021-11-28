@@ -9,12 +9,12 @@ contract ConsoleLogs {
 		console.log("Hi", "Hi");
     }
 	function test_log_elsewhere() public {
-		_OtherContract _otherContract = new _OtherContract();
-		_otherContract.test_log();
+		OtherContract otherContract = new OtherContract();
+		otherContract.test_log();
     }
 }
 
-contract _OtherContract {
+contract OtherContract {
     function test_log() public {
 		console.log(0x1111111111111111111111111111111111111111);
 		console.log("Hi");
