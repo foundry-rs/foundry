@@ -62,5 +62,3 @@ jobs:
         run: ./test.sh ${{ matrix.repo }}
         working-directory:
           ./integration-tests
-        env:
-          FORGE_BIN: ./target/debug/forge

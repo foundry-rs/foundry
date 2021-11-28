@@ -6,7 +6,6 @@ REPO=$1
 TESTDATA=testdata
 
 DIR=`pwd`
-FORGE_BIN=${FORGE_BIN:-forge}
 
 function runTests() {
     cd $TESTDATA/$1
@@ -15,9 +14,9 @@ function runTests() {
     make install || true
 
     # update the deps
-    $FORGE_BIN update
+    $DIR/../target/debug/forge update
     # always have the ffi flag turned on
-    $FORGE_BIN test --ffi
+    $DIR/../target/debug/forge test --ffi
 
     cd -
 }
