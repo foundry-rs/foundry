@@ -8,8 +8,8 @@ use ethers::{
     core::types::Chain,
     prelude::Provider,
     providers::Middleware,
+    etherscan::{contract::VerifyContract, Client},
 };
-use ethers_etherscan::{contract::VerifyContract, Client};
 use eyre::ContextCompat;
 use std::convert::TryFrom;
 
