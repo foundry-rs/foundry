@@ -269,13 +269,19 @@ impl std::convert::TryFrom<&BuildOpts> for Project {
 
         // build the project w/ allowed paths = root and all the libs
         let mut builder =
-            Project::builder().paths(paths).allowed_path(root).allowed_paths(lib_paths);
+            Project::builder().paths(paths).allowed_path(&root).allowed_paths(lib_paths);
 
         if opts.no_auto_detect {
             builder = builder.no_auto_detect();
         }
 
         let project = builder.build()?;
+
+        // if `--force` is provided, it proceeds to remove the cache
+        // and recompile the contracts.
+        if opts.force {
+            crate::utils::cleanup(root)?;
+        }
 
         Ok(project)
     }
@@ -313,6 +319,12 @@ pub struct BuildOpts {
         long
     )]
     pub no_auto_detect: bool,
+
+    #[structopt(
+        help = "force recompilation of the project, deletes the cache and artifacts folders",
+        long
+    )]
+    pub force: bool,
 }
 #[derive(Clone, Debug)]
 pub enum EvmType {
