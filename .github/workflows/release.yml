@@ -72,3 +72,15 @@ jobs:
          files: |
            ./target-macos-latest
            ./target-ubuntu-latest
+
+  # after the GH release is done, proceed to open a PR on homebrew-core
+  publish-homebrew:
+    runs-on: ubuntu-latest
+    needs:  build-artifacts
+    steps:
+      - name: Create homebrew-core PR
+        uses: mislav/bump-homebrew-formula-action@v1.12
+        with:
+          formula-name: foundry
+        env:
+          COMMITTER_TOKEN: ${{ secrets.GH_TOKEN }}
