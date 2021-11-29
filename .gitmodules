@@ -6,7 +6,7 @@
 	url = https://github.com/reflexer-labs/geb
 [submodule "integration-tests/testdata/guni-lev"]
 	path = integration-tests/testdata/guni-lev
-	url = https://github.com/hexonaut/guni-lev/
+	url = https://github.com/hexonaut/guni-lev
 [submodule "integration-tests/testdata/solmate"]
 	path = integration-tests/testdata/solmate
 	url = https://github.com/Rari-Capital/solmate
