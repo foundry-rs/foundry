@@ -140,6 +140,12 @@ pub enum Subcommands {
         #[structopt(help = "the shell you are using")]
         shell: structopt::clap::Shell,
     },
+
+    #[structopt(about = "removes the build artifacts and cache directories")]
+    Clean {
+        #[structopt(help = "the project's root path, default being the current directory", long)]
+        root: Option<PathBuf>,
+    },
 }
 
 /// Represents the common dapp argument pattern for `<path>:<contractname>` where `<path>:` is
