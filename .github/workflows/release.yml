@@ -1,0 +1,86 @@
+name: Release version
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+jobs:
+  # this job builds the `forge` and `cast` binaries for the specified platforms
+  # in the matrix. The MacOS binaries do not support M1 yet: https://github.com/actions/runner/issues/805
+  build-artifacts:
+    runs-on:  ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+      - name: Install toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      - uses: Swatinem/rust-cache@v1
+        with:
+          cache-on-failure: true
+      - name: cargo build
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release
+
+      - name: Upload production artifacts
+        uses: actions/upload-artifact@v2
+        with:
+            name: target-${{ matrix.os }}
+            path: |
+              ./target/release/forge
+              ./target/release/cast
+
+  # creates a GH release with the built binaries and CHANGELOG entry
+  create-release:
+    runs-on: ubuntu-latest
+    needs:  build-artifacts
+    steps:
+     - name: Checkout
+       uses: actions/checkout@v2
+       with:
+        fetch-depth: 1000
+
+     - name: Set output
+       id: vars
+       run: echo ::set-output name=tag::${GITHUB_REF#refs/*/}
+
+     - name: Restore artifacts
+       uses: actions/download-artifact@v2
+
+     - name: Build Changelog
+       id: github_release
+       uses: mikepenz/release-changelog-builder-action@v2.4.2
+       env:
+        GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+
+     - name: Create Release
+       id: create-release
+       uses: softprops/action-gh-release@v0.1.13
+       env:
+        GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+       with:
+         tag_name:  ${{ steps.vars.outputs.tag }}
+         release_name: ${{ github.ref }}
+         body: ${{steps.build_changelog.outputs.changelog}}
+         files: |
+           ./target-macos-latest
+           ./target-ubuntu-latest
+
+  # after the GH release is done, proceed to open a PR on homebrew-core
+  publish-homebrew:
+    runs-on: ubuntu-latest
+    needs:  build-artifacts
+    steps:
+      - name: Create homebrew-core PR
+        uses: mislav/bump-homebrew-formula-action@v1.12
+        with:
+          formula-name: foundry
+        env:
+          COMMITTER_TOKEN: ${{ secrets.GH_TOKEN }}
