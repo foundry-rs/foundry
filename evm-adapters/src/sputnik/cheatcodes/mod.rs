@@ -78,3 +78,5 @@ ethers::contract::abigen!(
             event log_named_string       (string key, string val)
             ]"#,
 );
+
+ethers::contract::abigen!(Console, "./testdata/console.json",);

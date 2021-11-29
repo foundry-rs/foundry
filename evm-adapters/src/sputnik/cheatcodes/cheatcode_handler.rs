@@ -1,7 +1,7 @@
 //! Hooks to EVM execution
 use super::{
-    backend::CheatcodeBackend, memory_stackstate_owned::MemoryStackStateOwned, HEVMCalls,
-    HevmConsoleEvents,
+    backend::CheatcodeBackend, memory_stackstate_owned::MemoryStackStateOwned, ConsoleCalls,
+    HEVMCalls, HevmConsoleEvents,
 };
 use crate::{
     sputnik::{Executor, SputnikExecutor},
@@ -37,6 +37,12 @@ pub static CHEATCODE_ADDRESS: Lazy<Address> = Lazy::new(|| {
     Address::from_slice(&hex::decode("7109709ECfa91a80626fF3989D68f67F5b1DD12D").unwrap())
 });
 
+// This is the address used by console.sol, vendored by nomiclabs/hardhat:
+// https://github.com/nomiclabs/hardhat/blob/master/packages/hardhat-core/console.sol
+pub static CONSOLE_ADDRESS: Lazy<Address> = Lazy::new(|| {
+    Address::from_slice(&hex::decode("000000000000000000636F6e736F6c652e6c6f67").unwrap())
+});
+
 /// Hooks on live EVM execution and forwards everything else to a Sputnik [`Handler`].
 ///
 /// It allows:
@@ -53,6 +59,7 @@ pub static CHEATCODE_ADDRESS: Lazy<Address> = Lazy::new(|| {
 pub struct CheatcodeHandler<H> {
     handler: H,
     enable_ffi: bool,
+    console_logs: Vec<String>,
 }
 
 // Forwards everything internally except for the transact_call which is overwritten.
@@ -195,6 +202,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
                     e => e.to_string(),
                 }
             })
+            .chain(self.console_logs.clone())
             .collect()
     }
 }
@@ -228,13 +236,16 @@ impl<'a, 'b, B: Backend, P: PrecompileSet>
 
         // create the executor and wrap it with the cheatcode handler
         let executor = StackExecutor::new_with_precompiles(state, config, precompiles);
-        let executor = CheatcodeHandler { handler: executor, enable_ffi };
+        let executor = CheatcodeHandler { handler: executor, enable_ffi, console_logs: Vec::new() };
 
         let mut evm = Executor::from_executor(executor, gas_limit);
 
         // Need to create a non-empty contract at the cheat code address so that the EVM backend
         // thinks that something exists there.
-        evm.initialize_contracts([(*CHEATCODE_ADDRESS, vec![0u8; 1].into())]);
+        evm.initialize_contracts([
+            (*CHEATCODE_ADDRESS, vec![0u8; 1].into()),
+            (*CONSOLE_ADDRESS, vec![0u8; 1].into()),
+        ]);
 
         evm
     }
@@ -249,6 +260,16 @@ fn evm_error(retdata: &str) -> Capture<(ExitReason, Vec<u8>), Infallible> {
 }
 
 impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> {
+    /// Given a transaction's calldata, it tries to parse it a console call and print the call
+    fn console_log(&mut self, input: Vec<u8>) -> Capture<(ExitReason, Vec<u8>), Infallible> {
+        let decoded = match ConsoleCalls::decode(&input) {
+            Ok(inner) => inner,
+            Err(err) => return evm_error(&err.to_string()),
+        };
+        self.console_logs.push(decoded.to_string());
+        Capture::Exit((ExitReason::Succeed(ExitSucceed::Stopped), vec![]))
+    }
+
     /// Given a transaction's calldata, it tries to parse it as an [`HEVM cheatcode`](super::HEVM)
     /// call and modify the state accordingly.
     fn apply_cheatcode(
@@ -721,6 +742,8 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
         // (e.g. with the StateManager)
         if code_address == *CHEATCODE_ADDRESS {
             self.apply_cheatcode(input, transfer, target_gas)
+        } else if code_address == *CONSOLE_ADDRESS {
+            self.console_log(input)
         } else {
             self.call_inner(
                 code_address,
@@ -868,7 +891,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn debug_logs() {
+    fn ds_test_logs() {
         let config = Config::istanbul();
         let vicinity = new_vicinity();
         let backend = new_backend(&vicinity, Default::default());
@@ -905,6 +928,30 @@ mod tests {
         .iter()
         .map(ToString::to_string)
         .collect::<Vec<_>>();
+        assert_eq!(logs, expected);
+    }
+
+    #[test]
+    fn console_logs() {
+        let config = Config::istanbul();
+        let vicinity = new_vicinity();
+        let backend = new_backend(&vicinity, Default::default());
+        let gas_limit = 10_000_000;
+        let precompiles = PRECOMPILES_MAP.clone();
+        let mut evm =
+            Executor::new_with_cheatcodes(backend, gas_limit, &config, &precompiles, true);
+
+        let compiled = COMPILED.find("ConsoleLogs").expect("could not find contract");
+        let (addr, _, _, _) =
+            evm.deploy(Address::zero(), compiled.bin.unwrap().clone(), 0.into()).unwrap();
+
+        // after the evm call is done, we call `logs` and print it all to the user
+        let (_, _, _, logs) =
+            evm.call::<(), _, _>(Address::zero(), addr, "test_log()", (), 0.into()).unwrap();
+        let expected = ["0x1111111111111111111111111111111111111111", "Hi", "Hi, Hi"]
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
         assert_eq!(logs, expected);
     }
 
