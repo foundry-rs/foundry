@@ -86,33 +86,41 @@ pub enum Subcommands {
         )]
         allow_failure: bool,
     },
+
     #[structopt(about = "build your smart contracts")]
     #[structopt(alias = "b")]
     Build {
         #[structopt(flatten)]
         opts: BuildOpts,
     },
-    #[structopt(about = "fetches all upstream lib changes")]
+
+    #[structopt(alias = "u", about = "fetches all upstream lib changes")]
     Update {
         #[structopt(
             help = "the submodule name of the library you want to update (will update all if none is provided)"
         )]
         lib: Option<PathBuf>,
     },
-    #[structopt(about = "installs one or more dependencies as git submodules")]
+
+    #[structopt(alias = "i", about = "installs one or more dependencies as git submodules")]
     Install {
         #[structopt(
             help = "the submodule name of the library you want to update (will update all if none is provided)"
         )]
         dependencies: Vec<Dependency>,
     },
-    #[structopt(about = "prints the automatically inferred remappings for this repository")]
+
+    #[structopt(
+        alias = "r",
+        about = "prints the automatically inferred remappings for this repository"
+    )]
     Remappings {
         #[structopt(help = "the project's root path, default being the current directory", long)]
         root: Option<PathBuf>,
         #[structopt(help = "the paths where your libraries are installed", long)]
         lib_paths: Vec<PathBuf>,
     },
+
     #[structopt(about = "build your smart contracts. Requires `ETHERSCAN_API_KEY` to be set.")]
     VerifyContract {
         #[structopt(help = "contract source info `<path>:<contractname>`")]
@@ -122,13 +130,15 @@ pub enum Subcommands {
         #[structopt(help = "constructor args calldata arguments.")]
         constructor_args: Vec<String>,
     },
-    #[structopt(about = "deploy a compiled contract")]
+
+    #[structopt(alias = "c", about = "deploy a compiled contract")]
     Create {
         #[structopt(help = "contract source info `<path>:<contractname>` or `<contractname>`")]
         contract: ContractInfo,
         #[structopt(long, help = "verify on Etherscan")]
         verify: bool,
     },
+
     #[structopt(alias = "i", about = "initializes a new forge repository")]
     Init {
         #[structopt(help = "the project's root path, default being the current directory")]
@@ -136,9 +146,16 @@ pub enum Subcommands {
         #[structopt(help = "optional solidity template to start from", long, short)]
         template: Option<String>,
     },
+
     Completions {
         #[structopt(help = "the shell you are using")]
         shell: structopt::clap::Shell,
+    },
+
+    #[structopt(about = "removes the build artifacts and cache directories")]
+    Clean {
+        #[structopt(help = "the project's root path, default being the current directory", long)]
+        root: Option<PathBuf>,
     },
 }
 
@@ -252,13 +269,19 @@ impl std::convert::TryFrom<&BuildOpts> for Project {
 
         // build the project w/ allowed paths = root and all the libs
         let mut builder =
-            Project::builder().paths(paths).allowed_path(root).allowed_paths(lib_paths);
+            Project::builder().paths(paths).allowed_path(&root).allowed_paths(lib_paths);
 
         if opts.no_auto_detect {
             builder = builder.no_auto_detect();
         }
 
         let project = builder.build()?;
+
+        // if `--force` is provided, it proceeds to remove the cache
+        // and recompile the contracts.
+        if opts.force {
+            crate::utils::cleanup(root)?;
+        }
 
         Ok(project)
     }
@@ -296,6 +319,12 @@ pub struct BuildOpts {
         long
     )]
     pub no_auto_detect: bool,
+
+    #[structopt(
+        help = "force recompilation of the project, deletes the cache and artifacts folders",
+        long
+    )]
+    pub force: bool,
 }
 #[derive(Clone, Debug)]
 pub enum EvmType {

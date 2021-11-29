@@ -233,6 +233,10 @@ fn main() -> eyre::Result<()> {
         Subcommands::Completions { shell } => {
             Subcommands::clap().gen_completions_to("forge", shell, &mut std::io::stdout())
         }
+        Subcommands::Clean { root } => {
+            let root = root.unwrap_or_else(|| std::env::current_dir().unwrap());
+            utils::cleanup(root)?;
+        }
     }
 
     Ok(())
