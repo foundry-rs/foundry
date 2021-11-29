@@ -931,7 +931,7 @@ mod tests {
         assert_eq!(logs, expected);
     }
 
-     #[test]
+    #[test]
     fn console_logs() {
         let config = Config::istanbul();
         let vicinity = new_vicinity();

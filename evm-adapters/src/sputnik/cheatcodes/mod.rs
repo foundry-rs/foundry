@@ -79,4 +79,4 @@ ethers::contract::abigen!(
             ]"#,
 );
 
-ethers::contract::abigen!(Console, "./evm-adapters/testdata/console.json",);
+ethers::contract::abigen!(Console, "./testdata/console.json",);
