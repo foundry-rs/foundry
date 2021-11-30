@@ -13,6 +13,3 @@ opt-level = "z"
 lto = true
 codegen-units = 1
 panic = "abort"
-
-[patch."https://github.com/rust-blockchain/evm"]
-evm = { git = "https://github.com/gakonst/evm", branch = "feat/auto-impl" }
