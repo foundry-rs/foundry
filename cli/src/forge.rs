@@ -16,9 +16,10 @@ use ansi_term::Colour;
 use ethers::types::U256;
 
 mod forge_opts;
-use forge_opts::{EvmType, Opts, Subcommands};
-
 use crate::forge_opts::{Dependency, FullContractInfo};
+use forge_opts::{EvmType, Opts, Subcommands};
+use std::env;
+use std::path::PathBuf;
 use std::{collections::HashMap, convert::TryFrom, process::Command, str::FromStr, sync::Arc};
 
 mod cmd;
@@ -27,7 +28,39 @@ mod utils;
 #[tracing::instrument(err)]
 fn main() -> eyre::Result<()> {
     utils::subscriber();
-
+    if cfg!(target_os = "windows") {
+        println!("Can't source env files on windows");
+    } else {
+        let home: String = env::var("HOME")?;
+        let paths = [
+            PathBuf::from(&home),
+            PathBuf::from(&home).join(".foundry"),
+            PathBuf::from(&home).join(".config/foundry"),
+        ];
+        let files = [String::from(".dapprc"), String::from(".forgerc")];
+        let mut flag = false;
+        for path in paths.iter() {
+            for file in &files {
+                let arg = PathBuf::from(&path).join(file);
+                match std::process::Command::new("source").args(arg.to_str()).spawn() {
+                    Ok(mut res) => {
+                        let wait_result = res.wait()?;
+                        if wait_result.success() {
+                            flag = true;
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        println!("{:?}", e);
+                        continue;
+                    }
+                }
+            }
+            if flag == true {
+                break;
+            }
+        }
+    }
     let opts = Opts::from_args();
     match opts.sub {
         Subcommands::Test {
