@@ -8,6 +8,7 @@ pub mod cheatcodes;
 pub mod state;
 
 use ethers::{
+    abi::RawLog,
     providers::Middleware,
     types::{Address, H160, H256, U256},
 };
@@ -81,6 +82,10 @@ pub trait SputnikExecutor<S> {
 
     fn create_address(&self, caller: CreateScheme) -> Address;
 
+    /// Returns a vector of sraw logs that occurred during the previous VM
+    /// execution
+    fn raw_logs(&self) -> Vec<RawLog>;
+
     /// Returns a vector of string parsed logs that occurred during the previous VM
     /// execution
     fn logs(&self) -> Vec<String>;
@@ -142,6 +147,11 @@ impl<'a, 'b, S: StackState<'a>, P: PrecompileSet> SputnikExecutor<S>
     fn logs(&self) -> Vec<String> {
         vec![]
     }
+
+    fn raw_logs(&self) -> Vec<RawLog> {
+        vec![]
+    }
+    
     fn clear_logs(&mut self) {}
 }
 

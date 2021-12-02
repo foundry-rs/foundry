@@ -6,6 +6,7 @@ use super::{
 use crate::{
     sputnik::{Executor, SputnikExecutor},
     Evm,
+    call_tracing::CallTrace,
 };
 
 use sputnik::{
@@ -161,6 +162,13 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
 
     fn clear_logs(&mut self) {
         self.state_mut().substate.logs_mut().clear()
+    }
+
+    fn raw_logs(&self) -> Vec<RawLog> {
+        let logs = self.state().substate.logs().to_vec();
+        logs.into_iter()
+            .map(|log| RawLog { topics: log.topics, data: log.data })
+            .collect()
     }
 
     fn logs(&self) -> Vec<String> {
@@ -428,6 +436,32 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         }
     }
 
+    fn start_trace(&mut self, address: H160, input: Vec<u8>, creation: bool) -> CallTrace {
+        let mut trace: CallTrace = Default::default();
+        trace.depth = self.state().metadata().depth().unwrap_or(0);
+        trace.addr = address;
+        trace.created = creation;
+        trace.data = input;
+        trace.location = self.state_mut().trace.location(&trace);
+        // we should probably delay having the input and other stuff so
+        // we minimize the size of the clone
+        self.state_mut().trace.add_trace(trace.clone());
+        trace
+    }
+
+    fn fill_trace(
+        &mut self, 
+        mut new_trace: CallTrace,
+        success: bool,
+        output: Option<Vec<u8>>,
+    ) {
+        new_trace.logs = self.raw_logs();
+        new_trace.output = output.unwrap_or(vec![]);
+        new_trace.cost = self.handler.used_gas();
+        new_trace.success = success;
+        self.state_mut().trace.update_trace(new_trace);
+    }
+
     // NB: This function is copy-pasted from uptream's call_inner
     #[allow(clippy::too_many_arguments)]
     fn call_inner(
@@ -441,11 +475,19 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         take_stipend: bool,
         context: Context,
     ) -> Capture<(ExitReason, Vec<u8>), Infallible> {
+        let trace = self.start_trace(code_address, input.clone(), false);
+
         macro_rules! try_or_fail {
             ( $e:expr ) => {
                 match $e {
                     Ok(v) => v,
-                    Err(e) => return Capture::Exit((e.into(), Vec::new())),
+                    Err(e) => {
+                        // if let Some(call_trace) = trace {
+                        //     self.state_mut().trace.success = false;
+                        // }
+                        self.fill_trace(trace, false, None);
+                        return Capture::Exit((e.into(), Vec::new()))
+                    },
                 }
             };
         }
@@ -485,6 +527,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
 
         if let Some(depth) = self.state().metadata().depth() {
             if depth > self.config().call_stack_limit {
+                self.fill_trace(trace, false, None);
                 let _ = self.handler.exit_substate(StackExitKind::Reverted);
                 return Capture::Exit((ExitError::CallTooDeep.into(), Vec::new()))
             }
@@ -494,6 +537,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
             match self.state_mut().transfer(transfer) {
                 Ok(()) => (),
                 Err(e) => {
+                    self.fill_trace(trace, false, None);
                     let _ = self.handler.exit_substate(StackExitKind::Reverted);
                     return Capture::Exit((ExitReason::Error(e), Vec::new()))
                 }
@@ -517,6 +561,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                     }
 
                     let _ = self.state_mut().metadata_mut().gasometer_mut().record_cost(cost);
+                    self.fill_trace(trace, true, Some(output.clone()));
                     let _ = self.handler.exit_substate(StackExitKind::Succeeded);
                     Capture::Exit((ExitReason::Succeed(exit_status), output))
                 }
@@ -528,6 +573,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                         }
                         PrecompileFailure::Fatal { exit_status } => ExitReason::Fatal(exit_status),
                     };
+                    self.fill_trace(trace, false, None);
                     let _ = self.handler.exit_substate(StackExitKind::Failed);
                     Capture::Exit((e, Vec::new()))
                 }
@@ -543,18 +589,22 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         // reason);
         match reason {
             ExitReason::Succeed(s) => {
+                self.fill_trace(trace, true, Some(runtime.machine().return_value()));
                 let _ = self.handler.exit_substate(StackExitKind::Succeeded);
                 Capture::Exit((ExitReason::Succeed(s), runtime.machine().return_value()))
             }
             ExitReason::Error(e) => {
+                self.fill_trace(trace, false, Some(runtime.machine().return_value()));
                 let _ = self.handler.exit_substate(StackExitKind::Failed);
                 Capture::Exit((ExitReason::Error(e), Vec::new()))
             }
             ExitReason::Revert(e) => {
+                self.fill_trace(trace, false, Some(runtime.machine().return_value()));
                 let _ = self.handler.exit_substate(StackExitKind::Reverted);
                 Capture::Exit((ExitReason::Revert(e), runtime.machine().return_value()))
             }
             ExitReason::Fatal(e) => {
+                self.fill_trace(trace, false, Some(runtime.machine().return_value()));
                 self.state_mut().metadata_mut().gasometer_mut().fail();
                 let _ = self.handler.exit_substate(StackExitKind::Failed);
                 Capture::Exit((ExitReason::Fatal(e), Vec::new()))
@@ -1047,5 +1097,32 @@ mod tests {
             _ => panic!("unexpected error"),
         };
         assert_eq!(reason, "ffi disabled: run again with --ffi if you want to allow tests to call external scripts");
+    }
+
+    #[test]
+    fn tracing() {
+        use std::collections::BTreeMap;
+
+        let config = Config::istanbul();
+        let vicinity = new_vicinity();
+        let backend = new_backend(&vicinity, Default::default());
+        let gas_limit = 10_000_000;
+        let precompiles = PRECOMPILES_MAP.clone();
+        let mut evm =
+            Executor::new_with_cheatcodes(backend, gas_limit, &config, &precompiles, false);
+
+        let compiled = COMPILED.find("RecursiveCall").expect("could not find contract");
+         let (addr, _, _, _) =
+            evm.deploy(Address::zero(), compiled.bin.unwrap().clone(), 0.into()).unwrap();
+
+        // after the evm call is done, we call `logs` and print it all to the user
+        let (_, _, _, logs) = evm
+            .call::<(), _, _>(Address::zero(), addr, "recurseCall(uint256,uint256)", (U256::from(3u32), U256::from(0u32)), 0u32.into())
+            .unwrap();
+
+        let mut mapping = BTreeMap::new();
+        mapping.insert("RecursiveCall".to_string(), (compiled.abi.expect("No abi").clone(), addr, vec![]));
+        evm.state().trace.pretty_print(&mapping);
+
     }
 }

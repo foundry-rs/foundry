@@ -12,6 +12,8 @@ pub use blocking_provider::BlockingProvider;
 
 pub mod fuzz;
 
+pub mod call_tracing;
+
 use ethers::{
     abi::{Detokenize, Tokenize},
     contract::{decode_function_data, encode_function_data},
