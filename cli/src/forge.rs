@@ -18,9 +18,16 @@ use ethers::types::U256;
 mod forge_opts;
 use crate::forge_opts::{Dependency, FullContractInfo};
 use forge_opts::{EvmType, Opts, Subcommands};
-use std::env;
-use std::path::PathBuf;
-use std::{collections::HashMap, convert::TryFrom, process::Command, str::FromStr, sync::Arc};
+use run_script::ScriptOptions;
+use std::{
+    collections::HashMap,
+    convert::TryFrom,
+    env,
+    path::{Path, PathBuf},
+    process::Command,
+    str::FromStr,
+    sync::Arc,
+};
 
 mod cmd;
 mod utils;
@@ -28,39 +35,7 @@ mod utils;
 #[tracing::instrument(err)]
 fn main() -> eyre::Result<()> {
     utils::subscriber();
-    if cfg!(target_os = "windows") {
-        println!("Can't source env files on windows");
-    } else {
-        let home: String = env::var("HOME")?;
-        let paths = [
-            PathBuf::from(&home),
-            PathBuf::from(&home).join(".foundry"),
-            PathBuf::from(&home).join(".config/foundry"),
-        ];
-        let files = [String::from(".dapprc"), String::from(".forgerc")];
-        let mut flag = false;
-        for path in paths.iter() {
-            for file in &files {
-                let arg = PathBuf::from(&path).join(file);
-                match std::process::Command::new("source").args(arg.to_str()).spawn() {
-                    Ok(mut res) => {
-                        let wait_result = res.wait()?;
-                        if wait_result.success() {
-                            flag = true;
-                            break;
-                        }
-                    }
-                    Err(e) => {
-                        println!("{:?}", e);
-                        continue;
-                    }
-                }
-            }
-            if flag == true {
-                break;
-            }
-        }
-    }
+    source_config_files()?;
     let opts = Opts::from_args();
     match opts.sub {
         Subcommands::Test {
@@ -357,6 +332,61 @@ fn test<A: ArtifactOutput + 'static, S: Clone, E: evm_adapters::Evm<S>>(
         exit_code = 0;
     }
     std::process::exit(exit_code);
+}
+
+fn source_env_file<T: AsRef<Path>>(path: T) -> eyre::Result<()> {
+    let options = ScriptOptions::new();
+    let args = vec![String::from(path.as_ref().to_str().unwrap())];
+    // run the script and get the script execution output
+    let (code, output, error) = run_script::run(
+        r#"
+        set -e
+        . $1
+        env
+         "#,
+        &args,
+        &options,
+    )?;
+    println!("args: {}, code: {}, output: {}, error: {}", args[0], code, output, error);
+    match code {
+        0 => {
+            println!("config file detected: {}", args[0]);
+            Ok(())
+        }
+        _ => Err(eyre::Report::msg(error)),
+    }
+}
+
+fn source_config_files() -> eyre::Result<()> {
+    if cfg!(target_os = "windows") {
+        println!("Can't source env files on windows");
+        Ok(())
+    } else {
+        let home: String = env::var("HOME")?;
+        let paths = [
+            PathBuf::from("./"),
+            PathBuf::from(&home),
+            PathBuf::from(&home).join(".foundry"),
+            PathBuf::from(&home).join(".config/foundry"),
+        ];
+        let files = [PathBuf::from(".dapprc"), PathBuf::from(".forgerc")];
+        let mut flag = false;
+        for path in paths.iter() {
+            for file in files.iter() {
+                match source_env_file(path.join(file)) {
+                    Ok(_res) => {
+                        flag = true;
+                        break;
+                    }
+                    Err(_e) => continue,
+                }
+            }
+            if flag {
+                break;
+            }
+        }
+        Ok(())
+    }
 }
 
 fn install(root: impl AsRef<std::path::Path>, dependencies: Vec<Dependency>) -> eyre::Result<()> {
