@@ -4,9 +4,9 @@ use super::{
     HEVMCalls, HevmConsoleEvents,
 };
 use crate::{
+    call_tracing::CallTrace,
     sputnik::{Executor, SputnikExecutor},
     Evm,
-    call_tracing::CallTrace,
 };
 
 use sputnik::{
@@ -166,9 +166,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
 
     fn raw_logs(&self) -> Vec<RawLog> {
         let logs = self.state().substate.logs().to_vec();
-        logs.into_iter()
-            .map(|log| RawLog { topics: log.topics, data: log.data })
-            .collect()
+        logs.into_iter().map(|log| RawLog { topics: log.topics, data: log.data }).collect()
     }
 
     fn logs(&self) -> Vec<String> {
@@ -439,11 +437,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
     fn start_trace(&mut self, address: H160, input: Vec<u8>, creation: bool) -> CallTrace {
         let mut trace: CallTrace = Default::default();
         // depth only starts tracking at first child substate and is 0. so add 1 when depth is some.
-        trace.depth = if let Some(depth) = self.state().metadata().depth() {
-            depth + 1
-        } else {
-            0
-        };
+        trace.depth = if let Some(depth) = self.state().metadata().depth() { depth + 1 } else { 0 };
         trace.addr = address;
         trace.created = creation;
         trace.data = input;
@@ -454,19 +448,14 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         trace
     }
 
-    fn fill_trace(
-        &mut self, 
-        mut new_trace: CallTrace,
-        success: bool,
-        output: Option<Vec<u8>>,
-    ) {
+    fn fill_trace(&mut self, mut new_trace: CallTrace, success: bool, output: Option<Vec<u8>>) {
         if let Some(trace) = self.state().trace.get_trace(new_trace.depth, new_trace.location) {
             let num = trace.inner_number_of_logs();
             new_trace.logs = self.raw_logs()[num..].to_vec();
         } else {
             new_trace.logs = self.raw_logs().to_vec();
         }
-        
+
         new_trace.output = output.unwrap_or(vec![]);
         new_trace.cost = self.handler.used_gas();
         new_trace.success = success;
@@ -495,7 +484,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                     Err(e) => {
                         self.fill_trace(trace, false, None);
                         return Capture::Exit((e.into(), Vec::new()))
-                    },
+                    }
                 }
             };
         }
@@ -1120,17 +1109,25 @@ mod tests {
             Executor::new_with_cheatcodes(backend, gas_limit, &config, &precompiles, false);
 
         let compiled = COMPILED.find("RecursiveCall").expect("could not find contract");
-         let (addr, _, _, _) =
+        let (addr, _, _, _) =
             evm.deploy(Address::zero(), compiled.bin.unwrap().clone(), 0.into()).unwrap();
 
         // after the evm call is done, we call `logs` and print it all to the user
         let (_, _, _, logs) = evm
-            .call::<(), _, _>(Address::zero(), addr, "recurseCall(uint256,uint256)", (U256::from(3u32), U256::from(0u32)), 0u32.into())
+            .call::<(), _, _>(
+                Address::zero(),
+                addr,
+                "recurseCall(uint256,uint256)",
+                (U256::from(3u32), U256::from(0u32)),
+                0u32.into(),
+            )
             .unwrap();
 
         let mut mapping = BTreeMap::new();
-        mapping.insert("RecursiveCall".to_string(), (compiled.abi.expect("No abi").clone(), addr, vec![]));
+        mapping.insert(
+            "RecursiveCall".to_string(),
+            (compiled.abi.expect("No abi").clone(), addr, vec![]),
+        );
         evm.state().trace.pretty_print(&mapping);
-
     }
 }

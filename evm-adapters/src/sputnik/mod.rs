@@ -151,7 +151,7 @@ impl<'a, 'b, S: StackState<'a>, P: PrecompileSet> SputnikExecutor<S>
     fn raw_logs(&self) -> Vec<RawLog> {
         vec![]
     }
-    
+
     fn clear_logs(&mut self) {}
 }
 
