@@ -27,8 +27,7 @@ use ethers::{
     signers::{LocalWallet, Signer},
     types::{Address, H160, H256, U256},
 };
-use std::convert::Infallible;
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, convert::Infallible};
 
 use once_cell::sync::Lazy;
 
@@ -461,7 +460,6 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
             } else {
                 new_trace.logs = self.raw_logs();
             }
-            
         } else {
             new_trace.logs = self.raw_logs().to_vec();
         }

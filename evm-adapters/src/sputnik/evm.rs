@@ -1,5 +1,5 @@
+use crate::{call_tracing::CallTrace, Evm, FAUCET_ACCOUNT};
 use ethers::abi::Abi;
-use crate::{Evm, FAUCET_ACCOUNT, call_tracing::CallTrace};
 
 use ethers::types::{Address, Bytes, U256};
 

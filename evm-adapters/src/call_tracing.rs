@@ -2,7 +2,7 @@ use ethers::{
     abi::{Abi, FunctionExt, RawLog},
     types::{Address, H160},
 };
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 use ansi_term::Colour;
@@ -121,7 +121,7 @@ impl CallTrace {
         if let Some((name, (abi, addr, _other))) =
             contracts.iter().find(|(_key, (_abi, addr, _other))| addr == &self.addr)
         {
-        	let color = if self.success { Colour::Green } else { Colour::Red };
+            let color = if self.success { Colour::Green } else { Colour::Red };
             // let indent = "\t".repeat(self.depth);
             for (func_name, overloaded_funcs) in abi.functions.iter() {
                 for func in overloaded_funcs.iter() {
@@ -149,35 +149,46 @@ impl CallTrace {
 
             self.logs.iter().enumerate().for_each(|(i, log)| {
                 for (event_name, overloaded_events) in abi.events.iter() {
-                	let mut found = false;
-                	let mut right = "├─ ";
+                    let mut found = false;
+                    let mut right = "├─ ";
                     if i == self.logs.len() - 1 {
                         right = "└─ ";
                     }
                     for event in overloaded_events.iter() {
                         if event.signature() == log.topics[0] {
-                        	found = true;
+                            found = true;
                             println!(
                                 "{}emit {}({})",
                                 left.to_string().replace("├─ ", "|  ") + right,
-                                Colour::Cyan.paint(event_name), 
-                                Colour::Cyan.paint(format!("{:?}", event.parse_log(log.clone()).unwrap()))
+                                Colour::Cyan.paint(event_name),
+                                Colour::Cyan
+                                    .paint(format!("{:?}", event.parse_log(log.clone()).unwrap()))
                             );
                         }
                     }
                     if !found {
-                    	println!("{}emit {}", left.to_string().replace("├─ ", "|  ") + right, Colour::Blue.paint(format!("{:?}", log)))
+                        println!(
+                            "{}emit {}",
+                            left.to_string().replace("├─ ", "|  ") + right,
+                            Colour::Blue.paint(format!("{:?}", log))
+                        )
                     }
                 }
             });
         } else {
-        	if self.data.len() >= 4 {
-        		println!("{}{:x}::{}({})", left, self.addr, hex::encode(&self.data[0..4]), hex::encode(&self.data[4..]));
-        	} else {
-        		println!("{}{:x}::({})", left, self.addr, hex::encode(&self.data));
-        	}
-        	
-        	self.inner.iter().enumerate().for_each(|(i, inner)| {
+            if self.data.len() >= 4 {
+                println!(
+                    "{}{:x}::{}({})",
+                    left,
+                    self.addr,
+                    hex::encode(&self.data[0..4]),
+                    hex::encode(&self.data[4..])
+                );
+            } else {
+                println!("{}{:x}::({})", left, self.addr, hex::encode(&self.data));
+            }
+
+            self.inner.iter().enumerate().for_each(|(i, inner)| {
                 // let inners = inner.inner_number_of_inners();
                 if i == self.inner.len() - 1 && self.logs.len() == 0 {
                     inner.pretty_print(contracts, left.to_string().replace("├─ ", "|  ") + "└─ ");
@@ -186,13 +197,17 @@ impl CallTrace {
                 }
             });
 
-        	let mut right = "├─ ";
-            
+            let mut right = "├─ ";
+
             self.logs.iter().enumerate().for_each(|(i, log)| {
-            	if i == self.logs.len() - 1 {
-	                right = "└─ ";
-	            }
-            	println!("{}emit {}", left.to_string().replace("├─ ", "|  ") + right, Colour::Cyan.paint(format!("{:?}", log)))
+                if i == self.logs.len() - 1 {
+                    right = "└─ ";
+                }
+                println!(
+                    "{}emit {}",
+                    left.to_string().replace("├─ ", "|  ") + right,
+                    Colour::Cyan.paint(format!("{:?}", log))
+                )
             });
         }
     }

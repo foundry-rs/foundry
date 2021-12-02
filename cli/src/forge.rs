@@ -324,11 +324,10 @@ fn test<A: ArtifactOutput + 'static, S: Clone, E: evm_adapters::Evm<S>>(
                         if let Some(trace) = &result.trace {
                             trace.pretty_print(&runner.contracts, "".to_string());
                         }
-                        println!();   
+                        println!();
                     }
                 }
             }
-
         }
     }
 
