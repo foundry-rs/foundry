@@ -8,7 +8,7 @@ pub mod cheatcodes;
 pub mod state;
 
 use ethers::{
-    abi::RawLog,
+    abi::{Abi, RawLog},
     providers::Middleware,
     types::{Address, H160, H256, U256},
 };
@@ -18,6 +18,8 @@ use sputnik::{
     executor::stack::{PrecompileFailure, PrecompileOutput, StackExecutor, StackState},
     Config, CreateScheme, ExitError, ExitReason, ExitSucceed,
 };
+
+use crate::call_tracing::CallTrace;
 
 pub use sputnik as sputnik_evm;
 use sputnik_evm::executor::stack::PrecompileSet;
@@ -85,6 +87,9 @@ pub trait SputnikExecutor<S> {
     /// Returns a vector of sraw logs that occurred during the previous VM
     /// execution
     fn raw_logs(&self) -> Vec<RawLog>;
+
+    /// Gets a trace
+    fn trace(&self) -> Option<CallTrace> { None }
 
     /// Returns a vector of string parsed logs that occurred during the previous VM
     /// execution

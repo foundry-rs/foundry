@@ -8,6 +8,9 @@ pub mod sputnik;
 pub mod evmodin;
 
 mod blocking_provider;
+use crate::call_tracing::CallTrace;
+use std::collections::BTreeMap;
+use ethers::abi::Abi;
 pub use blocking_provider::BlockingProvider;
 
 pub mod fuzz;
@@ -91,6 +94,8 @@ pub trait Evm<State> {
             Ok((retdata, status, gas, logs))
         }
     }
+
+    fn trace(&self) -> Option<CallTrace> { None }
 
     /// Executes the specified EVM call against the state
     // TODO: Should we just make this take a `TransactionRequest` or other more

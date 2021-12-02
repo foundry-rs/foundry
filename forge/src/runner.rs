@@ -1,3 +1,4 @@
+use evm_adapters::call_tracing::CallTrace;
 use ethers::{
     abi::{Abi, Function, Token},
     types::{Address, Bytes},
@@ -7,7 +8,7 @@ use evm_adapters::{fuzz::FuzzedExecutor, Evm, EvmError};
 
 use eyre::{Context, Result};
 use regex::Regex;
-use std::{collections::HashMap, fmt, time::Instant};
+use std::{collections::{HashMap}, fmt, time::Instant};
 
 use proptest::test_runner::{TestError, TestRunner};
 use serde::{Deserialize, Serialize};
@@ -46,6 +47,9 @@ pub struct TestResult {
     /// Any captured & parsed as strings logs along the test's execution which should
     /// be printed to the user.
     pub logs: Vec<String>,
+
+    /// Trace
+    pub trace: Option<CallTrace>,
 }
 
 use std::marker::PhantomData;
@@ -195,7 +199,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         let duration = Instant::now().duration_since(start);
         tracing::debug!(?duration, %success, %gas_used);
 
-        Ok(TestResult { success, reason, gas_used: Some(gas_used), counterexample: None, logs })
+        Ok(TestResult { success, reason, gas_used: Some(gas_used), counterexample: None, logs, trace: self.evm.trace() })
     }
 
     #[tracing::instrument(name = "fuzz-test", skip_all, fields(name = %func.signature()))]
@@ -235,7 +239,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
 
         // TODO: How can we have proptest also return us the gas_used and the revert reason
         // from that call?
-        Ok(TestResult { success, reason: None, gas_used: None, counterexample, logs: vec![] })
+        Ok(TestResult { success, reason: None, gas_used: None, counterexample, logs: vec![], trace: None })
     }
 }
 

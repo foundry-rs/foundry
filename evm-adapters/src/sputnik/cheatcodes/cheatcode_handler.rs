@@ -21,13 +21,14 @@ use sputnik::{
 use std::{process::Command, rc::Rc};
 
 use ethers::{
-    abi::{RawLog, Token},
+    abi::{Abi, RawLog, Token},
     contract::EthLogDecode,
     core::{abi::AbiDecode, k256::ecdsa::SigningKey, utils},
     signers::{LocalWallet, Signer},
     types::{Address, H160, H256, U256},
 };
 use std::convert::Infallible;
+use std::collections::BTreeMap;
 
 use once_cell::sync::Lazy;
 
@@ -167,6 +168,10 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
     fn raw_logs(&self) -> Vec<RawLog> {
         let logs = self.state().substate.logs().to_vec();
         logs.into_iter().map(|log| RawLog { topics: log.topics, data: log.data }).collect()
+    }
+
+    fn trace(&self) -> Option<CallTrace> {
+        Some(self.state().trace.clone())
     }
 
     fn logs(&self) -> Vec<String> {
@@ -451,7 +456,12 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
     fn fill_trace(&mut self, mut new_trace: CallTrace, success: bool, output: Option<Vec<u8>>) {
         if let Some(trace) = self.state().trace.get_trace(new_trace.depth, new_trace.location) {
             let num = trace.inner_number_of_logs();
-            new_trace.logs = self.raw_logs()[num..].to_vec();
+            if self.raw_logs().len() > num {
+                new_trace.logs = self.raw_logs()[num..].to_vec();
+            } else {
+                new_trace.logs = self.raw_logs();
+            }
+            
         } else {
             new_trace.logs = self.raw_logs().to_vec();
         }

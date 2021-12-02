@@ -1216,6 +1216,7 @@ dependencies = [
 name = "evm-adapters"
 version = "0.1.0"
 dependencies = [
+ "ansi_term 0.12.1",
  "bytes",
  "ethers",
  "evm",
@@ -1228,6 +1229,7 @@ dependencies = [
  "parking_lot",
  "proptest",
  "revm_precompiles",
+ "serde",
  "serde_json",
  "thiserror",
  "tokio",

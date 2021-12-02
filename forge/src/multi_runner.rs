@@ -113,7 +113,7 @@ impl MultiContractRunnerBuilder {
 pub struct MultiContractRunner<E, S> {
     /// Mapping of contract name to compiled bytecode, deployed address and logs emitted during
     /// deployment
-    contracts: BTreeMap<String, (Abi, Address, Vec<String>)>,
+    pub contracts: BTreeMap<String, (Abi, Address, Vec<String>)>,
     /// The EVM instance used in the test runner
     evm: E,
     /// The fuzzer which will be used to run parametric tests (w/ non-0 solidity args)

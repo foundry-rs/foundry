@@ -1,4 +1,5 @@
-use crate::{Evm, FAUCET_ACCOUNT};
+use ethers::abi::Abi;
+use crate::{Evm, FAUCET_ACCOUNT, call_tracing::CallTrace};
 
 use ethers::types::{Address, Bytes, U256};
 
@@ -98,6 +99,10 @@ where
 
     fn state(&self) -> &S {
         self.executor.state()
+    }
+
+    fn trace(&self) -> Option<CallTrace> {
+        self.executor.trace()
     }
 
     /// Deploys the provided contract bytecode
