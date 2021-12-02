@@ -438,7 +438,12 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
 
     fn start_trace(&mut self, address: H160, input: Vec<u8>, creation: bool) -> CallTrace {
         let mut trace: CallTrace = Default::default();
-        trace.depth = self.state().metadata().depth().unwrap_or(0);
+        // depth only starts tracking at first child substate and is 0. so add 1 when depth is some.
+        trace.depth = if let Some(depth) = self.state().metadata().depth() {
+            depth + 1
+        } else {
+            0
+        };
         trace.addr = address;
         trace.created = creation;
         trace.data = input;
@@ -455,7 +460,13 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         success: bool,
         output: Option<Vec<u8>>,
     ) {
-        new_trace.logs = self.raw_logs();
+        if let Some(trace) = self.state().trace.get_trace(new_trace.depth, new_trace.location) {
+            let num = trace.inner_number_of_logs();
+            new_trace.logs = self.raw_logs()[num..].to_vec();
+        } else {
+            new_trace.logs = self.raw_logs().to_vec();
+        }
+        
         new_trace.output = output.unwrap_or(vec![]);
         new_trace.cost = self.handler.used_gas();
         new_trace.success = success;
@@ -482,9 +493,6 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 match $e {
                     Ok(v) => v,
                     Err(e) => {
-                        // if let Some(call_trace) = trace {
-                        //     self.state_mut().trace.success = false;
-                        // }
                         self.fill_trace(trace, false, None);
                         return Capture::Exit((e.into(), Vec::new()))
                     },
