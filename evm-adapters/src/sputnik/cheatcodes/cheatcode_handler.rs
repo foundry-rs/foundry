@@ -1128,6 +1128,6 @@ mod tests {
             "RecursiveCall".to_string(),
             (compiled.abi.expect("No abi").clone(), addr, vec![]),
         );
-        evm.state().trace.pretty_print(&mapping);
+        evm.state().trace.pretty_print(&mapping, "".to_string());
     }
 }

@@ -82,6 +82,18 @@ impl CallTrace {
         total
     }
 
+    pub fn inner_number_of_inners(&self) -> usize {
+        // only count child logs
+        let mut total = 0;
+        if self.inner.len() > 0 {
+            self.inner.iter().for_each(|inner| {
+                total += inner.inner_number_of_inners();
+            });
+        }
+        total += self.inner.len();
+        total
+    }
+
     pub fn get_trace(&self, depth: usize, location: usize) -> Option<&CallTrace> {
         if self.depth == depth && self.location == location {
             return Some(&self)
@@ -97,17 +109,21 @@ impl CallTrace {
         return None
     }
 
-    pub fn pretty_print(&self, contracts: &BTreeMap<String, (Abi, Address, Vec<String>)>) {
+    pub fn pretty_print(
+        &self,
+        contracts: &BTreeMap<String, (Abi, Address, Vec<String>)>,
+        left: String,
+    ) {
         if let Some((name, (abi, _addr, _other))) =
             contracts.iter().find(|(_key, (_abi, addr, _other))| addr == &self.addr)
         {
-            let indent = "\t".repeat(self.depth);
+            // let indent = "\t".repeat(self.depth);
             for (func_name, overloaded_funcs) in abi.functions.iter() {
                 for func in overloaded_funcs.iter() {
                     if func.selector() == self.data[0..4] {
                         println!(
                             "{}{}.{}({:?})",
-                            indent,
+                            left,
                             name,
                             func_name,
                             func.decode_input(&self.data[4..]).unwrap()
@@ -116,15 +132,26 @@ impl CallTrace {
                 }
             }
 
-            self.inner.iter().for_each(|inner| inner.pretty_print(contracts));
+            self.inner.iter().enumerate().for_each(|(i, inner)| {
+                // let inners = inner.inner_number_of_inners();
+                if i == self.inner.len() - 1 && self.logs.len() == 0 {
+                    inner.pretty_print(contracts, left.to_string().replace("├─ ", "|  ") + "└─ ");
+                } else {
+                    inner.pretty_print(contracts, left.to_string().replace("├─ ", "|  ") + "├─ ");
+                }
+            });
 
-            self.logs.iter().for_each(|log| {
+            self.logs.iter().enumerate().for_each(|(i, log)| {
                 for (event_name, overloaded_events) in abi.events.iter() {
                     for event in overloaded_events.iter() {
                         if event.signature() == log.topics[0] {
+                            let mut right = "├─ ";
+                            if i == self.logs.len() - 1 {
+                                right = "└─ ";
+                            }
                             println!(
                                 "{}emit {}({:?})",
-                                indent,
+                                left.to_string().replace("├─ ", "|  ") + right,
                                 event_name,
                                 event.parse_log(log.clone()).unwrap()
                             );
