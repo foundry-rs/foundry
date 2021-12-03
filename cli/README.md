@@ -27,7 +27,7 @@ SUBCOMMANDS:
     clean              removes the build artifacts and cache directories completions
     create             deploy a compiled contract
     help               Prints this message or the help of the given subcommand(s)
-    init               initializes a new forge repository
+    init               initializes a new forge sample repository
     install            installs one or more dependencies as git submodules
     remappings         prints the automatically inferred remappings for this repository
     test               test your smart contracts
@@ -63,7 +63,7 @@ OPTIONS:
     -o, --out <out-path>                     path to where the contract artifacts are stored
     -r, --remappings <remappings>...         the remappings
         --remappings-env <remappings-env>     [env: DAPP_REMAPPINGS=]
-        --root <root>                        the project's root path, default being the current directory
+        --root <root>                        the project's root path, default being the current working directory
 ```
 
 By default, it will auto-detect the solc pragma version requirement per-file and
@@ -73,7 +73,7 @@ that satisfies the requirement, (e.g. `pragma solidity >=0.7.0 <0.8.0` will use
 `forge build --no-auto-detect`, and it'll use whichever `solc` version is in
 your `$PATH`.
 
-The project's root directory defaults to the current directory, assuming
+The project's root directory defaults to the current working directory, assuming
 contracts are under `src/` and `lib/`, but can also be configured via the
 `--root`, `--lib-paths` and `--contracts` arguments. The contracts and libraries
 directories are assumed to be relative to the project root, for example
@@ -163,7 +163,7 @@ OPTIONS:
     -r, --remappings <remappings>...                         the remappings
         --remappings-env <remappings-env>                     [env: DAPP_REMAPPINGS=]
         --root <root>
-            the project's root path, default being the current directory
+            the project's root path, default being the current working directory
 
         --sender <sender>
             the address which will be executing all tests [env: DAPP_TEST_ADDRESS=]  [default:

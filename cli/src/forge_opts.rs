@@ -115,7 +115,7 @@ pub enum Subcommands {
         about = "prints the automatically inferred remappings for this repository"
     )]
     Remappings {
-        #[structopt(help = "the project's root path, default being the current directory", long)]
+        #[structopt(help = "the project's root path, default being the current working directory", long)]
         root: Option<PathBuf>,
         #[structopt(help = "the paths where your libraries are installed", long)]
         lib_paths: Vec<PathBuf>,
@@ -139,9 +139,9 @@ pub enum Subcommands {
         verify: bool,
     },
 
-    #[structopt(alias = "i", about = "initializes a new forge repository")]
+    #[structopt(alias = "i", about = "initializes a new forge sample repository")]
     Init {
-        #[structopt(help = "the project's root path, default being the current directory")]
+        #[structopt(help = "the project's root path, default being the current working directory")]
         root: Option<PathBuf>,
         #[structopt(help = "optional solidity template to start from", long, short)]
         template: Option<String>,
@@ -154,7 +154,7 @@ pub enum Subcommands {
 
     #[structopt(about = "removes the build artifacts and cache directories")]
     Clean {
-        #[structopt(help = "the project's root path, default being the current directory", long)]
+        #[structopt(help = "the project's root path, default being the current working directory", long)]
         root: Option<PathBuf>,
     },
 }
@@ -289,7 +289,7 @@ impl std::convert::TryFrom<&BuildOpts> for Project {
 
 #[derive(Debug, StructOpt)]
 pub struct BuildOpts {
-    #[structopt(help = "the project's root path, default being the current directory", long)]
+    #[structopt(help = "the project's root path, default being the current working directory", long)]
     pub root: Option<PathBuf>,
 
     #[structopt(
