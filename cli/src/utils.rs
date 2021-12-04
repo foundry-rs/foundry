@@ -68,9 +68,3 @@ pub fn find_dapp_json_contract(path: &str, name: &str) -> eyre::Result<Contract>
 
     Ok(serde_json::from_value(contract)?)
 }
-
-pub fn cleanup(root: PathBuf) -> eyre::Result<()> {
-    std::fs::remove_dir_all(root.join("cache"))?;
-    std::fs::remove_dir_all(root.join("out"))?;
-    Ok(())
-}
