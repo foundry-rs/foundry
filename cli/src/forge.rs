@@ -1,6 +1,6 @@
 use ethers::{
     providers::Provider,
-    solc::{remappings::Remapping, ArtifactOutput, Project},
+    solc::{remappings::Remapping, ArtifactOutput, Project, ProjectPathsConfig},
 };
 use evm_adapters::{
     sputnik::{vicinity, ForkMemoryBackend, PRECOMPILES_MAP},
@@ -235,7 +235,9 @@ fn main() -> eyre::Result<()> {
         }
         Subcommands::Clean { root } => {
             let root = root.unwrap_or_else(|| std::env::current_dir().unwrap());
-            utils::cleanup(root)?;
+            let paths = ProjectPathsConfig::builder().root(&root).build()?;
+            let project = Project::builder().paths(paths).build()?;
+            project.cleanup()?;
         }
     }
 

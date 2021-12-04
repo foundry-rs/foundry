@@ -286,7 +286,7 @@ impl std::convert::TryFrom<&BuildOpts> for Project {
         // if `--force` is provided, it proceeds to remove the cache
         // and recompile the contracts.
         if opts.force {
-            crate::utils::cleanup(root)?;
+            project.cleanup()?;
         }
 
         Ok(project)
