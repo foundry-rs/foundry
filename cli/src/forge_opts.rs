@@ -115,7 +115,10 @@ pub enum Subcommands {
         about = "prints the automatically inferred remappings for this repository"
     )]
     Remappings {
-        #[structopt(help = "the project's root path, default being the current working directory", long)]
+        #[structopt(
+            help = "the project's root path, default being the current working directory",
+            long
+        )]
         root: Option<PathBuf>,
         #[structopt(help = "the paths where your libraries are installed", long)]
         lib_paths: Vec<PathBuf>,
@@ -154,7 +157,10 @@ pub enum Subcommands {
 
     #[structopt(about = "removes the build artifacts and cache directories")]
     Clean {
-        #[structopt(help = "the project's root path, default being the current working directory", long)]
+        #[structopt(
+            help = "the project's root path, default being the current working directory",
+            long
+        )]
         root: Option<PathBuf>,
     },
 }
@@ -289,7 +295,10 @@ impl std::convert::TryFrom<&BuildOpts> for Project {
 
 #[derive(Debug, StructOpt)]
 pub struct BuildOpts {
-    #[structopt(help = "the project's root path, default being the current working directory", long)]
+    #[structopt(
+        help = "the project's root path, default being the current working directory",
+        long
+    )]
     pub root: Option<PathBuf>,
 
     #[structopt(
