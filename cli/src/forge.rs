@@ -341,13 +341,18 @@ fn source_env_file<T: AsRef<Path>>(path: T) -> eyre::Result<()> {
     let (code, output, error) = run_script::run(
         r#"
         set -e
-        . $1
-        env
+        chmod +x $1
+        env -i bash -c "source $1 && env" $1
          "#,
         &args,
         &options,
     )?;
-    println!("args: {}, code: {}, output: {}, error: {}", args[0], code, output, error);
+    for line in output.lines() {
+        let mut arg = line.split("=");
+        let key = arg.next().unwrap();
+        let value = arg.next().unwrap();
+        std::env::set_var(key, value);
+    }
     match code {
         0 => {
             println!("config file detected: {}", args[0]);
