@@ -152,6 +152,16 @@ pub enum Subcommands {
         #[structopt(short, long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
+    #[structopt(name = "code")]
+    #[structopt(about = "Prints the bytecode at <address>")]
+    Code {
+        #[structopt(long, short, help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
+        block: Option<BlockId>,
+        #[structopt(help = "the address you want to query", parse(try_from_str = parse_name_or_address))]
+        who: NameOrAddress,
+        #[structopt(short, long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+    },
     #[structopt(name = "gas-price")]
     #[structopt(about = "Prints current gas price of target chain")]
     GasPrice {

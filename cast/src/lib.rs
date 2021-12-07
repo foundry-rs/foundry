@@ -44,7 +44,7 @@ where
     /// Makes a read-only call to the specified address
     ///
     /// ```no_run
-    /// 
+    ///
     /// use cast::Cast;
     /// use ethers_core::types::Address;
     /// use ethers_providers::{Provider, Http};
@@ -284,6 +284,14 @@ where
 
     pub async fn gas_price(&self) -> Result<U256> {
         Ok(self.provider.get_gas_price().await?)
+    }
+
+    pub async fn code<T: Into<NameOrAddress> + Send + Sync>(
+        &self,
+        who: T,
+        block: Option<BlockId>,
+    ) -> Result<String> {
+        Ok(format!("{}", self.provider.get_code(who, block).await?))
     }
 }
 
