@@ -29,11 +29,7 @@ pub trait Visitor {
         Ok(())
     }
 
-    fn visit_var_def(
-        &mut self,
-        _v: &mut VariableDeclaration,
-        _expr: &mut Option<Expression>,
-    ) -> VResult {
+    fn visit_var_def(&mut self, _var: &mut VariableDefinition) -> VResult {
         Ok(())
     }
 
@@ -65,6 +61,34 @@ pub trait Visitor {
         Ok(())
     }
 
+    fn visit_struct(&mut self, _struct: &mut StructDefinition) -> VResult {
+        Ok(())
+    }
+
+    fn visit_event(&mut self, _event: &mut EventDefinition) -> VResult {
+        Ok(())
+    }
+
+    fn visit_enum(&mut self, _enum: &mut EnumDefinition) -> VResult {
+        Ok(())
+    }
+
+    fn visit_stray(&mut self) -> VResult {
+        Ok(())
+    }
+
+    fn visit_using(&mut self, _using: &mut Using) -> VResult {
+        Ok(())
+    }
+
+    fn visit_import(&mut self, _import: &mut Import) -> VResult {
+        Ok(())
+    }
+
+    fn visit_pragma(&mut self, _ident: &mut Identifier, _str: &mut StringLiteral) -> VResult {
+        Ok(())
+    }
+
     // TODO more visit callbacks
 }
 
@@ -92,6 +116,30 @@ impl Visitable for SourceUnit {
 
 impl Visitable for SourceUnitPart {
     fn visit(&mut self, v: &mut dyn Visitor) -> VResult {
-        todo!()
+        match self {
+            SourceUnitPart::ContractDefinition(contract) => v.visit_contract(contract),
+            SourceUnitPart::PragmaDirective(_, ident, str) => v.visit_pragma(ident, str),
+            SourceUnitPart::ImportDirective(_, import) => v.visit_import(import),
+            SourceUnitPart::EnumDefinition(enumeration) => v.visit_enum(enumeration),
+            SourceUnitPart::StructDefinition(structure) => v.visit_struct(structure),
+            SourceUnitPart::EventDefinition(event) => v.visit_event(event),
+            SourceUnitPart::FunctionDefinition(function) => v.visit_function(function),
+            SourceUnitPart::VariableDefinition(variable) => v.visit_var_def(variable),
+            SourceUnitPart::StraySemicolon(_) => v.visit_stray(),
+        }
+    }
+}
+
+impl Visitable for ContractPart {
+    fn visit(&mut self, v: &mut dyn Visitor) -> VResult {
+        match self {
+            ContractPart::StructDefinition(structure) => v.visit_struct(structure),
+            ContractPart::EventDefinition(event) => v.visit_event(event),
+            ContractPart::EnumDefinition(enumeration) => v.visit_enum(enumeration),
+            ContractPart::VariableDefinition(variable) => v.visit_var_def(variable),
+            ContractPart::FunctionDefinition(function) => v.visit_function(function),
+            ContractPart::StraySemicolon(_) => v.visit_stray(),
+            ContractPart::Using(using) => v.visit_using(using),
+        }
     }
 }
