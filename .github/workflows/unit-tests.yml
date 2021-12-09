@@ -43,6 +43,8 @@ jobs:
 
       - name: cargo test
         run: cargo test --all --all-features
+        env:
+          LLVM_SYS_130_PREFIX: ${{ env.LLVM_PATH }}
 
   lint:
     runs-on: ubuntu-latest
