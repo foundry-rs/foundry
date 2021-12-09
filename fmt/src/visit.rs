@@ -97,10 +97,6 @@ pub trait Visitor {
         Ok(())
     }
 
-    fn visit_ident(&mut self, _ident: &Identifier) -> VResult {
-        Ok(())
-    }
-
     // TODO more visit callbacks
 }
 
@@ -153,11 +149,5 @@ impl Visitable for ContractPart {
             ContractPart::StraySemicolon(_) => v.visit_stray(),
             ContractPart::Using(using) => v.visit_using(using),
         }
-    }
-}
-
-impl Visitable for Identifier {
-    fn visit(&self, v: &mut impl Visitor) -> VResult {
-        v.visit_ident(self)
     }
 }

@@ -19,6 +19,10 @@ impl<'a, W: Write> Formatter<'a, W> {
         let f = CodeFormatter::new(w, " ".repeat(config.tab_width));
         Self { config, f }
     }
+
+    fn empty_brackets(&self) -> String {
+        if self.config.bracket_spacing { "{ }" } else { "{}" }.to_string()
+    }
 }
 
 // traverse the solidity AST and write to the code formatter
@@ -39,7 +43,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
     fn visit_contract(&mut self, contract: &ContractDefinition) -> VResult {
         if contract.parts.is_empty() {
-            writeln!(self.f, "contract {} {{}}", &contract.name.name)?;
+            writeln!(self.f, "contract {} {}", &contract.name.name, self.empty_brackets())?;
         } else {
             writeln!(self.f, "contract {} {{", &contract.name.name)?;
 
@@ -61,7 +65,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
     fn visit_enum(&mut self, enumeration: &EnumDefinition) -> VResult {
         if enumeration.values.is_empty() {
-            writeln!(self.f, "\nenum {} {{}}", &enumeration.name.name)?;
+            writeln!(self.f, "\nenum {} {}", &enumeration.name.name, self.empty_brackets())?;
         } else {
             write!(self.f, "\nenum {} {{", &enumeration.name.name)?;
 
@@ -86,12 +90,15 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 /// Contains the config and rule set
 #[derive(Debug, Clone)]
 pub struct FormatterConfig {
+    /// Number of spaces per indentation level
     pub tab_width: usize,
+    /// Print spaces between brackets
+    pub bracket_spacing: bool,
 }
 
 impl Default for FormatterConfig {
     fn default() -> Self {
-        FormatterConfig { tab_width: 4 }
+        FormatterConfig { tab_width: 4, bracket_spacing: false }
     }
 }
 
