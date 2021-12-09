@@ -83,8 +83,8 @@ impl<'a, W: Write> Formatter<'a, W> {
             let separated_item =
                 format!("{}{}", if i == 0 { "" } else { separator.as_ref() }, item);
 
-            if line_length + separated_item.len() > self.config.line_length
-                && separated_item.len() < self.config.line_length
+            if line_length + separated_item.len() > self.config.line_length &&
+                separated_item.len() < self.config.line_length
             {
                 write!(self, "{}\n{}", separator.as_ref().trim_end(), item)?;
                 line_length = item.len();

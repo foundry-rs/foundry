@@ -24,6 +24,19 @@ jobs:
           profile: minimal
           override: true
 
+      - name: Cache LLVM and Clang
+        id: cache-llvm
+        uses: actions/cache@v2
+        with:
+          path: $HOME/.clang
+          key: llvm-13.0
+      - name: Install LLVM and Clang
+        uses: KyleMayes/install-llvm-action@v1
+        with:
+          version: "13.0"
+          directory: $HOME/.clang
+          cached: ${{ steps.cache-llvm.outputs.cache-hit }}
+
       - uses: Swatinem/rust-cache@v1
         with:
           cache-on-failure: true
