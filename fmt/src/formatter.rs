@@ -201,29 +201,27 @@ mod tests {
     use super::*;
 
     fn test_formatter(config: FormatterConfig, source: &str, expected: &str) {
-        use pretty_assertions::assert_eq;
-        use std::fmt;
-
         #[derive(PartialEq, Eq)]
         #[doc(hidden)]
         pub struct PrettyString<'a>(pub &'a str);
 
-        /// Make diff to display string as multi-line string
-        impl<'a> fmt::Debug for PrettyString<'a> {
-            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        impl<'a> std::fmt::Debug for PrettyString<'a> {
+            fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
                 f.write_str(self.0)
             }
         }
 
-        let mut s = solang::parser::parse(source, 1).unwrap();
-        let mut out = String::new();
-        let mut f = Formatter::new(&mut out, config);
+        let mut source_unit = solang::parser::parse(source, 1).unwrap();
+        let mut formatted = String::new();
+        let mut formatter = Formatter::new(&mut formatted, config);
 
-        s.visit(&mut f).unwrap();
+        source_unit.visit(&mut formatter).unwrap();
 
-        let expected = expected.trim_start();
-
-        assert_eq!(PrettyString(&out), PrettyString(expected), "(formatted == expected)");
+        pretty_assertions::assert_eq!(
+            PrettyString(&formatted),
+            PrettyString(expected.trim_start()),
+            "(formatted == expected)"
+        );
     }
 
     #[test]
