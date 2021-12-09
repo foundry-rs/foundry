@@ -33,20 +33,20 @@ impl<'a, W: Write> Formatter<'a, W> {
 
     /// Respects the `config.bracket_spacing` setting:
     /// `"{ "` if `true`, `"{"` if `false`
-    fn opening_bracket(&self) -> String {
-        if self.config.bracket_spacing { "{ " } else { "{" }.to_string()
+    fn write_opening_bracket(&mut self) -> std::fmt::Result {
+        self.write_str(if self.config.bracket_spacing { "{ " } else { "{" })
     }
 
     /// Respects the `config.bracket_spacing` setting:
     /// `" }"` if `true`, `"}"` if `false`
-    fn closing_bracket(&self) -> String {
-        if self.config.bracket_spacing { " }" } else { "}" }.to_string()
+    fn write_closing_bracket(&mut self) -> std::fmt::Result {
+        self.write_str(if self.config.bracket_spacing { " }" } else { "}" })
     }
 
     /// Respects the `config.bracket_spacing` setting:
     /// `"{ }"` if `true`, `"{}"` if `false`
-    fn empty_brackets(&self) -> String {
-        if self.config.bracket_spacing { "{ }" } else { "{}" }.to_string()
+    fn write_empty_brackets(&mut self) -> std::fmt::Result {
+        self.write_str(if self.config.bracket_spacing { "{ }" } else { "{}" })
     }
 }
 
@@ -86,7 +86,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     fn visit_contract(&mut self, contract: &mut ContractDefinition) -> VResult {
         write!(self, "contract {} ", &contract.name.name)?;
         if contract.parts.is_empty() {
-            writeln!(self, "{}", self.empty_brackets())?;
+            self.write_empty_brackets()?;
         } else {
             writeln!(self, "{{")?;
 
@@ -102,8 +102,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             }
             self.dedent(1);
 
-            writeln!(self, "}}")?;
+            write!(self, "}}")?;
         }
+        writeln!(self)?;
 
         Ok(())
     }
@@ -135,7 +136,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         imports: &mut Vec<(Identifier, Option<Identifier>)>,
         from: &mut StringLiteral,
     ) -> VResult {
-        write!(self, "import {}", self.opening_bracket())?;
+        write!(self, "import ")?;
+        self.write_opening_bracket()?;
         write!(
             self,
             "{}",
@@ -148,7 +150,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 ))
                 .join(", ")
         )?;
-        writeln!(self, "{} from \"{}\";", self.closing_bracket(), from.string)?;
+        self.write_closing_bracket()?;
+        writeln!(self, " from \"{}\";", from.string)?;
 
         Ok(())
     }
@@ -156,7 +159,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     fn visit_enum(&mut self, enumeration: &mut EnumDefinition) -> VResult {
         write!(self, "enum {} ", &enumeration.name.name)?;
         if enumeration.values.is_empty() {
-            writeln!(self, "{}", self.empty_brackets())?;
+            self.write_empty_brackets()?;
         } else {
             writeln!(self, "{{")?;
 
@@ -172,8 +175,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             }
             self.dedent(1);
 
-            writeln!(self, "}}")?;
+            write!(self, "}}")?;
         }
+        writeln!(self)?;
 
         Ok(())
     }
