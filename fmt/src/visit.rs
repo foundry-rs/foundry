@@ -1,6 +1,6 @@
 //! Visitor helpers to traverse the [solang](https://github.com/hyperledger-labs/solang) solidity AST
 
-use solang::parser::{self, pt::*};
+use solang::parser::pt::*;
 
 /// The error type a visitor may return
 pub type VResult = Result<(), Box<dyn std::error::Error>>;
@@ -9,31 +9,35 @@ pub type VResult = Result<(), Box<dyn std::error::Error>>;
 ///
 /// Each method of the `Visitor` trait is a hook that can be potentially overridden.
 pub trait Visitor {
-    fn visit_stmt(&mut self, _stmt: &mut Statement) -> VResult {
+    fn visit_source_unit(&mut self, _source_unit: &SourceUnit) -> VResult {
         Ok(())
     }
 
-    fn visit_assembly(&mut self, _stmt: &mut AssemblyStatement) -> VResult {
+    fn visit_stmt(&mut self, _stmt: &Statement) -> VResult {
         Ok(())
     }
 
-    fn visit_arg(&mut self, _stmt: &mut NamedArgument) -> VResult {
+    fn visit_assembly(&mut self, _stmt: &AssemblyStatement) -> VResult {
         Ok(())
     }
 
-    fn visit_expr(&mut self, _expr: &mut Expression) -> VResult {
+    fn visit_arg(&mut self, _stmt: &NamedArgument) -> VResult {
         Ok(())
     }
 
-    fn visit_emit(&mut self, _stmt: &mut Expression) -> VResult {
+    fn visit_expr(&mut self, _expr: &Expression) -> VResult {
         Ok(())
     }
 
-    fn visit_var_def(&mut self, _var: &mut VariableDefinition) -> VResult {
+    fn visit_emit(&mut self, _stmt: &Expression) -> VResult {
         Ok(())
     }
 
-    fn visit_return(&mut self, _expr: &mut Option<Expression>) -> VResult {
+    fn visit_var_def(&mut self, _var: &VariableDefinition) -> VResult {
+        Ok(())
+    }
+
+    fn visit_return(&mut self, _expr: &Option<Expression>) -> VResult {
         Ok(())
     }
 
@@ -45,31 +49,35 @@ pub trait Visitor {
         Ok(())
     }
 
-    fn visit_do_while(&mut self, _stmt: &mut Statement, _expr: &mut Expression) -> VResult {
+    fn visit_do_while(&mut self, _stmt: &Statement, _expr: &Expression) -> VResult {
         Ok(())
     }
 
-    fn visit_while(&mut self, _expr: &mut Expression, _stmt: &mut Statement) -> VResult {
+    fn visit_while(&mut self, _expr: &Expression, _stmt: &Statement) -> VResult {
         Ok(())
     }
 
-    fn visit_function(&mut self, _fun: &mut FunctionDefinition) -> VResult {
+    fn visit_function(&mut self, _func: &FunctionDefinition) -> VResult {
         Ok(())
     }
 
-    fn visit_contract(&mut self, _contract: &mut ContractDefinition) -> VResult {
+    fn visit_contract(&mut self, _contract: &ContractDefinition) -> VResult {
         Ok(())
     }
 
-    fn visit_struct(&mut self, _struct: &mut StructDefinition) -> VResult {
+    fn visit_struct(&mut self, _struct: &StructDefinition) -> VResult {
         Ok(())
     }
 
-    fn visit_event(&mut self, _event: &mut EventDefinition) -> VResult {
+    fn visit_event(&mut self, _event: &EventDefinition) -> VResult {
         Ok(())
     }
 
-    fn visit_enum(&mut self, _enum: &mut EnumDefinition) -> VResult {
+    fn visit_event_parameter(&mut self, _param: &EventParameter) -> VResult {
+        Ok(())
+    }
+
+    fn visit_enum(&mut self, _enum: &EnumDefinition) -> VResult {
         Ok(())
     }
 
@@ -77,15 +85,19 @@ pub trait Visitor {
         Ok(())
     }
 
-    fn visit_using(&mut self, _using: &mut Using) -> VResult {
+    fn visit_using(&mut self, _using: &Using) -> VResult {
         Ok(())
     }
 
-    fn visit_import(&mut self, _import: &mut Import) -> VResult {
+    fn visit_import(&mut self, _import: &Import) -> VResult {
         Ok(())
     }
 
-    fn visit_pragma(&mut self, _ident: &mut Identifier, _str: &mut StringLiteral) -> VResult {
+    fn visit_pragma(&mut self, _ident: &Identifier, _str: &StringLiteral) -> VResult {
+        Ok(())
+    }
+
+    fn visit_ident(&mut self, _ident: &Identifier) -> VResult {
         Ok(())
     }
 
@@ -94,11 +106,11 @@ pub trait Visitor {
 
 /// The trait for solidity AST nodes
 pub trait Visitable {
-    fn visit(&mut self, v: &mut dyn Visitor) -> VResult;
+    fn visit(&self, v: &mut impl Visitor) -> VResult;
 }
 
 impl<T: Visitable> Visitable for Vec<T> {
-    fn visit(&mut self, v: &mut dyn Visitor) -> VResult {
+    fn visit(&self, v: &mut impl Visitor) -> VResult {
         for t in self {
             t.visit(v)?;
         }
@@ -107,15 +119,15 @@ impl<T: Visitable> Visitable for Vec<T> {
 }
 
 impl Visitable for SourceUnit {
-    fn visit(&mut self, v: &mut dyn Visitor) -> VResult {
-        self.0.visit(v)
+    fn visit(&self, v: &mut impl Visitor) -> VResult {
+        v.visit_source_unit(self)
     }
 }
 
 // TODO implement Visitable for all AST nodes
 
 impl Visitable for SourceUnitPart {
-    fn visit(&mut self, v: &mut dyn Visitor) -> VResult {
+    fn visit(&self, v: &mut impl Visitor) -> VResult {
         match self {
             SourceUnitPart::ContractDefinition(contract) => v.visit_contract(contract),
             SourceUnitPart::PragmaDirective(_, ident, str) => v.visit_pragma(ident, str),
@@ -131,7 +143,7 @@ impl Visitable for SourceUnitPart {
 }
 
 impl Visitable for ContractPart {
-    fn visit(&mut self, v: &mut dyn Visitor) -> VResult {
+    fn visit(&self, v: &mut impl Visitor) -> VResult {
         match self {
             ContractPart::StructDefinition(structure) => v.visit_struct(structure),
             ContractPart::EventDefinition(event) => v.visit_event(event),
@@ -141,5 +153,11 @@ impl Visitable for ContractPart {
             ContractPart::StraySemicolon(_) => v.visit_stray(),
             ContractPart::Using(using) => v.visit_using(using),
         }
+    }
+}
+
+impl Visitable for Identifier {
+    fn visit(&self, v: &mut impl Visitor) -> VResult {
+        v.visit_ident(self)
     }
 }
