@@ -3,7 +3,6 @@
 use std::fmt::Write;
 
 use indent_write::fmt::IndentWriter;
-use itertools::Itertools;
 use solang::parser::pt::{
     ContractDefinition, EnumDefinition, Identifier, SourceUnit, StringLiteral,
 };
@@ -69,7 +68,7 @@ impl<'a, W: Write> Formatter<'a, W> {
     /// Is length of the line consisting of `items` separated by `separator` greater
     /// than `config.line_length`
     fn is_separated_multiline(&self, items: &[String], separator: impl AsRef<str>) -> bool {
-        items.iter().join(separator.as_ref()).len() > self.config.line_length
+        items.join(separator.as_ref()).len() > self.config.line_length
     }
 
     /// Write `items` separated by `separator` with respect to `config.line_length` setting
