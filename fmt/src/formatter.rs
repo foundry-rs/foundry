@@ -68,14 +68,14 @@ impl<'a, W: Write> Formatter<'a, W> {
 
     /// Is length of the line consisting of `items` separated by `separator` greater
     /// than `config.line_length`
-    fn is_separated_multiline(&self, items: &Vec<String>, separator: impl AsRef<str>) -> bool {
+    fn is_separated_multiline(&self, items: &[String], separator: impl AsRef<str>) -> bool {
         items.iter().join(separator.as_ref()).len() > self.config.line_length
     }
 
     /// Write `items` separated by `separator` with respect to `config.line_length` setting
     fn write_separated(
         &mut self,
-        items: &Vec<String>,
+        items: &[String],
         separator: impl AsRef<str>,
     ) -> std::fmt::Result {
         let mut line_length = 0;
