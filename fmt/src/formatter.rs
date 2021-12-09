@@ -10,6 +10,23 @@ use solang::parser::pt::{
 
 use crate::visit::{VResult, Visitable, Visitor};
 
+/// Contains the config and rule set
+#[derive(Debug, Clone)]
+pub struct FormatterConfig {
+    /// Maximum line length where formatter will try to wrap the line
+    pub line_length: usize,
+    /// Number of spaces per indentation level
+    pub tab_width: usize,
+    /// Print spaces between brackets
+    pub bracket_spacing: bool,
+}
+
+impl Default for FormatterConfig {
+    fn default() -> Self {
+        FormatterConfig { line_length: 80, tab_width: 4, bracket_spacing: false }
+    }
+}
+
 /// A solidity formatter
 pub struct Formatter<'a, W> {
     config: FormatterConfig,
@@ -31,22 +48,54 @@ impl<'a, W: Write> Formatter<'a, W> {
         self.level = self.level.saturating_sub(level)
     }
 
-    /// Respects the `config.bracket_spacing` setting:
+    /// Write opening bracket with respect to `config.bracket_spacing` setting:
     /// `"{ "` if `true`, `"{"` if `false`
     fn write_opening_bracket(&mut self) -> std::fmt::Result {
         self.write_str(if self.config.bracket_spacing { "{ " } else { "{" })
     }
 
-    /// Respects the `config.bracket_spacing` setting:
+    /// Write closing bracket with respect to `config.bracket_spacing` setting:
     /// `" }"` if `true`, `"}"` if `false`
     fn write_closing_bracket(&mut self) -> std::fmt::Result {
         self.write_str(if self.config.bracket_spacing { " }" } else { "}" })
     }
 
-    /// Respects the `config.bracket_spacing` setting:
+    /// Write empty brackets with respect to `config.bracket_spacing` setting:
     /// `"{ }"` if `true`, `"{}"` if `false`
     fn write_empty_brackets(&mut self) -> std::fmt::Result {
         self.write_str(if self.config.bracket_spacing { "{ }" } else { "{}" })
+    }
+
+    /// Is length of the line consisting of `items` separated by `separator` greater
+    /// than `config.line_length`
+    fn is_separated_multiline(&self, items: &Vec<String>, separator: impl AsRef<str>) -> bool {
+        items.iter().join(separator.as_ref()).len() > self.config.line_length
+    }
+
+    /// Write `items` separated by `separator` with respect to `config.line_length` setting
+    fn write_separated(
+        &mut self,
+        items: &Vec<String>,
+        separator: impl AsRef<str>,
+    ) -> std::fmt::Result {
+        let mut line_length = 0;
+
+        for (i, item) in items.iter().enumerate() {
+            let separated_item =
+                format!("{}{}", if i == 0 { "" } else { separator.as_ref() }, item);
+
+            if line_length + separated_item.len() > self.config.line_length
+                && separated_item.len() < self.config.line_length
+            {
+                write!(self, "{}\n{}", separator.as_ref().trim_end(), item)?;
+                line_length = item.len();
+            } else {
+                write!(self, "{}", separated_item)?;
+                line_length += separated_item.len();
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -137,20 +186,36 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         from: &mut StringLiteral,
     ) -> VResult {
         write!(self, "import ")?;
-        self.write_opening_bracket()?;
-        write!(
-            self,
-            "{}",
-            imports
-                .iter()
-                .map(|(ident, alias)| format!(
+
+        let imports = imports
+            .iter()
+            .map(|(ident, alias)| {
+                format!(
                     "{}{}",
                     ident.name,
                     alias.as_ref().map_or("".to_string(), |alias| format!(" as {}", alias.name))
-                ))
-                .join(", ")
-        )?;
-        self.write_closing_bracket()?;
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let multiline = self.is_separated_multiline(&imports, ", ");
+
+        if multiline {
+            writeln!(self, "{{")?;
+            self.indent(1);
+        } else {
+            self.write_opening_bracket()?;
+        }
+
+        self.write_separated(&imports, ", ")?;
+
+        if multiline {
+            self.dedent(1);
+            write!(self, "\n}}")?;
+        } else {
+            self.write_closing_bracket()?;
+        }
+
         writeln!(self, " from \"{}\";", from.string)?;
 
         Ok(())
@@ -183,21 +248,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 }
 
-/// Contains the config and rule set
-#[derive(Debug, Clone)]
-pub struct FormatterConfig {
-    /// Number of spaces per indentation level
-    pub tab_width: usize,
-    /// Print spaces between brackets
-    pub bracket_spacing: bool,
-}
-
-impl Default for FormatterConfig {
-    fn default() -> Self {
-        FormatterConfig { tab_width: 4, bracket_spacing: false }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::visit::Visitable;
@@ -206,32 +256,30 @@ mod tests {
 
     fn test_formatter(config: FormatterConfig, source: &str, expected: &str) {
         #[derive(PartialEq, Eq)]
-        #[doc(hidden)]
-        pub struct PrettyString<'a>(pub &'a str);
+        struct PrettyString(String);
 
-        impl<'a> std::fmt::Debug for PrettyString<'a> {
+        impl std::fmt::Debug for PrettyString {
             fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                f.write_str(self.0)
+                f.write_str(&self.0)
             }
         }
 
         let mut source_unit = solang::parser::parse(source, 1).unwrap();
-        let mut formatted = String::new();
-        let mut formatter = Formatter::new(&mut formatted, config);
+        let mut result = String::new();
+        let mut f = Formatter::new(&mut result, config);
 
-        source_unit.visit(&mut formatter).unwrap();
+        source_unit.visit(&mut f).unwrap();
 
-        pretty_assertions::assert_eq!(
-            PrettyString(&formatted),
-            PrettyString(expected.trim_start()),
-            "(formatted == expected)"
-        );
+        let formatted = PrettyString(result);
+        let expected = PrettyString(expected.trim_start().to_string());
+
+        pretty_assertions::assert_eq!(formatted, expected, "(formatted == expected)");
     }
 
     #[test]
     fn contract() {
         test_formatter(
-            FormatterConfig { bracket_spacing: false, ..Default::default() },
+            Default::default(),
             r#"
 contract Empty {
     
@@ -280,7 +328,17 @@ contract Empty { }
             "import \"library.sol\" as file;\n",
         );
         test_formatter(
-            FormatterConfig { bracket_spacing: false, ..Default::default() },
+            FormatterConfig { line_length: 15, ..Default::default() },
+            "import{  symbol1  as   alias,   symbol2, sym3  } from   \"filename\"   ;",
+            r#"
+import {
+    symbol1 as alias,
+    symbol2, sym3
+} from "filename";
+"#,
+        );
+        test_formatter(
+            Default::default(),
             "import{  symbol1  as   alias,   symbol2  } from   \"filename\"   ;",
             "import {symbol1 as alias, symbol2} from \"filename\";\n",
         );
@@ -294,7 +352,7 @@ contract Empty { }
     #[test]
     fn enumeration() {
         test_formatter(
-            FormatterConfig { bracket_spacing: false, ..Default::default() },
+            Default::default(),
             r#"
 enum Empty {
     
