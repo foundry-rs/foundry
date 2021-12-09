@@ -5,7 +5,8 @@ edition = "2021"
 description = "Foundry's solidity formatting and linting support"
 
 [dependencies]
-indenter = { version = "0.3.3", features = ["std"] }
+indent_write = "2.2.0"
+itertools = "0.10.3"
 solang = { git = "https://github.com/hyperledger-labs/solang" }
 
 [dev-dependencies]
