@@ -279,8 +279,9 @@ mod tests {
 
             let precompiles = PRECOMPILES_MAP.clone();
             let mut evm = Executor::new(12_000_000, &cfg, &backend, &precompiles);
-            let (addr, _, _, _) =
-                evm.deploy(Address::zero(), compiled.bin.unwrap().clone(), 0.into()).unwrap();
+            let (addr, _, _, _) = evm
+                .deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into())
+                .unwrap();
 
             let mut runner =
                 ContractRunner::new(&mut evm, compiled.abi.as_ref().unwrap(), addr, None, &[]);
@@ -305,8 +306,9 @@ mod tests {
 
             let precompiles = PRECOMPILES_MAP.clone();
             let mut evm = Executor::new(12_000_000, &cfg, &backend, &precompiles);
-            let (addr, _, _, _) =
-                evm.deploy(Address::zero(), compiled.bin.unwrap().clone(), 0.into()).unwrap();
+            let (addr, _, _, _) = evm
+                .deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into())
+                .unwrap();
 
             let mut runner =
                 ContractRunner::new(&mut evm, compiled.abi.as_ref().unwrap(), addr, None, &[]);
@@ -332,8 +334,9 @@ mod tests {
 
             let precompiles = PRECOMPILES_MAP.clone();
             let mut evm = Executor::new(u64::MAX, &cfg, &backend, &precompiles);
-            let (addr, _, _, _) =
-                evm.deploy(Address::zero(), compiled.bin.unwrap().clone(), 0.into()).unwrap();
+            let (addr, _, _, _) = evm
+                .deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into())
+                .unwrap();
 
             let mut runner =
                 ContractRunner::new(&mut evm, compiled.abi.as_ref().unwrap(), addr, None, &[]);
@@ -356,8 +359,9 @@ mod tests {
 
             let precompiles = PRECOMPILES_MAP.clone();
             let mut evm = Executor::new(12_000_000, &cfg, &backend, &precompiles);
-            let (addr, _, _, _) =
-                evm.deploy(Address::zero(), compiled.bin.unwrap().clone(), 0.into()).unwrap();
+            let (addr, _, _, _) = evm
+                .deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into())
+                .unwrap();
 
             let mut runner =
                 ContractRunner::new(&mut evm, compiled.abi.as_ref().unwrap(), addr, None, &[]);
@@ -415,7 +419,7 @@ mod tests {
 
     pub fn test_runner<S: Clone, E: Evm<S>>(mut evm: E, compiled: CompactContractRef) {
         let (addr, _, _, _) =
-            evm.deploy(Address::zero(), compiled.bin.unwrap().clone(), 0.into()).unwrap();
+            evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
 
         let mut runner =
             ContractRunner::new(&mut evm, compiled.abi.as_ref().unwrap(), addr, None, &[]);

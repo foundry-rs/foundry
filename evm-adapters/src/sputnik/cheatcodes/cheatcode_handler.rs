@@ -902,7 +902,7 @@ mod tests {
 
         let compiled = COMPILED.find("DebugLogs").expect("could not find contract");
         let (addr, _, _, _) =
-            evm.deploy(Address::zero(), compiled.bin.unwrap().clone(), 0.into()).unwrap();
+            evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
 
         // after the evm call is done, we call `logs` and print it all to the user
         let (_, _, _, logs) =
@@ -943,7 +943,7 @@ mod tests {
 
         let compiled = COMPILED.find("ConsoleLogs").expect("could not find contract");
         let (addr, _, _, _) =
-            evm.deploy(Address::zero(), compiled.bin.unwrap().clone(), 0.into()).unwrap();
+            evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
 
         // after the evm call is done, we call `logs` and print it all to the user
         let (_, _, _, logs) =
@@ -967,7 +967,7 @@ mod tests {
 
         let compiled = COMPILED.find("DebugLogs").expect("could not find contract");
         let (addr, _, _, _) =
-            evm.deploy(Address::zero(), compiled.bin.unwrap().clone(), 0.into()).unwrap();
+            evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
 
         // after the evm call is done, we call `logs` and print it all to the user
         let (_, _, _, logs) = evm
@@ -992,7 +992,7 @@ mod tests {
 
         let compiled = COMPILED.find("CheatCodes").expect("could not find contract");
         let (addr, _, _, _) =
-            evm.deploy(Address::zero(), compiled.bin.unwrap().clone(), 0.into()).unwrap();
+            evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
 
         let state = evm.state().clone();
         let mut cfg = proptest::test_runner::Config::default();
@@ -1038,7 +1038,7 @@ mod tests {
 
         let compiled = COMPILED.find("CheatCodes").expect("could not find contract");
         let (addr, _, _, _) =
-            evm.deploy(Address::zero(), compiled.bin.unwrap().clone(), 0.into()).unwrap();
+            evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
 
         let err =
             evm.call::<(), _, _>(Address::zero(), addr, "testFFI()", (), 0.into()).unwrap_err();
