@@ -948,7 +948,7 @@ mod tests {
         // after the evm call is done, we call `logs` and print it all to the user
         let (_, _, _, logs) =
             evm.call::<(), _, _>(Address::zero(), addr, "test_log()", (), 0.into()).unwrap();
-        let expected = ["0x1111111111111111111111111111111111111111", "Hi", "Hi, Hi"]
+        let expected = ["0x1111111111111111111111111111111111111111", "Hi", "Hi, Hi", "4"]
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>();

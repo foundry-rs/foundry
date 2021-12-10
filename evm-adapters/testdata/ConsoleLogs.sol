@@ -7,5 +7,6 @@ contract ConsoleLogs {
 		console.log(0x1111111111111111111111111111111111111111);
 		console.log("Hi");
 		console.log("Hi", "Hi");
+		console.log(4);
     }
 }
