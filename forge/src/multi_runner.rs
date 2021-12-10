@@ -59,9 +59,10 @@ impl MultiContractRunnerBuilder {
         // artifacts
         let contracts = output.into_artifacts();
         let contracts: BTreeMap<String, (Abi, Address, Vec<String>)> = contracts
-            .map(|(fname, contract)| {
+            // only take contracts with valid abi and bytecode
+            .filter_map(|(fname, contract)| {
                 let (abi, bytecode) = contract.into_inner();
-                (fname, abi.unwrap(), bytecode.unwrap())
+                abi.and_then(|abi| bytecode.and_then(|bytecode| Some((fname, abi, bytecode))))
             })
             // Only take contracts with empty constructors.
             .filter(|(_, abi, _)| {
