@@ -216,7 +216,14 @@ fn main() -> eyre::Result<()> {
                 std::fs::write(contract_path, include_str!("../../assets/ContractTemplate.t.sol"))?;
 
                 // sets up git
-                Command::new("git").arg("init").current_dir(&root).spawn()?.wait()?;
+                let is_git = Command::new("git")
+                    .args(&["rev-parse,--is-inside-work-tree"])
+                    .current_dir(&root)
+                    .spawn()?
+                    .wait()?;
+                if !is_git.success() {
+                    Command::new("git").arg("init").current_dir(&root).spawn()?.wait()?;
+                }
                 Command::new("git").args(&["add", "."]).current_dir(&root).spawn()?.wait()?;
                 Command::new("git")
                     .args(&["commit", "-m", "chore: forge init"])
