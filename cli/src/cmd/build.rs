@@ -9,7 +9,7 @@ use ethers::{
 };
 use std::{path::PathBuf, str::FromStr};
 
-use crate::Cmd;
+use crate::{utils::find_git_root_path, Cmd};
 #[cfg(feature = "evmodin-evm")]
 use evmodin::util::mocked_host::MockedHost;
 #[cfg(feature = "evmodin-evm")]
@@ -86,7 +86,9 @@ impl std::convert::TryFrom<&BuildArgs> for Project {
     /// Defaults to converting to DAppTools-style repo layout, but can be customized.
     fn try_from(opts: &BuildArgs) -> eyre::Result<Project> {
         // 1. Set the root dir
-        let root = opts.root.clone().unwrap_or_else(|| std::env::current_dir().unwrap());
+        let root = opts.root.clone().unwrap_or_else(|| {
+            find_git_root_path().unwrap_or_else(|_| std::env::current_dir().unwrap())
+        });
         let root = std::fs::canonicalize(&root)?;
 
         // 2. Set the contracts dir

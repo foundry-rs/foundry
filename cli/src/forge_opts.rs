@@ -1,8 +1,9 @@
+use structopt::StructOpt;
+
+use ethers::types::Address;
 use std::{path::PathBuf, str::FromStr};
 
 use crate::cmd::build::BuildArgs;
-use ethers::types::Address;
-use structopt::StructOpt;
 
 use crate::cmd::{snapshot, test};
 
