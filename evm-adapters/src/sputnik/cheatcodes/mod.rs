@@ -81,7 +81,8 @@ ethers::contract::abigen!(
 
 ethers::contract::abigen!(Console, "./testdata/console.json",);
 
-// Manually implement log(uint), see https://github.com/gakonst/foundry/issues/197
+// Manually implement log(uint) and log(int),
+// see https://github.com/gakonst/foundry/issues/197
 pub struct LogUint {
     pub p_0: ethers::core::types::U256,
 }
@@ -169,6 +170,99 @@ impl ethers::core::abi::AbiEncode for LogUint {
     }
 }
 impl ::std::fmt::Display for LogUint {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        write!(f, "{:?}", self.p_0)?;
+        Ok(())
+    }
+}
+
+pub struct LogInt {
+    pub p_0: ethers::core::types::I256,
+}
+impl ethers::core::abi::AbiType for LogInt {
+    fn param_type() -> ethers::core::abi::ParamType {
+        ethers::core::abi::ParamType::Tuple(<[_]>::into_vec(Box::new([
+            <ethers::core::types::I256 as ethers::core::abi::AbiType>::param_type(),
+        ])))
+    }
+}
+impl ethers::core::abi::AbiArrayType for LogInt {}
+impl ethers::core::abi::Tokenizable for LogInt
+where
+    ethers::core::types::I256: ethers::core::abi::Tokenize,
+{
+    fn from_token(
+        token: ethers::core::abi::Token,
+    ) -> Result<Self, ethers::core::abi::InvalidOutputType>
+    where
+        Self: Sized,
+    {
+        if let ethers::core::abi::Token::Tuple(tokens) = token {
+            if tokens.len() != 1 {
+                return Err(ethers::core::abi::InvalidOutputType(::std::format!(
+                    "Expected {} tokens, got {}: {:?}",
+                    1,
+                    tokens.len(),
+                    tokens
+                )));
+            }
+
+            let mut iter = tokens.into_iter();
+            Ok(Self {
+                p_0: ethers::core::abi::Tokenizable::from_token(iter.next().unwrap())?,
+            })
+        } else {
+            Err(ethers::core::abi::InvalidOutputType(::std::format!(
+                "Expected Tuple, got {:?}",
+                token
+            )))
+        }
+    }
+    fn into_token(self) -> ethers::core::abi::Token {
+        ethers::core::abi::Token::Tuple(<[_]>::into_vec(Box::new([self.p_0.into_token()])))
+    }
+}
+impl ethers::core::abi::TokenizableItem for LogInt where
+    ethers::core::types::I256: ethers::core::abi::Tokenize
+{
+}
+impl ethers::contract::EthCall for LogInt {
+    fn function_name() -> ::std::borrow::Cow<'static, str> {
+        "log".into()
+    }
+    fn selector() -> ethers::core::types::Selector {
+        [78, 12, 29, 29]
+    }
+    fn abi_signature() -> ::std::borrow::Cow<'static, str> {
+        "log(int)".into()
+    }
+}
+impl ethers::core::abi::AbiDecode for LogInt {
+    fn decode(bytes: impl AsRef<[u8]>) -> Result<Self, ethers::core::abi::AbiError> {
+        let bytes = bytes.as_ref();
+        if bytes.len() < 4 || bytes[..4] != <Self as ethers::contract::EthCall>::selector() {
+            return Err(ethers::contract::AbiError::WrongSelector);
+        }
+        let data_types = [ethers::core::abi::ParamType::Int(256usize)];
+        let data_tokens = ethers::core::abi::decode(&data_types, &bytes[4..])?;
+        Ok(<Self as ethers::core::abi::Tokenizable>::from_token(
+            ethers::core::abi::Token::Tuple(data_tokens),
+        )?)
+    }
+}
+impl ethers::core::abi::AbiEncode for LogInt {
+    fn encode(self) -> ::std::vec::Vec<u8> {
+        let tokens = ethers::core::abi::Tokenize::into_tokens(self);
+        let selector = <Self as ethers::contract::EthCall>::selector();
+        let encoded = ethers::core::abi::encode(&tokens);
+        selector
+            .iter()
+            .copied()
+            .chain(encoded.into_iter())
+            .collect()
+    }
+}
+impl ::std::fmt::Display for LogInt {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         write!(f, "{:?}", self.p_0)?;
         Ok(())

@@ -8,5 +8,6 @@ contract ConsoleLogs {
 		console.log("Hi");
 		console.log("Hi", "Hi");
 		console.log(4);
+		console.logInt(-1);
     }
 }

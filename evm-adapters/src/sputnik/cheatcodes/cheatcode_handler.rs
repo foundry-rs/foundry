@@ -1,7 +1,7 @@
 //! Hooks to EVM execution
 use super::{
     backend::CheatcodeBackend, memory_stackstate_owned::MemoryStackStateOwned, ConsoleCalls,
-    HEVMCalls, HevmConsoleEvents, LogUint,
+    HEVMCalls, HevmConsoleEvents, LogInt, LogUint,
 };
 use crate::{
     sputnik::{Executor, SputnikExecutor},
@@ -265,6 +265,11 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
 
         if let Ok(uint_decoded) = LogUint::decode(&input) {
             self.console_logs.push(uint_decoded.to_string());
+            return Capture::Exit((ExitReason::Succeed(ExitSucceed::Stopped), vec![]))
+        };
+
+        if let Ok(int_decoded) = LogInt::decode(&input) {
+            self.console_logs.push(int_decoded.to_string());
             return Capture::Exit((ExitReason::Succeed(ExitSucceed::Stopped), vec![]))
         };
 
@@ -954,7 +959,7 @@ mod tests {
         // after the evm call is done, we call `logs` and print it all to the user
         let (_, _, _, logs) =
             evm.call::<(), _, _>(Address::zero(), addr, "test_log()", (), 0.into()).unwrap();
-        let expected = ["0x1111111111111111111111111111111111111111", "Hi", "Hi, Hi", "4"]
+        let expected = ["0x1111111111111111111111111111111111111111", "Hi", "Hi, Hi", "4", "-1"]
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>();
