@@ -269,6 +269,6 @@ mod tests {
     fn can_parse_snapshot_entry() {
         let s = "deposit() (gas: 7222)";
         let entry = SnapshotEntry::from_str(s).unwrap();
-        assert_eq!(entry, SnapshotEntry { signature: "deposit".to_string(), gas_used: 7222 });
+        assert_eq!(entry, SnapshotEntry { signature: "deposit()".to_string(), gas_used: 7222 });
     }
 }

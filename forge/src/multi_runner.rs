@@ -222,6 +222,7 @@ mod tests {
             helpers::{new_backend, new_vicinity},
             Executor, PRECOMPILES_MAP,
         };
+        use std::collections::HashMap;
 
         #[test]
         fn test_sputnik_debug_logs() {
