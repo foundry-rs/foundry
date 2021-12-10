@@ -1,6 +1,7 @@
 use structopt::StructOpt;
 
 use ethers::{
+    prelude::{artifacts::Settings, SolcConfig},
     solc::{remappings::Remapping, Project, ProjectPathsConfig},
     types::{Address, U256},
 };
@@ -274,8 +275,13 @@ impl std::convert::TryFrom<&BuildOpts> for Project {
         let paths = paths_builder.build()?;
 
         // build the project w/ allowed paths = root and all the libs
-        let mut builder =
-            Project::builder().paths(paths).allowed_path(&root).allowed_paths(lib_paths);
+        let mut solc_settings = Settings::default();
+        solc_settings.evm_version = Some(opts.evm_version.into());
+        let mut builder = Project::builder()
+            .paths(paths)
+            .allowed_path(&root)
+            .allowed_paths(lib_paths)
+            .solc_config(SolcConfig::builder().settings(solc_settings).build()?);
 
         if opts.no_auto_detect {
             builder = builder.no_auto_detect();
@@ -359,10 +365,32 @@ impl FromStr for EvmType {
 
 #[derive(Clone, Debug)]
 pub enum EvmVersion {
-    Frontier,
+    Homestead,
+    TangerineWhistle,
+    SpuriousDragon,
+    Byzantium,
+    Constantinople,
+    Petersburg,
     Istanbul,
     Berlin,
     London,
+}
+
+impl Into<ethers::prelude::EvmVersion> for EvmVersion {
+    fn into(self) -> ethers::prelude::EvmVersion {
+        use EvmVersion::*;
+        match self {
+            Homestead => ethers::prelude::EvmVersion::Homestead,
+            TangerineWhistle => ethers::prelude::EvmVersion::TangerineWhistle,
+            SpuriousDragon => ethers::prelude::EvmVersion::SpuriousDragon,
+            Byzantium => ethers::prelude::EvmVersion::Byzantium,
+            Constantinople => ethers::prelude::EvmVersion::Constantinople,
+            Petersburg => ethers::prelude::EvmVersion::Petersburg,
+            Istanbul => ethers::prelude::EvmVersion::Istanbul,
+            Berlin => ethers::prelude::EvmVersion::Berlin,
+            London => ethers::prelude::EvmVersion::London,
+        }
+    }
 }
 
 #[cfg(feature = "sputnik-evm")]
@@ -401,7 +429,11 @@ impl FromStr for EvmVersion {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         use EvmVersion::*;
         Ok(match s.to_lowercase().as_str() {
-            "frontier" => Frontier,
+            "homestead" => Homestead,
+            "tangerineWhistle" => TangerineWhistle,
+            "spuriousDragon" => SpuriousDragon,
+            "constantinople" => Constantinople,
+            "petersburg" => Petersburg,
             "istanbul" => Istanbul,
             "berlin" => Berlin,
             "london" => London,
