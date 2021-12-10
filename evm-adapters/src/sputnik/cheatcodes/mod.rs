@@ -81,7 +81,7 @@ ethers::contract::abigen!(
 
 ethers::contract::abigen!(Console, "./testdata/console.json",);
 
-// Manually implement log(uint), // see https://github.com/gakonst/foundry/issues/197
+// Manually implement log(uint), see https://github.com/gakonst/foundry/issues/197
 pub struct LogUint {
     pub p_0: ethers::core::types::U256,
 }
