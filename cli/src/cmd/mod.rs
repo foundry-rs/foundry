@@ -1,4 +1,4 @@
-//! Subcommands for dapp
+//! Subcommands for forge
 
 pub mod build;
 pub mod snapshot;
