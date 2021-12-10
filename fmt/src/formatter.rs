@@ -4,7 +4,7 @@ use std::fmt::Write;
 
 use indent_write::fmt::IndentWriter;
 use solang::parser::pt::{
-    ContractDefinition, EnumDefinition, Identifier, SourceUnit, StringLiteral,
+    ContractDefinition, EnumDefinition, Identifier, SourceUnit, SourceUnitPart, StringLiteral,
 };
 
 use crate::visit::{VResult, Visitable, Visitor};
@@ -22,21 +22,22 @@ pub struct FormatterConfig {
 
 impl Default for FormatterConfig {
     fn default() -> Self {
-        FormatterConfig { line_length: 80, tab_width: 4, bracket_spacing: false }
+        FormatterConfig { line_length: 79, tab_width: 4, bracket_spacing: false }
     }
 }
 
 /// A solidity formatter
 pub struct Formatter<'a, W> {
+    w: &'a mut W,
     config: FormatterConfig,
     level: usize,
     pending_indent: bool,
-    w: &'a mut W,
+    current_line: usize,
 }
 
 impl<'a, W: Write> Formatter<'a, W> {
     pub fn new(w: &'a mut W, config: FormatterConfig) -> Self {
-        Self { config, level: 0, pending_indent: true, w }
+        Self { w, config, level: 0, pending_indent: true, current_line: 0 }
     }
 
     fn indent(&mut self, level: usize) {
@@ -65,33 +66,37 @@ impl<'a, W: Write> Formatter<'a, W> {
         self.write_str(if self.config.bracket_spacing { "{ }" } else { "{}" })
     }
 
-    /// Is length of the line consisting of `items` separated by `separator` greater
-    /// than `config.line_length`
-    fn is_separated_multiline(&self, items: &[String], separator: impl AsRef<str>) -> bool {
-        items.join(separator.as_ref()).len() > self.config.line_length
+    /// Length of the line consisting of `items` separated by `separator` with respect to
+    /// already written line
+    fn len_indented_with_current(&self, s: &str) -> usize {
+        if self.pending_indent { self.config.tab_width * self.level } else { 0 }
+            .saturating_add(self.current_line)
+            .saturating_add(s.len())
+    }
+
+    /// Is length of the line consisting of `items` separated by `separator` with respect to
+    /// already written line greater than `config.line_length`
+    fn is_separated_multiline(&self, items: &[String], separator: &str) -> bool {
+        self.len_indented_with_current(&items.join(separator)) > self.config.line_length
     }
 
     /// Write `items` separated by `separator` with respect to `config.line_length` setting
     fn write_separated(
         &mut self,
         items: &[String],
-        separator: impl AsRef<str>,
+        separator: &str,
+        multiline: bool,
     ) -> std::fmt::Result {
-        let mut line_length = 0;
+        if multiline {
+            for (i, item) in items.iter().enumerate() {
+                write!(self, "{}", item)?;
 
-        for (i, item) in items.iter().enumerate() {
-            let separated_item =
-                format!("{}{}", if i == 0 { "" } else { separator.as_ref() }, item);
-
-            if line_length + separated_item.len() > self.config.line_length &&
-                separated_item.len() < self.config.line_length
-            {
-                write!(self, "{}\n{}", separator.as_ref().trim_end(), item)?;
-                line_length = item.len();
-            } else {
-                write!(self, "{}", separated_item)?;
-                line_length += separated_item.len();
+                if i != items.len() - 1 {
+                    writeln!(self, "{}", separator.trim_end())?;
+                }
             }
+        } else {
+            write!(self, "{}", items.join(separator))?;
         }
 
         Ok(())
@@ -107,8 +112,12 @@ impl<'a, W: Write> Write for Formatter<'a, W> {
         } else {
             self.w.write_str(s)?;
         }
+        self.current_line += s.len();
 
         self.pending_indent = s.ends_with('\n');
+        if self.pending_indent {
+            self.current_line = 0;
+        }
 
         Ok(())
     }
@@ -119,11 +128,25 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     // TODO implement all visit callback and write the formatted output to the underlying
 
     fn visit_source_unit(&mut self, source_unit: &mut SourceUnit) -> VResult {
+        source_unit.0.sort_by_key(|item| match item {
+            SourceUnitPart::ImportDirective(_, _) => 0,
+            _ => usize::MAX,
+        });
+
         let source_unit_parts = source_unit.0.len();
         for (i, unit) in source_unit.0.iter_mut().enumerate() {
-            unit.visit(self)?;
+            let is_declaration = !matches!(
+                unit,
+                SourceUnitPart::ImportDirective(_, _) | SourceUnitPart::PragmaDirective(_, _, _)
+            );
+            if i != 0 && is_declaration {
+                writeln!(self)?;
+            }
 
-            if i != source_unit_parts - 1 {
+            unit.visit(self)?;
+            writeln!(self)?;
+
+            if i != source_unit_parts - 1 && is_declaration {
                 writeln!(self)?;
             }
         }
@@ -139,10 +162,10 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             writeln!(self, "{{")?;
 
             self.indent(1);
-
             let contract_parts = contract.parts.len();
             for (i, part) in contract.parts.iter_mut().enumerate() {
                 part.visit(self)?;
+                writeln!(self)?;
 
                 if i != contract_parts - 1 {
                     writeln!(self)?;
@@ -152,19 +175,18 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
             write!(self, "}}")?;
         }
-        writeln!(self)?;
 
         Ok(())
     }
 
     fn visit_pragma(&mut self, ident: &mut Identifier, str: &mut StringLiteral) -> VResult {
-        writeln!(self, "pragma {} {};", &ident.name, &str.string)?;
+        write!(self, "pragma {} {};", &ident.name, &str.string)?;
 
         Ok(())
     }
 
     fn visit_import_plain(&mut self, import: &mut StringLiteral) -> VResult {
-        writeln!(self, "import \"{}\";", &import.string)?;
+        write!(self, "import \"{}\";", &import.string)?;
 
         Ok(())
     }
@@ -174,7 +196,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         global: &mut StringLiteral,
         alias: &mut Identifier,
     ) -> VResult {
-        writeln!(self, "import \"{}\" as {};", global.string, alias.name)?;
+        write!(self, "import \"{}\" as {};", global.string, alias.name)?;
 
         Ok(())
     }
@@ -186,7 +208,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     ) -> VResult {
         write!(self, "import ")?;
 
-        let imports = imports
+        let mut imports = imports
             .iter()
             .map(|(ident, alias)| {
                 format!(
@@ -196,6 +218,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 )
             })
             .collect::<Vec<_>>();
+        imports.sort();
 
         let multiline = self.is_separated_multiline(&imports, ", ");
 
@@ -206,7 +229,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             self.write_opening_bracket()?;
         }
 
-        self.write_separated(&imports, ", ")?;
+        self.write_separated(&imports, ", ", multiline)?;
 
         if multiline {
             self.dedent(1);
@@ -215,7 +238,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             self.write_closing_bracket()?;
         }
 
-        writeln!(self, " from \"{}\";", from.string)?;
+        write!(self, " from \"{}\";", from.string)?;
 
         Ok(())
     }
@@ -241,7 +264,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
             write!(self, "}}")?;
         }
-        writeln!(self)?;
 
         Ok(())
     }
@@ -288,6 +310,7 @@ contract Enums {enum Empty {}}
             r#"
 contract Empty {}
 
+
 contract Enums {
     enum Empty {}
 }
@@ -331,8 +354,9 @@ contract Empty { }
             "import{  symbol1  as   alias,   symbol2, sym3  } from   \"filename\"   ;",
             r#"
 import {
+    sym3,
     symbol1 as alias,
-    symbol2, sym3
+    symbol2
 } from "filename";
 "#,
         );
@@ -345,6 +369,22 @@ import {
             FormatterConfig { bracket_spacing: true, ..Default::default() },
             "import{  symbol1  as   alias,   symbol2  } from   \"filename\"   ;",
             "import { symbol1 as alias, symbol2 } from \"filename\";\n",
+        );
+        test_formatter(
+            Default::default(),
+            r#"
+import "library.sol";
+
+contract Empty {}
+
+import "token.sol";
+"#,
+            r#"
+import "library.sol";
+import "token.sol";
+
+contract Empty {}
+"#,
         );
     }
 
@@ -360,6 +400,7 @@ enum States { State1, State2, State3, State4, State5, State6, State7, State8, St
 "#,
             r#"
 enum Empty {}
+
 
 enum States {
     State1,

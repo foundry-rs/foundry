@@ -13,6 +13,38 @@ pub trait Visitor {
         Ok(())
     }
 
+    fn visit_contract(&mut self, _contract: &mut ContractDefinition) -> VResult {
+        Ok(())
+    }
+
+    fn visit_pragma(&mut self, _ident: &mut Identifier, _str: &mut StringLiteral) -> VResult {
+        Ok(())
+    }
+
+    fn visit_import_plain(&mut self, _import: &mut StringLiteral) -> VResult {
+        Ok(())
+    }
+
+    fn visit_import_global(
+        &mut self,
+        _global: &mut StringLiteral,
+        _alias: &mut Identifier,
+    ) -> VResult {
+        Ok(())
+    }
+
+    fn visit_import_renames(
+        &mut self,
+        _imports: &mut Vec<(Identifier, Option<Identifier>)>,
+        _from: &mut StringLiteral,
+    ) -> VResult {
+        Ok(())
+    }
+
+    fn visit_enum(&mut self, _enum: &mut EnumDefinition) -> VResult {
+        Ok(())
+    }
+
     fn visit_stmt(&mut self, _stmt: &mut Statement) -> VResult {
         Ok(())
     }
@@ -61,10 +93,6 @@ pub trait Visitor {
         Ok(())
     }
 
-    fn visit_contract(&mut self, _contract: &mut ContractDefinition) -> VResult {
-        Ok(())
-    }
-
     fn visit_struct(&mut self, _struct: &mut StructDefinition) -> VResult {
         Ok(())
     }
@@ -77,39 +105,11 @@ pub trait Visitor {
         Ok(())
     }
 
-    fn visit_enum(&mut self, _enum: &mut EnumDefinition) -> VResult {
-        Ok(())
-    }
-
     fn visit_stray(&mut self) -> VResult {
         Ok(())
     }
 
     fn visit_using(&mut self, _using: &mut Using) -> VResult {
-        Ok(())
-    }
-
-    fn visit_import_plain(&mut self, _import: &mut StringLiteral) -> VResult {
-        Ok(())
-    }
-
-    fn visit_import_global(
-        &mut self,
-        _global: &mut StringLiteral,
-        _alias: &mut Identifier,
-    ) -> VResult {
-        Ok(())
-    }
-
-    fn visit_import_renames(
-        &mut self,
-        _imports: &mut Vec<(Identifier, Option<Identifier>)>,
-        _from: &mut StringLiteral,
-    ) -> VResult {
-        Ok(())
-    }
-
-    fn visit_pragma(&mut self, _ident: &mut Identifier, _str: &mut StringLiteral) -> VResult {
         Ok(())
     }
 
