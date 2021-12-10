@@ -82,14 +82,13 @@ where
 
     fn block_number(&self) -> U256 {
         self.pin_block
-            .map(|block| match block {
+            .and_then(|block| match block {
                 BlockId::Number(num) => match num {
                     BlockNumber::Number(num) => Some(num.as_u64().into()),
                     _ => None,
                 },
                 BlockId::Hash(_) => None,
             })
-            .flatten()
             .unwrap_or_else(|| self.backend.block_number())
     }
 
