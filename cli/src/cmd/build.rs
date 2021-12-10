@@ -1,7 +1,10 @@
 //! build command
 
 use ethers::{
-    solc::{remappings::Remapping, Project, ProjectPathsConfig},
+    solc::{
+        remappings::Remapping, MinimalCombinedArtifacts, Project, ProjectCompileOutput,
+        ProjectPathsConfig,
+    },
     types::Address,
 };
 use std::{path::PathBuf, str::FromStr};
@@ -18,7 +21,7 @@ use sputnik::Config;
 use structopt::StructOpt;
 
 #[derive(Debug, Clone, StructOpt)]
-pub struct BuildOpts {
+pub struct BuildArgs {
     #[structopt(
         help = "the project's root path, default being the current working directory",
         long
@@ -60,8 +63,9 @@ pub struct BuildOpts {
     pub force: bool,
 }
 
-impl Cmd for BuildOpts {
-    fn run(self) -> eyre::Result<()> {
+impl Cmd for BuildArgs {
+    type Output = ProjectCompileOutput<MinimalCombinedArtifacts>;
+    fn run(self) -> eyre::Result<Self::Output> {
         let project = Project::try_from(&self)?;
         let output = project.compile()?;
         if output.has_compiler_errors() {
@@ -72,15 +76,15 @@ impl Cmd for BuildOpts {
         } else {
             println!("success.");
         }
-        Ok(())
+        Ok(output)
     }
 }
 
-impl std::convert::TryFrom<&BuildOpts> for Project {
+impl std::convert::TryFrom<&BuildArgs> for Project {
     type Error = eyre::Error;
 
     /// Defaults to converting to DAppTools-style repo layout, but can be customized.
-    fn try_from(opts: &BuildOpts) -> eyre::Result<Project> {
+    fn try_from(opts: &BuildArgs) -> eyre::Result<Project> {
         // 1. Set the root dir
         let root = opts.root.clone().unwrap_or_else(|| std::env::current_dir().unwrap());
         let root = std::fs::canonicalize(&root)?;

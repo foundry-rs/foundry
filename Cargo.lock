@@ -1404,6 +1404,7 @@ dependencies = [
  "foundry-utils",
  "git2",
  "glob",
+ "once_cell",
  "proptest",
  "regex",
  "rpassword",

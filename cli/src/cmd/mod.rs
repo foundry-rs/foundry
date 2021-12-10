@@ -7,5 +7,6 @@ pub mod verify;
 
 /// Common trait for all cli commands
 pub trait Cmd: structopt::StructOpt + Sized {
-    fn run(self) -> eyre::Result<()>;
+    type Output;
+    fn run(self) -> eyre::Result<Self::Output>;
 }

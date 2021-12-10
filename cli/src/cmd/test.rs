@@ -1,7 +1,7 @@
 //! Test command
 
 use crate::cmd::{
-    build::{BuildOpts, Env, EvmType},
+    build::{BuildArgs, Env, EvmType},
     Cmd,
 };
 use ansi_term::Colour;
@@ -17,11 +17,11 @@ use evm_adapters::{
 use forge::MultiContractRunnerBuilder;
 use regex::Regex;
 use sputnik::backend::Backend;
-use std::{collections::HashMap, convert::TryFrom, sync::Arc};
+use std::{collections::BTreeMap, convert::TryFrom, sync::Arc};
 use structopt::StructOpt;
 
 #[derive(Debug, Clone, StructOpt)]
-pub struct Test {
+pub struct TestArgs {
     #[structopt(help = "print the test results in json format", long, short)]
     json: bool,
 
@@ -37,7 +37,7 @@ pub struct Test {
     pattern: regex::Regex,
 
     #[structopt(flatten)]
-    opts: BuildOpts,
+    opts: BuildArgs,
 
     #[structopt(
         long,
@@ -89,9 +89,11 @@ pub struct Test {
     allow_failure: bool,
 }
 
-impl Cmd for Test {
-    fn run(self) -> eyre::Result<()> {
-        let Test {
+impl Cmd for TestArgs {
+    type Output = TestOutcome;
+
+    fn run(self) -> eyre::Result<Self::Output> {
+        let TestArgs {
             opts,
             env,
             json,
@@ -159,7 +161,7 @@ impl Cmd for Test {
                 let evm =
                     Executor::new_with_cheatcodes(backend, env.gas_limit, &cfg, &precompiles, ffi);
 
-                test(builder, project, evm, pattern, json, verbosity, allow_failure)?;
+                test(builder, project, evm, pattern, json, verbosity, allow_failure)
             }
             #[cfg(feature = "evmodin-evm")]
             EvmType::EvmOdin => {
@@ -173,14 +175,83 @@ impl Cmd for Test {
                 let host = env.evmodin_state();
 
                 let evm = EvmOdin::new(host, env.gas_limit, revision, NoopTracer);
-                test(builder, project, evm, pattern, json, verbosity, allow_failure)?;
+                test(builder, project, evm, pattern, json, verbosity, allow_failure)
             }
         }
+    }
+}
 
+/// The result of a single test
+#[derive(Debug, Clone)]
+pub struct Test {
+    /// The signature of the test
+    pub signature: String,
+    /// Result of the executed solidity test
+    pub result: forge::TestResult,
+}
+
+impl Test {
+    pub fn gas_used(&self) -> Option<u64> {
+        self.result.gas_used
+    }
+}
+
+/// Represents the bundled results of all tests
+pub struct TestOutcome {
+    /// Whether failures are allowed
+    allow_failure: bool,
+    /// All test results `contract -> (test name -> TestResult)`
+    pub results: BTreeMap<String, BTreeMap<String, forge::TestResult>>,
+}
+
+impl TestOutcome {
+    fn new(
+        results: BTreeMap<String, BTreeMap<String, forge::TestResult>>,
+        allow_failure: bool,
+    ) -> Self {
+        Self { results, allow_failure }
+    }
+
+    /// Iterator over all succeeding tests and their names
+    pub fn successes(&self) -> impl Iterator<Item = (&String, &forge::TestResult)> {
+        self.tests().filter(|(_, t)| t.success)
+    }
+
+    /// Iterator over all failing tests and their names
+    pub fn failures(&self) -> impl Iterator<Item = (&String, &forge::TestResult)> {
+        self.tests().filter(|(_, t)| !t.success)
+    }
+
+    /// Iterator over all tests and their names
+    pub fn tests(&self) -> impl Iterator<Item = (&String, &forge::TestResult)> {
+        self.results.values().flat_map(|tests| tests.iter())
+    }
+
+    pub fn into_tests(self) -> impl Iterator<Item = Test> {
+        self.results
+            .into_values()
+            .flat_map(|tests| tests.into_iter())
+            .map(|(name, result)| Test { signature: name, result })
+    }
+
+    /// Checks if there are any failures and failures are disallowed
+    pub fn ensure_ok(&self) -> eyre::Result<()> {
+        if !self.allow_failure {
+            let failures = self.failures().count();
+            if failures > 0 {
+                let successes = self.successes().count();
+                eyre::bail!(
+                    "Encountered a total of {} failing tests, {} tests succeeded",
+                    failures,
+                    successes
+                );
+            }
+        }
         Ok(())
     }
 }
 
+/// Runs all the tests
 fn test<A: ArtifactOutput + 'static, S: Clone, E: evm_adapters::Evm<S>>(
     builder: MultiContractRunnerBuilder,
     project: Project<A>,
@@ -189,10 +260,8 @@ fn test<A: ArtifactOutput + 'static, S: Clone, E: evm_adapters::Evm<S>>(
     json: bool,
     verbosity: u8,
     allow_failure: bool,
-) -> eyre::Result<HashMap<String, HashMap<String, forge::TestResult>>> {
+) -> eyre::Result<TestOutcome> {
     let mut runner = builder.build(project, evm)?;
-
-    let mut exit_code = 0;
 
     let results = runner.test(pattern)?;
 
@@ -214,8 +283,6 @@ fn test<A: ArtifactOutput + 'static, S: Clone, E: evm_adapters::Evm<S>>(
                 let status = if result.success {
                     Colour::Green.paint("[PASS]")
                 } else {
-                    // if an error is found, return a -1 exit code
-                    exit_code = -1;
                     let txt = match (&result.reason, &result.counterexample) {
                         (Some(ref reason), Some(ref counterexample)) => {
                             format!(
@@ -263,8 +330,5 @@ fn test<A: ArtifactOutput + 'static, S: Clone, E: evm_adapters::Evm<S>>(
         }
     }
 
-    if allow_failure {
-        exit_code = 0;
-    }
-    std::process::exit(exit_code);
+    Ok(TestOutcome::new(results, allow_failure))
 }

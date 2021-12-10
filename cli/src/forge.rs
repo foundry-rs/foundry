@@ -21,7 +21,8 @@ fn main() -> eyre::Result<()> {
     let opts = Opts::from_args();
     match opts.sub {
         Subcommands::Test(cmd) => {
-            cmd.run()?;
+            let outcome = cmd.run()?;
+            outcome.ensure_ok()?;
         }
         Subcommands::Build(cmd) => {
             cmd.run()?;

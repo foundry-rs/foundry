@@ -1,6 +1,6 @@
 use std::{path::PathBuf, str::FromStr};
 
-use crate::cmd::build::BuildOpts;
+use crate::cmd::build::BuildArgs;
 use ethers::types::Address;
 use structopt::StructOpt;
 
@@ -19,11 +19,11 @@ pub struct Opts {
 pub enum Subcommands {
     #[structopt(about = "test your smart contracts")]
     #[structopt(alias = "t")]
-    Test(test::Test),
+    Test(test::TestArgs),
 
     #[structopt(about = "build your smart contracts")]
     #[structopt(alias = "b")]
-    Build(BuildOpts),
+    Build(BuildArgs),
 
     #[structopt(alias = "u", about = "fetches all upstream lib changes")]
     Update {
@@ -96,10 +96,10 @@ pub enum Subcommands {
     },
 
     #[structopt(about = "creates a snapshot of each test's gas usage")]
-    Snapshot(snapshot::Snapshot),
+    Snapshot(snapshot::SnapshotArgs),
 
     #[structopt(about = r#"compares an existing snapshot with the current snapshot."#)]
-    CheckSnapshot(snapshot::CheckSnapshot),
+    CheckSnapshot(snapshot::CheckSnapshotArgs),
 }
 
 /// Represents the common dapp argument pattern for `<path>:<contractname>` where `<path>:` is

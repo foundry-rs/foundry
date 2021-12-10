@@ -12,10 +12,7 @@ use proptest::test_runner::TestRunner;
 use regex::Regex;
 
 use eyre::{Context, Result};
-use std::{
-    collections::{BTreeMap, HashMap},
-    marker::PhantomData,
-};
+use std::{collections::BTreeMap, marker::PhantomData};
 
 /// Builder used for instantiating the multi-contract runner
 #[derive(Debug, Default)]
@@ -129,7 +126,10 @@ where
     E: Evm<S>,
     S: Clone,
 {
-    pub fn test(&mut self, pattern: Regex) -> Result<HashMap<String, HashMap<String, TestResult>>> {
+    pub fn test(
+        &mut self,
+        pattern: Regex,
+    ) -> Result<BTreeMap<String, BTreeMap<String, TestResult>>> {
         // TODO: Convert to iterator, ideally parallel one?
         let contracts = std::mem::take(&mut self.contracts);
         let results = contracts
@@ -140,7 +140,7 @@ where
             })
             .filter_map(|x: Result<_>| x.ok())
             .filter_map(|(name, res)| if res.is_empty() { None } else { Some((name, res)) })
-            .collect::<HashMap<_, _>>();
+            .collect::<BTreeMap<_, _>>();
 
         self.contracts = contracts;
 
@@ -161,7 +161,7 @@ where
         address: Address,
         init_logs: &[String],
         pattern: &Regex,
-    ) -> Result<HashMap<String, TestResult>> {
+    ) -> Result<BTreeMap<String, TestResult>> {
         let mut runner =
             ContractRunner::new(&mut self.evm, contract, address, self.sender, init_logs);
         runner.run_tests(pattern, self.fuzzer.as_mut())
