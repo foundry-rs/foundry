@@ -232,7 +232,7 @@ mod tests {
         let mut evm = Executor::new(12_000_000, &cfg, &backend, &precompiles);
 
         let (addr, _, _, _) =
-            evm.deploy(Address::zero(), compiled.bin.unwrap().clone(), 0.into()).unwrap();
+            evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
 
         let (res, _, _, _) =
             evm.call::<U256, _, _>(Address::zero(), addr, "time()(uint256)", (), 0.into()).unwrap();
