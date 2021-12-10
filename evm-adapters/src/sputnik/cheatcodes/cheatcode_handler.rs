@@ -1,7 +1,7 @@
 //! Hooks to EVM execution
 use super::{
     backend::CheatcodeBackend, memory_stackstate_owned::MemoryStackStateOwned, ConsoleCalls,
-    HEVMCalls, HevmConsoleEvents,
+    HEVMCalls, HevmConsoleEvents, LogUint,
 };
 use crate::{
     sputnik::{Executor, SputnikExecutor},
@@ -262,6 +262,12 @@ fn evm_error(retdata: &str) -> Capture<(ExitReason, Vec<u8>), Infallible> {
 impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> {
     /// Given a transaction's calldata, it tries to parse it a console call and print the call
     fn console_log(&mut self, input: Vec<u8>) -> Capture<(ExitReason, Vec<u8>), Infallible> {
+
+        if let Ok(uint_decoded) = LogUint::decode(&input) {
+            self.console_logs.push(uint_decoded.to_string());
+            return Capture::Exit((ExitReason::Succeed(ExitSucceed::Stopped), vec![]))
+        };
+
         let decoded = match ConsoleCalls::decode(&input) {
             Ok(inner) => inner,
             Err(err) => return evm_error(&err.to_string()),
