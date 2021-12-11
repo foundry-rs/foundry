@@ -48,8 +48,9 @@ pub fn dapp_json_path() -> PathBuf {
 /// Tries to extract the `Contract` in the `DAPP_JSON` file
 pub fn find_dapp_json_contract(path: &str, name: &str) -> eyre::Result<Contract> {
     let dapp_json = dapp_json_path();
-    let mut value: serde_json::Value = serde_json::from_reader(std::fs::File::open(&dapp_json)?)
-        .wrap_err("Failed to read DAPP_JSON artifacts")?;
+    let file = std::io::BufReader::new(std::fs::File::open(&dapp_json)?);
+    let mut value: serde_json::Value =
+        serde_json::from_reader(file).wrap_err("Failed to read DAPP_JSON artifacts")?;
 
     let contracts = value["contracts"]
         .as_object_mut()
@@ -69,8 +70,8 @@ pub fn find_dapp_json_contract(path: &str, name: &str) -> eyre::Result<Contract>
     Ok(serde_json::from_value(contract)?)
 }
 
-pub fn cleanup(root: PathBuf) -> eyre::Result<()> {
-    std::fs::remove_dir_all(root.join("cache"))?;
-    std::fs::remove_dir_all(root.join("out"))?;
-    Ok(())
+pub fn find_git_root_path() -> eyre::Result<PathBuf> {
+    let repo = git2::Repository::discover(".").wrap_err("Failed to find git root path")?;
+
+    Ok(repo.path().parent().unwrap().to_path_buf())
 }

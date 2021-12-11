@@ -115,7 +115,10 @@ pub enum Subcommands {
         about = "prints the automatically inferred remappings for this repository"
     )]
     Remappings {
-        #[structopt(help = "the project's root path, default being the current directory", long)]
+        #[structopt(
+            help = "the project's root path, default being the current working directory",
+            long
+        )]
         root: Option<PathBuf>,
         #[structopt(help = "the paths where your libraries are installed", long)]
         lib_paths: Vec<PathBuf>,
@@ -139,9 +142,9 @@ pub enum Subcommands {
         verify: bool,
     },
 
-    #[structopt(alias = "i", about = "initializes a new forge repository")]
+    #[structopt(alias = "i", about = "initializes a new forge sample repository")]
     Init {
-        #[structopt(help = "the project's root path, default being the current directory")]
+        #[structopt(help = "the project's root path, default being the current working directory")]
         root: Option<PathBuf>,
         #[structopt(help = "optional solidity template to start from", long, short)]
         template: Option<String>,
@@ -154,7 +157,10 @@ pub enum Subcommands {
 
     #[structopt(about = "removes the build artifacts and cache directories")]
     Clean {
-        #[structopt(help = "the project's root path, default being the current directory", long)]
+        #[structopt(
+            help = "the project's root path, default being the current working directory",
+            long
+        )]
         root: Option<PathBuf>,
     },
 }
@@ -206,7 +212,9 @@ impl std::convert::TryFrom<&BuildOpts> for Project {
     /// Defaults to converting to DAppTools-style repo layout, but can be customized.
     fn try_from(opts: &BuildOpts) -> eyre::Result<Project> {
         // 1. Set the root dir
-        let root = opts.root.clone().unwrap_or_else(|| std::env::current_dir().unwrap());
+        let root = opts.root.clone().unwrap_or_else(|| {
+            find_git_root_path().unwrap_or_else(|_| std::env::current_dir().unwrap())
+        });
         let root = std::fs::canonicalize(&root)?;
 
         // 2. Set the contracts dir
@@ -280,7 +288,7 @@ impl std::convert::TryFrom<&BuildOpts> for Project {
         // if `--force` is provided, it proceeds to remove the cache
         // and recompile the contracts.
         if opts.force {
-            crate::utils::cleanup(root)?;
+            project.cleanup()?;
         }
 
         Ok(project)
@@ -289,7 +297,10 @@ impl std::convert::TryFrom<&BuildOpts> for Project {
 
 #[derive(Debug, StructOpt)]
 pub struct BuildOpts {
-    #[structopt(help = "the project's root path, default being the current directory", long)]
+    #[structopt(
+        help = "the project's root path, default being the current working directory",
+        long
+    )]
     pub root: Option<PathBuf>,
 
     #[structopt(
@@ -458,6 +469,7 @@ pub struct Env {
 #[cfg(feature = "sputnik-evm")]
 use sputnik::backend::MemoryVicinity;
 
+use crate::utils::find_git_root_path;
 #[cfg(feature = "evmodin-evm")]
 use evmodin::util::mocked_host::MockedHost;
 

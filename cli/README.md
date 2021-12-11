@@ -24,8 +24,10 @@ FLAGS:
 
 SUBCOMMANDS:
     build              build your smart contracts
+    clean              removes the build artifacts and cache directories completions
     create             deploy a compiled contract
     help               Prints this message or the help of the given subcommand(s)
+    init               initializes a new forge sample repository
     install            installs one or more dependencies as git submodules
     remappings         prints the automatically inferred remappings for this repository
     test               test your smart contracts
@@ -48,6 +50,7 @@ USAGE:
     forge build [FLAGS] [OPTIONS]
 
 FLAGS:
+        --force             force recompilation of the project, deletes the cache and artifacts folders
     -h, --help              Prints help information
         --no-auto-detect    if set to true, skips auto-detecting solc and uses what is in the user's $PATH
     -V, --version           Prints version information
@@ -60,8 +63,7 @@ OPTIONS:
     -o, --out <out-path>                     path to where the contract artifacts are stored
     -r, --remappings <remappings>...         the remappings
         --remappings-env <remappings-env>     [env: DAPP_REMAPPINGS=]
-        --root <root>                        the project's root path, default being the current directory [default:
-                                             std::env::current_dir().unwrap()]
+        --root <root>                        the project's root path, default being the current working directory
 ```
 
 By default, it will auto-detect the solc pragma version requirement per-file and
@@ -71,7 +73,7 @@ that satisfies the requirement, (e.g. `pragma solidity >=0.7.0 <0.8.0` will use
 `forge build --no-auto-detect`, and it'll use whichever `solc` version is in
 your `$PATH`.
 
-The project's root directory defaults to the current directory, assuming
+The project's root directory defaults to the current working directory, assuming
 contracts are under `src/` and `lib/`, but can also be configured via the
 `--root`, `--lib-paths` and `--contracts` arguments. The contracts and libraries
 directories are assumed to be relative to the project root, for example
@@ -112,12 +114,16 @@ USAGE:
 
 FLAGS:
         --ffi               enables the FFI cheatcode
+        --force             force recompilation of the project, deletes the cache and artifacts folders
     -h, --help              Prints help information
     -j, --json              print the test results in json format
         --no-auto-detect    if set to true, skips auto-detecting solc and uses what is in the user's $PATH
     -V, --version           Prints version information
 
 OPTIONS:
+        --allow-failure <allow-failure>
+            if set to true, the process will exit with an exit code = 0, even if the tests fail [env:
+            FORGE_ALLOW_FAILURE=]
         --block-base-fee-per-gas <block-base-fee-per-gas>    the base fee in a block [default: 0]
         --block-coinbase <block-coinbase>
             the block.coinbase value during EVM execution [default: 0x0000000000000000000000000000000000000000]
@@ -157,7 +163,7 @@ OPTIONS:
     -r, --remappings <remappings>...                         the remappings
         --remappings-env <remappings-env>                     [env: DAPP_REMAPPINGS=]
         --root <root>
-            the project's root path, default being the current directory [default: std::env::current_dir().unwrap()]
+            the project's root path, default being the current working directory
 
         --sender <sender>
             the address which will be executing all tests [env: DAPP_TEST_ADDRESS=]  [default:
