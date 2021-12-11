@@ -35,6 +35,7 @@ pub struct SnapshotArgs {
     config: SnapshotConfig,
     #[structopt(
         help = "Compare against a snapshot and display changes from the snapshot. Takes an optional snapshot file, [default: .gas-snapshot]",
+        conflicts_with = "snap",
         long
     )]
     diff: Option<Option<PathBuf>>,
