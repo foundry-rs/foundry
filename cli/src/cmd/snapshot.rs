@@ -5,9 +5,11 @@ use crate::cmd::{
     test::{Test, TestOutcome},
     Cmd,
 };
+use ansi_term::Colour;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::{
+    cmp::Ordering,
     collections::HashMap,
     fmt::Write,
     fs,
@@ -243,22 +245,49 @@ fn diff(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> eyre::Result<()> {
     let mut overall_gas_change = 0i128;
     let mut overall_gas_diff = 0f64;
 
-    diffs.sort_by(|a, b| a.gas_diff().partial_cmp(&b.gas_diff()).unwrap());
+    diffs.sort_by(|a, b| {
+        a.gas_diff().abs().partial_cmp(&b.gas_diff().abs()).unwrap_or_else(|| Ordering::Equal)
+    });
 
     for diff in diffs {
         let gas_change = diff.gas_change();
         overall_gas_change += gas_change;
         let gas_diff = diff.gas_diff();
         overall_gas_diff += gas_diff;
-        println!("{} (gas: {} ({:.3}%)) ", diff.signature, gas_change, gas_diff);
+        println!(
+            "{} (gas: {} ({})) ",
+            diff.signature,
+            fmt_change(gas_change),
+            fmt_pct_change(gas_diff)
+        );
     }
 
-    let is_pos = if overall_gas_change > 0 { "+" } else { "" };
     println!(
-        "Overall gas change: {}{} ({}{:.3}%)",
-        is_pos, overall_gas_change, is_pos, overall_gas_diff
+        "Overall gas change: {} ({})",
+        fmt_change(overall_gas_change),
+        fmt_pct_change(overall_gas_diff)
     );
     Ok(())
+}
+
+fn fmt_pct_change(change: f64) -> String {
+    match change.partial_cmp(&0.0).unwrap_or_else(|| Ordering::Equal) {
+        Ordering::Less => Colour::Green.paint(format!("{:.3}%", change)).to_string(),
+        Ordering::Equal => {
+            format!("{:.3}%", change)
+        }
+        Ordering::Greater => Colour::Red.paint(format!("{:.3}%", change)).to_string(),
+    }
+}
+
+fn fmt_change(change: i128) -> String {
+    match change.cmp(&0) {
+        Ordering::Less => Colour::Green.paint(format!("{}", , change)).to_string(),
+        Ordering::Equal => {
+            format!("{}", change)
+        }
+        Ordering::Greater => Colour::Red.paint(format!("{}", change)).to_string(),
+    }
 }
 
 #[cfg(test)]
