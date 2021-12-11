@@ -1216,7 +1216,7 @@ mod tests {
 
         let compiled = COMPILED.find("Trace").expect("could not find contract");
         let (addr, _, _, _) =
-            evm.deploy(Address::zero(), compiled.bin.unwrap().clone(), 0.into()).unwrap();
+            evm.deploy(Address::zero(), compiled.bin.unwrap().clone().into_bytes().expect("shouldn't be linked"), 0.into()).unwrap();
 
         // after the evm call is done, we call `logs` and print it all to the user
         let (_, _, _, logs) = evm
@@ -1234,7 +1234,7 @@ mod tests {
             "Trace".to_string(),
             (
                 compiled.abi.expect("No abi").clone(),
-                compiled.bin_runtime.expect("No runtime").to_vec(),
+                compiled.bin_runtime.expect("No runtime").clone().into_bytes().expect("Linking?").to_vec(),
             ),
         );
         let compiled = COMPILED.find("RecursiveCall").expect("could not find contract");
@@ -1242,7 +1242,7 @@ mod tests {
             "RecursiveCall".to_string(),
             (
                 compiled.abi.expect("No abi").clone(),
-                compiled.bin_runtime.expect("No runtime").to_vec(),
+                compiled.bin_runtime.expect("No runtime").clone().into_bytes().expect("Linking?").to_vec(),
             ),
         );
         evm.state().trace.pretty_print(0, &mapping, &evm, "".to_string());
@@ -1262,7 +1262,7 @@ mod tests {
 
         let compiled = COMPILED.find("Trace").expect("could not find contract");
         let (addr, _, _, _) =
-            evm.deploy(Address::zero(), compiled.bin.unwrap().clone(), 0.into()).unwrap();
+            evm.deploy(Address::zero(), compiled.bin.unwrap().clone().into_bytes().expect("shouldn't be linked"), 0.into()).unwrap();
 
         // after the evm call is done, we call `logs` and print it all to the user
         let (_, _, _, logs) = evm
@@ -1280,7 +1280,7 @@ mod tests {
             "Trace".to_string(),
             (
                 compiled.abi.expect("No abi").clone(),
-                compiled.bin_runtime.expect("No runtime").to_vec(),
+                compiled.bin_runtime.expect("No runtime").clone().into_bytes().expect("Linking?").to_vec()
             ),
         );
         let compiled = COMPILED.find("RecursiveCall").expect("could not find contract");
@@ -1288,7 +1288,7 @@ mod tests {
             "RecursiveCall".to_string(),
             (
                 compiled.abi.expect("No abi").clone(),
-                compiled.bin_runtime.expect("No runtime").to_vec(),
+                compiled.bin_runtime.expect("No runtime").clone().into_bytes().expect("Linking?").to_vec()
             ),
         );
         evm.state().trace.pretty_print(0, &mapping, &evm, "".to_string());
