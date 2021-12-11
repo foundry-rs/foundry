@@ -248,7 +248,12 @@ impl<'a, 'b, B: Backend, P: PrecompileSet>
 
         // create the executor and wrap it with the cheatcode handler
         let executor = StackExecutor::new_with_precompiles(state, config, precompiles);
-        let executor = CheatcodeHandler { handler: executor, enable_ffi, enable_trace, console_logs: Vec::new() };
+        let executor = CheatcodeHandler {
+            handler: executor,
+            enable_ffi,
+            enable_trace,
+            console_logs: Vec::new(),
+        };
 
         let mut evm = Executor::from_executor(executor, gas_limit);
 
@@ -440,11 +445,19 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         }
     }
 
-    fn start_trace(&mut self, address: H160, input: Vec<u8>, creation: bool, prelogs: usize) -> Option<CallTrace> {
+    fn start_trace(
+        &mut self,
+        address: H160,
+        input: Vec<u8>,
+        creation: bool,
+        prelogs: usize,
+    ) -> Option<CallTrace> {
         if self.enable_trace {
             let mut trace: CallTrace = Default::default();
-            // depth only starts tracking at first child substate and is 0. so add 1 when depth is some.
-            trace.depth = if let Some(depth) = self.state().metadata().depth() { depth + 1 } else { 0 };
+            // depth only starts tracking at first child substate and is 0. so add 1 when depth is
+            // some.
+            trace.depth =
+                if let Some(depth) = self.state().metadata().depth() { depth + 1 } else { 0 };
             trace.addr = address;
             trace.created = creation;
             trace.data = input;
@@ -453,7 +466,6 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
             // we minimize the size of the clone
             trace = self.state_mut().trace.push_trace(0, trace.clone());
 
-            
             if trace.depth > 0 && prelogs > 0 {
                 let trace_index = trace.idx;
                 let parent_index = self.state().trace.arena[trace_index].parent.expect("No parent");
@@ -462,12 +474,21 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 let child_logs = self.state().trace.inner_number_of_logs(parent_index);
 
                 if self.raw_logs().len() >= prelogs {
-                    if prelogs.saturating_sub(child_logs).saturating_sub(self.state().trace.arena[parent_index].trace.prelogs.len().saturating_sub(1)) > 0 {
-                        let prelogs = self.raw_logs()[
-                            self.state().trace.arena[parent_index].trace.prelogs.len() + child_logs
-                            ..
-                            prelogs
-                        ].to_vec();
+                    if prelogs.saturating_sub(child_logs).saturating_sub(
+                        self.state().trace.arena[parent_index]
+                            .trace
+                            .prelogs
+                            .len()
+                            .saturating_sub(1),
+                    ) > 0
+                    {
+                        let prelogs = self.raw_logs()[self.state().trace.arena[parent_index]
+                            .trace
+                            .prelogs
+                            .len() +
+                            child_logs..
+                            prelogs]
+                            .to_vec();
                         let parent = &mut self.state_mut().trace.arena[parent_index];
 
                         if prelogs.len() > 0 {
@@ -481,7 +502,10 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 if self.raw_logs().len() >= prelogs {
                     let prelogs = self.raw_logs()[0..prelogs].to_vec();
                     prelogs.into_iter().for_each(|prelog| {
-                        self.state_mut().trace.arena[0].trace.prelogs.push((prelog, trace.location));
+                        self.state_mut().trace.arena[0]
+                            .trace
+                            .prelogs
+                            .push((prelog, trace.location));
                     })
                 }
             }
@@ -491,10 +515,16 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         }
     }
 
-    fn fill_trace(&mut self, mut new_trace: Option<CallTrace>, prelogs: usize, success: bool, output: Option<Vec<u8>>) {
+    fn fill_trace(
+        &mut self,
+        mut new_trace: Option<CallTrace>,
+        prelogs: usize,
+        success: bool,
+        output: Option<Vec<u8>>,
+    ) {
         if let Some(mut new_trace) = new_trace {
             let mut next = self.raw_logs().len().saturating_sub(1);
-            
+
             if new_trace.depth > 0 && prelogs > 0 && next > prelogs {
                 next = self.raw_logs().len() - prelogs;
             } else if new_trace.depth == 0 {
@@ -537,7 +567,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 match $e {
                     Ok(v) => v,
                     Err(e) => {
-                        self.fill_trace(trace, prelogs, false, None);    
+                        self.fill_trace(trace, prelogs, false, None);
                         return Capture::Exit((e.into(), Vec::new()))
                     }
                 }
@@ -610,7 +640,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                             Err(error) => {
                                 self.fill_trace(trace, prelogs, false, Some(output.clone()));
                                 return Capture::Exit((ExitReason::Error(error), output))
-                            },
+                            }
                         }
                     }
 
@@ -688,7 +718,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                     Err(e) => {
                         self.fill_trace(trace, prelogs, false, None);
                         return Capture::Exit((e.into(), None, Vec::new()))
-                    },
+                    }
                 }
             };
         }
@@ -1202,12 +1232,18 @@ mod tests {
         let mut mapping = BTreeMap::new();
         mapping.insert(
             "Trace".to_string(),
-            (compiled.abi.expect("No abi").clone(), compiled.bin_runtime.expect("No runtime").to_vec()),
+            (
+                compiled.abi.expect("No abi").clone(),
+                compiled.bin_runtime.expect("No runtime").to_vec(),
+            ),
         );
         let compiled = COMPILED.find("RecursiveCall").expect("could not find contract");
         mapping.insert(
             "RecursiveCall".to_string(),
-            (compiled.abi.expect("No abi").clone(), compiled.bin_runtime.expect("No runtime").to_vec()),
+            (
+                compiled.abi.expect("No abi").clone(),
+                compiled.bin_runtime.expect("No runtime").to_vec(),
+            ),
         );
         evm.state().trace.pretty_print(0, &mapping, &evm, "".to_string());
     }
@@ -1242,12 +1278,18 @@ mod tests {
         let mut mapping = BTreeMap::new();
         mapping.insert(
             "Trace".to_string(),
-            (compiled.abi.expect("No abi").clone(), compiled.bin_runtime.expect("No runtime").to_vec()),
+            (
+                compiled.abi.expect("No abi").clone(),
+                compiled.bin_runtime.expect("No runtime").to_vec(),
+            ),
         );
         let compiled = COMPILED.find("RecursiveCall").expect("could not find contract");
         mapping.insert(
             "RecursiveCall".to_string(),
-            (compiled.abi.expect("No abi").clone(), compiled.bin_runtime.expect("No runtime").to_vec()),
+            (
+                compiled.abi.expect("No abi").clone(),
+                compiled.bin_runtime.expect("No runtime").to_vec(),
+            ),
         );
         evm.state().trace.pretty_print(0, &mapping, &evm, "".to_string());
     }

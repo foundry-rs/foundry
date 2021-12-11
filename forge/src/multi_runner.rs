@@ -1,5 +1,5 @@
-use ethers::prelude::artifacts::CompactContract;
 use crate::{runner::TestResult, ContractRunner};
+use ethers::prelude::artifacts::CompactContract;
 use evm_adapters::Evm;
 
 use ethers::{
@@ -60,12 +60,14 @@ impl MultiContractRunnerBuilder {
         // artifacts
         let contracts = output.into_artifacts();
         let mut known_contracts: BTreeMap<String, (Abi, Vec<u8>)> = Default::default();
-        let mut deployed_contracts: BTreeMap<String, (Abi, Address, Vec<String>)> = Default::default();
+        let mut deployed_contracts: BTreeMap<String, (Abi, Address, Vec<String>)> =
+            Default::default();
 
         use std::any::Any;
         for (fname, contract) in contracts {
             let c: &dyn Any = &contract as &dyn Any;
-            let compact_contract = c.downcast_ref::<CompactContract>().expect("Wasn't a compact contract");
+            let compact_contract =
+                c.downcast_ref::<CompactContract>().expect("Wasn't a compact contract");
             let runtime_code = compact_contract.bin_runtime.as_ref().unwrap().clone();
             let bytecode = compact_contract.bin.as_ref().unwrap();
             let abi = compact_contract.abi.as_ref().unwrap();
@@ -83,11 +85,7 @@ impl MultiContractRunnerBuilder {
                 }
             }
             let split = fname.split(":").collect::<Vec<&str>>();
-            let contract_name = if split.len() > 1 {
-                split[1]
-            } else {
-                split[0]
-            };
+            let contract_name = if split.len() > 1 { split[1] } else { split[0] };
             known_contracts.insert(contract_name.to_string(), (abi.clone(), runtime_code.to_vec()));
         }
 
@@ -267,8 +265,14 @@ mod tests {
             let backend = new_backend(&env, Default::default());
             // important to instantiate the VM with cheatcodes
             let precompiles = PRECOMPILES_MAP.clone();
-            let evm =
-                Executor::new_with_cheatcodes(backend, gas_limit, &config, &precompiles, false, false);
+            let evm = Executor::new_with_cheatcodes(
+                backend,
+                gas_limit,
+                &config,
+                &precompiles,
+                false,
+                false,
+            );
 
             let mut runner = runner(evm);
             let results = runner.test(Regex::new(".*").unwrap()).unwrap();
