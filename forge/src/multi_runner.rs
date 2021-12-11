@@ -68,8 +68,20 @@ impl MultiContractRunnerBuilder {
             let c: &dyn Any = &contract as &dyn Any;
             let compact_contract =
                 c.downcast_ref::<CompactContract>().expect("Wasn't a compact contract");
-            let runtime_code = compact_contract.bin_runtime.as_ref().unwrap().clone().into_bytes().expect("Linking not supported in tracing");
-            let bytecode = compact_contract.bin.as_ref().unwrap().clone().into_bytes().expect("Linking not supported in tracing");
+            let runtime_code = compact_contract
+                .bin_runtime
+                .as_ref()
+                .unwrap()
+                .clone()
+                .into_bytes()
+                .expect("Linking not supported in tracing");
+            let bytecode = compact_contract
+                .bin
+                .as_ref()
+                .unwrap()
+                .clone()
+                .into_bytes()
+                .expect("Linking not supported in tracing");
             let abi = compact_contract.abi.as_ref().unwrap();
             if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) {
                 if abi.functions().any(|func| func.name.starts_with("test")) {
