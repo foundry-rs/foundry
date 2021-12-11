@@ -98,9 +98,6 @@ pub enum Subcommands {
 
     #[structopt(about = "creates a snapshot of each test's gas usage")]
     Snapshot(snapshot::SnapshotArgs),
-
-    #[structopt(about = r#"compares an existing snapshot with the current snapshot."#)]
-    CheckSnapshot(snapshot::CheckSnapshotArgs),
 }
 
 /// Represents the common dapp argument pattern for `<path>:<contractname>` where `<path>:` is

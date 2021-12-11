@@ -6,6 +6,7 @@ use crate::cmd::{
     Cmd,
 };
 use ansi_term::Colour;
+use eyre::Context;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::{
@@ -37,6 +38,12 @@ pub struct SnapshotArgs {
         long
     )]
     diff: Option<Option<PathBuf>>,
+    #[structopt(
+        help = "Run snapshot in 'check' mode and compares against an existing snapshot file, [default: .gas-snapshot]. Exits with 0 if snapshots match. Exits with 1 and prints a diff otherwise",
+        conflicts_with = "diff",
+        long
+    )]
+    check: Option<Option<PathBuf>>,
     #[structopt(help = "How to format the output.", long)]
     format: Option<Format>,
     #[structopt(help = "Output file for the snapshot.", default_value = ".gas-snapshot", long)]
@@ -82,28 +89,6 @@ impl FromStr for Format {
             "t" | "table" => Ok(Format::Table),
             _ => Err(format!("Unrecognized format `{}`", s)),
         }
-    }
-}
-
-#[derive(Debug, Clone, StructOpt)]
-pub struct CheckSnapshotArgs {
-    #[structopt(
-        help = " Input gas snapshot file to compare against.",
-        default_value = ".gas_snapshot",
-        short,
-        long
-    )]
-    input: PathBuf,
-    #[structopt(flatten)]
-    config: SnapshotConfig,
-}
-
-impl Cmd for CheckSnapshotArgs {
-    type Output = ();
-
-    fn run(self) -> eyre::Result<()> {
-        dbg!(self);
-        todo!()
     }
 }
 
@@ -182,8 +167,14 @@ impl FromStr for SnapshotEntry {
 
 /// Reads a list of snapshot entries from a snapshot file
 fn read_snapshot(path: impl AsRef<Path>) -> eyre::Result<Vec<SnapshotEntry>> {
+    let path = path.as_ref();
     let mut entries = Vec::new();
-    for line in io::BufReader::new(fs::File::open(path)?).lines() {
+    for line in io::BufReader::new(
+        fs::File::open(path)
+            .wrap_err(format!("failed to read snapshot file \"{}\"", path.display()))?,
+    )
+    .lines()
+    {
         entries
             .push(SnapshotEntry::from_str(line?.as_str()).map_err(|err| eyre::eyre!("{}", err))?);
     }
@@ -282,7 +273,7 @@ fn fmt_pct_change(change: f64) -> String {
 
 fn fmt_change(change: i128) -> String {
     match change.cmp(&0) {
-        Ordering::Less => Colour::Green.paint(format!("{}", , change)).to_string(),
+        Ordering::Less => Colour::Green.paint(format!("{}", change)).to_string(),
         Ordering::Equal => {
             format!("{}", change)
         }

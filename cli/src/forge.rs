@@ -138,9 +138,6 @@ fn main() -> eyre::Result<()> {
         Subcommands::Snapshot(cmd) => {
             cmd.run()?;
         }
-        Subcommands::CheckSnapshot(cmd) => {
-            cmd.run()?;
-        }
     }
 
     Ok(())
