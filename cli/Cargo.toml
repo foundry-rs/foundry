@@ -17,6 +17,7 @@ evm-adapters = { path = "../evm-adapters" }
 ethers = { git = "https://github.com/gakonst/ethers-rs" }
 ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs" }
 eyre = "0.6.5"
+color-eyre = "0.5"
 rustc-hex = "2.1.0"
 serde_json = "1.0.67"
 tokio = { version = "1.11.0", features = ["macros"] }
