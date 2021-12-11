@@ -26,6 +26,7 @@ mod utils;
 
 #[tracing::instrument(err)]
 fn main() -> eyre::Result<()> {
+    color_eyre::install()?;
     utils::subscriber();
 
     let opts = Opts::from_args();
