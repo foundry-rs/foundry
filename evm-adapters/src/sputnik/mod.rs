@@ -8,7 +8,7 @@ pub mod cheatcodes;
 pub mod state;
 
 use ethers::{
-    abi::{Abi, RawLog},
+    abi::RawLog,
     providers::Middleware,
     types::{Address, H160, H256, U256},
 };

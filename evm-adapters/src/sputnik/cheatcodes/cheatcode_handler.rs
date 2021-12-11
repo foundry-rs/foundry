@@ -21,13 +21,13 @@ use sputnik::{
 use std::{process::Command, rc::Rc};
 
 use ethers::{
-    abi::{Abi, RawLog, Token},
+    abi::{RawLog, Token},
     contract::EthLogDecode,
     core::{abi::AbiDecode, k256::ecdsa::SigningKey, utils},
     signers::{LocalWallet, Signer},
     types::{Address, H160, H256, U256},
 };
-use std::{collections::BTreeMap, convert::Infallible};
+use std::convert::Infallible;
 
 use once_cell::sync::Lazy;
 
@@ -469,7 +469,6 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
             if trace.depth > 0 && prelogs > 0 {
                 let trace_index = trace.idx;
                 let parent_index = self.state().trace.arena[trace_index].parent.expect("No parent");
-                let next_log_index = self.state().trace.next_log_index();
 
                 let child_logs = self.state().trace.inner_number_of_logs(parent_index);
 
@@ -517,12 +516,12 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
 
     fn fill_trace(
         &mut self,
-        mut new_trace: Option<CallTrace>,
+        new_trace: Option<CallTrace>,
         prelogs: usize,
         success: bool,
         output: Option<Vec<u8>>,
     ) {
-        if let Some(mut new_trace) = new_trace {
+        if let Some(new_trace) = new_trace {
             let mut next = self.raw_logs().len().saturating_sub(1);
 
             if new_trace.depth > 0 && prelogs > 0 && next > prelogs {
@@ -1219,7 +1218,7 @@ mod tests {
             evm.deploy(Address::zero(), compiled.bin.unwrap().clone().into_bytes().expect("shouldn't be linked"), 0.into()).unwrap();
 
         // after the evm call is done, we call `logs` and print it all to the user
-        let (_, _, _, logs) = evm
+        let (_, _, _, _) = evm
             .call::<(), _, _>(
                 Address::zero(),
                 addr,
@@ -1265,7 +1264,7 @@ mod tests {
             evm.deploy(Address::zero(), compiled.bin.unwrap().clone().into_bytes().expect("shouldn't be linked"), 0.into()).unwrap();
 
         // after the evm call is done, we call `logs` and print it all to the user
-        let (_, _, _, logs) = evm
+        let (_, _, _, _) = evm
             .call::<(), _, _>(
                 Address::zero(),
                 addr,

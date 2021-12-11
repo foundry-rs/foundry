@@ -7,7 +7,6 @@ use sputnik::{
 use crate::call_tracing::CallTraceArena;
 
 use ethers::{
-    abi::RawLog,
     types::{H160, H256, U256},
 };
 

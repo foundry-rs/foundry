@@ -5,7 +5,7 @@ use evm_adapters::Evm;
 use ethers::{
     abi::Abi,
     prelude::ArtifactOutput,
-    solc::{Artifact, Project},
+    solc::Project,
     types::{Address, U256},
 };
 
