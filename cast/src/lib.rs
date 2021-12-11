@@ -262,6 +262,14 @@ where
             "0x14c2283285a88fe5fce9bf5c573ab03d6616695d717b12a127188bcacfc743c4" => "kotti",
             "0x6d3c66c5357ec91d5c43af47e234a939b22557cbb552dc45bebbceeed90fbe34" => "bsctest",
             "0x0d21840abff46b96c84b2ac9e10e4f5cdaeb5693cb665db62a2f3b02d2d57b5b" => "bsc",
+            "0x31ced5b9beb7f8782b014660da0cb18cc409f121f408186886e1ca3e8eeca96b" => {
+                match &(Cast::block(self, 1, false, Some(String::from("hash")), false).await?)[..] {
+                    "0x738639479dc82d199365626f90caa82f7eafcfe9ed354b456fb3d294597ceb53" => {
+                        "avalanche-fuji"
+                    }
+                    _ => "avalanche",
+                }
+            }
             _ => "unknown",
         })
     }
