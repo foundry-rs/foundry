@@ -69,6 +69,14 @@ impl<S: HostExt, Tr: Tracer> Evm<S> for EvmOdin<S, Tr> {
         &self.host
     }
 
+    fn code(&self, address: Address) -> Vec<u8> {
+        if let Some(bytes) = self.host.get_code(&address) {
+            bytes.to_vec()
+        } else {
+            vec![]
+        }
+    }
+
     #[allow(unused)]
     fn deploy(
         &mut self,

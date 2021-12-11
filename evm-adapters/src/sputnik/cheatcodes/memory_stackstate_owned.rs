@@ -4,9 +4,9 @@ use sputnik::{
     ExitError, Transfer,
 };
 
-use crate::call_tracing::CallTrace;
+use crate::call_tracing::CallTraceArena;
 
-use ethers::types::{H160, H256, U256};
+use ethers::{abi::RawLog, types::{H160, H256, U256}};
 
 /// This struct implementation is copied from [upstream](https://github.com/rust-blockchain/evm/blob/5ecf36ce393380a89c6f1b09ef79f686fe043624/src/executor/stack/state.rs#L412) and modified to own the Backend type.
 ///
@@ -17,9 +17,13 @@ use ethers::types::{H160, H256, U256};
 pub struct MemoryStackStateOwned<'config, B> {
     pub backend: B,
     pub substate: MemoryStackSubstate<'config>,
-    pub trace: CallTrace,
-    pub current_trace: CallTrace,
+    pub trace: CallTraceArena,
 }
+
+// pub struct IndexedLog {
+//     pub index: usize,
+//     pub log: RawLog,
+// }
 
 impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
     pub fn deposit(&mut self, address: H160, value: U256) {
@@ -33,7 +37,6 @@ impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
             backend,
             substate: MemoryStackSubstate::new(metadata),
             trace: Default::default(),
-            current_trace: Default::default(),
         }
     }
 }

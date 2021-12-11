@@ -2,7 +2,7 @@ use ethers::{
     abi::{Abi, Function, Token},
     types::{Address, Bytes},
 };
-use evm_adapters::call_tracing::CallTrace;
+use evm_adapters::call_tracing::CallTraceArena;
 
 use evm_adapters::{fuzz::FuzzedExecutor, Evm, EvmError};
 
@@ -49,7 +49,7 @@ pub struct TestResult {
     pub logs: Vec<String>,
 
     /// Trace
-    pub trace: Option<CallTrace>,
+    pub trace: Option<CallTraceArena>,
 }
 
 use std::marker::PhantomData;

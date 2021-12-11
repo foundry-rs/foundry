@@ -8,10 +8,8 @@ pub mod sputnik;
 pub mod evmodin;
 
 mod blocking_provider;
-use crate::call_tracing::CallTrace;
+use crate::call_tracing::CallTraceArena;
 pub use blocking_provider::BlockingProvider;
-use ethers::abi::Abi;
-use std::collections::BTreeMap;
 
 pub mod fuzz;
 
@@ -68,6 +66,8 @@ pub trait Evm<State> {
     /// Gets a reference to the current state of the EVM
     fn state(&self) -> &State;
 
+    fn code(&self, address: Address) -> Vec<u8>;
+
     /// Sets the balance at the specified address
     fn set_balance(&mut self, address: Address, amount: U256);
 
@@ -95,7 +95,7 @@ pub trait Evm<State> {
         }
     }
 
-    fn trace(&self) -> Option<CallTrace> {
+    fn trace(&self) -> Option<CallTraceArena> {
         None
     }
 

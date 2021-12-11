@@ -106,6 +106,7 @@ fn main() -> eyre::Result<()> {
                         &cfg,
                         &precompiles,
                         ffi,
+                        verbosity > 2
                     );
 
                     test(builder, project, evm, pattern, json, verbosity, allow_failure)?;
@@ -320,9 +321,8 @@ fn test<A: ArtifactOutput + 'static, S: Clone, E: evm_adapters::Evm<S>>(
 
                     println!();
                     if verbosity > 2 {
-                        println!("{:?}", runner.contracts);
                         if let Some(trace) = &result.trace {
-                            trace.pretty_print(&runner.contracts, "".to_string());
+                            trace.pretty_print(0, &runner.known_contracts, &runner.evm, "".to_string());
                         }
                         println!();
                     }

@@ -19,7 +19,7 @@ use sputnik::{
     Config, CreateScheme, ExitError, ExitReason, ExitSucceed,
 };
 
-use crate::call_tracing::CallTrace;
+use crate::call_tracing::CallTraceArena;
 
 pub use sputnik as sputnik_evm;
 use sputnik_evm::executor::stack::PrecompileSet;
@@ -89,7 +89,7 @@ pub trait SputnikExecutor<S> {
     fn raw_logs(&self) -> Vec<RawLog>;
 
     /// Gets a trace
-    fn trace(&self) -> Option<CallTrace> {
+    fn trace(&self) -> Option<CallTraceArena> {
         None
     }
 

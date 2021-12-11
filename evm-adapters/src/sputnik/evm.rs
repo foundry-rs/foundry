@@ -1,6 +1,4 @@
-use crate::{call_tracing::CallTrace, Evm, FAUCET_ACCOUNT};
-use ethers::abi::Abi;
-
+use crate::{call_tracing::CallTraceArena, Evm, FAUCET_ACCOUNT};
 use ethers::types::{Address, Bytes, U256};
 
 use sputnik::{
@@ -101,7 +99,11 @@ where
         self.executor.state()
     }
 
-    fn trace(&self) -> Option<CallTrace> {
+    fn code(&self, address: Address) -> Vec<u8> {
+        self.executor.state().code(address)
+    }
+
+    fn trace(&self) -> Option<CallTraceArena> {
         self.executor.trace()
     }
 
