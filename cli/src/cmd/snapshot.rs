@@ -58,18 +58,20 @@ impl Cmd for SnapshotArgs {
         outcome.ensure_ok()?;
         let tests = self.config.apply(outcome);
 
-        match self.diff {
-            Some(Some(snap)) => {
-                let snaps = read_snapshot(snap)?;
-                diff(tests, snaps)?;
+        if let Some(path) = self.diff {
+            let snap = path.as_ref().unwrap_or(&self.snap);
+            let snaps = read_snapshot(snap)?;
+            diff(tests, snaps)?;
+        } else if let Some(path) = self.check {
+            let snap = path.as_ref().unwrap_or(&self.snap);
+            let snaps = read_snapshot(snap)?;
+            if check(tests, snaps) {
+                std::process::exit(0)
+            } else {
+                std::process::exit(1)
             }
-            Some(None) => {
-                let snaps = read_snapshot(self.snap)?;
-                diff(tests, snaps)?;
-            }
-            _ => {
-                write_to_snapshot_file(&tests, self.snap)?;
-            }
+        } else {
+            write_to_snapshot_file(&tests, self.snap, self.format)?;
         }
         Ok(())
     }
@@ -182,7 +184,11 @@ fn read_snapshot(path: impl AsRef<Path>) -> eyre::Result<Vec<SnapshotEntry>> {
 }
 
 /// Writes a series of tests to a snapshot file
-fn write_to_snapshot_file(tests: &[Test], path: impl AsRef<Path>) -> eyre::Result<()> {
+fn write_to_snapshot_file(
+    tests: &[Test],
+    path: impl AsRef<Path>,
+    _format: Option<Format>,
+) -> eyre::Result<()> {
     let mut out = String::new();
     for test in tests {
         if let Some(gas) = test.gas_used() {
@@ -215,6 +221,34 @@ impl SnapshotDiff {
     }
 }
 
+/// Compares the set of tests with an existing snapshot
+///
+/// Returns true all tests match
+fn check(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> bool {
+    let snaps = snaps.into_iter().map(|s| (s.signature, s.gas_used)).collect::<HashMap<_, _>>();
+    let mut has_diff = false;
+
+    for test in tests.into_iter().filter(|t| t.gas_used().is_some()) {
+        if let Some(target_gas) = snaps.get(&test.signature).cloned() {
+            let source_gas = test.gas_used().unwrap();
+            if source_gas != target_gas {
+                println!(
+                    "Diff in \"{}\": consumed {} gas, expected {} gas ",
+                    test.signature, source_gas, target_gas
+                );
+                has_diff = true;
+            }
+        } else {
+            println!(
+                "No matching snapshot entry found for \"{}\" in snapshot file",
+                test.signature
+            );
+            has_diff = true;
+        }
+    }
+    !has_diff
+}
+
 /// Compare the set of tests with an existing snapshot
 fn diff(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> eyre::Result<()> {
     let snaps = snaps.into_iter().map(|s| (s.signature, s.gas_used)).collect::<HashMap<_, _>>();
@@ -237,7 +271,7 @@ fn diff(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> eyre::Result<()> {
     let mut overall_gas_diff = 0f64;
 
     diffs.sort_by(|a, b| {
-        a.gas_diff().abs().partial_cmp(&b.gas_diff().abs()).unwrap_or_else(|| Ordering::Equal)
+        a.gas_diff().abs().partial_cmp(&b.gas_diff().abs()).unwrap_or(Ordering::Equal)
     });
 
     for diff in diffs {
@@ -262,7 +296,7 @@ fn diff(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> eyre::Result<()> {
 }
 
 fn fmt_pct_change(change: f64) -> String {
-    match change.partial_cmp(&0.0).unwrap_or_else(|| Ordering::Equal) {
+    match change.partial_cmp(&0.0).unwrap_or(Ordering::Equal) {
         Ordering::Less => Colour::Green.paint(format!("{:.3}%", change)).to_string(),
         Ordering::Equal => {
             format!("{:.3}%", change)
