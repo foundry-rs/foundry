@@ -338,28 +338,46 @@ fn source_env_file<T: AsRef<Path>>(path: T) -> eyre::Result<()> {
     let options = ScriptOptions::new();
     let args = vec![String::from(path.as_ref().to_str().unwrap())];
     // run the script and get the script execution output
-    let (code, output, error) = run_script::run(
+    let (code, output, _error) = run_script::run(
         r#"
         set -e
-        chmod +x $1
-        env -i bash -c "source $1 && env" $1
+        chmod 644 $1
+        . $1
+        env -i sh -c ". $1 && env && echo 'REMAPPINGS_START\n${DAPP_REMAPPINGS}' && echo REMAPPINGS_END" $1
+        [ -f $1 ]
          "#,
         &args,
         &options,
     )?;
-    for line in output.lines() {
-        let mut arg = line.split("=");
-        let key = arg.next().unwrap();
-        let value = arg.next().unwrap();
-        std::env::set_var(key, value);
-    }
-    match code {
-        0 => {
-            println!("config file detected: {}", args[0]);
-            Ok(())
+    // println!("command rn with args: {:?} and output \n: {}", args, output);
+    let mut value = String::new();
+    let mut key = String::new();
+    let mut remappings_flag = false;
+    let lines_iterator = output.lines();
+    for line in lines_iterator {
+        if line.contains("REMAPPINGS_START") || remappings_flag {
+            if !remappings_flag {
+                value = "".to_string();
+                remappings_flag = true;
+                continue;
+            } else if line.contains("REMAPPINGS_END") {
+                key = "DAPP_REMAPPINGS".to_string();
+                std::env::set_var(&key, &value);
+                remappings_flag = false;
+            }
+            value.push_str(line);
+            value.push('\n');
+        } else {
+            let mut arg = line.splitn(2, '=');
+            key = arg.next().unwrap().to_string();
+            value = arg.next().unwrap().to_string();
+            std::env::set_var(&key, &value);
         }
-        _ => Err(eyre::Report::msg(error)),
     }
+    if code == 0 {
+        println!("Detected configuration file at: {}", args[0]);
+    }
+    Ok(())
 }
 
 fn source_config_files() -> eyre::Result<()> {
@@ -369,25 +387,15 @@ fn source_config_files() -> eyre::Result<()> {
     } else {
         let home: String = env::var("HOME")?;
         let paths = [
-            PathBuf::from("./"),
-            PathBuf::from(&home),
-            PathBuf::from(&home).join(".foundry"),
             PathBuf::from(&home).join(".config/foundry"),
+            PathBuf::from(&home).join(".foundry"),
+            PathBuf::from(&home),
+            PathBuf::from("./"),
         ];
         let files = [PathBuf::from(".dapprc"), PathBuf::from(".forgerc")];
-        let mut flag = false;
         for path in paths.iter() {
             for file in files.iter() {
-                match source_env_file(path.join(file)) {
-                    Ok(_res) => {
-                        flag = true;
-                        break;
-                    }
-                    Err(_e) => continue,
-                }
-            }
-            if flag {
-                break;
+                let _ = source_env_file(path.join(file))?;
             }
         }
         Ok(())
