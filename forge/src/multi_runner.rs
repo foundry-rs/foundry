@@ -59,7 +59,7 @@ impl MultiContractRunnerBuilder {
             // only take contracts with valid abi and bytecode
             .filter_map(|(fname, contract)| {
                 let (abi, bytecode) = contract.into_inner();
-                abi.and_then(|abi| bytecode.and_then(|bytecode| Some((fname, abi, bytecode))))
+                abi.and_then(|abi| bytecode.map(|bytecode| (fname, abi, bytecode)))
             })
             // Only take contracts with empty constructors.
             .filter(|(_, abi, _)| {
