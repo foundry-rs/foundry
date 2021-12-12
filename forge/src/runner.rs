@@ -173,6 +173,8 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
             logs.extend_from_slice(&setup_logs);
         }
 
+        self.evm.reset_traces();
+
         let (status, reason, gas_used, logs) = match self.evm.call::<(), _, _>(
             self.sender,
             self.address,
@@ -195,6 +197,15 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
                 }
             },
         };
+
+        let mut trace = None;
+        if let Some(traces) = self.evm.traces() {
+            if traces.len() > 0 {
+                trace = Some(traces[0].clone());    
+            }
+        }
+        self.evm.reset_traces();
+
         let success = self.evm.check_success(self.address, &status, should_fail);
         let duration = Instant::now().duration_since(start);
         tracing::debug!(?duration, %success, %gas_used);
@@ -205,7 +216,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
             gas_used: Some(gas_used),
             counterexample: None,
             logs,
-            trace: self.evm.trace(),
+            trace,
         })
     }
 

@@ -330,10 +330,13 @@ fn test<A: ArtifactOutput + 'static, S: Clone, E: evm_adapters::Evm<S>>(
 
                     println!();
                     if verbosity > 2 {
+                        let mut identified = Default::default();
                         if let Some(trace) = &result.trace {
+                            // deploy -> setup -> test -> failed -> setup -> test -> failed
                             trace.pretty_print(
                                 0,
                                 &runner.known_contracts,
+                                &mut identified,
                                 &runner.evm,
                                 "".to_string(),
                             );

@@ -27,6 +27,11 @@ impl Default for CallTraceArena {
     }
 }
 
+pub enum Output {
+    Token(Vec<ethers::abi::Token>),
+    Raw(Vec<u8>),
+}
+
 impl CallTraceArena {
     pub fn push_trace(&mut self, entry: usize, mut new_trace: CallTrace) -> CallTrace {
         if new_trace.depth == 0 {
@@ -93,33 +98,155 @@ impl CallTraceArena {
         &self,
         idx: usize,
         contracts: &BTreeMap<String, (Abi, Vec<u8>)>,
+        identified_contracts: &mut BTreeMap<H160, (String, Abi)>,
         evm: &'a E,
         left: String,
     ) {
         let trace = &self.arena[idx].trace;
 
-        if trace.created {
-            if let Some((name, (_abi, _code))) = contracts
-                .iter()
-                .find(|(_key, (_abi, code))| diff_score(code, &evm.code(trace.addr)) < 0.05)
-            {
-                println!("{}{} {}@{:?}", left, Colour::Yellow.paint("→ new"), name, trace.addr);
-                return
+        // color the printout by success
+        let color = if trace.success { Colour::Green } else { Colour::Red };
+
+        let maybe_found;
+        {
+            if let Some((name, abi)) = identified_contracts.get(&trace.addr) {
+                maybe_found = Some((name.clone(), abi.clone()));
             } else {
-                println!("{}→ new <Unknown>@{:?}", left, trace.addr);
-                return
+                maybe_found = None;
             }
         }
-        // fuzzy find contracts
-        if let Some((name, (abi, _code))) = contracts
-            .iter()
-            .find(|(_key, (_abi, code))| diff_score(code, &evm.code(trace.addr)) < 0.05)
-        {
-            // color the printout by success
-            let color = if trace.success { Colour::Green } else { Colour::Red };
+        if let Some((name, abi)) = maybe_found {
+            if trace.created {
+                println!("{}{} {}@{:?}", left, Colour::Yellow.paint("→ new"), name, trace.addr);
+                self.print_children_and_prelogs(idx, trace, &abi, contracts, identified_contracts, evm, left.clone());
+                Self::print_logs(trace, &abi, &left);
+                println!(
+                    "{}  └─ {} {} bytes of code",
+                    left.to_string().replace("├─", "│").replace("└─", "  "),
+                    color.paint("←"),
+                    trace.output.len() / 2
+                );
+                return;
+            }
+            let output = Self::print_func_call(trace, &abi, &name, color, &left);
+            self.print_children_and_prelogs(idx, trace, &abi, contracts, identified_contracts, evm, left.clone());
+            Self::print_logs(trace, &abi, &left);
+            Self::print_output(color, output, left);
+        } else {
+            if trace.created {
+                if let Some((name, (abi, _code))) = contracts
+                    .iter()
+                    .find(|(_key, (_abi, code))| diff_score(code, &trace.output) < 0.10)
+                {
+                    identified_contracts.insert(trace.addr, (name.to_string(), abi.clone()));
+                    println!("{}{} {}@{:?}", left, Colour::Yellow.paint("→ new"), name, trace.addr);
+                    self.print_children_and_prelogs(idx, trace, &abi, contracts, identified_contracts, evm, left.clone());
+                    Self::print_logs(trace, &abi, &left);
+                    println!(
+                        "{}  └─ {} {} bytes of code",
+                        left.to_string().replace("├─", "│").replace("└─", "  "),
+                        color.paint("←"),
+                        trace.output.len() / 2
+                    );
+                    return
+                } else {
+                    println!("{}→ new <Unknown>@{:?}", left, trace.addr);
+                    self.print_unknown(color, idx, trace, contracts, identified_contracts, evm, left.clone());
+                    return
+                }
+            }
 
-            let mut decoded_output = None;
-            // search thru abi functions to find matching
+            if let Some((name, (abi, _code))) = contracts
+                .iter()
+                .find(|(_key, (_abi, code))| diff_score(code, &evm.code(trace.addr)) < 0.10)
+            {
+                identified_contracts.insert(trace.addr, (name.to_string(), abi.clone()));
+                // re-enter this function at this level if we found the contract
+                self.pretty_print(idx, contracts, identified_contracts, evm, left);
+            } else {
+                self.print_unknown(color, idx, trace, contracts, identified_contracts, evm, left.clone());
+            }
+        }
+    }
+
+    pub fn print_unknown<'a, S: Clone, E: crate::Evm<S>>(
+        &self,
+        color: Colour,
+        idx: usize,
+        trace: &CallTrace,
+        contracts: &BTreeMap<String, (Abi, Vec<u8>)>,
+        identified_contracts: &mut BTreeMap<H160, (String, Abi)>,
+        evm: &'a E,
+        left: String
+    ) {
+        if trace.data.len() >= 4 {
+            println!(
+                "{}{:x}::{}({})",
+                left,
+                trace.addr,
+                hex::encode(&trace.data[0..4]),
+                hex::encode(&trace.data[4..])
+            );
+        } else {
+            println!("{}{:x}::({})", left, trace.addr, hex::encode(&trace.data));
+        }
+
+        let children_idxs = &self.arena[idx].children;
+        children_idxs.iter().enumerate().for_each(|(i, child_idx)| {
+            // let inners = inner.inner_number_of_inners();
+            if i == children_idxs.len() - 1 && trace.logs.len() == 0 {
+                self.pretty_print(
+                    *child_idx,
+                    contracts,
+                    identified_contracts,
+                    evm,
+                    left.to_string().replace("├─", "│").replace("└─", "  ") + "  └─ ",
+                );
+            } else {
+                self.pretty_print(
+                    *child_idx,
+                    contracts,
+                    identified_contracts,
+                    evm,
+                    left.to_string().replace("├─", "│").replace("└─", "  ") + "  ├─ ",
+                );
+            }
+        });
+
+        let mut right = "  ├─ ";
+
+        trace.logs.iter().enumerate().for_each(|(i, log)| {
+            if i == trace.logs.len() - 1 {
+                right = "  └─ ";
+            }
+            println!(
+                "{}emit {}",
+                left.to_string().replace("├─", "│") + right,
+                Colour::Cyan.paint(format!("{:?}", log))
+            )
+        });
+
+        if !trace.created {
+            println!(
+                "{}  └─ {} {}",
+                left.to_string().replace("├─", "│").replace("└─", "  "),
+                color.paint("←"),
+                if trace.output.len() == 0 { "()".to_string() } else { "0x".to_string() + &hex::encode(&trace.output) }
+            );
+        } else {
+            println!(
+                "{}  └─ {} {} bytes of code",
+                left.to_string().replace("├─", "│").replace("└─", "  "),
+                color.paint("←"),
+                trace.output.len() / 2
+            );
+        }
+        
+    }
+
+    /// Prints function call, optionally returning the decoded output
+    pub fn print_func_call(trace: &CallTrace, abi: &Abi, name: &String, color: Colour, left: &String) -> Output {
+        if trace.data.len() >= 4 {
             for (func_name, overloaded_funcs) in abi.functions.iter() {
                 for func in overloaded_funcs.iter() {
                     if func.selector() == trace.data[0..4] {
@@ -130,6 +257,7 @@ impl CallTraceArena {
                             .map(|param| format!("{:?}", param))
                             .collect::<Vec<String>>()
                             .join(", ");
+
                         println!(
                             "{}[{}] {}::{}({})",
                             left,
@@ -139,120 +267,48 @@ impl CallTraceArena {
                             strings
                         );
 
-                        decoded_output = Some(
+                        return Output::Token(
                             func.decode_output(&trace.output[..]).expect("Bad func output decode"),
                         );
                     }
                 }
             }
+        } else {
+            // fallback function?
+            println!(
+                "{}[{}] {}::fallback()",
+                left,
+                trace.cost,
+                color.paint(name),
+            );
 
-            let children_idxs = &self.arena[idx].children;
-            if children_idxs.len() == 0 {
-                trace.prelogs.iter().for_each(|(log, loc)| {
-                    if *loc == 0 {
-                        let mut found = false;
-                        let right = "  ├─ ";
-                        'outer: for (event_name, overloaded_events) in abi.events.iter() {
-                            for event in overloaded_events.iter() {
-                                if event.signature() == log.topics[0] {
-                                    found = true;
-                                    let params =
-                                        event.parse_log(log.clone()).expect("Bad event").params;
-                                    let strings = params
-                                        .iter()
-                                        .map(|param| format!("{}: {:?}", param.name, param.value))
-                                        .collect::<Vec<String>>()
-                                        .join(", ");
-                                    println!(
-                                        "{}emit {}({})",
-                                        left.to_string().replace("├─", "│") + right,
-                                        Colour::Cyan.paint(event_name),
-                                        strings
-                                    );
-                                    break 'outer
-                                }
-                            }
-                        }
-                        if !found {
-                            println!(
-                                "{}emit {}",
-                                left.to_string().replace("├─", "│") + right,
-                                Colour::Cyan.paint(format!("{:?}", log))
-                            )
-                        }
-                    }
-                });
-            } else {
-                children_idxs.iter().enumerate().for_each(|(i, child_idx)| {
-                    let child_location = self.arena[*child_idx].trace.location;
-                    trace.prelogs.iter().for_each(|(log, loc)| {
-                        if loc == &child_location {
-                            let mut found = false;
-                            let right = "  ├─ ";
-                            'outer: for (event_name, overloaded_events) in abi.events.iter() {
-                                for event in overloaded_events.iter() {
-                                    if event.signature() == log.topics[0] {
-                                        found = true;
-                                        let params =
-                                            event.parse_log(log.clone()).expect("Bad event").params;
-                                        let strings = params
-                                            .iter()
-                                            .map(|param| {
-                                                format!("{}: {:?}", param.name, param.value)
-                                            })
-                                            .collect::<Vec<String>>()
-                                            .join(", ");
-                                        println!(
-                                            "{}emit {}({})",
-                                            left.to_string().replace("├─", "│") + right,
-                                            Colour::Cyan.paint(event_name),
-                                            strings
-                                        );
-                                        break 'outer
-                                    }
-                                }
-                            }
-                            if !found {
-                                println!(
-                                    "{}emit {}",
-                                    left.to_string().replace("├─", "│") + right,
-                                    Colour::Cyan.paint(format!("{:?}", log))
-                                )
-                            }
-                        }
-                    });
-                    if i == children_idxs.len() - 1 &&
-                        trace.logs.len() == 0 &&
-                        decoded_output.is_none()
-                    {
-                        self.pretty_print(
-                            *child_idx,
-                            contracts,
-                            evm,
-                            left.to_string().replace("├─", "│").replace("└─", "  ") + "  └─ ",
-                        );
-                    } else {
-                        self.pretty_print(
-                            *child_idx,
-                            contracts,
-                            evm,
-                            left.to_string().replace("├─", "│").replace("└─", "  ") + "  ├─ ",
-                        );
-                    }
-                });
-            }
+            return Output::Raw(trace.output[..].to_vec());
+        }
+        
 
-            trace.logs.iter().enumerate().for_each(|(i, log)| {
+        println!(
+            "{}[{}] {}::{}({})",
+            left,
+            trace.cost,
+            color.paint(name),
+            if trace.data.len() >= 4 { hex::encode(&trace.data[0..4]) } else { hex::encode(&trace.data[..]) },
+            if trace.data.len() >= 4 { hex::encode(&trace.data[4..]) } else { hex::encode(&vec![][..])}
+        );
+
+        Output::Raw(trace.output[..].to_vec())
+    }
+
+    pub fn print_prelogs(prelogs: &Vec<(RawLog, usize)>, location: usize, abi: &Abi, left: &String) {
+        prelogs.iter().for_each(|(log, loc)| {
+            if *loc == location {
                 let mut found = false;
-                let mut right = "  ├─ ";
-                if i == trace.logs.len() - 1 && decoded_output.is_none() {
-                    right = "  └─ ";
-                }
+                let right = "  ├─ ";
                 'outer: for (event_name, overloaded_events) in abi.events.iter() {
                     for event in overloaded_events.iter() {
                         if event.signature() == log.topics[0] {
                             found = true;
-                            let params = event.parse_log(log.clone()).expect("Bad event").params;
+                            let params =
+                                event.parse_log(log.clone()).expect("Bad event").params;
                             let strings = params
                                 .iter()
                                 .map(|param| format!("{}: {:?}", param.name, param.value))
@@ -275,10 +331,76 @@ impl CallTraceArena {
                         Colour::Cyan.paint(format!("{:?}", log))
                     )
                 }
-            });
+            }
+        });
+    }
 
-            if let Some(decoded) = decoded_output {
-                let strings = decoded
+    pub fn print_children_and_prelogs<'a, S: Clone, E: crate::Evm<S>>(
+        &self,
+        idx: usize,
+        trace: &CallTrace,
+        abi: &Abi,
+        contracts: &BTreeMap<String, (Abi, Vec<u8>)>,
+        identified_contracts: &mut BTreeMap<H160, (String, Abi)>,
+        evm: &'a E,
+        left: String
+    ) {
+        let children_idxs = &self.arena[idx].children;
+        if children_idxs.len() == 0 {
+            Self::print_prelogs(&trace.prelogs, 0, abi, &left);
+        } else {
+            children_idxs.iter().for_each(|child_idx| {
+                let child_location = self.arena[*child_idx].trace.location;
+                Self::print_prelogs(&trace.prelogs, child_location, abi, &left);
+                self.pretty_print(
+                    *child_idx,
+                    contracts,
+                    identified_contracts,
+                    evm,
+                    left.to_string().replace("├─", "│").replace("└─", "  ") + "  ├─ ",
+                );
+            });
+        }
+    }
+
+    pub fn print_logs(trace: &CallTrace, abi: &Abi, left: &String) {
+        trace.logs.iter().for_each(|log| {
+            let mut found = false;
+            let right = "  ├─ ";
+            'outer: for (event_name, overloaded_events) in abi.events.iter() {
+                for event in overloaded_events.iter() {
+                    if event.signature() == log.topics[0] {
+                        found = true;
+                        let params = event.parse_log(log.clone()).expect("Bad event").params;
+                        let strings = params
+                            .iter()
+                            .map(|param| format!("{}: {:?}", param.name, param.value))
+                            .collect::<Vec<String>>()
+                            .join(", ");
+                        println!(
+                            "{}emit {}({})",
+                            left.to_string().replace("├─", "│") + right,
+                            Colour::Cyan.paint(event_name),
+                            strings
+                        );
+                        break 'outer
+                    }
+                }
+            }
+            if !found {
+                println!(
+                    "{}emit {}",
+                    left.to_string().replace("├─", "│") + right,
+                    Colour::Cyan.paint(format!("{:?}", log))
+                )
+            }
+        });
+    }
+
+    pub fn print_output(color: Colour, output: Output, left: String) {
+        match output {
+            Output::Token(token) => {
+                let strings = token
                     .iter()
                     .map(|param| format!("{:?}", param))
                     .collect::<Vec<String>>()
@@ -286,55 +408,18 @@ impl CallTraceArena {
                 println!(
                     "{}  └─ {} {}",
                     left.to_string().replace("├─", "│").replace("└─", "  "),
-                    Colour::Green.paint("←"),
+                    color.paint("←"),
                     if strings.len() == 0 { "()" } else { &*strings }
                 );
             }
-        } else {
-            if trace.data.len() >= 4 {
+            Output::Raw(bytes) => {
                 println!(
-                    "{}{:x}::{}({})",
-                    left,
-                    trace.addr,
-                    hex::encode(&trace.data[0..4]),
-                    hex::encode(&trace.data[4..])
+                    "{}  └─ {} {}",
+                    left.to_string().replace("├─", "│").replace("└─", "  "),
+                    color.paint("←"),
+                    if bytes.len() == 0 { "()".to_string() } else { "0x".to_string() + &hex::encode(&bytes) }
                 );
-            } else {
-                println!("{}{:x}::({})", left, trace.addr, hex::encode(&trace.data));
             }
-
-            let children_idxs = &self.arena[idx].children;
-            children_idxs.iter().enumerate().for_each(|(i, child_idx)| {
-                // let inners = inner.inner_number_of_inners();
-                if i == children_idxs.len() - 1 && trace.logs.len() == 0 {
-                    self.pretty_print(
-                        *child_idx,
-                        contracts,
-                        evm,
-                        left.to_string().replace("├─", "│").replace("└─", "  ") + " _└─ ",
-                    );
-                } else {
-                    self.pretty_print(
-                        *child_idx,
-                        contracts,
-                        evm,
-                        left.to_string().replace("├─", "│").replace("└─", "  ") + " _├─ ",
-                    );
-                }
-            });
-
-            let mut right = " _├─ ";
-
-            trace.logs.iter().enumerate().for_each(|(i, log)| {
-                if i == trace.logs.len() - 1 {
-                    right = " _└─ ";
-                }
-                println!(
-                    "{}emit {}",
-                    left.to_string().replace("├─", "│") + right,
-                    Colour::Cyan.paint(format!("{:?}", log))
-                )
-            });
         }
     }
 }
@@ -371,8 +456,6 @@ pub struct CallTrace {
     /// Logs
     #[serde(skip)]
     pub logs: Vec<RawLog>,
-    /// inner calls
-    pub inner: Vec<CallTrace>,
 }
 
 impl CallTrace {
@@ -384,83 +467,7 @@ impl CallTrace {
         self.logs = new_trace.logs;
         self.data = new_trace.data;
         self.addr = new_trace.addr;
-        // we dont update inner because the temporary new_trace doesnt track inner calls
     }
-
-    // pub fn inner_number_of_logs(&self) -> usize {
-    //     // only count child logs
-    //     let mut total = 0;
-    //     if self.inner.len() > 0 {
-    //         self.inner.iter().for_each(|inner| {
-    //             total += inner.inner_number_of_logs();
-    //         });
-    //     }
-    //     total += self.logs.len() + self.prelogs.len();
-    //     total
-    // }
-
-    // pub fn logs_up_to_depth_loc(&self, depth: usize, loc: usize) -> usize {
-    // 	if depth == 0 {
-    // 		return 0;
-    // 	}
-    // 	let target = self.get_trace(depth, loc).expect("huh?");
-    // 	let parent = self.get_trace(target.depth - 1, target.parent_location).expect("huh?");
-    // 	let siblings = &parent.inner[..loc];
-    // 	let mut total = target.logs.len() + target.prelogs.len();
-    // 	for sibling in siblings.iter() {
-    // 		total += sibling.logs.len() + sibling.prelogs.len();
-    // 	}
-    // 	total += self.logs_up_to_depth_loc(target.depth - 1, target.parent_location);
-    // 	total
-    // }
-
-    // pub fn next_log_index(&self, depth: usize, loc: usize) -> usize {
-    // 	let total = self.logs_up_to_depth_loc(depth, loc);
-    // 	let target = self.get_trace(depth, loc).expect("huh?");
-    // 	total + target.inner_number_of_logs()
-    // }
-
-    // pub fn inner_number_of_inners(&self) -> usize {
-    //     // only count child logs
-    //     let mut total = 0;
-    //     if self.inner.len() > 0 {
-    //         self.inner.iter().for_each(|inner| {
-    //             total += inner.inner_number_of_inners();
-    //         });
-    //     }
-    //     total += self.inner.len();
-    //     total
-    // }
-
-    // pub fn get_trace(&self, depth: usize, location: usize) -> Option<&CallTrace> {
-    //     if self.depth == depth && self.location == location {
-    //         return Some(&self)
-    //     } else {
-    //         if self.depth != depth {
-    //             for inner in self.inner.iter() {
-    //                 if let Some(trace) = inner.get_trace(depth, location) {
-    //                     return Some(trace)
-    //                 }
-    //             }
-    //         }
-    //     }
-    //     return None
-    // }
-
-    // pub fn get_trace_mut(&mut self, depth: usize, location: usize) -> Option<&mut CallTrace> {
-    //     if self.depth == depth && self.location == location {
-    //         return Some(self)
-    //     } else {
-    //         if self.depth != depth {
-    //             for inner in self.inner.iter_mut() {
-    //                 if let Some(trace) = inner.get_trace_mut(depth, location) {
-    //                     return Some(trace)
-    //                 }
-    //             }
-    //         }
-    //     }
-    //     return None
-    // }
 }
 
 // very simple fuzzy matching to account for immutables. Will fail for small contracts that are

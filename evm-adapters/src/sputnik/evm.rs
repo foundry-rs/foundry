@@ -103,8 +103,12 @@ where
         self.executor.state().code(address)
     }
 
-    fn trace(&self) -> Option<CallTraceArena> {
-        self.executor.trace()
+    fn traces(&self) -> Option<Vec<CallTraceArena>> {
+        self.executor.traces()
+    }
+
+    fn reset_traces(&mut self) {
+        self.executor.reset_traces()
     }
 
     /// Deploys the provided contract bytecode

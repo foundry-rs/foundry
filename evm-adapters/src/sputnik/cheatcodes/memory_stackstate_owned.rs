@@ -17,23 +17,36 @@ use ethers::types::{H160, H256, U256};
 pub struct MemoryStackStateOwned<'config, B> {
     pub backend: B,
     pub substate: MemoryStackSubstate<'config>,
-    pub trace: CallTraceArena,
+    pub call_index: usize,
+    pub traces: Vec<CallTraceArena>,
 }
-
-// pub struct IndexedLog {
-//     pub index: usize,
-//     pub log: RawLog,
-// }
 
 impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
     pub fn deposit(&mut self, address: H160, value: U256) {
         self.substate.deposit(address, value, &self.backend);
     }
+
+    pub fn increment_call_index(&mut self) {
+        self.traces.push(Default::default());
+        self.call_index += 1;
+    }
+    pub fn trace_mut(&mut self) -> &mut CallTraceArena {
+        &mut self.traces[self.call_index]
+    }
+
+    pub fn trace(&self) -> &CallTraceArena {
+        &self.traces[self.call_index]
+    }
+
+    pub fn reset_traces(&mut self) {
+        self.traces = vec![Default::default()];
+        self.call_index = 0;
+    }
 }
 
 impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
     pub fn new(metadata: StackSubstateMetadata<'config>, backend: B) -> Self {
-        Self { backend, substate: MemoryStackSubstate::new(metadata), trace: Default::default() }
+        Self { backend, substate: MemoryStackSubstate::new(metadata), call_index: 0, traces: vec![Default::default()] }
     }
 }
 

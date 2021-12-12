@@ -89,9 +89,11 @@ pub trait SputnikExecutor<S> {
     fn raw_logs(&self) -> Vec<RawLog>;
 
     /// Gets a trace
-    fn trace(&self) -> Option<CallTraceArena> {
+    fn traces(&self) -> Option<Vec<CallTraceArena>> {
         None
     }
+
+    fn reset_traces(&mut self) {}
 
     /// Returns a vector of string parsed logs that occurred during the previous VM
     /// execution

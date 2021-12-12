@@ -95,10 +95,11 @@ pub trait Evm<State> {
         }
     }
 
-    fn trace(&self) -> Option<CallTraceArena> {
+    fn traces(&self) -> Option<Vec<CallTraceArena>> {
         None
     }
 
+    fn reset_traces(&mut self) {}
     /// Executes the specified EVM call against the state
     // TODO: Should we just make this take a `TransactionRequest` or other more
     // ergonomic type?
