@@ -142,4 +142,4 @@ jobs:
         with:
           use-cross: ${{ matrix.job.use-cross }}
           command: run
-          args: cargo run --bin forge -- --help
+          args: -p foundry-cli --bin forge -- --help
