@@ -114,7 +114,7 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(eth.rpc_url.as_str())?;
             let chain_id = Cast::new(&provider).chain_id().await?;
 
-            if let Some(signer) = eth.signer(chain_id).await? {
+            if let Some(signer) = eth.signer_with(chain_id, provider.clone()).await? {
                 match signer {
                     cast_opts::WalletType::Ledger(signer) => {
                         cast_send(&signer, signer.address(), to, sig, args, eth.cast_async).await?;

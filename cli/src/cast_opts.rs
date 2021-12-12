@@ -254,11 +254,18 @@ pub struct EthereumOpts {
 }
 
 impl EthereumOpts {
+    #[allow(unused)]
+    pub async fn signer(&self, chain_id: U256) -> eyre::Result<Option<WalletType>> {
+        self.signer_with(chain_id, Provider::try_from(self.rpc_url.as_str())?).await
+    }
+
     /// Returns a [`SignerMiddleware`] corresponding to the provided private key, mnemonic or hw
     /// signer
-    pub async fn signer(&self, chain_id: U256) -> eyre::Result<Option<WalletType>> {
-        let provider = Provider::try_from(self.rpc_url.as_str())?;
-
+    pub async fn signer_with(
+        &self,
+        chain_id: U256,
+        provider: Provider<Http>,
+    ) -> eyre::Result<Option<WalletType>> {
         if self.wallet.ledger {
             let derivation = HDPath::LedgerLive(self.wallet.mnemonic_index as usize);
             let ledger = Ledger::new(derivation, chain_id.as_u64()).await?;
