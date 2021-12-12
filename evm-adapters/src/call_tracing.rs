@@ -127,7 +127,7 @@ impl CallTraceArena {
             if trace.created {
                 if let Some((name, (abi, _code))) = contracts
                     .iter()
-                    .find(|(_key, (_abi, code))| diff_score(code, &trace.output) < 0.30)
+                    .find(|(_key, (_abi, code))| diff_score(code, &trace.output) < 0.10)
                 {
                     identified_contracts.insert(trace.addr, (name.to_string(), abi.clone()));
                     self.update_children_and_prelogs(idx, contracts, identified_contracts, evm);
@@ -140,7 +140,7 @@ impl CallTraceArena {
 
             if let Some((name, (abi, _code))) = contracts
                 .iter()
-                .find(|(_key, (_abi, code))| diff_score(code, &evm.code(trace.addr)) < 0.30)
+                .find(|(_key, (_abi, code))| diff_score(code, &evm.code(trace.addr)) < 0.10)
             {
                 identified_contracts.insert(trace.addr, (name.to_string(), abi.clone()));
                 // re-enter this function at this level if we found the contract
