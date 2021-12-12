@@ -8,7 +8,7 @@ use evm_adapters::{fuzz::FuzzedExecutor, Evm, EvmError};
 
 use eyre::{Context, Result};
 use regex::Regex;
-use std::{collections::HashMap, fmt, time::Instant};
+use std::{collections::BTreeMap, fmt, time::Instant};
 
 use proptest::test_runner::{TestError, TestRunner};
 use serde::{Deserialize, Serialize};
@@ -27,6 +27,7 @@ impl fmt::Display for CounterExample {
     }
 }
 
+/// The result of an executed solidity test
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TestResult {
     /// Whether the test case was successful. This means that the transaction executed
@@ -99,7 +100,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         &mut self,
         regex: &Regex,
         fuzzer: Option<&mut TestRunner>,
-    ) -> Result<HashMap<String, TestResult>> {
+    ) -> Result<BTreeMap<String, TestResult>> {
         tracing::info!("starting tests");
         let start = Instant::now();
         let needs_setup = self.contract.functions().any(|func| func.name == "setUp");
@@ -123,7 +124,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
                 let result = self.run_test(func, needs_setup)?;
                 Ok((func.signature(), result))
             })
-            .collect::<Result<HashMap<_, _>>>()?;
+            .collect::<Result<BTreeMap<_, _>>>()?;
 
         let map = if let Some(fuzzer) = fuzzer {
             let fuzz_tests = test_fns
@@ -133,7 +134,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
                     let result = self.run_fuzz_test(func, needs_setup, fuzzer.clone())?;
                     Ok((func.signature(), result))
                 })
-                .collect::<Result<HashMap<_, _>>>()?;
+                .collect::<Result<BTreeMap<_, _>>>()?;
 
             let mut map = unit_tests;
             map.extend(fuzz_tests);

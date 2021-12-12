@@ -16,6 +16,8 @@ use structopt::StructOpt;
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
+    color_eyre::install()?;
+
     let opts = Opts::from_args();
     match opts.sub {
         Subcommands::FromUtf8 { text } => {
