@@ -118,7 +118,15 @@ impl CallTraceArena {
         if let Some((name, abi)) = maybe_found {
             if trace.created {
                 println!("{}{} {}@{:?}", left, Colour::Yellow.paint("→ new"), name, trace.addr);
-                self.print_children_and_prelogs(idx, trace, &abi, contracts, identified_contracts, evm, left.clone());
+                self.print_children_and_prelogs(
+                    idx,
+                    trace,
+                    &abi,
+                    contracts,
+                    identified_contracts,
+                    evm,
+                    left.clone(),
+                );
                 Self::print_logs(trace, &abi, &left);
                 println!(
                     "{}  └─ {} {} bytes of code",
@@ -126,10 +134,18 @@ impl CallTraceArena {
                     color.paint("←"),
                     trace.output.len() / 2
                 );
-                return;
+                return
             }
             let output = Self::print_func_call(trace, &abi, &name, color, &left);
-            self.print_children_and_prelogs(idx, trace, &abi, contracts, identified_contracts, evm, left.clone());
+            self.print_children_and_prelogs(
+                idx,
+                trace,
+                &abi,
+                contracts,
+                identified_contracts,
+                evm,
+                left.clone(),
+            );
             Self::print_logs(trace, &abi, &left);
             Self::print_output(color, output, left);
         } else {
@@ -140,7 +156,15 @@ impl CallTraceArena {
                 {
                     identified_contracts.insert(trace.addr, (name.to_string(), abi.clone()));
                     println!("{}{} {}@{:?}", left, Colour::Yellow.paint("→ new"), name, trace.addr);
-                    self.print_children_and_prelogs(idx, trace, &abi, contracts, identified_contracts, evm, left.clone());
+                    self.print_children_and_prelogs(
+                        idx,
+                        trace,
+                        &abi,
+                        contracts,
+                        identified_contracts,
+                        evm,
+                        left.clone(),
+                    );
                     Self::print_logs(trace, &abi, &left);
                     println!(
                         "{}  └─ {} {} bytes of code",
@@ -151,7 +175,15 @@ impl CallTraceArena {
                     return
                 } else {
                     println!("{}→ new <Unknown>@{:?}", left, trace.addr);
-                    self.print_unknown(color, idx, trace, contracts, identified_contracts, evm, left.clone());
+                    self.print_unknown(
+                        color,
+                        idx,
+                        trace,
+                        contracts,
+                        identified_contracts,
+                        evm,
+                        left.clone(),
+                    );
                     return
                 }
             }
@@ -164,7 +196,15 @@ impl CallTraceArena {
                 // re-enter this function at this level if we found the contract
                 self.pretty_print(idx, contracts, identified_contracts, evm, left);
             } else {
-                self.print_unknown(color, idx, trace, contracts, identified_contracts, evm, left.clone());
+                self.print_unknown(
+                    color,
+                    idx,
+                    trace,
+                    contracts,
+                    identified_contracts,
+                    evm,
+                    left.clone(),
+                );
             }
         }
     }
@@ -177,7 +217,7 @@ impl CallTraceArena {
         contracts: &BTreeMap<String, (Abi, Vec<u8>)>,
         identified_contracts: &mut BTreeMap<H160, (String, Abi)>,
         evm: &'a E,
-        left: String
+        left: String,
     ) {
         if trace.data.len() >= 4 {
             println!(
@@ -231,7 +271,11 @@ impl CallTraceArena {
                 "{}  └─ {} {}",
                 left.to_string().replace("├─", "│").replace("└─", "  "),
                 color.paint("←"),
-                if trace.output.len() == 0 { "()".to_string() } else { "0x".to_string() + &hex::encode(&trace.output) }
+                if trace.output.len() == 0 {
+                    "()".to_string()
+                } else {
+                    "0x".to_string() + &hex::encode(&trace.output)
+                }
             );
         } else {
             println!(
@@ -241,11 +285,16 @@ impl CallTraceArena {
                 trace.output.len() / 2
             );
         }
-        
     }
 
     /// Prints function call, optionally returning the decoded output
-    pub fn print_func_call(trace: &CallTrace, abi: &Abi, name: &String, color: Colour, left: &String) -> Output {
+    pub fn print_func_call(
+        trace: &CallTrace,
+        abi: &Abi,
+        name: &String,
+        color: Colour,
+        left: &String,
+    ) -> Output {
         if trace.data.len() >= 4 {
             for (func_name, overloaded_funcs) in abi.functions.iter() {
                 for func in overloaded_funcs.iter() {
@@ -269,36 +318,43 @@ impl CallTraceArena {
 
                         return Output::Token(
                             func.decode_output(&trace.output[..]).expect("Bad func output decode"),
-                        );
+                        )
                     }
                 }
             }
         } else {
             // fallback function?
-            println!(
-                "{}[{}] {}::fallback()",
-                left,
-                trace.cost,
-                color.paint(name),
-            );
+            println!("{}[{}] {}::fallback()", left, trace.cost, color.paint(name),);
 
-            return Output::Raw(trace.output[..].to_vec());
+            return Output::Raw(trace.output[..].to_vec())
         }
-        
 
         println!(
             "{}[{}] {}::{}({})",
             left,
             trace.cost,
             color.paint(name),
-            if trace.data.len() >= 4 { hex::encode(&trace.data[0..4]) } else { hex::encode(&trace.data[..]) },
-            if trace.data.len() >= 4 { hex::encode(&trace.data[4..]) } else { hex::encode(&vec![][..])}
+            if trace.data.len() >= 4 {
+                hex::encode(&trace.data[0..4])
+            } else {
+                hex::encode(&trace.data[..])
+            },
+            if trace.data.len() >= 4 {
+                hex::encode(&trace.data[4..])
+            } else {
+                hex::encode(&vec![][..])
+            }
         );
 
         Output::Raw(trace.output[..].to_vec())
     }
 
-    pub fn print_prelogs(prelogs: &Vec<(RawLog, usize)>, location: usize, abi: &Abi, left: &String) {
+    pub fn print_prelogs(
+        prelogs: &Vec<(RawLog, usize)>,
+        location: usize,
+        abi: &Abi,
+        left: &String,
+    ) {
         prelogs.iter().for_each(|(log, loc)| {
             if *loc == location {
                 let mut found = false;
@@ -307,8 +363,7 @@ impl CallTraceArena {
                     for event in overloaded_events.iter() {
                         if event.signature() == log.topics[0] {
                             found = true;
-                            let params =
-                                event.parse_log(log.clone()).expect("Bad event").params;
+                            let params = event.parse_log(log.clone()).expect("Bad event").params;
                             let strings = params
                                 .iter()
                                 .map(|param| format!("{}: {:?}", param.name, param.value))
@@ -343,7 +398,7 @@ impl CallTraceArena {
         contracts: &BTreeMap<String, (Abi, Vec<u8>)>,
         identified_contracts: &mut BTreeMap<H160, (String, Abi)>,
         evm: &'a E,
-        left: String
+        left: String,
     ) {
         let children_idxs = &self.arena[idx].children;
         if children_idxs.len() == 0 {
@@ -417,7 +472,11 @@ impl CallTraceArena {
                     "{}  └─ {} {}",
                     left.to_string().replace("├─", "│").replace("└─", "  "),
                     color.paint("←"),
-                    if bytes.len() == 0 { "()".to_string() } else { "0x".to_string() + &hex::encode(&bytes) }
+                    if bytes.len() == 0 {
+                        "()".to_string()
+                    } else {
+                        "0x".to_string() + &hex::encode(&bytes)
+                    }
                 );
             }
         }

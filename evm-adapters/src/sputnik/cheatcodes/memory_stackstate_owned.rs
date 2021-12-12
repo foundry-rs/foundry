@@ -46,7 +46,12 @@ impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
 
 impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
     pub fn new(metadata: StackSubstateMetadata<'config>, backend: B) -> Self {
-        Self { backend, substate: MemoryStackSubstate::new(metadata), call_index: 0, traces: vec![Default::default()] }
+        Self {
+            backend,
+            substate: MemoryStackSubstate::new(metadata),
+            call_index: 0,
+            traces: vec![Default::default()],
+        }
     }
 }
 

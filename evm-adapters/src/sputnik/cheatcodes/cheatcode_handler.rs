@@ -127,11 +127,11 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
             Capture::Exit((s, v)) => {
                 self.state_mut().increment_call_index();
                 (s, v)
-            },
+            }
             Capture::Trap(_) => {
                 self.state_mut().increment_call_index();
                 unreachable!()
-            },
+            }
         }
     }
 
@@ -161,11 +161,11 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
             Capture::Exit((s, _, _)) => {
                 self.state_mut().increment_call_index();
                 s
-            },
+            }
             Capture::Trap(_) => {
                 self.state_mut().increment_call_index();
                 unreachable!()
-            },
+            }
         }
     }
 
@@ -484,7 +484,8 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
 
             if trace.depth > 0 && prelogs > 0 {
                 let trace_index = trace.idx;
-                let parent_index = self.state().trace().arena[trace_index].parent.expect("No parent");
+                let parent_index =
+                    self.state().trace().arena[trace_index].parent.expect("No parent");
 
                 let child_logs = self.state().trace().inner_number_of_logs(parent_index);
                 if self.raw_logs().len() >= prelogs {
@@ -496,19 +497,24 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                             .saturating_sub(1),
                     ) > 0
                     {
-                        let prelogs = self.state().substate.logs().to_vec()[self.state().trace().arena[parent_index]
-                            .trace
-                            .prelogs
-                            .len() +
-                            child_logs..
-                            prelogs]
-                            .to_vec();
+                        let prelogs =
+                            self.state().substate.logs().to_vec()[self.state().trace().arena
+                                [parent_index]
+                                .trace
+                                .prelogs
+                                .len() +
+                                child_logs..
+                                prelogs]
+                                .to_vec();
                         let parent = &mut self.state_mut().trace_mut().arena[parent_index];
 
                         if prelogs.len() > 0 {
                             prelogs.into_iter().for_each(|prelog| {
                                 if prelog.address == parent.trace.addr {
-                                    parent.trace.prelogs.push((RawLog { topics: prelog.topics, data: prelog.data }, trace.location));
+                                    parent.trace.prelogs.push((
+                                        RawLog { topics: prelog.topics, data: prelog.data },
+                                        trace.location,
+                                    ));
                                 }
                             });
                         }
@@ -531,19 +537,18 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         }
     }
 
-    fn fill_trace(
-        &mut self,
-        new_trace: Option<CallTrace>,
-        success: bool,
-        output: Option<Vec<u8>>,
-    ) {
+    fn fill_trace(&mut self, new_trace: Option<CallTrace>, success: bool, output: Option<Vec<u8>>) {
         if let Some(new_trace) = new_trace {
             let logs = self.state().substate.logs().to_vec();
-            let applicable_logs = logs.into_iter().filter(|log| log.address == new_trace.addr).collect::<Vec<_>>();
+            let applicable_logs =
+                logs.into_iter().filter(|log| log.address == new_trace.addr).collect::<Vec<_>>();
             let prelogs = self.state_mut().trace_mut().arena[new_trace.idx].trace.prelogs.len();
             let curr_logs = self.state_mut().trace_mut().arena[new_trace.idx].trace.logs.len();
-            applicable_logs[prelogs+curr_logs..].to_vec().into_iter().for_each(|log| {
-                self.state_mut().trace_mut().arena[new_trace.idx].trace.logs.push(RawLog { topics: log.topics, data: log.data });
+            applicable_logs[prelogs + curr_logs..].to_vec().into_iter().for_each(|log| {
+                self.state_mut().trace_mut().arena[new_trace.idx]
+                    .trace
+                    .logs
+                    .push(RawLog { topics: log.topics, data: log.data });
             });
             let used_gas = self.handler.used_gas();
             let trace = &mut self.state_mut().trace_mut().arena[new_trace.idx].trace;
@@ -1270,7 +1275,13 @@ mod tests {
             ),
         );
         let mut identified = Default::default();
-        evm.traces().expect("no traces")[1].pretty_print(0, &mapping, &mut identified, &evm, "".to_string());
+        evm.traces().expect("no traces")[1].pretty_print(
+            0,
+            &mapping,
+            &mut identified,
+            &evm,
+            "".to_string(),
+        );
     }
 
     #[test]
@@ -1334,6 +1345,12 @@ mod tests {
             ),
         );
         let mut identified = Default::default();
-        evm.traces().expect("no traces")[1].pretty_print(0, &mapping, &mut identified, &evm, "".to_string());
+        evm.traces().expect("no traces")[1].pretty_print(
+            0,
+            &mapping,
+            &mut identified,
+            &evm,
+            "".to_string(),
+        );
     }
 }
