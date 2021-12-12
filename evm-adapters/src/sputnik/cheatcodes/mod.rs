@@ -55,8 +55,7 @@ ethers::contract::abigen!(
             etch(address,bytes)
     ]"#,
 );
-pub use hevm_mod::HEVMCalls;
-pub use hevm_mod::HEVM_ABI;
+pub use hevm_mod::{HEVMCalls, HEVM_ABI};
 
 ethers::contract::abigen!(
     HevmConsole,

@@ -97,6 +97,60 @@ impl CallTraceArena {
         self.arena[node_idx].trace.logs.iter().for_each(|raw| println!("log {}", raw.topics[0]));
     }
 
+    pub fn update_identified<'a, S: Clone, E: crate::Evm<S>>(
+        &self,
+        idx: usize,
+        contracts: &BTreeMap<String, (Abi, Vec<u8>)>,
+        identified_contracts: &mut BTreeMap<H160, (String, Abi)>,
+        evm: &'a E,
+    ) {
+        let trace = &self.arena[idx].trace;
+
+        #[cfg(feature = "sputnik")]
+        identified_contracts.insert(*CHEATCODE_ADDRESS, ("VM".to_string(), HEVM_ABI.clone()));
+
+        let maybe_found;
+        {
+            if let Some((name, abi)) = identified_contracts.get(&trace.addr) {
+                maybe_found = Some((name.clone(), abi.clone()));
+            } else {
+                maybe_found = None;
+            }
+        }
+        if let Some((_name, _abi)) = maybe_found {
+            if trace.created {
+                self.update_children_and_prelogs(idx, contracts, identified_contracts, evm);
+                return
+            }
+            self.update_children_and_prelogs(idx, contracts, identified_contracts, evm);
+        } else {
+            if trace.created {
+                if let Some((name, (abi, _code))) = contracts
+                    .iter()
+                    .find(|(_key, (_abi, code))| diff_score(code, &trace.output) < 0.30)
+                {
+                    identified_contracts.insert(trace.addr, (name.to_string(), abi.clone()));
+                    self.update_children_and_prelogs(idx, contracts, identified_contracts, evm);
+                    return
+                } else {
+                    self.update_unknown(idx, trace, contracts, identified_contracts, evm);
+                    return
+                }
+            }
+
+            if let Some((name, (abi, _code))) = contracts
+                .iter()
+                .find(|(_key, (_abi, code))| diff_score(code, &evm.code(trace.addr)) < 0.30)
+            {
+                identified_contracts.insert(trace.addr, (name.to_string(), abi.clone()));
+                // re-enter this function at this level if we found the contract
+                self.update_identified(idx, contracts, identified_contracts, evm);
+            } else {
+                self.update_unknown(idx, trace, contracts, identified_contracts, evm);
+            }
+        }
+    }
+
     pub fn pretty_print<'a, S: Clone, E: crate::Evm<S>>(
         &self,
         idx: usize,
@@ -111,13 +165,18 @@ impl CallTraceArena {
         identified_contracts.insert(*CHEATCODE_ADDRESS, ("VM".to_string(), HEVM_ABI.clone()));
 
         #[cfg(feature = "sputnik")]
-        let color = if trace.addr == *CHEATCODE_ADDRESS { Colour::Blue} else {
-            if trace.success { Colour::Green } else { Colour::Red }
+        let color = if trace.addr == *CHEATCODE_ADDRESS {
+            Colour::Blue
+        } else {
+            if trace.success {
+                Colour::Green
+            } else {
+                Colour::Red
+            }
         };
 
         #[cfg(not(feature = "sputnik"))]
         let color = if trace.success { Colour::Green } else { Colour::Red };
-
 
         let maybe_found;
         {
@@ -265,16 +324,34 @@ impl CallTraceArena {
             }
         });
 
-        let mut right = "  ├─ ";
-
-        trace.logs.iter().enumerate().for_each(|(i, log)| {
-            if i == trace.logs.len() - 1 {
-                right = "  └─ ";
+        trace.logs.iter().enumerate().for_each(|(_i, log)| {
+            for (i, topic) in log.topics.iter().enumerate() {
+                let right = if i == log.topics.len() - 1 && log.data.len() == 0 {
+                    "  └─ "
+                } else {
+                    "  ├─ "
+                };
+                if i == 0 {
+                    println!(
+                        "{}{} {}",
+                        left.to_string().replace("├─", "│") + right,
+                        Colour::Cyan.paint("emit topic 0:"),
+                        Colour::Cyan.paint(format!("{:?}", topic))
+                    )
+                } else {
+                    println!(
+                        "{} {} {}",
+                        left.to_string().replace("├─", "│") + "  │ " + right,
+                        Colour::Cyan.paint(format!("topic {}:", i)),
+                        Colour::Cyan.paint(format!("{:?}", topic))
+                    )
+                }
             }
             println!(
-                "{}emit {}",
-                left.to_string().replace("├─", "│") + right,
-                Colour::Cyan.paint(format!("{:?}", log))
+                "{}    {} {}",
+                left.to_string().replace("├─", "│") + "  │ " + "  └─ ",
+                Colour::Cyan.paint("data:"),
+                Colour::Cyan.paint("0x".to_string() + &hex::encode(&log.data))
             )
         });
 
@@ -299,6 +376,25 @@ impl CallTraceArena {
         }
     }
 
+    pub fn update_unknown<'a, S: Clone, E: crate::Evm<S>>(
+        &self,
+        idx: usize,
+        trace: &CallTrace,
+        contracts: &BTreeMap<String, (Abi, Vec<u8>)>,
+        identified_contracts: &mut BTreeMap<H160, (String, Abi)>,
+        evm: &'a E,
+    ) {
+        let children_idxs = &self.arena[idx].children;
+        children_idxs.iter().enumerate().for_each(|(i, child_idx)| {
+            // let inners = inner.inner_number_of_inners();
+            if i == children_idxs.len() - 1 && trace.logs.len() == 0 {
+                self.update_identified(*child_idx, contracts, identified_contracts, evm);
+            } else {
+                self.update_identified(*child_idx, contracts, identified_contracts, evm);
+            }
+        });
+    }
+
     /// Prints function call, optionally returning the decoded output
     pub fn print_func_call(
         trace: &CallTrace,
@@ -321,7 +417,7 @@ impl CallTraceArena {
                                 .collect::<Vec<String>>()
                                 .join(", ");
                         }
-                        
+
                         println!(
                             "{}[{}] {}::{}({})",
                             left,
@@ -333,7 +429,8 @@ impl CallTraceArena {
 
                         if trace.output.len() > 0 {
                             return Output::Token(
-                                func.decode_output(&trace.output[..]).expect("Bad func output decode"),
+                                func.decode_output(&trace.output[..])
+                                    .expect("Bad func output decode"),
                             )
                         } else {
                             return Output::Raw(vec![])
@@ -399,10 +496,31 @@ impl CallTraceArena {
                     }
                 }
                 if !found {
+                    for (i, topic) in log.topics.iter().enumerate() {
+                        let right = if i == log.topics.len() - 1 && log.data.len() == 0 {
+                            "  └─ "
+                        } else {
+                            "  ├─"
+                        };
+                        if i == 0 {
+                            println!(
+                                "{}emit topic 0: {}",
+                                left.to_string().replace("├─", "│") + right,
+                                Colour::Cyan.paint(format!("{:?}", topic))
+                            )
+                        } else {
+                            println!(
+                                "{}topic {}: {}",
+                                left.to_string().replace("├─", "│") + right,
+                                i,
+                                Colour::Cyan.paint(format!("{:?}", topic))
+                            )
+                        }
+                    }
                     println!(
-                        "{}emit {}",
-                        left.to_string().replace("├─", "│") + right,
-                        Colour::Cyan.paint(format!("{:?}", log))
+                        "{}data {}",
+                        left.to_string().replace("├─", "│") + "  └─ ",
+                        Colour::Cyan.paint(hex::encode(&log.data))
                     )
                 }
             }
@@ -437,6 +555,19 @@ impl CallTraceArena {
         }
     }
 
+    pub fn update_children_and_prelogs<'a, S: Clone, E: crate::Evm<S>>(
+        &self,
+        idx: usize,
+        contracts: &BTreeMap<String, (Abi, Vec<u8>)>,
+        identified_contracts: &mut BTreeMap<H160, (String, Abi)>,
+        evm: &'a E,
+    ) {
+        let children_idxs = &self.arena[idx].children;
+        children_idxs.iter().for_each(|child_idx| {
+            self.update_identified(*child_idx, contracts, identified_contracts, evm);
+        });
+    }
+
     pub fn print_logs(trace: &CallTrace, abi: &Abi, left: &String) {
         trace.logs.iter().for_each(|log| {
             let mut found = false;
@@ -462,10 +593,31 @@ impl CallTraceArena {
                 }
             }
             if !found {
+                for (i, topic) in log.topics.iter().enumerate() {
+                    let right = if i == log.topics.len() - 1 && log.data.len() == 0 {
+                        "  └─ "
+                    } else {
+                        "  ├─"
+                    };
+                    if i == 0 {
+                        println!(
+                            "{}emit topic 0: {}",
+                            left.to_string().replace("├─", "│") + right,
+                            Colour::Cyan.paint(format!("{:?}", topic))
+                        )
+                    } else {
+                        println!(
+                            "{}topic {}: {}",
+                            left.to_string().replace("├─", "│") + right,
+                            i,
+                            Colour::Cyan.paint(format!("{:?}", topic))
+                        )
+                    }
+                }
                 println!(
-                    "{}emit {}",
-                    left.to_string().replace("├─", "│") + right,
-                    Colour::Cyan.paint(format!("{:?}", log))
+                    "{}data {}",
+                    left.to_string().replace("├─", "│") + "  └─ ",
+                    Colour::Cyan.paint(hex::encode(&log.data))
                 )
             }
         });
@@ -565,5 +717,6 @@ fn diff_score(bytecode1: &Vec<u8>, bytecode2: &Vec<u8>) -> f64 {
         }
     }
 
+    // println!("diff_score {}", diff_chars as f64 / cutoff_len as f64);
     diff_chars as f64 / cutoff_len as f64
 }

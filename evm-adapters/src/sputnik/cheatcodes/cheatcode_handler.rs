@@ -321,8 +321,6 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
             Err(err) => return evm_error(&err.to_string()),
         };
 
-
-
         match decoded {
             HEVMCalls::Warp(inner) => {
                 state.backend.cheats.block_timestamp = Some(inner.0);
@@ -562,7 +560,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                         .push(RawLog { topics: log.topics, data: log.data });
                 });
             }
-            
+
             let used_gas = self.handler.used_gas();
             let trace = &mut self.state_mut().trace_mut().arena[new_trace.idx].trace;
             trace.output = output.unwrap_or(vec![]);

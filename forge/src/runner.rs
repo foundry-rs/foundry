@@ -48,8 +48,8 @@ pub struct TestResult {
     /// be printed to the user.
     pub logs: Vec<String>,
 
-    /// Trace
-    pub trace: Option<CallTraceArena>,
+    /// Traces
+    pub traces: Option<Vec<CallTraceArena>>,
 }
 
 use std::marker::PhantomData;
@@ -162,6 +162,8 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
 
         let mut logs = self.init_logs.to_vec();
 
+        self.evm.reset_traces();
+
         // call the setup function in each test to reset the test's state.
         if setup {
             tracing::trace!("setting up");
@@ -172,8 +174,6 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
                 .1;
             logs.extend_from_slice(&setup_logs);
         }
-
-        self.evm.reset_traces();
 
         let (status, reason, gas_used, logs) = match self.evm.call::<(), _, _>(
             self.sender,
@@ -198,10 +198,10 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
             },
         };
 
-        let mut trace = None;
-        if let Some(traces) = self.evm.traces() {
-            if traces.len() > 0 {
-                trace = Some(traces[0].clone());
+        let mut traces = None;
+        if let Some(evm_traces) = self.evm.traces() {
+            if evm_traces.len() > 0 {
+                traces = Some(evm_traces.clone());
             }
         }
         self.evm.reset_traces();
@@ -216,7 +216,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
             gas_used: Some(gas_used),
             counterexample: None,
             logs,
-            trace,
+            traces,
         })
     }
 
@@ -263,7 +263,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
             gas_used: None,
             counterexample,
             logs: vec![],
-            trace: None,
+            traces: None,
         })
     }
 }
