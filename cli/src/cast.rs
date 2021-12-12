@@ -5,9 +5,7 @@ use cast_opts::{Opts, Subcommands};
 
 use ethers::{
     core::types::{BlockId, BlockNumber::Latest},
-    middleware::SignerMiddleware,
     providers::{Middleware, Provider},
-    signers::Signer,
     types::{NameOrAddress, U256},
 };
 use rustc_hex::ToHex;
@@ -114,10 +112,17 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::SendTx { eth, to, sig, args } => {
             let provider = Provider::try_from(eth.rpc_url.as_str())?;
-            if let Some(signer) = eth.signer()? {
-                let from = eth.from.unwrap_or_else(|| signer.address());
-                let provider = SignerMiddleware::new(provider, signer);
-                cast_send(provider, from, to, sig, args, eth.cast_async).await?;
+            let chain_id = Cast::new(&provider).chain_id().await?;
+
+            if let Some(signer) = eth.signer_with(chain_id, provider.clone()).await? {
+                match signer {
+                    cast_opts::WalletType::Ledger(signer) => {
+                        cast_send(&signer, signer.address(), to, sig, args, eth.cast_async).await?;
+                    }
+                    cast_opts::WalletType::Local(signer) => {
+                        cast_send(&signer, signer.address(), to, sig, args, eth.cast_async).await?;
+                    }
+                }
             } else {
                 let from = eth.from.expect("No ETH_FROM or signer specified");
                 cast_send(provider, from, to, sig, args, eth.cast_async).await?;

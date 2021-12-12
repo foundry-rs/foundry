@@ -1,9 +1,10 @@
-use std::{convert::TryFrom, str::FromStr, sync::Arc};
+use std::{convert::TryFrom, str::FromStr};
 
 use ethers::{
+    middleware::SignerMiddleware,
     providers::{Http, Provider},
-    signers::{coins_bip39::English, LocalWallet, MnemonicBuilder},
-    types::{Address, BlockId, BlockNumber, NameOrAddress, H256},
+    signers::{coins_bip39::English, HDPath, Ledger, LocalWallet, MnemonicBuilder},
+    types::{Address, BlockId, BlockNumber, NameOrAddress, H256, U256},
 };
 use eyre::Result;
 use structopt::StructOpt;
@@ -252,19 +253,44 @@ pub struct EthereumOpts {
     pub wallet: Wallet,
 }
 
-// TODO: Improve these so that we return a middleware trait object
 impl EthereumOpts {
     #[allow(unused)]
-    pub fn provider(&self) -> eyre::Result<Arc<Provider<Http>>> {
-        Ok(Arc::new(Provider::try_from(self.rpc_url.as_str())?))
+    pub async fn signer(&self, chain_id: U256) -> eyre::Result<Option<WalletType>> {
+        self.signer_with(chain_id, Provider::try_from(self.rpc_url.as_str())?).await
     }
 
-    /// Returns a [`LocalWallet`] corresponding to the provided private key or mnemonic
-    pub fn signer(&self) -> eyre::Result<Option<LocalWallet>> {
-        self.wallet.signer()
+    /// Returns a [`SignerMiddleware`] corresponding to the provided private key, mnemonic or hw
+    /// signer
+    pub async fn signer_with(
+        &self,
+        chain_id: U256,
+        provider: Provider<Http>,
+    ) -> eyre::Result<Option<WalletType>> {
+        if self.wallet.ledger {
+            let derivation = HDPath::LedgerLive(self.wallet.mnemonic_index as usize);
+            let ledger = Ledger::new(derivation, chain_id.as_u64()).await?;
+
+            Ok(Some(WalletType::Ledger(SignerMiddleware::new(provider, ledger))))
+        } else {
+            let local = self
+                .wallet
+                .private_key()
+                .transpose()
+                .or_else(|| self.wallet.mnemonic().transpose())
+                .or_else(|| self.wallet.keystore().transpose())
+                .transpose()?
+                .ok_or_else(|| eyre::eyre!("error accessing local wallet"))?;
+
+            Ok(Some(WalletType::Local(SignerMiddleware::new(provider, local))))
+        }
     }
 }
 
+#[derive(Debug)]
+pub enum WalletType {
+    Local(SignerMiddleware<Provider<Http>, LocalWallet>),
+    Ledger(SignerMiddleware<Provider<Http>, Ledger>),
+}
 #[derive(StructOpt, Debug, Clone)]
 pub struct Wallet {
     #[structopt(long = "private-key", help = "Your private key string")]
@@ -279,24 +305,18 @@ pub struct Wallet {
     #[structopt(long = "mnemonic-path", help = "Path to your mnemonic file")]
     pub mnemonic_path: Option<String>,
 
+    #[structopt(short, long = "ledger", help = "Use your Ledger hardware wallet")]
+    pub ledger: bool,
+
     #[structopt(
         long = "mnemonic_index",
         help = "your index in the standard hd path",
-        default_value = "0",
-        requires = "mnemonic-path"
+        default_value = "0"
     )]
     pub mnemonic_index: u32,
 }
 
 impl Wallet {
-    pub fn signer(&self) -> Result<Option<LocalWallet>> {
-        self.private_key()
-            .transpose()
-            .or_else(|| self.mnemonic().transpose())
-            .or_else(|| self.keystore().transpose())
-            .transpose()
-    }
-
     fn private_key(&self) -> Result<Option<LocalWallet>> {
         Ok(if let Some(ref private_key) = self.private_key {
             Some(LocalWallet::from_str(private_key)?)
