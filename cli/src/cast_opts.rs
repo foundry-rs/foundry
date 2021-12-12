@@ -1,4 +1,4 @@
-use std::{convert::TryFrom, str::FromStr, sync::Arc};
+use std::{convert::TryFrom, str::FromStr};
 
 use ethers::{
     middleware::SignerMiddleware,
@@ -254,15 +254,10 @@ pub struct EthereumOpts {
 }
 
 impl EthereumOpts {
-    #[allow(unused)]
-    pub fn provider(&self) -> eyre::Result<Arc<Provider<Http>>> {
-        Ok(Arc::new(Provider::try_from(self.rpc_url.as_str())?))
-    }
-
     /// Returns a [`SignerMiddleware`] corresponding to the provided private key, mnemonic or hw
     /// signer
     pub async fn signer(&self, chain_id: U256) -> eyre::Result<Option<WalletType>> {
-        let provider = self.provider()?;
+        let provider = Provider::try_from(self.rpc_url.as_str())?;
 
         if self.wallet.ledger {
             let derivation = HDPath::LedgerLive(self.wallet.mnemonic_index as usize);
@@ -286,8 +281,8 @@ impl EthereumOpts {
 
 #[derive(Debug)]
 pub enum WalletType {
-    Local(SignerMiddleware<Arc<Provider<Http>>, LocalWallet>),
-    Ledger(SignerMiddleware<Arc<Provider<Http>>, Ledger>),
+    Local(SignerMiddleware<Provider<Http>, LocalWallet>),
+    Ledger(SignerMiddleware<Provider<Http>, Ledger>),
 }
 #[derive(StructOpt, Debug, Clone)]
 pub struct Wallet {
