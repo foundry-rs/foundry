@@ -113,7 +113,7 @@ impl Cmd for TestArgs {
         let fuzzer = proptest::test_runner::TestRunner::new(cfg);
 
         // Set up the project
-        let project = Project::try_from(&opts)?;
+        let project = opts.project()?;
 
         // prepare the test builder
         let builder = MultiContractRunnerBuilder::default()

@@ -7,9 +7,12 @@ use ethers::{
     },
     types::Address,
 };
-use std::{path::PathBuf, str::FromStr};
+use std::{
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
-use crate::{utils::find_git_root_path, Cmd};
+use crate::{utils, Cmd};
 #[cfg(feature = "evmodin-evm")]
 use evmodin::util::mocked_host::MockedHost;
 #[cfg(feature = "evmodin-evm")]
@@ -61,12 +64,19 @@ pub struct BuildArgs {
         long
     )]
     pub force: bool,
+
+    #[structopt(
+        help = "uses hardhat style project layout. This a convenience flag and is the same as `--contracts contracts --lib-paths node_modules`",
+        long,
+        conflicts_with = "contracts"
+    )]
+    pub hardhat: bool,
 }
 
 impl Cmd for BuildArgs {
     type Output = ProjectCompileOutput<MinimalCombinedArtifacts>;
     fn run(self) -> eyre::Result<Self::Output> {
-        let project = Project::try_from(&self)?;
+        let project = self.project()?;
         let output = project.compile()?;
         if output.has_compiler_errors() {
             // return the diagnostics error back to the user.
@@ -80,45 +90,82 @@ impl Cmd for BuildArgs {
     }
 }
 
-impl std::convert::TryFrom<&BuildArgs> for Project {
-    type Error = eyre::Error;
+impl BuildArgs {
+    /// Determines the source directory within the given root
+    fn contracts_path(&self, root: impl AsRef<Path>) -> PathBuf {
+        let root = root.as_ref();
+        if let Some(ref contracts) = self.contracts {
+            root.join(contracts)
+        } else if self.hardhat {
+            root.join("contracts")
+        } else {
+            // no contract source directory was provided, determine the source directory
+            utils::find_contracts_dir(&root)
+        }
+    }
 
-    /// Defaults to converting to DAppTools-style repo layout, but can be customized.
-    fn try_from(opts: &BuildArgs) -> eyre::Result<Project> {
+    /// Determines the artifacts directory within the given root
+    fn artifacts_path(&self, root: impl AsRef<Path>) -> PathBuf {
+        let root = root.as_ref();
+        if let Some(ref artifacts) = self.out_path {
+            root.join(artifacts)
+        } else if self.hardhat {
+            root.join("artifacts")
+        } else {
+            // no artifacts source directory was provided, determine the artifacts directory
+            utils::find_artifacts_dir(&root)
+        }
+    }
+
+    /// Determines the libraries
+    fn libs(&self, root: impl AsRef<Path>) -> Vec<PathBuf> {
+        let root = root.as_ref();
+        if self.lib_paths.is_empty() {
+            if self.hardhat {
+                vec![root.join("node_modules")]
+            } else {
+                // no libs directories provided
+                utils::find_libs(&root)
+            }
+        } else {
+            let mut libs = self.lib_paths.clone();
+            if self.hardhat && !self.lib_paths.iter().any(|lib| lib.ends_with("node_modules")) {
+                // if --hardhat was set, ensure it is present in the lib set
+                libs.push(root.join("node_modules"));
+            }
+            libs
+        }
+    }
+
+    /// Converts all build arguments to the corresponding project config
+    ///
+    /// Defaults to DAppTools-style repo layout, but can be customized.
+    pub fn project(&self) -> eyre::Result<Project> {
         // 1. Set the root dir
-        let root = opts.root.clone().unwrap_or_else(|| {
-            find_git_root_path().unwrap_or_else(|_| std::env::current_dir().unwrap())
+        let root = self.root.clone().unwrap_or_else(|| {
+            utils::find_git_root_path().unwrap_or_else(|_| std::env::current_dir().unwrap())
         });
         let root = std::fs::canonicalize(&root)?;
 
         // 2. Set the contracts dir
-        let contracts = if let Some(ref contracts) = opts.contracts {
-            root.join(contracts)
-        } else {
-            root.join("src")
-        };
+        let contracts = self.contracts_path(&root);
 
         // 3. Set the output dir
-        let artifacts = if let Some(ref artifacts) = opts.out_path {
-            root.join(artifacts)
-        } else {
-            root.join("out")
-        };
+        let artifacts = self.artifacts_path(&root);
 
         // 4. Set where the libraries are going to be read from
         // default to the lib path being the `lib/` dir
-        let lib_paths =
-            if opts.lib_paths.is_empty() { vec![root.join("lib")] } else { opts.lib_paths.clone() };
+        let lib_paths = self.libs(&root);
 
         // get all the remappings corresponding to the lib paths
         let mut remappings: Vec<_> =
             lib_paths.iter().flat_map(|path| Remapping::find_many(&path).unwrap()).collect();
 
         // extend them with the once manually provided in the opts
-        remappings.extend_from_slice(&opts.remappings);
+        remappings.extend_from_slice(&self.remappings);
 
         // extend them with the one via the env vars
-        if let Some(ref env) = opts.remappings_env {
+        if let Some(ref env) = self.remappings_env {
             remappings.extend(remappings_from_newline(env))
         }
 
@@ -153,7 +200,7 @@ impl std::convert::TryFrom<&BuildArgs> for Project {
         let mut builder =
             Project::builder().paths(paths).allowed_path(&root).allowed_paths(lib_paths);
 
-        if opts.no_auto_detect {
+        if self.no_auto_detect {
             builder = builder.no_auto_detect();
         }
 
@@ -161,7 +208,7 @@ impl std::convert::TryFrom<&BuildArgs> for Project {
 
         // if `--force` is provided, it proceeds to remove the cache
         // and recompile the contracts.
-        if opts.force {
+        if self.force {
             project.cleanup()?;
         }
 
