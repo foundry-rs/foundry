@@ -140,7 +140,9 @@ fn fuzz_param(param: &ParamType) -> impl Strategy<Value = Token> {
             _ => panic!("unsupported solidity type uint{}", n),
         },
         ParamType::Bool => any::<bool>().prop_map(|x| x.into_token()).boxed(),
-        ParamType::String => any::<String>().prop_map(|x| x.into_token()).boxed(),
+        ParamType::String => any::<Vec<u8>>()
+            .prop_map(|x| Token::String(unsafe { std::str::from_utf8_unchecked(&x).to_string() }))
+            .boxed(),
         ParamType::Array(param) => proptest::collection::vec(fuzz_param(param), 0..MAX_ARRAY_LEN)
             .prop_map(Token::Array)
             .boxed(),
