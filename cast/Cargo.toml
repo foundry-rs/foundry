@@ -11,6 +11,7 @@ foundry-utils = { path = "../utils" }
 # ethers = "0.5"
 ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-providers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
+ethers-signers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["ledger"] }
 eyre = "0.6.5"
 rustc-hex = "2.1.0"
 serde_json = "1.0.67"
