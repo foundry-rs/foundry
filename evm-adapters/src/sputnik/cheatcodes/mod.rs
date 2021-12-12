@@ -56,6 +56,7 @@ ethers::contract::abigen!(
     ]"#,
 );
 pub use hevm_mod::HEVMCalls;
+pub use hevm_mod::HEVM_ABI;
 
 ethers::contract::abigen!(
     HevmConsole,

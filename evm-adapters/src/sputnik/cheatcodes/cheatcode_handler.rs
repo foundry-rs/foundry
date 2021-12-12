@@ -313,12 +313,15 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
     ) -> Capture<(ExitReason, Vec<u8>), Infallible> {
         let mut res = vec![];
 
+        let trace = self.start_trace(*CHEATCODE_ADDRESS, input.clone(), false, 0);
         // Get a mutable ref to the state so we can apply the cheats
         let state = self.state_mut();
         let decoded = match HEVMCalls::decode(&input) {
             Ok(inner) => inner,
             Err(err) => return evm_error(&err.to_string()),
         };
+
+
 
         match decoded {
             HEVMCalls::Warp(inner) => {
@@ -448,6 +451,8 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
             }
         };
 
+        self.fill_trace(trace, true, Some(res.clone()));
+
         // TODO: Add more cheat codes.
         Capture::Exit((ExitReason::Succeed(ExitSucceed::Stopped), res))
     }
@@ -543,18 +548,21 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
             let child_logs = self.state().trace().inner_number_of_logs(new_trace.idx);
 
             let logs = self.state().substate.logs().to_vec();
-            let applicable_logs = logs[prelogs + child_logs..]
-                .to_vec()
-                .into_iter()
-                .filter(|log| log.address == new_trace.addr)
-                .collect::<Vec<_>>();
+            if logs.len() > prelogs + child_logs {
+                let applicable_logs = logs[prelogs + child_logs..]
+                    .to_vec()
+                    .into_iter()
+                    .filter(|log| log.address == new_trace.addr)
+                    .collect::<Vec<_>>();
 
-            applicable_logs.into_iter().for_each(|log| {
-                self.state_mut().trace_mut().arena[new_trace.idx]
-                    .trace
-                    .logs
-                    .push(RawLog { topics: log.topics, data: log.data });
-            });
+                applicable_logs.into_iter().for_each(|log| {
+                    self.state_mut().trace_mut().arena[new_trace.idx]
+                        .trace
+                        .logs
+                        .push(RawLog { topics: log.topics, data: log.data });
+                });
+            }
+            
             let used_gas = self.handler.used_gas();
             let trace = &mut self.state_mut().trace_mut().arena[new_trace.idx].trace;
             trace.output = output.unwrap_or(vec![]);

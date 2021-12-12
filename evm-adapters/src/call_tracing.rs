@@ -7,6 +7,9 @@ use std::collections::BTreeMap;
 
 use ansi_term::Colour;
 
+#[cfg(feature = "sputnik")]
+use crate::sputnik::cheatcodes::{cheatcode_handler::CHEATCODE_ADDRESS, HEVM_ABI};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CallTraceArena {
     pub arena: Vec<CallTraceNode>,
@@ -104,8 +107,17 @@ impl CallTraceArena {
     ) {
         let trace = &self.arena[idx].trace;
 
-        // color the printout by success
+        #[cfg(feature = "sputnik")]
+        identified_contracts.insert(*CHEATCODE_ADDRESS, ("VM".to_string(), HEVM_ABI.clone()));
+
+        #[cfg(feature = "sputnik")]
+        let color = if trace.addr == *CHEATCODE_ADDRESS { Colour::Blue} else {
+            if trace.success { Colour::Green } else { Colour::Red }
+        };
+
+        #[cfg(not(feature = "sputnik"))]
         let color = if trace.success { Colour::Green } else { Colour::Red };
+
 
         let maybe_found;
         {
@@ -299,14 +311,17 @@ impl CallTraceArena {
             for (func_name, overloaded_funcs) in abi.functions.iter() {
                 for func in overloaded_funcs.iter() {
                     if func.selector() == trace.data[0..4] {
-                        let params =
-                            func.decode_input(&trace.data[4..]).expect("Bad func data decode");
-                        let strings = params
-                            .iter()
-                            .map(|param| format!("{:?}", param))
-                            .collect::<Vec<String>>()
-                            .join(", ");
-
+                        let mut strings = "".to_string();
+                        if trace.data[4..].len() > 0 {
+                            let params =
+                                func.decode_input(&trace.data[4..]).expect("Bad func data decode");
+                            strings = params
+                                .iter()
+                                .map(|param| format!("{:?}", param))
+                                .collect::<Vec<String>>()
+                                .join(", ");
+                        }
+                        
                         println!(
                             "{}[{}] {}::{}({})",
                             left,
@@ -316,9 +331,13 @@ impl CallTraceArena {
                             strings
                         );
 
-                        return Output::Token(
-                            func.decode_output(&trace.output[..]).expect("Bad func output decode"),
-                        )
+                        if trace.output.len() > 0 {
+                            return Output::Token(
+                                func.decode_output(&trace.output[..]).expect("Bad func output decode"),
+                            )
+                        } else {
+                            return Output::Raw(vec![])
+                        }
                     }
                 }
             }
