@@ -197,7 +197,7 @@ where
             let input = std::io::stdin();
             let mut what = String::new();
             input.read_line(&mut what)?;
-            T::from_str(&what.replace("\n", ""))?
+            T::from_str(&what.replace('\n', ""))?
         }
     })
 }

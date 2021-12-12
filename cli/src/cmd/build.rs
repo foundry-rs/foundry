@@ -112,7 +112,7 @@ impl std::convert::TryFrom<&BuildArgs> for Project {
 
         // get all the remappings corresponding to the lib paths
         let mut remappings: Vec<_> =
-            lib_paths.iter().map(|path| Remapping::find_many(&path).unwrap()).flatten().collect();
+            lib_paths.iter().flat_map(|path| Remapping::find_many(&path).unwrap()).collect();
 
         // extend them with the once manually provided in the opts
         remappings.extend_from_slice(&opts.remappings);

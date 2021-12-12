@@ -319,7 +319,7 @@ impl Wallet {
 
     fn mnemonic(&self) -> Result<Option<LocalWallet>> {
         Ok(if let Some(ref path) = self.mnemonic_path {
-            let mnemonic = std::fs::read_to_string(path)?.replace("\n", "");
+            let mnemonic = std::fs::read_to_string(path)?.replace('\n', "");
             Some(
                 MnemonicBuilder::<English>::default()
                     .phrase(mnemonic.as_str())
