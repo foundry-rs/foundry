@@ -372,7 +372,7 @@ impl CallTraceArena {
                             println!(
                                 "{}emit {}({})",
                                 left.to_string().replace("├─", "│") + right,
-                                Colour::Cyan.paint(event_name),
+                                Colour::Blue.paint(event_name),
                                 strings
                             );
                             break 'outer
@@ -383,7 +383,7 @@ impl CallTraceArena {
                     println!(
                         "{}emit {}",
                         left.to_string().replace("├─", "│") + right,
-                        Colour::Cyan.paint(format!("{:?}", log))
+                        Colour::Blue.paint(format!("{:?}", log))
                     )
                 }
             }

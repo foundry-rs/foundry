@@ -539,12 +539,17 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
 
     fn fill_trace(&mut self, new_trace: Option<CallTrace>, success: bool, output: Option<Vec<u8>>) {
         if let Some(new_trace) = new_trace {
-            let logs = self.state().substate.logs().to_vec();
-            let applicable_logs =
-                logs.into_iter().filter(|log| log.address == new_trace.addr).collect::<Vec<_>>();
             let prelogs = self.state_mut().trace_mut().arena[new_trace.idx].trace.prelogs.len();
-            let curr_logs = self.state_mut().trace_mut().arena[new_trace.idx].trace.logs.len();
-            applicable_logs[prelogs + curr_logs..].to_vec().into_iter().for_each(|log| {
+            let child_logs = self.state().trace().inner_number_of_logs(new_trace.idx);
+
+            let logs = self.state().substate.logs().to_vec();
+            let applicable_logs = logs[prelogs + child_logs..]
+                .to_vec()
+                .into_iter()
+                .filter(|log| log.address == new_trace.addr)
+                .collect::<Vec<_>>();
+
+            applicable_logs.into_iter().for_each(|log| {
                 self.state_mut().trace_mut().arena[new_trace.idx]
                     .trace
                     .logs
