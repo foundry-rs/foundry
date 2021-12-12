@@ -96,13 +96,11 @@ impl BuildArgs {
         let root = root.as_ref();
         if let Some(ref contracts) = self.contracts {
             root.join(contracts)
+        } else if self.hardhat {
+            root.join("contracts")
         } else {
-            if self.hardhat {
-                root.join("contracts")
-            } else {
-                // no contract source directory was provided, determine the source directory
-                utils::find_contracts_dir(&root)
-            }
+            // no contract source directory was provided, determine the source directory
+            utils::find_contracts_dir(&root)
         }
     }
 
@@ -111,13 +109,11 @@ impl BuildArgs {
         let root = root.as_ref();
         if let Some(ref artifacts) = self.out_path {
             root.join(artifacts)
+        } else if self.hardhat {
+            root.join("artifacts")
         } else {
-            if self.hardhat {
-                root.join("artifacts")
-            } else {
-                // no artifacts source directory was provided, determine the artifacts directory
-                utils::find_artifacts_dir(&root)
-            }
+            // no artifacts source directory was provided, determine the artifacts directory
+            utils::find_artifacts_dir(&root)
         }
     }
 
