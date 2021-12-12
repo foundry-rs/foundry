@@ -286,16 +286,16 @@ pub enum WalletType {
 }
 #[derive(StructOpt, Debug, Clone)]
 pub struct Wallet {
-    #[structopt(long = "private_key", help = "Your private key string")]
+    #[structopt(long = "private-key", help = "Your private key string")]
     pub private_key: Option<String>,
 
     #[structopt(long = "keystore", help = "Path to your keystore folder / file")]
     pub keystore_path: Option<String>,
 
-    #[structopt(long = "password", help = "Your keystore password", requires = "keystore_path")]
+    #[structopt(long = "password", help = "Your keystore password", requires = "keystore-path")]
     pub keystore_password: Option<String>,
 
-    #[structopt(long = "mnemonic_path", help = "Path to your mnemonic file")]
+    #[structopt(long = "mnemonic-path", help = "Path to your mnemonic file")]
     pub mnemonic_path: Option<String>,
 
     #[structopt(short, long = "ledger", help = "Use your Ledger hardware wallet")]
@@ -332,7 +332,7 @@ impl Wallet {
 
     fn mnemonic(&self) -> Result<Option<LocalWallet>> {
         Ok(if let Some(ref path) = self.mnemonic_path {
-            let mnemonic = std::fs::read_to_string(path)?.replace("\n", "");
+            let mnemonic = std::fs::read_to_string(path)?.replace('\n', "");
             Some(
                 MnemonicBuilder::<English>::default()
                     .phrase(mnemonic.as_str())
