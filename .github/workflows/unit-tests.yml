@@ -89,15 +89,10 @@ jobs:
           esac
 
       - name: Install packages (Ubuntu)
-        if: matrix.os == 'ubuntu-18.04'
+        if: matrix.job.os == 'ubuntu-20.04'
         run: |
-          ci/ubuntu-install-packages
-          sudo apt update && sudo apt install pkg-config libudev-dev libssl-dev openssl
-
-      - name: Install packages (macOS)
-        if: matrix.os == 'macos-latest'
-        run: |
-          ci/macos-install-packages
+          sudo apt update 
+          sudo apt install libudev-dev libssl-dev openssl pkg-config 
 
       - name: Extract crate information
         shell: bash
