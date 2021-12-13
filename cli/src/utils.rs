@@ -1,10 +1,15 @@
-use ethers::solc::artifacts::Contract;
+use ethers::solc::{artifacts::Contract, EvmVersion};
 
 use eyre::{ContextCompat, WrapErr};
 use std::{
     env::VarError,
     path::{Path, PathBuf},
 };
+
+#[cfg(feature = "evmodin-evm")]
+use evmodin::Revision;
+#[cfg(feature = "sputnik-evm")]
+use sputnik::Config;
 
 /// Default local RPC endpoint
 const LOCAL_RPC_URL: &str = "http://127.0.0.1:8545";
@@ -113,4 +118,24 @@ fn find_fave_or_alt_path(root: impl AsRef<Path>, fave: &str, alt: &str) -> PathB
         }
     }
     p
+}
+
+#[cfg(feature = "sputnik-evm")]
+pub fn sputnik_cfg(evm: EvmVersion) -> Config {
+    match evm {
+        EvmVersion::Istanbul => Config::istanbul(),
+        EvmVersion::Berlin => Config::berlin(),
+        EvmVersion::London => Config::london(),
+        _ => panic!("Unsupported EVM version"),
+    }
+}
+
+#[cfg(feature = "evmodin-evm")]
+pub fn evmodin_cfg(evm: EvmVersion) -> Revision {
+    match evm {
+        EvmVersion::Istanbul => Revision::Istanbul,
+        EvmVersion::Berlin => Revision::Berlin,
+        EvmVersion::London => Revision::London,
+        _ => panic!("Unsupported EVM version"),
+    }
 }
