@@ -96,7 +96,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         &mut self,
         regex: &Regex,
         fuzzer: Option<&mut TestRunner>,
-        init_state: &S
+        init_state: &S,
     ) -> Result<BTreeMap<String, TestResult>> {
         tracing::info!("starting tests");
         let start = Instant::now();
@@ -292,7 +292,11 @@ mod tests {
             cfg.failure_persistence = None;
             let mut fuzzer = TestRunner::new(cfg);
             let results = runner
-                .run_tests(&Regex::from_str("testGreeting").unwrap(), Some(&mut fuzzer), &init_state)
+                .run_tests(
+                    &Regex::from_str("testGreeting").unwrap(),
+                    Some(&mut fuzzer),
+                    &init_state,
+                )
                 .unwrap();
             assert!(results["testGreeting()"].success);
             assert!(results["testGreeting(string)"].success);

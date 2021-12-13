@@ -164,7 +164,7 @@ where
         address: Address,
         init_logs: &[String],
         pattern: &Regex,
-        init_state: &S
+        init_state: &S,
     ) -> Result<BTreeMap<String, TestResult>> {
         let mut runner =
             ContractRunner::new(&mut self.evm, contract, address, self.sender, init_logs);
