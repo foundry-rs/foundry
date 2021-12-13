@@ -2253,32 +2253,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "inkwell"
-version = "0.1.0-beta.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2223d0eba0ae6d40a3e4680c6a3209143471e1f38b41746ea309aa36dde9f90b"
-dependencies = [
- "either",
- "inkwell_internals",
- "libc",
- "llvm-sys",
- "once_cell",
- "parking_lot",
- "regex",
-]
-
-[[package]]
-name = "inkwell_internals"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c7090af3d300424caa81976b8c97bca41cd70e861272c072e188ae082fb49f9"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "instant"
 version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2433,19 +2407,6 @@ dependencies = [
  "libc",
  "pkg-config",
  "vcpkg",
-]
-
-[[package]]
-name = "llvm-sys"
-version = "130.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a0de69eac0257a2f6c0da27b42e6a8dd21bae7b39c37caf87aee6021d79d61f"
-dependencies = [
- "cc",
- "lazy_static",
- "libc",
- "regex",
- "semver 0.11.0",
 ]
 
 [[package]]
@@ -4136,7 +4097,7 @@ dependencies = [
 [[package]]
 name = "solang"
 version = "0.1.9"
-source = "git+https://github.com/hyperledger-labs/solang#1367dbd12446bb76ce5352cecbf2df2ae2eed3d1"
+source = "git+https://github.com/shekhirin/solang?branch=feat/feature-gate-llvm#939055b2350bd59bdb4b13ecf60118813dc7c52e"
 dependencies = [
  "base58 0.2.0",
  "bitvec 0.20.4",
@@ -4148,7 +4109,6 @@ dependencies = [
  "handlebars",
  "hex",
  "indexmap",
- "inkwell",
  "itertools",
  "lalrpop",
  "lalrpop-util",
