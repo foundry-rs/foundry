@@ -4097,7 +4097,7 @@ dependencies = [
 [[package]]
 name = "solang"
 version = "0.1.9"
-source = "git+https://github.com/shekhirin/solang?branch=feat/feature-gate-llvm#939055b2350bd59bdb4b13ecf60118813dc7c52e"
+source = "git+https://github.com/shekhirin/solang?branch=feat/feature-gate-llvm#a6cc88f28273202db7e062211a2a8e5de841aca4"
 dependencies = [
  "base58 0.2.0",
  "bitvec 0.20.4",
