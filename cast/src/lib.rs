@@ -351,6 +351,7 @@ impl SimpleCast {
     ///
     ///     Ok(())
     /// }
+    /// ```
     pub fn max_uint() -> Result<U256> {
         Ok(U256::MAX)
     }

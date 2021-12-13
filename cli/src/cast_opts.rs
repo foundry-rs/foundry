@@ -14,7 +14,7 @@ use structopt::StructOpt;
 pub enum Subcommands {
     #[structopt(name = "--max-uint")]
     #[structopt(about = "maximum u256 value")]
-    MaxUint { },
+    MaxUint,
     #[structopt(aliases = &["--from-ascii"])]
     #[structopt(name = "--from-utf8")]
     #[structopt(about = "convert text data into hexdata")]
