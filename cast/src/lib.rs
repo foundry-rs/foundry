@@ -340,6 +340,22 @@ impl SimpleCast {
         Ok(U256::from_str(hex)?)
     }
 
+    /// Returns maximum U256 value
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    /// use ethers_core::types::U256;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(U256::MAX, Cast::max_uint()?);
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn max_uint() -> Result<U256> {
+        Ok(U256::MAX)
+    }
+
     /// Converts integers with specified decimals into fixed point numbers
     ///
     /// ```

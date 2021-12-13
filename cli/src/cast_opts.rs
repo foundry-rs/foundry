@@ -12,6 +12,9 @@ use structopt::StructOpt;
 #[derive(Debug, StructOpt)]
 #[structopt(about = "Perform Ethereum RPC calls from the comfort of your command line.")]
 pub enum Subcommands {
+    #[structopt(name = "--max-uint")]
+    #[structopt(about = "maximum u256 value")]
+    MaxUint,
     #[structopt(aliases = &["--from-ascii"])]
     #[structopt(name = "--from-utf8")]
     #[structopt(about = "convert text data into hexdata")]
