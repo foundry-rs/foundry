@@ -4097,7 +4097,7 @@ dependencies = [
 [[package]]
 name = "solang"
 version = "0.1.9"
-source = "git+https://github.com/shekhirin/solang?branch=feat/feature-gate-llvm#a6cc88f28273202db7e062211a2a8e5de841aca4"
+source = "git+https://github.com/shekhirin/solang?branch=feat/feature-gate-llvm#0df912d1e1c2afaa5c76180ec127ee6bd0b26e7d"
 dependencies = [
  "base58 0.2.0",
  "bitvec 0.20.4",
@@ -4113,7 +4113,6 @@ dependencies = [
  "lalrpop",
  "lalrpop-util",
  "lazy_static",
- "libc",
  "num-bigint",
  "num-derive",
  "num-rational",
