@@ -9,7 +9,7 @@
 - [ ] `--from-fix`
 - [ ] `--from-wei`
 - [ ] `--max-int`
-- [ ] `--max-uint`
+- [x] `--max-uint`
 - [ ] `--min-int`
 - [x] `--to-checksum-address` (`--to-address` in dapptools)
 - [x] `--to-ascii`
