@@ -125,6 +125,9 @@ async fn main() -> eyre::Result<()> {
                     cast_opts::WalletType::Local(signer) => {
                         cast_send(&signer, signer.address(), to, sig, args, eth.cast_async).await?;
                     }
+                    cast_opts::WalletType::Trezor(signer) => {
+                        cast_send(&signer, signer.address(), to, sig, args, eth.cast_async).await?;
+                    }
                 }
             } else {
                 let from = eth.from.expect("No ETH_FROM or signer specified");
