@@ -3,7 +3,10 @@ use std::{convert::TryFrom, str::FromStr};
 use ethers::{
     middleware::SignerMiddleware,
     providers::{Http, Provider},
-    signers::{coins_bip39::English, HDPath, Ledger, LocalWallet, MnemonicBuilder},
+    signers::{
+        coins_bip39::English, HDPath as LedgerHDPath, Ledger, LocalWallet, MnemonicBuilder, Trezor,
+        TrezorHDPath,
+    },
     types::{Address, BlockId, BlockNumber, NameOrAddress, H256, U256},
 };
 use eyre::Result;
@@ -270,10 +273,21 @@ impl EthereumOpts {
         provider: Provider<Http>,
     ) -> eyre::Result<Option<WalletType>> {
         if self.wallet.ledger {
-            let derivation = HDPath::LedgerLive(self.wallet.mnemonic_index as usize);
+            let derivation = match &self.wallet.hd_path {
+                Some(hd_path) => LedgerHDPath::Other(hd_path.clone()),
+                None => LedgerHDPath::LedgerLive(self.wallet.mnemonic_index as usize),
+            };
             let ledger = Ledger::new(derivation, chain_id.as_u64()).await?;
 
             Ok(Some(WalletType::Ledger(SignerMiddleware::new(provider, ledger))))
+        } else if self.wallet.trezor {
+            let derivation = match &self.wallet.hd_path {
+                Some(hd_path) => TrezorHDPath::Other(hd_path.clone()),
+                None => TrezorHDPath::TrezorLive(self.wallet.mnemonic_index as usize),
+            };
+            let trezor = Trezor::new(derivation, chain_id.as_u64()).await?;
+
+            Ok(Some(WalletType::Trezor(SignerMiddleware::new(provider, trezor))))
         } else {
             let local = self
                 .wallet
@@ -293,6 +307,7 @@ impl EthereumOpts {
 pub enum WalletType {
     Local(SignerMiddleware<Provider<Http>, LocalWallet>),
     Ledger(SignerMiddleware<Provider<Http>, Ledger>),
+    Trezor(SignerMiddleware<Provider<Http>, Trezor>),
 }
 #[derive(StructOpt, Debug, Clone)]
 pub struct Wallet {
@@ -310,6 +325,15 @@ pub struct Wallet {
 
     #[structopt(short, long = "ledger", help = "Use your Ledger hardware wallet")]
     pub ledger: bool,
+
+    #[structopt(short, long = "trezor", help = "Use your Trezor hardware wallet")]
+    pub trezor: bool,
+
+    #[structopt(
+        long = "hd-path",
+        help = "Derivation path for your hardware wallet (trezor or ledger)"
+    )]
+    pub hd_path: Option<String>,
 
     #[structopt(
         long = "mnemonic_index",
