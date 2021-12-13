@@ -18,7 +18,7 @@ async fn main() -> eyre::Result<()> {
 
     let opts = Opts::from_args();
     match opts.sub {
-        Subcommands::MaxUint { } => {
+        Subcommands::MaxUint => {
             println!("{}", SimpleCast::max_uint()?);
         }
         Subcommands::FromUtf8 { text } => {
