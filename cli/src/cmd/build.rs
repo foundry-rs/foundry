@@ -2,8 +2,8 @@
 
 use ethers::{
     solc::{
-        remappings::Remapping, MinimalCombinedArtifacts, Project, ProjectCompileOutput,
-        ProjectPathsConfig,
+        artifacts::Settings, remappings::Remapping, EvmVersion, MinimalCombinedArtifacts, Project,
+        ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
     },
     types::Address,
 };
@@ -15,12 +15,8 @@ use std::{
 use crate::{utils, Cmd};
 #[cfg(feature = "evmodin-evm")]
 use evmodin::util::mocked_host::MockedHost;
-#[cfg(feature = "evmodin-evm")]
-use evmodin::Revision;
 #[cfg(feature = "sputnik-evm")]
 use sputnik::backend::MemoryVicinity;
-#[cfg(feature = "sputnik-evm")]
-use sputnik::Config;
 use structopt::StructOpt;
 
 #[derive(Debug, Clone, StructOpt)]
@@ -197,8 +193,12 @@ impl BuildArgs {
         let paths = paths_builder.build()?;
 
         // build the project w/ allowed paths = root and all the libs
-        let mut builder =
-            Project::builder().paths(paths).allowed_path(&root).allowed_paths(lib_paths);
+        let solc_settings = Settings { evm_version: Some(self.evm_version), ..Default::default() };
+        let mut builder = Project::builder()
+            .paths(paths)
+            .allowed_path(&root)
+            .allowed_paths(lib_paths)
+            .solc_config(SolcConfig::builder().settings(solc_settings).build()?);
 
         if self.no_auto_detect {
             builder = builder.no_auto_detect();
@@ -234,53 +234,6 @@ impl FromStr for EvmType {
             #[cfg(feature = "evmodin-evm")]
             "evmodin" => EvmType::EvmOdin,
             other => eyre::bail!("unknown EVM type {}", other),
-        })
-    }
-}
-
-#[derive(Clone, Debug)]
-pub enum EvmVersion {
-    Frontier,
-    Istanbul,
-    Berlin,
-    London,
-}
-
-impl EvmVersion {
-    #[cfg(feature = "sputnik-evm")]
-    pub fn sputnik_cfg(self) -> Config {
-        use EvmVersion::*;
-        match self {
-            Frontier => Config::frontier(),
-            Istanbul => Config::istanbul(),
-            Berlin => Config::berlin(),
-            London => Config::london(),
-        }
-    }
-
-    #[cfg(feature = "evmodin-evm")]
-    pub fn evmodin_cfg(self) -> Revision {
-        use EvmVersion::*;
-        match self {
-            Frontier => Revision::Frontier,
-            Istanbul => Revision::Istanbul,
-            Berlin => Revision::Berlin,
-            London => Revision::London,
-        }
-    }
-}
-
-impl FromStr for EvmVersion {
-    type Err = eyre::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        use EvmVersion::*;
-        Ok(match s.to_lowercase().as_str() {
-            "frontier" => Frontier,
-            "istanbul" => Istanbul,
-            "berlin" => Berlin,
-            "london" => London,
-            _ => eyre::bail!("unsupported evm version: {}", s),
         })
     }
 }

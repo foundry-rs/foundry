@@ -1,8 +1,11 @@
 //! Test command
 
-use crate::cmd::{
-    build::{BuildArgs, Env, EvmType},
-    Cmd,
+use crate::{
+    cmd::{
+        build::{BuildArgs, Env, EvmType},
+        Cmd,
+    },
+    utils,
 };
 use ansi_term::Colour;
 use ethers::{
@@ -127,7 +130,7 @@ impl Cmd for TestArgs {
             EvmType::Sputnik => {
                 use evm_adapters::sputnik::Executor;
                 use sputnik::backend::MemoryBackend;
-                let mut cfg = opts.evm_version.sputnik_cfg();
+                let mut cfg = utils::sputnik_cfg(opts.evm_version);
 
                 // We disable the contract size limit by default, because Solidity
                 // test smart contracts are likely to be >24kb
@@ -168,7 +171,7 @@ impl Cmd for TestArgs {
                 use evm_adapters::evmodin::EvmOdin;
                 use evmodin::tracing::NoopTracer;
 
-                let revision = opts.evm_version.evmodin_cfg();
+                let revision = utils::evmodin_cfg(opts.evm_version);
 
                 // TODO: Replace this with a proper host. We'll want this to also be
                 // provided generically when we add the Forking host(s).
