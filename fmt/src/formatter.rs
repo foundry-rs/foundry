@@ -1,4 +1,4 @@
-//! A solidity formatter
+//! A Solidity formatter
 
 use std::fmt::Write;
 
@@ -26,7 +26,7 @@ impl Default for FormatterConfig {
     }
 }
 
-/// A solidity formatter
+/// A Solidity formatter
 pub struct Formatter<'a, W> {
     w: &'a mut W,
     config: FormatterConfig,

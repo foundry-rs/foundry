@@ -1,13 +1,14 @@
-//! Visitor helpers to traverse the [solang](https://github.com/hyperledger-labs/solang) solidity AST
+//! Visitor helpers to traverse the [solang](https://github.com/hyperledger-labs/solang) Solidity AST
 
 use solang::parser::pt::*;
 
-/// The error type a visitor may return
+/// The error type a [Visitor] may return
 pub type VResult = Result<(), Box<dyn std::error::Error>>;
 
-/// A trait that is invoked while traversing the  solidity AST.
+/// A trait that is invoked while traversing the Solidity AST.
+/// Each method of the [Visitor] trait is a hook that can be potentially overridden.
 ///
-/// Each method of the `Visitor` trait is a hook that can be potentially overridden.
+/// Currently the main implementor of this trait is the [`Formatter`](crate::Formatter) struct.
 pub trait Visitor {
     fn visit_source_unit(&mut self, _source_unit: &mut SourceUnit) -> VResult {
         Ok(())
@@ -116,7 +117,12 @@ pub trait Visitor {
     // TODO more visit callbacks
 }
 
-/// The trait for solidity AST nodes
+/// All `solang::pt::*` types, such as [Statement](solang::pt::Statement) should implement the
+/// [Visitable] trait that accepts a trait [Visitor] implementation, which has various callback
+/// handles for Solidity AST nodes.
+///
+/// We want to take a `&mut self` to be able to implement some advanced features in the future such
+/// as modifying the AST before formatting it.
 pub trait Visitable {
     fn visit(&mut self, v: &mut impl Visitor) -> VResult;
 }
