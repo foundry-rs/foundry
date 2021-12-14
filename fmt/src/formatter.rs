@@ -123,10 +123,8 @@ impl<'a, W: Write> Write for Formatter<'a, W> {
     }
 }
 
-// traverse the solidity AST and write to the code formatter
+// Traverse the Solidity Parse Tree and write to the code formatter
 impl<'a, W: Write> Visitor for Formatter<'a, W> {
-    // TODO implement all visit callback and write the formatted output to the underlying
-
     fn visit_source_unit(&mut self, source_unit: &mut SourceUnit) -> VResult {
         source_unit.0.sort_by_key(|item| match item {
             SourceUnitPart::ImportDirective(_, _) => 0,
