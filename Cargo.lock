@@ -1136,7 +1136,7 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "0.6.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/try-fix-sha2-asm#7b06117cf149ccecccd8843e9e479a3b558c8721"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/try-fix-sha2-asm#9458cf2c971ff72bdae33a2b397f8e10e6cd9c57"
 dependencies = [
  "ethers-contract",
  "ethers-core",
@@ -1150,7 +1150,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "0.6.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/try-fix-sha2-asm#7b06117cf149ccecccd8843e9e479a3b558c8721"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/try-fix-sha2-asm#9458cf2c971ff72bdae33a2b397f8e10e6cd9c57"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1168,7 +1168,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "0.6.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/try-fix-sha2-asm#7b06117cf149ccecccd8843e9e479a3b558c8721"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/try-fix-sha2-asm#9458cf2c971ff72bdae33a2b397f8e10e6cd9c57"
 dependencies = [
  "Inflector",
  "anyhow",
@@ -1189,7 +1189,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "0.6.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/try-fix-sha2-asm#7b06117cf149ccecccd8843e9e479a3b558c8721"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/try-fix-sha2-asm#9458cf2c971ff72bdae33a2b397f8e10e6cd9c57"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -1203,7 +1203,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "0.6.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/try-fix-sha2-asm#7b06117cf149ccecccd8843e9e479a3b558c8721"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/try-fix-sha2-asm#9458cf2c971ff72bdae33a2b397f8e10e6cd9c57"
 dependencies = [
  "arrayvec 0.7.2",
  "bytes",
@@ -1231,7 +1231,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "0.2.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/try-fix-sha2-asm#7b06117cf149ccecccd8843e9e479a3b558c8721"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/try-fix-sha2-asm#9458cf2c971ff72bdae33a2b397f8e10e6cd9c57"
 dependencies = [
  "ethers-core",
  "reqwest",
@@ -1244,7 +1244,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "0.6.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/try-fix-sha2-asm#7b06117cf149ccecccd8843e9e479a3b558c8721"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/try-fix-sha2-asm#9458cf2c971ff72bdae33a2b397f8e10e6cd9c57"
 dependencies = [
  "async-trait",
  "ethers-contract",
@@ -1267,7 +1267,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "0.6.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/try-fix-sha2-asm#7b06117cf149ccecccd8843e9e479a3b558c8721"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/try-fix-sha2-asm#9458cf2c971ff72bdae33a2b397f8e10e6cd9c57"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -1296,7 +1296,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "0.6.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/try-fix-sha2-asm#7b06117cf149ccecccd8843e9e479a3b558c8721"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/try-fix-sha2-asm#9458cf2c971ff72bdae33a2b397f8e10e6cd9c57"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1318,7 +1318,7 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "0.1.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/try-fix-sha2-asm#7b06117cf149ccecccd8843e9e479a3b558c8721"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/try-fix-sha2-asm#9458cf2c971ff72bdae33a2b397f8e10e6cd9c57"
 dependencies = [
  "colored",
  "ethers-core",
@@ -1334,7 +1334,7 @@ dependencies = [
  "semver 1.0.4",
  "serde",
  "serde_json",
- "sha2 0.10.0",
+ "sha2 0.9.8",
  "svm-rs",
  "thiserror",
  "tiny-keccak",
@@ -3596,27 +3596,6 @@ dependencies = [
  "cpufeatures",
  "digest 0.9.0",
  "opaque-debug 0.3.0",
-]
-
-[[package]]
-name = "sha2"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "900d964dd36bb15bcf2f2b35694c072feab74969a54f2bbeec7a2d725d2bdcb6"
-dependencies = [
- "cfg-if 1.0.0",
- "cpufeatures",
- "digest 0.10.0",
- "sha2-asm",
-]
-
-[[package]]
-name = "sha2-asm"
-version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf27176fb5d15398e3a479c652c20459d9dac830dedd1fa55b42a77dbcdbfcea"
-dependencies = [
- "cc",
 ]
 
 [[package]]
