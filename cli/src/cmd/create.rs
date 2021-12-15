@@ -71,13 +71,13 @@ impl Cmd for CreateArgs {
         if let Some(signer) = rt.block_on(self.eth.signer_with(chain_id, provider))? {
             match signer {
                 WalletType::Ledger(signer) => {
-                    self.deploy(abi, bin, constructor_with_args, signer)?;
+                    rt.block_on(self.deploy(abi, bin, constructor_with_args, signer))?;
                 }
                 WalletType::Local(signer) => {
-                    self.deploy(abi, bin, constructor_with_args, signer)?;
+                    rt.block_on(self.deploy(abi, bin, constructor_with_args, signer))?;
                 }
                 WalletType::Trezor(signer) => {
-                    self.deploy(abi, bin, constructor_with_args, signer)?;
+                    rt.block_on(self.deploy(abi, bin, constructor_with_args, signer))?;
                 }
             }
         } else {
@@ -153,7 +153,7 @@ impl CreateArgs {
         ))
     }
 
-    fn deploy(
+    async fn deploy(
         self,
         abi: Contract,
         bin: BytecodeObject,
@@ -168,8 +168,7 @@ impl CreateArgs {
             None => factory.deploy(())?,
         };
 
-        let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
-        let deployed_contract = rt.block_on(deployer.send())?;
+        let deployed_contract = deployer.send().await?;
 
         println!("Deployer: {:?}", deployer_address);
         println!("Deployed to: {:?}", deployed_contract.address());
