@@ -163,6 +163,7 @@ impl SnapshotGas {
     fn gas(&self) -> u64 {
         match self {
             SnapshotGas::Standard(gas) => *gas,
+            // we use the median for comparisons
             SnapshotGas::Fuzz { median, .. } => *median,
         }
     }
@@ -183,8 +184,8 @@ impl fmt::Display for SnapshotGas {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             SnapshotGas::Standard(gas) => gas.fmt(f),
-            SnapshotGas::Fuzz { median, mean } => {
-                write!(f, "(μ: {}, ~: {})", median, mean)
+            SnapshotGas::Fuzz { mean, median } => {
+                write!(f, "(μ: {}, ~: {})", mean, median)
             }
         }
     }
@@ -293,9 +294,9 @@ fn check(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> bool {
     for test in tests.into_iter().filter(|t| t.gas_used().is_some()) {
         if let Some(target_gas) = snaps.get(&test.signature).cloned() {
             let source_gas = SnapshotGas::from(&test.result);
-            if source_gas != target_gas {
+            if source_gas.gas() != target_gas.gas() {
                 println!(
-                    "Diff in \"{}\": consumed {} gas, expected {} gas ",
+                    "Diff in \"{}\": consumed \"{}\" gas, expected \"{}\" gas ",
                     test.signature, source_gas, target_gas
                 );
                 has_diff = true;
