@@ -7,13 +7,13 @@ use crate::cmd::{
 };
 use ansi_term::Colour;
 use eyre::Context;
-use forge::{TestKind, TestResult};
+use forge::TestKindGas;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::{
     cmp::Ordering,
     collections::HashMap,
-    fmt::{self, Formatter, Write},
+    fmt::Write,
     fs,
     io::{self, BufRead},
     path::{Path, PathBuf},
@@ -128,9 +128,7 @@ impl SnapshotConfig {
     fn apply(&self, outcome: TestOutcome) -> Vec<Test> {
         let mut tests = outcome
             .into_tests()
-            .filter_map(|test| test.gas_used().map(|gas| (test, gas)))
-            .filter(|(_test, gas)| self.is_in_gas_range(*gas))
-            .map(|(test, _)| test)
+            .filter(|test| self.is_in_gas_range(test.gas_used()))
             .collect::<Vec<_>>();
 
         if self.asc {
@@ -149,46 +147,7 @@ impl SnapshotConfig {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct SnapshotEntry {
     pub signature: String,
-    pub gas_used: SnapshotGas,
-}
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub enum SnapshotGas {
-    Standard(u64),
-    Fuzz { mean: u64, median: u64 },
-}
-
-impl SnapshotGas {
-    /// Returns the gas to compare against
-    fn gas(&self) -> u64 {
-        match self {
-            SnapshotGas::Standard(gas) => *gas,
-            // we use the median for comparisons
-            SnapshotGas::Fuzz { median, .. } => *median,
-        }
-    }
-}
-
-impl<'a> From<&'a TestResult> for SnapshotGas {
-    fn from(test: &'a TestResult) -> Self {
-        match &test.kind {
-            TestKind::Standard => SnapshotGas::Standard(test.gas_used.unwrap_or_default()),
-            TestKind::Fuzz(fuzzed) => {
-                SnapshotGas::Fuzz { median: fuzzed.median_gas(), mean: fuzzed.mean_gas() }
-            }
-        }
-    }
-}
-
-impl fmt::Display for SnapshotGas {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            SnapshotGas::Standard(gas) => gas.fmt(f),
-            SnapshotGas::Fuzz { mean, median } => {
-                write!(f, "(μ: {}, ~: {})", mean, median)
-            }
-        }
-    }
+    pub gas_used: TestKindGas,
 }
 
 impl FromStr for SnapshotEntry {
@@ -202,13 +161,13 @@ impl FromStr for SnapshotEntry {
                     if let Some(gas) = cap.name("gas") {
                         Some(SnapshotEntry {
                             signature: sig.as_str().to_string(),
-                            gas_used: SnapshotGas::Standard(gas.as_str().parse().unwrap()),
+                            gas_used: TestKindGas::Standard(gas.as_str().parse().unwrap()),
                         })
                     } else {
                         cap.name("avg").and_then(|avg| cap.name("med").map(|med| (avg, med))).map(
                             |(avg, med)| SnapshotEntry {
                                 signature: sig.as_str().to_string(),
-                                gas_used: SnapshotGas::Fuzz {
+                                gas_used: TestKindGas::Fuzz {
                                     median: med.as_str().parse().unwrap(),
                                     mean: avg.as_str().parse().unwrap(),
                                 },
@@ -245,18 +204,7 @@ fn write_to_snapshot_file(
 ) -> eyre::Result<()> {
     let mut out = String::new();
     for test in tests {
-        match &test.result.kind {
-            TestKind::Standard => {
-                if let Some(gas) = test.gas_used() {
-                    writeln!(out, "{} (gas: {})", test.signature, gas)?;
-                }
-            }
-            TestKind::Fuzz(fuzzed) => {
-                let mean = fuzzed.mean_gas();
-                let median = fuzzed.median_gas();
-                writeln!(out, "{} (μ: {}, ~: {})", test.signature, mean, median)?;
-            }
-        }
+        writeln!(out, "{} {}", test.signature, test.result.kind.gas_used())?;
     }
     Ok(fs::write(path, out)?)
 }
@@ -265,8 +213,8 @@ fn write_to_snapshot_file(
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct SnapshotDiff {
     pub signature: String,
-    pub source_gas_used: SnapshotGas,
-    pub target_gas_used: SnapshotGas,
+    pub source_gas_used: TestKindGas,
+    pub target_gas_used: TestKindGas,
 }
 
 impl SnapshotDiff {
@@ -291,9 +239,9 @@ fn check(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> bool {
     let snaps = snaps.into_iter().map(|s| (s.signature, s.gas_used)).collect::<HashMap<_, _>>();
     let mut has_diff = false;
 
-    for test in tests.into_iter().filter(|t| t.gas_used().is_some()) {
+    for test in tests {
         if let Some(target_gas) = snaps.get(&test.signature).cloned() {
-            let source_gas = SnapshotGas::from(&test.result);
+            let source_gas = test.result.kind.gas_used();
             if source_gas.gas() != target_gas.gas() {
                 println!(
                     "Diff in \"{}\": consumed \"{}\" gas, expected \"{}\" gas ",
@@ -316,7 +264,7 @@ fn check(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> bool {
 fn diff(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> eyre::Result<()> {
     let snaps = snaps.into_iter().map(|s| (s.signature, s.gas_used)).collect::<HashMap<_, _>>();
     let mut diffs = Vec::with_capacity(tests.len());
-    for test in tests.into_iter().filter(|t| t.gas_used().is_some()) {
+    for test in tests.into_iter() {
         let target_gas_used = snaps.get(&test.signature).cloned().ok_or_else(|| {
             eyre::eyre!(
                 "No matching snapshot entry found for \"{}\" in snapshot file",
@@ -325,7 +273,7 @@ fn diff(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> eyre::Result<()> {
         })?;
 
         diffs.push(SnapshotDiff {
-            source_gas_used: SnapshotGas::from(&test.result),
+            source_gas_used: test.result.kind.gas_used(),
             signature: test.signature,
             target_gas_used,
         });
@@ -390,7 +338,7 @@ mod tests {
             entry,
             SnapshotEntry {
                 signature: "deposit()".to_string(),
-                gas_used: SnapshotGas::Standard(7222)
+                gas_used: TestKindGas::Standard(7222)
             }
         );
     }
@@ -403,7 +351,7 @@ mod tests {
             entry,
             SnapshotEntry {
                 signature: "deposit()".to_string(),
-                gas_used: SnapshotGas::Fuzz { median: 200, mean: 100 }
+                gas_used: TestKindGas::Fuzz { median: 200, mean: 100 }
             }
         );
     }

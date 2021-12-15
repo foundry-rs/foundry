@@ -194,7 +194,7 @@ pub struct Test {
 }
 
 impl Test {
-    pub fn gas_used(&self) -> Option<u64> {
+    pub fn gas_used(&self) -> u64 {
         self.result.gas_used
     }
 }
@@ -304,15 +304,8 @@ fn test<A: ArtifactOutput + 'static, S: Clone, E: evm_adapters::Evm<S>>(
 
                     Colour::Red.paint(txt)
                 };
-                println!(
-                    "{} {} (gas: {})",
-                    status,
-                    name,
-                    result
-                        .gas_used
-                        .map(|x| x.to_string())
-                        .unwrap_or_else(|| "[fuzztest]".to_string())
-                );
+
+                println!("{} {} {}", status, name, result.kind.gas_used());
             }
 
             if verbosity > 1 {

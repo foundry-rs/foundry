@@ -44,7 +44,7 @@ pub struct TestResult {
     ///
     /// If this is the result of a fuzz test (`TestKind::Fuzz`), then this is the median of all
     /// successful cases
-    pub gas_used: Option<u64>,
+    pub gas_used: u64,
 
     /// Minimal reproduction test case for failing fuzz tests
     pub counterexample: Option<CounterExample>,
@@ -53,8 +53,7 @@ pub struct TestResult {
     /// be printed to the user.
     pub logs: Vec<String>,
 
-    /// What kind of test
-    // TODO safe to include?
+    /// What kind of test this was
     pub kind: TestKind,
 }
 
@@ -65,13 +64,58 @@ impl TestResult {
     }
 }
 
+/// Used gas by a test
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum TestKindGas {
+    Standard(u64),
+    Fuzz { mean: u64, median: u64 },
+}
+
+impl fmt::Display for TestKindGas {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TestKindGas::Standard(gas) => {
+                write!(f, "(gas: {})", gas)
+            }
+            TestKindGas::Fuzz { mean, median } => {
+                write!(f, "(μ: {}, ~: {})", mean, median)
+            }
+        }
+    }
+}
+
+impl TestKindGas {
+    /// Returns the main gas value to compare against
+    pub fn gas(&self) -> u64 {
+        match self {
+            TestKindGas::Standard(gas) => *gas,
+            // we use the median for comparisons
+            TestKindGas::Fuzz { median, .. } => *median,
+        }
+    }
+}
+
 /// Various types of tests
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum TestKind {
     /// A standard test that consists of calling the defined solidity function
-    Standard,
+    ///
+    /// Holds the consumed gas
+    Standard(u64),
     /// A solidity fuzz test, that stores all test cases
     Fuzz(FuzzedCases),
+}
+
+impl TestKind {
+    /// The gas consumed by this test
+    pub fn gas_used(&self) -> TestKindGas {
+        match self {
+            TestKind::Standard(gas) => TestKindGas::Standard(*gas),
+            TestKind::Fuzz(fuzzed) => {
+                TestKindGas::Fuzz { median: fuzzed.median_gas(), mean: fuzzed.mean_gas() }
+            }
+        }
+    }
 }
 
 pub struct ContractRunner<'a, S, E> {
@@ -221,10 +265,10 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         Ok(TestResult {
             success,
             reason,
-            gas_used: Some(gas_used),
+            gas_used,
             counterexample: None,
             logs,
-            kind: TestKind::Standard,
+            kind: TestKind::Standard(gas_used),
         })
     }
 
@@ -273,7 +317,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         Ok(TestResult {
             success,
             reason,
-            gas_used: Some(cases.median_gas()),
+            gas_used: cases.median_gas(),
             counterexample,
             logs: vec![],
             kind: TestKind::Fuzz(cases),
@@ -395,7 +439,7 @@ mod tests {
             cfg.failure_persistence = None;
             let fuzzer = TestRunner::new(cfg);
             let func = get_func("testStringFuzz(string)").unwrap();
-            let res = runner.run_fuzz_test(&func, true, fuzzer.clone()).unwrap();
+            let res = runner.run_fuzz_test(&func, true, fuzzer).unwrap();
             assert!(res.success);
             assert!(res.counterexample.is_none());
         }
@@ -420,7 +464,7 @@ mod tests {
             cfg.failure_persistence = None;
             let fuzzer = TestRunner::new(cfg);
             let func = get_func("function testShrinking(uint256 x, uint256 y) public").unwrap();
-            let res = runner.run_fuzz_test(&func, true, fuzzer.clone()).unwrap();
+            let res = runner.run_fuzz_test(&func, true, fuzzer).unwrap();
             assert!(!res.success);
 
             // get the counterexample with shrinking enabled by default
