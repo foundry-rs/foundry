@@ -133,10 +133,12 @@ where
     ) -> Result<BTreeMap<String, BTreeMap<String, TestResult>>> {
         // TODO: Convert to iterator, ideally parallel one?
         let contracts = std::mem::take(&mut self.contracts);
+
+        let init_state: S = self.evm.state().clone();
         let results = contracts
             .iter()
             .map(|(name, (abi, address, logs))| {
-                let result = self.run_tests(name, abi, *address, logs, &pattern)?;
+                let result = self.run_tests(name, abi, *address, logs, &pattern, &init_state)?;
                 Ok((name.clone(), result))
             })
             .filter_map(|x: Result<_>| x.ok())
@@ -162,10 +164,11 @@ where
         address: Address,
         init_logs: &[String],
         pattern: &Regex,
+        init_state: &S,
     ) -> Result<BTreeMap<String, TestResult>> {
         let mut runner =
             ContractRunner::new(&mut self.evm, contract, address, self.sender, init_logs);
-        runner.run_tests(pattern, self.fuzzer.as_mut())
+        runner.run_tests(pattern, self.fuzzer.as_mut(), init_state)
     }
 }
 

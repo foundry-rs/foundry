@@ -96,6 +96,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         &mut self,
         regex: &Regex,
         fuzzer: Option<&mut TestRunner>,
+        init_state: &S,
     ) -> Result<BTreeMap<String, TestResult>> {
         tracing::info!("starting tests");
         let start = Instant::now();
@@ -107,8 +108,6 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
             .filter(|func| func.name.starts_with("test"))
             .filter(|func| regex.is_match(&func.name))
             .collect::<Vec<_>>();
-
-        let init_state = self.evm.state().clone();
 
         // run all unit tests
         let unit_tests = test_fns
@@ -284,6 +283,8 @@ mod tests {
                 .deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into())
                 .unwrap();
 
+            let init_state = evm.state().clone();
+
             let mut runner =
                 ContractRunner::new(&mut evm, compiled.abi.as_ref().unwrap(), addr, None, &[]);
 
@@ -291,7 +292,11 @@ mod tests {
             cfg.failure_persistence = None;
             let mut fuzzer = TestRunner::new(cfg);
             let results = runner
-                .run_tests(&Regex::from_str("testGreeting").unwrap(), Some(&mut fuzzer))
+                .run_tests(
+                    &Regex::from_str("testGreeting").unwrap(),
+                    Some(&mut fuzzer),
+                    &init_state,
+                )
                 .unwrap();
             assert!(results["testGreeting()"].success);
             assert!(results["testGreeting(string)"].success);
@@ -311,6 +316,8 @@ mod tests {
                 .deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into())
                 .unwrap();
 
+            let init_state = evm.state().clone();
+
             let mut runner =
                 ContractRunner::new(&mut evm, compiled.abi.as_ref().unwrap(), addr, None, &[]);
 
@@ -318,7 +325,7 @@ mod tests {
             cfg.failure_persistence = None;
             let mut fuzzer = TestRunner::new(cfg);
             let results = runner
-                .run_tests(&Regex::from_str("testFuzz.*").unwrap(), Some(&mut fuzzer))
+                .run_tests(&Regex::from_str("testFuzz.*").unwrap(), Some(&mut fuzzer), &init_state)
                 .unwrap();
             for (_, res) in results {
                 assert!(!res.success);
@@ -422,10 +429,12 @@ mod tests {
         let (addr, _, _, _) =
             evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
 
+        let init_state = evm.state().clone();
+
         let mut runner =
             ContractRunner::new(&mut evm, compiled.abi.as_ref().unwrap(), addr, None, &[]);
 
-        let res = runner.run_tests(&".*".parse().unwrap(), None).unwrap();
+        let res = runner.run_tests(&".*".parse().unwrap(), None, &init_state).unwrap();
         assert!(!res.is_empty());
         assert!(res.iter().all(|(_, result)| result.success));
     }
