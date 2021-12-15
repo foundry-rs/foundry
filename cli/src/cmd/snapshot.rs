@@ -7,12 +7,13 @@ use crate::cmd::{
 };
 use ansi_term::Colour;
 use eyre::Context;
+use forge::{TestKind, TestResult};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::{
     cmp::Ordering,
     collections::HashMap,
-    fmt::Write,
+    fmt::{self, Formatter, Write},
     fs,
     io::{self, BufRead},
     path::{Path, PathBuf},
@@ -22,8 +23,9 @@ use structopt::StructOpt;
 
 /// A regex that matches a basic snapshot entry like
 /// `testDeposit() (gas: 58804)`
-pub static RE_BASIC_SNAPSHOT_ENTRY: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?P<sig>(\w+)\s*\((.*?)\))\s*\((gas:)?\s*(?P<gas>\d+)\)").unwrap());
+pub static RE_BASIC_SNAPSHOT_ENTRY: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?P<sig>(\w+)\s*\((.*?)\))\s*\(((gas:)?\s*(?P<gas>\d+)|(μ:\s*(?P<avg>\d+),\s*~:\s*(?P<med>\d+)))\)").unwrap()
+});
 
 #[derive(Debug, Clone, StructOpt)]
 pub struct SnapshotArgs {
@@ -147,7 +149,45 @@ impl SnapshotConfig {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct SnapshotEntry {
     pub signature: String,
-    pub gas_used: u64,
+    pub gas_used: SnapshotGas,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum SnapshotGas {
+    Standard(u64),
+    Fuzz { mean: u64, median: u64 },
+}
+
+impl SnapshotGas {
+    /// Returns the gas to compare against
+    fn gas(&self) -> u64 {
+        match self {
+            SnapshotGas::Standard(gas) => *gas,
+            SnapshotGas::Fuzz { median, .. } => *median,
+        }
+    }
+}
+
+impl<'a> From<&'a TestResult> for SnapshotGas {
+    fn from(test: &'a TestResult) -> Self {
+        match &test.kind {
+            TestKind::Standard => SnapshotGas::Standard(test.gas_used.unwrap_or_default()),
+            TestKind::Fuzz(fuzzed) => {
+                SnapshotGas::Fuzz { median: fuzzed.median_gas(), mean: fuzzed.mean_gas() }
+            }
+        }
+    }
+}
+
+impl fmt::Display for SnapshotGas {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            SnapshotGas::Standard(gas) => gas.fmt(f),
+            SnapshotGas::Fuzz { median, mean } => {
+                write!(f, "(μ: {}, ~: {})", median, mean)
+            }
+        }
+    }
 }
 
 impl FromStr for SnapshotEntry {
@@ -158,10 +198,22 @@ impl FromStr for SnapshotEntry {
             .captures(s)
             .and_then(|cap| {
                 cap.name("sig").and_then(|sig| {
-                    cap.name("gas").map(|gas| SnapshotEntry {
-                        signature: sig.as_str().to_string(),
-                        gas_used: gas.as_str().parse().unwrap(),
-                    })
+                    if let Some(gas) = cap.name("gas") {
+                        Some(SnapshotEntry {
+                            signature: sig.as_str().to_string(),
+                            gas_used: SnapshotGas::Standard(gas.as_str().parse().unwrap()),
+                        })
+                    } else {
+                        cap.name("avg").and_then(|avg| cap.name("med").map(|med| (avg, med))).map(
+                            |(avg, med)| SnapshotEntry {
+                                signature: sig.as_str().to_string(),
+                                gas_used: SnapshotGas::Fuzz {
+                                    median: med.as_str().parse().unwrap(),
+                                    mean: avg.as_str().parse().unwrap(),
+                                },
+                            },
+                        )
+                    }
                 })
             })
             .ok_or_else(|| format!("Could not extract Snapshot Entry for {}", s))
@@ -192,8 +244,17 @@ fn write_to_snapshot_file(
 ) -> eyre::Result<()> {
     let mut out = String::new();
     for test in tests {
-        if let Some(gas) = test.gas_used() {
-            writeln!(out, "{} (gas: {})", test.signature, gas)?;
+        match &test.result.kind {
+            TestKind::Standard => {
+                if let Some(gas) = test.gas_used() {
+                    writeln!(out, "{} (gas: {})", test.signature, gas)?;
+                }
+            }
+            TestKind::Fuzz(fuzzed) => {
+                let mean = fuzzed.mean_gas();
+                let median = fuzzed.median_gas();
+                writeln!(out, "{} (μ: {}, ~: {})", test.signature, mean, median)?;
+            }
         }
     }
     Ok(fs::write(path, out)?)
@@ -203,8 +264,8 @@ fn write_to_snapshot_file(
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct SnapshotDiff {
     pub signature: String,
-    pub source_gas_used: u64,
-    pub target_gas_used: u64,
+    pub source_gas_used: SnapshotGas,
+    pub target_gas_used: SnapshotGas,
 }
 
 impl SnapshotDiff {
@@ -213,12 +274,12 @@ impl SnapshotDiff {
     /// `> 0` if the source used more gas
     /// `< 0` if the source used more gas
     fn gas_change(&self) -> i128 {
-        self.source_gas_used as i128 - self.target_gas_used as i128
+        self.source_gas_used.gas() as i128 - self.target_gas_used.gas() as i128
     }
 
     /// Determines the percentage change
     fn gas_diff(&self) -> f64 {
-        self.gas_change() as f64 / self.target_gas_used as f64
+        self.gas_change() as f64 / self.target_gas_used.gas() as f64
     }
 }
 
@@ -231,7 +292,7 @@ fn check(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> bool {
 
     for test in tests.into_iter().filter(|t| t.gas_used().is_some()) {
         if let Some(target_gas) = snaps.get(&test.signature).cloned() {
-            let source_gas = test.gas_used().unwrap();
+            let source_gas = SnapshotGas::from(&test.result);
             if source_gas != target_gas {
                 println!(
                     "Diff in \"{}\": consumed {} gas, expected {} gas ",
@@ -263,7 +324,7 @@ fn diff(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> eyre::Result<()> {
         })?;
 
         diffs.push(SnapshotDiff {
-            source_gas_used: test.gas_used().unwrap(),
+            source_gas_used: SnapshotGas::from(&test.result),
             signature: test.signature,
             target_gas_used,
         });
@@ -321,9 +382,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn can_parse_snapshot_entry() {
+    fn can_parse_basic_snapshot_entry() {
         let s = "deposit() (gas: 7222)";
         let entry = SnapshotEntry::from_str(s).unwrap();
-        assert_eq!(entry, SnapshotEntry { signature: "deposit()".to_string(), gas_used: 7222 });
+        assert_eq!(
+            entry,
+            SnapshotEntry {
+                signature: "deposit()".to_string(),
+                gas_used: SnapshotGas::Standard(7222)
+            }
+        );
+    }
+
+    #[test]
+    fn can_parse_fuzz_snapshot_entry() {
+        let s = "deposit() (μ: 100, ~:200)";
+        let entry = SnapshotEntry::from_str(s).unwrap();
+        assert_eq!(
+            entry,
+            SnapshotEntry {
+                signature: "deposit()".to_string(),
+                gas_used: SnapshotGas::Fuzz { median: 200, mean: 100 }
+            }
+        );
     }
 }

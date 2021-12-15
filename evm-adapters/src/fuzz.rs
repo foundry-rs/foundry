@@ -168,23 +168,23 @@ impl FuzzedCases {
     }
 
     /// Returns the average gas use of all test cases
-    fn mean_gas(&self) -> u64 {
-        self.cases.iter().map(|c| c.gas).sum::<u64>() / numbers.len() as u64
+    pub fn mean_gas(&self) -> u64 {
+        self.cases.iter().map(|c| c.gas).sum::<u64>() / self.cases.len() as u64
     }
 
-    fn highest(&self) -> Option<&FuzzCase> {
+    pub fn highest(&self) -> Option<&FuzzCase> {
         self.cases.last()
     }
 
-    fn lowest(&self) -> Option<&FuzzCase> {
+    pub fn lowest(&self) -> Option<&FuzzCase> {
         self.cases.first()
     }
 
-    fn highest_gas(&self) -> u64 {
+    pub fn highest_gas(&self) -> u64 {
         self.highest().map(|c| c.gas).unwrap_or_default()
     }
 
-    fn lowest_gas(&self) -> u64 {
+    pub fn lowest_gas(&self) -> u64 {
         self.lowest().map(|c| c.gas).unwrap_or_default()
     }
 }

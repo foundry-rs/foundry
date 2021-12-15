@@ -40,7 +40,10 @@ pub struct TestResult {
     /// still be successful (i.e self.success == true) when it's expected to fail.
     pub reason: Option<String>,
 
-    /// The gas used during execution
+    /// The gas used during execution.
+    ///
+    /// If this is the result of a fuzz test (`TestKind::Fuzz`), then this is the median of all
+    /// successful cases
     pub gas_used: Option<u64>,
 
     /// Minimal reproduction test case for failing fuzz tests
