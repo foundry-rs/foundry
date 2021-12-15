@@ -1,18 +1,13 @@
-use ethers::solc::{remappings::Remapping, Project, ProjectPathsConfig};
-
-use structopt::StructOpt;
-
-mod cmd;
+pub mod cmd;
+mod opts;
 mod utils;
 
-mod opts;
-use opts::{
-    forge::{Dependency, FullContractInfo, Opts, Subcommands},
-    EthereumOpts,
-};
-
 use crate::cmd::Cmd;
+
+use ethers::solc::{remappings::Remapping, Project, ProjectPathsConfig};
+use opts::forge::{Dependency, FullContractInfo, Opts, Subcommands};
 use std::{process::Command, str::FromStr};
+use structopt::StructOpt;
 
 #[tracing::instrument(err)]
 fn main() -> eyre::Result<()> {

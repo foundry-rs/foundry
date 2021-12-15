@@ -1,8 +1,8 @@
-use cast::{Cast, SimpleCast};
-
-mod cmd;
+pub mod cmd;
 #[allow(dead_code)]
 mod utils;
+
+use cast::{Cast, SimpleCast};
 
 mod opts;
 use opts::{
