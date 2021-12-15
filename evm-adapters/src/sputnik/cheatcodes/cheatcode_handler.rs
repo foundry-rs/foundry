@@ -1018,8 +1018,7 @@ mod tests {
                     evm.as_mut().call_unchecked(Address::zero(), addr, func, (), 0.into()).unwrap();
                 assert!(evm.as_mut().check_success(addr, &reason, should_fail));
             } else {
-                // if the unwrap passes then it works
-                evm.fuzz(func, addr, should_fail).unwrap();
+                assert!(evm.fuzz(func, addr, should_fail).is_ok());
             }
 
             evm.as_mut().reset(state.clone());

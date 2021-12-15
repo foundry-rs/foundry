@@ -1,5 +1,5 @@
 mod runner;
-pub use runner::{ContractRunner, TestResult};
+pub use runner::{ContractRunner, TestKind, TestKindGas, TestResult};
 
 mod multi_runner;
 pub use multi_runner::{MultiContractRunner, MultiContractRunnerBuilder};

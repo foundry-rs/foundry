@@ -183,7 +183,7 @@ mod tests {
 
         let paths = ProjectPathsConfig::builder().root(&root).sources(&root).build().unwrap();
 
-        let project = Project::builder()
+        Project::builder()
             // need to add the ilb path here. would it be better placed in the ProjectPathsConfig
             // instead? what is the `libs` modifier useful for then? linked libraries?
             .allowed_path(root.join("../../evm-adapters/testdata"))
@@ -191,9 +191,7 @@ mod tests {
             .ephemeral()
             .no_artifacts()
             .build()
-            .unwrap();
-
-        project
+            .unwrap()
     }
 
     fn runner<S: Clone, E: Evm<S>>(evm: E) -> MultiContractRunner<E, S> {
@@ -246,7 +244,6 @@ mod tests {
                 .iter()
                 .map(|(name, res)| (name, res.logs.clone()))
                 .collect::<HashMap<_, _>>();
-            dbg!(&reasons);
             assert_eq!(
                 reasons[&"test1()".to_owned()],
                 vec!["constructor".to_owned(), "setUp".to_owned(), "one".to_owned()]

@@ -1379,6 +1379,7 @@ dependencies = [
  "parking_lot",
  "proptest",
  "revm_precompiles",
+ "serde",
  "serde_json",
  "thiserror",
  "tokio",
