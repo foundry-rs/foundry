@@ -6,11 +6,11 @@ use crate::{
 };
 use cast::SimpleCast;
 use ethers::{
-    abi::{Function, FunctionExt},
+    abi::{Contract, Function, FunctionExt},
     prelude::{
-        artifacts::{Source, Sources},
-        ContractFactory, Http, Middleware, MinimalCombinedArtifacts, Provider, Signer,
-        SignerMiddleware,
+        artifacts::{BytecodeObject, Source, Sources},
+        ContractFactory, Http, Middleware, MinimalCombinedArtifacts, Project, ProjectCompileOutput,
+        Provider, Signer, SignerMiddleware,
     },
     solc::cache::SolFilesCache,
 };
@@ -40,129 +40,44 @@ pub struct CreateArgs {
 
 impl Cmd for CreateArgs {
     type Output = ();
+
     fn run(self) -> Result<Self::Output> {
-        /*
-         * Read contract name
-         */
+        // Find Project & Compile
         let project = self.opts.project()?;
         let compiled = project.compile()?;
+
+        if self.verify && self.contract.path.is_none() {
+            eyre::bail!("verifying requires giving out the source path");
+        }
 
         if compiled.has_compiler_errors() {
             // return the diagnostics error back to the user.
             eyre::bail!(compiled.to_string())
         }
 
+        // Get ABI and BIN
         let (abi, bin) = match self.contract.path {
-            Some(path) => {
-                // Get requested artifact location
-                let abs_path = std::fs::canonicalize(PathBuf::from(path))?;
-                let mut sources = Sources::new();
-                sources.insert(abs_path.clone(), Source::read(&abs_path)?);
-
-                // Get artifact
-                let mut config = SolFilesCache::builder().insert_files(sources.clone(), None)?;
-                config.files.entry(abs_path).and_modify(|f| f.artifacts = vec![self.contract.name]);
-
-                // Get Bytecode from the only existing artififact
-                let artifact = config
-                    .read_artifacts::<MinimalCombinedArtifacts>(project.artifacts_path())?
-                    .values()
-                    .collect::<Vec<_>>()[0]
-                    .clone();
-
-                (
-                    artifact.abi.ok_or(eyre::Error::msg("message"))?,
-                    artifact.bin.ok_or(eyre::Error::msg("message"))?,
-                )
-            }
-            None => {
-                // Find using only the contract name
-
-                let mut has_found_contract = false;
-                let mut contract_artifact = None;
-
-                for (name, artifact) in compiled.into_artifacts() {
-                    let artifact_contract_name = name.split(':').collect::<Vec<_>>()[1];
-
-                    if artifact_contract_name == self.contract.name {
-                        if has_found_contract {
-                            eyre::bail!("contract with duplicate name. pass path")
-                        }
-                        has_found_contract = true;
-                        contract_artifact = Some(artifact);
-                    }
-                }
-
-                match contract_artifact {
-                    Some(artifact) => (
-                        artifact.abi.ok_or(eyre::Error::msg("message"))?,
-                        artifact.bin.ok_or(eyre::Error::msg("message"))?,
-                    ),
-                    None => {
-                        eyre::bail!("could not find artifact")
-                    }
-                }
-            }
+            Some(ref path) => self.get_artifact_from_path(&project, path.clone())?,
+            None => self.get_artifact_from_name(compiled)?,
         };
-        let provider = Provider::<Http>::try_from(self.eth.rpc_url.as_str())?;
 
+        // Add arguments to constructor
+        let provider = Provider::<Http>::try_from(self.eth.rpc_url.as_str())?;
+        let constructor_with_args = self.build_constructor_with_args(abi.clone())?;
+
+        // Deploy with signer
         let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
         let chain_id = rt.block_on(provider.get_chainid())?;
-        let mut args = None;
-        if let Some(constructor) = abi.clone().constructor {
-            // convert constructor into function
-            #[allow(deprecated)]
-            let fun = Function {
-                name: "constructor".to_string(),
-                inputs: constructor.inputs,
-                outputs: vec![],
-                constant: false,
-                state_mutability: Default::default(),
-            };
-
-            args = Some(SimpleCast::calldata(fun.abi_signature(), &self.constructor_args)?);
-        } else if !self.constructor_args.is_empty() {
-            eyre::bail!("No constructor found but contract arguments provided")
-        }
-
         if let Some(signer) = rt.block_on(self.eth.signer_with(chain_id, provider))? {
             match signer {
                 WalletType::Ledger(signer) => {
-                    println!("ASDAS");
-
-                    println!("address {:?}", format!("0x{}", signer.default_sender().unwrap()));
-                    let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
-                    let arc_signer = Arc::new(signer);
-                    let factory =
-                        ContractFactory::new(abi, bin.as_bytes().unwrap().clone(), arc_signer);
-
-                    let deployer = match args {
-                        Some(args) => factory.deploy(args)?,
-                        None => factory.deploy(())?,
-                    };
-
-                    println!("{:?}", rt.block_on(deployer.send()).unwrap().address());
-                    // println!("{:?}", rt.block_on(deployer.call()).unwrap());
+                    self.deploy(abi, bin, constructor_with_args, signer)?;
                 }
                 WalletType::Local(signer) => {
-                    deploy(abi, bin, args, signer)?;
+                    self.deploy(abi, bin, constructor_with_args, signer)?;
                 }
                 WalletType::Trezor(signer) => {
-                    println!("address {:?}", format!("0x{}", signer.default_sender().unwrap()));
-                    let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
-                    let arc_signer = Arc::new(signer);
-                    let _arc_signer = Arc::clone(&arc_signer);
-                    let factory =
-                        ContractFactory::new(abi, bin.as_bytes().unwrap().clone(), arc_signer);
-
-                    let deployer = match args {
-                        Some(args) => factory.deploy(args)?,
-                        None => factory.deploy(())?,
-                    };
-
-                    println!("address {:?}", format!("0x{}", Arc::clone(&_arc_signer).address()));
-
-                    println!("{:?}", rt.block_on(deployer.legacy().send()).unwrap().address());
+                    self.deploy(abi, bin, constructor_with_args, signer)?;
                 }
             }
         } else {
@@ -173,22 +88,112 @@ impl Cmd for CreateArgs {
     }
 }
 
-fn deploy(
-    abi: ethers::abi::Contract,
-    bin: ethers::prelude::artifacts::BytecodeObject,
-    args: Option<String>,
-    signer: SignerMiddleware<Provider<Http>, impl Signer + 'static>,
-) -> Result<()> {
-    let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
-    let arc_signer = Arc::new(signer);
-    let factory = ContractFactory::new(abi, bin.as_bytes().unwrap().clone(), arc_signer);
+impl CreateArgs {
+    /// Find using only ContractName
+    fn get_artifact_from_name(
+        &self,
+        compiled: ProjectCompileOutput<MinimalCombinedArtifacts>,
+    ) -> Result<(Contract, BytecodeObject)> {
+        let mut has_found_contract = false;
+        let mut contract_artifact = None;
 
-    let deployer = match args {
-        Some(args) => factory.deploy(args)?,
-        None => factory.deploy(())?,
-    };
+        for (name, artifact) in compiled.into_artifacts() {
+            let artifact_contract_name = name.split(':').collect::<Vec<_>>()[1];
 
-    println!("{:?}", rt.block_on(deployer.send()).unwrap().address());
+            if artifact_contract_name == self.contract.name {
+                if has_found_contract {
+                    eyre::bail!("contract with duplicate name. pass path")
+                }
+                has_found_contract = true;
+                contract_artifact = Some(artifact);
+            }
+        }
 
-    Ok(())
+        Ok(match contract_artifact {
+            Some(artifact) => (
+                artifact.abi.ok_or_else(|| eyre::Error::msg("message"))?,
+                artifact.bin.ok_or_else(|| eyre::Error::msg("message"))?,
+            ),
+            None => {
+                eyre::bail!("could not find artifact")
+            }
+        })
+    }
+
+    /// Find using src/ContractSource.sol:ContractName
+    fn get_artifact_from_path(
+        &self,
+        project: &Project,
+        path: String,
+    ) -> Result<(Contract, BytecodeObject)> {
+        // Get sources from the requested location
+        let abs_path = std::fs::canonicalize(PathBuf::from(path))?;
+        let mut sources = Sources::new();
+        sources.insert(abs_path.clone(), Source::read(&abs_path)?);
+
+        // Get artifact from the contract name and sources
+        let mut config = SolFilesCache::builder().insert_files(sources.clone(), None)?;
+        config.files.entry(abs_path).and_modify(|f| f.artifacts = vec![self.contract.name.clone()]);
+
+        // let binding
+        let _artifacts =
+            config.read_artifacts::<MinimalCombinedArtifacts>(project.artifacts_path())?;
+
+        let artifacts = _artifacts.values().collect::<Vec<_>>();
+
+        if artifacts.is_empty() {
+            eyre::bail!("could not find artifact")
+        } else if artifacts.len() > 1 {
+            eyre::bail!("duplicate contract name in the same source file")
+        }
+
+        Ok((
+            artifacts[0].clone().abi.ok_or_else(|| eyre::Error::msg("message"))?,
+            artifacts[0].clone().bin.ok_or_else(|| eyre::Error::msg("message"))?,
+        ))
+    }
+
+    fn deploy(
+        self,
+        abi: Contract,
+        bin: BytecodeObject,
+        args: Option<String>,
+        signer: SignerMiddleware<Provider<Http>, impl Signer + 'static>,
+    ) -> Result<()> {
+        let deployer_address = signer.address();
+        let factory = ContractFactory::new(abi, bin.as_bytes().unwrap().clone(), Arc::new(signer));
+
+        let deployer = match args {
+            Some(args) => factory.deploy(args)?,
+            None => factory.deploy(())?,
+        };
+
+        let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
+        let deployed_contract = rt.block_on(deployer.send())?;
+
+        println!("Deployer: {:?}", deployer_address);
+        println!("Deployed to: {:?}", deployed_contract.address());
+
+        Ok(())
+    }
+
+    fn build_constructor_with_args(&self, abi: Contract) -> Result<Option<String>> {
+        if let Some(constructor) = abi.constructor {
+            // convert constructor into function
+            #[allow(deprecated)]
+            let fun = Function {
+                name: "constructor".to_string(),
+                inputs: constructor.inputs,
+                outputs: vec![],
+                constant: false,
+                state_mutability: Default::default(),
+            };
+
+            Ok(Some(SimpleCast::calldata(fun.abi_signature(), &self.constructor_args)?))
+        } else if !self.constructor_args.is_empty() {
+            eyre::bail!("No constructor found but contract arguments provided")
+        } else {
+            Ok(None)
+        }
+    }
 }
