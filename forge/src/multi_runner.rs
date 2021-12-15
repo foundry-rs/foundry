@@ -246,7 +246,6 @@ mod tests {
                 .iter()
                 .map(|(name, res)| (name, res.logs.clone()))
                 .collect::<HashMap<_, _>>();
-            dbg!(&reasons);
             assert_eq!(
                 reasons[&"test1()".to_owned()],
                 vec!["constructor".to_owned(), "setUp".to_owned(), "one".to_owned()]

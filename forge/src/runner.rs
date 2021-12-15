@@ -3,11 +3,13 @@ use ethers::{
     types::{Address, Bytes},
 };
 
-use evm_adapters::{fuzz::FuzzedExecutor, Evm, EvmError};
-
+use evm_adapters::{
+    fuzz::{FuzzTestResult, FuzzedCases, FuzzedExecutor},
+    Evm, EvmError,
+};
 use eyre::{Context, Result};
 use regex::Regex;
-use std::{collections::BTreeMap, fmt, time::Instant};
+use std::{collections::BTreeMap, fmt, marker::PhantomData, time::Instant};
 
 use proptest::test_runner::{TestError, TestRunner};
 use serde::{Deserialize, Serialize};
@@ -47,9 +49,27 @@ pub struct TestResult {
     /// Any captured & parsed as strings logs along the test's execution which should
     /// be printed to the user.
     pub logs: Vec<String>,
+
+    /// What kind of test
+    // TODO safe to include?
+    pub kind: TestKind,
 }
 
-use std::marker::PhantomData;
+impl TestResult {
+    /// Returns `true` if this is the result of a fuzz test
+    pub fn is_fuzz(&self) -> bool {
+        matches!(self.kind, TestKind::Fuzz(_))
+    }
+}
+
+/// Various types of tests
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum TestKind {
+    /// A standard test that consists of calling the defined solidity function
+    Standard,
+    /// A solidity fuzz test, that stores all test cases
+    Fuzz(FuzzedCases),
+}
 
 pub struct ContractRunner<'a, S, E> {
     /// Mutable reference to the EVM type.
@@ -195,7 +215,14 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         let duration = Instant::now().duration_since(start);
         tracing::debug!(?duration, %success, %gas_used);
 
-        Ok(TestResult { success, reason, gas_used: Some(gas_used), counterexample: None, logs })
+        Ok(TestResult {
+            success,
+            reason,
+            gas_used: Some(gas_used),
+            counterexample: None,
+            logs,
+            kind: TestKind::Standard,
+        })
     }
 
     #[tracing::instrument(name = "fuzz-test", skip_all, fields(name = %func.signature()))]
@@ -216,26 +243,38 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
 
         // instantiate the fuzzed evm in line
         let evm = FuzzedExecutor::new(self.evm, runner, self.sender);
-        let result = evm.fuzz(func, self.address, should_fail);
+        let FuzzTestResult { cases, test_error } = evm.fuzz(func, self.address, should_fail);
 
-        let (success, counterexample) = match result {
-            Ok(_) => (true, None),
-            Err(TestError::Fail(_, value)) => {
-                // skip the function selector when decoding
-                let args = func.decode_input(&value.as_ref()[4..])?;
-                let counterexample = CounterExample { calldata: value.clone(), args };
-                tracing::info!("Found minimal failing case: {}", hex::encode(&value));
-                (false, Some(counterexample))
+        let success = test_error.is_none();
+        let mut counterexample = None;
+        let mut reason = None;
+        if let Some(err) = test_error {
+            match err.test_error {
+                TestError::Fail(_, value) => {
+                    // skip the function selector when decoding
+                    let args = func.decode_input(&value.as_ref()[4..])?;
+                    let counter = CounterExample { calldata: value.clone(), args };
+                    counterexample = Some(counter);
+                    tracing::info!("Found minimal failing case: {}", hex::encode(&value));
+                }
+                result => panic!("Unexpected test result: {:?}", result),
             }
-            result => panic!("Unexpected result: {:?}", result),
-        };
+            // TODO custom display for Evm::ReturnReason?
+            reason = Some(format!("{:?}", err.return_reason));
+        }
 
         let duration = Instant::now().duration_since(start);
         tracing::debug!(?duration, %success);
 
-        // TODO: How can we have proptest also return us the gas_used and the revert reason
         // from that call?
-        Ok(TestResult { success, reason: None, gas_used: None, counterexample, logs: vec![] })
+        Ok(TestResult {
+            success,
+            reason,
+            gas_used: Some(cases.median_gas()),
+            counterexample,
+            logs: vec![],
+            kind: TestKind::Fuzz(cases),
+        })
     }
 }
 
