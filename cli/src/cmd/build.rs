@@ -12,7 +12,8 @@ use std::{
     str::FromStr,
 };
 
-use crate::{utils, Cmd};
+use crate::{cmd::Cmd, utils};
+
 #[cfg(feature = "evmodin-evm")]
 use evmodin::util::mocked_host::MockedHost;
 #[cfg(feature = "sputnik-evm")]
