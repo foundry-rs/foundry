@@ -1665,6 +1665,7 @@ version = "0.1.0"
 dependencies = [
  "indent_write",
  "pretty_assertions",
+ "semver 1.0.4",
  "solang",
 ]
 

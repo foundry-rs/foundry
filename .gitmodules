@@ -22,3 +22,6 @@
 [submodule "integration-tests/testdata/lootloose"]
 	path = integration-tests/testdata/lootloose
 	url = https://github.com/gakonst/lootloose
+[submodule "fmt/testdata/prettier-plugin-solidity"]
+	path = fmt/testdata/prettier-plugin-solidity
+	url = https://github.com/prettier-solidity/prettier-plugin-solidity

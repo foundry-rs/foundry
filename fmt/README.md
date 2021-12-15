@@ -1,6 +1,6 @@
 # Formatter (`fmt`)
 
-Solidity formatter that respects the [Style Guide](https://docs.soliditylang.org/en/latest/style-guide.html) and
+Solidity formatter that respects (some parts of) the [Style Guide](https://docs.soliditylang.org/en/latest/style-guide.html) and
 is tested on the [Prettier Solidity Plugin](https://github.com/prettier-solidity/prettier-plugin-solidity) cases.
 
 ## Features (WIP)
@@ -14,6 +14,7 @@ is tested on the [Prettier Solidity Plugin](https://github.com/prettier-solidity
 - [ ] Function definition
 - [ ] Function body
 - [ ] Variable definition
+- [ ] Comments
 
 ## Architecture
 

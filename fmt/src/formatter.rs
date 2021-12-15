@@ -22,7 +22,7 @@ pub struct FormatterConfig {
 
 impl Default for FormatterConfig {
     fn default() -> Self {
-        FormatterConfig { line_length: 79, tab_width: 4, bracket_spacing: false }
+        FormatterConfig { line_length: 80, tab_width: 4, bracket_spacing: false }
     }
 }
 
@@ -126,10 +126,12 @@ impl<'a, W: Write> Write for Formatter<'a, W> {
 // Traverse the Solidity Parse Tree and write to the code formatter
 impl<'a, W: Write> Visitor for Formatter<'a, W> {
     fn visit_source_unit(&mut self, source_unit: &mut SourceUnit) -> VResult {
-        source_unit.0.sort_by_key(|item| match item {
-            SourceUnitPart::ImportDirective(_, _) => 0,
-            _ => usize::MAX,
-        });
+        // TODO: do we need to put pragma and import directives at the top of the file?
+        // source_unit.0.sort_by_key(|item| match item {
+        //     SourceUnitPart::PragmaDirective(_, _, _) => 0,
+        //     SourceUnitPart::ImportDirective(_, _) => 1,
+        //     _ => usize::MAX,
+        // });
 
         let source_unit_parts = source_unit.0.len();
         for (i, unit) in source_unit.0.iter_mut().enumerate() {
@@ -137,9 +139,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 unit,
                 SourceUnitPart::ImportDirective(_, _) | SourceUnitPart::PragmaDirective(_, _, _)
             );
-            if i != 0 && is_declaration {
-                writeln!(self)?;
-            }
 
             unit.visit(self)?;
             writeln!(self)?;
@@ -153,21 +152,54 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_contract(&mut self, contract: &mut ContractDefinition) -> VResult {
-        write!(self, "contract {} ", &contract.name.name)?;
+        write!(self, "{} {} ", contract.ty, contract.name.name)?;
+
+        if !contract.base.is_empty() {
+            write!(self, "is")?;
+
+            let bases = contract
+                .base
+                .iter_mut()
+                .map(|base| {
+                    // TODO: write `base.args`
+
+                    base.name.name.to_string()
+                })
+                .collect::<Vec<_>>();
+
+            let multiline = self.is_separated_multiline(&bases, ", ");
+
+            if multiline {
+                writeln!(self)?;
+                self.indent(1);
+            } else {
+                write!(self, " ")?;
+            }
+
+            self.write_separated(&bases, ", ", multiline)?;
+
+            if multiline {
+                self.dedent(1);
+                writeln!(self)?;
+            }
+        }
+
         if contract.parts.is_empty() {
             self.write_empty_brackets()?;
         } else {
             writeln!(self, "{{")?;
 
             self.indent(1);
-            let contract_parts = contract.parts.len();
-            for (i, part) in contract.parts.iter_mut().enumerate() {
+            // let contract_parts = contract.parts.len();
+            for (_i, part) in contract.parts.iter_mut().enumerate() {
                 part.visit(self)?;
                 writeln!(self)?;
 
-                if i != contract_parts - 1 {
-                    writeln!(self)?;
-                }
+                // TODO: if source has zero blank lines between declarations, leave it as is. If one
+                //  or more, separate declarations with one blank line.
+                // if i != contract_parts - 1 {
+                //     writeln!(self)?;
+                // }
             }
             self.dedent(1);
 
@@ -178,7 +210,11 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_pragma(&mut self, ident: &mut Identifier, str: &mut StringLiteral) -> VResult {
-        write!(self, "pragma {} {};", &ident.name, &str.string)?;
+        // Ranges like `>=0.4.21<0.6.0` or `>=0.4.21 <0.6.0` are not parseable by `semver`
+        // TODO: semver-solidity crate :D
+        let semver = semver::VersionReq::parse(&str.string)?;
+
+        write!(self, "pragma {} {};", &ident.name, semver)?;
 
         Ok(())
     }
@@ -269,9 +305,76 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
 #[cfg(test)]
 mod tests {
+    use std::{fs, path::PathBuf};
+
     use crate::visit::Visitable;
 
     use super::*;
+
+    fn test_directory(dir: &str) {
+        let snapshot_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("testdata/prettier-plugin-solidity/tests/format")
+            .join(dir)
+            .join("__snapshots__/jsfmt.spec.js.snap");
+
+        let snapshot = fs::read_to_string(snapshot_path).unwrap();
+
+        snapshot
+            .strip_prefix("// Jest Snapshot v1, https://goo.gl/fbAQLP")
+            .unwrap()
+            .split("`;")
+            .for_each(|test| {
+                let is_header = |line: &str, name: &str| {
+                    line.starts_with("=") && line.ends_with("=") && line.contains(name)
+                };
+
+                let mut lines = test.split('\n');
+
+                let config = lines
+                    .by_ref()
+                    .skip_while(|line| !is_header(line, "options"))
+                    .take_while(|line| !is_header(line, "input"))
+                    .filter_map(|line| {
+                        let parts = line.splitn(2, ":").collect::<Vec<_>>();
+
+                        if parts.len() != 2 {
+                            return None
+                        }
+
+                        let key = parts[0];
+                        let value = parts[1].trim();
+
+                        if key == "parsers" && value != r#"["solidity-parse"]"# {
+                            return None
+                        }
+
+                        Some((key, value))
+                    })
+                    .fold(FormatterConfig::default(), |mut config, (key, value)| {
+                        match key {
+                            "bracketSpacing" => config.bracket_spacing = value == "true",
+                            "compiler" => (),      // TODO: set compiler in config
+                            "explicitTypes" => (), // TODO: set explicit_types in config
+                            "parsers" => (),
+                            "printWidth" => config.line_length = value.parse().unwrap(),
+                            _ => panic!("Unknown snapshot options key: {}", key),
+                        }
+
+                        config
+                    });
+
+                let input = lines
+                    .by_ref()
+                    .take_while(|line| !is_header(line, "output"))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+
+                let output =
+                    lines.take_while(|line| !is_header(line, "")).collect::<Vec<_>>().join("\n");
+
+                test_formatter(config, &input, &output);
+            });
+    }
 
     fn test_formatter(config: FormatterConfig, source: &str, expected: &str) {
         #[derive(PartialEq, Eq)]
@@ -296,132 +399,17 @@ mod tests {
     }
 
     #[test]
-    fn contract() {
-        test_formatter(
-            Default::default(),
-            r#"
-contract Empty {
-    
-}
-contract Enums {enum Empty {}}
-"#,
-            r#"
-contract Empty {}
-
-
-contract Enums {
-    enum Empty {}
-}
-"#,
-        );
-        test_formatter(
-            FormatterConfig { bracket_spacing: true, ..Default::default() },
-            r#"
-contract Empty {
-}
-"#,
-            r#"
-contract Empty { }
-"#,
-        );
+    fn contract_definitions() {
+        test_directory("ContractDefinitions");
     }
 
     #[test]
-    fn pragma() {
-        test_formatter(
-            Default::default(),
-            "pragma    solidity  ^0.5.0;",
-            "pragma solidity ^0.5.0;\n",
-        );
+    fn enum_definitions() {
+        test_directory("EnumDefinitions");
     }
 
     #[test]
-    fn import() {
-        test_formatter(
-            Default::default(),
-            "import    \"library.sol\"  ;",
-            "import \"library.sol\";\n",
-        );
-        test_formatter(
-            Default::default(),
-            "import    \"library.sol\"   as   file  ;",
-            "import \"library.sol\" as file;\n",
-        );
-        test_formatter(
-            FormatterConfig { line_length: 15, ..Default::default() },
-            "import{  symbol1  as   alias,   symbol2, sym3  } from   \"filename\"   ;",
-            r#"
-import {
-    sym3,
-    symbol1 as alias,
-    symbol2
-} from "filename";
-"#,
-        );
-        test_formatter(
-            Default::default(),
-            "import{  symbol1  as   alias,   symbol2  } from   \"filename\"   ;",
-            "import {symbol1 as alias, symbol2} from \"filename\";\n",
-        );
-        test_formatter(
-            FormatterConfig { bracket_spacing: true, ..Default::default() },
-            "import{  symbol1  as   alias,   symbol2  } from   \"filename\"   ;",
-            "import { symbol1 as alias, symbol2 } from \"filename\";\n",
-        );
-        test_formatter(
-            Default::default(),
-            r#"
-import "library.sol";
-
-contract Empty {}
-
-import "token.sol";
-"#,
-            r#"
-import "library.sol";
-import "token.sol";
-
-contract Empty {}
-"#,
-        );
-    }
-
-    #[test]
-    fn enumeration() {
-        test_formatter(
-            Default::default(),
-            r#"
-enum Empty {
-    
-}
-enum States { State1, State2, State3, State4, State5, State6, State7, State8, State9 }
-"#,
-            r#"
-enum Empty {}
-
-
-enum States {
-    State1,
-    State2,
-    State3,
-    State4,
-    State5,
-    State6,
-    State7,
-    State8,
-    State9
-}
-"#,
-        );
-        test_formatter(
-            FormatterConfig { bracket_spacing: true, ..Default::default() },
-            r#"
-enum Empty {
-}
-"#,
-            r#"
-enum Empty { }
-"#,
-        );
+    fn import_directive() {
+        test_directory("ImportDirective");
     }
 }
