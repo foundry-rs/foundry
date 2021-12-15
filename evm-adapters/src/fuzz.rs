@@ -63,7 +63,7 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
         let pre_test_state = self.evm.borrow().state().clone();
 
         // stores the consumed gas and calldata of every successful fuzz call
-        let fuzz_cases: RefCell<Vec<FuzzedCase>> = RefCell::new(Default::default());
+        let fuzz_cases: RefCell<Vec<FuzzCase>> = RefCell::new(Default::default());
 
         // stores the latest reason of a test call, this will hold the return reason of failed test
         // case if the runner failed
@@ -98,7 +98,7 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
                 );
 
                 // push test case to the case set
-                fuzz_cases.borrow_mut().push(FuzzedCase { calldata, gas });
+                fuzz_cases.borrow_mut().push(FuzzCase { calldata, gas });
 
                 Ok(())
             })
@@ -144,35 +144,54 @@ pub struct FuzzError<Reason> {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct FuzzedCases {
-    cases: Vec<FuzzedCase>,
+    cases: Vec<FuzzCase>,
 }
 
 impl FuzzedCases {
-    fn new(mut cases: Vec<FuzzedCase>) -> Self {
+    fn new(mut cases: Vec<FuzzCase>) -> Self {
         cases.sort_by_key(|c| c.gas);
         Self { cases }
     }
 
-    pub fn cases(&self) -> &[FuzzedCase] {
+    pub fn cases(&self) -> &[FuzzCase] {
         &self.cases
     }
 
-    pub fn into_cases(self) -> Vec<FuzzedCase> {
+    pub fn into_cases(self) -> Vec<FuzzCase> {
         self.cases
     }
-}
 
-impl FuzzedCases {
     /// Returns the median gas of all test cases
     pub fn median_gas(&self) -> u64 {
         let mid = self.cases.len() / 2;
         self.cases.get(mid).map(|c| c.gas).unwrap_or_default()
     }
+
+    /// Returns the average gas use of all test cases
+    fn mean_gas(&self) -> u64 {
+        self.cases.iter().map(|c| c.gas).sum::<u64>() / numbers.len() as u64
+    }
+
+    fn highest(&self) -> Option<&FuzzCase> {
+        self.cases.last()
+    }
+
+    fn lowest(&self) -> Option<&FuzzCase> {
+        self.cases.first()
+    }
+
+    fn highest_gas(&self) -> u64 {
+        self.highest().map(|c| c.gas).unwrap_or_default()
+    }
+
+    fn lowest_gas(&self) -> u64 {
+        self.lowest().map(|c| c.gas).unwrap_or_default()
+    }
 }
 
 /// Data of a single fuzz test case
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct FuzzedCase {
+pub struct FuzzCase {
     /// The calldata used for this fuzz test
     pub calldata: Bytes,
     // Consumed gas
