@@ -13,6 +13,8 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v2
+        with:
+          submodules: recursive
       
       - name: Install libusb (for Ledger)
         run: sudo apt update && sudo apt install pkg-config libudev-dev
