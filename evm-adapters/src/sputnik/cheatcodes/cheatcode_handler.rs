@@ -756,8 +756,8 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
         // NB: This is very similar to how Optimism's custom intercept logic to "predeploys" work
         // (e.g. with the StateManager)
 
-        let expected_revert = &self.state().expected_revert.clone();
-        self.state_mut().expected_revert = None;
+        let expected_revert = self.state_mut().expected_revert.take();
+
         if code_address == *CHEATCODE_ADDRESS {
             self.apply_cheatcode(input, transfer, target_gas)
         } else if code_address == *CONSOLE_ADDRESS {
@@ -792,7 +792,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
                                     String::from_utf8_lossy(
                                         &decoded_data[..]
                                     ),
-                                    String::from_utf8_lossy(expected_revert)
+                                    String::from_utf8_lossy(&expected_revert)
                                 ))
                             }
                         }
