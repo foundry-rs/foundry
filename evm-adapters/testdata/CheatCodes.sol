@@ -218,6 +218,14 @@ contract CheatCodes is DSTest {
         target.stringErr(99); 
     }
 
+    function testExpectCustomRevert() public {
+        ExpectRevert target = new ExpectRevert();
+        bytes memory data = abi.encodePacked(bytes4(keccak256("InputTooLarge()")));
+        hevm.expectRevert(data);
+        target.customErr(101);
+        target.customErr(99); 
+    }
+
     function testCalleeExpectRevert() public {
         ExpectRevert target = new ExpectRevert();
         hevm.expectRevert("Value too largeCallee");
@@ -255,7 +263,7 @@ contract CheatCodes is DSTest {
 }
 
 
-// error InputTooLarge();
+error InputTooLarge();
 contract ExpectRevert {
     function stringErrCall(uint256 a) public returns (uint256) {
         ExpectRevertCallee callee = new ExpectRevertCallee();
@@ -273,14 +281,12 @@ contract ExpectRevert {
         return a;
     }
 
-    // TODO: ethabi doesn't support custom errors, so whenever they do we can reimpl this test
-
-    // function customErr(uint256 a) public returns (uint256) {
-    //     if (a < 100) {
-    //         revert InputTooLarge();
-    //     }
-    //     return a;
-    // }
+    function customErr(uint256 a) public returns (uint256) {
+        if (a > 99) {
+            revert InputTooLarge();
+        }
+        return a;
+    }
 }
 
 contract ExpectRevertCallee {
