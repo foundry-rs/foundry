@@ -1,5 +1,5 @@
 pub mod cmd;
-#[allow(dead_code)]
+
 mod utils;
 
 use cast::{Cast, SimpleCast};

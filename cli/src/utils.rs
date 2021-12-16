@@ -18,6 +18,7 @@ const LOCAL_RPC_URL: &str = "http://127.0.0.1:8545";
 pub const DAPP_JSON: &str = "./out/dapp.sol.json";
 
 /// Initializes a tracing Subscriber for logging
+#[allow(dead_code)]
 pub fn subscriber() {
     tracing_subscriber::FmtSubscriber::builder()
         // .with_timer(tracing_subscriber::fmt::time::uptime())
