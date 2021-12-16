@@ -1,0 +1,20 @@
+[package]
+name = "forge-shell"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Foundry's Solidity shell"
+
+[dependencies]
+colored = "2.0.0"
+ctrlc = "3.2.1"
+rustyline = "9.1.1"
+shellwords = "1.1.0"
+structopt = "0.3.25"
+ethers = { git = "https://github.com/gakonst/ethers-rs" }
+regex = { version = "1.5.4", default-features = false }
+eyre = "0.6.5"
+dirs-next = "2.0.0"
+log = "0.4.14"
+solang = { git = "https://github.com/hyperledger-labs/solang", default-features = false }
+pretty_env_logger = "0.4.0"
