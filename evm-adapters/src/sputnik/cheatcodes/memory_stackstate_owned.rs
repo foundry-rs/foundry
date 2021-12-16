@@ -15,6 +15,7 @@ use ethers::types::{H160, H256, U256};
 pub struct MemoryStackStateOwned<'config, B> {
     pub backend: B,
     pub substate: MemoryStackSubstate<'config>,
+    pub expected_revert: Option<Vec<u8>>,
 }
 
 impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
@@ -25,7 +26,7 @@ impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
 
 impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
     pub fn new(metadata: StackSubstateMetadata<'config>, backend: B) -> Self {
-        Self { backend, substate: MemoryStackSubstate::new(metadata) }
+        Self { backend, substate: MemoryStackSubstate::new(metadata), expected_revert: None }
     }
 }
 

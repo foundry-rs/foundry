@@ -53,6 +53,7 @@ ethers::contract::abigen!(
             prank(address,address,bytes)(bool,bytes)
             deal(address,uint256)
             etch(address,bytes)
+            expectRevert(bytes)
     ]"#,
 );
 pub use hevm_mod::HEVMCalls;

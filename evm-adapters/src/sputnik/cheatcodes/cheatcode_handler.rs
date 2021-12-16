@@ -43,6 +43,11 @@ pub static CONSOLE_ADDRESS: Lazy<Address> = Lazy::new(|| {
     Address::from_slice(&hex::decode("000000000000000000636F6e736F6c652e6c6f67").unwrap())
 });
 
+/// For certain cheatcodes, we may internally change the status of the call, i.e. in
+/// `expectRevert`. Solidity will see a successful call and attempt to abi.decode for the called
+/// function. Therefore, we need to populate the return with dummy bytes such that the decode doesn't fail
+pub static DUMMY_OUTPUT: [u8; 320] = [0u8; 320];
+
 /// Hooks on live EVM execution and forwards everything else to a Sputnik [`Handler`].
 ///
 /// It allows:
@@ -402,6 +407,15 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                     _ => vec![],
                 };
             }
+            HEVMCalls::ExpectRevert(inner) => {
+                if let Some(_) = self.state().expected_revert {
+                    return evm_error(
+                        "You must call another function prior to expecting a second revert.",
+                    );
+                } else {
+                    self.state_mut().expected_revert = Some(inner.0.to_vec());    
+                }
+            }
             HEVMCalls::Deal(inner) => {
                 let who = inner.0;
                 let value = inner.1;
@@ -740,12 +754,15 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
         // to the state.
         // NB: This is very similar to how Optimism's custom intercept logic to "predeploys" work
         // (e.g. with the StateManager)
+
+        let expected_revert = &self.state().expected_revert.clone();
+        self.state_mut().expected_revert = None;
         if code_address == *CHEATCODE_ADDRESS {
             self.apply_cheatcode(input, transfer, target_gas)
         } else if code_address == *CONSOLE_ADDRESS {
             self.console_log(input)
         } else {
-            self.call_inner(
+            let res = self.call_inner(
                 code_address,
                 transfer,
                 input,
@@ -754,7 +771,37 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
                 true,
                 true,
                 context,
-            )
+            );
+            
+            if let Some(expected_revert) = expected_revert {
+                let final_res = match res {
+                    Capture::Exit((ExitReason::Revert(_e), data)) => {
+                        if data.len() >= 4 {
+                            if data[0..4] == [8, 195, 121, 160] {
+                                // its a revert string
+                                let len = U256::from(&data[4+32..36+32]).as_usize();
+                                if data[4+32+32..4+32+32+len] == *expected_revert {
+                                    return Capture::Exit((ExitReason::Succeed(ExitSucceed::Returned), DUMMY_OUTPUT.to_vec()));
+                                } else {
+                                    return evm_error(&*format!("Error != expected error: '{}' != '{}'", String::from_utf8_lossy(&data[4+32+32..4+32+32+len]), String::from_utf8_lossy(expected_revert)));
+                                }
+                            }
+                        }
+
+                        if data == *expected_revert {
+                            Capture::Exit((ExitReason::Succeed(ExitSucceed::Returned), DUMMY_OUTPUT.to_vec()))
+                        } else {
+                            evm_error(&*format!("Error data != expected error data: 0x{} != 0x{}", hex::encode(data), hex::encode(expected_revert)))
+                        }
+                    }
+                    _ => {
+                        evm_error("Expected revert call did not revert")
+                    }
+                };
+                final_res
+            } else {
+                res
+            }
         }
     }
 
