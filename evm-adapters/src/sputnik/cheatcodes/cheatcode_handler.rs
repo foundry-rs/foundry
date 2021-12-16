@@ -409,7 +409,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 };
             }
             HEVMCalls::ExpectRevert(inner) => {
-                if let Some(_) = self.state().expected_revert {
+                if self.state().expected_revert.is_some() {
                     return evm_error(
                         "You must call another function prior to expecting a second revert.",
                     )
@@ -777,24 +777,22 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
             if let Some(expected_revert) = expected_revert {
                 let final_res = match res {
                     Capture::Exit((ExitReason::Revert(_e), data)) => {
-                        if data.len() >= 4 {
-                            if data[0..4] == [8, 195, 121, 160] {
-                                // its a revert string
-                                let len = U256::from(&data[4 + 32..36 + 32]).as_usize();
-                                if data[4 + 32 + 32..4 + 32 + 32 + len] == *expected_revert {
-                                    return Capture::Exit((
-                                        ExitReason::Succeed(ExitSucceed::Returned),
-                                        DUMMY_OUTPUT.to_vec(),
-                                    ))
-                                } else {
-                                    return evm_error(&*format!(
-                                        "Error != expected error: '{}' != '{}'",
-                                        String::from_utf8_lossy(
-                                            &data[4 + 32 + 32..4 + 32 + 32 + len]
-                                        ),
-                                        String::from_utf8_lossy(expected_revert)
-                                    ))
-                                }
+                        if data.len() >= 4 && data[0..4] == [8, 195, 121, 160] {
+                            // its a revert string
+                            let len = U256::from(&data[4 + 32..36 + 32]).as_usize();
+                            if data[4 + 32 + 32..4 + 32 + 32 + len] == *expected_revert {
+                                return Capture::Exit((
+                                    ExitReason::Succeed(ExitSucceed::Returned),
+                                    DUMMY_OUTPUT.to_vec(),
+                                ))
+                            } else {
+                                return evm_error(&*format!(
+                                    "Error != expected error: '{}' != '{}'",
+                                    String::from_utf8_lossy(
+                                        &data[4 + 32 + 32..4 + 32 + 32 + len]
+                                    ),
+                                    String::from_utf8_lossy(expected_revert)
+                                ))
                             }
                         }
 
