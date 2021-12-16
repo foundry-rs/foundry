@@ -7,7 +7,7 @@ use sputnik::{
     executor::stack::{
         MemoryStackState, PrecompileSet, StackExecutor, StackState, StackSubstateMetadata,
     },
-    Config, CreateScheme, ExitReason, ExitRevert, Transfer,
+    Config, CreateScheme, ExitReason, ExitRevert, ExitSucceed, Transfer,
 };
 use std::{collections::BTreeMap, marker::PhantomData};
 
@@ -48,6 +48,12 @@ impl<'a, 'b, B: Backend, P: PrecompileSet>
         let executor = StackExecutor::new_with_precompiles(state, config, precompiles);
 
         Self { executor, gas_limit, marker: PhantomData }
+    }
+}
+
+impl crate::Reason for ExitReason {
+    fn stopped(&self) -> bool {
+        *self == ExitReason::Succeed(ExitSucceed::Stopped)
     }
 }
 

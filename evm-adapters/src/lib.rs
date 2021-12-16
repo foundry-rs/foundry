@@ -42,12 +42,16 @@ pub enum EvmError {
     Eyre(#[from] eyre::Error),
 }
 
+pub trait Reason {
+    fn stopped(&self) -> bool;
+}
+
 // TODO: Any reason this should be an async trait?
 /// Low-level abstraction layer for interfacing with various EVMs. Once instantiated, one
 /// only needs to specify the transaction parameters
 pub trait Evm<State> {
     /// The returned reason type from an EVM (Success / Revert/ Stopped etc.)
-    type ReturnReason: std::fmt::Debug + PartialEq;
+    type ReturnReason: Reason + std::fmt::Debug + PartialEq;
 
     /// Gets the revert reason type
     fn revert() -> Self::ReturnReason;

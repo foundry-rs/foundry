@@ -36,6 +36,12 @@ pub trait HostExt: Host {
     fn set_balance(&mut self, address: Address, balance: U256);
 }
 
+impl crate::Reason for StatusCode {
+    fn stopped(&self) -> bool {
+        *self == StatusCode::Success
+    }
+}
+
 impl<S: HostExt, Tr: Tracer> Evm<S> for EvmOdin<S, Tr> {
     type ReturnReason = StatusCode;
 

@@ -1,5 +1,5 @@
 //! Fuzzing support abstracted over the [`Evm`](crate::Evm) used
-use crate::Evm;
+use crate::{Evm, Reason};
 use ethers::{
     abi::{Function, ParamType, Token, Tokenizable},
     types::{Address, Bytes, Sign, I256, U256},
@@ -86,6 +86,8 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
                 let success = evm.check_success(address, &reason, should_fail);
 
                 // store the result of this test case
+                let stopped = reason.stopped();
+                dbg!(&reason);
                 let _ = return_reason.borrow_mut().insert(reason);
 
                 // This will panic and get caught by the executor
@@ -97,8 +99,12 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
                     foundry_utils::decode_revert(returndata.as_ref())?
                 );
 
-                // push test case to the case set
-                fuzz_cases.borrow_mut().push(FuzzCase { calldata, gas });
+                // if the call succeeded and did not return early, that means it was
+                // a successful fuzz test
+                if stopped {
+                    // push test case to the case set
+                    fuzz_cases.borrow_mut().push(FuzzCase { calldata, gas });
+                }
 
                 Ok(())
             })
@@ -169,6 +175,9 @@ impl FuzzedCases {
 
     /// Returns the average gas use of all test cases
     pub fn mean_gas(&self) -> u64 {
+        if self.cases.len() == 0 {
+            return 0
+        }
         self.cases.iter().map(|c| c.gas).sum::<u64>() / self.cases.len() as u64
     }
 
