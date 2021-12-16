@@ -4,9 +4,8 @@ use crate::{
     cmd::{build::BuildArgs, Cmd},
     opts::{EthereumOpts, WalletType},
 };
-use cast::SimpleCast;
 use ethers::{
-    abi::{Contract, Function, FunctionExt},
+    abi::{Constructor, Contract, Token},
     prelude::{
         artifacts::{BytecodeObject, Source, Sources},
         ContractFactory, Http, Middleware, MinimalCombinedArtifacts, Project, ProjectCompileOutput,
@@ -15,6 +14,7 @@ use ethers::{
     solc::cache::SolFilesCache,
 };
 use eyre::Result;
+use foundry_utils::parse_tokens;
 
 use crate::opts::forge::ContractInfo;
 use std::{path::PathBuf, sync::Arc};
@@ -63,7 +63,10 @@ impl Cmd for CreateArgs {
 
         // Add arguments to constructor
         let provider = Provider::<Http>::try_from(self.eth.rpc_url.as_str())?;
-        let constructor_with_args = self.build_constructor_with_args(abi.clone())?;
+        let params = match abi.clone().constructor {
+            Some(v) => self.parse_constructor_args(v)?,
+            None => vec![],
+        };
 
         // Deploy with signer
         let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
@@ -71,13 +74,13 @@ impl Cmd for CreateArgs {
         if let Some(signer) = rt.block_on(self.eth.signer_with(chain_id, provider))? {
             match signer {
                 WalletType::Ledger(signer) => {
-                    rt.block_on(self.deploy(abi, bin, constructor_with_args, signer))?;
+                    rt.block_on(self.deploy(abi, bin, params, signer))?;
                 }
                 WalletType::Local(signer) => {
-                    rt.block_on(self.deploy(abi, bin, constructor_with_args, signer))?;
+                    rt.block_on(self.deploy(abi, bin, params, signer))?;
                 }
                 WalletType::Trezor(signer) => {
-                    rt.block_on(self.deploy(abi, bin, constructor_with_args, signer))?;
+                    rt.block_on(self.deploy(abi, bin, params, signer))?;
                 }
             }
         } else {
@@ -157,17 +160,15 @@ impl CreateArgs {
         self,
         abi: Contract,
         bin: BytecodeObject,
-        args: Option<String>,
+        args: Vec<Token>,
         signer: SignerMiddleware<Provider<Http>, impl Signer + 'static>,
     ) -> Result<()> {
         let deployer_address = signer.address();
-        let factory = ContractFactory::new(abi, bin.as_bytes().unwrap().clone(), Arc::new(signer));
+        let arc_signer = Arc::new(signer);
+        let factory =
+            ContractFactory::new(abi.clone(), bin.as_bytes().unwrap().clone(), arc_signer.clone());
 
-        let deployer = match args {
-            Some(args) => factory.deploy(args)?,
-            None => factory.deploy(())?,
-        };
-
+        let deployer = factory.deploy_tokens(args)?;
         let deployed_contract = deployer.send().await?;
 
         println!("Deployer: {:?}", deployer_address);
@@ -176,23 +177,14 @@ impl CreateArgs {
         Ok(())
     }
 
-    fn build_constructor_with_args(&self, abi: Contract) -> Result<Option<String>> {
-        if let Some(constructor) = abi.constructor {
-            // convert constructor into function
-            #[allow(deprecated)]
-            let fun = Function {
-                name: "constructor".to_string(),
-                inputs: constructor.inputs,
-                outputs: vec![],
-                constant: false,
-                state_mutability: Default::default(),
-            };
+    fn parse_constructor_args(&self, constructor: Constructor) -> Result<Vec<Token>> {
+        let params = constructor
+            .inputs
+            .iter()
+            .zip(&self.constructor_args)
+            .map(|(input, arg)| (&input.kind, arg.as_str()))
+            .collect::<Vec<_>>();
 
-            Ok(Some(SimpleCast::calldata(fun.abi_signature(), &self.constructor_args)?))
-        } else if !self.constructor_args.is_empty() {
-            eyre::bail!("No constructor found but contract arguments provided")
-        } else {
-            Ok(None)
-        }
+        parse_tokens(params, true)
     }
 }
