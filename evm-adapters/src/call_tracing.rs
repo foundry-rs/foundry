@@ -188,7 +188,7 @@ impl CallTraceArena {
         }
         if let Some((name, abi)) = maybe_found {
             if trace.created {
-                println!("{}{} {}@{:?}", left, Colour::Yellow.paint("→ new"), name, trace.addr);
+                println!("{}{} {}@{}", left, Colour::Yellow.paint("→ new"), name, trace.addr);
                 self.print_children_and_prelogs(
                     idx,
                     trace,
@@ -226,7 +226,7 @@ impl CallTraceArena {
                     .find(|(_key, (_abi, code))| diff_score(code, &trace.output) < 0.10)
                 {
                     identified_contracts.insert(trace.addr, (name.to_string(), abi.clone()));
-                    println!("{}{} {}@{:?}", left, Colour::Yellow.paint("→ new"), name, trace.addr);
+                    println!("{}{} {}@{}", left, Colour::Yellow.paint("→ new"), name, trace.addr);
                     self.print_children_and_prelogs(
                         idx,
                         trace,
@@ -245,7 +245,7 @@ impl CallTraceArena {
                     );
                     return
                 } else {
-                    println!("{}→ new <Unknown>@{:?}", left, trace.addr);
+                    println!("{}→ new <Unknown>@{}", left, trace.addr);
                     self.print_unknown(
                         color,
                         idx,
@@ -292,14 +292,15 @@ impl CallTraceArena {
     ) {
         if trace.data.len() >= 4 {
             println!(
-                "{}{:x}::{}({})",
+                "{}[{}] {:x}::{}(0x{})",
                 left,
+                trace.cost,
                 trace.addr,
                 hex::encode(&trace.data[0..4]),
                 hex::encode(&trace.data[4..])
             );
         } else {
-            println!("{}{:x}::({})", left, trace.addr, hex::encode(&trace.data));
+            println!("{}{:x}::(0x{})", left, trace.addr, hex::encode(&trace.data));
         }
 
         let children_idxs = &self.arena[idx].children;
@@ -336,14 +337,14 @@ impl CallTraceArena {
                         "{}{} {}",
                         left.to_string().replace("├─", "│") + right,
                         Colour::Cyan.paint("emit topic 0:"),
-                        Colour::Cyan.paint(format!("{:?}", topic))
+                        Colour::Cyan.paint(format!("0x{}", topic))
                     )
                 } else {
                     println!(
                         "{} {} {}",
                         left.to_string().replace("├─", "│") + "  │ " + right,
                         Colour::Cyan.paint(format!("topic {}:", i)),
-                        Colour::Cyan.paint(format!("{:?}", topic))
+                        Colour::Cyan.paint(format!("0x{}", topic))
                     )
                 }
             }
@@ -413,7 +414,7 @@ impl CallTraceArena {
                                 func.decode_input(&trace.data[4..]).expect("Bad func data decode");
                             strings = params
                                 .iter()
-                                .map(|param| format!("{:?}", param))
+                                .map(|param| format!("{}", param))
                                 .collect::<Vec<String>>()
                                 .join(", ");
                         }
@@ -482,7 +483,7 @@ impl CallTraceArena {
                             let params = event.parse_log(log.clone()).expect("Bad event").params;
                             let strings = params
                                 .iter()
-                                .map(|param| format!("{}: {:?}", param.name, param.value))
+                                .map(|param| format!("{}: {}", param.name, param.value))
                                 .collect::<Vec<String>>()
                                 .join(", ");
                             println!(
@@ -506,14 +507,14 @@ impl CallTraceArena {
                             println!(
                                 "{}emit topic 0: {}",
                                 left.to_string().replace("├─", "│") + right,
-                                Colour::Cyan.paint(format!("{:?}", topic))
+                                Colour::Cyan.paint(format!("0x{}", topic))
                             )
                         } else {
                             println!(
                                 "{}topic {}: {}",
                                 left.to_string().replace("├─", "│") + right,
                                 i,
-                                Colour::Cyan.paint(format!("{:?}", topic))
+                                Colour::Cyan.paint(format!("0x{}", topic))
                             )
                         }
                     }
@@ -579,7 +580,7 @@ impl CallTraceArena {
                         let params = event.parse_log(log.clone()).expect("Bad event").params;
                         let strings = params
                             .iter()
-                            .map(|param| format!("{}: {:?}", param.name, param.value))
+                            .map(|param| format!("{}: {}", param.name, param.value))
                             .collect::<Vec<String>>()
                             .join(", ");
                         println!(
@@ -603,14 +604,14 @@ impl CallTraceArena {
                         println!(
                             "{}emit topic 0: {}",
                             left.to_string().replace("├─", "│") + right,
-                            Colour::Cyan.paint(format!("{:?}", topic))
+                            Colour::Cyan.paint(format!("0x{}", topic))
                         )
                     } else {
                         println!(
                             "{}topic {}: {}",
                             left.to_string().replace("├─", "│") + right,
                             i,
-                            Colour::Cyan.paint(format!("{:?}", topic))
+                            Colour::Cyan.paint(format!("0x{}", topic))
                         )
                     }
                 }
@@ -628,7 +629,7 @@ impl CallTraceArena {
             Output::Token(token) => {
                 let strings = token
                     .iter()
-                    .map(|param| format!("{:?}", param))
+                    .map(|param| format!("{}", param))
                     .collect::<Vec<String>>()
                     .join(", ");
                 println!(
