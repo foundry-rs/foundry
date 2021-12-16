@@ -137,7 +137,7 @@ which implements the following methods:
 - `function prank(address from, address to, bytes calldata) (bool success,bytes retdata)`:
   Performs a smart contract call as another address
 - `function expectRevert(bytes calldata expectedError)`:
-  Tells the evm to expect that the next call to revert with a specified error bytes.
+  Tells the evm to expect that the next call reverts with specified error bytes.
 
 The below example uses the `warp` cheatcode to override the timestamp & `expectRevert` to expect a specific revert string:
 
