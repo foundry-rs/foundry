@@ -779,8 +779,9 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
                     Capture::Exit((ExitReason::Revert(_e), data)) => {
                         if data.len() >= 4 && data[0..4] == [8, 195, 121, 160] {
                             // its a revert string
-                            let len = U256::from(&data[4 + 32..36 + 32]).as_usize();
-                            if data[4 + 32 + 32..4 + 32 + 32 + len] == *expected_revert {
+                            let decoded_data = ethers::abi::decode(&[ethers::abi::ParamType::Bytes], &data[4..]).expect("String error code, but not actual string");
+                            let decoded_data = decoded_data[0].clone().into_bytes().expect("Can never fail because it is bytes");
+                            if decoded_data == *expected_revert {
                                 return Capture::Exit((
                                     ExitReason::Succeed(ExitSucceed::Returned),
                                     DUMMY_OUTPUT.to_vec(),
@@ -789,7 +790,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
                                 return evm_error(&*format!(
                                     "Error != expected error: '{}' != '{}'",
                                     String::from_utf8_lossy(
-                                        &data[4 + 32 + 32..4 + 32 + 32 + len]
+                                        &decoded_data[..]
                                     ),
                                     String::from_utf8_lossy(expected_revert)
                                 ))
