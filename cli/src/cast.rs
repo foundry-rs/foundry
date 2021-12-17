@@ -1,7 +1,14 @@
+pub mod cmd;
+
+mod utils;
+
 use cast::{Cast, SimpleCast};
 
-mod cast_opts;
-use cast_opts::{Opts, Subcommands};
+mod opts;
+use opts::{
+    cast::{Opts, Subcommands},
+    WalletType,
+};
 
 use ethers::{
     core::types::{BlockId, BlockNumber::Latest},
@@ -117,25 +124,25 @@ async fn main() -> eyre::Result<()> {
         Subcommands::Namehash { name } => {
             println!("{}", SimpleCast::namehash(&name)?);
         }
-        Subcommands::SendTx { eth, to, sig, args } => {
+        Subcommands::SendTx { eth, to, sig, cast_async, args } => {
             let provider = Provider::try_from(eth.rpc_url.as_str())?;
             let chain_id = Cast::new(&provider).chain_id().await?;
 
             if let Some(signer) = eth.signer_with(chain_id, provider.clone()).await? {
                 match signer {
-                    cast_opts::WalletType::Ledger(signer) => {
-                        cast_send(&signer, signer.address(), to, sig, args, eth.cast_async).await?;
+                    WalletType::Ledger(signer) => {
+                        cast_send(&signer, signer.address(), to, sig, args, cast_async).await?;
                     }
-                    cast_opts::WalletType::Local(signer) => {
-                        cast_send(&signer, signer.address(), to, sig, args, eth.cast_async).await?;
+                    WalletType::Local(signer) => {
+                        cast_send(&signer, signer.address(), to, sig, args, cast_async).await?;
                     }
-                    cast_opts::WalletType::Trezor(signer) => {
-                        cast_send(&signer, signer.address(), to, sig, args, eth.cast_async).await?;
+                    WalletType::Trezor(signer) => {
+                        cast_send(&signer, signer.address(), to, sig, args, cast_async).await?;
                     }
                 }
             } else {
                 let from = eth.from.expect("No ETH_FROM or signer specified");
-                cast_send(provider, from, to, sig, args, eth.cast_async).await?;
+                cast_send(provider, from, to, sig, args, cast_async).await?;
             }
         }
         Subcommands::Age { block, rpc_url } => {

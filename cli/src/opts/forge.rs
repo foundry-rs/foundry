@@ -3,9 +3,7 @@ use structopt::StructOpt;
 use ethers::types::Address;
 use std::{path::PathBuf, str::FromStr};
 
-use crate::cmd::build::BuildArgs;
-
-use crate::cmd::{snapshot, test};
+use crate::cmd::{build::BuildArgs, create, snapshot, test};
 
 #[derive(Debug, StructOpt)]
 pub struct Opts {
@@ -67,12 +65,7 @@ pub enum Subcommands {
     },
 
     #[structopt(alias = "c", about = "deploy a compiled contract")]
-    Create {
-        #[structopt(help = "contract source info `<path>:<contractname>` or `<contractname>`")]
-        contract: ContractInfo,
-        #[structopt(long, help = "verify on Etherscan")]
-        verify: bool,
-    },
+    Create(create::CreateArgs),
 
     #[structopt(alias = "i", about = "initializes a new forge sample repository")]
     Init {
