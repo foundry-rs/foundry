@@ -6,4 +6,4 @@ TESTDATA=testdata
 REPO_URL=https://github.com/$1
 REPO=${REPO_URL##*/}
 
-git clone --depth 1 $REPO_URL $CURRENT_DIR/$TESTDATA/$REPO
+git clone --depth 1 --recursive $REPO_URL $CURRENT_DIR/$TESTDATA/$REPO

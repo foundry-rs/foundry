@@ -14,3 +14,6 @@ $(INTEGRATION_TESTS_REPOS):
 	@integration-tests/add_test.sh $@
 
 testdata: integration-tests-testdata
+
+testdata-clean:
+	rm -rf integration-tests/testdata/*
