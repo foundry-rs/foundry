@@ -73,6 +73,7 @@ pub struct BuildArgs {
 impl Cmd for BuildArgs {
     type Output = ProjectCompileOutput<MinimalCombinedArtifacts>;
     fn run(self) -> eyre::Result<Self::Output> {
+        println!("compiling...");
         let project = self.project()?;
         let output = project.compile()?;
         if output.has_compiler_errors() {

@@ -77,6 +77,7 @@ pub enum WalletType {
     Ledger(SignerMiddleware<Provider<Http>, Ledger>),
     Trezor(SignerMiddleware<Provider<Http>, Trezor>),
 }
+
 #[derive(StructOpt, Debug, Clone)]
 pub struct Wallet {
     #[structopt(long = "private-key", help = "Your private key string")]

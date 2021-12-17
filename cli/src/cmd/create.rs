@@ -9,7 +9,7 @@ use ethers::{
     prelude::{
         artifacts::{BytecodeObject, Source, Sources},
         ContractFactory, Http, Middleware, MinimalCombinedArtifacts, Project, ProjectCompileOutput,
-        Provider, Signer, SignerMiddleware,
+        Provider,
     },
     solc::cache::SolFilesCache,
 };
@@ -44,6 +44,7 @@ impl Cmd for CreateArgs {
     fn run(self) -> Result<Self::Output> {
         // Find Project & Compile
         let project = self.opts.project()?;
+        println!("compiling...");
         let compiled = project.compile()?;
 
         if self.verify && self.contract.path.is_none() {
@@ -53,6 +54,10 @@ impl Cmd for CreateArgs {
         if compiled.has_compiler_errors() {
             // return the diagnostics error back to the user.
             eyre::bail!(compiled.to_string())
+        } else if compiled.is_unchanged() {
+            println!("no files changed, compilation skippped.");
+        } else {
+            println!("success.");
         }
 
         // Get ABI and BIN
@@ -63,8 +68,8 @@ impl Cmd for CreateArgs {
 
         // Add arguments to constructor
         let provider = Provider::<Http>::try_from(self.eth.rpc_url.as_str())?;
-        let params = match abi.clone().constructor {
-            Some(v) => self.parse_constructor_args(v)?,
+        let params = match abi.constructor {
+            Some(ref v) => self.parse_constructor_args(v)?,
             None => vec![],
         };
 
@@ -93,6 +98,8 @@ impl Cmd for CreateArgs {
 
 impl CreateArgs {
     /// Find using only ContractName
+    // TODO: Is there a better / more ergonomic way to get the artifacts given a project and a
+    // contract name?
     fn get_artifact_from_name(
         &self,
         compiled: ProjectCompileOutput<MinimalCombinedArtifacts>,
@@ -114,8 +121,12 @@ impl CreateArgs {
 
         Ok(match contract_artifact {
             Some(artifact) => (
-                artifact.abi.ok_or_else(|| eyre::Error::msg("message"))?,
-                artifact.bin.ok_or_else(|| eyre::Error::msg("message"))?,
+                artifact.abi.ok_or_else(|| {
+                    eyre::Error::msg(format!("abi not found for {}", self.contract.name))
+                })?,
+                artifact.bin.ok_or_else(|| {
+                    eyre::Error::msg(format!("bytecode not found for {}", self.contract.name))
+                })?,
             ),
             None => {
                 eyre::bail!("could not find artifact")
@@ -124,6 +135,8 @@ impl CreateArgs {
     }
 
     /// Find using src/ContractSource.sol:ContractName
+    // TODO: Is there a better / more ergonomic way to get the artifacts given a project and a
+    // path?
     fn get_artifact_from_path(
         &self,
         project: &Project,
@@ -138,35 +151,41 @@ impl CreateArgs {
         let mut config = SolFilesCache::builder().insert_files(sources.clone(), None)?;
         config.files.entry(abs_path).and_modify(|f| f.artifacts = vec![self.contract.name.clone()]);
 
-        // let binding
-        let _artifacts =
-            config.read_artifacts::<MinimalCombinedArtifacts>(project.artifacts_path())?;
-
-        let artifacts = _artifacts.values().collect::<Vec<_>>();
+        let artifacts = config
+            .read_artifacts::<MinimalCombinedArtifacts>(project.artifacts_path())?
+            .into_values()
+            .collect::<Vec<_>>();
 
         if artifacts.is_empty() {
             eyre::bail!("could not find artifact")
         } else if artifacts.len() > 1 {
             eyre::bail!("duplicate contract name in the same source file")
         }
+        let artifact = artifacts[0].clone();
 
         Ok((
-            artifacts[0].clone().abi.ok_or_else(|| eyre::Error::msg("message"))?,
-            artifacts[0].clone().bin.ok_or_else(|| eyre::Error::msg("message"))?,
+            artifact.abi.ok_or_else(|| {
+                eyre::Error::msg(format!("abi not found for {}", self.contract.name))
+            })?,
+            artifact.bin.ok_or_else(|| {
+                eyre::Error::msg(format!("bytecode not found for {}", self.contract.name))
+            })?,
         ))
     }
 
-    async fn deploy(
+    async fn deploy<M: Middleware + 'static>(
         self,
         abi: Contract,
         bin: BytecodeObject,
         args: Vec<Token>,
-        signer: SignerMiddleware<Provider<Http>, impl Signer + 'static>,
+        provider: M,
     ) -> Result<()> {
-        let deployer_address = signer.address();
-        let arc_signer = Arc::new(signer);
-        let factory =
-            ContractFactory::new(abi.clone(), bin.as_bytes().unwrap().clone(), arc_signer.clone());
+        let deployer_address =
+            provider.default_sender().expect("no sender address set for provider");
+        let bin = bin.into_bytes().unwrap_or_else(|| {
+            panic!("no bytecode found in bin object for {}", self.contract.name)
+        });
+        let factory = ContractFactory::new(abi, bin, Arc::new(provider));
 
         let deployer = factory.deploy_tokens(args)?;
         let deployed_contract = deployer.send().await?;
@@ -177,7 +196,7 @@ impl CreateArgs {
         Ok(())
     }
 
-    fn parse_constructor_args(&self, constructor: Constructor) -> Result<Vec<Token>> {
+    fn parse_constructor_args(&self, constructor: &Constructor) -> Result<Vec<Token>> {
         let params = constructor
             .inputs
             .iter()

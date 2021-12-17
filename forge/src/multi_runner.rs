@@ -39,6 +39,7 @@ impl MultiContractRunnerBuilder {
         A: ArtifactOutput + 'static,
         E: Evm<S>,
     {
+        println!("compiling...");
         let output = project.compile()?;
         if output.has_compiler_errors() {
             // return the diagnostics error back to the user.
