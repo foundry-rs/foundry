@@ -1,3 +1,4 @@
+# Repositories for integration tests that will be cloned inside `integration-tests/testdata/REPO` folders
 INTEGRATION_TESTS_REPOS = \
 	mds1/drai \
 	reflexer-labs/geb \
@@ -11,9 +12,12 @@ INTEGRATION_TESTS_REPOS = \
 integration-tests-testdata: $(INTEGRATION_TESTS_REPOS)
 
 $(INTEGRATION_TESTS_REPOS):
-	@integration-tests/add_test.sh $@
+	@FOLDER=$(shell dirname "$0")/integration-tests/testdata/$(lastword $(subst /, ,$@));\
+	if [ ! -d $$FOLDER ] ; then\
+        git clone https://github.com/$@ $$FOLDER;\
+    else\
+        cd $$FOLDER;\
+        git pull --recurse-submodules;\
+    fi
 
 testdata: integration-tests-testdata
-
-testdata-clean:
-	rm -rf integration-tests/testdata/*
