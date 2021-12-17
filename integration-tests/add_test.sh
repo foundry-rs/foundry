@@ -1,10 +1,9 @@
 #!/bin/bash
 # Installs a new dapptools test repository to use
 
+CURRENT_DIR=$(dirname "$0")
 TESTDATA=testdata
-REPO=$1
+REPO_URL=https://github.com/$1
+REPO=${REPO_URL##*/}
 
-cd $TESTDATA
-git submodule add $REPO
-
-git commit -m "integration-tests: add $REPO"
+git clone --depth 1 $REPO_URL $CURRENT_DIR/$TESTDATA/$REPO

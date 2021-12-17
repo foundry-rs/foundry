@@ -11,19 +11,33 @@ env:
   FORK_BLOCK: 13633752
 
 jobs:
+  prepare-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Clone repositories for integration tests
+        run: make integration-tests
+
+      - id: set-matrix
+        run: echo "::set-output name=matrix::$(ls integration-tests/testdata | awk \'BEGIN { ORS = \"\"; print \"[\"; } { print \"/@\"$0\"/@\"; } END { print \"]\"; }\' | sed \"s^\\\"^\\\\\\\\\\\"^g;s^/@/@^\\\", \\\"^g;s^/\\@^\\\"^g\")"
+
   tests:
+    needs: prepare-matrix
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # TODO: Can we automatically generate this matrix via `ls` and `fromJSON`?
-        # https://docs.github.com/en/actions/learn-github-actions/expressions#fromjson
-        repo: ["lootloose", "solmate", "vaults", "geb", "solidity-stringutils", "multicall", "guni-lev", "drai"]
+        repo: ${{fromJSON(needs.prepare-matrix.outputs.matrix)}}
 
     steps:
       # clone
       - uses: actions/checkout@v2
-        with:
-          submodules: recursive
+
+      - name: Clone repositories for integration tests
+        run: make integration-tests
+
       # some deps require node
       - uses: actions/setup-node@v2
       # install rust
