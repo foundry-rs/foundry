@@ -105,14 +105,13 @@ fn main() -> eyre::Result<()> {
                     .wait()?;
                 if !is_git.success() {
                     Command::new("git").arg("init").current_dir(&root).spawn()?.wait()?;
+                    Command::new("git").args(&["add", "."]).current_dir(&root).spawn()?.wait()?;
+                    Command::new("git")
+                        .args(&["commit", "-m", "chore: forge init"])
+                        .current_dir(&root)
+                        .spawn()?
+                        .wait()?;
                 }
-                Command::new("git").args(&["add", "."]).current_dir(&root).spawn()?.wait()?;
-                Command::new("git")
-                    .args(&["commit", "-m", "chore: forge init"])
-                    .current_dir(&root)
-                    .spawn()?
-                    .wait()?;
-
                 Dependency::from_str("https://github.com/dapphub/ds-test")
                     .and_then(|dependency| install(root, vec![dependency]))?;
             }
