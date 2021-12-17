@@ -2,9 +2,8 @@ on:
   push:
     branches:
       - master
-  pull_request:
 
-name: e2e tests
+name: E2E tests
 
 env:
   ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf
