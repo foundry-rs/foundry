@@ -386,7 +386,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                     // we allow someone to do a 1 time prank even when startPrank is set if
                     // and only if we ensure that the startPrank *cannot* be applied to the following call
                     if start_prank_depth == depth && caller == orginal_pranker {
-                        return evm_error("You have an active `startPrank` at this frame depth already. Use either `prank` or `startPrank`");
+                        return evm_error("You have an active `startPrank` at this frame depth already. Use either `prank` or `startPrank`, not both");
                     }
                 }
                 self.state_mut().next_msg_sender = Some(caller);
@@ -401,7 +401,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 // it to any other addresses when depth == prank_depth
                 let caller = inner.0;
                 if self.state().next_msg_sender.is_some() {
-                    return evm_error("You have an active `prank` call already. Use either `prank` or `startPrank`");
+                    return evm_error("You have an active `prank` call already. Use either `prank` or `startPrank`, not both");
                 } else {
                     self.state_mut().msg_sender = Some((
                         msg_sender,
