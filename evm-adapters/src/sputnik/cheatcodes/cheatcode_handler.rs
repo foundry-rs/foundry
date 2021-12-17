@@ -278,7 +278,11 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
 
     /// Given a transaction's calldata, it tries to parse it as an [`HEVM cheatcode`](super::HEVM)
     /// call and modify the state accordingly.
-    fn apply_cheatcode(&mut self, input: Vec<u8>, msg_sender: H160) -> Capture<(ExitReason, Vec<u8>), Infallible> {
+    fn apply_cheatcode(
+        &mut self,
+        input: Vec<u8>,
+        msg_sender: H160,
+    ) -> Capture<(ExitReason, Vec<u8>), Infallible> {
         let mut res = vec![];
 
         // Get a mutable ref to the state so we can apply the cheats
@@ -384,7 +388,8 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                         0
                     };
                     // we allow someone to do a 1 time prank even when startPrank is set if
-                    // and only if we ensure that the startPrank *cannot* be applied to the following call
+                    // and only if we ensure that the startPrank *cannot* be applied to the
+                    // following call
                     if start_prank_depth == depth && caller == orginal_pranker {
                         return evm_error("You have an active `startPrank` at this frame depth already. Use either `prank` or `startPrank`, not both");
                     }
@@ -397,8 +402,9 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 // will continue to use the prank caller for any subsequent calls
                 // until stopPrank is called.
                 //
-                // We additionally have to store the original message sender of the cheatcode caller so that we dont apply
-                // it to any other addresses when depth == prank_depth
+                // We additionally have to store the original message sender of the cheatcode caller
+                // so that we dont apply it to any other addresses when depth ==
+                // prank_depth
                 let caller = inner.0;
                 if self.state().next_msg_sender.is_some() {
                     return evm_error("You have an active `prank` call already. Use either `prank` or `startPrank`, not both");
