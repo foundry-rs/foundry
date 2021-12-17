@@ -22,7 +22,7 @@ jobs:
         run: make integration-tests
 
       - id: set-matrix
-        run: echo "::set-output name=matrix::$(ls integration-tests/testdata | awk \'BEGIN { ORS = \"\"; print \"[\"; } { print \"/@\"$0\"/@\"; } END { print \"]\"; }\' | sed \"s^\\\"^\\\\\\\\\\\"^g;s^/@/@^\\\", \\\"^g;s^/\\@^\\\"^g\")"
+        run: echo "::set-output name=matrix::$(ls integration-tests/testdata | awk 'BEGIN { ORS = ""; print "["; } { print "/@"$0"/@"; } END { print "]"; }' | sed "s^\"^\\\\\"^g;s^/@/@^\",\"^g;s^/\@^\"^g")"
 
   tests:
     needs: prepare-matrix
