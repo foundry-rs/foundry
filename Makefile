@@ -8,7 +8,9 @@ INTEGRATION_TESTS_REPOS = \
 	makerdao/multicall \
 	gakonst/lootloose
 
-integration-tests: $(INTEGRATION_TESTS_REPOS)
+integration-tests-testdata: $(INTEGRATION_TESTS_REPOS)
 
 $(INTEGRATION_TESTS_REPOS):
 	@integration-tests/add_test.sh $@
+
+testdata: integration-tests-testdata

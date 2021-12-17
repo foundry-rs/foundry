@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@v2
 
       - name: Clone repositories for integration tests
-        run: make integration-tests
+        run: make integration-tests-testdata
 
       - id: set-matrix
         run: echo "::set-output name=matrix::$(ls integration-tests/testdata | awk 'BEGIN { ORS = ""; print "["; } { print "/@"$0"/@"; } END { print "]"; }' | sed "s^\"^\\\\\"^g;s^/@/@^\",\"^g;s^/\@^\"^g")"
@@ -35,8 +35,11 @@ jobs:
       # clone
       - uses: actions/checkout@v2
 
-      - name: Clone repositories for integration tests
-        run: make integration-tests
+      - name: Install libusb (for Ledger)
+        run: sudo apt update && sudo apt install pkg-config libudev-dev
+
+      - name: Clone repositories for integration tests testdata
+        run: make integration-tests-testdata
 
       # some deps require node
       - uses: actions/setup-node@v2
