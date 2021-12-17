@@ -176,6 +176,16 @@ contract CheatCodes is DSTest {
         prank.bar(address(this));
     }
 
+    function testPrankStartComplex() public {
+        // A -> B, B starts pranking, doesnt call stopPrank, A calls C calls D
+        // C -> D would be pranked
+        ComplexPrank complexPrank = new ComplexPrank();
+        Prank prank = new Prank();
+        complexPrank.uncompletedPrank();
+        prank.bar(address(this));
+        complexPrank.completePrank(prank);
+    }
+
     function testEtch() public {
         address rewriteCode = address(1337);
         
@@ -286,6 +296,20 @@ contract Prank {
 contract InnerPrank {
     function bar(address expectedMsgSender) public {
         require(msg.sender == expectedMsgSender, "bad prank");
+    }
+}
+
+contract ComplexPrank {
+    Hevm hevm = Hevm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+
+    function uncompletedPrank() public {
+        hevm.startPrank(address(1337));
+    }
+
+    function completePrank(Prank prank) public {
+        prank.bar(address(1337));
+        hevm.stopPrank();
+        prank.bar(address(this));
     }
 }
 
