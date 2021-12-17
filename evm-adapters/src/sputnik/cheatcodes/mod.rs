@@ -51,6 +51,8 @@ ethers::contract::abigen!(
             addr(uint256)(address)
             sign(uint256,bytes32)(uint8,bytes32,bytes32)
             prank(address)
+            startPrank(address)
+            stopPrank()
             deal(address,uint256)
             etch(address,bytes)
             expectRevert(bytes)

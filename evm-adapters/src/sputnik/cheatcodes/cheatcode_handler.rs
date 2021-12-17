@@ -377,7 +377,39 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
             }
             HEVMCalls::Prank(inner) => {
                 let caller = inner.0;
+                if let Some((_caller, depth)) = self.state().msg_sender {
+                    let start_prank_depth = if let Some(depth) = self.state().metadata().depth() {
+                        depth + 1
+                    } else {
+                        0
+                    };
+                    if start_prank_depth == depth {
+                        return evm_error("You have an active `startPrank` at this frame depth already. Use either `prank` or `startPrank`");
+                    }
+                }
                 self.state_mut().next_msg_sender = Some(caller);
+            }
+            HEVMCalls::StartPrank(inner) => {
+                // startPrank works by using frame depth to determine whether to overwrite
+                // msg.sender if we set a prank caller at a particular depth, it
+                // will continue to use the prank caller for any subsequent calls
+                // until stopPrank is called.
+                let caller = inner.0;
+                if self.state().next_msg_sender.is_some() {
+                    return evm_error("You have an active `prank` call already. Use either `prank` or `startPrank`");
+                } else {
+                    self.state_mut().msg_sender = Some((
+                        caller,
+                        if let Some(depth) = self.state().metadata().depth() {
+                            depth + 1
+                        } else {
+                            0
+                        },
+                    ));
+                }
+            }
+            HEVMCalls::StopPrank(_) => {
+                self.state_mut().msg_sender = None;
             }
             HEVMCalls::ExpectRevert(inner) => {
                 if self.state().expected_revert.is_some() {
@@ -728,9 +760,20 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
         // (e.g. with the StateManager)
 
         let expected_revert = self.state_mut().expected_revert.take();
-        let caller = self.state_mut().next_msg_sender.take();
+
         let mut new_context = context;
-        if let Some(caller) = caller {
+
+        // handle `startPrank` - see apply_cheatcodes for more info
+        if let Some((permanent_caller, depth)) = self.state().msg_sender {
+            let curr_depth =
+                if let Some(depth) = self.state().metadata().depth() { depth + 1 } else { 0 };
+            if curr_depth == depth {
+                new_context.caller = permanent_caller;
+            }
+        }
+
+        // handle normal `prank`
+        if let Some(caller) = self.state_mut().next_msg_sender.take() {
             new_context.caller = caller;
         }
 

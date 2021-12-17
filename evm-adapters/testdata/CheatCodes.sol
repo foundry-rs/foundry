@@ -22,6 +22,10 @@ interface Hevm {
     function ffi(string[] calldata) external returns (bytes memory);
     // Sets the *next* call's msg.sender to be the input address
     function prank(address) external;
+    // Sets all subsequent calls' msg.sender to be the input address until `stopPrank` is called
+    function startPrank(address) external;
+    // Resets subsequent calls' msg.sender to be `address(this)`
+    function stopPrank() external;
     // Sets an address' balance, (who, newBalance)
     function deal(address, uint256) external;
     // Sets an address' code, (who, newCode)
@@ -157,11 +161,19 @@ contract CheatCodes is DSTest {
         address new_sender = address(1337);
         address sender = msg.sender;
         hevm.prank(new_sender);
-        string memory input = "And his name is JOHN CENA!";
-        string memory retString = prank.checksOriginAndSender(input);
-        string memory expectedRetString = "SUPER SLAM!";
-        assertEq(retString, expectedRetString);
-        assertEq(sender, msg.sender);
+        prank.bar(new_sender);
+        prank.bar(address(this));
+    }
+
+    function testPrankStart() public {
+        Prank prank = new Prank();
+        address new_sender = address(1337);
+        address sender = msg.sender;
+        hevm.startPrank(new_sender);
+        prank.bar(new_sender);
+        prank.bar(new_sender);
+        hevm.stopPrank();
+        prank.bar(address(this));
     }
 
     function testEtch() public {
@@ -263,12 +275,18 @@ contract ExpectRevertCallee {
     }
 }
 
-contract Prank is DSTest {
-    function checksOriginAndSender(string calldata input) external payable returns (string memory) {
-        string memory expectedInput = "And his name is JOHN CENA!";
-        assertEq(input, expectedInput);
-        assertEq(address(1337), msg.sender);
-        string memory expectedRetString = "SUPER SLAM!";
-        return expectedRetString;
+contract Prank {
+    function bar(address expectedMsgSender) public {
+        require(msg.sender == expectedMsgSender, "bad prank");
+        InnerPrank inner = new InnerPrank();
+        inner.bar(address(this));
     }
 }
+
+contract InnerPrank {
+    function bar(address expectedMsgSender) public {
+        require(msg.sender == expectedMsgSender, "bad prank");
+    }
+}
+
+
