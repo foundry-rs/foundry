@@ -278,12 +278,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
 
     /// Given a transaction's calldata, it tries to parse it as an [`HEVM cheatcode`](super::HEVM)
     /// call and modify the state accordingly.
-    fn apply_cheatcode(
-        &mut self,
-        input: Vec<u8>,
-        transfer: Option<Transfer>,
-        target_gas: Option<u64>,
-    ) -> Capture<(ExitReason, Vec<u8>), Infallible> {
+    fn apply_cheatcode(&mut self, input: Vec<u8>) -> Capture<(ExitReason, Vec<u8>), Infallible> {
         let mut res = vec![];
 
         // Get a mutable ref to the state so we can apply the cheats
@@ -382,31 +377,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
             }
             HEVMCalls::Prank(inner) => {
                 let caller = inner.0;
-                let address = inner.1;
-                let input = inner.2;
-
-                let value =
-                    if let Some(ref transfer) = transfer { transfer.value } else { U256::zero() };
-
-                // change origin
-                let context = Context { caller, address, apparent_value: value };
-                let ret = self.call(
-                    address,
-                    Some(Transfer { source: caller, target: address, value }),
-                    input.to_vec(),
-                    target_gas,
-                    false,
-                    context,
-                );
-                res = match ret {
-                    Capture::Exit((successful, v)) => match successful {
-                        ExitReason::Succeed(_) => {
-                            ethers::abi::encode(&[Token::Bool(true), Token::Bytes(v.to_vec())])
-                        }
-                        _ => ethers::abi::encode(&[Token::Bool(false), Token::Bytes(v.to_vec())]),
-                    },
-                    _ => vec![],
-                };
+                self.state_mut().next_msg_sender = Some(caller);
             }
             HEVMCalls::ExpectRevert(inner) => {
                 if self.state().expected_revert.is_some() {
@@ -757,9 +728,14 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
         // (e.g. with the StateManager)
 
         let expected_revert = self.state_mut().expected_revert.take();
+        let caller = self.state_mut().next_msg_sender.take();
+        let mut new_context = context;
+        if let Some(caller) = caller {
+            new_context.caller = caller;
+        }
 
         if code_address == *CHEATCODE_ADDRESS {
-            self.apply_cheatcode(input, transfer, target_gas)
+            self.apply_cheatcode(input)
         } else if code_address == *CONSOLE_ADDRESS {
             self.console_log(input)
         } else {
@@ -771,7 +747,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
                 is_static,
                 true,
                 true,
-                context,
+                new_context,
             );
 
             if let Some(expected_revert) = expected_revert {

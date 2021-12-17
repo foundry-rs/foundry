@@ -20,8 +20,8 @@ interface Hevm {
     function addr(uint256) external returns (address);
     // Performs a foreign function call via terminal, (stringInputs) => (result)
     function ffi(string[] calldata) external returns (bytes memory);
-    // Calls another contract with a specified `msg.sender`, (newSender, contract, input) => (success, returnData)
-    function prank(address, address, bytes calldata) external payable returns (bool, bytes memory);
+    // Sets the *next* call's msg.sender to be the input address
+    function prank(address) external;
     // Sets an address' balance, (who, newBalance)
     function deal(address, uint256) external;
     // Sets an address' code, (who, newCode)
@@ -155,50 +155,12 @@ contract CheatCodes is DSTest {
     function testPrank() public {
         Prank prank = new Prank();
         address new_sender = address(1337);
-        bytes4 sig = prank.checksOriginAndSender.selector;
-        string memory input = "And his name is JOHN CENA!";
-        bytes memory calld = abi.encodePacked(sig, abi.encode(input));
-        address origin = tx.origin;
         address sender = msg.sender;
-        (bool success, bytes memory ret) = hevm.prank(new_sender, address(prank), calld);
-        assertTrue(success);
-        string memory expectedRetString = "SUPER SLAM!";
-        string memory actualRet = abi.decode(ret, (string));
-        assertEq(actualRet, expectedRetString);
-
-        // make sure we returned back to normal
-        assertEq(origin, tx.origin);
-        assertEq(sender, msg.sender);
-    }
-
-    function testPrankValue() public {
-        Prank prank = new Prank();
-        // setup the call
-        address new_sender = address(1337);
-        bytes4 sig = prank.checksOriginAndSender.selector;
+        hevm.prank(new_sender);
         string memory input = "And his name is JOHN CENA!";
-        bytes memory calld = abi.encodePacked(sig, abi.encode(input));
-        address origin = tx.origin;
-        address sender = msg.sender;
-
-        // give the sender some monies
-        hevm.deal(new_sender, 1337);
-
-        // call the function passing in a value. the eth is pulled from the new sender
-        sig = hevm.prank.selector;
-        calld = abi.encodePacked(sig, abi.encode(new_sender, address(prank), calld));
-
-        // this is nested low level calls effectively
-        (bool high_level_success, bytes memory outerRet) = address(hevm).call{value: 1}(calld);
-        assertTrue(high_level_success);
-        (bool success, bytes memory ret) = abi.decode(outerRet, (bool,bytes));
-        assertTrue(success);
+        string memory retString = prank.checksOriginAndSender(input);
         string memory expectedRetString = "SUPER SLAM!";
-        string memory actualRet = abi.decode(ret, (string));
-        assertEq(actualRet, expectedRetString);
-
-        // make sure we returned back to normal
-        assertEq(origin, tx.origin);
+        assertEq(retString, expectedRetString);
         assertEq(sender, msg.sender);
     }
 
