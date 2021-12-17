@@ -1514,7 +1514,6 @@ dependencies = [
  "cast",
  "color-eyre",
  "ethers",
- "ethers-etherscan",
  "evm",
  "evm-adapters",
  "evmodin",
