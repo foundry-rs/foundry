@@ -19,6 +19,9 @@ Foundry consists of:
 
 ![demo](./assets/demo.svg)
 
+## Dependencies
+Currently both Forge and Cast rely on the [libudev-dev](https://packages.debian.org/sid/libudev-dev) package. This package may be preinstalled for your system, but is also available in most packages managers.
+
 ## Forge
 
 ```
