@@ -768,7 +768,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
         } else if code_address == *CONSOLE_ADDRESS {
             self.console_log(input)
         } else {
-            // apply some cheatcode relevant things
+            // modify execution context depending on the cheatcode
             let expected_revert = self.state_mut().expected_revert.take();
             let mut new_context = context;
 
