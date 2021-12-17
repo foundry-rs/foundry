@@ -377,13 +377,15 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
             }
             HEVMCalls::Prank(inner) => {
                 let caller = inner.0;
-                if let Some((_orginal_pranker, _caller, depth)) = self.state().msg_sender {
+                if let Some((orginal_pranker, caller, depth)) = self.state().msg_sender {
                     let start_prank_depth = if let Some(depth) = self.state().metadata().depth() {
                         depth + 1
                     } else {
                         0
                     };
-                    if start_prank_depth == depth {
+                    // we allow someone to do a 1 time prank even when startPrank is set if
+                    // and only if we ensure that the startPrank *cannot* be applied to the following call
+                    if start_prank_depth == depth && caller == original_msg_sender {
                         return evm_error("You have an active `startPrank` at this frame depth already. Use either `prank` or `startPrank`");
                     }
                 }
