@@ -278,7 +278,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
 
     /// Given a transaction's calldata, it tries to parse it as an [`HEVM cheatcode`](super::HEVM)
     /// call and modify the state accordingly.
-    fn apply_cheatcode(&mut self, input: Vec<u8>) -> Capture<(ExitReason, Vec<u8>), Infallible> {
+    fn apply_cheatcode(&mut self, input: Vec<u8>, msg_sender: H160) -> Capture<(ExitReason, Vec<u8>), Infallible> {
         let mut res = vec![];
 
         // Get a mutable ref to the state so we can apply the cheats
@@ -377,7 +377,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
             }
             HEVMCalls::Prank(inner) => {
                 let caller = inner.0;
-                if let Some((_caller, depth)) = self.state().msg_sender {
+                if let Some((_orginal_pranker, _caller, depth)) = self.state().msg_sender {
                     let start_prank_depth = if let Some(depth) = self.state().metadata().depth() {
                         depth + 1
                     } else {
@@ -394,11 +394,15 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 // msg.sender if we set a prank caller at a particular depth, it
                 // will continue to use the prank caller for any subsequent calls
                 // until stopPrank is called.
+                //
+                // We additionally have to store the original message sender of the cheatcode caller so that we dont apply
+                // it to any other addresses when depth == prank_depth
                 let caller = inner.0;
                 if self.state().next_msg_sender.is_some() {
                     return evm_error("You have an active `prank` call already. Use either `prank` or `startPrank`");
                 } else {
                     self.state_mut().msg_sender = Some((
+                        msg_sender,
                         caller,
                         if let Some(depth) = self.state().metadata().depth() {
                             depth + 1
@@ -759,29 +763,30 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
         // NB: This is very similar to how Optimism's custom intercept logic to "predeploys" work
         // (e.g. with the StateManager)
 
-        let expected_revert = self.state_mut().expected_revert.take();
-
-        let mut new_context = context;
-
-        // handle `startPrank` - see apply_cheatcodes for more info
-        if let Some((permanent_caller, depth)) = self.state().msg_sender {
-            let curr_depth =
-                if let Some(depth) = self.state().metadata().depth() { depth + 1 } else { 0 };
-            if curr_depth == depth {
-                new_context.caller = permanent_caller;
-            }
-        }
-
-        // handle normal `prank`
-        if let Some(caller) = self.state_mut().next_msg_sender.take() {
-            new_context.caller = caller;
-        }
-
         if code_address == *CHEATCODE_ADDRESS {
-            self.apply_cheatcode(input)
+            self.apply_cheatcode(input, context.caller)
         } else if code_address == *CONSOLE_ADDRESS {
             self.console_log(input)
         } else {
+            // apply some cheatcode relevant things
+            let expected_revert = self.state_mut().expected_revert.take();
+            let mut new_context = context;
+
+            // handle `startPrank` - see apply_cheatcodes for more info
+            if let Some((original_msg_sender, permanent_caller, depth)) = self.state().msg_sender {
+                let curr_depth =
+                    if let Some(depth) = self.state().metadata().depth() { depth + 1 } else { 0 };
+                if curr_depth == depth && new_context.caller == original_msg_sender {
+                    new_context.caller = permanent_caller;
+                }
+            }
+
+            // handle normal `prank`
+            if let Some(caller) = self.state_mut().next_msg_sender.take() {
+                new_context.caller = caller;
+            }
+
+            // perform the call
             let res = self.call_inner(
                 code_address,
                 transfer,

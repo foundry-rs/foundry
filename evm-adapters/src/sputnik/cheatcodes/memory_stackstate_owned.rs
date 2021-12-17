@@ -17,7 +17,7 @@ pub struct MemoryStackStateOwned<'config, B> {
     pub substate: MemoryStackSubstate<'config>,
     pub expected_revert: Option<Vec<u8>>,
     pub next_msg_sender: Option<H160>,
-    pub msg_sender: Option<(H160, usize)>,
+    pub msg_sender: Option<(H160, H160, usize)>,
 }
 
 impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
