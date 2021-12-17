@@ -385,7 +385,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                     };
                     // we allow someone to do a 1 time prank even when startPrank is set if
                     // and only if we ensure that the startPrank *cannot* be applied to the following call
-                    if start_prank_depth == depth && caller == original_msg_sender {
+                    if start_prank_depth == depth && caller == orginal_pranker {
                         return evm_error("You have an active `startPrank` at this frame depth already. Use either `prank` or `startPrank`");
                     }
                 }
