@@ -7,7 +7,7 @@ set -e
 REPO=$1
 TESTDATA=testdata
 
-ALLOWED_FAILURE_REPOS=("geb" "drai" "guni-lev")
+ALLOWED_FAILURE_REPOS=("geb" "drai" "guni-lev", "multicall")
 if [[ " ${ALLOWED_FAILURE_REPOS[*]} " =~ " ${REPO} " ]]; then
     export FORGE_ALLOW_FAILURE=1
 fi
