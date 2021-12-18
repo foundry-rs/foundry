@@ -25,6 +25,10 @@ Foundry consists of:
 cargo install --git https://github.com/gakonst/foundry --bin forge --locked
 ```
 
+We also recommend using [forgeup](https://github.com/transmissions11/forgeup)
+for managing various versions of Forge, so that you can easily test out bleeding
+edge changes in open pull requests or forks from contributors.
+
 More documentation can be found in the [forge package](./forge/README.md) and in
 the [CLI README](./cli/README.md).
 

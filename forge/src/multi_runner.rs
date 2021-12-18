@@ -39,6 +39,7 @@ impl MultiContractRunnerBuilder {
         A: ArtifactOutput + 'static,
         E: Evm<S>,
     {
+        println!("compiling...");
         let output = project.compile()?;
         if output.has_compiler_errors() {
             // return the diagnostics error back to the user.
@@ -133,10 +134,12 @@ where
     ) -> Result<BTreeMap<String, BTreeMap<String, TestResult>>> {
         // TODO: Convert to iterator, ideally parallel one?
         let contracts = std::mem::take(&mut self.contracts);
+
+        let init_state: S = self.evm.state().clone();
         let results = contracts
             .iter()
             .map(|(name, (abi, address, logs))| {
-                let result = self.run_tests(name, abi, *address, logs, &pattern)?;
+                let result = self.run_tests(name, abi, *address, logs, &pattern, &init_state)?;
                 Ok((name.clone(), result))
             })
             .filter_map(|x: Result<_>| x.ok())
@@ -162,10 +165,11 @@ where
         address: Address,
         init_logs: &[String],
         pattern: &Regex,
+        init_state: &S,
     ) -> Result<BTreeMap<String, TestResult>> {
         let mut runner =
             ContractRunner::new(&mut self.evm, contract, address, self.sender, init_logs);
-        runner.run_tests(pattern, self.fuzzer.as_mut())
+        runner.run_tests(pattern, self.fuzzer.as_mut(), init_state)
     }
 }
 
@@ -180,7 +184,7 @@ mod tests {
 
         let paths = ProjectPathsConfig::builder().root(&root).sources(&root).build().unwrap();
 
-        let project = Project::builder()
+        Project::builder()
             // need to add the ilb path here. would it be better placed in the ProjectPathsConfig
             // instead? what is the `libs` modifier useful for then? linked libraries?
             .allowed_path(root.join("../../evm-adapters/testdata"))
@@ -188,9 +192,7 @@ mod tests {
             .ephemeral()
             .no_artifacts()
             .build()
-            .unwrap();
-
-        project
+            .unwrap()
     }
 
     fn runner<S: Clone, E: Evm<S>>(evm: E) -> MultiContractRunner<E, S> {
@@ -243,7 +245,6 @@ mod tests {
                 .iter()
                 .map(|(name, res)| (name, res.logs.clone()))
                 .collect::<HashMap<_, _>>();
-            dbg!(&reasons);
             assert_eq!(
                 reasons[&"test1()".to_owned()],
                 vec!["constructor".to_owned(), "setUp".to_owned(), "one".to_owned()]

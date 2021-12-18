@@ -1,18 +1,13 @@
-use ethers::solc::{remappings::Remapping, Project, ProjectPathsConfig};
-
-use structopt::StructOpt;
-
-mod forge_opts;
-use forge_opts::{Opts, Subcommands};
-
-use crate::{
-    cmd::Cmd,
-    forge_opts::{Dependency, FullContractInfo},
-};
-use std::{process::Command, str::FromStr};
-
-mod cmd;
+pub mod cmd;
+mod opts;
 mod utils;
+
+use crate::cmd::Cmd;
+
+use ethers::solc::{remappings::Remapping, Project, ProjectPathsConfig};
+use opts::forge::{Dependency, FullContractInfo, Opts, Subcommands};
+use std::{process::Command, str::FromStr};
+use structopt::StructOpt;
 
 #[tracing::instrument(err)]
 fn main() -> eyre::Result<()> {
@@ -33,8 +28,8 @@ fn main() -> eyre::Result<()> {
             let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
             rt.block_on(cmd::verify::run(path, name, address, constructor_args))?;
         }
-        Subcommands::Create { contract: _, verify: _ } => {
-            unimplemented!("Not yet implemented")
+        Subcommands::Create(cmd) => {
+            cmd.run()?;
         }
         Subcommands::Update { lib } => {
             // TODO: Should we add some sort of progress bar here? Would be nice

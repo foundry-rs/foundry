@@ -136,12 +136,22 @@ which implements the following methods:
 
 - `function prank(address from, address to, bytes calldata) (bool success,bytes retdata)`:
   Performs a smart contract call as another address
+- `function expectRevert(bytes calldata expectedError)`:
+  Tells the evm to expect that the next call reverts with specified error bytes.
 
-The below example uses the `warp` cheatcode to override the timestamp:
+The below example uses the `warp` cheatcode to override the timestamp & `expectRevert` to expect a specific revert string:
 
 ```solidity
 interface Vm {
     function warp(uint256 x) external;
+    function expectRevert(bytes calldata) external;
+}
+
+contract Foo {
+    function bar(uint256 a) public returns (uint256) {
+        require(a < 100, "My expected revert string");
+        return a;
+    }
 }
 
 contract MyTest {
@@ -151,6 +161,47 @@ contract MyTest {
         vm.warp(100);
         require(block.timestamp == 100);
     }
+
+    function testBarExpectedRevert() public {
+        vm.expectRevert("My expected revert string");
+        // This would fail *if* we didnt expect revert. Since we expect the revert,
+        // it doesn't, unless the revert string is wrong.
+        foo.bar(101);
+    }
+
+    function testFailBar() public {
+        // this call would revert, causing this test to pass
+        foo.bar(101);
+    }
+}
+```
+
+A full interface for all cheatcodes is here:
+```solidity
+interface Vm {
+    // Set block.timestamp (newTimestamp)
+    function warp(uint256) external;
+    // Set block.height (newHeight)
+    function roll(uint256) external;
+    // Loads a storage slot from an address (who, slot)
+    function load(address,bytes32) external returns (bytes32);
+    // Stores a value to an address' storage slot, (who, slot, value)
+    function store(address,bytes32,bytes32) external;
+    // Signs data, (privateKey, digest) => (r, v, s)
+    function sign(uint256,bytes32) external returns (uint8,bytes32,bytes32);
+    // Gets address for a given private key, (privateKey) => (address)
+    function addr(uint256) external returns (address);
+    // Performs a foreign function call via terminal, (stringInputs) => (result)
+    function ffi(string[] calldata) external returns (bytes memory);
+    // Calls another contract with a specified `msg.sender`, (newSender, contract, input) => (success, returnData)
+    function prank(address, address, bytes calldata) external payable returns (bool, bytes memory);
+    // Sets an address' balance, (who, newBalance)
+    function deal(address, uint256) external;
+    // Sets an address' code, (who, newCode)
+    function etch(address, bytes calldata) external;
+    // Expects an error on next call
+    function expectRevert(bytes calldata) external;
+}
 ```
 
 ## Future Features

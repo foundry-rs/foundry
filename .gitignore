@@ -1,3 +1,5 @@
 /target
 out/
 out.json
+
+integration-tests/testdata/*

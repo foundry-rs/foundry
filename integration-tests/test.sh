@@ -13,6 +13,7 @@ if [[ " ${ALLOWED_FAILURE_REPOS[*]} " =~ " ${REPO} " ]]; then
 fi
 
 DIR=`pwd`
+FORGE=${FORGE:-$DIR/../target/release/forge}
 
 function runTests() {
     cd $TESTDATA/$1
@@ -21,9 +22,9 @@ function runTests() {
     make install || true
 
     # update the deps
-    $DIR/../target/debug/forge update
+    $FORGE update
     # always have the ffi flag turned on
-    $DIR/../target/debug/forge test --ffi
+    $FORGE test --ffi
 
     cd -
 }

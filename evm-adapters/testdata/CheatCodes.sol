@@ -1,6 +1,6 @@
 // Taken from:
 // https://github.com/dapphub/dapptools/blob/e41b6cd9119bbd494aba1236838b859f2136696b/src/dapp-tests/pass/cheatCodes.sol
-pragma solidity ^0.6.6;
+pragma solidity ^0.8.4;
 pragma experimental ABIEncoderV2;
 
 import "./DsTest.sol";
@@ -26,6 +26,8 @@ interface Hevm {
     function deal(address, uint256) external;
     // Sets an address' code, (who, newCode)
     function etch(address, bytes calldata) external;
+    // Expects an error on next call
+    function expectRevert(bytes calldata) external;
 }
 
 contract HasStorage {
@@ -209,6 +211,40 @@ contract CheatCodes is DSTest {
         assertEq(string(newCode), string(n_code));
     }
 
+    function testExpectRevert() public {
+        ExpectRevert target = new ExpectRevert();
+        hevm.expectRevert("Value too large");
+        target.stringErr(101);
+        target.stringErr(99); 
+    }
+
+    function testExpectCustomRevert() public {
+        ExpectRevert target = new ExpectRevert();
+        bytes memory data = abi.encodePacked(bytes4(keccak256("InputTooLarge()")));
+        hevm.expectRevert(data);
+        target.customErr(101);
+        target.customErr(99); 
+    }
+
+    function testCalleeExpectRevert() public {
+        ExpectRevert target = new ExpectRevert();
+        hevm.expectRevert("Value too largeCallee");
+        target.stringErrCall(101);
+        target.stringErrCall(99);
+    }
+
+    function testFailExpectRevert() public {
+        ExpectRevert target = new ExpectRevert();
+        hevm.expectRevert("Value too large");
+        target.stringErr2(101);
+    }
+
+    function testFailExpectRevert2() public {
+        ExpectRevert target = new ExpectRevert();
+        hevm.expectRevert("Value too large");
+        target.stringErr(99);
+    }
+
     function getCode(address who) internal returns (bytes memory o_code) {
         assembly {
             // retrieve the size of the code, this needs assembly
@@ -223,6 +259,45 @@ contract CheatCodes is DSTest {
             // actually retrieve the code, this needs assembly
             extcodecopy(who, add(o_code, 0x20), 0, size)
         }
+    }
+}
+
+
+error InputTooLarge();
+contract ExpectRevert {
+    function stringErrCall(uint256 a) public returns (uint256) {
+        ExpectRevertCallee callee = new ExpectRevertCallee();
+        uint256 amount = callee.stringErr(a);
+        return amount;
+    }
+
+    function stringErr(uint256 a) public returns (uint256) {
+        require(a < 100, "Value too large");
+        return a;
+    }
+
+    function stringErr2(uint256 a) public returns (uint256) {
+        require(a < 100, "Value too large2");
+        return a;
+    }
+
+    function customErr(uint256 a) public returns (uint256) {
+        if (a > 99) {
+            revert InputTooLarge();
+        }
+        return a;
+    }
+}
+
+contract ExpectRevertCallee {
+    function stringErr(uint256 a) public returns (uint256) {
+        require(a < 100, "Value too largeCallee");
+        return a;
+    }
+
+    function stringErr2(uint256 a) public returns (uint256) {
+        require(a < 100, "Value too large2Callee");
+        return a;
     }
 }
 

@@ -2,28 +2,44 @@ on:
   push:
     branches:
       - master
-  pull_request:
 
-name: e2e tests
+name: E2E tests
 
 env:
   ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf
   FORK_BLOCK: 13633752
 
 jobs:
+  prepare-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Clone repositories for integration tests
+        run: make integration-tests-testdata
+
+      - id: set-matrix
+        run: echo "::set-output name=matrix::$(ls integration-tests/testdata | awk 'BEGIN { ORS = ""; print "["; } { print "/@"$0"/@"; } END { print "]"; }' | sed "s^\"^\\\\\"^g;s^/@/@^\",\"^g;s^/\@^\"^g")"
+
   tests:
+    needs: prepare-matrix
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # TODO: Can we automatically generate this matrix via `ls` and `fromJSON`?
-        # https://docs.github.com/en/actions/learn-github-actions/expressions#fromjson
-        repo: ["lootloose", "solmate", "vaults", "geb", "solidity-stringutils", "multicall", "guni-lev", "drai"]
+        repo: ${{fromJSON(needs.prepare-matrix.outputs.matrix)}}
 
     steps:
       # clone
       - uses: actions/checkout@v2
-        with:
-          submodules: recursive
+
+      - name: Install libusb (for Ledger)
+        run: sudo apt update && sudo apt install pkg-config libudev-dev
+
+      - name: Clone repositories for integration tests testdata
+        run: make integration-tests-testdata
+
       # some deps require node
       - uses: actions/setup-node@v2
       # install rust
@@ -50,13 +66,13 @@ jobs:
         env:
           cache-name: cache-forge
         with:
-          path: ./target/debug/forge
+          path: ./target/release/forge
           key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ steps.vars.outputs.sha_short }}
 
       # if couldn't get, install forge
       - name: Install forge
         if: steps.cache-forge.outputs.cache-hit != 'true'
-        run: cargo build --bin forge
+        run: cargo build --release --bin forge
 
       - name: Test ${{ matrix.repo }}
         run: ./test.sh ${{ matrix.repo }}

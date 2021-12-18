@@ -285,6 +285,29 @@ where
     pub async fn gas_price(&self) -> Result<U256> {
         Ok(self.provider.get_gas_price().await?)
     }
+
+    /// ```no_run
+    /// use cast::Cast;
+    /// use ethers_providers::{Provider, Http};
+    /// use ethers_core::types::Address;
+    /// use std::{str::FromStr, convert::TryFrom};
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
+    /// let cast = Cast::new(provider);
+    /// let addr = Address::from_str("0x00000000219ab540356cbb839cbe05303d7705fa")?;
+    /// let code = cast.code(addr, None).await?;
+    /// println!("{}", code);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn code<T: Into<NameOrAddress> + Send + Sync>(
+        &self,
+        who: T,
+        block: Option<BlockId>,
+    ) -> Result<String> {
+        Ok(format!("{}", self.provider.get_code(who, block).await?))
+    }
 }
 
 pub struct SimpleCast;
@@ -338,6 +361,22 @@ impl SimpleCast {
     /// }
     pub fn to_dec(hex: &str) -> Result<U256> {
         Ok(U256::from_str(hex)?)
+    }
+
+    /// Returns maximum U256 value
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    /// use ethers_core::types::U256;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(U256::MAX, Cast::max_uint()?);
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn max_uint() -> Result<U256> {
+        Ok(U256::MAX)
     }
 
     /// Converts integers with specified decimals into fixed point numbers

@@ -12,7 +12,8 @@ use std::{
     str::FromStr,
 };
 
-use crate::{utils, Cmd};
+use crate::{cmd::Cmd, utils};
+
 #[cfg(feature = "evmodin-evm")]
 use evmodin::util::mocked_host::MockedHost;
 #[cfg(feature = "sputnik-evm")]
@@ -72,6 +73,7 @@ pub struct BuildArgs {
 impl Cmd for BuildArgs {
     type Output = ProjectCompileOutput<MinimalCombinedArtifacts>;
     fn run(self) -> eyre::Result<Self::Output> {
+        println!("compiling...");
         let project = self.project()?;
         let output = project.compile()?;
         if output.has_compiler_errors() {

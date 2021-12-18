@@ -261,9 +261,8 @@ mod tests {
         let precompiles = PRECOMPILES_MAP.clone();
         let mut evm = Executor::new(12_000_000, &cfg, &backend, &precompiles);
 
-        let (addr, _, _, _) = evm
-            .deploy(Address::zero(), compiled.bytecode().clone().unwrap().clone(), 0.into())
-            .unwrap();
+        let (addr, _, _, _) =
+            evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
 
         // call the setup function to deploy the contracts inside the test
         let status = evm.setup(addr).unwrap().0;
