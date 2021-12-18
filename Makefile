@@ -13,7 +13,12 @@ integration-tests-testdata: $(INTEGRATION_TESTS_REPOS)
 
 $(INTEGRATION_TESTS_REPOS):
 	@FOLDER=$(shell dirname "$0")/integration-tests/testdata/$(lastword $(subst /, ,$@));\
-	if [ ! -d $$FOLDER ] ; then git clone --depth 1 --recursive https://github.com/$@ $$FOLDER;\
+	if [ ! -d $$FOLDER/.git ] ; then git clone --depth 1 --recursive https://github.com/$@ $$FOLDER;\
 	else cd $$FOLDER; git pull --recurse-submodules; fi
 
-testdata: integration-tests-testdata
+fmt-testdata:
+	@FOLDER=$(shell dirname "$0")/fmt/testdata;\
+	if [ ! -d $$FOLDER/.git ] ; then git clone --depth 1 --recursive https://github.com/prettier-solidity/prettier-plugin-solidity $$FOLDER/prettier-plugin-solidity;\
+	else cd $$FOLDER; git pull --recurse-submodules; fi
+
+testdata: integration-tests-testdata fmt-testdata

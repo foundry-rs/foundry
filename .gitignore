@@ -3,3 +3,4 @@ out/
 out.json
 
 integration-tests/testdata/*
+fmt/testdata/*
