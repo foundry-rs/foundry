@@ -45,6 +45,7 @@ ethers::contract::abigen!(
     r#"[
             roll(uint256)
             warp(uint256)
+            fee(uint256)
             store(address,bytes32,bytes32)
             load(address,bytes32)(bytes32)
             ffi(string[])(bytes)
