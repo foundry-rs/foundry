@@ -13,6 +13,9 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v2
+
+      - name: Clone testdata for fmt tests
+        run: make fmt-testdata
       
       - name: Install libusb (for Ledger)
         run: sudo apt update && sudo apt install pkg-config libudev-dev
