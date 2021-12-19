@@ -184,8 +184,16 @@ mod tests {
 
     fn project() -> Project {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata");
-
+        println!("root {}", root.display());
         let paths = ProjectPathsConfig::builder().root(&root).sources(&root).build().unwrap();
+
+        let allowed = MockAllowedPaths(vec![root.join("../../evm-adapters/testdata")]);
+        println!("formatted allowed paths `{}`", allowed);
+
+        let canon = root.join("../../evm-adapters/testdata").canonicalize().unwrap();
+        println!("canon {}", canon.display());
+        let allowed = MockAllowedPaths(vec![canon]);
+        println!("canonicalized allowed paths `{}`", allowed);
 
         Project::builder()
             // need to add the ilb path here. would it be better placed in the ProjectPathsConfig
@@ -198,7 +206,26 @@ mod tests {
             .unwrap()
     }
 
+    use std::fmt;
+    #[derive(Clone, Debug, Default)]
+    pub struct MockAllowedPaths(pub(crate) Vec<PathBuf>);
+    impl fmt::Display for MockAllowedPaths {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            let lib_paths = self
+                .0
+                .iter()
+                .filter(|path| path.exists())
+                .map(|path| format!("{}", path.display()))
+                .collect::<Vec<_>>()
+                .join(",");
+            write!(f, "{}", lib_paths)
+        }
+    }
+
     fn runner<S: Clone, E: Evm<S>>(evm: E) -> MultiContractRunner<E, S> {
+        let p = project();
+        println!("project path {}", p.paths);
+        println!("allowed paths {}", p.allowed_lib_paths);
         MultiContractRunnerBuilder::default().build(project(), evm).unwrap()
     }
 
