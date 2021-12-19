@@ -77,7 +77,7 @@ where
         // decode args into tokens
         let decoded = func.decode_output(res.as_ref())?;
         // handle case when return type is not specified
-        if decoded.len() == 0 {
+        if decoded.is_empty() {
             Ok(format!("{}\n", res))
         } else {
             // concatenate them
