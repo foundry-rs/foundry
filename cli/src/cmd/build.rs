@@ -73,7 +73,8 @@ pub struct BuildArgs {
     #[structopt(
         help = "uses hardhat style project layout. This a convenience flag and is the same as `--contracts contracts --lib-paths node_modules`",
         long,
-        conflicts_with = "contracts"
+        conflicts_with = "contracts",
+        alias = "hh"
     )]
     pub hardhat: bool,
 }
