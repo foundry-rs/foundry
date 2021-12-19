@@ -10,6 +10,8 @@ interface Hevm {
     function warp(uint256) external;
     // Set block.height (newHeight)
     function roll(uint256) external;
+    // Set block.basefee (newBasefee)
+    function fee(uint256) external;
     // Loads a storage slot from an address (who, slot)
     function load(address,bytes32) external returns (bytes32);
     // Stores a value to an address' storage slot, (who, slot, value)
@@ -69,6 +71,14 @@ contract CheatCodes is DSTest {
         uint pre = block.timestamp;
         hevm.warp(block.timestamp + jump);
         assertEq(block.timestamp, pre + jump + 1);
+    }
+
+    // Fee
+
+    // Sets the basefee
+    function testFee(uint256 fee) public {
+        hevm.fee(fee);
+        require(block.basefee == fee);
     }
 
     // Roll
@@ -188,7 +198,7 @@ contract CheatCodes is DSTest {
 
     function testEtch() public {
         address rewriteCode = address(1337);
-        
+
         bytes memory newCode = hex"1337";
         hevm.etch(rewriteCode, newCode);
         bytes memory n_code = getCode(rewriteCode);
@@ -199,7 +209,7 @@ contract CheatCodes is DSTest {
         ExpectRevert target = new ExpectRevert();
         hevm.expectRevert("Value too large");
         target.stringErr(101);
-        target.stringErr(99); 
+        target.stringErr(99);
     }
 
     function testExpectCustomRevert() public {
@@ -207,7 +217,7 @@ contract CheatCodes is DSTest {
         bytes memory data = abi.encodePacked(bytes4(keccak256("InputTooLarge()")));
         hevm.expectRevert(data);
         target.customErr(101);
-        target.customErr(99); 
+        target.customErr(99);
     }
 
     function testCalleeExpectRevert() public {

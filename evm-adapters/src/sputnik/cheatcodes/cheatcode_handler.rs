@@ -299,6 +299,9 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
             HEVMCalls::Roll(inner) => {
                 state.backend.cheats.block_number = Some(inner.0);
             }
+            HEVMCalls::Fee(inner) => {
+                state.backend.cheats.block_base_fee_per_gas = Some(inner.0);
+            }
             HEVMCalls::Store(inner) => {
                 state.set_storage(inner.0, inner.1.into(), inner.2.into());
             }
@@ -1078,7 +1081,7 @@ mod tests {
 
     #[test]
     fn cheatcodes() {
-        let config = Config::istanbul();
+        let config = Config::london();
         let vicinity = new_vicinity();
         let backend = new_backend(&vicinity, Default::default());
         let gas_limit = 10_000_000;
