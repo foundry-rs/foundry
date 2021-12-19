@@ -1081,7 +1081,7 @@ mod tests {
 
     #[test]
     fn cheatcodes() {
-        let config = Config::istanbul();
+        let config = Config::london();
         let vicinity = new_vicinity();
         let backend = new_backend(&vicinity, Default::default());
         let gas_limit = 10_000_000;
