@@ -107,6 +107,16 @@ pub enum Subcommands {
     #[structopt(name = "namehash")]
     #[structopt(about = "returns ENS namehash of provided name")]
     Namehash { name: String },
+    #[structopt(name = "tx")]
+    #[structopt(about = "Show information about the transaction <tx-hash>")]
+    Tx {
+        hash: String,
+        field: Option<String>,
+        #[structopt(long = "--json", short = "-j")]
+        to_json: bool,
+        #[structopt(long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+    },
     #[structopt(name = "send")]
     #[structopt(about = "Publish a transaction signed by <from> to call <to> with <data>")]
     SendTx {
