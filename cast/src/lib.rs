@@ -44,7 +44,7 @@ where
     /// Makes a read-only call to the specified address
     ///
     /// ```no_run
-    /// 
+    ///
     /// use cast::Cast;
     /// use ethers_core::types::Address;
     /// use ethers_providers::{Provider, Http};
@@ -307,6 +307,46 @@ where
         block: Option<BlockId>,
     ) -> Result<String> {
         Ok(format!("{}", self.provider.get_code(who, block).await?))
+    }
+
+    /// ```no_run
+    /// use cast::Cast;
+    /// use ethers_providers::{Provider, Http};
+    /// use std::convert::TryFrom;
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
+    /// let cast = Cast::new(provider);
+    /// let tx_hash = "0xf8d1713ea15a81482958fb7ddf884baee8d3bcc478c5f2f604e008dc788ee4fc";
+    /// let tx = cast.transaction(tx_hash.to_string(), None, false).await?;
+    /// println!("{}", tx);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn transaction(
+        &self,
+        tx_hash: String,
+        field: Option<String>,
+        to_json: bool,
+    ) -> Result<String> {
+        let transaction_result = self
+            .provider
+            .get_transaction(H256::from_str(&tx_hash)?)
+            .await?
+            .ok_or_else(|| eyre::eyre!("transaction {:?} not found", tx_hash))?;
+
+        let transaction = if let Some(ref field) = field {
+            serde_json::to_value(&transaction_result)?
+                .get(field)
+                .cloned()
+                .ok_or_else(|| eyre::eyre!("field {} not found", field))?
+        } else {
+            serde_json::to_value(&transaction_result)?
+        };
+
+        let transaction =
+            if to_json { serde_json::to_string(&transaction)? } else { to_table(transaction) };
+        Ok(transaction)
     }
 }
 

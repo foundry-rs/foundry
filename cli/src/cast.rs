@@ -124,6 +124,10 @@ async fn main() -> eyre::Result<()> {
         Subcommands::Namehash { name } => {
             println!("{}", SimpleCast::namehash(&name)?);
         }
+        Subcommands::Tx { rpc_url, hash, field, to_json } => {
+            let provider = Provider::try_from(rpc_url)?;
+            println!("{}", Cast::new(&provider).transaction(hash, field, to_json).await?)
+        }
         Subcommands::SendTx { eth, to, sig, cast_async, args } => {
             let provider = Provider::try_from(eth.rpc_url.as_str())?;
             let chain_id = Cast::new(&provider).chain_id().await?;
