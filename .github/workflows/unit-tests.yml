@@ -88,7 +88,7 @@ jobs:
         if: matrix.job.os == 'ubuntu-20.04'
         run: |
           sudo apt update
-          sudo apt install libudev-dev libssl-dev openssl pkg-config
+          sudo apt install libudev-dev pkg-config
 
       - name: Extract crate information
         shell: bash
