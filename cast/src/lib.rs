@@ -512,10 +512,10 @@ impl SimpleCast {
     }
 
     /// Converts wei into an eth amount
-    /// 
+    ///
     /// ```
     /// use cast::SimpleCast as Cast;
-    /// 
+    ///
     /// fn main() -> eyre::Result<()> {
     ///     assert_eq!(Cast::from_wei(1.into(), "gwei".to_string())?, "0.000000001");
     ///     assert_eq!(Cast::from_wei(12340000005u64.into(), "gwei".to_string())?, "12.340000005");
@@ -533,15 +533,15 @@ impl SimpleCast {
                 let left = value / gwei;
                 let right = value - left * gwei;
                 let res = format!("{}.{:0>9}", left, right.to_string());
-                res.trim_end_matches("0").to_string()
-            },
+                res.trim_end_matches('0').to_string()
+            }
             "eth" | "ether" => {
                 let wei = U256::pow(10.into(), 18.into());
                 let left = value / wei;
                 let right = value - left * wei;
                 let res = format!("{}.{:0>18}", left, right.to_string());
-                res.trim_end_matches("0").to_string()
-            },
+                res.trim_end_matches('0').to_string()
+            }
             _ => value.to_string(),
         })
     }
