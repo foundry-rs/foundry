@@ -60,8 +60,7 @@ fn main() -> eyre::Result<()> {
             let root = std::fs::canonicalize(root)?;
 
             let lib_paths = if lib_paths.is_empty() { vec![root.join("lib")] } else { lib_paths };
-            let remappings: Vec<_> =
-                lib_paths.iter().flat_map(|path| Remapping::find_many(&path).unwrap()).collect();
+            let remappings: Vec<_> = lib_paths.iter().flat_map(Remapping::find_many).collect();
             remappings.iter().for_each(|x| println!("{}", x));
         }
         Subcommands::Init { root, template } => {
