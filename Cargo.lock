@@ -756,22 +756,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6245d59a3e82a7fc217c5828a6692dbc6dfb63a0c8c90495621f7b9d79704a0e"
 
 [[package]]
-name = "core-foundation"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a89e2ae426ea83155dccf10c0fa6b1463ef6d5fcb44cee0b224a408fa640a62"
-dependencies = [
- "core-foundation-sys",
- "libc",
-]
-
-[[package]]
-name = "core-foundation-sys"
-version = "0.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ea221b5284a47e40033bf9b66f35f984ec0ea2931eb03505246cd27a963f981b"
-
-[[package]]
 name = "cpufeatures"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1134,7 +1118,7 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#4d647453e3df09d0934964ef913951cd38366286"
+source = "git+https://github.com/gakonst/ethers-rs#d7c29cc615e260bd13f9efd93fa2223d48d9d31b"
 dependencies = [
  "ethers-contract",
  "ethers-core",
@@ -1148,7 +1132,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#4d647453e3df09d0934964ef913951cd38366286"
+source = "git+https://github.com/gakonst/ethers-rs#d7c29cc615e260bd13f9efd93fa2223d48d9d31b"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1166,7 +1150,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#4d647453e3df09d0934964ef913951cd38366286"
+source = "git+https://github.com/gakonst/ethers-rs#d7c29cc615e260bd13f9efd93fa2223d48d9d31b"
 dependencies = [
  "Inflector",
  "anyhow",
@@ -1187,7 +1171,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#4d647453e3df09d0934964ef913951cd38366286"
+source = "git+https://github.com/gakonst/ethers-rs#d7c29cc615e260bd13f9efd93fa2223d48d9d31b"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -1201,7 +1185,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#4d647453e3df09d0934964ef913951cd38366286"
+source = "git+https://github.com/gakonst/ethers-rs#d7c29cc615e260bd13f9efd93fa2223d48d9d31b"
 dependencies = [
  "arrayvec 0.7.2",
  "bytes",
@@ -1229,7 +1213,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "0.2.0"
-source = "git+https://github.com/gakonst/ethers-rs#4d647453e3df09d0934964ef913951cd38366286"
+source = "git+https://github.com/gakonst/ethers-rs#d7c29cc615e260bd13f9efd93fa2223d48d9d31b"
 dependencies = [
  "ethers-core",
  "reqwest",
@@ -1242,7 +1226,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#4d647453e3df09d0934964ef913951cd38366286"
+source = "git+https://github.com/gakonst/ethers-rs#d7c29cc615e260bd13f9efd93fa2223d48d9d31b"
 dependencies = [
  "async-trait",
  "ethers-contract",
@@ -1265,7 +1249,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#4d647453e3df09d0934964ef913951cd38366286"
+source = "git+https://github.com/gakonst/ethers-rs#d7c29cc615e260bd13f9efd93fa2223d48d9d31b"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -1294,7 +1278,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#4d647453e3df09d0934964ef913951cd38366286"
+source = "git+https://github.com/gakonst/ethers-rs#d7c29cc615e260bd13f9efd93fa2223d48d9d31b"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1316,7 +1300,7 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "0.1.0"
-source = "git+https://github.com/gakonst/ethers-rs#4d647453e3df09d0934964ef913951cd38366286"
+source = "git+https://github.com/gakonst/ethers-rs#d7c29cc615e260bd13f9efd93fa2223d48d9d31b"
 dependencies = [
  "colored",
  "ethers-core",
@@ -1489,21 +1473,6 @@ name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
-
-[[package]]
-name = "foreign-types"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6f339eb8adc052cd2ca78910fda869aefa38d22d5cb648e6485e4d3fc06f3b1"
-dependencies = [
- "foreign-types-shared",
-]
-
-[[package]]
-name = "foreign-types-shared"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
 
 [[package]]
 name = "forge"
@@ -1994,19 +1963,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hyper-tls"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6183ddfa99b85da61a140bea0efc93fdf56ceaa041b37d553518030827f9905"
-dependencies = [
- "bytes",
- "hyper",
- "native-tls",
- "tokio",
- "tokio-native-tls",
-]
-
-[[package]]
 name = "i256"
 version = "0.1.0"
 source = "git+https://github.com/vorot93/rust-i256#7e14ceab6bc45cf1ba6b4f1fb083e38f7187ddd0"
@@ -2315,24 +2271,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "native-tls"
-version = "0.2.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "48ba9f7719b5a0f42f338907614285fb5fd70e53858141f69898a1fb7203b24d"
-dependencies = [
- "lazy_static",
- "libc",
- "log",
- "openssl",
- "openssl-probe",
- "openssl-sys",
- "schannel",
- "security-framework",
- "security-framework-sys",
- "tempfile",
-]
-
-[[package]]
 name = "nix"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2483,20 +2421,6 @@ name = "opaque-debug"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "624a8340c38c1b80fd549087862da4ba43e08858af025b236e509b6649fc13d5"
-
-[[package]]
-name = "openssl"
-version = "0.10.36"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8d9facdb76fec0b73c406f125d44d86fdad818d66fef0531eec9233ca425ff4a"
-dependencies = [
- "bitflags",
- "cfg-if 1.0.0",
- "foreign-types",
- "libc",
- "once_cell",
- "openssl-sys",
-]
 
 [[package]]
 name = "openssl-probe"
@@ -3159,13 +3083,11 @@ dependencies = [
  "http-body",
  "hyper",
  "hyper-rustls",
- "hyper-tls",
  "ipnet",
  "js-sys",
  "lazy_static",
  "log",
  "mime",
- "native-tls",
  "percent-encoding",
  "pin-project-lite",
  "rustls",
@@ -3174,7 +3096,6 @@ dependencies = [
  "serde_json",
  "serde_urlencoded",
  "tokio",
- "tokio-native-tls",
  "tokio-rustls",
  "url",
  "wasm-bindgen",
@@ -3389,16 +3310,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "schannel"
-version = "0.1.19"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f05ba609c234e60bee0d547fe94a4c7e9da733d1c962cf6e59efa4cd9c8bc75"
-dependencies = [
- "lazy_static",
- "winapi",
-]
-
-[[package]]
 name = "scopeguard"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3461,29 +3372,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "827cb7cce42533829c792fc51b82fbf18b125b45a702ef2c8be77fce65463a7b"
 dependencies = [
  "cc",
-]
-
-[[package]]
-name = "security-framework"
-version = "2.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "525bc1abfda2e1998d152c45cf13e696f76d0a4972310b22fac1658b05df7c87"
-dependencies = [
- "bitflags",
- "core-foundation",
- "core-foundation-sys",
- "libc",
- "security-framework-sys",
-]
-
-[[package]]
-name = "security-framework-sys"
-version = "2.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a9dd14d83160b528b7bfd66439110573efcfbe281b17fc2ca9f39f550d619c7e"
-dependencies = [
- "core-foundation-sys",
- "libc",
 ]
 
 [[package]]
@@ -3595,16 +3483,6 @@ dependencies = [
  "cpufeatures",
  "digest 0.9.0",
  "opaque-debug 0.3.0",
- "sha2-asm",
-]
-
-[[package]]
-name = "sha2-asm"
-version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf27176fb5d15398e3a479c652c20459d9dac830dedd1fa55b42a77dbcdbfcea"
-dependencies = [
- "cc",
 ]
 
 [[package]]
@@ -3767,8 +3645,7 @@ checksum = "6bdef32e8150c2a081110b42772ffe7d7c9032b606bc226c8260fd97e0976601"
 [[package]]
 name = "svm-rs"
 version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8733662d7e2c4bc2bdc5ca4102c7f8b13d1c3c12fb767089de07c2c3df3cd03d"
+source = "git+https://github.com/roynalnaruto/svm-rs#4dd8d3f93a6383ff660899899b4dc43c73a14f97"
 dependencies = [
  "anyhow",
  "cfg-if 1.0.0",
@@ -3955,16 +3832,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "tokio-native-tls"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f7d995660bd2b7f8c1568414c1126076c13fbb725c40112dc0120b78eb9b717b"
-dependencies = [
- "native-tls",
- "tokio",
 ]
 
 [[package]]
