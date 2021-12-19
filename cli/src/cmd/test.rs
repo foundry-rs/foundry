@@ -123,7 +123,9 @@ impl Cmd for TestArgs {
         match evm_type {
             #[cfg(feature = "sputnik-evm")]
             EvmType::Sputnik => {
-                use evm_adapters::sputnik::{Executor, {vicinity, ForkMemoryBackend, PRECOMPILES_MAP}};
+                use evm_adapters::sputnik::{
+                    vicinity, Executor, ForkMemoryBackend, PRECOMPILES_MAP,
+                };
                 use sputnik::backend::{Backend, MemoryBackend};
                 let mut cfg = utils::sputnik_cfg(opts.evm_version);
 
