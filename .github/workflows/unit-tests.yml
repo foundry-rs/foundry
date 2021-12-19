@@ -114,23 +114,23 @@ jobs:
           cargo -V
           rustc -V
 
-      - name: Build foundry and call crates
+      - name: Build foundry crates
         uses: actions-rs/cargo@v1
         with:
           use-cross: ${{ matrix.job.use-cross }}
           command: build
-          args: --no-default-features --verbose --workspace
+          args: --verbose --workspace
 
       - name: Run forge
         uses: actions-rs/cargo@v1
         with:
           use-cross: ${{ matrix.job.use-cross }}
           command: run
-          args: -p foundry-cli --no-default-features --bin forge -- --help
+          args: -p foundry-cli --bin forge -- --help
 
-      - name: Run tests without --default-features to avoid solc-asm being used
+      - name: Run tests
         uses: actions-rs/cargo@v1
         with:
           use-cross: ${{ matrix.job.use-cross }}
           command: test
-          args: --verbose --no-default-features --workspace
+          args: --verbose --workspace
