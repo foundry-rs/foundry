@@ -1111,6 +1111,11 @@ mod tests {
 
         let abi = compiled.abi.as_ref().unwrap();
         for func in abi.functions().filter(|func| func.name.starts_with("test")) {
+            // Skip the FFI unit test if not in a unix system
+            if func.name == "testFFI" && !cfg!(unix) {
+                continue
+            }
+
             let should_fail = func.name.starts_with("testFail");
             if func.inputs.is_empty() {
                 let (_, reason, _, _) =
