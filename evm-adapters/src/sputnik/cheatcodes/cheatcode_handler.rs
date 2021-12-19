@@ -281,8 +281,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
     fn apply_cheatcode(
         &mut self,
         input: Vec<u8>,
-        transfer: Option<Transfer>,
-        target_gas: Option<u64>,
+        msg_sender: H160,
     ) -> Capture<(ExitReason, Vec<u8>), Infallible> {
         let mut res = vec![];
 
@@ -299,6 +298,9 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
             }
             HEVMCalls::Roll(inner) => {
                 state.backend.cheats.block_number = Some(inner.0);
+            }
+            HEVMCalls::Fee(inner) => {
+                state.backend.cheats.block_base_fee_per_gas = Some(inner.0);
             }
             HEVMCalls::Store(inner) => {
                 state.set_storage(inner.0, inner.1.into(), inner.2.into());
@@ -382,31 +384,47 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
             }
             HEVMCalls::Prank(inner) => {
                 let caller = inner.0;
-                let address = inner.1;
-                let input = inner.2;
-
-                let value =
-                    if let Some(ref transfer) = transfer { transfer.value } else { U256::zero() };
-
-                // change origin
-                let context = Context { caller, address, apparent_value: value };
-                let ret = self.call(
-                    address,
-                    Some(Transfer { source: caller, target: address, value }),
-                    input.to_vec(),
-                    target_gas,
-                    false,
-                    context,
-                );
-                res = match ret {
-                    Capture::Exit((successful, v)) => match successful {
-                        ExitReason::Succeed(_) => {
-                            ethers::abi::encode(&[Token::Bool(true), Token::Bytes(v.to_vec())])
-                        }
-                        _ => ethers::abi::encode(&[Token::Bool(false), Token::Bytes(v.to_vec())]),
-                    },
-                    _ => vec![],
-                };
+                if let Some((orginal_pranker, caller, depth)) = self.state().msg_sender {
+                    let start_prank_depth = if let Some(depth) = self.state().metadata().depth() {
+                        depth + 1
+                    } else {
+                        0
+                    };
+                    // we allow someone to do a 1 time prank even when startPrank is set if
+                    // and only if we ensure that the startPrank *cannot* be applied to the
+                    // following call
+                    if start_prank_depth == depth && caller == orginal_pranker {
+                        return evm_error("You have an active `startPrank` at this frame depth already. Use either `prank` or `startPrank`, not both");
+                    }
+                }
+                self.state_mut().next_msg_sender = Some(caller);
+            }
+            HEVMCalls::StartPrank(inner) => {
+                // startPrank works by using frame depth to determine whether to overwrite
+                // msg.sender if we set a prank caller at a particular depth, it
+                // will continue to use the prank caller for any subsequent calls
+                // until stopPrank is called.
+                //
+                // We additionally have to store the original message sender of the cheatcode caller
+                // so that we dont apply it to any other addresses when depth ==
+                // prank_depth
+                let caller = inner.0;
+                if self.state().next_msg_sender.is_some() {
+                    return evm_error("You have an active `prank` call already. Use either `prank` or `startPrank`, not both");
+                } else {
+                    self.state_mut().msg_sender = Some((
+                        msg_sender,
+                        caller,
+                        if let Some(depth) = self.state().metadata().depth() {
+                            depth + 1
+                        } else {
+                            0
+                        },
+                    ));
+                }
+            }
+            HEVMCalls::StopPrank(_) => {
+                self.state_mut().msg_sender = None;
             }
             HEVMCalls::ExpectRevert(inner) => {
                 if self.state().expected_revert.is_some() {
@@ -756,13 +774,30 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
         // NB: This is very similar to how Optimism's custom intercept logic to "predeploys" work
         // (e.g. with the StateManager)
 
-        let expected_revert = self.state_mut().expected_revert.take();
-
         if code_address == *CHEATCODE_ADDRESS {
-            self.apply_cheatcode(input, transfer, target_gas)
+            self.apply_cheatcode(input, context.caller)
         } else if code_address == *CONSOLE_ADDRESS {
             self.console_log(input)
         } else {
+            // modify execution context depending on the cheatcode
+            let expected_revert = self.state_mut().expected_revert.take();
+            let mut new_context = context;
+
+            // handle `startPrank` - see apply_cheatcodes for more info
+            if let Some((original_msg_sender, permanent_caller, depth)) = self.state().msg_sender {
+                let curr_depth =
+                    if let Some(depth) = self.state().metadata().depth() { depth + 1 } else { 0 };
+                if curr_depth == depth && new_context.caller == original_msg_sender {
+                    new_context.caller = permanent_caller;
+                }
+            }
+
+            // handle normal `prank`
+            if let Some(caller) = self.state_mut().next_msg_sender.take() {
+                new_context.caller = caller;
+            }
+
+            // perform the call
             let res = self.call_inner(
                 code_address,
                 transfer,
@@ -771,7 +806,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
                 is_static,
                 true,
                 true,
-                context,
+                new_context,
             );
 
             if let Some(expected_revert) = expected_revert {
@@ -1046,7 +1081,7 @@ mod tests {
 
     #[test]
     fn cheatcodes() {
-        let config = Config::istanbul();
+        let config = Config::london();
         let vicinity = new_vicinity();
         let backend = new_backend(&vicinity, Default::default());
         let gas_limit = 10_000_000;

@@ -2,8 +2,10 @@
 
 use ethers::{
     solc::{
-        artifacts::Settings, remappings::Remapping, EvmVersion, MinimalCombinedArtifacts, Project,
-        ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
+        artifacts::{Optimizer, Settings},
+        remappings::Remapping,
+        EvmVersion, MinimalCombinedArtifacts, Project, ProjectCompileOutput, ProjectPathsConfig,
+        SolcConfig,
     },
     types::Address,
 };
@@ -29,7 +31,7 @@ pub struct BuildArgs {
     pub root: Option<PathBuf>,
 
     #[structopt(
-        help = "the directory relative to the root under which the smart contrats are",
+        help = "the directory relative to the root under which the smart contracts are",
         long,
         short
     )]
@@ -50,6 +52,12 @@ pub struct BuildArgs {
     #[structopt(help = "choose the evm version", long, default_value = "london")]
     pub evm_version: EvmVersion,
 
+    #[structopt(help = "activate the solidity optimizer", long)]
+    pub optimize: bool,
+
+    #[structopt(help = "optimizer parameter runs", long, default_value = "200")]
+    pub optimize_runs: u32,
+
     #[structopt(
         help = "if set to true, skips auto-detecting solc and uses what is in the user's $PATH ",
         long
@@ -65,7 +73,8 @@ pub struct BuildArgs {
     #[structopt(
         help = "uses hardhat style project layout. This a convenience flag and is the same as `--contracts contracts --lib-paths node_modules`",
         long,
-        conflicts_with = "contracts"
+        conflicts_with = "contracts",
+        alias = "hh"
     )]
     pub hardhat: bool,
 }
@@ -156,8 +165,7 @@ impl BuildArgs {
         let lib_paths = self.libs(&root);
 
         // get all the remappings corresponding to the lib paths
-        let mut remappings: Vec<_> =
-            lib_paths.iter().flat_map(|path| Remapping::find_many(&path).unwrap()).collect();
+        let mut remappings: Vec<_> = lib_paths.iter().flat_map(Remapping::find_many).collect();
 
         // extend them with the once manually provided in the opts
         remappings.extend_from_slice(&self.remappings);
@@ -194,8 +202,12 @@ impl BuildArgs {
 
         let paths = paths_builder.build()?;
 
+        let optimizer =
+            Optimizer { enabled: Some(self.optimize), runs: Some(self.optimize_runs as usize) };
+
         // build the project w/ allowed paths = root and all the libs
-        let solc_settings = Settings { evm_version: Some(self.evm_version), ..Default::default() };
+        let solc_settings =
+            Settings { optimizer, evm_version: Some(self.evm_version), ..Default::default() };
         let mut builder = Project::builder()
             .paths(paths)
             .allowed_path(&root)

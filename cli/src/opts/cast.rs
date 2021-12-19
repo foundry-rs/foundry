@@ -50,6 +50,9 @@ pub enum Subcommands {
     #[structopt(name = "--to-wei")]
     #[structopt(about = "convert an ETH amount into wei")]
     ToWei { value: Option<String>, unit: Option<String> },
+    #[structopt(name = "--from-wei")]
+    #[structopt(about = "convert wei into an ETH amount")]
+    FromWei { value: Option<String>, unit: Option<String> },
     #[structopt(name = "block")]
     #[structopt(
         about = "Prints information about <block>. If <field> is given, print only the value of that field"
@@ -107,6 +110,16 @@ pub enum Subcommands {
     #[structopt(name = "namehash")]
     #[structopt(about = "returns ENS namehash of provided name")]
     Namehash { name: String },
+    #[structopt(name = "tx")]
+    #[structopt(about = "Show information about the transaction <tx-hash>")]
+    Tx {
+        hash: String,
+        field: Option<String>,
+        #[structopt(long = "--json", short = "-j")]
+        to_json: bool,
+        #[structopt(long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+    },
     #[structopt(name = "send")]
     #[structopt(about = "Publish a transaction signed by <from> to call <to> with <data>")]
     SendTx {

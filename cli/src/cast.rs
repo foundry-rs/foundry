@@ -94,6 +94,16 @@ async fn main() -> eyre::Result<()> {
                 )?
             );
         }
+        Subcommands::FromWei { value, unit } => {
+            let val = unwrap_or_stdin(value)?;
+            println!(
+                "{}",
+                SimpleCast::from_wei(
+                    U256::from_dec_str(&val)?,
+                    unit.unwrap_or_else(|| String::from("wei"))
+                )?
+            );
+        }
         Subcommands::Block { rpc_url, block, full, field, to_json } => {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).block(block, full, field, to_json).await?);
@@ -123,6 +133,10 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::Namehash { name } => {
             println!("{}", SimpleCast::namehash(&name)?);
+        }
+        Subcommands::Tx { rpc_url, hash, field, to_json } => {
+            let provider = Provider::try_from(rpc_url)?;
+            println!("{}", Cast::new(&provider).transaction(hash, field, to_json).await?)
         }
         Subcommands::SendTx { eth, to, sig, cast_async, args } => {
             let provider = Provider::try_from(eth.rpc_url.as_str())?;

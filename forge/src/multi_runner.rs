@@ -91,16 +91,19 @@ impl MultiContractRunnerBuilder {
         })
     }
 
+    #[must_use]
     pub fn sender(mut self, sender: Address) -> Self {
         self.sender = Some(sender);
         self
     }
 
+    #[must_use]
     pub fn initial_balance(mut self, initial_balance: U256) -> Self {
         self.initial_balance = initial_balance;
         self
     }
 
+    #[must_use]
     pub fn fuzzer(mut self, fuzzer: TestRunner) -> Self {
         self.fuzzer = Some(fuzzer);
         self

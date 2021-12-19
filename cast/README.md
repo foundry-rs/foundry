@@ -7,7 +7,7 @@
 - [x] `--from-ascii` (with `--from-utf8` alias)
 - [ ] `--from-bin`
 - [ ] `--from-fix`
-- [ ] `--from-wei`
+- [x] `--from-wei`
 - [ ] `--max-int`
 - [x] `--max-uint`
 - [ ] `--min-int`
@@ -35,7 +35,7 @@
 - [x] `calldata`
 - [x] `chain`
 - [x] `chain-id`
-- [ ] `code`
+- [x] `code`
 - [ ] `debug`
 - [ ] `estimate`
 - [ ] `etherscan-source`
@@ -56,4 +56,4 @@
 - [x] `send` (partial)
 - [ ] `sign`
 - [x] `storage`
-- [ ] `tx`
+- [x] `tx`

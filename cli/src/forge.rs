@@ -60,8 +60,7 @@ fn main() -> eyre::Result<()> {
             let root = std::fs::canonicalize(root)?;
 
             let lib_paths = if lib_paths.is_empty() { vec![root.join("lib")] } else { lib_paths };
-            let remappings: Vec<_> =
-                lib_paths.iter().flat_map(|path| Remapping::find_many(&path).unwrap()).collect();
+            let remappings: Vec<_> = lib_paths.iter().flat_map(Remapping::find_many).collect();
             remappings.iter().for_each(|x| println!("{}", x));
         }
         Subcommands::Init { root, template } => {
@@ -105,14 +104,13 @@ fn main() -> eyre::Result<()> {
                     .wait()?;
                 if !is_git.success() {
                     Command::new("git").arg("init").current_dir(&root).spawn()?.wait()?;
+                    Command::new("git").args(&["add", "."]).current_dir(&root).spawn()?.wait()?;
+                    Command::new("git")
+                        .args(&["commit", "-m", "chore: forge init"])
+                        .current_dir(&root)
+                        .spawn()?
+                        .wait()?;
                 }
-                Command::new("git").args(&["add", "."]).current_dir(&root).spawn()?.wait()?;
-                Command::new("git")
-                    .args(&["commit", "-m", "chore: forge init"])
-                    .current_dir(&root)
-                    .spawn()?
-                    .wait()?;
-
                 Dependency::from_str("https://github.com/dapphub/ds-test")
                     .and_then(|dependency| install(root, vec![dependency]))?;
             }
