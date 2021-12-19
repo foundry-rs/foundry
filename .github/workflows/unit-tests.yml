@@ -119,7 +119,7 @@ jobs:
         with:
           use-cross: ${{ matrix.job.use-cross }}
           command: build
-          args: --verbose --workspace
+          args: --no-default-features --verbose --workspace
 
       - name: Run forge
         uses: actions-rs/cargo@v1
