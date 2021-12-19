@@ -7,7 +7,7 @@
 - [x] `--from-ascii` (with `--from-utf8` alias)
 - [ ] `--from-bin`
 - [ ] `--from-fix`
-- [ ] `--from-wei`
+- [x] `--from-wei`
 - [ ] `--max-int`
 - [x] `--max-uint`
 - [ ] `--min-int`
