@@ -75,16 +75,20 @@ where
         let res = self.provider.call(&tx, None).await?;
 
         // decode args into tokens
-        let res = func.decode_output(res.as_ref())?;
+        let decoded = func.decode_output(res.as_ref())?;
+        // handle case when return type is not specified
+        if decoded.is_empty() {
+            Ok(format!("{}\n", res))
+        } else {
+            // concatenate them
+            let mut s = String::new();
+            for output in decoded {
+                s.push_str(&format!("0x{}\n", output));
+            }
 
-        // concatenate them
-        let mut s = String::new();
-        for output in res {
-            s.push_str(&format!("{}\n", output));
+            // return string
+            Ok(s)
         }
-
-        // return string
-        Ok(s)
     }
 
     pub async fn balance<T: Into<NameOrAddress> + Send + Sync>(
