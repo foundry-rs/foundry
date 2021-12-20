@@ -85,6 +85,10 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
         self.handler.state_mut()
     }
 
+    fn expected_revert(&self) -> Option<&[u8]> {
+        self.handler.state().expected_revert.as_deref()
+    }
+
     fn gas_left(&self) -> U256 {
         // NB: We do this to avoid `function cannot return without recursing`
         U256::from(self.state().metadata().gasometer().gas())
