@@ -86,13 +86,8 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
     }
 
     fn expected_revert(&self) -> Option<&[u8]> { 
-        if let Some(a) = self.handler.state().expected_revert.as_ref() {
-            let c: &[u8] = a;
-            return Some(c);
-        }
-        return None
-        
-     }
+        self.handler.state().expected_revert.as_deref()
+    }
 
     fn gas_left(&self) -> U256 {
         // NB: We do this to avoid `function cannot return without recursing`
