@@ -239,6 +239,8 @@ contract CheatCodes is DSTest {
         target.stringErr(99);
     }
 
+    // Test should fail if nothing is called
+    // after expectRevert
     function testFailExpectRevert3() public {
         hevm.expectRevert("revert");
     }  
