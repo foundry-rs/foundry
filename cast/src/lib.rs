@@ -299,6 +299,29 @@ where
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
     /// let cast = Cast::new(provider);
+    /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
+    /// let nonce = cast.nonce(addr, None).await?;
+    /// println!("{}", nonce);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn nonce<T: Into<NameOrAddress> + Send + Sync>(
+        &self,
+        who: T,
+        block: Option<BlockId>,
+    ) -> Result<U256> {
+        Ok(self.provider.get_transaction_count(who, block).await?)
+    }
+
+    /// ```no_run
+    /// use cast::Cast;
+    /// use ethers_providers::{Provider, Http};
+    /// use ethers_core::types::Address;
+    /// use std::{str::FromStr, convert::TryFrom};
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
+    /// let cast = Cast::new(provider);
     /// let addr = Address::from_str("0x00000000219ab540356cbb839cbe05303d7705fa")?;
     /// let code = cast.code(addr, None).await?;
     /// println!("{}", code);

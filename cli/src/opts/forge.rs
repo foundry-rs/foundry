@@ -54,7 +54,9 @@ pub enum Subcommands {
         lib_paths: Vec<PathBuf>,
     },
 
-    #[structopt(about = "build your smart contracts. Requires `ETHERSCAN_API_KEY` to be set.")]
+    #[structopt(
+        about = "verify your smart contracts source code on Etherscan. Requires `ETHERSCAN_API_KEY` to be set."
+    )]
     VerifyContract {
         #[structopt(help = "contract source info `<path>:<contractname>`")]
         contract: FullContractInfo,
@@ -75,6 +77,7 @@ pub enum Subcommands {
         template: Option<String>,
     },
 
+    #[structopt(about = "generate shell completions script")]
     Completions {
         #[structopt(help = "the shell you are using")]
         shell: structopt::clap::Shell,
