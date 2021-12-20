@@ -223,6 +223,16 @@ pub enum Subcommands {
         )]
         block: Option<BlockId>,
     },
+    #[structopt(name = "nonce")]
+    #[structopt(about = "Prints the number of transactions sent from <address>")]
+    Nonce {
+        #[structopt(long, short = "-B", help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
+        block: Option<BlockId>,
+        #[structopt(help = "the address you want to query", parse(try_from_str = parse_name_or_address))]
+        who: NameOrAddress,
+        #[structopt(short, long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+    },
 }
 
 fn parse_name_or_address(s: &str) -> eyre::Result<NameOrAddress> {

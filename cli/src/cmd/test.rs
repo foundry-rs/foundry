@@ -13,13 +13,9 @@ use ethers::{
     solc::{ArtifactOutput, Project},
     types::{Address, U256},
 };
-use evm_adapters::{
-    sputnik::{vicinity, ForkMemoryBackend, PRECOMPILES_MAP},
-    FAUCET_ACCOUNT,
-};
+use evm_adapters::FAUCET_ACCOUNT;
 use forge::MultiContractRunnerBuilder;
 use regex::Regex;
-use sputnik::backend::Backend;
 use std::{collections::BTreeMap, convert::TryFrom, sync::Arc};
 use structopt::StructOpt;
 
@@ -127,8 +123,10 @@ impl Cmd for TestArgs {
         match evm_type {
             #[cfg(feature = "sputnik-evm")]
             EvmType::Sputnik => {
-                use evm_adapters::sputnik::Executor;
-                use sputnik::backend::MemoryBackend;
+                use evm_adapters::sputnik::{
+                    vicinity, Executor, ForkMemoryBackend, PRECOMPILES_MAP,
+                };
+                use sputnik::backend::{Backend, MemoryBackend};
                 let mut cfg = utils::sputnik_cfg(opts.evm_version);
 
                 // We disable the contract size limit by default, because Solidity

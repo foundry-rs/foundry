@@ -20,13 +20,21 @@ Foundry consists of:
 ![demo](./assets/demo.svg)
 
 ## Dependencies
-Currently both Forge and Cast rely on the [libudev-dev](https://packages.debian.org/sid/libudev-dev) package. This package may be preinstalled for your system, but is also available in most packages managers.
+
+Currently both Forge and Cast rely on the
+[libudev-dev](https://packages.debian.org/sid/libudev-dev) package. This package
+may be preinstalled for your system, but is also available in most packages
+managers.
 
 ## Forge
 
 ```
 cargo install --git https://github.com/gakonst/foundry --bin forge --locked
 ```
+
+If you are on a x86/x86_64 Unix machine, you can also use `--features=solc-asm`
+to enable Sha2 Assembly instructions, which further speedup the compilation
+pipeline cache.
 
 We also recommend using [forgeup](https://github.com/transmissions11/forgeup)
 for managing various versions of Forge, so that you can easily test out bleeding
