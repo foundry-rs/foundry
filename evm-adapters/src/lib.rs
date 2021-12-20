@@ -52,6 +52,8 @@ pub trait Evm<State> {
     /// Gets the revert reason type
     fn revert() -> Self::ReturnReason;
 
+    fn expected_revert(&self) -> Option<Vec<u8>>;
+
     /// Whether a return reason should be considered successful
     fn is_success(reason: &Self::ReturnReason) -> bool;
     /// Whether a return reason should be considered failing

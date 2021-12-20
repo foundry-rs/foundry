@@ -77,6 +77,10 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
         self.handler.config()
     }
 
+    fn expected_revert(&self) -> Option<Vec<u8>> { 
+       self.handler.state().expected_revert.clone()
+    }
+
     fn state(&self) -> &CheatcodeStackState<'a, B> {
         self.handler.state()
     }

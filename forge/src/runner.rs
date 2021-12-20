@@ -258,7 +258,8 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
                 }
             },
         };
-        let success = self.evm.check_success(self.address, &status, should_fail);
+        let success = self.evm.check_success(self.address, &status, should_fail) && !self.evm.expected_revert().is_some();
+   
         let duration = Instant::now().duration_since(start);
         tracing::debug!(?duration, %success, %gas_used);
 
