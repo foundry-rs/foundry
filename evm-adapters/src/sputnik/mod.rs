@@ -107,7 +107,7 @@ impl<'a, 'b, S: StackState<'a>, P: PrecompileSet> SputnikExecutor<S>
         self.state_mut()
     }
 
-    fn expected_revert(&self) -> Option<&[u8]> { 
+    fn expected_revert(&self) -> Option<&[u8]> {
         None
     }
 

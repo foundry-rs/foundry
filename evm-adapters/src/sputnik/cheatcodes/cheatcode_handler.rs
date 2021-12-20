@@ -85,7 +85,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
         self.handler.state_mut()
     }
 
-    fn expected_revert(&self) -> Option<&[u8]> { 
+    fn expected_revert(&self) -> Option<&[u8]> {
         self.handler.state().expected_revert.as_deref()
     }
 
