@@ -77,10 +77,6 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
         self.handler.config()
     }
 
-    fn expected_revert(&self) -> Option<Vec<u8>> { 
-       self.handler.state().expected_revert.clone()
-    }
-
     fn state(&self) -> &CheatcodeStackState<'a, B> {
         self.handler.state()
     }
@@ -88,6 +84,15 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
     fn state_mut(&mut self) -> &mut CheatcodeStackState<'a, B> {
         self.handler.state_mut()
     }
+
+    fn expected_revert(&self) -> Option<&[u8]> { 
+        if let Some(a) = self.handler.state().expected_revert.as_ref() {
+            let c: &[u8] = a;
+            return Some(c);
+        }
+        return None
+        
+     }
 
     fn gas_left(&self) -> U256 {
         // NB: We do this to avoid `function cannot return without recursing`

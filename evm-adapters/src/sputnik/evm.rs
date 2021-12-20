@@ -67,7 +67,7 @@ where
         ExitReason::Revert(ExitRevert::Reverted)
     }
 
-    fn expected_revert(&self) -> Option<Vec<u8>> {
+    fn expected_revert(&self) -> Option<&[u8]> {
         self.executor.expected_revert()
     }
 

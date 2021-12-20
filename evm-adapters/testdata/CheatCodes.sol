@@ -239,6 +239,10 @@ contract CheatCodes is DSTest {
         target.stringErr(99);
     }
 
+    function testFailExpectRevert3() public {
+        hevm.expectRevert("revert");
+    }  
+
     function getCode(address who) internal returns (bytes memory o_code) {
         assembly {
             // retrieve the size of the code, this needs assembly

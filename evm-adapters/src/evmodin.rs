@@ -43,7 +43,7 @@ impl<S: HostExt, Tr: Tracer> Evm<S> for EvmOdin<S, Tr> {
         StatusCode::Revert
     }
 
-    fn expected_revert(&self) -> Option<Vec<u8>> {
+    fn expected_revert(&self) -> Option<&[u8]> {
         None
     }
 
