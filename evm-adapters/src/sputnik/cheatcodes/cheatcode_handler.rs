@@ -28,6 +28,7 @@ use ethers::{
 };
 use std::convert::Infallible;
 
+use crate::sputnik::cheatcodes::patch_hardhat_console_log_selector;
 use once_cell::sync::Lazy;
 
 // This is now getting us the right hash? Also tried [..20]
@@ -272,6 +273,8 @@ fn evm_error(retdata: &str) -> Capture<(ExitReason, Vec<u8>), Infallible> {
 impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> {
     /// Given a transaction's calldata, it tries to parse it a console call and print the call
     fn console_log(&mut self, input: Vec<u8>) -> Capture<(ExitReason, Vec<u8>), Infallible> {
+        // replacing hardhat style selectors (`uint`) with abigen style (`uint256`)
+        let input = patch_hardhat_console_log_selector(input);
         let decoded = match ConsoleCalls::decode(&input) {
             Ok(inner) => inner,
             Err(err) => return evm_error(&err.to_string()),
@@ -1051,10 +1054,17 @@ mod tests {
         // after the evm call is done, we call `logs` and print it all to the user
         let (_, _, _, logs) =
             evm.call::<(), _, _>(Address::zero(), addr, "test_log()", (), 0.into()).unwrap();
-        let expected = ["0x1111111111111111111111111111111111111111", "Hi", "Hi, Hi"]
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>();
+        let expected = [
+            "0x1111111111111111111111111111111111111111",
+            "Hi",
+            "Hi, Hi",
+            "1337",
+            "1337, 1245",
+            "Hi, 1337",
+        ]
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
         assert_eq!(logs, expected);
     }
 
