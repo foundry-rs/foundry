@@ -14,3 +14,10 @@ lto = true
 codegen-units = 1
 panic = "abort"
 debug = true
+
+[patch."https://github.com/gakonst/ethers-rs"]
+ethers = { git = "https://github.com/mattsse/ethers-rs", branch = "matt/remapping-fine-tuning" }
+ethers-core = { git = "https://github.com/mattsse/ethers-rs", branch = "matt/remapping-fine-tuning" }
+ethers-providers = { git = "https://github.com/mattsse/ethers-rs", branch = "matt/remapping-fine-tuning" }
+ethers-signers = { git = "https://github.com/mattsse/ethers-rs", branch = "matt/remapping-fine-tuning" }
+ethers-etherscan = { git = "https://github.com/mattsse/ethers-rs", branch = "matt/remapping-fine-tuning" }
