@@ -286,7 +286,7 @@ fn test<A: ArtifactOutput + 'static, S: Clone, E: evm_adapters::Evm<S>>(
                     let txt = match (&result.reason, &result.counterexample) {
                         (Some(ref reason), Some(ref counterexample)) => {
                             format!(
-                                "[FAIL. Reason: {} blah. Counterexample: {}]",
+                                "[FAIL. Reason: {}. Counterexample: {}]",
                                 reason, counterexample
                             )
                         }
