@@ -166,6 +166,10 @@ pub trait Evm<State> {
                 success = !failed;
             }
         }
+        // check if there is a remaining expected revert
+        if self.expected_revert().is_some() {
+            success = false;
+        }
 
         // Check Success output: Should Fail vs Success
         //
