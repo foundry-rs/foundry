@@ -57,6 +57,8 @@ ethers::contract::abigen!(
             deal(address,uint256)
             etch(address,bytes)
             expectRevert(bytes)
+            record()
+            accesses(address)(bytes32[],bytes32[])
     ]"#,
 );
 pub use hevm_mod::HEVMCalls;

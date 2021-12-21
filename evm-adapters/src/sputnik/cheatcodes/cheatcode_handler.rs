@@ -27,8 +27,11 @@ use ethers::{
     types::{Address, H160, H256, U256},
 };
 use std::convert::Infallible;
+use std::cell::RefCell;
 
 use once_cell::sync::Lazy;
+
+use ethers::abi::Tokenize;
 
 // This is now getting us the right hash? Also tried [..20]
 // Lazy::new(|| Address::from_slice(&keccak256("hevm cheat code")[12..]));
@@ -446,6 +449,24 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 let code = inner.1;
                 state.set_code(who, code.to_vec());
             }
+            HEVMCalls::Record(_) => {
+                self.state_mut().accesses = Some((RefCell::new(Default::default()), RefCell::new(Default::default())));
+            }
+            HEVMCalls::Accesses(inner) => {
+                let address = inner.0;
+                // we dont reset all records in case user wants to query multiple address
+                if let Some((read_accesses, write_accesses)) = &self.state().accesses {
+                    res = ethers::abi::encode(&[
+                        read_accesses.borrow_mut().remove(&address).unwrap_or_default().into_tokens()[0].clone(), 
+                        write_accesses.borrow_mut().remove(&address).unwrap_or_default().into_tokens()[0].clone()
+                    ]);
+                    if read_accesses.borrow().len() == 0 && read_accesses.borrow().len() == 0 {
+                        self.state_mut().accesses = None;
+                    }
+                } else {
+                    res = ethers::abi::encode(&[Token::Array(vec![]), Token::Array(vec![])]);
+                }
+            }
         };
 
         // TODO: Add more cheat codes.
@@ -773,7 +794,6 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
         // to the state.
         // NB: This is very similar to how Optimism's custom intercept logic to "predeploys" work
         // (e.g. with the StateManager)
-
         if code_address == *CHEATCODE_ADDRESS {
             self.apply_cheatcode(input, context.caller)
         } else if code_address == *CONSOLE_ADDRESS {

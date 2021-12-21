@@ -29,5 +29,5 @@ proptest = "1.0.0"
 [dev-dependencies]
 evm-adapters = { path = "./../evm-adapters", features = ["sputnik", "sputnik-helpers", "evmodin", "evmodin-helpers"] }
 evmodin = { git = "https://github.com/vorot93/evmodin", features = ["util"] }
-evm = { git = "https://github.com/rust-blockchain/evm" }
+evm = { git = "https://github.com/rust-blockchain/evm", features = ["tracing"] }
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["solc-full", "solc-tests"] }
