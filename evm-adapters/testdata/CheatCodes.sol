@@ -188,6 +188,8 @@ contract CheatCodes is DSTest {
 
     function testPayable() public {
         Prank prank = new Prank();
+        uint256 ownerBalance = address(this).balance;
+
         address new_sender = address(1337);
         hevm.deal(new_sender, 10 ether);
         
@@ -199,6 +201,8 @@ contract CheatCodes is DSTest {
         prank.payableBar{value: 1 ether}(new_sender);
         hevm.stopPrank();
         assertEq(new_sender.balance, 8 ether);
+
+        assertEq(ownerBalance, address(this).balance);
     }
 
     function testPrankStartComplex() public {
