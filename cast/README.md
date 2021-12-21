@@ -48,7 +48,7 @@
 - [ ] `ls`
 - [ ] `mktx`
 - [x] `namehash`
-- [ ] `nonce`
+- [x] `nonce`
 - [ ] `publish`
 - [ ] `receipt`
 - [x] `resolve-name`
