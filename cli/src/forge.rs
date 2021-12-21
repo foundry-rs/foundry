@@ -32,24 +32,16 @@ fn main() -> eyre::Result<()> {
             cmd.run()?;
         }
         Subcommands::Update { lib } => {
-            // TODO: Should we add some sort of progress bar here? Would be nice
-            // but not a requirement.
-            // open the repo
-            let repo = git2::Repository::open(".")?;
+            let mut cmd = Command::new("git");
+
+            cmd.args(&["submodule", "update", "--init", "--recursive"]);
 
             // if a lib is specified, open it
             if let Some(lib) = lib {
-                println!("Updating submodule {:?}", lib);
-                repo.find_submodule(
-                    &lib.into_os_string().into_string().expect("invalid submodule path"),
-                )?
-                .update(true, None)?;
-            } else {
-                Command::new("git")
-                    .args(&["submodule", "update", "--init", "--recursive"])
-                    .spawn()?
-                    .wait()?;
+                cmd.args(&["--", lib.display().to_string().as_str()]);
             }
+
+            cmd.spawn()?.wait()?;
         }
         // TODO: Make it work with updates?
         Subcommands::Install { dependencies } => {
