@@ -90,7 +90,7 @@ fn main() -> eyre::Result<()> {
 
                 // sets up git
                 let is_git = Command::new("git")
-                    .args(&["rev-parse,--is-inside-work-tree"])
+                    .args(&["rev-parse", "--is-inside-work-tree"])
                     .current_dir(&root)
                     .spawn()?
                     .wait()?;
