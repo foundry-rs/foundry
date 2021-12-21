@@ -186,7 +186,7 @@ contract CheatCodes is DSTest {
         prank.bar(address(this));
     }
 
-    function testPayable() public {
+    function testPrankPayable() public {
         Prank prank = new Prank();
         uint256 ownerBalance = address(this).balance;
 
