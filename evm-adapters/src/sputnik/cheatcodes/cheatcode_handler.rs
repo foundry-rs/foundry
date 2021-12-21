@@ -797,14 +797,14 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
                     if let Some(depth) = self.state().metadata().depth() { depth + 1 } else { 0 };
                 if curr_depth == depth && new_context.caller == original_msg_sender {
                     new_context.caller = permanent_caller;
-                }
 
-                if let Some(t) = &new_transfer {
-                    new_transfer = Some(Transfer {
-                        source: permanent_caller,
-                        target: t.target,
-                        value: t.value,
-                    });
+                    if let Some(t) = &new_transfer {
+                        new_transfer = Some(Transfer {
+                            source: permanent_caller,
+                            target: t.target,
+                            value: t.value,
+                        });
+                    }
                 }
             }
 
