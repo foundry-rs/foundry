@@ -789,6 +789,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
             // modify execution context depending on the cheatcode
             let expected_revert = self.state_mut().expected_revert.take();
             let mut new_context = context;
+            let mut new_transfer = transfer;
 
             // handle `startPrank` - see apply_cheatcodes for more info
             if let Some((original_msg_sender, permanent_caller, depth)) = self.state().msg_sender {
@@ -796,18 +797,31 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
                     if let Some(depth) = self.state().metadata().depth() { depth + 1 } else { 0 };
                 if curr_depth == depth && new_context.caller == original_msg_sender {
                     new_context.caller = permanent_caller;
+
+                    if let Some(t) = &new_transfer {
+                        new_transfer = Some(Transfer {
+                            source: permanent_caller,
+                            target: t.target,
+                            value: t.value,
+                        });
+                    }
                 }
             }
 
             // handle normal `prank`
             if let Some(caller) = self.state_mut().next_msg_sender.take() {
                 new_context.caller = caller;
+
+                if let Some(t) = &new_transfer {
+                    new_transfer =
+                        Some(Transfer { source: caller, target: t.target, value: t.value });
+                }
             }
 
             // perform the call
             let res = self.call_inner(
                 code_address,
-                transfer,
+                new_transfer,
                 input,
                 target_gas,
                 is_static,

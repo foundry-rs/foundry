@@ -186,6 +186,25 @@ contract CheatCodes is DSTest {
         prank.bar(address(this));
     }
 
+    function testPrankPayable() public {
+        Prank prank = new Prank();
+        uint256 ownerBalance = address(this).balance;
+
+        address new_sender = address(1337);
+        hevm.deal(new_sender, 10 ether);
+        
+        hevm.prank(new_sender);
+        prank.payableBar{value: 1 ether}(new_sender);
+        assertEq(new_sender.balance, 9 ether);
+
+        hevm.startPrank(new_sender);
+        prank.payableBar{value: 1 ether}(new_sender);
+        hevm.stopPrank();
+        assertEq(new_sender.balance, 8 ether);
+
+        assertEq(ownerBalance, address(this).balance);
+    }
+
     function testPrankStartComplex() public {
         // A -> B, B starts pranking, doesnt call stopPrank, A calls C calls D
         // C -> D would be pranked
@@ -306,6 +325,10 @@ contract Prank {
         require(msg.sender == expectedMsgSender, "bad prank");
         InnerPrank inner = new InnerPrank();
         inner.bar(address(this));
+    }
+
+    function payableBar(address expectedMsgSender) payable public {
+        bar(expectedMsgSender);
     }
 }
 
