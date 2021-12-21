@@ -799,7 +799,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
                     new_context.caller = permanent_caller;
                 }
 
-                if let Some(t) = &transfer {
+                if let Some(t) = &new_transfer {
                     new_transfer = Some(Transfer {
                         source: permanent_caller,
                         target: t.target,
@@ -812,7 +812,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
             if let Some(caller) = self.state_mut().next_msg_sender.take() {
                 new_context.caller = caller;
 
-                if let Some(t) = &transfer {
+                if let Some(t) = &new_transfer {
                     new_transfer =
                         Some(Transfer { source: caller, target: t.target, value: t.value });
                 }
