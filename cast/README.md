@@ -5,10 +5,10 @@
 - [ ] `--abi-decode`
 - [ ] `--calldata-decode`
 - [x] `--from-ascii` (with `--from-utf8` alias)
-- [ ] `--from-bin`
+- [] `--from-bin`
 - [ ] `--from-fix`
 - [ ] `--from-wei`
-- [ ] `--max-int`
+- [x] `--max-int`
 - [x] `--max-uint`
 - [ ] `--min-int`
 - [x] `--to-checksum-address` (`--to-address` in dapptools)

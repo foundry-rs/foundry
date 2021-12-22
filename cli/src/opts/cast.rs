@@ -8,6 +8,9 @@ use super::EthereumOpts;
 #[derive(Debug, StructOpt)]
 #[structopt(about = "Perform Ethereum RPC calls from the comfort of your command line.")]
 pub enum Subcommands {
+    #[structopt(name = "--max-int")]
+    #[structopt(about = "maximum i256 value")]
+    MaxInt,
     #[structopt(name = "--max-uint")]
     #[structopt(about = "maximum u256 value")]
     MaxUint,
