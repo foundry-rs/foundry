@@ -7,7 +7,7 @@
 - [x] `--from-ascii` (with `--from-utf8` alias)
 - [] `--from-bin`
 - [ ] `--from-fix`
-- [ ] `--from-wei`
+- [x] `--from-wei`
 - [x] `--max-int`
 - [x] `--max-uint`
 - [ ] `--min-int`
@@ -35,7 +35,7 @@
 - [x] `calldata`
 - [x] `chain`
 - [x] `chain-id`
-- [ ] `code`
+- [x] `code`
 - [ ] `debug`
 - [ ] `estimate`
 - [ ] `etherscan-source`
@@ -48,7 +48,7 @@
 - [ ] `ls`
 - [ ] `mktx`
 - [x] `namehash`
-- [ ] `nonce`
+- [x] `nonce`
 - [ ] `publish`
 - [ ] `receipt`
 - [x] `resolve-name`
@@ -56,4 +56,4 @@
 - [x] `send` (partial)
 - [ ] `sign`
 - [x] `storage`
-- [ ] `tx`
+- [x] `tx`

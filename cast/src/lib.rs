@@ -75,16 +75,20 @@ where
         let res = self.provider.call(&tx, None).await?;
 
         // decode args into tokens
-        let res = func.decode_output(res.as_ref())?;
+        let decoded = func.decode_output(res.as_ref())?;
+        // handle case when return type is not specified
+        if decoded.is_empty() {
+            Ok(format!("{}\n", res))
+        } else {
+            // concatenate them
+            let mut s = String::new();
+            for output in decoded {
+                s.push_str(&format!("0x{}\n", output));
+            }
 
-        // concatenate them
-        let mut s = String::new();
-        for output in res {
-            s.push_str(&format!("{}\n", output));
+            // return string
+            Ok(s)
         }
-
-        // return string
-        Ok(s)
     }
 
     pub async fn balance<T: Into<NameOrAddress> + Send + Sync>(
@@ -295,6 +299,29 @@ where
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
     /// let cast = Cast::new(provider);
+    /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
+    /// let nonce = cast.nonce(addr, None).await?;
+    /// println!("{}", nonce);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn nonce<T: Into<NameOrAddress> + Send + Sync>(
+        &self,
+        who: T,
+        block: Option<BlockId>,
+    ) -> Result<U256> {
+        Ok(self.provider.get_transaction_count(who, block).await?)
+    }
+
+    /// ```no_run
+    /// use cast::Cast;
+    /// use ethers_providers::{Provider, Http};
+    /// use ethers_core::types::Address;
+    /// use std::{str::FromStr, convert::TryFrom};
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
+    /// let cast = Cast::new(provider);
     /// let addr = Address::from_str("0x00000000219ab540356cbb839cbe05303d7705fa")?;
     /// let code = cast.code(addr, None).await?;
     /// println!("{}", code);
@@ -307,6 +334,46 @@ where
         block: Option<BlockId>,
     ) -> Result<String> {
         Ok(format!("{}", self.provider.get_code(who, block).await?))
+    }
+
+    /// ```no_run
+    /// use cast::Cast;
+    /// use ethers_providers::{Provider, Http};
+    /// use std::convert::TryFrom;
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
+    /// let cast = Cast::new(provider);
+    /// let tx_hash = "0xf8d1713ea15a81482958fb7ddf884baee8d3bcc478c5f2f604e008dc788ee4fc";
+    /// let tx = cast.transaction(tx_hash.to_string(), None, false).await?;
+    /// println!("{}", tx);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn transaction(
+        &self,
+        tx_hash: String,
+        field: Option<String>,
+        to_json: bool,
+    ) -> Result<String> {
+        let transaction_result = self
+            .provider
+            .get_transaction(H256::from_str(&tx_hash)?)
+            .await?
+            .ok_or_else(|| eyre::eyre!("transaction {:?} not found", tx_hash))?;
+
+        let transaction = if let Some(ref field) = field {
+            serde_json::to_value(&transaction_result)?
+                .get(field)
+                .cloned()
+                .ok_or_else(|| eyre::eyre!("field {} not found", field))?
+        } else {
+            serde_json::to_value(&transaction_result)?
+        };
+
+        let transaction =
+            if to_json { serde_json::to_string(&transaction)? } else { to_table(transaction) };
+        Ok(transaction)
     }
 }
 
@@ -484,6 +551,41 @@ impl SimpleCast {
             "gwei" => format!("{:0<1$}", value, 9 + value.len()),
             "eth" | "ether" => format!("{:0<1$}", value, 18 + value.len()),
             _ => value,
+        })
+    }
+
+    /// Converts wei into an eth amount
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(Cast::from_wei(1.into(), "gwei".to_string())?, "0.000000001");
+    ///     assert_eq!(Cast::from_wei(12340000005u64.into(), "gwei".to_string())?, "12.340000005");
+    ///     assert_eq!(Cast::from_wei(10.into(), "ether".to_string())?, "0.00000000000000001");
+    ///     assert_eq!(Cast::from_wei(100.into(), "eth".to_string())?, "0.0000000000000001");
+    ///     assert_eq!(Cast::from_wei(17.into(), "".to_string())?, "17");
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn from_wei(value: U256, unit: String) -> Result<String> {
+        Ok(match &unit[..] {
+            "gwei" => {
+                let gwei = U256::pow(10.into(), 9.into());
+                let left = value / gwei;
+                let right = value - left * gwei;
+                let res = format!("{}.{:0>9}", left, right.to_string());
+                res.trim_end_matches('0').to_string()
+            }
+            "eth" | "ether" => {
+                let wei = U256::pow(10.into(), 18.into());
+                let left = value / wei;
+                let right = value - left * wei;
+                let res = format!("{}.{:0>18}", left, right.to_string());
+                res.trim_end_matches('0').to_string()
+            }
+            _ => value.to_string(),
         })
     }
 

@@ -34,9 +34,6 @@ jobs:
       # clone
       - uses: actions/checkout@v2
 
-      - name: Install libusb (for Ledger)
-        run: sudo apt update && sudo apt install pkg-config libudev-dev
-
       - name: Clone repositories for integration tests testdata
         run: make integration-tests-testdata
 

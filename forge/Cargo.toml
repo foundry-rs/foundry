@@ -11,7 +11,7 @@ foundry-utils = { path = "./../utils" }
 evm-adapters = { path = "./../evm-adapters", default-features = false }
 
 # ethers = { version = "0.5.2" }
-ethers = { git = "https://github.com/gakonst/ethers-rs", features = ["solc-full"] }
+ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["solc-full"] }
 
 eyre = "0.6.5"
 semver = "1.0.4"
@@ -30,4 +30,4 @@ proptest = "1.0.0"
 evm-adapters = { path = "./../evm-adapters", features = ["sputnik", "sputnik-helpers", "evmodin", "evmodin-helpers"] }
 evmodin = { git = "https://github.com/vorot93/evmodin", features = ["util"] }
 evm = { git = "https://github.com/rust-blockchain/evm" }
-ethers = { git = "https://github.com/gakonst/ethers-rs", features = ["solc-full", "solc-tests"] }
+ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["solc-full", "solc-tests"] }

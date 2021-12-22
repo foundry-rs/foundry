@@ -59,6 +59,7 @@ pub trait SputnikExecutor<S> {
     fn config(&self) -> &Config;
     fn state(&self) -> &S;
     fn state_mut(&mut self) -> &mut S;
+    fn expected_revert(&self) -> Option<&[u8]>;
     fn gas_left(&self) -> U256;
     fn transact_call(
         &mut self,
@@ -104,6 +105,10 @@ impl<'a, 'b, S: StackState<'a>, P: PrecompileSet> SputnikExecutor<S>
 
     fn state_mut(&mut self) -> &mut S {
         self.state_mut()
+    }
+
+    fn expected_revert(&self) -> Option<&[u8]> {
+        None
     }
 
     fn gas_left(&self) -> U256 {

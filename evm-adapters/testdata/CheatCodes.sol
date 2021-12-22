@@ -10,6 +10,8 @@ interface Hevm {
     function warp(uint256) external;
     // Set block.height (newHeight)
     function roll(uint256) external;
+    // Set block.basefee (newBasefee)
+    function fee(uint256) external;
     // Loads a storage slot from an address (who, slot)
     function load(address,bytes32) external returns (bytes32);
     // Stores a value to an address' storage slot, (who, slot, value)
@@ -69,6 +71,14 @@ contract CheatCodes is DSTest {
         uint pre = block.timestamp;
         hevm.warp(block.timestamp + jump);
         assertEq(block.timestamp, pre + jump + 1);
+    }
+
+    // Fee
+
+    // Sets the basefee
+    function testFee(uint256 fee) public {
+        hevm.fee(fee);
+        require(block.basefee == fee);
     }
 
     // Roll
@@ -176,6 +186,25 @@ contract CheatCodes is DSTest {
         prank.bar(address(this));
     }
 
+    function testPrankPayable() public {
+        Prank prank = new Prank();
+        uint256 ownerBalance = address(this).balance;
+
+        address new_sender = address(1337);
+        hevm.deal(new_sender, 10 ether);
+        
+        hevm.prank(new_sender);
+        prank.payableBar{value: 1 ether}(new_sender);
+        assertEq(new_sender.balance, 9 ether);
+
+        hevm.startPrank(new_sender);
+        prank.payableBar{value: 1 ether}(new_sender);
+        hevm.stopPrank();
+        assertEq(new_sender.balance, 8 ether);
+
+        assertEq(ownerBalance, address(this).balance);
+    }
+
     function testPrankStartComplex() public {
         // A -> B, B starts pranking, doesnt call stopPrank, A calls C calls D
         // C -> D would be pranked
@@ -188,7 +217,7 @@ contract CheatCodes is DSTest {
 
     function testEtch() public {
         address rewriteCode = address(1337);
-        
+
         bytes memory newCode = hex"1337";
         hevm.etch(rewriteCode, newCode);
         bytes memory n_code = getCode(rewriteCode);
@@ -199,7 +228,7 @@ contract CheatCodes is DSTest {
         ExpectRevert target = new ExpectRevert();
         hevm.expectRevert("Value too large");
         target.stringErr(101);
-        target.stringErr(99); 
+        target.stringErr(99);
     }
 
     function testExpectCustomRevert() public {
@@ -207,7 +236,7 @@ contract CheatCodes is DSTest {
         bytes memory data = abi.encodePacked(bytes4(keccak256("InputTooLarge()")));
         hevm.expectRevert(data);
         target.customErr(101);
-        target.customErr(99); 
+        target.customErr(99);
     }
 
     function testCalleeExpectRevert() public {
@@ -228,6 +257,12 @@ contract CheatCodes is DSTest {
         hevm.expectRevert("Value too large");
         target.stringErr(99);
     }
+
+    // Test should fail if nothing is called
+    // after expectRevert
+    function testFailExpectRevert3() public {
+        hevm.expectRevert("revert");
+    }  
 
     function getCode(address who) internal returns (bytes memory o_code) {
         assembly {
@@ -290,6 +325,10 @@ contract Prank {
         require(msg.sender == expectedMsgSender, "bad prank");
         InnerPrank inner = new InnerPrank();
         inner.bar(address(this));
+    }
+
+    function payableBar(address expectedMsgSender) payable public {
+        bar(expectedMsgSender);
     }
 }
 

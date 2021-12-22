@@ -28,6 +28,7 @@ use ethers::{
 };
 use std::convert::Infallible;
 
+use crate::sputnik::cheatcodes::patch_hardhat_console_log_selector;
 use once_cell::sync::Lazy;
 
 // This is now getting us the right hash? Also tried [..20]
@@ -83,6 +84,10 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
 
     fn state_mut(&mut self) -> &mut CheatcodeStackState<'a, B> {
         self.handler.state_mut()
+    }
+
+    fn expected_revert(&self) -> Option<&[u8]> {
+        self.handler.state().expected_revert.as_deref()
     }
 
     fn gas_left(&self) -> U256 {
@@ -268,6 +273,8 @@ fn evm_error(retdata: &str) -> Capture<(ExitReason, Vec<u8>), Infallible> {
 impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> {
     /// Given a transaction's calldata, it tries to parse it a console call and print the call
     fn console_log(&mut self, input: Vec<u8>) -> Capture<(ExitReason, Vec<u8>), Infallible> {
+        // replacing hardhat style selectors (`uint`) with abigen style (`uint256`)
+        let input = patch_hardhat_console_log_selector(input);
         let decoded = match ConsoleCalls::decode(&input) {
             Ok(inner) => inner,
             Err(err) => return evm_error(&err.to_string()),
@@ -298,6 +305,9 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
             }
             HEVMCalls::Roll(inner) => {
                 state.backend.cheats.block_number = Some(inner.0);
+            }
+            HEVMCalls::Fee(inner) => {
+                state.backend.cheats.block_base_fee_per_gas = Some(inner.0);
             }
             HEVMCalls::Store(inner) => {
                 state.set_storage(inner.0, inner.1.into(), inner.2.into());
@@ -779,6 +789,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
             // modify execution context depending on the cheatcode
             let expected_revert = self.state_mut().expected_revert.take();
             let mut new_context = context;
+            let mut new_transfer = transfer;
 
             // handle `startPrank` - see apply_cheatcodes for more info
             if let Some((original_msg_sender, permanent_caller, depth)) = self.state().msg_sender {
@@ -786,18 +797,31 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
                     if let Some(depth) = self.state().metadata().depth() { depth + 1 } else { 0 };
                 if curr_depth == depth && new_context.caller == original_msg_sender {
                     new_context.caller = permanent_caller;
+
+                    if let Some(t) = &new_transfer {
+                        new_transfer = Some(Transfer {
+                            source: permanent_caller,
+                            target: t.target,
+                            value: t.value,
+                        });
+                    }
                 }
             }
 
             // handle normal `prank`
             if let Some(caller) = self.state_mut().next_msg_sender.take() {
                 new_context.caller = caller;
+
+                if let Some(t) = &new_transfer {
+                    new_transfer =
+                        Some(Transfer { source: caller, target: t.target, value: t.value });
+                }
             }
 
             // perform the call
             let res = self.call_inner(
                 code_address,
-                transfer,
+                new_transfer,
                 input,
                 target_gas,
                 is_static,
@@ -1044,10 +1068,17 @@ mod tests {
         // after the evm call is done, we call `logs` and print it all to the user
         let (_, _, _, logs) =
             evm.call::<(), _, _>(Address::zero(), addr, "test_log()", (), 0.into()).unwrap();
-        let expected = ["0x1111111111111111111111111111111111111111", "Hi", "Hi, Hi"]
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>();
+        let expected = [
+            "0x1111111111111111111111111111111111111111",
+            "Hi",
+            "Hi, Hi",
+            "1337",
+            "1337, 1245",
+            "Hi, 1337",
+        ]
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
         assert_eq!(logs, expected);
     }
 
@@ -1078,7 +1109,7 @@ mod tests {
 
     #[test]
     fn cheatcodes() {
-        let config = Config::istanbul();
+        let config = Config::london();
         let vicinity = new_vicinity();
         let backend = new_backend(&vicinity, Default::default());
         let gas_limit = 10_000_000;
@@ -1108,6 +1139,11 @@ mod tests {
 
         let abi = compiled.abi.as_ref().unwrap();
         for func in abi.functions().filter(|func| func.name.starts_with("test")) {
+            // Skip the FFI unit test if not in a unix system
+            if func.name == "testFFI" && !cfg!(unix) {
+                continue
+            }
+
             let should_fail = func.name.starts_with("testFail");
             if func.inputs.is_empty() {
                 let (_, reason, _, _) =

@@ -6,10 +6,10 @@ use cast::SimpleCast;
 use ethers::{
     abi::{Address, Function, FunctionExt},
     core::types::Chain,
+    etherscan::{contract::VerifyContract, Client},
     prelude::Provider,
     providers::Middleware,
 };
-use ethers_etherscan::{contract::VerifyContract, Client};
 use eyre::ContextCompat;
 use std::convert::TryFrom;
 
