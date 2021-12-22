@@ -137,6 +137,14 @@ pub enum Subcommands {
         #[structopt(flatten)]
         eth: EthereumOpts,
     },
+    #[structopt(name = "abi-decode")]
+    #[structopt(about = "Decode ABI-encoded hex data")]
+    abiDecode {
+        #[structopt(help = "the hex data you want to decode")]
+        abi: String,
+        hex_calldata: String,
+        hex_output: String,
+    },
     #[structopt(name = "age")]
     #[structopt(about = "Prints the timestamp of a block")]
     Age {
