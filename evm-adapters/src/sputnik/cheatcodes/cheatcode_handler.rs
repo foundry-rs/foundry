@@ -594,7 +594,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         let reason = self.execute(&mut runtime);
         // // log::debug!(target: "evm", "Call execution using address {}: {:?}", code_address,
         // reason);
-        
+
         // we add any logs produced by the substate to the all_logs.
         // this allows us to keep around any logs that may be dropped if a call reverts
         let logs = self.logs()[..logs_len].to_vec();
@@ -634,7 +634,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         let logs = self.logs();
         let logs_len = logs.len();
         self.state_mut().all_logs.extend(logs);
-        
+
         macro_rules! try_or_fail {
             ( $e:expr ) => {
                 match $e {

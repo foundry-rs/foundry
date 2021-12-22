@@ -258,7 +258,12 @@ mod tests {
             );
             assert_eq!(
                 reasons[&"testFailWithRevert()".to_owned()],
-                vec!["constructor".to_owned(), "setUp".to_owned(), "three".to_owned(), "failure".to_owned()]
+                vec![
+                    "constructor".to_owned(),
+                    "setUp".to_owned(),
+                    "three".to_owned(),
+                    "failure".to_owned()
+                ]
             );
         }
 
