@@ -1012,14 +1012,12 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
     }
 
     fn log(&mut self, address: H160, topics: Vec<H256>, data: Vec<u8>) -> Result<(), ExitError> {
-        if let Some(decoded) = convert_log(Log {
-            address: address,
-            topics: topics.clone(),
-            data: data.clone(),
-        }) {
-            self.state_mut().all_logs.push(decoded);    
+        if let Some(decoded) =
+            convert_log(Log { address, topics: topics.clone(), data: data.clone() })
+        {
+            self.state_mut().all_logs.push(decoded);
         }
-        
+
         self.handler.log(address, topics, data)
     }
 
