@@ -1,8 +1,11 @@
 //! Test command
 
-use crate::cmd::{
-    build::{BuildArgs, Env, EvmType},
-    Cmd,
+use crate::{
+    cmd::{
+        build::{BuildArgs, Env, EvmType},
+        Cmd,
+    },
+    utils,
 };
 use ansi_term::Colour;
 use ethers::{
@@ -10,13 +13,9 @@ use ethers::{
     solc::{ArtifactOutput, Project},
     types::{Address, U256},
 };
-use evm_adapters::{
-    sputnik::{vicinity, ForkMemoryBackend, PRECOMPILES_MAP},
-    FAUCET_ACCOUNT,
-};
+use evm_adapters::FAUCET_ACCOUNT;
 use forge::MultiContractRunnerBuilder;
 use regex::Regex;
-use sputnik::backend::Backend;
 use std::{collections::BTreeMap, convert::TryFrom, sync::Arc};
 use structopt::StructOpt;
 
@@ -53,7 +52,6 @@ pub struct TestArgs {
         short
     )]
     #[structopt(alias = "rpc-url")]
-    #[structopt(env = "ETH_RPC_URL")]
     fork_url: Option<String>,
 
     #[structopt(help = "pins the block number for the state fork", long)]
@@ -113,7 +111,7 @@ impl Cmd for TestArgs {
         let fuzzer = proptest::test_runner::TestRunner::new(cfg);
 
         // Set up the project
-        let project = Project::try_from(&opts)?;
+        let project = opts.project()?;
 
         // prepare the test builder
         let builder = MultiContractRunnerBuilder::default()
@@ -125,9 +123,11 @@ impl Cmd for TestArgs {
         match evm_type {
             #[cfg(feature = "sputnik-evm")]
             EvmType::Sputnik => {
-                use evm_adapters::sputnik::Executor;
-                use sputnik::backend::MemoryBackend;
-                let mut cfg = opts.evm_version.sputnik_cfg();
+                use evm_adapters::sputnik::{
+                    vicinity, Executor, ForkMemoryBackend, PRECOMPILES_MAP,
+                };
+                use sputnik::backend::{Backend, MemoryBackend};
+                let mut cfg = utils::sputnik_cfg(opts.evm_version);
 
                 // We disable the contract size limit by default, because Solidity
                 // test smart contracts are likely to be >24kb
@@ -168,7 +168,7 @@ impl Cmd for TestArgs {
                 use evm_adapters::evmodin::EvmOdin;
                 use evmodin::tracing::NoopTracer;
 
-                let revision = opts.evm_version.evmodin_cfg();
+                let revision = utils::evmodin_cfg(opts.evm_version);
 
                 // TODO: Replace this with a proper host. We'll want this to also be
                 // provided generically when we add the Forking host(s).
@@ -191,7 +191,7 @@ pub struct Test {
 }
 
 impl Test {
-    pub fn gas_used(&self) -> Option<u64> {
+    pub fn gas_used(&self) -> u64 {
         self.result.gas_used
     }
 }
@@ -301,15 +301,8 @@ fn test<A: ArtifactOutput + 'static, S: Clone, E: evm_adapters::Evm<S>>(
 
                     Colour::Red.paint(txt)
                 };
-                println!(
-                    "{} {} (gas: {})",
-                    status,
-                    name,
-                    result
-                        .gas_used
-                        .map(|x| x.to_string())
-                        .unwrap_or_else(|| "[fuzztest]".to_string())
-                );
+
+                println!("{} {} {}", status, name, result.kind.gas_used());
             }
 
             if verbosity > 1 {

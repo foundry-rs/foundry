@@ -1,18 +1,13 @@
-use ethers::solc::{remappings::Remapping, Project, ProjectPathsConfig};
-
-use structopt::StructOpt;
-
-mod forge_opts;
-use forge_opts::{Opts, Subcommands};
-
-use crate::{
-    cmd::Cmd,
-    forge_opts::{Dependency, FullContractInfo},
-};
-use std::{process::Command, str::FromStr};
-
-mod cmd;
+pub mod cmd;
+mod opts;
 mod utils;
+
+use crate::cmd::Cmd;
+
+use ethers::solc::{remappings::Remapping, Project, ProjectPathsConfig};
+use opts::forge::{Dependency, FullContractInfo, Opts, Subcommands};
+use std::{process::Command, str::FromStr};
+use structopt::StructOpt;
 
 #[tracing::instrument(err)]
 fn main() -> eyre::Result<()> {
@@ -33,28 +28,20 @@ fn main() -> eyre::Result<()> {
             let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
             rt.block_on(cmd::verify::run(path, name, address, constructor_args))?;
         }
-        Subcommands::Create { contract: _, verify: _ } => {
-            unimplemented!("Not yet implemented")
+        Subcommands::Create(cmd) => {
+            cmd.run()?;
         }
         Subcommands::Update { lib } => {
-            // TODO: Should we add some sort of progress bar here? Would be nice
-            // but not a requirement.
-            // open the repo
-            let repo = git2::Repository::open(".")?;
+            let mut cmd = Command::new("git");
+
+            cmd.args(&["submodule", "update", "--init", "--recursive"]);
 
             // if a lib is specified, open it
             if let Some(lib) = lib {
-                println!("Updating submodule {:?}", lib);
-                repo.find_submodule(
-                    &lib.into_os_string().into_string().expect("invalid submodule path"),
-                )?
-                .update(true, None)?;
-            } else {
-                Command::new("git")
-                    .args(&["submodule", "update", "--init", "--recursive"])
-                    .spawn()?
-                    .wait()?;
+                cmd.args(&["--", lib.display().to_string().as_str()]);
             }
+
+            cmd.spawn()?.wait()?;
         }
         // TODO: Make it work with updates?
         Subcommands::Install { dependencies } => {
@@ -65,11 +52,7 @@ fn main() -> eyre::Result<()> {
             let root = std::fs::canonicalize(root)?;
 
             let lib_paths = if lib_paths.is_empty() { vec![root.join("lib")] } else { lib_paths };
-            let remappings: Vec<_> = lib_paths
-                .iter()
-                .map(|path| Remapping::find_many(&path).unwrap())
-                .flatten()
-                .collect();
+            let remappings: Vec<_> = lib_paths.iter().flat_map(Remapping::find_many).collect();
             remappings.iter().for_each(|x| println!("{}", x));
         }
         Subcommands::Init { root, template } => {
@@ -107,20 +90,19 @@ fn main() -> eyre::Result<()> {
 
                 // sets up git
                 let is_git = Command::new("git")
-                    .args(&["rev-parse,--is-inside-work-tree"])
+                    .args(&["rev-parse", "--is-inside-work-tree"])
                     .current_dir(&root)
                     .spawn()?
                     .wait()?;
                 if !is_git.success() {
                     Command::new("git").arg("init").current_dir(&root).spawn()?.wait()?;
+                    Command::new("git").args(&["add", "."]).current_dir(&root).spawn()?.wait()?;
+                    Command::new("git")
+                        .args(&["commit", "-m", "chore: forge init"])
+                        .current_dir(&root)
+                        .spawn()?
+                        .wait()?;
                 }
-                Command::new("git").args(&["add", "."]).current_dir(&root).spawn()?.wait()?;
-                Command::new("git")
-                    .args(&["commit", "-m", "chore: forge init"])
-                    .current_dir(&root)
-                    .spawn()?
-                    .wait()?;
-
                 Dependency::from_str("https://github.com/dapphub/ds-test")
                     .and_then(|dependency| install(root, vec![dependency]))?;
             }

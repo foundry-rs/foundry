@@ -1,13 +1,18 @@
+pub mod cmd;
+
+mod utils;
+
 use cast::{Cast, SimpleCast};
 
-mod cast_opts;
-use cast_opts::{Opts, Subcommands};
+mod opts;
+use opts::{
+    cast::{Opts, Subcommands},
+    WalletType,
+};
 
 use ethers::{
     core::types::{BlockId, BlockNumber::Latest},
-    middleware::SignerMiddleware,
     providers::{Middleware, Provider},
-    signers::Signer,
     types::{NameOrAddress, U256},
 };
 use rustc_hex::ToHex;
@@ -20,6 +25,9 @@ async fn main() -> eyre::Result<()> {
 
     let opts = Opts::from_args();
     match opts.sub {
+        Subcommands::MaxUint => {
+            println!("{}", SimpleCast::max_uint()?);
+        }
         Subcommands::FromUtf8 { text } => {
             let val = unwrap_or_stdin(text)?;
             println!("{}", SimpleCast::from_utf8(&val));
@@ -86,6 +94,16 @@ async fn main() -> eyre::Result<()> {
                 )?
             );
         }
+        Subcommands::FromWei { value, unit } => {
+            let val = unwrap_or_stdin(value)?;
+            println!(
+                "{}",
+                SimpleCast::from_wei(
+                    U256::from_dec_str(&val)?,
+                    unit.unwrap_or_else(|| String::from("wei"))
+                )?
+            );
+        }
         Subcommands::Block { rpc_url, block, full, field, to_json } => {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).block(block, full, field, to_json).await?);
@@ -109,18 +127,36 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).chain_id().await?);
         }
+        Subcommands::Code { block, who, rpc_url } => {
+            let provider = Provider::try_from(rpc_url)?;
+            println!("{}", Cast::new(provider).code(who, block).await?);
+        }
         Subcommands::Namehash { name } => {
             println!("{}", SimpleCast::namehash(&name)?);
         }
-        Subcommands::SendTx { eth, to, sig, args } => {
+        Subcommands::Tx { rpc_url, hash, field, to_json } => {
+            let provider = Provider::try_from(rpc_url)?;
+            println!("{}", Cast::new(&provider).transaction(hash, field, to_json).await?)
+        }
+        Subcommands::SendTx { eth, to, sig, cast_async, args } => {
             let provider = Provider::try_from(eth.rpc_url.as_str())?;
-            if let Some(signer) = eth.signer()? {
-                let from = eth.from.unwrap_or_else(|| signer.address());
-                let provider = SignerMiddleware::new(provider, signer);
-                cast_send(provider, from, to, sig, args, eth.cast_async).await?;
+            let chain_id = Cast::new(&provider).chain_id().await?;
+
+            if let Some(signer) = eth.signer_with(chain_id, provider.clone()).await? {
+                match signer {
+                    WalletType::Ledger(signer) => {
+                        cast_send(&signer, signer.address(), to, sig, args, cast_async).await?;
+                    }
+                    WalletType::Local(signer) => {
+                        cast_send(&signer, signer.address(), to, sig, args, cast_async).await?;
+                    }
+                    WalletType::Trezor(signer) => {
+                        cast_send(&signer, signer.address(), to, sig, args, cast_async).await?;
+                    }
+                }
             } else {
                 let from = eth.from.expect("No ETH_FROM or signer specified");
-                cast_send(provider, from, to, sig, args, eth.cast_async).await?;
+                cast_send(provider, from, to, sig, args, cast_async).await?;
             }
         }
         Subcommands::Age { block, rpc_url } => {
@@ -181,6 +217,10 @@ async fn main() -> eyre::Result<()> {
             let value = provider.get_storage_at(address, slot, block).await?;
             println!("{:?}", value);
         }
+        Subcommands::Nonce { block, who, rpc_url } => {
+            let provider = Provider::try_from(rpc_url)?;
+            println!("{}", Cast::new(provider).nonce(who, block).await?);
+        }
     };
 
     Ok(())
@@ -197,7 +237,7 @@ where
             let input = std::io::stdin();
             let mut what = String::new();
             input.read_line(&mut what)?;
-            T::from_str(&what.replace("\n", ""))?
+            T::from_str(&what.replace('\n', ""))?
         }
     })
 }

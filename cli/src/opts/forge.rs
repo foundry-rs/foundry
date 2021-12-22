@@ -3,9 +3,7 @@ use structopt::StructOpt;
 use ethers::types::Address;
 use std::{path::PathBuf, str::FromStr};
 
-use crate::cmd::build::BuildArgs;
-
-use crate::cmd::{snapshot, test};
+use crate::cmd::{build::BuildArgs, create, snapshot, test};
 
 #[derive(Debug, StructOpt)]
 pub struct Opts {
@@ -56,7 +54,9 @@ pub enum Subcommands {
         lib_paths: Vec<PathBuf>,
     },
 
-    #[structopt(about = "build your smart contracts. Requires `ETHERSCAN_API_KEY` to be set.")]
+    #[structopt(
+        about = "verify your smart contracts source code on Etherscan. Requires `ETHERSCAN_API_KEY` to be set."
+    )]
     VerifyContract {
         #[structopt(help = "contract source info `<path>:<contractname>`")]
         contract: FullContractInfo,
@@ -67,12 +67,7 @@ pub enum Subcommands {
     },
 
     #[structopt(alias = "c", about = "deploy a compiled contract")]
-    Create {
-        #[structopt(help = "contract source info `<path>:<contractname>` or `<contractname>`")]
-        contract: ContractInfo,
-        #[structopt(long, help = "verify on Etherscan")]
-        verify: bool,
-    },
+    Create(create::CreateArgs),
 
     #[structopt(alias = "i", about = "initializes a new forge sample repository")]
     Init {
@@ -82,6 +77,7 @@ pub enum Subcommands {
         template: Option<String>,
     },
 
+    #[structopt(about = "generate shell completions script")]
     Completions {
         #[structopt(help = "the shell you are using")]
         shell: structopt::clap::Shell,

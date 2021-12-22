@@ -1,6 +1,6 @@
 // Taken from:
 // https://github.com/dapphub/dapptools/blob/e41b6cd9119bbd494aba1236838b859f2136696b/src/dapp-tests/pass/cheatCodes.sol
-pragma solidity ^0.6.6;
+pragma solidity ^0.8.4;
 pragma experimental ABIEncoderV2;
 
 import "./DsTest.sol";
@@ -10,6 +10,8 @@ interface Hevm {
     function warp(uint256) external;
     // Set block.height (newHeight)
     function roll(uint256) external;
+    // Set block.basefee (newBasefee)
+    function fee(uint256) external;
     // Loads a storage slot from an address (who, slot)
     function load(address,bytes32) external returns (bytes32);
     // Stores a value to an address' storage slot, (who, slot, value)
@@ -20,12 +22,18 @@ interface Hevm {
     function addr(uint256) external returns (address);
     // Performs a foreign function call via terminal, (stringInputs) => (result)
     function ffi(string[] calldata) external returns (bytes memory);
-    // Calls another contract with a specified `msg.sender`, (newSender, contract, input) => (success, returnData)
-    function prank(address, address, bytes calldata) external payable returns (bool, bytes memory);
+    // Sets the *next* call's msg.sender to be the input address
+    function prank(address) external;
+    // Sets all subsequent calls' msg.sender to be the input address until `stopPrank` is called
+    function startPrank(address) external;
+    // Resets subsequent calls' msg.sender to be `address(this)`
+    function stopPrank() external;
     // Sets an address' balance, (who, newBalance)
     function deal(address, uint256) external;
     // Sets an address' code, (who, newCode)
     function etch(address, bytes calldata) external;
+    // Expects an error on next call
+    function expectRevert(bytes calldata) external;
 }
 
 contract HasStorage {
@@ -63,6 +71,14 @@ contract CheatCodes is DSTest {
         uint pre = block.timestamp;
         hevm.warp(block.timestamp + jump);
         assertEq(block.timestamp, pre + jump + 1);
+    }
+
+    // Fee
+
+    // Sets the basefee
+    function testFee(uint256 fee) public {
+        hevm.fee(fee);
+        require(block.basefee == fee);
     }
 
     // Roll
@@ -153,61 +169,100 @@ contract CheatCodes is DSTest {
     function testPrank() public {
         Prank prank = new Prank();
         address new_sender = address(1337);
-        bytes4 sig = prank.checksOriginAndSender.selector;
-        string memory input = "And his name is JOHN CENA!";
-        bytes memory calld = abi.encodePacked(sig, abi.encode(input));
-        address origin = tx.origin;
         address sender = msg.sender;
-        (bool success, bytes memory ret) = hevm.prank(new_sender, address(prank), calld);
-        assertTrue(success);
-        string memory expectedRetString = "SUPER SLAM!";
-        string memory actualRet = abi.decode(ret, (string));
-        assertEq(actualRet, expectedRetString);
-
-        // make sure we returned back to normal
-        assertEq(origin, tx.origin);
-        assertEq(sender, msg.sender);
+        hevm.prank(new_sender);
+        prank.bar(new_sender);
+        prank.bar(address(this));
     }
 
-    function testPrankValue() public {
+    function testPrankStart() public {
         Prank prank = new Prank();
-        // setup the call
         address new_sender = address(1337);
-        bytes4 sig = prank.checksOriginAndSender.selector;
-        string memory input = "And his name is JOHN CENA!";
-        bytes memory calld = abi.encodePacked(sig, abi.encode(input));
-        address origin = tx.origin;
         address sender = msg.sender;
+        hevm.startPrank(new_sender);
+        prank.bar(new_sender);
+        prank.bar(new_sender);
+        hevm.stopPrank();
+        prank.bar(address(this));
+    }
 
-        // give the sender some monies
-        hevm.deal(new_sender, 1337);
+    function testPrankPayable() public {
+        Prank prank = new Prank();
+        uint256 ownerBalance = address(this).balance;
 
-        // call the function passing in a value. the eth is pulled from the new sender
-        sig = hevm.prank.selector;
-        calld = abi.encodePacked(sig, abi.encode(new_sender, address(prank), calld));
+        address new_sender = address(1337);
+        hevm.deal(new_sender, 10 ether);
+        
+        hevm.prank(new_sender);
+        prank.payableBar{value: 1 ether}(new_sender);
+        assertEq(new_sender.balance, 9 ether);
 
-        // this is nested low level calls effectively
-        (bool high_level_success, bytes memory outerRet) = address(hevm).call{value: 1}(calld);
-        assertTrue(high_level_success);
-        (bool success, bytes memory ret) = abi.decode(outerRet, (bool,bytes));
-        assertTrue(success);
-        string memory expectedRetString = "SUPER SLAM!";
-        string memory actualRet = abi.decode(ret, (string));
-        assertEq(actualRet, expectedRetString);
+        hevm.startPrank(new_sender);
+        prank.payableBar{value: 1 ether}(new_sender);
+        hevm.stopPrank();
+        assertEq(new_sender.balance, 8 ether);
 
-        // make sure we returned back to normal
-        assertEq(origin, tx.origin);
-        assertEq(sender, msg.sender);
+        assertEq(ownerBalance, address(this).balance);
+    }
+
+    function testPrankStartComplex() public {
+        // A -> B, B starts pranking, doesnt call stopPrank, A calls C calls D
+        // C -> D would be pranked
+        ComplexPrank complexPrank = new ComplexPrank();
+        Prank prank = new Prank();
+        complexPrank.uncompletedPrank();
+        prank.bar(address(this));
+        complexPrank.completePrank(prank);
     }
 
     function testEtch() public {
         address rewriteCode = address(1337);
-        
+
         bytes memory newCode = hex"1337";
         hevm.etch(rewriteCode, newCode);
         bytes memory n_code = getCode(rewriteCode);
         assertEq(string(newCode), string(n_code));
     }
+
+    function testExpectRevert() public {
+        ExpectRevert target = new ExpectRevert();
+        hevm.expectRevert("Value too large");
+        target.stringErr(101);
+        target.stringErr(99);
+    }
+
+    function testExpectCustomRevert() public {
+        ExpectRevert target = new ExpectRevert();
+        bytes memory data = abi.encodePacked(bytes4(keccak256("InputTooLarge()")));
+        hevm.expectRevert(data);
+        target.customErr(101);
+        target.customErr(99);
+    }
+
+    function testCalleeExpectRevert() public {
+        ExpectRevert target = new ExpectRevert();
+        hevm.expectRevert("Value too largeCallee");
+        target.stringErrCall(101);
+        target.stringErrCall(99);
+    }
+
+    function testFailExpectRevert() public {
+        ExpectRevert target = new ExpectRevert();
+        hevm.expectRevert("Value too large");
+        target.stringErr2(101);
+    }
+
+    function testFailExpectRevert2() public {
+        ExpectRevert target = new ExpectRevert();
+        hevm.expectRevert("Value too large");
+        target.stringErr(99);
+    }
+
+    // Test should fail if nothing is called
+    // after expectRevert
+    function testFailExpectRevert3() public {
+        hevm.expectRevert("revert");
+    }  
 
     function getCode(address who) internal returns (bytes memory o_code) {
         assembly {
@@ -226,12 +281,75 @@ contract CheatCodes is DSTest {
     }
 }
 
-contract Prank is DSTest {
-    function checksOriginAndSender(string calldata input) external payable returns (string memory) {
-        string memory expectedInput = "And his name is JOHN CENA!";
-        assertEq(input, expectedInput);
-        assertEq(address(1337), msg.sender);
-        string memory expectedRetString = "SUPER SLAM!";
-        return expectedRetString;
+
+error InputTooLarge();
+contract ExpectRevert {
+    function stringErrCall(uint256 a) public returns (uint256) {
+        ExpectRevertCallee callee = new ExpectRevertCallee();
+        uint256 amount = callee.stringErr(a);
+        return amount;
+    }
+
+    function stringErr(uint256 a) public returns (uint256) {
+        require(a < 100, "Value too large");
+        return a;
+    }
+
+    function stringErr2(uint256 a) public returns (uint256) {
+        require(a < 100, "Value too large2");
+        return a;
+    }
+
+    function customErr(uint256 a) public returns (uint256) {
+        if (a > 99) {
+            revert InputTooLarge();
+        }
+        return a;
     }
 }
+
+contract ExpectRevertCallee {
+    function stringErr(uint256 a) public returns (uint256) {
+        require(a < 100, "Value too largeCallee");
+        return a;
+    }
+
+    function stringErr2(uint256 a) public returns (uint256) {
+        require(a < 100, "Value too large2Callee");
+        return a;
+    }
+}
+
+contract Prank {
+    function bar(address expectedMsgSender) public {
+        require(msg.sender == expectedMsgSender, "bad prank");
+        InnerPrank inner = new InnerPrank();
+        inner.bar(address(this));
+    }
+
+    function payableBar(address expectedMsgSender) payable public {
+        bar(expectedMsgSender);
+    }
+}
+
+contract InnerPrank {
+    function bar(address expectedMsgSender) public {
+        require(msg.sender == expectedMsgSender, "bad prank");
+    }
+}
+
+contract ComplexPrank {
+    Hevm hevm = Hevm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+
+    function uncompletedPrank() public {
+        hevm.startPrank(address(1337));
+    }
+
+    function completePrank(Prank prank) public {
+        prank.bar(address(1337));
+        hevm.stopPrank();
+        prank.bar(address(this));
+    }
+}
+
+

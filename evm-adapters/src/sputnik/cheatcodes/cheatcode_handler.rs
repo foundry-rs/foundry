@@ -29,6 +29,7 @@ use ethers::{
 };
 use std::convert::Infallible;
 
+use crate::sputnik::cheatcodes::patch_hardhat_console_log_selector;
 use once_cell::sync::Lazy;
 
 // This is now getting us the right hash? Also tried [..20]
@@ -43,6 +44,12 @@ pub static CHEATCODE_ADDRESS: Lazy<Address> = Lazy::new(|| {
 pub static CONSOLE_ADDRESS: Lazy<Address> = Lazy::new(|| {
     Address::from_slice(&hex::decode("000000000000000000636F6e736F6c652e6c6f67").unwrap())
 });
+
+/// For certain cheatcodes, we may internally change the status of the call, i.e. in
+/// `expectRevert`. Solidity will see a successful call and attempt to abi.decode for the called
+/// function. Therefore, we need to populate the return with dummy bytes such that the decode
+/// doesn't fail
+pub static DUMMY_OUTPUT: [u8; 320] = [0u8; 320];
 
 /// Hooks on live EVM execution and forwards everything else to a Sputnik [`Handler`].
 ///
@@ -79,6 +86,10 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
 
     fn state_mut(&mut self) -> &mut CheatcodeStackState<'a, B> {
         self.handler.state_mut()
+    }
+
+    fn expected_revert(&self) -> Option<&[u8]> {
+        self.handler.state().expected_revert.as_deref()
     }
 
     fn gas_left(&self) -> U256 {
@@ -295,6 +306,8 @@ fn evm_error(retdata: &str) -> Capture<(ExitReason, Vec<u8>), Infallible> {
 impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> {
     /// Given a transaction's calldata, it tries to parse it a console call and print the call
     fn console_log(&mut self, input: Vec<u8>) -> Capture<(ExitReason, Vec<u8>), Infallible> {
+        // replacing hardhat style selectors (`uint`) with abigen style (`uint256`)
+        let input = patch_hardhat_console_log_selector(input);
         let decoded = match ConsoleCalls::decode(&input) {
             Ok(inner) => inner,
             Err(err) => return evm_error(&err.to_string()),
@@ -308,8 +321,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
     fn apply_cheatcode(
         &mut self,
         input: Vec<u8>,
-        transfer: Option<Transfer>,
-        target_gas: Option<u64>,
+        msg_sender: H160,
     ) -> Capture<(ExitReason, Vec<u8>), Infallible> {
         let mut res = vec![];
 
@@ -327,6 +339,9 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
             }
             HEVMCalls::Roll(inner) => {
                 state.backend.cheats.block_number = Some(inner.0);
+            }
+            HEVMCalls::Fee(inner) => {
+                state.backend.cheats.block_base_fee_per_gas = Some(inner.0);
             }
             HEVMCalls::Store(inner) => {
                 state.set_storage(inner.0, inner.1.into(), inner.2.into());
@@ -410,31 +425,56 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
             }
             HEVMCalls::Prank(inner) => {
                 let caller = inner.0;
-                let address = inner.1;
-                let input = inner.2;
-
-                let value =
-                    if let Some(ref transfer) = transfer { transfer.value } else { U256::zero() };
-
-                // change origin
-                let context = Context { caller, address, apparent_value: value };
-                let ret = self.call(
-                    address,
-                    Some(Transfer { source: caller, target: address, value }),
-                    input.to_vec(),
-                    target_gas,
-                    false,
-                    context,
-                );
-                res = match ret {
-                    Capture::Exit((successful, v)) => match successful {
-                        ExitReason::Succeed(_) => {
-                            ethers::abi::encode(&[Token::Bool(true), Token::Bytes(v.to_vec())])
-                        }
-                        _ => ethers::abi::encode(&[Token::Bool(false), Token::Bytes(v.to_vec())]),
-                    },
-                    _ => vec![],
-                };
+                if let Some((orginal_pranker, caller, depth)) = self.state().msg_sender {
+                    let start_prank_depth = if let Some(depth) = self.state().metadata().depth() {
+                        depth + 1
+                    } else {
+                        0
+                    };
+                    // we allow someone to do a 1 time prank even when startPrank is set if
+                    // and only if we ensure that the startPrank *cannot* be applied to the
+                    // following call
+                    if start_prank_depth == depth && caller == orginal_pranker {
+                        return evm_error("You have an active `startPrank` at this frame depth already. Use either `prank` or `startPrank`, not both");
+                    }
+                }
+                self.state_mut().next_msg_sender = Some(caller);
+            }
+            HEVMCalls::StartPrank(inner) => {
+                // startPrank works by using frame depth to determine whether to overwrite
+                // msg.sender if we set a prank caller at a particular depth, it
+                // will continue to use the prank caller for any subsequent calls
+                // until stopPrank is called.
+                //
+                // We additionally have to store the original message sender of the cheatcode caller
+                // so that we dont apply it to any other addresses when depth ==
+                // prank_depth
+                let caller = inner.0;
+                if self.state().next_msg_sender.is_some() {
+                    return evm_error("You have an active `prank` call already. Use either `prank` or `startPrank`, not both");
+                } else {
+                    self.state_mut().msg_sender = Some((
+                        msg_sender,
+                        caller,
+                        if let Some(depth) = self.state().metadata().depth() {
+                            depth + 1
+                        } else {
+                            0
+                        },
+                    ));
+                }
+            }
+            HEVMCalls::StopPrank(_) => {
+                self.state_mut().msg_sender = None;
+            }
+            HEVMCalls::ExpectRevert(inner) => {
+                if self.state().expected_revert.is_some() {
+                    return evm_error(
+                        "You must call another function prior to expecting a second revert.",
+                    )
+                } else {
+                    self.state_mut().expected_revert = Some(inner.0.to_vec());
+                }
             }
             HEVMCalls::Deal(inner) => {
                 let who = inner.0;
@@ -915,21 +955,101 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
         // to the state.
         // NB: This is very similar to how Optimism's custom intercept logic to "predeploys" work
         // (e.g. with the StateManager)
+
         if code_address == *CHEATCODE_ADDRESS {
-            self.apply_cheatcode(input, transfer, target_gas)
+            self.apply_cheatcode(input, context.caller)
         } else if code_address == *CONSOLE_ADDRESS {
             self.console_log(input)
         } else {
-            self.call_inner(
+            // modify execution context depending on the cheatcode
+            let expected_revert = self.state_mut().expected_revert.take();
+            let mut new_context = context;
+            let mut new_transfer = transfer;
+
+            // handle `startPrank` - see apply_cheatcodes for more info
+            if let Some((original_msg_sender, permanent_caller, depth)) = self.state().msg_sender {
+                let curr_depth =
+                    if let Some(depth) = self.state().metadata().depth() { depth + 1 } else { 0 };
+                if curr_depth == depth && new_context.caller == original_msg_sender {
+                    new_context.caller = permanent_caller;
+
+                    if let Some(t) = &new_transfer {
+                        new_transfer = Some(Transfer {
+                            source: permanent_caller,
+                            target: t.target,
+                            value: t.value,
+                        });
+                    }
+                }
+            }
+
+            // handle normal `prank`
+            if let Some(caller) = self.state_mut().next_msg_sender.take() {
+                new_context.caller = caller;
+
+                if let Some(t) = &new_transfer {
+                    new_transfer =
+                        Some(Transfer { source: caller, target: t.target, value: t.value });
+                }
+            }
+
+            // perform the call
+            let res = self.call_inner(
                 code_address,
-                transfer,
+                new_transfer,
                 input,
                 target_gas,
                 is_static,
                 true,
                 true,
-                context,
-            )
+                new_context,
+            );
+
+            if let Some(expected_revert) = expected_revert {
+                let final_res = match res {
+                    Capture::Exit((ExitReason::Revert(_e), data)) => {
+                        if data.len() >= 4 && data[0..4] == [8, 195, 121, 160] {
+                            // its a revert string
+                            let decoded_data =
+                                ethers::abi::decode(&[ethers::abi::ParamType::Bytes], &data[4..])
+                                    .expect("String error code, but not actual string");
+                            let decoded_data = decoded_data[0]
+                                .clone()
+                                .into_bytes()
+                                .expect("Can never fail because it is bytes");
+                            if decoded_data == *expected_revert {
+                                return Capture::Exit((
+                                    ExitReason::Succeed(ExitSucceed::Returned),
+                                    DUMMY_OUTPUT.to_vec(),
+                                ))
+                            } else {
+                                return evm_error(&*format!(
+                                    "Error != expected error: '{}' != '{}'",
+                                    String::from_utf8_lossy(&decoded_data[..]),
+                                    String::from_utf8_lossy(&expected_revert)
+                                ))
+                            }
+                        }
+
+                        if data == *expected_revert {
+                            Capture::Exit((
+                                ExitReason::Succeed(ExitSucceed::Returned),
+                                DUMMY_OUTPUT.to_vec(),
+                            ))
+                        } else {
+                            evm_error(&*format!(
+                                "Error data != expected error data: 0x{} != 0x{}",
+                                hex::encode(data),
+                                hex::encode(expected_revert)
+                            ))
+                        }
+                    }
+                    _ => evm_error("Expected revert call did not revert"),
+                };
+                final_res
+            } else {
+                res
+            }
         }
     }
 
@@ -1124,10 +1244,17 @@ mod tests {
         // after the evm call is done, we call `logs` and print it all to the user
         let (_, _, _, logs) =
             evm.call::<(), _, _>(Address::zero(), addr, "test_log()", (), 0.into()).unwrap();
-        let expected = ["0x1111111111111111111111111111111111111111", "Hi", "Hi, Hi"]
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>();
+        let expected = [
+            "0x1111111111111111111111111111111111111111",
+            "Hi",
+            "Hi, Hi",
+            "1337",
+            "1337, 1245",
+            "Hi, 1337",
+        ]
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
         assert_eq!(logs, expected);
     }
 
@@ -1158,7 +1285,7 @@ mod tests {
 
     #[test]
     fn cheatcodes() {
-        let config = Config::istanbul();
+        let config = Config::london();
         let vicinity = new_vicinity();
         let backend = new_backend(&vicinity, Default::default());
         let gas_limit = 10_000_000;
@@ -1188,14 +1315,18 @@ mod tests {
 
         let abi = compiled.abi.as_ref().unwrap();
         for func in abi.functions().filter(|func| func.name.starts_with("test")) {
+            // Skip the FFI unit test if not in a unix system
+            if func.name == "testFFI" && !cfg!(unix) {
+                continue
+            }
+
             let should_fail = func.name.starts_with("testFail");
             if func.inputs.is_empty() {
                 let (_, reason, _, _) =
                     evm.as_mut().call_unchecked(Address::zero(), addr, func, (), 0.into()).unwrap();
                 assert!(evm.as_mut().check_success(addr, &reason, should_fail));
             } else {
-                // if the unwrap passes then it works
-                evm.fuzz(func, addr, should_fail).unwrap();
+                assert!(evm.fuzz(func, addr, should_fail).is_ok());
             }
 
             evm.as_mut().reset(state.clone());

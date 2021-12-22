@@ -19,6 +19,9 @@ pub struct MemoryStackStateOwned<'config, B> {
     pub substate: MemoryStackSubstate<'config>,
     pub call_index: usize,
     pub traces: Vec<CallTraceArena>,
+    pub expected_revert: Option<Vec<u8>>,
+    pub next_msg_sender: Option<H160>,
+    pub msg_sender: Option<(H160, H160, usize)>,
 }
 
 impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
@@ -51,7 +54,9 @@ impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
             substate: MemoryStackSubstate::new(metadata),
             call_index: 0,
             traces: vec![Default::default()],
-        }
+            expected_revert: None,
+            next_msg_sender: None,
+            msg_sender: None,
     }
 }
 

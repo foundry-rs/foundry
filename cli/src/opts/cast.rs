@@ -1,16 +1,16 @@
-use std::{convert::TryFrom, str::FromStr, sync::Arc};
+use std::str::FromStr;
 
-use ethers::{
-    providers::{Http, Provider},
-    signers::{coins_bip39::English, LocalWallet, MnemonicBuilder},
-    types::{Address, BlockId, BlockNumber, NameOrAddress, H256},
-};
-use eyre::Result;
+use ethers::types::{Address, BlockId, BlockNumber, NameOrAddress, H256};
 use structopt::StructOpt;
+
+use super::EthereumOpts;
 
 #[derive(Debug, StructOpt)]
 #[structopt(about = "Perform Ethereum RPC calls from the comfort of your command line.")]
 pub enum Subcommands {
+    #[structopt(name = "--max-uint")]
+    #[structopt(about = "maximum u256 value")]
+    MaxUint,
     #[structopt(aliases = &["--from-ascii"])]
     #[structopt(name = "--from-utf8")]
     #[structopt(about = "convert text data into hexdata")]
@@ -50,6 +50,9 @@ pub enum Subcommands {
     #[structopt(name = "--to-wei")]
     #[structopt(about = "convert an ETH amount into wei")]
     ToWei { value: Option<String>, unit: Option<String> },
+    #[structopt(name = "--from-wei")]
+    #[structopt(about = "convert wei into an ETH amount")]
+    FromWei { value: Option<String>, unit: Option<String> },
     #[structopt(name = "block")]
     #[structopt(
         about = "Prints information about <block>. If <field> is given, print only the value of that field"
@@ -107,6 +110,16 @@ pub enum Subcommands {
     #[structopt(name = "namehash")]
     #[structopt(about = "returns ENS namehash of provided name")]
     Namehash { name: String },
+    #[structopt(name = "tx")]
+    #[structopt(about = "Show information about the transaction <tx-hash>")]
+    Tx {
+        hash: String,
+        field: Option<String>,
+        #[structopt(long = "--json", short = "-j")]
+        to_json: bool,
+        #[structopt(long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+    },
     #[structopt(name = "send")]
     #[structopt(about = "Publish a transaction signed by <from> to call <to> with <data>")]
     SendTx {
@@ -116,6 +129,8 @@ pub enum Subcommands {
         sig: String,
         #[structopt(help = "the list of arguments you want to call the function with")]
         args: Vec<String>,
+        #[structopt(long, env = "CAST_ASYNC")]
+        cast_async: bool,
         #[structopt(flatten)]
         eth: EthereumOpts,
     },
@@ -142,6 +157,16 @@ pub enum Subcommands {
     BaseFee {
         #[structopt(global = true, help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
         block: Option<BlockId>,
+        #[structopt(short, long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+    },
+    #[structopt(name = "code")]
+    #[structopt(about = "Prints the bytecode at <address>")]
+    Code {
+        #[structopt(long, short, help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
+        block: Option<BlockId>,
+        #[structopt(help = "the address you want to query", parse(try_from_str = parse_name_or_address))]
+        who: NameOrAddress,
         #[structopt(short, long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
@@ -198,6 +223,16 @@ pub enum Subcommands {
         )]
         block: Option<BlockId>,
     },
+    #[structopt(name = "nonce")]
+    #[structopt(about = "Prints the number of transactions sent from <address>")]
+    Nonce {
+        #[structopt(long, short = "-B", help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
+        block: Option<BlockId>,
+        #[structopt(help = "the address you want to query", parse(try_from_str = parse_name_or_address))]
+        who: NameOrAddress,
+        #[structopt(short, long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+    },
 }
 
 fn parse_name_or_address(s: &str) -> eyre::Result<NameOrAddress> {
@@ -230,104 +265,4 @@ fn parse_slot(s: &str) -> eyre::Result<H256> {
 pub struct Opts {
     #[structopt(subcommand)]
     pub sub: Subcommands,
-}
-
-#[derive(StructOpt, Debug, Clone)]
-pub struct EthereumOpts {
-    #[structopt(
-        env = "ETH_RPC_URL",
-        short,
-        long = "rpc-url",
-        help = "The tracing / archival node's URL"
-    )]
-    pub rpc_url: String,
-
-    #[structopt(env = "ETH_FROM", short, long = "from", help = "The sender account")]
-    pub from: Option<Address>,
-
-    #[structopt(long, env = "CAST_ASYNC")]
-    pub cast_async: bool,
-
-    #[structopt(flatten)]
-    pub wallet: Wallet,
-}
-
-// TODO: Improve these so that we return a middleware trait object
-impl EthereumOpts {
-    #[allow(unused)]
-    pub fn provider(&self) -> eyre::Result<Arc<Provider<Http>>> {
-        Ok(Arc::new(Provider::try_from(self.rpc_url.as_str())?))
-    }
-
-    /// Returns a [`LocalWallet`] corresponding to the provided private key or mnemonic
-    pub fn signer(&self) -> eyre::Result<Option<LocalWallet>> {
-        self.wallet.signer()
-    }
-}
-
-#[derive(StructOpt, Debug, Clone)]
-pub struct Wallet {
-    #[structopt(long = "private_key", help = "Your private key string")]
-    pub private_key: Option<String>,
-
-    #[structopt(long = "keystore", help = "Path to your keystore folder / file")]
-    pub keystore_path: Option<String>,
-
-    #[structopt(long = "password", help = "Your keystore password", requires = "keystore_path")]
-    pub keystore_password: Option<String>,
-
-    #[structopt(long = "mnemonic_path", help = "Path to your mnemonic file")]
-    pub mnemonic_path: Option<String>,
-
-    #[structopt(
-        long = "mnemonic_index",
-        help = "your index in the standard hd path",
-        default_value = "0",
-        requires = "mnemonic_path"
-    )]
-    pub mnemonic_index: u32,
-}
-
-impl Wallet {
-    pub fn signer(&self) -> Result<Option<LocalWallet>> {
-        self.private_key()
-            .transpose()
-            .or_else(|| self.mnemonic().transpose())
-            .or_else(|| self.keystore().transpose())
-            .transpose()
-    }
-
-    fn private_key(&self) -> Result<Option<LocalWallet>> {
-        Ok(if let Some(ref private_key) = self.private_key {
-            Some(LocalWallet::from_str(private_key)?)
-        } else {
-            None
-        })
-    }
-
-    fn keystore(&self) -> Result<Option<LocalWallet>> {
-        Ok(match (&self.keystore_path, &self.keystore_password) {
-            (Some(path), Some(password)) => Some(LocalWallet::decrypt_keystore(path, password)?),
-            (Some(path), None) => {
-                println!("Insert keystore password:");
-                let password = rpassword::read_password().unwrap();
-                Some(LocalWallet::decrypt_keystore(path, password)?)
-            }
-            (None, _) => None,
-        })
-    }
-
-    fn mnemonic(&self) -> Result<Option<LocalWallet>> {
-        Ok(if let Some(ref path) = self.mnemonic_path {
-            let mnemonic = std::fs::read_to_string(path)?.replace("\n", "");
-            Some(
-                MnemonicBuilder::<English>::default()
-                    .phrase(mnemonic.as_str())
-                    .index(self.mnemonic_index)?
-                    .build()?,
-            )
-        } else {
-            None
-        })
-    }
 }
