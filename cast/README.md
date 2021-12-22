@@ -5,7 +5,7 @@
 - [ ] `--abi-decode`
 - [ ] `--calldata-decode`
 - [x] `--from-ascii` (with `--from-utf8` alias)
-- [] `--from-bin`
+- [ ] `--from-bin`
 - [ ] `--from-fix`
 - [ ] `--from-wei`
 - [x] `--max-int`
