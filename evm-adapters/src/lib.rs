@@ -52,6 +52,8 @@ pub trait Evm<State> {
     /// Gets the revert reason type
     fn revert() -> Self::ReturnReason;
 
+    fn expected_revert(&self) -> Option<&[u8]>;
+
     /// Whether a return reason should be considered successful
     fn is_success(reason: &Self::ReturnReason) -> bool;
     /// Whether a return reason should be considered failing
@@ -163,6 +165,10 @@ pub trait Evm<State> {
             if let Ok(failed) = self.failed(address) {
                 success = !failed;
             }
+        }
+        // check if there is a remaining expected revert
+        if self.expected_revert().is_some() {
+            success = false;
         }
 
         // Check Success output: Should Fail vs Success

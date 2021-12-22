@@ -53,6 +53,9 @@ pub enum Subcommands {
     #[structopt(name = "--to-wei")]
     #[structopt(about = "convert an ETH amount into wei")]
     ToWei { value: Option<String>, unit: Option<String> },
+    #[structopt(name = "--from-wei")]
+    #[structopt(about = "convert wei into an ETH amount")]
+    FromWei { value: Option<String>, unit: Option<String> },
     #[structopt(name = "block")]
     #[structopt(
         about = "Prints information about <block>. If <field> is given, print only the value of that field"
@@ -110,6 +113,16 @@ pub enum Subcommands {
     #[structopt(name = "namehash")]
     #[structopt(about = "returns ENS namehash of provided name")]
     Namehash { name: String },
+    #[structopt(name = "tx")]
+    #[structopt(about = "Show information about the transaction <tx-hash>")]
+    Tx {
+        hash: String,
+        field: Option<String>,
+        #[structopt(long = "--json", short = "-j")]
+        to_json: bool,
+        #[structopt(long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+    },
     #[structopt(name = "send")]
     #[structopt(about = "Publish a transaction signed by <from> to call <to> with <data>")]
     SendTx {
@@ -212,6 +225,16 @@ pub enum Subcommands {
             parse(try_from_str = parse_block_id)
         )]
         block: Option<BlockId>,
+    },
+    #[structopt(name = "nonce")]
+    #[structopt(about = "Prints the number of transactions sent from <address>")]
+    Nonce {
+        #[structopt(long, short = "-B", help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
+        block: Option<BlockId>,
+        #[structopt(help = "the address you want to query", parse(try_from_str = parse_name_or_address))]
+        who: NameOrAddress,
+        #[structopt(short, long, env = "ETH_RPC_URL")]
+        rpc_url: String,
     },
 }
 
