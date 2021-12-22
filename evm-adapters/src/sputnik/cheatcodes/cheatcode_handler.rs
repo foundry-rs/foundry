@@ -95,6 +95,10 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
         U256::from(self.state().metadata().gasometer().gas())
     }
 
+    fn all_logs(&self) -> Vec<String> {
+        self.handler.state().all_logs.clone()
+    }
+
     fn transact_call(
         &mut self,
         caller: H160,
@@ -104,6 +108,9 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
         gas_limit: u64,
         access_list: Vec<(H160, Vec<H256>)>,
     ) -> (ExitReason, Vec<u8>) {
+        // reset all_logs because its a new call
+        self.state_mut().all_logs = vec![];
+
         let transaction_cost = gasometer::call_transaction_cost(&data, &access_list);
         match self.state_mut().metadata_mut().gasometer_mut().record_transaction(transaction_cost) {
             Ok(()) => (),
@@ -146,6 +153,9 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
         gas_limit: u64,
         access_list: Vec<(H160, Vec<H256>)>,
     ) -> ExitReason {
+        // reset all_logs because its a new call
+        self.state_mut().all_logs = vec![];
+
         let transaction_cost = gasometer::create_transaction_cost(&init_code, &access_list);
         match self.state_mut().metadata_mut().gasometer_mut().record_transaction(transaction_cost) {
             Ok(()) => (),
@@ -481,6 +491,9 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         take_stipend: bool,
         context: Context,
     ) -> Capture<(ExitReason, Vec<u8>), Infallible> {
+        let logs = self.logs();
+        let logs_len = logs.len();
+        self.state_mut().all_logs.extend(logs);
         macro_rules! try_or_fail {
             ( $e:expr ) => {
                 match $e {
@@ -581,6 +594,12 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         let reason = self.execute(&mut runtime);
         // // log::debug!(target: "evm", "Call execution using address {}: {:?}", code_address,
         // reason);
+        
+        // we add any logs produced by the substate to the all_logs.
+        // this allows us to keep around any logs that may be dropped if a call reverts
+        let logs = self.logs()[..logs_len].to_vec();
+        self.state_mut().all_logs.extend(logs);
+
         match reason {
             ExitReason::Succeed(s) => {
                 let _ = self.handler.exit_substate(StackExitKind::Succeeded);
@@ -612,6 +631,10 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         target_gas: Option<u64>,
         take_l64: bool,
     ) -> Capture<(ExitReason, Option<H160>, Vec<u8>), Infallible> {
+        let logs = self.logs();
+        let logs_len = logs.len();
+        self.state_mut().all_logs.extend(logs);
+        
         macro_rules! try_or_fail {
             ( $e:expr ) => {
                 match $e {
@@ -704,6 +727,9 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
 
         let reason = self.execute(&mut runtime);
         // log::debug!(target: "evm", "Create execution using address {}: {:?}", address, reason);
+
+        let logs = self.logs()[..logs_len].to_vec();
+        self.state_mut().all_logs.extend(logs);
 
         match reason {
             ExitReason::Succeed(s) => {

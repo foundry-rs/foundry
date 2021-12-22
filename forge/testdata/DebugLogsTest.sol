@@ -19,4 +19,16 @@ contract DebugLogsTest is DSTest {
         emit log("two");
     }
 
+    function testFailWithRevert() public {
+        Fails fails = new Fails();
+        emit log("three");
+        fails.failure();
+    }
+}
+
+contract Fails is DSTest {
+    function failure() public {
+        emit log("failure");
+        revert();
+    }
 }
