@@ -69,6 +69,41 @@ pub struct CheatcodeHandler<H> {
     console_logs: Vec<String>,
 }
 
+pub(crate) fn convert_log(log: Log) -> Option<String> {
+    use HevmConsoleEvents::*;
+    let log = RawLog { topics: log.topics, data: log.data };
+    let event = HevmConsoleEvents::decode_log(&log).ok()?;
+    let ret = match event {
+        LogsFilter(inner) => format!("{}", inner.0),
+        LogBytesFilter(inner) => format!("{}", inner.0),
+        LogNamedAddressFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
+        LogNamedBytes32Filter(inner) => {
+            format!("{}: 0x{}", inner.key, hex::encode(inner.val))
+        }
+        LogNamedDecimalIntFilter(inner) => format!(
+            "{}: {:?}",
+            inner.key,
+            ethers::utils::parse_units(inner.val, inner.decimals.as_u32()).unwrap()
+        ),
+        LogNamedDecimalUintFilter(inner) => {
+            format!(
+                "{}: {:?}",
+                inner.key,
+                ethers::utils::parse_units(inner.val, inner.decimals.as_u32()).unwrap()
+            )
+        }
+        LogNamedIntFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
+        LogNamedUintFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
+        LogNamedBytesFilter(inner) => {
+            format!("{}: 0x{}", inner.key, hex::encode(inner.val))
+        }
+        LogNamedStringFilter(inner) => format!("{}: {}", inner.key, inner.val),
+
+        e => e.to_string(),
+    };
+    Some(ret)
+}
+
 // Forwards everything internally except for the transact_call which is overwritten.
 // TODO: Maybe we can pull this functionality up to the `Evm` trait to avoid having so many traits?
 impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'a, B>>
@@ -491,9 +526,6 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         take_stipend: bool,
         context: Context,
     ) -> Capture<(ExitReason, Vec<u8>), Infallible> {
-        let logs = self.logs();
-        let logs_len = logs.len();
-        self.state_mut().all_logs.extend(logs);
         macro_rules! try_or_fail {
             ( $e:expr ) => {
                 match $e {
@@ -595,11 +627,6 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         // // log::debug!(target: "evm", "Call execution using address {}: {:?}", code_address,
         // reason);
 
-        // we add any logs produced by the substate to the all_logs.
-        // this allows us to keep around any logs that may be dropped if a call reverts
-        let logs = self.logs()[..logs_len].to_vec();
-        self.state_mut().all_logs.extend(logs);
-
         match reason {
             ExitReason::Succeed(s) => {
                 let _ = self.handler.exit_substate(StackExitKind::Succeeded);
@@ -631,10 +658,6 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         target_gas: Option<u64>,
         take_l64: bool,
     ) -> Capture<(ExitReason, Option<H160>, Vec<u8>), Infallible> {
-        let logs = self.logs();
-        let logs_len = logs.len();
-        self.state_mut().all_logs.extend(logs);
-
         macro_rules! try_or_fail {
             ( $e:expr ) => {
                 match $e {
@@ -727,9 +750,6 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
 
         let reason = self.execute(&mut runtime);
         // log::debug!(target: "evm", "Create execution using address {}: {:?}", address, reason);
-
-        let logs = self.logs()[..logs_len].to_vec();
-        self.state_mut().all_logs.extend(logs);
 
         match reason {
             ExitReason::Succeed(s) => {
@@ -992,6 +1012,14 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
     }
 
     fn log(&mut self, address: H160, topics: Vec<H256>, data: Vec<u8>) -> Result<(), ExitError> {
+        if let Some(decoded) = convert_log(Log {
+            address: address,
+            topics: topics.clone(),
+            data: data.clone(),
+        }) {
+            self.state_mut().all_logs.push(decoded);    
+        }
+        
         self.handler.log(address, topics, data)
     }
 

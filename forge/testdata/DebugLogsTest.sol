@@ -24,6 +24,11 @@ contract DebugLogsTest is DSTest {
         emit log("three");
         fails.failure();
     }
+
+    function testFailWithRequire() public {
+        emit log("four");
+        require(false);
+    }
 }
 
 contract Fails is DSTest {

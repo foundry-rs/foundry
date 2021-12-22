@@ -265,6 +265,14 @@ mod tests {
                     "failure".to_owned()
                 ]
             );
+            assert_eq!(
+                reasons[&"testFailWithRequire()".to_owned()],
+                vec![
+                    "constructor".to_owned(),
+                    "setUp".to_owned(),
+                    "four".to_owned()
+                ]
+            );
         }
 
         #[test]
