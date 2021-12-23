@@ -472,17 +472,12 @@ impl CallTrace {
                                         .expect("Bad func output decode"),
                                 )
                             } else if !self.output.is_empty() && !self.success {
-                                match foundry_utils::decode_revert(&self.output[..]) {
-                                    Ok(decoded_error) => {
-                                        println!("here");
-                                        return Output::Token(vec![ethers::abi::Token::String(
-                                            decoded_error,
-                                        )])
-                                    }
-                                    Err(e) => {
-                                        println!("{:?}", e);
-                                        return Output::Raw(self.output.clone())
-                                    }
+                                if let Ok(decoded_error) = foundry_utils::decode_revert(&self.output[..]) {
+                                    return Output::Token(vec![ethers::abi::Token::String(
+                                        decoded_error,
+                                    )])
+                                } else {
+                                    return Output::Raw(self.output.clone())
                                 }
                             } else {
                                 return Output::Raw(vec![])
