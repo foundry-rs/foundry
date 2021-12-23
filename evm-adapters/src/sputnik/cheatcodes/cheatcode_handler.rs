@@ -4,7 +4,7 @@ use super::{
     HEVMCalls, HevmConsoleEvents,
 };
 use crate::{
-    call_tracing::{CallTrace, CallTraceArena},
+    call_tracing::{CallTrace, CallTraceArena, LogCallOrder},
     sputnik::{Executor, SputnikExecutor},
     Evm,
 };
@@ -271,7 +271,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet>
         // create the memory stack state (owned, so that we can modify the backend via
         // self.state_mut on the transact_call fn)
         let metadata = StackSubstateMetadata::new(gas_limit, config);
-        let state = MemoryStackStateOwned::new(metadata, backend);
+        let state = MemoryStackStateOwned::new(metadata, backend, enable_trace);
 
         // create the executor and wrap it with the cheatcode handler
         let executor = StackExecutor::new_with_precompiles(state, config, precompiles);
@@ -524,56 +524,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
             // we should probably delay having the input and other stuff so
             // we minimize the size of the clone
             trace = self.state_mut().trace_mut().push_trace(0, trace.clone());
-
-            if trace.depth > 0 && prelogs > 0 {
-                let trace_index = trace.idx;
-                let parent_index =
-                    self.state().trace().arena[trace_index].parent.expect("No parent");
-
-                let child_logs = self.state().trace().inner_number_of_logs(parent_index);
-                if self.raw_logs().len() >= prelogs {
-                    if prelogs.saturating_sub(child_logs).saturating_sub(
-                        self.state().trace().arena[parent_index]
-                            .trace
-                            .prelogs
-                            .len()
-                            .saturating_sub(1),
-                    ) > 0
-                    {
-                        let prelogs =
-                            self.state().substate.logs().to_vec()[self.state().trace().arena
-                                [parent_index]
-                                .trace
-                                .prelogs
-                                .len() +
-                                child_logs..
-                                prelogs]
-                                .to_vec();
-                        let parent = &mut self.state_mut().trace_mut().arena[parent_index];
-
-                        if prelogs.len() > 0 {
-                            prelogs.into_iter().for_each(|prelog| {
-                                if prelog.address == parent.trace.addr {
-                                    parent.trace.prelogs.push((
-                                        RawLog { topics: prelog.topics, data: prelog.data },
-                                        trace.location,
-                                    ));
-                                }
-                            });
-                        }
-                    }
-                }
-            } else if trace.depth == 0 {
-                if self.raw_logs().len() >= prelogs {
-                    let prelogs = self.raw_logs()[0..prelogs].to_vec();
-                    prelogs.into_iter().for_each(|prelog| {
-                        self.state_mut().trace_mut().arena[0]
-                            .trace
-                            .prelogs
-                            .push((prelog, trace.location));
-                    })
-                }
-            }
+            self.state_mut().trace_index = trace.idx;
             Some(trace)
         } else {
             None
@@ -582,25 +533,6 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
 
     fn fill_trace(&mut self, new_trace: Option<CallTrace>, success: bool, output: Option<Vec<u8>>) {
         if let Some(new_trace) = new_trace {
-            let prelogs = self.state_mut().trace_mut().arena[new_trace.idx].trace.prelogs.len();
-            let child_logs = self.state().trace().inner_number_of_logs(new_trace.idx);
-
-            let logs = self.state().substate.logs().to_vec();
-            if logs.len() > prelogs + child_logs {
-                let applicable_logs = logs[prelogs + child_logs..]
-                    .to_vec()
-                    .into_iter()
-                    .filter(|log| log.address == new_trace.addr)
-                    .collect::<Vec<_>>();
-
-                applicable_logs.into_iter().for_each(|log| {
-                    self.state_mut().trace_mut().arena[new_trace.idx]
-                        .trace
-                        .logs
-                        .push(RawLog { topics: log.topics, data: log.data });
-                });
-            }
-
             let used_gas = self.handler.used_gas();
             let trace = &mut self.state_mut().trace_mut().arena[new_trace.idx].trace;
             trace.output = output.unwrap_or(vec![]);
@@ -622,8 +554,8 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         take_stipend: bool,
         context: Context,
     ) -> Capture<(ExitReason, Vec<u8>), Infallible> {
-        let prelogs = self.raw_logs().len();
-        let trace = self.start_trace(code_address, input.clone(), false, prelogs);
+        let pre_index = self.state().trace_index;
+        let trace = self.start_trace(code_address, input.clone(), false, 0);
 
         macro_rules! try_or_fail {
             ( $e:expr ) => {
@@ -732,6 +664,9 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         let config = self.config().clone();
         let mut runtime = Runtime::new(Rc::new(code), Rc::new(input), context, &config);
         let reason = self.execute(&mut runtime);
+
+        self.state_mut().trace_index = pre_index;
+
         // // log::debug!(target: "evm", "Call execution using address {}: {:?}", code_address,
         // reason);
         match reason {
@@ -769,10 +704,11 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         target_gas: Option<u64>,
         take_l64: bool,
     ) -> Capture<(ExitReason, Option<H160>, Vec<u8>), Infallible> {
-        let prelogs = self.raw_logs().len();
+        let pre_index = self.state().trace_index;
+
         let address = self.create_address(scheme);
 
-        let trace = self.start_trace(address, init_code.clone(), true, prelogs);
+        let trace = self.start_trace(address, init_code.clone(), true, 0);
 
         macro_rules! try_or_fail {
             ( $e:expr ) => {
@@ -872,7 +808,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
 
         let reason = self.execute(&mut runtime);
         // log::debug!(target: "evm", "Create execution using address {}: {:?}", address, reason);
-
+        self.state_mut().trace_index = pre_index;
         match reason {
             ExitReason::Succeed(s) => {
                 let out = runtime.machine().return_value();
@@ -955,7 +891,6 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
         // to the state.
         // NB: This is very similar to how Optimism's custom intercept logic to "predeploys" work
         // (e.g. with the StateManager)
-
         if code_address == *CHEATCODE_ADDRESS {
             self.apply_cheatcode(input, context.caller)
         } else if code_address == *CONSOLE_ADDRESS {
@@ -1141,6 +1076,13 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
     }
 
     fn log(&mut self, address: H160, topics: Vec<H256>, data: Vec<u8>) -> Result<(), ExitError> {
+        if self.state().trace_enabled {
+            let index = self.state().trace_index;
+            let node = &mut self.state_mut().traces.last_mut().expect("no traces").arena[index];
+            node.ordering.push(LogCallOrder::Log(node.logs.len()));
+            node.logs.push(RawLog { topics: topics.clone(), data: data.clone() });
+        }
+
         self.handler.log(address, topics, data)
     }
 

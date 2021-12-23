@@ -158,8 +158,14 @@ impl Cmd for TestArgs {
                 let backend = Arc::new(backend);
 
                 let precompiles = PRECOMPILES_MAP.clone();
-                let evm =
-                    Executor::new_with_cheatcodes(backend, env.gas_limit, &cfg, &precompiles, ffi, verbosity > 2,);
+                let evm = Executor::new_with_cheatcodes(
+                    backend,
+                    env.gas_limit,
+                    &cfg,
+                    &precompiles,
+                    ffi,
+                    verbosity > 2,
+                );
 
                 test(builder, project, evm, pattern, json, verbosity, allow_failure)
             }

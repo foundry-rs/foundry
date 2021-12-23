@@ -17,7 +17,9 @@ use ethers::types::{H160, H256, U256};
 pub struct MemoryStackStateOwned<'config, B> {
     pub backend: B,
     pub substate: MemoryStackSubstate<'config>,
+    pub trace_enabled: bool,
     pub call_index: usize,
+    pub trace_index: usize,
     pub traces: Vec<CallTraceArena>,
     pub expected_revert: Option<Vec<u8>>,
     pub next_msg_sender: Option<H160>,
@@ -48,15 +50,18 @@ impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
 }
 
 impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
-    pub fn new(metadata: StackSubstateMetadata<'config>, backend: B) -> Self {
+    pub fn new(metadata: StackSubstateMetadata<'config>, backend: B, trace_enabled: bool) -> Self {
         Self {
             backend,
             substate: MemoryStackSubstate::new(metadata),
+            trace_enabled,
             call_index: 0,
+            trace_index: 1,
             traces: vec![Default::default()],
             expected_revert: None,
             next_msg_sender: None,
             msg_sender: None,
+        }
     }
 }
 
