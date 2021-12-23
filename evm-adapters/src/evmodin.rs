@@ -73,6 +73,10 @@ impl<S: HostExt, Tr: Tracer> Evm<S> for EvmOdin<S, Tr> {
         &self.host
     }
 
+    fn all_logs(&self) -> Vec<String> {
+        vec![]
+    }
+
     #[allow(unused)]
     fn deploy(
         &mut self,

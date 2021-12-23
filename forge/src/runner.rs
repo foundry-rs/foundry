@@ -250,6 +250,8 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
             Err(err) => match err {
                 EvmError::Execution { reason, gas_used, logs: execution_logs } => {
                     logs.extend(execution_logs);
+                    // add reverted logs
+                    logs.extend(self.evm.all_logs());
                     (E::revert(), Some(reason), gas_used, logs)
                 }
                 err => {
