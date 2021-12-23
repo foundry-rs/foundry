@@ -597,7 +597,7 @@ fn diff_score(bytecode1: &[u8], bytecode2: &[u8]) -> f64 {
 
 fn decode_solidity_reverts(data: &[u8]) -> Option<&str> {
     if data.len() >= 4 {
-        match [data[0], data[1], data[2], data[3]] {
+        match data[0..4] {
             // keccak(Panic(uint256))
             [78, 72, 123, 113] => {
                 // ref: https://soliditydeveloper.com/solidity-0.8
