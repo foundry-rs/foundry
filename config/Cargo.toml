@@ -6,8 +6,9 @@ description = """
 Foundry configuration
 """
 repository = "https://github.com/gakonst/foundry"
-readme = "../README.md"
+readme = "README.md"
 
 [dependencies]
-dirs-next = "2.0.0"
+dirs-next = "2.0"
+serde = { version = "1.0", features = ["derive"] }
 toml = "0.5"
