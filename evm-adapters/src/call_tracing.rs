@@ -630,15 +630,15 @@ fn decode_solidity_reverts(data: &[u8]) -> Option<&str> {
                 match data[data.len() - 1] {
                     1 => {
                         // assert
-                        Some("assert failure")
+                        Some("Assertion violated")
                     }
                     17 => {
                         // safemath over/underflow
-                        Some("SafeMath over/underflow")
+                        Some("Arithmetic over/underflow")
                     }
                     18 => {
                         // divide by 0
-                        Some("Divide by 0")
+                        Some("Division or modulo by 0")
                     }
                     33 => {
                         // conversion into non-existent enum type
@@ -650,7 +650,7 @@ fn decode_solidity_reverts(data: &[u8]) -> Option<&str> {
                     }
                     49 => {
                         // pop() on empty array
-                        Some("pop() on empty array")
+                        Some("`pop()` on empty array")
                     }
                     50 => {
                         // index out of bounds
@@ -662,7 +662,7 @@ fn decode_solidity_reverts(data: &[u8]) -> Option<&str> {
                     }
                     81 => {
                         // calling a zero initialized variable of internal function type
-                        Some("calling a zero initialized variable of internal function type")
+                        Some("Calling a zero initialized variable of internal function type")
                     }
                     _ => None,
                 }
