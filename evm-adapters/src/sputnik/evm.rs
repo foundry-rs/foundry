@@ -171,9 +171,12 @@ pub mod helpers {
     use ethers::types::H160;
     use sputnik::backend::{MemoryBackend, MemoryVicinity};
 
-    use crate::sputnik::{
-        cheatcodes::cheatcode_handler::{CheatcodeStackExecutor, CheatcodeStackState},
-        PrecompileFn, PRECOMPILES_MAP,
+    use crate::{
+        fuzz::FuzzedExecutor,
+        sputnik::{
+            cheatcodes::cheatcode_handler::{CheatcodeStackExecutor, CheatcodeStackState},
+            PrecompileFn, PRECOMPILES_MAP,
+        },
     };
     use once_cell::sync::Lazy;
 
@@ -188,9 +191,22 @@ pub mod helpers {
     static VICINITY: Lazy<MemoryVicinity> = Lazy::new(|| new_vicinity());
     const GAS_LIMIT: u64 = 30_000_000;
 
+    /// Instantiates a Sputnik EVM with enabled cheatcodes + FFI and a simple non-forking in memory
+    /// backend
     pub fn vm<'a>() -> TestSputnikVM<'a, MemoryBackend<'a>> {
         let backend = new_backend(&*VICINITY, Default::default());
         Executor::new_with_cheatcodes(backend, GAS_LIMIT, &*CFG, &*PRECOMPILES_MAP, true)
+    }
+
+    /// Instantiates a FuzzedExecutor over provided Sputnik EVM
+    pub fn fuzzvm<'a, B: Backend>(
+        evm: &'a mut TestSputnikVM<'a, B>,
+    ) -> FuzzedExecutor<'a, TestSputnikVM<'a, B>, CheatcodeStackState<'a, B>> {
+        let mut cfg = proptest::test_runner::Config::default();
+        cfg.failure_persistence = None;
+
+        let runner = proptest::test_runner::TestRunner::new(cfg);
+        FuzzedExecutor::new(evm, runner, Address::zero())
     }
 
     pub fn new_backend(vicinity: &MemoryVicinity, state: MemoryState) -> MemoryBackend<'_> {
