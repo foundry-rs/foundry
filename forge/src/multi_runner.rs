@@ -223,23 +223,12 @@ mod tests {
 
     mod sputnik {
         use super::*;
-        use evm::Config;
-        use evm_adapters::sputnik::{
-            helpers::{new_backend, new_vicinity},
-            Executor, PRECOMPILES_MAP,
-        };
+        use evm_adapters::sputnik::helpers::vm;
         use std::collections::HashMap;
 
         #[test]
         fn test_sputnik_debug_logs() {
-            let config = Config::istanbul();
-            let gas_limit = 12_500_000;
-            let env = new_vicinity();
-            let backend = new_backend(&env, Default::default());
-            // important to instantiate the VM with cheatcodes
-            let precompiles = PRECOMPILES_MAP.clone();
-            let evm =
-                Executor::new_with_cheatcodes(backend, gas_limit, &config, &precompiles, false);
+            let evm = vm();
 
             let mut runner = runner(evm);
             let results = runner.test(Regex::new(".*").unwrap()).unwrap();
@@ -260,13 +249,7 @@ mod tests {
 
         #[test]
         fn test_sputnik_multi_runner() {
-            let config = Config::istanbul();
-            let gas_limit = 12_500_000;
-            let env = new_vicinity();
-            let backend = new_backend(&env, Default::default());
-            let precompiles = PRECOMPILES_MAP.clone();
-            let evm = Executor::new(gas_limit, &config, &backend, &precompiles);
-            test_multi_runner(evm);
+            test_multi_runner(vm());
         }
     }
 

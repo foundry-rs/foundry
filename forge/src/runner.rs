@@ -329,16 +329,11 @@ mod tests {
     use super::*;
     use crate::test_helpers::COMPILED;
     use ethers::solc::artifacts::CompactContractRef;
-    use evm::Config;
-    use evm_adapters::sputnik::PRECOMPILES_MAP;
+    use evm_adapters::sputnik::helpers::vm;
 
     mod sputnik {
         use std::str::FromStr;
 
-        use evm_adapters::sputnik::{
-            helpers::{new_backend, new_vicinity},
-            Executor,
-        };
         use foundry_utils::get_func;
         use proptest::test_runner::Config as FuzzConfig;
 
@@ -346,24 +341,15 @@ mod tests {
 
         #[test]
         fn test_runner() {
-            let cfg = Config::istanbul();
             let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
-            let vicinity = new_vicinity();
-            let backend = new_backend(&vicinity, Default::default());
-            let precompiles = PRECOMPILES_MAP.clone();
-            let evm = Executor::new(12_000_000, &cfg, &backend, &precompiles);
+            let evm = vm();
             super::test_runner(evm, compiled);
         }
 
         #[test]
         fn test_function_overriding() {
-            let cfg = Config::istanbul();
             let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
-            let vicinity = new_vicinity();
-            let backend = new_backend(&vicinity, Default::default());
-
-            let precompiles = PRECOMPILES_MAP.clone();
-            let mut evm = Executor::new(12_000_000, &cfg, &backend, &precompiles);
+            let mut evm = vm();
             let (addr, _, _, _) = evm
                 .deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into())
                 .unwrap();
@@ -390,13 +376,8 @@ mod tests {
 
         #[test]
         fn test_fuzzing_counterexamples() {
-            let cfg = Config::istanbul();
             let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
-            let vicinity = new_vicinity();
-            let backend = new_backend(&vicinity, Default::default());
-
-            let precompiles = PRECOMPILES_MAP.clone();
-            let mut evm = Executor::new(12_000_000, &cfg, &backend, &precompiles);
+            let mut evm = vm();
             let (addr, _, _, _) = evm
                 .deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into())
                 .unwrap();
@@ -420,13 +401,8 @@ mod tests {
 
         #[test]
         fn test_fuzzing_ok() {
-            let cfg = Config::istanbul();
             let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
-            let vicinity = new_vicinity();
-            let backend = new_backend(&vicinity, Default::default());
-
-            let precompiles = PRECOMPILES_MAP.clone();
-            let mut evm = Executor::new(u64::MAX, &cfg, &backend, &precompiles);
+            let mut evm = vm();
             let (addr, _, _, _) = evm
                 .deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into())
                 .unwrap();
@@ -445,13 +421,8 @@ mod tests {
 
         #[test]
         fn test_fuzz_shrinking() {
-            let cfg = Config::istanbul();
             let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
-            let vicinity = new_vicinity();
-            let backend = new_backend(&vicinity, Default::default());
-
-            let precompiles = PRECOMPILES_MAP.clone();
-            let mut evm = Executor::new(12_000_000, &cfg, &backend, &precompiles);
+            let mut evm = vm();
             let (addr, _, _, _) = evm
                 .deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into())
                 .unwrap();
