@@ -267,8 +267,8 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
 
         let mut traces = None;
         if let Some(evm_traces) = self.evm.traces() {
-            if evm_traces.len() > 0 {
-                traces = Some(evm_traces.clone());
+            if !evm_traces.is_empty() {
+                traces = Some(evm_traces);
             }
         }
         self.evm.reset_traces();

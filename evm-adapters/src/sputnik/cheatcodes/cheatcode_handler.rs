@@ -325,7 +325,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
     ) -> Capture<(ExitReason, Vec<u8>), Infallible> {
         let mut res = vec![];
 
-        let trace = self.start_trace(*CHEATCODE_ADDRESS, input.clone(), false, 0);
+        let trace = self.start_trace(*CHEATCODE_ADDRESS, input.clone(), false);
         // Get a mutable ref to the state so we can apply the cheats
         let state = self.state_mut();
         let decoded = match HEVMCalls::decode(&input) {
@@ -504,22 +504,21 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         }
     }
 
-    fn start_trace(
-        &mut self,
-        address: H160,
-        input: Vec<u8>,
-        creation: bool,
-        prelogs: usize,
-    ) -> Option<CallTrace> {
+    fn start_trace(&mut self, address: H160, input: Vec<u8>, creation: bool) -> Option<CallTrace> {
         if self.enable_trace {
-            let mut trace: CallTrace = Default::default();
-            // depth only starts tracking at first child substate and is 0. so add 1 when depth is
-            // some.
-            trace.depth =
-                if let Some(depth) = self.state().metadata().depth() { depth + 1 } else { 0 };
-            trace.addr = address;
-            trace.created = creation;
-            trace.data = input;
+            let mut trace: CallTrace = CallTrace {
+                // depth only starts tracking at first child substate and is 0. so add 1 when depth
+                // is some.
+                depth: if let Some(depth) = self.state().metadata().depth() {
+                    depth + 1
+                } else {
+                    0
+                },
+                addr: address,
+                created: creation,
+                data: input,
+                ..Default::default()
+            };
 
             // we should probably delay having the input and other stuff so
             // we minimize the size of the clone
@@ -535,7 +534,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         if let Some(new_trace) = new_trace {
             let used_gas = self.handler.used_gas();
             let trace = &mut self.state_mut().trace_mut().arena[new_trace.idx].trace;
-            trace.output = output.unwrap_or(vec![]);
+            trace.output = output.unwrap_or_default();
             trace.cost = used_gas;
             trace.success = success;
         }
@@ -555,7 +554,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         context: Context,
     ) -> Capture<(ExitReason, Vec<u8>), Infallible> {
         let pre_index = self.state().trace_index;
-        let trace = self.start_trace(code_address, input.clone(), false, 0);
+        let trace = self.start_trace(code_address, input.clone(), false);
 
         macro_rules! try_or_fail {
             ( $e:expr ) => {
@@ -708,7 +707,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
 
         let address = self.create_address(scheme);
 
-        let trace = self.start_trace(address, init_code.clone(), true, 0);
+        let trace = self.start_trace(address, init_code.clone(), true);
 
         macro_rules! try_or_fail {
             ( $e:expr ) => {

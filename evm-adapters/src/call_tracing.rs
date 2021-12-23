@@ -154,12 +154,10 @@ impl CallTraceArena {
         #[cfg(feature = "sputnik")]
         let color = if trace.addr == *CHEATCODE_ADDRESS {
             Colour::Blue
+        } else if trace.success {
+            Colour::Green
         } else {
-            if trace.success {
-                Colour::Green
-            } else {
-                Colour::Red
-            }
+            Colour::Red
         };
 
         #[cfg(not(feature = "sputnik"))]
@@ -189,7 +187,7 @@ impl CallTraceArena {
                     );
                     println!(
                         "{}  └─ {} {} bytes of code",
-                        left.to_string().replace("├─", "│").replace("└─", "  "),
+                        left.replace("├─", "│").replace("└─", "  "),
                         color.paint("←"),
                         trace.output.len()
                     );
@@ -210,7 +208,7 @@ impl CallTraceArena {
                         );
                         self.print_children_and_logs(
                             idx,
-                            Some(&abi),
+                            Some(abi),
                             contracts,
                             identified_contracts,
                             evm,
@@ -218,7 +216,7 @@ impl CallTraceArena {
                         );
                         println!(
                             "{}  └─ {} {} bytes of code",
-                            left.to_string().replace("├─", "│").replace("└─", "  "),
+                            left.replace("├─", "│").replace("└─", "  "),
                             color.paint("←"),
                             trace.output.len()
                         );
@@ -235,7 +233,7 @@ impl CallTraceArena {
                         );
                         println!(
                             "{}  └─ {} {} bytes of code",
-                            left.to_string().replace("├─", "│").replace("└─", "  "),
+                            left.replace("├─", "│").replace("└─", "  "),
                             color.paint("←"),
                             trace.output.len()
                         );
@@ -301,7 +299,7 @@ impl CallTraceArena {
                     contracts,
                     identified_contracts,
                     evm,
-                    left.to_string().replace("├─", "│").replace("└─", "  ") + "  ├─ ",
+                    left.replace("├─", "│").replace("└─", "  ") + "  ├─ ",
                 );
             }
         });
@@ -313,54 +311,51 @@ impl CallTraceArena {
         abi: Option<&Abi>,
         name: Option<&String>,
         color: Colour,
-        left: &String,
+        left: &str,
     ) -> Output {
-        match (abi, name) {
-            (Some(abi), Some(name)) => {
-                if trace.data.len() >= 4 {
-                    for (func_name, overloaded_funcs) in abi.functions.iter() {
-                        for func in overloaded_funcs.iter() {
-                            if func.selector() == trace.data[0..4] {
-                                let mut strings = "".to_string();
-                                if trace.data[4..].len() > 0 {
-                                    let params = func
-                                        .decode_input(&trace.data[4..])
-                                        .expect("Bad func data decode");
-                                    strings = params
-                                        .iter()
-                                        .map(|param| format!("{}", param))
-                                        .collect::<Vec<String>>()
-                                        .join(", ");
-                                }
+        if let (Some(abi), Some(name)) = (abi, name) {
+            if trace.data.len() >= 4 {
+                for (func_name, overloaded_funcs) in abi.functions.iter() {
+                    for func in overloaded_funcs.iter() {
+                        if func.selector() == trace.data[0..4] {
+                            let mut strings = "".to_string();
+                            if !trace.data[4..].is_empty() {
+                                let params = func
+                                    .decode_input(&trace.data[4..])
+                                    .expect("Bad func data decode");
+                                strings = params
+                                    .iter()
+                                    .map(|param| format!("{}", param))
+                                    .collect::<Vec<String>>()
+                                    .join(", ");
+                            }
 
-                                println!(
-                                    "{}[{}] {}::{}({})",
-                                    left,
-                                    trace.cost,
-                                    color.paint(name),
-                                    color.paint(func_name),
-                                    strings
-                                );
+                            println!(
+                                "{}[{}] {}::{}({})",
+                                left,
+                                trace.cost,
+                                color.paint(name),
+                                color.paint(func_name),
+                                strings
+                            );
 
-                                if trace.output.len() > 0 {
-                                    return Output::Token(
-                                        func.decode_output(&trace.output[..])
-                                            .expect("Bad func output decode"),
-                                    )
-                                } else {
-                                    return Output::Raw(vec![])
-                                }
+                            if !trace.output.is_empty() {
+                                return Output::Token(
+                                    func.decode_output(&trace.output[..])
+                                        .expect("Bad func output decode"),
+                                )
+                            } else {
+                                return Output::Raw(vec![])
                             }
                         }
                     }
-                } else {
-                    // fallback function
-                    println!("{}[{}] {}::fallback()", left, trace.cost, color.paint(name),);
-
-                    return Output::Raw(trace.output[..].to_vec())
                 }
+            } else {
+                // fallback function
+                println!("{}[{}] {}::fallback()", left, trace.cost, color.paint(name),);
+
+                return Output::Raw(trace.output[..].to_vec())
             }
-            _ => {}
         }
 
         println!(
@@ -383,7 +378,7 @@ impl CallTraceArena {
         Output::Raw(trace.output[..].to_vec())
     }
 
-    pub fn print_log(&self, log: &RawLog, abi: Option<&Abi>, left: &String) {
+    pub fn print_log(&self, log: &RawLog, abi: Option<&Abi>, left: &str) {
         let right = "  ├─ ";
         if let Some(abi) = abi {
             for (event_name, overloaded_events) in abi.events.iter() {
@@ -397,7 +392,7 @@ impl CallTraceArena {
                             .join(", ");
                         println!(
                             "{}emit {}({})",
-                            left.to_string().replace("├─", "│") + right,
+                            left.replace("├─", "│") + right,
                             Colour::Cyan.paint(event_name),
                             strings
                         );
@@ -408,14 +403,14 @@ impl CallTraceArena {
         }
         // we didnt decode the log, print it as an unknown log
         for (i, topic) in log.topics.iter().enumerate() {
-            let right = if i == log.topics.len() - 1 && log.data.len() == 0 {
+            let right = if i == log.topics.len() - 1 && log.data.is_empty() {
                 "  └─ "
             } else {
                 "  ├─"
             };
             println!(
                 "{}{}topic {}: {}",
-                left.to_string().replace("├─", "│") + right,
+                left.replace("├─", "│") + right,
                 if i == 0 { " emit " } else { "      " },
                 i,
                 Colour::Cyan.paint(format!("0x{}", hex::encode(&topic)))
@@ -423,7 +418,7 @@ impl CallTraceArena {
         }
         println!(
             "{}        data: {}",
-            left.to_string().replace("├─", "│").replace("└─", "  ") + "  │  ", /* left.to_string().replace("├─", "│") + "  └─ ", */
+            left.replace("├─", "│").replace("└─", "  ") + "  │  ",
             Colour::Cyan.paint(format!("0x{}", hex::encode(&log.data)))
         )
     }
@@ -438,17 +433,17 @@ impl CallTraceArena {
                     .join(", ");
                 println!(
                     "{}  └─ {} {}",
-                    left.to_string().replace("├─", "│").replace("└─", "  "),
+                    left.replace("├─", "│").replace("└─", "  "),
                     color.paint("←"),
-                    if strings.len() == 0 { "()" } else { &*strings }
+                    if strings.is_empty() { "()" } else { &*strings }
                 );
             }
             Output::Raw(bytes) => {
                 println!(
                     "{}  └─ {} {}",
-                    left.to_string().replace("├─", "│").replace("└─", "  "),
+                    left.replace("├─", "│").replace("└─", "  "),
                     color.paint("←"),
-                    if bytes.len() == 0 {
+                    if bytes.is_empty() {
                         "()".to_string()
                     } else {
                         "0x".to_string() + &hex::encode(&bytes)
@@ -510,7 +505,7 @@ impl CallTrace {
 
 // very simple fuzzy matching to account for immutables. Will fail for small contracts that are
 // basically all immutable vars
-fn diff_score(bytecode1: &Vec<u8>, bytecode2: &Vec<u8>) -> f64 {
+fn diff_score(bytecode1: &[u8], bytecode2: &[u8]) -> f64 {
     let cutoff_len = usize::min(bytecode1.len(), bytecode2.len());
     let b1 = &bytecode1[..cutoff_len];
     let b2 = &bytecode2[..cutoff_len];

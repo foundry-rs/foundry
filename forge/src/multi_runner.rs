@@ -1,5 +1,6 @@
 use crate::{runner::TestResult, ContractRunner};
-use ethers::prelude::artifacts::CompactContract;
+use ethers::solc::Artifact;
+
 use evm_adapters::Evm;
 
 use ethers::{
@@ -12,7 +13,7 @@ use ethers::{
 use proptest::test_runner::TestRunner;
 use regex::Regex;
 
-use eyre::{Context, Result};
+use eyre::Result;
 use std::{collections::BTreeMap, marker::PhantomData};
 
 /// Builder used for instantiating the multi-contract runner
@@ -61,68 +62,26 @@ impl MultiContractRunnerBuilder {
         let mut deployed_contracts: BTreeMap<String, (Abi, Address, Vec<String>)> =
             Default::default();
 
-        use std::any::Any;
         for (fname, contract) in contracts {
-            let c: &dyn Any = &contract as &dyn Any;
-            let compact_contract =
-                c.downcast_ref::<CompactContract>().expect("Wasn't a compact contract");
-            let runtime_code = compact_contract
-                .bin_runtime
-                .as_ref()
-                .unwrap()
-                .clone()
-                .into_bytes()
-                .expect("Linking not supported in tracing");
-            let bytecode = compact_contract
-                .bin
-                .as_ref()
-                .unwrap()
-                .clone()
-                .into_bytes()
-                .expect("Linking not supported in tracing");
-            let abi = compact_contract.abi.as_ref().unwrap();
-            if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) {
-                if abi.functions().any(|func| func.name.starts_with("test")) {
+            let (maybe_abi, maybe_deploy_bytes, maybe_runtime_bytes) = contract.into_parts();
+            if let (Some(abi), Some(bytecode)) = (maybe_abi, maybe_deploy_bytes) {
+                if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) &&
+                    abi.functions().any(|func| func.name.starts_with("test"))
+                {
                     let span = tracing::trace_span!("deploying", ?fname);
                     let _enter = span.enter();
-
-                    let (addr, _, _, logs) = evm
-                        .deploy(sender, bytecode.clone(), 0u32.into())
-                        .wrap_err(format!("could not deploy {}", fname))?;
-
+                    let (addr, _, _, logs) = evm.deploy(sender, bytecode.clone(), 0u32.into())?;
                     evm.set_balance(addr, initial_balance);
                     deployed_contracts.insert(fname.clone(), (abi.clone(), addr, logs));
                 }
+
+                let split = fname.split(':').collect::<Vec<&str>>();
+                let contract_name = if split.len() > 1 { split[1] } else { split[0] };
+                if let Some(runtime_code) = maybe_runtime_bytes {
+                    known_contracts.insert(contract_name.to_string(), (abi, runtime_code.to_vec()));
+                }
             }
-            let split = fname.split(":").collect::<Vec<&str>>();
-            let contract_name = if split.len() > 1 { split[1] } else { split[0] };
-            known_contracts.insert(contract_name.to_string(), (abi.clone(), runtime_code.to_vec()));
         }
-
-        // let contracts: BTreeMap<String, (Abi, Address, Vec<String>)> = contracts
-        //     .map(|(fname, contract)| {
-        //         let (abi, bytecode) = contract.into_inner();
-        //         (fname, abi.unwrap(), bytecode.unwrap())
-        //     })
-        //     // Only take contracts with empty constructors.
-        //     .filter(|(_, abi, _)| {
-        //         abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true)
-        //     })
-        //     // Only take contracts which contain a `test` function
-        //     .filter(|(_, abi, _)| abi.functions().any(|func| func.name.starts_with("test")))
-        //     // deploy the contracts
-        //     .map(|(name, abi, bytecode)| {
-        //         let span = tracing::trace_span!("deploying", ?name);
-        //         let _enter = span.enter();
-
-        //         let (addr, _, _, logs) = evm
-        //             .deploy(sender, bytecode, 0.into())
-        //             .wrap_err(format!("could not deploy {}", name))?;
-
-        //         evm.set_balance(addr, initial_balance);
-        //         Ok((name, (abi, addr, logs)))
-        //     })
-        //     .collect::<Result<BTreeMap<_, _>>>()?;
 
         Ok(MultiContractRunner {
             contracts: deployed_contracts,
