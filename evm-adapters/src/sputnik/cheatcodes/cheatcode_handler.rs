@@ -1125,14 +1125,9 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
 
 #[cfg(test)]
 mod tests {
-    use sputnik::Config;
-
     use crate::{
         fuzz::FuzzedExecutor,
-        sputnik::{
-            helpers::{new_backend, new_vicinity},
-            Executor, PRECOMPILES_MAP,
-        },
+        sputnik::helpers::{vm, vm_tracing},
         test_helpers::COMPILED,
         Evm,
     };
@@ -1141,14 +1136,7 @@ mod tests {
 
     #[test]
     fn ds_test_logs() {
-        let config = Config::istanbul();
-        let vicinity = new_vicinity();
-        let backend = new_backend(&vicinity, Default::default());
-        let gas_limit = 10_000_000;
-        let precompiles = PRECOMPILES_MAP.clone();
-        let mut evm =
-            Executor::new_with_cheatcodes(backend, gas_limit, &config, &precompiles, true, false);
-
+        let mut evm = vm();
         let compiled = COMPILED.find("DebugLogs").expect("could not find contract");
         let (addr, _, _, _) =
             evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
@@ -1182,13 +1170,7 @@ mod tests {
 
     #[test]
     fn console_logs() {
-        let config = Config::istanbul();
-        let vicinity = new_vicinity();
-        let backend = new_backend(&vicinity, Default::default());
-        let gas_limit = 10_000_000;
-        let precompiles = PRECOMPILES_MAP.clone();
-        let mut evm =
-            Executor::new_with_cheatcodes(backend, gas_limit, &config, &precompiles, true, false);
+        let mut evm = vm();
 
         let compiled = COMPILED.find("ConsoleLogs").expect("could not find contract");
         let (addr, _, _, _) =
@@ -1213,13 +1195,7 @@ mod tests {
 
     #[test]
     fn logs_external_contract() {
-        let config = Config::istanbul();
-        let vicinity = new_vicinity();
-        let backend = new_backend(&vicinity, Default::default());
-        let gas_limit = 10_000_000;
-        let precompiles = PRECOMPILES_MAP.clone();
-        let mut evm =
-            Executor::new_with_cheatcodes(backend, gas_limit, &config, &precompiles, true, false);
+        let mut evm = vm();
 
         let compiled = COMPILED.find("DebugLogs").expect("could not find contract");
         let (addr, _, _, _) =
@@ -1238,14 +1214,7 @@ mod tests {
 
     #[test]
     fn cheatcodes() {
-        let config = Config::london();
-        let vicinity = new_vicinity();
-        let backend = new_backend(&vicinity, Default::default());
-        let gas_limit = 10_000_000;
-        let precompiles = PRECOMPILES_MAP.clone();
-        let mut evm =
-            Executor::new_with_cheatcodes(backend, gas_limit, &config, &precompiles, true, false);
-
+        let mut evm = vm();
         let compiled = COMPILED.find("CheatCodes").expect("could not find contract");
         let (addr, _, _, _) =
             evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
@@ -1288,13 +1257,8 @@ mod tests {
 
     #[test]
     fn ffi_fails_if_disabled() {
-        let config = Config::istanbul();
-        let vicinity = new_vicinity();
-        let backend = new_backend(&vicinity, Default::default());
-        let gas_limit = 10_000_000;
-        let precompiles = PRECOMPILES_MAP.clone();
-        let mut evm =
-            Executor::new_with_cheatcodes(backend, gas_limit, &config, &precompiles, false, false);
+        let mut evm = vm();
+        evm.executor.enable_ffi = false;
 
         let compiled = COMPILED.find("CheatCodes").expect("could not find contract");
         let (addr, _, _, _) =
@@ -1312,14 +1276,7 @@ mod tests {
     #[test]
     fn tracing_call() {
         use std::collections::BTreeMap;
-
-        let config = Config::istanbul();
-        let vicinity = new_vicinity();
-        let backend = new_backend(&vicinity, Default::default());
-        let gas_limit = 10_000_000;
-        let precompiles = PRECOMPILES_MAP.clone();
-        let mut evm =
-            Executor::new_with_cheatcodes(backend, gas_limit, &config, &precompiles, false, true);
+        let mut evm = vm_tracing();
 
         let compiled = COMPILED.find("Trace").expect("could not find contract");
         let (addr, _, _, _) = evm
@@ -1377,13 +1334,7 @@ mod tests {
     fn tracing_create() {
         use std::collections::BTreeMap;
 
-        let config = Config::istanbul();
-        let vicinity = new_vicinity();
-        let backend = new_backend(&vicinity, Default::default());
-        let gas_limit = 10_000_000;
-        let precompiles = PRECOMPILES_MAP.clone();
-        let mut evm =
-            Executor::new_with_cheatcodes(backend, gas_limit, &config, &precompiles, false, true);
+        let mut evm = vm_tracing();
 
         let compiled = COMPILED.find("Trace").expect("could not find contract");
         let (addr, _, _, _) = evm

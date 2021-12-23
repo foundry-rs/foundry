@@ -79,6 +79,14 @@ pub trait Evm<State> {
     /// Turns on/off tracing
     fn set_tracing_enabled(&mut self, enabled: bool) -> bool;
 
+    /// returns whether tracing is enabled
+    fn tracing_enabled(&mut self) -> bool {
+        // kind of hack that uses an existing method to reduce code
+        let curr = self.set_tracing_enabled(false);
+        self.set_tracing_enabled(curr);
+        curr
+    }
+
     /// Performs a [`call_unchecked`](Self::call_unchecked), checks if execution reverted, and
     /// proceeds to return the decoded response to the user.
     fn call<D: Detokenize, T: Tokenize, F: IntoFunction>(

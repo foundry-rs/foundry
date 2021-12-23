@@ -241,6 +241,10 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         self.evm.reset_traces();
 
         // call the setup function in each test to reset the test's state.
+        let mut traces: Option<Vec<CallTraceArena>> = None;
+        let mut identified_contracts: Option<BTreeMap<Address, (String, Abi)>> = None;
+        let mut ident = BTreeMap::new();
+
         if setup {
             tracing::trace!("setting up");
             let setup_logs = self
@@ -249,21 +253,18 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
                 .wrap_err(format!("could not setup during {} test", func.signature()))?
                 .1;
             logs.extend_from_slice(&setup_logs);
-        }
 
-        let mut traces: Option<Vec<CallTraceArena>> = None;
-        let mut identified_contracts: Option<BTreeMap<Address, (String, Abi)>> = None;
-        let mut ident = BTreeMap::new();
-        if let Some(evm_traces) = self.evm.traces() {
-            if !evm_traces.is_empty() {
-                let trace = evm_traces.into_iter().next().expect("no trace");
-                trace.update_identified(
-                    0,
-                    known_contracts.expect("traces enabled but no identified_contracts"),
-                    &mut ident,
-                    self.evm,
-                );
-                traces = Some(vec![trace]);
+            if let Some(evm_traces) = self.evm.traces() {
+                if !evm_traces.is_empty() && self.evm.tracing_enabled() {
+                    let trace = evm_traces.into_iter().next().expect("no trace");
+                    trace.update_identified(
+                        0,
+                        known_contracts.expect("traces enabled but no identified_contracts"),
+                        &mut ident,
+                        self.evm,
+                    );
+                    traces = Some(vec![trace]);
+                }
             }
         }
 
@@ -293,7 +294,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         };
 
         if let Some(evm_traces) = self.evm.traces() {
-            if !evm_traces.is_empty() {
+            if !evm_traces.is_empty() && self.evm.tracing_enabled() {
                 let trace = evm_traces.into_iter().next().expect("no trace");
                 trace.update_identified(
                     0,
@@ -304,6 +305,9 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
                 identified_contracts = Some(ident);
                 if let Some(ref mut traces) = traces {
                     traces.push(trace);
+                } else {
+                    // we didnt have a setup
+                    traces = Some(vec![trace]);
                 }
             }
         }
@@ -388,16 +392,11 @@ mod tests {
     use super::*;
     use crate::test_helpers::COMPILED;
     use ethers::solc::artifacts::CompactContractRef;
-    use evm::Config;
-    use evm_adapters::sputnik::PRECOMPILES_MAP;
+    use evm_adapters::sputnik::helpers::vm;
 
     mod sputnik {
         use std::str::FromStr;
 
-        use evm_adapters::sputnik::{
-            helpers::{new_backend, new_vicinity},
-            Executor,
-        };
         use foundry_utils::get_func;
         use proptest::test_runner::Config as FuzzConfig;
 
@@ -405,24 +404,15 @@ mod tests {
 
         #[test]
         fn test_runner() {
-            let cfg = Config::istanbul();
             let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
-            let vicinity = new_vicinity();
-            let backend = new_backend(&vicinity, Default::default());
-            let precompiles = PRECOMPILES_MAP.clone();
-            let evm = Executor::new(12_000_000, &cfg, &backend, &precompiles);
+            let evm = vm();
             super::test_runner(evm, compiled);
         }
 
         #[test]
         fn test_function_overriding() {
-            let cfg = Config::istanbul();
             let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
-            let vicinity = new_vicinity();
-            let backend = new_backend(&vicinity, Default::default());
-
-            let precompiles = PRECOMPILES_MAP.clone();
-            let mut evm = Executor::new(12_000_000, &cfg, &backend, &precompiles);
+            let mut evm = vm();
             let (addr, _, _, _) = evm
                 .deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into())
                 .unwrap();
@@ -450,13 +440,8 @@ mod tests {
 
         #[test]
         fn test_fuzzing_counterexamples() {
-            let cfg = Config::istanbul();
             let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
-            let vicinity = new_vicinity();
-            let backend = new_backend(&vicinity, Default::default());
-
-            let precompiles = PRECOMPILES_MAP.clone();
-            let mut evm = Executor::new(12_000_000, &cfg, &backend, &precompiles);
+            let mut evm = vm();
             let (addr, _, _, _) = evm
                 .deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into())
                 .unwrap();
@@ -485,13 +470,8 @@ mod tests {
 
         #[test]
         fn test_fuzzing_ok() {
-            let cfg = Config::istanbul();
             let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
-            let vicinity = new_vicinity();
-            let backend = new_backend(&vicinity, Default::default());
-
-            let precompiles = PRECOMPILES_MAP.clone();
-            let mut evm = Executor::new(u64::MAX, &cfg, &backend, &precompiles);
+            let mut evm = vm();
             let (addr, _, _, _) = evm
                 .deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into())
                 .unwrap();
@@ -510,13 +490,8 @@ mod tests {
 
         #[test]
         fn test_fuzz_shrinking() {
-            let cfg = Config::istanbul();
             let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
-            let vicinity = new_vicinity();
-            let backend = new_backend(&vicinity, Default::default());
-
-            let precompiles = PRECOMPILES_MAP.clone();
-            let mut evm = Executor::new(12_000_000, &cfg, &backend, &precompiles);
+            let mut evm = vm();
             let (addr, _, _, _) = evm
                 .deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into())
                 .unwrap();
