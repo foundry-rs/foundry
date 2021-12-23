@@ -1,6 +1,6 @@
 use ethers::{
     abi::{Abi, FunctionExt, RawLog},
-    types::H160,
+    types::{H160, U256},
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -129,40 +129,14 @@ impl CallTraceArena {
         #[cfg(feature = "sputnik")]
         identified_contracts.insert(*CHEATCODE_ADDRESS, ("VM".to_string(), HEVM_ABI.clone()));
 
-        let mut abi = None;
-        let mut name = None;
-        {
-            if let Some((name_, abi_)) = identified_contracts.get(&trace.addr) {
-                abi = Some(abi_.clone());
-                name = Some(name_.clone());
-            }
-        }
-        if trace.created {
-            match (abi, name) {
-                (Some(_abi), Some(_name)) => {}
-                _ => {
-                    // if its a creation call, check the output instead of asking the evm for the
-                    // runtime code
-                    if let Some((name, (abi, _code))) = contracts
-                        .iter()
-                        .find(|(_key, (_abi, code))| diff_score(code, &trace.output) < 0.10)
-                    {
-                        identified_contracts.insert(trace.addr, (name.to_string(), abi.clone()));
-                    }
-                }
-            }
-        } else {
-            match (abi, name) {
-                (Some(_abi), Some(_name)) => {}
-                _ => {
-                    // check the code at the address and try to find the corresponding contract
-                    if let Some((name, (abi, _code))) = contracts
-                        .iter()
-                        .find(|(_key, (_abi, code))| diff_score(code, &evm.code(trace.addr)) < 0.10)
-                    {
-                        identified_contracts.insert(trace.addr, (name.to_string(), abi.clone()));
-                    }
-                }
+        let res = identified_contracts.get(&trace.addr);
+        if res.is_none() {
+            let code = if trace.created { trace.output.clone() } else { evm.code(trace.addr) };
+            if let Some((name, (abi, _code))) = contracts
+                .iter()
+                .find(|(_key, (_abi, known_code))| diff_score(known_code, &code) < 0.10)
+            {
+                identified_contracts.insert(trace.addr, (name.to_string(), abi.clone()));
             }
         }
 
@@ -227,24 +201,27 @@ impl CallTraceArena {
         #[cfg(not(feature = "sputnik"))]
         let color = if trace.success { Colour::Green } else { Colour::Red };
 
-        let mut abi = None;
-        let mut name = None;
-        {
-            if let Some((name_, abi_)) = identified_contracts.get(&trace.addr) {
-                abi = Some(abi_.clone());
-                name = Some(name_.clone());
-            }
-        }
-        // was this a contract creation?
-        if trace.created {
-            match (abi, name) {
-                (Some(abi), Some(name)) => {
-                    // if we have identified the address already, decode and print with the provided
-                    // name and abi
+        // we have to clone the name and abi because identified_contracts is later borrowed
+        // immutably
+        let res = if let Some((name, abi)) = identified_contracts.get(&trace.addr) {
+            Some((name.clone(), abi.clone()))
+        } else {
+            None
+        };
+        if res.is_none() {
+            // get the code to compare
+            let code = if trace.created { trace.output.clone() } else { evm.code(trace.addr) };
+            if let Some((name, (abi, _code))) = contracts
+                .iter()
+                .find(|(_key, (_abi, known_code))| diff_score(known_code, &code) < 0.10)
+            {
+                // found matching contract, insert and print
+                identified_contracts.insert(trace.addr, (name.to_string(), abi.clone()));
+                if trace.created {
                     println!("{}{} {}@{}", left, Colour::Yellow.paint("→ new"), name, trace.addr);
                     self.print_children_and_logs(
                         idx,
-                        Some(&abi),
+                        Some(abi),
                         contracts,
                         identified_contracts,
                         evm,
@@ -256,98 +233,53 @@ impl CallTraceArena {
                         color.paint("←"),
                         trace.output.len()
                     );
+                } else {
+                    // re-enter this function at the current node
+                    self.pretty_print(idx, contracts, identified_contracts, evm, left);
                 }
-                _ => {
-                    // otherwise, try to identify it and print
-                    if let Some((name, (abi, _code))) = contracts
-                        .iter()
-                        .find(|(_key, (_abi, code))| diff_score(code, &trace.output) < 0.10)
-                    {
-                        identified_contracts.insert(trace.addr, (name.to_string(), abi.clone()));
-                        println!(
-                            "{}{} {}@{}",
-                            left,
-                            Colour::Yellow.paint("→ new"),
-                            name,
-                            trace.addr
-                        );
-                        self.print_children_and_logs(
-                            idx,
-                            Some(abi),
-                            contracts,
-                            identified_contracts,
-                            evm,
-                            left,
-                        );
-                        println!(
-                            "{}  └─ {} {} bytes of code",
-                            left.replace("├─", "│").replace("└─", "  "),
-                            color.paint("←"),
-                            trace.output.len()
-                        );
-                    } else {
-                        // we couldn't identify, print the children and logs without the abi
-                        println!(
-                            "{}{} <Unknown>@{}",
-                            left,
-                            Colour::Yellow.paint("→ new"),
-                            trace.addr
-                        );
-                        self.print_children_and_logs(
-                            idx,
-                            None,
-                            contracts,
-                            identified_contracts,
-                            evm,
-                            left,
-                        );
-                        println!(
-                            "{}  └─ {} {} bytes of code",
-                            left.replace("├─", "│").replace("└─", "  "),
-                            color.paint("←"),
-                            trace.output.len()
-                        );
-                    }
-                }
+            } else if trace.created {
+                // we couldn't identify, print the children and logs without the abi
+                println!("{}{} <Unknown>@{}", left, Colour::Yellow.paint("→ new"), trace.addr);
+                self.print_children_and_logs(idx, None, contracts, identified_contracts, evm, left);
+                println!(
+                    "{}  └─ {} {} bytes of code",
+                    left.replace("├─", "│").replace("└─", "  "),
+                    color.paint("←"),
+                    trace.output.len()
+                );
+            } else {
+                let output = trace.print_func_call(None, None, color, left);
+                self.print_children_and_logs(idx, None, contracts, identified_contracts, evm, left);
+                output.print(color, left);
             }
-        } else {
-            match (abi, name) {
-                (Some(abi), Some(name)) => {
-                    // print the function call, grab the output, print the children and logs, and
-                    // finally output
-                    let output = trace.print_func_call(Some(&abi), Some(&name), color, left);
-                    self.print_children_and_logs(
-                        idx,
-                        Some(&abi),
-                        contracts,
-                        identified_contracts,
-                        evm,
-                        left,
-                    );
-                    output.print(color, left);
-                }
-                _ => {
-                    if let Some((name, (abi, _code))) = contracts
-                        .iter()
-                        .find(|(_key, (_abi, code))| diff_score(code, &evm.code(trace.addr)) < 0.10)
-                    {
-                        identified_contracts.insert(trace.addr, (name.to_string(), abi.clone()));
-                        // re-enter this function at this node level if we found the contract
-                        self.pretty_print(idx, contracts, identified_contracts, evm, left);
-                    } else {
-                        // we couldn't identify it, print without abi and name
-                        let output = trace.print_func_call(None, None, color, left);
-                        self.print_children_and_logs(
-                            idx,
-                            None,
-                            contracts,
-                            identified_contracts,
-                            evm,
-                            left,
-                        );
-                        output.print(color, left);
-                    }
-                }
+        } else if let Some((name, abi)) = res {
+            if trace.created {
+                println!("{}{} {}@{}", left, Colour::Yellow.paint("→ new"), name, trace.addr);
+                self.print_children_and_logs(
+                    idx,
+                    Some(&abi),
+                    contracts,
+                    identified_contracts,
+                    evm,
+                    left,
+                );
+                println!(
+                    "{}  └─ {} {} bytes of code",
+                    left.replace("├─", "│").replace("└─", "  "),
+                    color.paint("←"),
+                    trace.output.len()
+                );
+            } else {
+                let output = trace.print_func_call(Some(&abi), Some(&name), color, left);
+                self.print_children_and_logs(
+                    idx,
+                    Some(&abi),
+                    contracts,
+                    identified_contracts,
+                    evm,
+                    left,
+                );
+                output.print(color, left);
             }
         }
     }
@@ -475,6 +407,8 @@ pub struct CallTrace {
     pub addr: H160,
     /// Creation
     pub created: bool,
+    /// Ether value transfer
+    pub value: U256,
     /// Call data, including function selector (if applicable)
     pub data: Vec<u8>,
     /// Gas cost
@@ -521,12 +455,17 @@ impl CallTrace {
                             }
 
                             println!(
-                                "{}[{}] {}::{}({})",
+                                "{}[{}] {}::{}{}({})",
                                 left,
                                 self.cost,
                                 color.paint(name),
                                 color.paint(func_name),
-                                strings
+                                if self.value > 0.into() {
+                                    format!("{{value: {}}}", self.value)
+                                } else {
+                                    "".to_string()
+                                },
+                                strings,
                             );
 
                             if !self.output.is_empty() {
@@ -542,7 +481,17 @@ impl CallTrace {
                 }
             } else {
                 // fallback function
-                println!("{}[{}] {}::fallback()", left, self.cost, color.paint(name),);
+                println!(
+                    "{}[{}] {}::fallback{}()",
+                    left,
+                    self.cost,
+                    color.paint(name),
+                    if self.value > 0.into() {
+                        format!("{{value: {}}}", self.value)
+                    } else {
+                        "".to_string()
+                    }
+                );
 
                 return Output::Raw(self.output[..].to_vec())
             }
@@ -550,7 +499,7 @@ impl CallTrace {
 
         // We couldn't decode the function call, so print it as an abstract call
         println!(
-            "{}[{}] {}::{}({})",
+            "{}[{}] {}::{}{}({})",
             left,
             self.cost,
             color.paint(format!("{}", self.addr)),
@@ -559,11 +508,16 @@ impl CallTrace {
             } else {
                 hex::encode(&self.data[..])
             },
+            if self.value > 0.into() {
+                format!("{{value: {}}}", self.value)
+            } else {
+                "".to_string()
+            },
             if self.data.len() >= 4 {
                 hex::encode(&self.data[4..])
             } else {
                 hex::encode(&vec![][..])
-            }
+            },
         );
 
         Output::Raw(self.output[..].to_vec())

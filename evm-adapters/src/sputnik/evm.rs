@@ -115,7 +115,7 @@ where
         self.executor.state().code(address)
     }
 
-    fn traces(&self) -> Option<Vec<CallTraceArena>> {
+    fn traces(&self) -> Vec<CallTraceArena> {
         self.executor.traces()
     }
 

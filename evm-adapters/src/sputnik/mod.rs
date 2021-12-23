@@ -87,13 +87,13 @@ pub trait SputnikExecutor<S> {
 
     fn create_address(&self, caller: CreateScheme) -> Address;
 
-    /// Returns a vector of sraw logs that occurred during the previous VM
+    /// Returns a vector of raw logs that occurred during the previous VM
     /// execution
     fn raw_logs(&self) -> Vec<RawLog>;
 
     /// Gets a trace
-    fn traces(&self) -> Option<Vec<CallTraceArena>> {
-        None
+    fn traces(&self) -> Vec<CallTraceArena> {
+        vec![]
     }
 
     fn reset_traces(&mut self) {}

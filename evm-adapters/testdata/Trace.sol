@@ -59,7 +59,6 @@ contract Trace {
 		return new RecursiveCall(address(this));
 	}
 
-
 	function recurseCall(uint256 neededDepth, uint256 depth) public returns (uint256) {
 		if (address(first) == address(0)) {
 			first = new RecursiveCall(address(this));

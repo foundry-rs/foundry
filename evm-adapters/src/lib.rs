@@ -103,8 +103,8 @@ pub trait Evm<State> {
         }
     }
 
-    fn traces(&self) -> Option<Vec<CallTraceArena>> {
-        None
+    fn traces(&self) -> Vec<CallTraceArena> {
+        vec![]
     }
 
     fn reset_traces(&mut self) {}

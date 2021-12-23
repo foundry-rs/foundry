@@ -277,37 +277,36 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         let mut traces: Option<Vec<CallTraceArena>> = None;
         let mut identified_contracts: Option<BTreeMap<Address, (String, Abi)>> = None;
 
-        if let Some(evm_traces) = self.evm.traces() {
-            if !evm_traces.is_empty() && self.evm.tracing_enabled() {
-                let mut ident = BTreeMap::new();
-                // create an iter over the traces
-                let mut trace_iter = evm_traces.into_iter();
-                let mut temp_traces = Vec::new();
-                if setup {
-                    // grab the setup trace if it exists
-                    let setup = trace_iter.next().expect("no setup trace");
-                    setup.update_identified(
-                        0,
-                        known_contracts.expect("traces enabled but no identified_contracts"),
-                        &mut ident,
-                        self.evm,
-                    );
-                    temp_traces.push(setup);
-                }
-                // grab the test trace
-                let test_trace = trace_iter.next().expect("no test trace");
-                test_trace.update_identified(
+        let evm_traces = self.evm.traces();
+        if !evm_traces.is_empty() && self.evm.tracing_enabled() {
+            let mut ident = BTreeMap::new();
+            // create an iter over the traces
+            let mut trace_iter = evm_traces.into_iter();
+            let mut temp_traces = Vec::new();
+            if setup {
+                // grab the setup trace if it exists
+                let setup = trace_iter.next().expect("no setup trace");
+                setup.update_identified(
                     0,
                     known_contracts.expect("traces enabled but no identified_contracts"),
                     &mut ident,
                     self.evm,
                 );
-                temp_traces.push(test_trace);
-
-                // pass back the identified contracts and traces
-                identified_contracts = Some(ident);
-                traces = Some(temp_traces);
+                temp_traces.push(setup);
             }
+            // grab the test trace
+            let test_trace = trace_iter.next().expect("no test trace");
+            test_trace.update_identified(
+                0,
+                known_contracts.expect("traces enabled but no identified_contracts"),
+                &mut ident,
+                self.evm,
+            );
+            temp_traces.push(test_trace);
+
+            // pass back the identified contracts and traces
+            identified_contracts = Some(ident);
+            traces = Some(temp_traces);
         }
 
         self.evm.reset_traces();
@@ -335,6 +334,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         setup: bool,
         runner: TestRunner,
     ) -> Result<TestResult> {
+        // do not trace in fuzztests, as it's a big performance hit
         let prev = self.evm.set_tracing_enabled(false);
         let start = Instant::now();
         let should_fail = func.name.starts_with("testFail");
@@ -369,6 +369,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         let duration = Instant::now().duration_since(start);
         tracing::debug!(?duration, %success);
 
+        // reset tracing to previous value in case next test *isn't* a fuzz test
         self.evm.set_tracing_enabled(prev);
         // from that call?
         Ok(TestResult {

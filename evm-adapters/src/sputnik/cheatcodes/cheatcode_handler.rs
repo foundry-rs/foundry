@@ -203,8 +203,8 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
         logs.into_iter().map(|log| RawLog { topics: log.topics, data: log.data }).collect()
     }
 
-    fn traces(&self) -> Option<Vec<CallTraceArena>> {
-        Some(self.state().traces.clone())
+    fn traces(&self) -> Vec<CallTraceArena> {
+        self.state().traces.clone()
     }
 
     fn reset_traces(&mut self) {
@@ -335,7 +335,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
     ) -> Capture<(ExitReason, Vec<u8>), Infallible> {
         let mut res = vec![];
         let pre_index = self.state().trace_index;
-        let trace = self.start_trace(*CHEATCODE_ADDRESS, input.clone(), false);
+        let trace = self.start_trace(*CHEATCODE_ADDRESS, input.clone(), 0.into(), false);
         // Get a mutable ref to the state so we can apply the cheats
         let state = self.state_mut();
         let decoded = match HEVMCalls::decode(&input) {
@@ -514,7 +514,13 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         }
     }
 
-    fn start_trace(&mut self, address: H160, input: Vec<u8>, creation: bool) -> Option<CallTrace> {
+    fn start_trace(
+        &mut self,
+        address: H160,
+        input: Vec<u8>,
+        transfer: U256,
+        creation: bool,
+    ) -> Option<CallTrace> {
         if self.enable_trace {
             let mut trace: CallTrace = CallTrace {
                 // depth only starts tracking at first child substate and is 0. so add 1 when depth
@@ -527,6 +533,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 addr: address,
                 created: creation,
                 data: input,
+                value: transfer,
                 ..Default::default()
             };
 
@@ -571,7 +578,12 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         context: Context,
     ) -> Capture<(ExitReason, Vec<u8>), Infallible> {
         let pre_index = self.state().trace_index;
-        let trace = self.start_trace(code_address, input.clone(), false);
+        let trace = self.start_trace(
+            code_address,
+            input.clone(),
+            transfer.as_ref().map(|x| x.value).unwrap_or_default(),
+            false,
+        );
 
         macro_rules! try_or_fail {
             ( $e:expr ) => {
@@ -722,7 +734,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
 
         let address = self.create_address(scheme);
 
-        let trace = self.start_trace(address, init_code.clone(), true);
+        let trace = self.start_trace(address, init_code.clone(), value, true);
 
         macro_rules! try_or_fail {
             ( $e:expr ) => {
@@ -1114,7 +1126,6 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
         target_gas: Option<u64>,
     ) -> Capture<(ExitReason, Option<H160>, Vec<u8>), Self::CreateInterrupt> {
         self.create_inner(caller, scheme, value, init_code, target_gas, true)
-        // self.handler.create(caller, scheme, value, init_code, target_gas)
     }
 
     fn pre_validate(
@@ -1331,7 +1342,7 @@ mod tests {
             ),
         );
         let mut identified = Default::default();
-        evm.traces().expect("no traces")[1].pretty_print(0, &mapping, &mut identified, &evm, "");
+        evm.traces()[1].pretty_print(0, &mapping, &mut identified, &evm, "");
     }
 
     #[test]
@@ -1389,6 +1400,6 @@ mod tests {
             ),
         );
         let mut identified = Default::default();
-        evm.traces().expect("no traces")[1].pretty_print(0, &mapping, &mut identified, &evm, "");
+        evm.traces()[1].pretty_print(0, &mapping, &mut identified, &evm, "");
     }
 }
