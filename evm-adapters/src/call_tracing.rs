@@ -18,10 +18,7 @@ pub struct CallTraceArena {
 
 impl Default for CallTraceArena {
     fn default() -> Self {
-        CallTraceArena {
-            arena: vec![Default::default()],
-            entry: 0,
-        }
+        CallTraceArena { arena: vec![Default::default()], entry: 0 }
     }
 }
 
@@ -51,12 +48,10 @@ impl CallTraceArena {
                 self.arena[entry].children.push(new_trace.idx);
                 new_trace
             }
-            _ => {
-                self.push_trace(
-                    *self.arena[entry].children.last().expect("Disconnected trace"),
-                    new_trace,
-                )
-            }
+            _ => self.push_trace(
+                *self.arena[entry].children.last().expect("Disconnected trace"),
+                new_trace,
+            ),
         }
     }
 
@@ -77,7 +72,6 @@ impl CallTraceArena {
         #[cfg(feature = "sputnik")]
         identified_contracts.insert(*CHEATCODE_ADDRESS, ("VM".to_string(), HEVM_ABI.clone()));
 
-
         let mut abi = None;
         let mut name = None;
         {
@@ -88,33 +82,31 @@ impl CallTraceArena {
         }
         if trace.created {
             match (abi, name) {
-                (Some(_abi), Some(_name)) => {
-                    self.update_children(idx, contracts, identified_contracts, evm);
-                }
+                (Some(_abi), Some(_name)) => {}
                 _ => {
                     if let Some((name, (abi, _code))) = contracts
                         .iter()
                         .find(|(_key, (_abi, code))| diff_score(code, &trace.output) < 0.10)
                     {
                         identified_contracts.insert(trace.addr, (name.to_string(), abi.clone()));
-                        self.update_children(idx, contracts, identified_contracts, evm);
-                    } else {
-                        self.update_children(idx, contracts, identified_contracts, evm);   
                     }
                 }
             }
         } else {
-            if let Some((name, (abi, _code))) = contracts
-                .iter()
-                .find(|(_key, (_abi, code))| diff_score(code, &evm.code(trace.addr)) < 0.10)
-            {
-                identified_contracts.insert(trace.addr, (name.to_string(), abi.clone()));
-                // re-enter this function at this level if we found the contract
-                self.update_children(idx, contracts, identified_contracts, evm);
-            } else {
-                self.update_children(idx, contracts, identified_contracts, evm);
+            match (abi, name) {
+                (Some(_abi), Some(_name)) => {}
+                _ => {
+                    if let Some((name, (abi, _code))) = contracts
+                        .iter()
+                        .find(|(_key, (_abi, code))| diff_score(code, &evm.code(trace.addr)) < 0.10)
+                    {
+                        identified_contracts.insert(trace.addr, (name.to_string(), abi.clone()));
+                    }
+                }
             }
         }
+
+        self.update_children(idx, contracts, identified_contracts, evm);
     }
 
     pub fn update_children<'a, S: Clone, E: crate::Evm<S>>(
@@ -317,7 +309,7 @@ impl CallTraceArena {
                                     .expect("Bad func data decode");
                                 strings = params
                                     .into_iter()
-                                    .map(|param| format_token(param))
+                                    .map(format_token)
                                     .collect::<Vec<String>>()
                                     .join(", ");
                             }
@@ -402,7 +394,11 @@ impl CallTraceArena {
             };
             println!(
                 "{}{}topic {}: {}",
-                if i == 0 { left.replace("├─", "│") + right} else { left.replace("├─", "│") + "  │ "},
+                if i == 0 {
+                    left.replace("├─", "│") + right
+                } else {
+                    left.replace("├─", "│") + "  │ "
+                },
                 if i == 0 { " emit " } else { "      " },
                 i,
                 Colour::Cyan.paint(format!("0x{}", hex::encode(&topic)))
@@ -503,32 +499,26 @@ fn format_token(param: ethers::abi::Token) -> String {
         Token::Bytes(bytes) => format!("0x{}", hex::encode(&bytes)),
         Token::Int(num) => {
             if num.bit(255) {
-                format!("-{}", (num & ethers::types::U256::from(1u32) << 255u32).to_string())
+                format!("-{}", (num & ethers::types::U256::from(1u32) << 255u32))
             } else {
-                format!("{}", num.to_string())
+                num.to_string()
             }
-        },
-        Token::Uint(num) => format!("{}", num.to_string()),
+        }
+        Token::Uint(num) => num.to_string(),
         Token::Bool(b) => format!("{}", b),
         Token::String(s) => s,
         Token::FixedArray(tokens) => {
-            let string = tokens.into_iter().map(|token| {
-                format_token(token)
-            }).collect::<Vec<String>>().join(", ");
+            let string = tokens.into_iter().map(format_token).collect::<Vec<String>>().join(", ");
             format!("[{}]", string)
-        },
+        }
         Token::Array(tokens) => {
-            let string = tokens.into_iter().map(|token| {
-                format_token(token)
-            }).collect::<Vec<String>>().join(", ");
+            let string = tokens.into_iter().map(format_token).collect::<Vec<String>>().join(", ");
             format!("[{}]", string)
-        },
+        }
         Token::Tuple(tokens) => {
-            let string = tokens.into_iter().map(|token| {
-                format_token(token)
-            }).collect::<Vec<String>>().join(", ");
+            let string = tokens.into_iter().map(format_token).collect::<Vec<String>>().join(", ");
             format!("({})", string)
-        },
+        }
     }
 }
 

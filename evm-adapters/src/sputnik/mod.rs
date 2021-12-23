@@ -126,7 +126,9 @@ impl<'a, 'b, S: StackState<'a>, P: PrecompileSet> SputnikExecutor<S>
         None
     }
 
-    fn set_tracing_enabled(&mut self, _enabled: bool) -> bool { false }
+    fn set_tracing_enabled(&mut self, _enabled: bool) -> bool {
+        false
+    }
 
     fn gas_left(&self) -> U256 {
         // NB: We do this to avoid `function cannot return without recursing`

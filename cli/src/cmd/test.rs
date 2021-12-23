@@ -326,7 +326,9 @@ fn test<A: ArtifactOutput + 'static, S: Clone, E: evm_adapters::Evm<S>>(
                     println!();
 
                     if verbosity > 2 {
-                        if let (Some(traces), Some(identified_contracts)) = (&result.traces, &result.identified_contracts) {
+                        if let (Some(traces), Some(identified_contracts)) =
+                            (&result.traces, &result.identified_contracts)
+                        {
                             let mut ident = identified_contracts.clone();
                             traces[2].pretty_print(
                                 0,

@@ -6,7 +6,7 @@ use evm_adapters::call_tracing::CallTraceArena;
 
 use evm_adapters::{
     fuzz::{FuzzTestResult, FuzzedCases, FuzzedExecutor},
-    Evm, EvmError
+    Evm, EvmError,
 };
 use eyre::{Context, Result};
 use regex::Regex;
@@ -257,15 +257,18 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         if let Some(evm_traces) = self.evm.traces() {
             if !evm_traces.is_empty() {
                 let mut ident = BTreeMap::new();
-                let evm_traces = evm_traces.into_iter().map(|trace: CallTraceArena| {
-                    trace.update_identified(
-                        0,
-                        known_contracts.expect("traces enabled but no identified_contracts"),
-                        &mut ident,
-                        self.evm,
-                    );
-                    trace
-                }).collect();
+                let evm_traces = evm_traces
+                    .into_iter()
+                    .map(|trace: CallTraceArena| {
+                        trace.update_identified(
+                            0,
+                            known_contracts.expect("traces enabled but no identified_contracts"),
+                            &mut ident,
+                            self.evm,
+                        );
+                        trace
+                    })
+                    .collect();
                 traces = Some(evm_traces);
             }
         }
@@ -297,15 +300,18 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
 
         if let Some(evm_traces) = self.evm.traces() {
             if !evm_traces.is_empty() {
-                let evm_traces = evm_traces.into_iter().map(|trace: CallTraceArena| {
-                    trace.update_identified(
-                        0,
-                        known_contracts.expect("traces enabled but no identified_contracts"),
-                        &mut ident,
-                        self.evm,
-                    );
-                    trace
-                }).collect::<Vec<CallTraceArena>>();
+                let evm_traces = evm_traces
+                    .into_iter()
+                    .map(|trace: CallTraceArena| {
+                        trace.update_identified(
+                            0,
+                            known_contracts.expect("traces enabled but no identified_contracts"),
+                            &mut ident,
+                            self.evm,
+                        );
+                        trace
+                    })
+                    .collect::<Vec<CallTraceArena>>();
                 identified_contracts = Some(ident);
                 if let Some(ref mut traces) = traces {
                     traces.extend(evm_traces);
@@ -313,7 +319,6 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
             }
         }
 
-        
         self.evm.reset_traces();
 
         let success = self.evm.check_success(self.address, &status, should_fail);
@@ -476,7 +481,12 @@ mod tests {
             cfg.failure_persistence = None;
             let mut fuzzer = TestRunner::new(cfg);
             let results = runner
-                .run_tests(&Regex::from_str("testFuzz.*").unwrap(), Some(&mut fuzzer), &init_state, None)
+                .run_tests(
+                    &Regex::from_str("testFuzz.*").unwrap(),
+                    Some(&mut fuzzer),
+                    &init_state,
+                    None,
+                )
                 .unwrap();
             for (_, res) in results {
                 assert!(!res.success);
