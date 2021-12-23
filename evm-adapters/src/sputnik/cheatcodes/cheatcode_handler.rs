@@ -818,7 +818,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
 
         let reason = self.execute(&mut runtime);
         // log::debug!(target: "evm", "Create execution using address {}: {:?}", address, reason);
-        self.state_mut().trace_index = pre_index;
+        
         match reason {
             ExitReason::Succeed(s) => {
                 let out = runtime.machine().return_value();
