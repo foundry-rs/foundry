@@ -1,0 +1,13 @@
+[package]
+name = "foundry-config"
+version = "0.1.0"
+edition = "2021"
+description = """
+Foundry configuration
+"""
+repository = "https://github.com/gakonst/foundry"
+readme = "../README.md"
+
+[dependencies]
+dirs-next = "2.0.0"
+toml = "0.5"
