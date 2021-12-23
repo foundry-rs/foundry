@@ -152,7 +152,7 @@ impl<'a, 'b, S: StackState<'a>, P: PrecompileSet> SputnikExecutor<S>
 
 use std::borrow::Cow;
 
-type PrecompileFn =
+pub type PrecompileFn =
     fn(&[u8], Option<u64>, &sputnik::Context, bool) -> Result<PrecompileOutput, PrecompileFailure>;
 
 /// Precompiled contracts which should be provided when instantiating the EVM.

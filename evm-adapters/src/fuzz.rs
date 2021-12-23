@@ -288,39 +288,22 @@ fn fuzz_param(param: &ParamType) -> impl Strategy<Value = Token> {
 #[cfg(feature = "sputnik")]
 mod tests {
     use super::*;
-    use foundry_utils::IntoFunction;
-    use sputnik::Config;
 
     use crate::{
-        fuzz::FuzzedExecutor,
-        sputnik::{
-            helpers::{new_backend, new_vicinity},
-            Executor, PRECOMPILES_MAP,
-        },
+        sputnik::helpers::{fuzzvm, vm},
         test_helpers::COMPILED,
         Evm,
     };
 
     #[test]
     fn prints_fuzzed_revert_reasons() {
-        // TODO: refactor to `vm` function
-        let config = Config::london();
-        let vicinity = new_vicinity();
-        let backend = new_backend(&vicinity, Default::default());
-        let gas_limit = 10_000_000;
-        let precompiles = PRECOMPILES_MAP.clone();
-        let mut evm =
-            Executor::new_with_cheatcodes(backend, gas_limit, &config, &precompiles, true);
+        let mut evm = vm();
 
         let compiled = COMPILED.find("FuzzTests").expect("could not find contract");
         let (addr, _, _, _) =
             evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
 
-        // TODO: refactor to `fuzzvm` function
-        let mut cfg = proptest::test_runner::Config::default();
-        cfg.failure_persistence = None;
-        let runner = proptest::test_runner::TestRunner::new(cfg);
-        let evm = FuzzedExecutor::new(&mut evm, runner, Address::zero());
+        let evm = fuzzvm(&mut evm);
 
         let func = compiled.abi.unwrap().function("testFuzzedRevert").unwrap();
         let res = evm.fuzz(&func, addr, false);
