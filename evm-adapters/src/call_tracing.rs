@@ -19,14 +19,7 @@ pub struct CallTraceArena {
 impl Default for CallTraceArena {
     fn default() -> Self {
         CallTraceArena {
-            arena: vec![CallTraceNode {
-                parent: None,
-                children: vec![],
-                idx: 0,
-                trace: CallTrace::default(),
-                logs: vec![],
-                ordering: vec![],
-            }],
+            arena: vec![Default::default()],
             entry: 0,
         }
     }
@@ -39,30 +32,31 @@ pub enum Output {
 
 impl CallTraceArena {
     pub fn push_trace(&mut self, entry: usize, mut new_trace: CallTrace) -> CallTrace {
-        if new_trace.depth == 0 {
-            // overwrite
-            self.update(new_trace.clone());
-            new_trace
-        } else if self.arena[entry].trace.depth == new_trace.depth - 1 {
-            new_trace.idx = self.arena.len();
-            new_trace.location = self.arena[entry].children.len();
-            self.arena[entry].ordering.push(LogCallOrder::Call(new_trace.location));
-            let node = CallTraceNode {
-                parent: Some(entry),
-                children: vec![],
-                idx: self.arena.len(),
-                trace: new_trace.clone(),
-                logs: vec![],
-                ordering: vec![],
-            };
-            self.arena.push(node);
-            self.arena[entry].children.push(new_trace.idx);
-            new_trace
-        } else {
-            self.push_trace(
-                *self.arena[entry].children.last().expect("Disconnected trace"),
-                new_trace,
-            )
+        match new_trace.depth {
+            0 => {
+                self.update(new_trace.clone());
+                new_trace
+            }
+            _ if self.arena[entry].trace.depth == new_trace.depth - 1 => {
+                new_trace.idx = self.arena.len();
+                new_trace.location = self.arena[entry].children.len();
+                self.arena[entry].ordering.push(LogCallOrder::Call(new_trace.location));
+                let node = CallTraceNode {
+                    parent: Some(entry),
+                    idx: self.arena.len(),
+                    trace: new_trace.clone(),
+                    ..Default::default()
+                };
+                self.arena.push(node);
+                self.arena[entry].children.push(new_trace.idx);
+                new_trace
+            }
+            _ => {
+                self.push_trace(
+                    *self.arena[entry].children.last().expect("Disconnected trace"),
+                    new_trace,
+                )
+            }
         }
     }
 
@@ -83,42 +77,40 @@ impl CallTraceArena {
         #[cfg(feature = "sputnik")]
         identified_contracts.insert(*CHEATCODE_ADDRESS, ("VM".to_string(), HEVM_ABI.clone()));
 
-        let maybe_found;
+
+        let mut abi = None;
+        let mut name = None;
         {
-            if let Some((name, abi)) = identified_contracts.get(&trace.addr) {
-                maybe_found = Some((name.clone(), abi.clone()));
-            } else {
-                maybe_found = None;
+            if let Some((name_, abi_)) = identified_contracts.get(&trace.addr) {
+                abi = Some(abi_.clone());
+                name = Some(name_.clone());
             }
         }
-        if let Some((_name, _abi)) = maybe_found {
-            if trace.created {
-                self.update_children(idx, contracts, identified_contracts, evm);
-                return
-            }
-            self.update_children(idx, contracts, identified_contracts, evm);
-        } else {
-            if trace.created {
-                if let Some((name, (abi, _code))) = contracts
-                    .iter()
-                    .find(|(_key, (_abi, code))| diff_score(code, &trace.output) < 0.10)
-                {
-                    identified_contracts.insert(trace.addr, (name.to_string(), abi.clone()));
+        if trace.created {
+            match (abi, name) {
+                (Some(_abi), Some(_name)) => {
                     self.update_children(idx, contracts, identified_contracts, evm);
-                    return
-                } else {
-                    self.update_children(idx, contracts, identified_contracts, evm);
-                    return
+                }
+                _ => {
+                    if let Some((name, (abi, _code))) = contracts
+                        .iter()
+                        .find(|(_key, (_abi, code))| diff_score(code, &trace.output) < 0.10)
+                    {
+                        identified_contracts.insert(trace.addr, (name.to_string(), abi.clone()));
+                        self.update_children(idx, contracts, identified_contracts, evm);
+                    } else {
+                        self.update_children(idx, contracts, identified_contracts, evm);   
+                    }
                 }
             }
-
+        } else {
             if let Some((name, (abi, _code))) = contracts
                 .iter()
                 .find(|(_key, (_abi, code))| diff_score(code, &evm.code(trace.addr)) < 0.10)
             {
                 identified_contracts.insert(trace.addr, (name.to_string(), abi.clone()));
                 // re-enter this function at this level if we found the contract
-                self.update_identified(idx, contracts, identified_contracts, evm);
+                self.update_children(idx, contracts, identified_contracts, evm);
             } else {
                 self.update_children(idx, contracts, identified_contracts, evm);
             }
@@ -324,8 +316,8 @@ impl CallTraceArena {
                                     .decode_input(&trace.data[4..])
                                     .expect("Bad func data decode");
                                 strings = params
-                                    .iter()
-                                    .map(|param| format!("{}", param))
+                                    .into_iter()
+                                    .map(|param| format_token(param))
                                     .collect::<Vec<String>>()
                                     .join(", ");
                             }
@@ -386,8 +378,8 @@ impl CallTraceArena {
                     if event.signature() == log.topics[0] {
                         let params = event.parse_log(log.clone()).expect("Bad event").params;
                         let strings = params
-                            .iter()
-                            .map(|param| format!("{}: {}", param.name, param.value))
+                            .into_iter()
+                            .map(|param| format!("{}: {}", param.name, format_token(param.value)))
                             .collect::<Vec<String>>()
                             .join(", ");
                         println!(
@@ -410,7 +402,7 @@ impl CallTraceArena {
             };
             println!(
                 "{}{}topic {}: {}",
-                left.replace("├─", "│") + right,
+                if i == 0 { left.replace("├─", "│") + right} else { left.replace("├─", "│") + "  │ "},
                 if i == 0 { " emit " } else { "      " },
                 i,
                 Colour::Cyan.paint(format!("0x{}", hex::encode(&topic)))
@@ -454,7 +446,7 @@ impl CallTraceArena {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct CallTraceNode {
     pub parent: Option<usize>,
     pub children: Vec<usize>,
@@ -500,6 +492,43 @@ impl CallTrace {
         self.output = new_trace.output;
         self.data = new_trace.data;
         self.addr = new_trace.addr;
+    }
+}
+
+fn format_token(param: ethers::abi::Token) -> String {
+    use ethers::abi::Token;
+    match param {
+        Token::Address(addr) => format!("{:?}", addr),
+        Token::FixedBytes(bytes) => format!("0x{}", hex::encode(&bytes)),
+        Token::Bytes(bytes) => format!("0x{}", hex::encode(&bytes)),
+        Token::Int(num) => {
+            if num.bit(255) {
+                format!("-{}", (num & ethers::types::U256::from(1u32) << 255u32).to_string())
+            } else {
+                format!("{}", num.to_string())
+            }
+        },
+        Token::Uint(num) => format!("{}", num.to_string()),
+        Token::Bool(b) => format!("{}", b),
+        Token::String(s) => s,
+        Token::FixedArray(tokens) => {
+            let string = tokens.into_iter().map(|token| {
+                format_token(token)
+            }).collect::<Vec<String>>().join(", ");
+            format!("[{}]", string)
+        },
+        Token::Array(tokens) => {
+            let string = tokens.into_iter().map(|token| {
+                format_token(token)
+            }).collect::<Vec<String>>().join(", ");
+            format!("[{}]", string)
+        },
+        Token::Tuple(tokens) => {
+            let string = tokens.into_iter().map(|token| {
+                format_token(token)
+            }).collect::<Vec<String>>().join(", ");
+            format!("({})", string)
+        },
     }
 }
 

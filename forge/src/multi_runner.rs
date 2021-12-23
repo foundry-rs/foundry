@@ -86,6 +86,7 @@ impl MultiContractRunnerBuilder {
         Ok(MultiContractRunner {
             contracts: deployed_contracts,
             known_contracts,
+            identified_contracts: Default::default(),
             evm,
             state: PhantomData,
             sender: self.sender,
@@ -120,6 +121,8 @@ pub struct MultiContractRunner<E, S> {
     pub contracts: BTreeMap<String, (Abi, Address, Vec<String>)>,
     /// Compiled contracts by name that have an Abi and runtime bytecode
     pub known_contracts: BTreeMap<String, (Abi, Vec<u8>)>,
+    /// Identified contracts by test
+    pub identified_contracts: BTreeMap<String, BTreeMap<Address, (String, Abi)>>,
     /// The EVM instance used in the test runner
     pub evm: E,
     /// The fuzzer which will be used to run parametric tests (w/ non-0 solidity args)
@@ -176,7 +179,7 @@ where
     ) -> Result<BTreeMap<String, TestResult>> {
         let mut runner =
             ContractRunner::new(&mut self.evm, contract, address, self.sender, init_logs);
-        runner.run_tests(pattern, self.fuzzer.as_mut(), init_state)
+        runner.run_tests(pattern, self.fuzzer.as_mut(), init_state, Some(&self.known_contracts))
     }
 }
 

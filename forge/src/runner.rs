@@ -6,7 +6,7 @@ use evm_adapters::call_tracing::CallTraceArena;
 
 use evm_adapters::{
     fuzz::{FuzzTestResult, FuzzedCases, FuzzedExecutor},
-    Evm, EvmError,
+    Evm, EvmError
 };
 use eyre::{Context, Result};
 use regex::Regex;
@@ -59,6 +59,9 @@ pub struct TestResult {
 
     /// Traces
     pub traces: Option<Vec<CallTraceArena>>,
+
+    /// Identified contracts
+    pub identified_contracts: Option<BTreeMap<Address, (String, Abi)>>,
 }
 
 impl TestResult {
@@ -168,6 +171,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         regex: &Regex,
         fuzzer: Option<&mut TestRunner>,
         init_state: &S,
+        known_contracts: Option<&BTreeMap<String, (Abi, Vec<u8>)>>,
     ) -> Result<BTreeMap<String, TestResult>> {
         tracing::info!("starting tests");
         let start = Instant::now();
@@ -187,7 +191,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
             .map(|func| {
                 // Before each test run executes, ensure we're at our initial state.
                 self.evm.reset(init_state.clone());
-                let result = self.run_test(func, needs_setup)?;
+                let result = self.run_test(func, needs_setup, known_contracts)?;
                 Ok((func.signature(), result))
             })
             .collect::<Result<BTreeMap<_, _>>>()?;
@@ -218,7 +222,12 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
     }
 
     #[tracing::instrument(name = "test", skip_all, fields(name = %func.signature()))]
-    pub fn run_test(&mut self, func: &Function, setup: bool) -> Result<TestResult> {
+    pub fn run_test(
+        &mut self,
+        func: &Function,
+        setup: bool,
+        known_contracts: Option<&BTreeMap<String, (Abi, Vec<u8>)>>,
+    ) -> Result<TestResult> {
         let start = Instant::now();
         // the expected result depends on the function name
         // DAppTools' ds-test will not revert inside its `assertEq`-like functions
@@ -241,6 +250,27 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
                 .1;
             logs.extend_from_slice(&setup_logs);
         }
+
+        let mut traces: Option<Vec<CallTraceArena>> = None;
+        let mut identified_contracts: Option<BTreeMap<Address, (String, Abi)>> = None;
+        let mut ident = BTreeMap::new();
+        if let Some(evm_traces) = self.evm.traces() {
+            if !evm_traces.is_empty() {
+                let mut ident = BTreeMap::new();
+                let evm_traces = evm_traces.into_iter().map(|trace: CallTraceArena| {
+                    trace.update_identified(
+                        0,
+                        known_contracts.expect("traces enabled but no identified_contracts"),
+                        &mut ident,
+                        self.evm,
+                    );
+                    trace
+                }).collect();
+                traces = Some(evm_traces);
+            }
+        }
+
+        self.evm.reset_traces();
 
         let (status, reason, gas_used, logs) = match self.evm.call::<(), _, _>(
             self.sender,
@@ -265,12 +295,25 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
             },
         };
 
-        let mut traces = None;
         if let Some(evm_traces) = self.evm.traces() {
             if !evm_traces.is_empty() {
-                traces = Some(evm_traces);
+                let evm_traces = evm_traces.into_iter().map(|trace: CallTraceArena| {
+                    trace.update_identified(
+                        0,
+                        known_contracts.expect("traces enabled but no identified_contracts"),
+                        &mut ident,
+                        self.evm,
+                    );
+                    trace
+                }).collect::<Vec<CallTraceArena>>();
+                identified_contracts = Some(ident);
+                if let Some(ref mut traces) = traces {
+                    traces.extend(evm_traces);
+                }
             }
         }
+
+        
         self.evm.reset_traces();
 
         let success = self.evm.check_success(self.address, &status, should_fail);
@@ -285,6 +328,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
             logs,
             kind: TestKind::Standard(gas_used),
             traces,
+            identified_contracts,
         })
     }
 
@@ -295,6 +339,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         setup: bool,
         runner: TestRunner,
     ) -> Result<TestResult> {
+        let prev = self.evm.set_tracing_enabled(false);
         let start = Instant::now();
         let should_fail = func.name.starts_with("testFail");
         tracing::debug!(func = ?func.signature(), should_fail, "fuzzing");
@@ -329,6 +374,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         let duration = Instant::now().duration_since(start);
         tracing::debug!(?duration, %success);
 
+        self.evm.set_tracing_enabled(prev);
         // from that call?
         Ok(TestResult {
             success,
@@ -338,6 +384,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
             logs: vec![],
             kind: TestKind::Fuzz(cases),
             traces: None,
+            identified_contracts: None,
         })
     }
 }
@@ -399,6 +446,7 @@ mod tests {
                     &Regex::from_str("testGreeting").unwrap(),
                     Some(&mut fuzzer),
                     &init_state,
+                    None,
                 )
                 .unwrap();
             assert!(results["testGreeting()"].success);
@@ -428,7 +476,7 @@ mod tests {
             cfg.failure_persistence = None;
             let mut fuzzer = TestRunner::new(cfg);
             let results = runner
-                .run_tests(&Regex::from_str("testFuzz.*").unwrap(), Some(&mut fuzzer), &init_state)
+                .run_tests(&Regex::from_str("testFuzz.*").unwrap(), Some(&mut fuzzer), &init_state, None)
                 .unwrap();
             for (_, res) in results {
                 assert!(!res.success);
@@ -537,7 +585,7 @@ mod tests {
         let mut runner =
             ContractRunner::new(&mut evm, compiled.abi.as_ref().unwrap(), addr, None, &[]);
 
-        let res = runner.run_tests(&".*".parse().unwrap(), None, &init_state).unwrap();
+        let res = runner.run_tests(&".*".parse().unwrap(), None, &init_state, None).unwrap();
         assert!(!res.is_empty());
         assert!(res.iter().all(|(_, result)| result.success));
     }

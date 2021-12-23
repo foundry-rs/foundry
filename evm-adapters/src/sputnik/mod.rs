@@ -63,6 +63,7 @@ pub trait SputnikExecutor<S> {
     fn state(&self) -> &S;
     fn state_mut(&mut self) -> &mut S;
     fn expected_revert(&self) -> Option<&[u8]>;
+    fn set_tracing_enabled(&mut self, enabled: bool) -> bool;
     fn gas_left(&self) -> U256;
     fn transact_call(
         &mut self,
@@ -124,6 +125,8 @@ impl<'a, 'b, S: StackState<'a>, P: PrecompileSet> SputnikExecutor<S>
     fn expected_revert(&self) -> Option<&[u8]> {
         None
     }
+
+    fn set_tracing_enabled(&mut self, _enabled: bool) -> bool { false }
 
     fn gas_left(&self) -> U256 {
         // NB: We do this to avoid `function cannot return without recursing`

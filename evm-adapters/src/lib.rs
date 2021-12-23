@@ -76,6 +76,9 @@ pub trait Evm<State> {
     /// Resets the EVM's state to the provided value
     fn reset(&mut self, state: State);
 
+    /// Turns on/off tracing
+    fn set_tracing_enabled(&mut self, enabled: bool) -> bool;
+
     /// Performs a [`call_unchecked`](Self::call_unchecked), checks if execution reverted, and
     /// proceeds to return the decoded response to the user.
     fn call<D: Detokenize, T: Tokenize, F: IntoFunction>(

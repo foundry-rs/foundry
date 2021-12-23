@@ -326,31 +326,15 @@ fn test<A: ArtifactOutput + 'static, S: Clone, E: evm_adapters::Evm<S>>(
                     println!();
 
                     if verbosity > 2 {
-                        if let Some(traces) = &result.traces {
-                            let mut identified = Default::default();
-                            if traces.len() > 1 {
-                                traces[0].update_identified(
-                                    0,
-                                    &runner.known_contracts,
-                                    &mut identified,
-                                    &runner.evm,
-                                );
-                                traces[1].pretty_print(
-                                    0,
-                                    &runner.known_contracts,
-                                    &mut identified,
-                                    &runner.evm,
-                                    "".to_string(),
-                                );
-                            } else {
-                                traces[0].pretty_print(
-                                    0,
-                                    &runner.known_contracts,
-                                    &mut identified,
-                                    &runner.evm,
-                                    "".to_string(),
-                                );
-                            }
+                        if let (Some(traces), Some(identified_contracts)) = (&result.traces, &result.identified_contracts) {
+                            let mut ident = identified_contracts.clone();
+                            traces[2].pretty_print(
+                                0,
+                                &runner.known_contracts,
+                                &mut ident,
+                                &runner.evm,
+                                "".to_string(),
+                            );
                             println!();
                         }
                     }

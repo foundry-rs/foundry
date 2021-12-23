@@ -92,6 +92,12 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
         self.handler.state().expected_revert.as_deref()
     }
 
+    fn set_tracing_enabled(&mut self, enabled: bool) -> bool {
+        let curr = self.state_mut().trace_enabled;
+        self.state_mut().trace_enabled = enabled;
+        curr
+    }
+
     fn gas_left(&self) -> U256 {
         // NB: We do this to avoid `function cannot return without recursing`
         U256::from(self.state().metadata().gasometer().gas())
