@@ -171,6 +171,28 @@ pub mod helpers {
     use ethers::types::H160;
     use sputnik::backend::{MemoryBackend, MemoryVicinity};
 
+    use crate::sputnik::{
+        cheatcodes::cheatcode_handler::{CheatcodeStackExecutor, CheatcodeStackState},
+        PrecompileFn, PRECOMPILES_MAP,
+    };
+    use once_cell::sync::Lazy;
+
+    type TestSputnikVM<'a, B> = Executor<
+        // state
+        CheatcodeStackState<'a, B>,
+        // actual stack executor
+        CheatcodeStackExecutor<'a, 'a, B, BTreeMap<Address, PrecompileFn>>,
+    >;
+
+    static CFG: Lazy<Config> = Lazy::new(|| Config::london());
+    static VICINITY: Lazy<MemoryVicinity> = Lazy::new(|| new_vicinity());
+    const GAS_LIMIT: u64 = 30_000_000;
+
+    pub fn vm<'a>() -> TestSputnikVM<'a, MemoryBackend<'a>> {
+        let backend = new_backend(&*VICINITY, Default::default());
+        Executor::new_with_cheatcodes(backend, GAS_LIMIT, &*CFG, &*PRECOMPILES_MAP, true)
+    }
+
     pub fn new_backend(vicinity: &MemoryVicinity, state: MemoryState) -> MemoryBackend<'_> {
         MemoryBackend::new(vicinity, state)
     }
@@ -193,51 +215,32 @@ pub mod helpers {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        helpers::{new_backend, new_vicinity},
-        *,
+    use super::*;
+    use crate::{
+        sputnik::helpers::vm,
+        test_helpers::{can_call_vm_directly, solidity_unit_test, COMPILED},
     };
-    use crate::test_helpers::{can_call_vm_directly, solidity_unit_test, COMPILED};
-
-    use crate::sputnik::PRECOMPILES_MAP;
     use ethers::utils::id;
     use sputnik::{ExitReason, ExitRevert, ExitSucceed};
 
     #[test]
     fn sputnik_can_call_vm_directly() {
-        let cfg = Config::istanbul();
+        let evm = vm();
         let compiled = COMPILED.find("Greeter").expect("could not find contract");
-
-        let vicinity = new_vicinity();
-        let backend = new_backend(&vicinity, Default::default());
-        let precompiles = PRECOMPILES_MAP.clone();
-        let evm = Executor::new(12_000_000, &cfg, &backend, &precompiles);
         can_call_vm_directly(evm, compiled);
     }
 
     #[test]
     fn sputnik_solidity_unit_test() {
-        let cfg = Config::istanbul();
-
+        let evm = vm();
         let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
-
-        let vicinity = new_vicinity();
-        let backend = new_backend(&vicinity, Default::default());
-        let precompiles = PRECOMPILES_MAP.clone();
-        let evm = Executor::new(12_000_000, &cfg, &backend, &precompiles);
         solidity_unit_test(evm, compiled);
     }
 
     #[test]
     fn failing_with_no_reason_if_no_setup() {
-        let cfg = Config::istanbul();
-
+        let mut evm = vm();
         let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
-
-        let vicinity = new_vicinity();
-        let backend = new_backend(&vicinity, Default::default());
-        let precompiles = PRECOMPILES_MAP.clone();
-        let mut evm = Executor::new(12_000_000, &cfg, &backend, &precompiles);
 
         let (addr, _, _, _) =
             evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
@@ -256,14 +259,8 @@ mod tests {
 
     #[test]
     fn failing_solidity_unit_test() {
-        let cfg = Config::istanbul();
-
+        let mut evm = vm();
         let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
-
-        let vicinity = new_vicinity();
-        let backend = new_backend(&vicinity, Default::default());
-        let precompiles = PRECOMPILES_MAP.clone();
-        let mut evm = Executor::new(12_000_000, &cfg, &backend, &precompiles);
 
         let (addr, _, _, _) =
             evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
@@ -280,19 +277,13 @@ mod tests {
             _ => panic!("unexpected error variant"),
         };
         assert_eq!(reason, "not equal to `hi`".to_string());
-        assert_eq!(gas_used, 31233);
+        assert_eq!(gas_used, 26633);
     }
 
     #[test]
     fn test_can_call_large_contract() {
-        let cfg = Config::istanbul();
-
+        let mut evm = vm();
         let compiled = COMPILED.find("LargeContract").expect("could not find contract");
-
-        let vicinity = new_vicinity();
-        let backend = new_backend(&vicinity, Default::default());
-        let precompiles = PRECOMPILES_MAP.clone();
-        let mut evm = Executor::new(13_000_000, &cfg, &backend, &precompiles);
 
         let from = Address::random();
         let (addr, _, _, _) =
