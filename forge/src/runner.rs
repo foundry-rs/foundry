@@ -306,8 +306,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
                 }
                 result => panic!("Unexpected test result: {:?}", result),
             }
-            // TODO custom display for Evm::ReturnReason?
-            reason = Some(format!("{:?}", err.return_reason));
+            reason = Some(err.revert_reason);
         }
 
         let duration = Instant::now().duration_since(start);
