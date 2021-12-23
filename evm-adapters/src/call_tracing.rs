@@ -472,23 +472,17 @@ impl CallTrace {
                                         .expect("Bad func output decode"),
                                 )
                             } else if !self.output.is_empty() && !self.success {
-                                if self.output.len() >= 4 && self.output[0..4] == [8, 195, 121, 160]
-                                {
-                                    // its a revert string
-                                    let decoded_data = ethers::abi::decode(
-                                        &[ethers::abi::ParamType::String],
-                                        &self.output[4..],
-                                    )
-                                    .expect("String error code, but not actual string");
-                                    return Output::Token(decoded_data)
-                                } else if let Some(revert_type) =
-                                    decode_solidity_reverts(&self.output)
-                                {
-                                    return Output::Token(vec![ethers::abi::Token::String(
-                                        revert_type.to_string(),
-                                    )])
-                                } else {
-                                    return Output::Raw(self.output.clone())
+                                match foundry_utils::decode_revert(&self.output[..]) {
+                                    Ok(decoded_error) => {
+                                        println!("here");
+                                        return Output::Token(vec![ethers::abi::Token::String(
+                                            decoded_error,
+                                        )])
+                                    }
+                                    Err(e) => {
+                                        println!("{:?}", e);
+                                        return Output::Raw(self.output.clone())
+                                    }
                                 }
                             } else {
                                 return Output::Raw(vec![])
@@ -511,18 +505,8 @@ impl CallTrace {
                 );
 
                 if !self.success {
-                    if self.output.len() >= 4 && self.output[0..4] == [8, 195, 121, 160] {
-                        // its a revert string
-                        let decoded_data = ethers::abi::decode(
-                            &[ethers::abi::ParamType::String],
-                            &self.output[4..],
-                        )
-                        .expect("String error code, but not actual string");
-                        return Output::Token(decoded_data)
-                    } else if let Some(revert_type) = decode_solidity_reverts(&self.output) {
-                        return Output::Token(vec![ethers::abi::Token::String(
-                            revert_type.to_string(),
-                        )])
+                    if let Ok(decoded_error) = foundry_utils::decode_revert(&self.output[..]) {
+                        return Output::Token(vec![ethers::abi::Token::String(decoded_error)])
                     }
                 }
                 return Output::Raw(self.output[..].to_vec())
@@ -553,14 +537,8 @@ impl CallTrace {
         );
 
         if !self.success {
-            if self.output.len() >= 4 && self.output[0..4] == [8, 195, 121, 160] {
-                // its a revert string
-                let decoded_data =
-                    ethers::abi::decode(&[ethers::abi::ParamType::String], &self.output[4..])
-                        .expect("String error code, but not actual string");
-                return Output::Token(decoded_data)
-            } else if let Some(revert_type) = decode_solidity_reverts(&self.output) {
-                return Output::Token(vec![ethers::abi::Token::String(revert_type.to_string())])
+            if let Ok(decoded_error) = foundry_utils::decode_revert(&self.output[..]) {
+                return Output::Token(vec![ethers::abi::Token::String(decoded_error)])
             }
         }
         Output::Raw(self.output[..].to_vec())
@@ -619,57 +597,4 @@ fn diff_score(bytecode1: &[u8], bytecode2: &[u8]) -> f64 {
 
     // println!("diff_score {}", diff_chars as f64 / cutoff_len as f64);
     diff_chars as f64 / cutoff_len as f64
-}
-
-fn decode_solidity_reverts(data: &[u8]) -> Option<&str> {
-    if data.len() >= 4 {
-        match data[0..4] {
-            // keccak(Panic(uint256))
-            [78, 72, 123, 113] => {
-                // ref: https://soliditydeveloper.com/solidity-0.8
-                match data[data.len() - 1] {
-                    1 => {
-                        // assert
-                        Some("Assertion violated")
-                    }
-                    17 => {
-                        // safemath over/underflow
-                        Some("Arithmetic over/underflow")
-                    }
-                    18 => {
-                        // divide by 0
-                        Some("Division or modulo by 0")
-                    }
-                    33 => {
-                        // conversion into non-existent enum type
-                        Some("Conversion into non-existent enum type")
-                    }
-                    34 => {
-                        // incorrectly encoded storage byte array
-                        Some("Incorrectly encoded storage byte array")
-                    }
-                    49 => {
-                        // pop() on empty array
-                        Some("`pop()` on empty array")
-                    }
-                    50 => {
-                        // index out of bounds
-                        Some("Index out of bounds")
-                    }
-                    65 => {
-                        // allocating too much memory or creating too large array
-                        Some("Memory allocation overflow")
-                    }
-                    81 => {
-                        // calling a zero initialized variable of internal function type
-                        Some("Calling a zero initialized variable of internal function type")
-                    }
-                    _ => None,
-                }
-            }
-            _ => None,
-        }
-    } else {
-        None
-    }
 }
