@@ -11,8 +11,11 @@ use ansi_term::Colour;
 use crate::sputnik::cheatcodes::{cheatcode_handler::CHEATCODE_ADDRESS, HEVM_ABI};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// An arena of `CallTraceNode`s
 pub struct CallTraceArena {
+    /// The arena of nodes
     pub arena: Vec<CallTraceNode>,
+    /// The entry index, denoting the first node's index in the arena
     pub entry: usize,
 }
 
@@ -22,18 +25,55 @@ impl Default for CallTraceArena {
     }
 }
 
+/// Function output type
 pub enum Output {
+    /// Decoded vec of tokens
     Token(Vec<ethers::abi::Token>),
+    /// Not decoded raw bytes
     Raw(Vec<u8>),
 }
 
+impl Output {
+    /// Prints the output of a function call
+    pub fn print(self, color: Colour, left: &str) {
+        match self {
+            Output::Token(token) => {
+                let strings =
+                    token.into_iter().map(format_token).collect::<Vec<String>>().join(", ");
+                println!(
+                    "{}  └─ {} {}",
+                    left.replace("├─", "│").replace("└─", "  "),
+                    color.paint("←"),
+                    if strings.is_empty() { "()" } else { &*strings }
+                );
+            }
+            Output::Raw(bytes) => {
+                println!(
+                    "{}  └─ {} {}",
+                    left.replace("├─", "│").replace("└─", "  "),
+                    color.paint("←"),
+                    if bytes.is_empty() {
+                        "()".to_string()
+                    } else {
+                        "0x".to_string() + &hex::encode(&bytes)
+                    }
+                );
+            }
+        }
+    }
+}
+
 impl CallTraceArena {
+    /// Pushes a new trace into the arena, returning the trace that was passed in with updated
+    /// values
     pub fn push_trace(&mut self, entry: usize, mut new_trace: CallTrace) -> CallTrace {
         match new_trace.depth {
+            // The entry node, just update it
             0 => {
                 self.update(new_trace.clone());
                 new_trace
             }
+            // we found the parent node, add the new trace as a child
             _ if self.arena[entry].trace.depth == new_trace.depth - 1 => {
                 new_trace.idx = self.arena.len();
                 new_trace.location = self.arena[entry].children.len();
@@ -48,6 +88,7 @@ impl CallTraceArena {
                 self.arena[entry].children.push(new_trace.idx);
                 new_trace
             }
+            // we haven't found the parent node, go deeper
             _ => self.push_trace(
                 *self.arena[entry].children.last().expect("Disconnected trace"),
                 new_trace,
@@ -55,11 +96,27 @@ impl CallTraceArena {
         }
     }
 
+    /// Updates the values in the calltrace held by the arena based on the passed in trace
     pub fn update(&mut self, trace: CallTrace) {
         let node = &mut self.arena[trace.idx];
         node.trace.update(trace);
     }
 
+    /// Updates `identified_contracts` for future use so that after an `evm.reset_state()`, we
+    /// already know which contract corresponds to which address.
+    ///
+    /// `idx` is the call arena index to start at. Generally this will be 0, but if you want to
+    /// update a subset of the tree, you can pass in a different index
+    ///
+    /// `contracts` are the known contracts of (name => (abi, runtime_code)). It is used to identify
+    /// a deployed contract.
+    ///
+    /// `identified_contracts` are the identified contract addresses built up from comparing
+    /// deployed contracts against `contracts`
+    ///
+    /// `evm` is the evm that we used so that we can grab deployed code if needed. A lot of times,
+    /// the evm state is reset so we wont have any code but it can be useful if we want to
+    /// pretty print right after a test.
     pub fn update_identified<'a, S: Clone, E: crate::Evm<S>>(
         &self,
         idx: usize,
@@ -84,6 +141,8 @@ impl CallTraceArena {
             match (abi, name) {
                 (Some(_abi), Some(_name)) => {}
                 _ => {
+                    // if its a creation call, check the output instead of asking the evm for the
+                    // runtime code
                     if let Some((name, (abi, _code))) = contracts
                         .iter()
                         .find(|(_key, (_abi, code))| diff_score(code, &trace.output) < 0.10)
@@ -96,6 +155,7 @@ impl CallTraceArena {
             match (abi, name) {
                 (Some(_abi), Some(_name)) => {}
                 _ => {
+                    // check the code at the address and try to find the corresponding contract
                     if let Some((name, (abi, _code))) = contracts
                         .iter()
                         .find(|(_key, (_abi, code))| diff_score(code, &evm.code(trace.addr)) < 0.10)
@@ -106,9 +166,11 @@ impl CallTraceArena {
             }
         }
 
+        // update all children nodes
         self.update_children(idx, contracts, identified_contracts, evm);
     }
 
+    /// Updates all children nodes by recursing into `update_identified`
     pub fn update_children<'a, S: Clone, E: crate::Evm<S>>(
         &self,
         idx: usize,
@@ -122,13 +184,30 @@ impl CallTraceArena {
         });
     }
 
+    /// Pretty print a CallTraceArena
+    ///
+    /// `idx` is the call arena index to start at. Generally this will be 0, but if you want to
+    /// print a subset of the tree, you can pass in a different index
+    ///
+    /// `contracts` are the known contracts of (name => (abi, runtime_code)). It is used to identify
+    /// a deployed contract.
+    ///
+    /// `identified_contracts` are the identified contract addresses built up from comparing
+    /// deployed contracts against `contracts`
+    ///
+    /// `evm` is the evm that we used so that we can grab deployed code if needed. A lot of times,
+    /// the evm state is reset so we wont have any code but it can be useful if we want to
+    /// pretty print right after a test.
+    ///
+    /// For a user, `left` input should generally be `""`. Left is used recursively
+    /// to build the tree print out structure and is built up as we recurse down the tree.
     pub fn pretty_print<'a, S: Clone, E: crate::Evm<S>>(
         &self,
         idx: usize,
         contracts: &BTreeMap<String, (Abi, Vec<u8>)>,
         identified_contracts: &mut BTreeMap<H160, (String, Abi)>,
         evm: &'a E,
-        left: String,
+        left: &str,
     ) {
         let trace = &self.arena[idx].trace;
 
@@ -136,6 +215,7 @@ impl CallTraceArena {
         identified_contracts.insert(*CHEATCODE_ADDRESS, ("VM".to_string(), HEVM_ABI.clone()));
 
         #[cfg(feature = "sputnik")]
+        // color the trace function call & output by success
         let color = if trace.addr == *CHEATCODE_ADDRESS {
             Colour::Blue
         } else if trace.success {
@@ -159,7 +239,8 @@ impl CallTraceArena {
         if trace.created {
             match (abi, name) {
                 (Some(abi), Some(name)) => {
-                    // if we have a match already, print it like normal
+                    // if we have identified the address already, decode and print with the provided
+                    // name and abi
                     println!("{}{} {}@{}", left, Colour::Yellow.paint("→ new"), name, trace.addr);
                     self.print_children_and_logs(
                         idx,
@@ -167,7 +248,7 @@ impl CallTraceArena {
                         contracts,
                         identified_contracts,
                         evm,
-                        &left,
+                        left,
                     );
                     println!(
                         "{}  └─ {} {} bytes of code",
@@ -196,7 +277,7 @@ impl CallTraceArena {
                             contracts,
                             identified_contracts,
                             evm,
-                            &left,
+                            left,
                         );
                         println!(
                             "{}  └─ {} {} bytes of code",
@@ -218,7 +299,7 @@ impl CallTraceArena {
                             contracts,
                             identified_contracts,
                             evm,
-                            &left,
+                            left,
                         );
                         println!(
                             "{}  └─ {} {} bytes of code",
@@ -232,16 +313,18 @@ impl CallTraceArena {
         } else {
             match (abi, name) {
                 (Some(abi), Some(name)) => {
-                    let output = trace.print_func_call(Some(&abi), Some(&name), color, &left);
+                    // print the function call, grab the output, print the children and logs, and
+                    // finally output
+                    let output = trace.print_func_call(Some(&abi), Some(&name), color, left);
                     self.print_children_and_logs(
                         idx,
                         Some(&abi),
                         contracts,
                         identified_contracts,
                         evm,
-                        &left,
+                        left,
                     );
-                    Self::print_output(color, output, left);
+                    output.print(color, left);
                 }
                 _ => {
                     if let Some((name, (abi, _code))) = contracts
@@ -249,25 +332,27 @@ impl CallTraceArena {
                         .find(|(_key, (_abi, code))| diff_score(code, &evm.code(trace.addr)) < 0.10)
                     {
                         identified_contracts.insert(trace.addr, (name.to_string(), abi.clone()));
-                        // re-enter this function at this level if we found the contract
+                        // re-enter this function at this node level if we found the contract
                         self.pretty_print(idx, contracts, identified_contracts, evm, left);
                     } else {
-                        let output = trace.print_func_call(None, None, color, &left);
+                        // we couldn't identify it, print without abi and name
+                        let output = trace.print_func_call(None, None, color, left);
                         self.print_children_and_logs(
                             idx,
                             None,
                             contracts,
                             identified_contracts,
                             evm,
-                            &left,
+                            left,
                         );
-                        Self::print_output(color, output, left);
+                        output.print(color, left);
                     }
                 }
             }
         }
     }
 
+    /// Prints child calls and logs in order
     pub fn print_children_and_logs<'a, S: Clone, E: crate::Evm<S>>(
         &self,
         node_idx: usize,
@@ -277,6 +362,9 @@ impl CallTraceArena {
         evm: &'a E,
         left: &str,
     ) {
+        // Ordering stores a vec of `LogCallOrder` which is populated based on if
+        // a log or a call was called first. This makes it such that we always print
+        // logs and calls in the correct order
         self.arena[node_idx].ordering.iter().for_each(|ordering| match ordering {
             LogCallOrder::Log(index) => {
                 self.arena[node_idx].print_log(*index, abi, left);
@@ -287,53 +375,33 @@ impl CallTraceArena {
                     contracts,
                     identified_contracts,
                     evm,
-                    left.replace("├─", "│").replace("└─", "  ") + "  ├─ ",
+                    &(left.replace("├─", "│").replace("└─", "  ") + "  ├─ "),
                 );
             }
         });
     }
-
-    pub fn print_output(color: Colour, output: Output, left: String) {
-        match output {
-            Output::Token(token) => {
-                let strings =
-                    token.into_iter().map(format_token).collect::<Vec<String>>().join(", ");
-                println!(
-                    "{}  └─ {} {}",
-                    left.replace("├─", "│").replace("└─", "  "),
-                    color.paint("←"),
-                    if strings.is_empty() { "()" } else { &*strings }
-                );
-            }
-            Output::Raw(bytes) => {
-                println!(
-                    "{}  └─ {} {}",
-                    left.replace("├─", "│").replace("└─", "  "),
-                    color.paint("←"),
-                    if bytes.is_empty() {
-                        "()".to_string()
-                    } else {
-                        "0x".to_string() + &hex::encode(&bytes)
-                    }
-                );
-            }
-        }
-    }
 }
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
+/// A node in the arena
 pub struct CallTraceNode {
+    /// Parent node index in the arena
     pub parent: Option<usize>,
+    /// Children node indexes in the arena
     pub children: Vec<usize>,
+    /// This node's index in the arena
     pub idx: usize,
+    /// The call trace
     pub trace: CallTrace,
     /// Logs
     #[serde(skip)]
     pub logs: Vec<RawLog>,
+    /// Ordering of child calls and logs
     pub ordering: Vec<LogCallOrder>,
 }
 
 impl CallTraceNode {
+    /// Prints a log at a particular index, optionally decoding if abi is provided
     pub fn print_log(&self, index: usize, abi: Option<&Abi>, left: &str) {
         let log = &self.logs[index];
         let right = "  ├─ ";
@@ -386,6 +454,10 @@ impl CallTraceNode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Ordering enum for calls and logs
+///
+/// i.e. if Call 0 occurs before Log 0, it will be pushed into the `CallTraceNode`'s ordering before
+/// the log.
 pub enum LogCallOrder {
     Log(usize),
     Call(usize),
@@ -412,6 +484,7 @@ pub struct CallTrace {
 }
 
 impl CallTrace {
+    /// Updates a trace given another trace
     fn update(&mut self, new_trace: Self) {
         self.success = new_trace.success;
         self.addr = new_trace.addr;
@@ -430,6 +503,7 @@ impl CallTrace {
         left: &str,
     ) -> Output {
         if let (Some(abi), Some(name)) = (abi, name) {
+            // Is data longer than 4, meaning we can attempt to decode it
             if self.data.len() >= 4 {
                 for (func_name, overloaded_funcs) in abi.functions.iter() {
                     for func in overloaded_funcs.iter() {
@@ -474,6 +548,7 @@ impl CallTrace {
             }
         }
 
+        // We couldn't decode the function call, so print it as an abstract call
         println!(
             "{}[{}] {}::{}({})",
             left,
@@ -495,6 +570,7 @@ impl CallTrace {
     }
 }
 
+// Gets pretty print strings for tokens
 fn format_token(param: ethers::abi::Token) -> String {
     use ethers::abi::Token;
     match param {

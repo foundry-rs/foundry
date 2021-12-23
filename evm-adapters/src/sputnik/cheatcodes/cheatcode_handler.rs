@@ -330,7 +330,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         msg_sender: H160,
     ) -> Capture<(ExitReason, Vec<u8>), Infallible> {
         let mut res = vec![];
-
+        let pre_index = self.state().trace_index;
         let trace = self.start_trace(*CHEATCODE_ADDRESS, input.clone(), false);
         // Get a mutable ref to the state so we can apply the cheats
         let state = self.state_mut();
@@ -495,7 +495,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
             }
         };
 
-        self.fill_trace(trace, true, Some(res.clone()));
+        self.fill_trace(&trace, true, Some(res.clone()), pre_index);
 
         // TODO: Add more cheat codes.
         Capture::Exit((ExitReason::Succeed(ExitSucceed::Stopped), res))
@@ -536,7 +536,14 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         }
     }
 
-    fn fill_trace(&mut self, new_trace: Option<CallTrace>, success: bool, output: Option<Vec<u8>>) {
+    fn fill_trace(
+        &mut self,
+        new_trace: &Option<CallTrace>,
+        success: bool,
+        output: Option<Vec<u8>>,
+        pre_trace_index: usize,
+    ) {
+        self.state_mut().trace_index = pre_trace_index;
         if let Some(new_trace) = new_trace {
             let used_gas = self.handler.used_gas();
             let trace = &mut self.state_mut().trace_mut().arena[new_trace.idx].trace;
@@ -567,7 +574,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 match $e {
                     Ok(v) => v,
                     Err(e) => {
-                        self.fill_trace(trace, false, None);
+                        self.fill_trace(&trace, false, None, pre_index);
                         return Capture::Exit((e.into(), Vec::new()))
                     }
                 }
@@ -608,7 +615,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
 
         if let Some(depth) = self.state().metadata().depth() {
             if depth > self.config().call_stack_limit {
-                self.fill_trace(trace, false, None);
+                self.fill_trace(&trace, false, None, pre_index);
                 let _ = self.handler.exit_substate(StackExitKind::Reverted);
                 return Capture::Exit((ExitError::CallTooDeep.into(), Vec::new()))
             }
@@ -618,7 +625,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
             match self.state_mut().transfer(transfer) {
                 Ok(()) => (),
                 Err(e) => {
-                    self.fill_trace(trace, false, None);
+                    self.fill_trace(&trace, false, None, pre_index);
                     let _ = self.handler.exit_substate(StackExitKind::Reverted);
                     return Capture::Exit((ExitReason::Error(e), Vec::new()))
                 }
@@ -638,14 +645,14 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                         match self.log(address, topics, data) {
                             Ok(_) => continue,
                             Err(error) => {
-                                self.fill_trace(trace, false, Some(output.clone()));
+                                self.fill_trace(&trace, false, Some(output.clone()), pre_index);
                                 return Capture::Exit((ExitReason::Error(error), output))
                             }
                         }
                     }
 
                     let _ = self.state_mut().metadata_mut().gasometer_mut().record_cost(cost);
-                    self.fill_trace(trace, true, Some(output.clone()));
+                    self.fill_trace(&trace, true, Some(output.clone()), pre_index);
                     let _ = self.handler.exit_substate(StackExitKind::Succeeded);
                     Capture::Exit((ExitReason::Succeed(exit_status), output))
                 }
@@ -657,7 +664,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                         }
                         PrecompileFailure::Fatal { exit_status } => ExitReason::Fatal(exit_status),
                     };
-                    self.fill_trace(trace, false, None);
+                    self.fill_trace(&trace, false, None, pre_index);
                     let _ = self.handler.exit_substate(StackExitKind::Failed);
                     Capture::Exit((e, Vec::new()))
                 }
@@ -670,28 +677,26 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         let mut runtime = Runtime::new(Rc::new(code), Rc::new(input), context, &config);
         let reason = self.execute(&mut runtime);
 
-        self.state_mut().trace_index = pre_index;
-
         // // log::debug!(target: "evm", "Call execution using address {}: {:?}", code_address,
         // reason);
         match reason {
             ExitReason::Succeed(s) => {
-                self.fill_trace(trace, true, Some(runtime.machine().return_value()));
+                self.fill_trace(&trace, true, Some(runtime.machine().return_value()), pre_index);
                 let _ = self.handler.exit_substate(StackExitKind::Succeeded);
                 Capture::Exit((ExitReason::Succeed(s), runtime.machine().return_value()))
             }
             ExitReason::Error(e) => {
-                self.fill_trace(trace, false, Some(runtime.machine().return_value()));
+                self.fill_trace(&trace, false, Some(runtime.machine().return_value()), pre_index);
                 let _ = self.handler.exit_substate(StackExitKind::Failed);
                 Capture::Exit((ExitReason::Error(e), Vec::new()))
             }
             ExitReason::Revert(e) => {
-                self.fill_trace(trace, false, Some(runtime.machine().return_value()));
+                self.fill_trace(&trace, false, Some(runtime.machine().return_value()), pre_index);
                 let _ = self.handler.exit_substate(StackExitKind::Reverted);
                 Capture::Exit((ExitReason::Revert(e), runtime.machine().return_value()))
             }
             ExitReason::Fatal(e) => {
-                self.fill_trace(trace, false, Some(runtime.machine().return_value()));
+                self.fill_trace(&trace, false, Some(runtime.machine().return_value()), pre_index);
                 self.state_mut().metadata_mut().gasometer_mut().fail();
                 let _ = self.handler.exit_substate(StackExitKind::Failed);
                 Capture::Exit((ExitReason::Fatal(e), Vec::new()))
@@ -720,7 +725,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 match $e {
                     Ok(v) => v,
                     Err(e) => {
-                        self.fill_trace(trace, false, None);
+                        self.fill_trace(&trace, false, None, pre_index);
                         return Capture::Exit((e.into(), None, Vec::new()))
                     }
                 }
@@ -745,13 +750,13 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
 
         if let Some(depth) = self.state().metadata().depth() {
             if depth > self.config().call_stack_limit {
-                self.fill_trace(trace, false, None);
+                self.fill_trace(&trace, false, None, pre_index);
                 return Capture::Exit((ExitError::CallTooDeep.into(), None, Vec::new()))
             }
         }
 
         if self.balance(caller) < value {
-            self.fill_trace(trace, false, None);
+            self.fill_trace(&trace, false, None, pre_index);
             return Capture::Exit((ExitError::OutOfFund.into(), None, Vec::new()))
         }
 
@@ -779,14 +784,14 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
 
         {
             if self.code_size(address) != U256::zero() {
+                self.fill_trace(&trace, false, None, pre_index);
                 let _ = self.handler.exit_substate(StackExitKind::Failed);
-                self.fill_trace(trace, false, None);
                 return Capture::Exit((ExitError::CreateCollision.into(), None, Vec::new()))
             }
 
             if self.handler.nonce(address) > U256::zero() {
+                self.fill_trace(&trace, false, None, pre_index);
                 let _ = self.handler.exit_substate(StackExitKind::Failed);
-                self.fill_trace(trace, false, None);
                 return Capture::Exit((ExitError::CreateCollision.into(), None, Vec::new()))
             }
 
@@ -798,8 +803,8 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         match self.state_mut().transfer(transfer) {
             Ok(()) => (),
             Err(e) => {
+                self.fill_trace(&trace, false, None, pre_index);
                 let _ = self.handler.exit_substate(StackExitKind::Reverted);
-                self.fill_trace(trace, false, None);
                 return Capture::Exit((ExitReason::Error(e), None, Vec::new()))
             }
         }
@@ -821,16 +826,16 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 // As of EIP-3541 code starting with 0xef cannot be deployed
                 if let Err(e) = check_first_byte(self.config(), &out) {
                     self.state_mut().metadata_mut().gasometer_mut().fail();
+                    self.fill_trace(&trace, false, None, pre_index);
                     let _ = self.handler.exit_substate(StackExitKind::Failed);
-                    self.fill_trace(trace, false, None);
                     return Capture::Exit((e.into(), None, Vec::new()))
                 }
 
                 if let Some(limit) = self.config().create_contract_limit {
                     if out.len() > limit {
                         self.state_mut().metadata_mut().gasometer_mut().fail();
+                        self.fill_trace(&trace, false, None, pre_index);
                         let _ = self.handler.exit_substate(StackExitKind::Failed);
-                        self.fill_trace(trace, false, None);
                         return Capture::Exit((
                             ExitError::CreateContractLimit.into(),
                             None,
@@ -841,34 +846,35 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
 
                 match self.state_mut().metadata_mut().gasometer_mut().record_deposit(out.len()) {
                     Ok(()) => {
+                        self.fill_trace(&trace, true, Some(out.clone()), pre_index);
                         let e = self.handler.exit_substate(StackExitKind::Succeeded);
-                        self.state_mut().set_code(address, out.clone());
+                        self.state_mut().set_code(address, out);
+                        // this may overwrite the trace and thats okay
                         try_or_fail!(e);
-                        self.fill_trace(trace, true, Some(out));
                         Capture::Exit((ExitReason::Succeed(s), Some(address), Vec::new()))
                     }
                     Err(e) => {
+                        self.fill_trace(&trace, false, None, pre_index);
                         let _ = self.handler.exit_substate(StackExitKind::Failed);
-                        self.fill_trace(trace, false, None);
                         Capture::Exit((ExitReason::Error(e), None, Vec::new()))
                     }
                 }
             }
             ExitReason::Error(e) => {
                 self.state_mut().metadata_mut().gasometer_mut().fail();
+                self.fill_trace(&trace, false, None, pre_index);
                 let _ = self.handler.exit_substate(StackExitKind::Failed);
-                self.fill_trace(trace, false, None);
                 Capture::Exit((ExitReason::Error(e), None, Vec::new()))
             }
             ExitReason::Revert(e) => {
+                self.fill_trace(&trace, false, Some(runtime.machine().return_value()), pre_index);
                 let _ = self.handler.exit_substate(StackExitKind::Reverted);
-                self.fill_trace(trace, false, Some(runtime.machine().return_value()));
                 Capture::Exit((ExitReason::Revert(e), None, runtime.machine().return_value()))
             }
             ExitReason::Fatal(e) => {
                 self.state_mut().metadata_mut().gasometer_mut().fail();
+                self.fill_trace(&trace, false, None, pre_index);
                 let _ = self.handler.exit_substate(StackExitKind::Failed);
-                self.fill_trace(trace, false, None);
                 Capture::Exit((ExitReason::Fatal(e), None, Vec::new()))
             }
         }
@@ -1364,13 +1370,7 @@ mod tests {
             ),
         );
         let mut identified = Default::default();
-        evm.traces().expect("no traces")[1].pretty_print(
-            0,
-            &mapping,
-            &mut identified,
-            &evm,
-            "".to_string(),
-        );
+        evm.traces().expect("no traces")[1].pretty_print(0, &mapping, &mut identified, &evm, "");
     }
 
     #[test]
@@ -1434,12 +1434,6 @@ mod tests {
             ),
         );
         let mut identified = Default::default();
-        evm.traces().expect("no traces")[1].pretty_print(
-            0,
-            &mapping,
-            &mut identified,
-            &evm,
-            "".to_string(),
-        );
+        evm.traces().expect("no traces")[1].pretty_print(0, &mapping, &mut identified, &evm, "");
     }
 }

@@ -338,7 +338,7 @@ fn test<A: ArtifactOutput + 'static, S: Clone, E: evm_adapters::Evm<S>>(
                                         &runner.known_contracts,
                                         &mut ident,
                                         &runner.evm,
-                                        "".to_string(),
+                                        "",
                                     );
                                 });
                             } else if !traces.is_empty() {
@@ -347,7 +347,7 @@ fn test<A: ArtifactOutput + 'static, S: Clone, E: evm_adapters::Evm<S>>(
                                     &runner.known_contracts,
                                     &mut ident,
                                     &runner.evm,
-                                    "".to_string(),
+                                    "",
                                 );
                             }
 
