@@ -71,6 +71,41 @@ pub struct CheatcodeHandler<H> {
     console_logs: Vec<String>,
 }
 
+pub(crate) fn convert_log(log: Log) -> Option<String> {
+    use HevmConsoleEvents::*;
+    let log = RawLog { topics: log.topics, data: log.data };
+    let event = HevmConsoleEvents::decode_log(&log).ok()?;
+    let ret = match event {
+        LogsFilter(inner) => format!("{}", inner.0),
+        LogBytesFilter(inner) => format!("{}", inner.0),
+        LogNamedAddressFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
+        LogNamedBytes32Filter(inner) => {
+            format!("{}: 0x{}", inner.key, hex::encode(inner.val))
+        }
+        LogNamedDecimalIntFilter(inner) => format!(
+            "{}: {:?}",
+            inner.key,
+            ethers::utils::parse_units(inner.val, inner.decimals.as_u32()).unwrap()
+        ),
+        LogNamedDecimalUintFilter(inner) => {
+            format!(
+                "{}: {:?}",
+                inner.key,
+                ethers::utils::parse_units(inner.val, inner.decimals.as_u32()).unwrap()
+            )
+        }
+        LogNamedIntFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
+        LogNamedUintFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
+        LogNamedBytesFilter(inner) => {
+            format!("{}: 0x{}", inner.key, hex::encode(inner.val))
+        }
+        LogNamedStringFilter(inner) => format!("{}: {}", inner.key, inner.val),
+
+        e => e.to_string(),
+    };
+    Some(ret)
+}
+
 // Forwards everything internally except for the transact_call which is overwritten.
 // TODO: Maybe we can pull this functionality up to the `Evm` trait to avoid having so many traits?
 impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'a, B>>
@@ -107,6 +142,10 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
         U256::from(self.state().metadata().gasometer().gas())
     }
 
+    fn all_logs(&self) -> Vec<String> {
+        self.handler.state().all_logs.clone()
+    }
+
     fn transact_call(
         &mut self,
         caller: H160,
@@ -116,6 +155,9 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
         gas_limit: u64,
         access_list: Vec<(H160, Vec<H256>)>,
     ) -> (ExitReason, Vec<u8>) {
+        // reset all_logs because its a new call
+        self.state_mut().all_logs = vec![];
+
         let transaction_cost = gasometer::call_transaction_cost(&data, &access_list);
         match self.state_mut().metadata_mut().gasometer_mut().record_transaction(transaction_cost) {
             Ok(()) => (),
@@ -164,6 +206,9 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
         gas_limit: u64,
         access_list: Vec<(H160, Vec<H256>)>,
     ) -> ExitReason {
+        // reset all_logs because its a new call
+        self.state_mut().all_logs = vec![];
+
         let transaction_cost = gasometer::create_transaction_cost(&init_code, &access_list);
         match self.state_mut().metadata_mut().gasometer_mut().record_transaction(transaction_cost) {
             Ok(()) => (),
@@ -213,45 +258,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
 
     fn logs(&self) -> Vec<String> {
         let logs = self.state().substate.logs().to_vec();
-        logs.into_iter()
-            .filter_map(|log| {
-                // convert to the ethers type
-                let log = RawLog { topics: log.topics, data: log.data };
-                HevmConsoleEvents::decode_log(&log).ok()
-            })
-            .map(|event| {
-                use HevmConsoleEvents::*;
-                match event {
-                    LogsFilter(inner) => format!("{}", inner.0),
-                    LogBytesFilter(inner) => format!("{}", inner.0),
-                    LogNamedAddressFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
-                    LogNamedBytes32Filter(inner) => {
-                        format!("{}: 0x{}", inner.key, hex::encode(inner.val))
-                    }
-                    LogNamedDecimalIntFilter(inner) => format!(
-                        "{}: {:?}",
-                        inner.key,
-                        ethers::utils::parse_units(inner.val, inner.decimals.as_u32()).unwrap()
-                    ),
-                    LogNamedDecimalUintFilter(inner) => {
-                        format!(
-                            "{}: {:?}",
-                            inner.key,
-                            ethers::utils::parse_units(inner.val, inner.decimals.as_u32()).unwrap()
-                        )
-                    }
-                    LogNamedIntFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
-                    LogNamedUintFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
-                    LogNamedBytesFilter(inner) => {
-                        format!("{}: 0x{}", inner.key, hex::encode(inner.val))
-                    }
-                    LogNamedStringFilter(inner) => format!("{}: {}", inner.key, inner.val),
-
-                    e => e.to_string(),
-                }
-            })
-            .chain(self.console_logs.clone())
-            .collect()
+        logs.into_iter().filter_map(convert_log).chain(self.console_logs.clone()).collect()
     }
 }
 
@@ -695,6 +702,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
 
         // // log::debug!(target: "evm", "Call execution using address {}: {:?}", code_address,
         // reason);
+
         match reason {
             ExitReason::Succeed(s) => {
                 self.fill_trace(&trace, true, Some(runtime.machine().return_value()), pre_index);
@@ -1108,6 +1116,12 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
             let node = &mut self.state_mut().traces.last_mut().expect("no traces").arena[index];
             node.ordering.push(LogCallOrder::Log(node.logs.len()));
             node.logs.push(RawLog { topics: topics.clone(), data: data.clone() });
+        }
+
+        if let Some(decoded) =
+            convert_log(Log { address, topics: topics.clone(), data: data.clone() })
+        {
+            self.state_mut().all_logs.push(decoded);
         }
 
         self.handler.log(address, topics, data)

@@ -82,6 +82,9 @@ pub trait Evm<State> {
     /// Returns whether tracing is enabled
     fn tracing_enabled(&self) -> bool;
 
+    /// Gets all logs from the execution, regardless of reverts
+    fn all_logs(&self) -> Vec<String>;
+
     /// Performs a [`call_unchecked`](Self::call_unchecked), checks if execution reverted, and
     /// proceeds to return the decoded response to the user.
     fn call<D: Detokenize, T: Tokenize, F: IntoFunction>(

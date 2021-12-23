@@ -123,6 +123,10 @@ where
         self.executor.reset_traces()
     }
 
+    fn all_logs(&self) -> Vec<String> {
+        self.executor.all_logs()
+    }
+
     /// Deploys the provided contract bytecode
     fn deploy(
         &mut self,

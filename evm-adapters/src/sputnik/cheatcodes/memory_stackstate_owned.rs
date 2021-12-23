@@ -24,6 +24,7 @@ pub struct MemoryStackStateOwned<'config, B> {
     pub expected_revert: Option<Vec<u8>>,
     pub next_msg_sender: Option<H160>,
     pub msg_sender: Option<(H160, H160, usize)>,
+    pub all_logs: Vec<String>,
 }
 
 impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
@@ -61,6 +62,7 @@ impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
             expected_revert: None,
             next_msg_sender: None,
             msg_sender: None,
+            all_logs: Default::default(),
         }
     }
 }

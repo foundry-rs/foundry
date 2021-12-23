@@ -65,6 +65,7 @@ pub trait SputnikExecutor<S> {
     fn expected_revert(&self) -> Option<&[u8]>;
     fn set_tracing_enabled(&mut self, enabled: bool) -> bool;
     fn tracing_enabled(&self) -> bool;
+    fn all_logs(&self) -> Vec<String>;
     fn gas_left(&self) -> U256;
     fn transact_call(
         &mut self,
@@ -133,6 +134,10 @@ impl<'a, 'b, S: StackState<'a>, P: PrecompileSet> SputnikExecutor<S>
 
     fn tracing_enabled(&self) -> bool {
         false
+    }
+
+    fn all_logs(&self) -> Vec<String> {
+        vec![]
     }
 
     fn gas_left(&self) -> U256 {
