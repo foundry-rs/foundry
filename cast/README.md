@@ -8,7 +8,7 @@
 - [ ] `--from-bin`
 - [ ] `--from-fix`
 - [x] `--from-wei`
-- [ ] `--max-int`
+- [x] `--max-int`
 - [x] `--max-uint`
 - [ ] `--min-int`
 - [x] `--to-checksum-address` (`--to-address` in dapptools)

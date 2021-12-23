@@ -25,6 +25,9 @@ async fn main() -> eyre::Result<()> {
 
     let opts = Opts::from_args();
     match opts.sub {
+        Subcommands::MaxInt => {
+            println!("{}", SimpleCast::max_int()?);
+        }
         Subcommands::MaxUint => {
             println!("{}", SimpleCast::max_uint()?);
         }
