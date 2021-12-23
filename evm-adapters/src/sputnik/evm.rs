@@ -187,8 +187,8 @@ pub mod helpers {
         CheatcodeStackExecutor<'a, 'a, B, BTreeMap<Address, PrecompileFn>>,
     >;
 
-    static CFG: Lazy<Config> = Lazy::new(|| Config::london());
-    static VICINITY: Lazy<MemoryVicinity> = Lazy::new(|| new_vicinity());
+    static CFG: Lazy<Config> = Lazy::new(Config::london);
+    static VICINITY: Lazy<MemoryVicinity> = Lazy::new(new_vicinity);
     const GAS_LIMIT: u64 = 30_000_000;
 
     /// Instantiates a Sputnik EVM with enabled cheatcodes + FFI and a simple non-forking in memory
@@ -202,8 +202,7 @@ pub mod helpers {
     pub fn fuzzvm<'a, B: Backend>(
         evm: &'a mut TestSputnikVM<'a, B>,
     ) -> FuzzedExecutor<'a, TestSputnikVM<'a, B>, CheatcodeStackState<'a, B>> {
-        let mut cfg = proptest::test_runner::Config::default();
-        cfg.failure_persistence = None;
+        let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
 
         let runner = proptest::test_runner::TestRunner::new(cfg);
         FuzzedExecutor::new(evm, runner, Address::zero())
