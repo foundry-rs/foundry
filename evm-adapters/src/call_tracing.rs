@@ -510,6 +510,24 @@ impl CallTrace {
                     }
                 );
 
+                if !self.success {
+                    if self.output.len() >= 4 && self.output[0..4] == [8, 195, 121, 160]
+                    {
+                        // its a revert string
+                        let decoded_data = ethers::abi::decode(
+                            &[ethers::abi::ParamType::String],
+                            &self.output[4..],
+                        )
+                        .expect("String error code, but not actual string");
+                        return Output::Token(decoded_data)
+                    } else if let Some(revert_type) =
+                        decode_solidity_reverts(&self.output)
+                    {
+                        return Output::Token(vec![ethers::abi::Token::String(
+                            revert_type.to_string(),
+                        )])
+                    }
+                }
                 return Output::Raw(self.output[..].to_vec())
             }
         }
@@ -537,9 +555,28 @@ impl CallTrace {
             },
         );
 
+        if !self.success {
+            if self.output.len() >= 4 && self.output[0..4] == [8, 195, 121, 160]
+            {
+                // its a revert string
+                let decoded_data = ethers::abi::decode(
+                    &[ethers::abi::ParamType::String],
+                    &self.output[4..],
+                )
+                .expect("String error code, but not actual string");
+                return Output::Token(decoded_data)
+            } else if let Some(revert_type) =
+                decode_solidity_reverts(&self.output)
+            {
+                return Output::Token(vec![ethers::abi::Token::String(
+                    revert_type.to_string(),
+                )])
+            }
+        }
         Output::Raw(self.output[..].to_vec())
     }
 }
+
 
 // Gets pretty print strings for tokens
 fn format_token(param: ethers::abi::Token) -> String {
