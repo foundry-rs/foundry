@@ -68,6 +68,7 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
         // stores the latest reason of a test call, this will hold the return reason of failed test
         // case if the runner failed
         let return_reason: RefCell<Option<E::ReturnReason>> = RefCell::new(None);
+        let revert_reason = RefCell::new(None);
 
         let mut runner = self.runner.clone();
         tracing::debug!(func = ?func.name, should_fail, "fuzzing");
@@ -88,6 +89,12 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
                 // store the result of this test case
                 let _ = return_reason.borrow_mut().insert(reason);
 
+                if !success {
+                    let revert =
+                        foundry_utils::decode_revert(returndata.as_ref()).unwrap_or_default();
+                    let _ = revert_reason.borrow_mut().insert(revert);
+                }
+
                 // This will panic and get caught by the executor
                 proptest::prop_assert!(
                     success,
@@ -106,6 +113,7 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
             .map(|test_error| FuzzError {
                 test_error,
                 return_reason: return_reason.into_inner().expect("Reason must be set"),
+                revert_reason: revert_reason.into_inner().expect("Revert error string must be set"),
             });
 
         FuzzTestResult { cases: FuzzedCases::new(fuzz_cases.into_inner()), test_error }
@@ -138,6 +146,8 @@ pub struct FuzzError<Reason> {
     pub test_error: TestError<Bytes>,
     /// The return reason of the offending call
     pub return_reason: Reason,
+    /// The revert string of the offending call
+    pub revert_reason: String,
 }
 
 /// Container type for all successful test cases
@@ -271,5 +281,51 @@ fn fuzz_param(param: &ParamType) -> impl Strategy<Value = Token> {
         ParamType::Tuple(params) => {
             params.iter().map(fuzz_param).collect::<Vec<_>>().prop_map(Token::Tuple).boxed()
         }
+    }
+}
+
+#[cfg(test)]
+#[cfg(feature = "sputnik")]
+mod tests {
+    use super::*;
+    use foundry_utils::IntoFunction;
+    use sputnik::Config;
+
+    use crate::{
+        fuzz::FuzzedExecutor,
+        sputnik::{
+            helpers::{new_backend, new_vicinity},
+            Executor, PRECOMPILES_MAP,
+        },
+        test_helpers::COMPILED,
+        Evm,
+    };
+
+    #[test]
+    fn prints_fuzzed_revert_reasons() {
+        // TODO: refactor to `vm` function
+        let config = Config::london();
+        let vicinity = new_vicinity();
+        let backend = new_backend(&vicinity, Default::default());
+        let gas_limit = 10_000_000;
+        let precompiles = PRECOMPILES_MAP.clone();
+        let mut evm =
+            Executor::new_with_cheatcodes(backend, gas_limit, &config, &precompiles, true);
+
+        let compiled = COMPILED.find("FuzzTests").expect("could not find contract");
+        let (addr, _, _, _) =
+            evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
+
+        // TODO: refactor to `fuzzvm` function
+        let mut cfg = proptest::test_runner::Config::default();
+        cfg.failure_persistence = None;
+        let runner = proptest::test_runner::TestRunner::new(cfg);
+        let evm = FuzzedExecutor::new(&mut evm, runner, Address::zero());
+
+        let func = compiled.abi.unwrap().function("testFuzzedRevert").unwrap();
+        let res = evm.fuzz(&func, addr, false);
+        let error = res.test_error.unwrap();
+        let revert_reason = error.revert_reason;
+        assert_eq!(revert_reason, "fuzztest-revert");
     }
 }
