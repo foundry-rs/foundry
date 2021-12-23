@@ -577,9 +577,10 @@ fn format_token(param: ethers::abi::Token) -> String {
         Token::Address(addr) => format!("{:?}", addr),
         Token::FixedBytes(bytes) => format!("0x{}", hex::encode(&bytes)),
         Token::Bytes(bytes) => format!("0x{}", hex::encode(&bytes)),
-        Token::Int(num) => {
+        Token::Int(mut num) => {
             if num.bit(255) {
-                format!("-{}", (num & ethers::types::U256::from(1u32) << 255u32))
+                num = num - 1;
+                format!("-{}", num.overflowing_neg().0)
             } else {
                 num.to_string()
             }

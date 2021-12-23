@@ -5,6 +5,7 @@ interface RecursiveCallee {
 	function recurseCall(uint256 neededDepth, uint256 depth) external returns (uint256);
 	function recurseCreate(uint256 neededDepth, uint256 depth) external returns (uint256);
 	function someCall() external;
+	function negativeNum() external returns (int256);
 }
 
 contract RecursiveCall {
@@ -19,6 +20,7 @@ contract RecursiveCall {
 
 	function recurseCall(uint256 neededDepth, uint256 depth) public returns (uint256) {
 		if (depth == neededDepth) {
+			RecursiveCallee(address(this)).negativeNum();
 			return neededDepth;
 		}
 		uint256 childDepth = RecursiveCallee(address(this)).recurseCall(neededDepth, depth + 1);
@@ -40,6 +42,10 @@ contract RecursiveCall {
 	}
 
 	function someCall() public {}
+
+	function negativeNum() public returns (int256) {
+		return -1000000000;
+	}
 }
 
 contract Trace {
