@@ -221,10 +221,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
 
     fn logs(&self) -> Vec<String> {
         let logs = self.state().substate.logs().to_vec();
-        logs.into_iter()
-            .filter_map(convert_log)
-            .chain(self.console_logs.clone())
-            .collect()
+        logs.into_iter().filter_map(convert_log).chain(self.console_logs.clone()).collect()
     }
 }
 
