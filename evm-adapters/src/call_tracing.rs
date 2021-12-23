@@ -66,12 +66,11 @@ impl Output {
 impl CallTraceArena {
     /// Pushes a new trace into the arena, returning the trace that was passed in with updated
     /// values
-    pub fn push_trace(&mut self, entry: usize, mut new_trace: CallTrace) -> CallTrace {
+    pub fn push_trace(&mut self, entry: usize, mut new_trace: &mut CallTrace) {
         match new_trace.depth {
             // The entry node, just update it
             0 => {
                 self.update(new_trace.clone());
-                new_trace
             }
             // we found the parent node, add the new trace as a child
             _ if self.arena[entry].trace.depth == new_trace.depth - 1 => {
@@ -86,7 +85,6 @@ impl CallTraceArena {
                 };
                 self.arena.push(node);
                 self.arena[entry].children.push(new_trace.idx);
-                new_trace
             }
             // we haven't found the parent node, go deeper
             _ => self.push_trace(

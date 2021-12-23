@@ -544,9 +544,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 ..Default::default()
             };
 
-            // we should probably delay having the input and other stuff so
-            // we minimize the size of the clone
-            trace = self.state_mut().trace_mut().push_trace(0, trace.clone());
+            self.state_mut().trace_mut().push_trace(0, &mut trace);
             self.state_mut().trace_index = trace.idx;
             Some(trace)
         } else {
