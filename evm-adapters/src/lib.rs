@@ -8,9 +8,12 @@ pub mod sputnik;
 pub mod evmodin;
 
 mod blocking_provider;
+use crate::call_tracing::CallTraceArena;
 pub use blocking_provider::BlockingProvider;
 
 pub mod fuzz;
+
+pub mod call_tracing;
 
 use ethers::{
     abi::{Detokenize, Tokenize},
@@ -65,11 +68,19 @@ pub trait Evm<State> {
     /// Gets a reference to the current state of the EVM
     fn state(&self) -> &State;
 
+    fn code(&self, address: Address) -> Vec<u8>;
+
     /// Sets the balance at the specified address
     fn set_balance(&mut self, address: Address, amount: U256);
 
     /// Resets the EVM's state to the provided value
     fn reset(&mut self, state: State);
+
+    /// Turns on/off tracing, returning the previously set value
+    fn set_tracing_enabled(&mut self, enabled: bool) -> bool;
+
+    /// Returns whether tracing is enabled
+    fn tracing_enabled(&self) -> bool;
 
     /// Gets all logs from the execution, regardless of reverts
     fn all_logs(&self) -> Vec<String>;
@@ -95,6 +106,11 @@ pub trait Evm<State> {
         }
     }
 
+    fn traces(&self) -> Vec<CallTraceArena> {
+        vec![]
+    }
+
+    fn reset_traces(&mut self) {}
     /// Executes the specified EVM call against the state
     // TODO: Should we just make this take a `TransactionRequest` or other more
     // ergonomic type?

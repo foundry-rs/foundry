@@ -4,6 +4,8 @@ use sputnik::{
     ExitError, Transfer,
 };
 
+use crate::call_tracing::CallTraceArena;
+
 use ethers::types::{H160, H256, U256};
 
 /// This struct implementation is copied from [upstream](https://github.com/rust-blockchain/evm/blob/5ecf36ce393380a89c6f1b09ef79f686fe043624/src/executor/stack/state.rs#L412) and modified to own the Backend type.
@@ -15,6 +17,10 @@ use ethers::types::{H160, H256, U256};
 pub struct MemoryStackStateOwned<'config, B> {
     pub backend: B,
     pub substate: MemoryStackSubstate<'config>,
+    pub trace_enabled: bool,
+    pub call_index: usize,
+    pub trace_index: usize,
+    pub traces: Vec<CallTraceArena>,
     pub expected_revert: Option<Vec<u8>>,
     pub next_msg_sender: Option<H160>,
     pub msg_sender: Option<(H160, H160, usize)>,
@@ -25,13 +31,34 @@ impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
     pub fn deposit(&mut self, address: H160, value: U256) {
         self.substate.deposit(address, value, &self.backend);
     }
+
+    pub fn increment_call_index(&mut self) {
+        self.traces.push(Default::default());
+        self.call_index += 1;
+    }
+    pub fn trace_mut(&mut self) -> &mut CallTraceArena {
+        &mut self.traces[self.call_index]
+    }
+
+    pub fn trace(&self) -> &CallTraceArena {
+        &self.traces[self.call_index]
+    }
+
+    pub fn reset_traces(&mut self) {
+        self.traces = vec![Default::default()];
+        self.call_index = 0;
+    }
 }
 
 impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
-    pub fn new(metadata: StackSubstateMetadata<'config>, backend: B) -> Self {
+    pub fn new(metadata: StackSubstateMetadata<'config>, backend: B, trace_enabled: bool) -> Self {
         Self {
             backend,
             substate: MemoryStackSubstate::new(metadata),
+            trace_enabled,
+            call_index: 0,
+            trace_index: 1,
+            traces: vec![Default::default()],
             expected_revert: None,
             next_msg_sender: None,
             msg_sender: None,

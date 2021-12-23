@@ -1,17 +1,19 @@
 use crate::{runner::TestResult, ContractRunner};
+use ethers::solc::Artifact;
+
 use evm_adapters::Evm;
 
 use ethers::{
     abi::Abi,
     prelude::ArtifactOutput,
-    solc::{Artifact, Project},
+    solc::Project,
     types::{Address, U256},
 };
 
 use proptest::test_runner::TestRunner;
 use regex::Regex;
 
-use eyre::{Context, Result};
+use eyre::Result;
 use std::{collections::BTreeMap, marker::PhantomData};
 
 /// Builder used for instantiating the multi-contract runner
@@ -56,34 +58,35 @@ impl MultiContractRunnerBuilder {
         // This is just the contracts compiled, but we need to merge this with the read cached
         // artifacts
         let contracts = output.into_artifacts();
-        let contracts: BTreeMap<String, (Abi, Address, Vec<String>)> = contracts
-            // only take contracts with valid abi and bytecode
-            .filter_map(|(fname, contract)| {
-                let (abi, bytecode) = contract.into_inner();
-                abi.and_then(|abi| bytecode.map(|bytecode| (fname, abi, bytecode)))
-            })
-            // Only take contracts with empty constructors.
-            .filter(|(_, abi, _)| {
-                abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true)
-            })
-            // Only take contracts which contain a `test` function
-            .filter(|(_, abi, _)| abi.functions().any(|func| func.name.starts_with("test")))
-            // deploy the contracts
-            .map(|(name, abi, bytecode)| {
-                let span = tracing::trace_span!("deploying", ?name);
-                let _enter = span.enter();
+        let mut known_contracts: BTreeMap<String, (Abi, Vec<u8>)> = Default::default();
+        let mut deployed_contracts: BTreeMap<String, (Abi, Address, Vec<String>)> =
+            Default::default();
 
-                let (addr, _, _, logs) = evm
-                    .deploy(sender, bytecode, 0.into())
-                    .wrap_err(format!("could not deploy {}", name))?;
+        for (fname, contract) in contracts {
+            let (maybe_abi, maybe_deploy_bytes, maybe_runtime_bytes) = contract.into_parts();
+            if let (Some(abi), Some(bytecode)) = (maybe_abi, maybe_deploy_bytes) {
+                if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) &&
+                    abi.functions().any(|func| func.name.starts_with("test"))
+                {
+                    let span = tracing::trace_span!("deploying", ?fname);
+                    let _enter = span.enter();
+                    let (addr, _, _, logs) = evm.deploy(sender, bytecode.clone(), 0u32.into())?;
+                    evm.set_balance(addr, initial_balance);
+                    deployed_contracts.insert(fname.clone(), (abi.clone(), addr, logs));
+                }
 
-                evm.set_balance(addr, initial_balance);
-                Ok((name, (abi, addr, logs)))
-            })
-            .collect::<Result<BTreeMap<_, _>>>()?;
+                let split = fname.split(':').collect::<Vec<&str>>();
+                let contract_name = if split.len() > 1 { split[1] } else { split[0] };
+                if let Some(runtime_code) = maybe_runtime_bytes {
+                    known_contracts.insert(contract_name.to_string(), (abi, runtime_code.to_vec()));
+                }
+            }
+        }
 
         Ok(MultiContractRunner {
-            contracts,
+            contracts: deployed_contracts,
+            known_contracts,
+            identified_contracts: Default::default(),
             evm,
             state: PhantomData,
             sender: self.sender,
@@ -115,9 +118,13 @@ impl MultiContractRunnerBuilder {
 pub struct MultiContractRunner<E, S> {
     /// Mapping of contract name to compiled bytecode, deployed address and logs emitted during
     /// deployment
-    contracts: BTreeMap<String, (Abi, Address, Vec<String>)>,
+    pub contracts: BTreeMap<String, (Abi, Address, Vec<String>)>,
+    /// Compiled contracts by name that have an Abi and runtime bytecode
+    pub known_contracts: BTreeMap<String, (Abi, Vec<u8>)>,
+    /// Identified contracts by test
+    pub identified_contracts: BTreeMap<String, BTreeMap<Address, (String, Abi)>>,
     /// The EVM instance used in the test runner
-    evm: E,
+    pub evm: E,
     /// The fuzzer which will be used to run parametric tests (w/ non-0 solidity args)
     fuzzer: Option<TestRunner>,
     /// The address which will be used as the `from` field in all EVM calls
@@ -172,7 +179,7 @@ where
     ) -> Result<BTreeMap<String, TestResult>> {
         let mut runner =
             ContractRunner::new(&mut self.evm, contract, address, self.sender, init_logs);
-        runner.run_tests(pattern, self.fuzzer.as_mut(), init_state)
+        runner.run_tests(pattern, self.fuzzer.as_mut(), init_state, Some(&self.known_contracts))
     }
 }
 

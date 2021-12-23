@@ -8,6 +8,7 @@ pub mod cheatcodes;
 pub mod state;
 
 use ethers::{
+    abi::RawLog,
     providers::Middleware,
     types::{Address, H160, H256, U256},
 };
@@ -17,6 +18,8 @@ use sputnik::{
     executor::stack::{PrecompileFailure, PrecompileOutput, StackExecutor, StackState},
     Config, CreateScheme, ExitError, ExitReason, ExitSucceed,
 };
+
+use crate::call_tracing::CallTraceArena;
 
 pub use sputnik as sputnik_evm;
 use sputnik_evm::executor::stack::PrecompileSet;
@@ -60,6 +63,8 @@ pub trait SputnikExecutor<S> {
     fn state(&self) -> &S;
     fn state_mut(&mut self) -> &mut S;
     fn expected_revert(&self) -> Option<&[u8]>;
+    fn set_tracing_enabled(&mut self, enabled: bool) -> bool;
+    fn tracing_enabled(&self) -> bool;
     fn all_logs(&self) -> Vec<String>;
     fn gas_left(&self) -> U256;
     fn transact_call(
@@ -82,6 +87,17 @@ pub trait SputnikExecutor<S> {
     ) -> ExitReason;
 
     fn create_address(&self, caller: CreateScheme) -> Address;
+
+    /// Returns a vector of raw logs that occurred during the previous VM
+    /// execution
+    fn raw_logs(&self) -> Vec<RawLog>;
+
+    /// Gets a trace
+    fn traces(&self) -> Vec<CallTraceArena> {
+        vec![]
+    }
+
+    fn reset_traces(&mut self) {}
 
     /// Returns a vector of string parsed logs that occurred during the previous VM
     /// execution
@@ -110,6 +126,14 @@ impl<'a, 'b, S: StackState<'a>, P: PrecompileSet> SputnikExecutor<S>
 
     fn expected_revert(&self) -> Option<&[u8]> {
         None
+    }
+
+    fn set_tracing_enabled(&mut self, _enabled: bool) -> bool {
+        false
+    }
+
+    fn tracing_enabled(&self) -> bool {
+        false
     }
 
     fn all_logs(&self) -> Vec<String> {
@@ -152,6 +176,11 @@ impl<'a, 'b, S: StackState<'a>, P: PrecompileSet> SputnikExecutor<S>
     fn logs(&self) -> Vec<String> {
         vec![]
     }
+
+    fn raw_logs(&self) -> Vec<RawLog> {
+        vec![]
+    }
+
     fn clear_logs(&mut self) {}
 }
 

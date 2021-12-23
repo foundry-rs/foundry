@@ -60,7 +60,7 @@ ethers::contract::abigen!(
             expectRevert(bytes)
     ]"#,
 );
-pub use hevm_mod::HEVMCalls;
+pub use hevm_mod::{HEVMCalls, HEVM_ABI};
 
 ethers::contract::abigen!(
     HevmConsole,

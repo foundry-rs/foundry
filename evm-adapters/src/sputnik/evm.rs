@@ -1,5 +1,4 @@
-use crate::{Evm, FAUCET_ACCOUNT};
-
+use crate::{call_tracing::CallTraceArena, Evm, FAUCET_ACCOUNT};
 use ethers::types::{Address, Bytes, U256};
 
 use sputnik::{
@@ -84,6 +83,14 @@ where
         *_state = state;
     }
 
+    fn set_tracing_enabled(&mut self, enabled: bool) -> bool {
+        self.executor.set_tracing_enabled(enabled)
+    }
+
+    fn tracing_enabled(&self) -> bool {
+        self.executor.tracing_enabled()
+    }
+
     /// given an iterator of contract address to contract bytecode, initializes
     /// the state with the contract deployed at the specified address
     fn initialize_contracts<T: IntoIterator<Item = (Address, Bytes)>>(&mut self, contracts: T) {
@@ -102,6 +109,18 @@ where
 
     fn state(&self) -> &S {
         self.executor.state()
+    }
+
+    fn code(&self, address: Address) -> Vec<u8> {
+        self.executor.state().code(address)
+    }
+
+    fn traces(&self) -> Vec<CallTraceArena> {
+        self.executor.traces()
+    }
+
+    fn reset_traces(&mut self) {
+        self.executor.reset_traces()
     }
 
     fn all_logs(&self) -> Vec<String> {
@@ -196,10 +215,17 @@ pub mod helpers {
     const GAS_LIMIT: u64 = 30_000_000;
 
     /// Instantiates a Sputnik EVM with enabled cheatcodes + FFI and a simple non-forking in memory
-    /// backend
+    /// backend and tracing disabled
     pub fn vm<'a>() -> TestSputnikVM<'a, MemoryBackend<'a>> {
         let backend = new_backend(&*VICINITY, Default::default());
-        Executor::new_with_cheatcodes(backend, GAS_LIMIT, &*CFG, &*PRECOMPILES_MAP, true)
+        Executor::new_with_cheatcodes(backend, GAS_LIMIT, &*CFG, &*PRECOMPILES_MAP, true, false)
+    }
+
+    /// Instantiates a Sputnik EVM with enabled cheatcodes + FFI and a simple non-forking in memory
+    /// backend and tracing enabled
+    pub fn vm_tracing<'a>() -> TestSputnikVM<'a, MemoryBackend<'a>> {
+        let backend = new_backend(&*VICINITY, Default::default());
+        Executor::new_with_cheatcodes(backend, GAS_LIMIT, &*CFG, &*PRECOMPILES_MAP, true, true)
     }
 
     /// Instantiates a FuzzedExecutor over provided Sputnik EVM

@@ -1336,6 +1336,7 @@ dependencies = [
 name = "evm-adapters"
 version = "0.1.0"
 dependencies = [
+ "ansi_term",
  "bytes",
  "ethers",
  "evm",

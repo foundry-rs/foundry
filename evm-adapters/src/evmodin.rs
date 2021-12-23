@@ -63,6 +63,14 @@ impl<S: HostExt, Tr: Tracer> Evm<S> for EvmOdin<S, Tr> {
         self.host = state;
     }
 
+    fn set_tracing_enabled(&mut self, _enabled: bool) -> bool {
+        false
+    }
+
+    fn tracing_enabled(&self) -> bool {
+        false
+    }
+
     fn initialize_contracts<I: IntoIterator<Item = (Address, Bytes)>>(&mut self, contracts: I) {
         contracts.into_iter().for_each(|(address, bytecode)| {
             self.host.set_code(address, bytecode.0);
@@ -71,6 +79,14 @@ impl<S: HostExt, Tr: Tracer> Evm<S> for EvmOdin<S, Tr> {
 
     fn state(&self) -> &S {
         &self.host
+    }
+
+    fn code(&self, address: Address) -> Vec<u8> {
+        if let Some(bytes) = self.host.get_code(&address) {
+            bytes.to_vec()
+        } else {
+            vec![]
+        }
     }
 
     fn all_logs(&self) -> Vec<String> {

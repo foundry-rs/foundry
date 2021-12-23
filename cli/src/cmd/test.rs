@@ -158,8 +158,14 @@ impl Cmd for TestArgs {
                 let backend = Arc::new(backend);
 
                 let precompiles = PRECOMPILES_MAP.clone();
-                let evm =
-                    Executor::new_with_cheatcodes(backend, env.gas_limit, &cfg, &precompiles, ffi);
+                let evm = Executor::new_with_cheatcodes(
+                    backend,
+                    env.gas_limit,
+                    &cfg,
+                    &precompiles,
+                    ffi,
+                    verbosity > 2,
+                );
 
                 test(builder, project, evm, pattern, json, verbosity, allow_failure)
             }
@@ -318,6 +324,36 @@ fn test<A: ArtifactOutput + 'static, S: Clone, E: evm_adapters::Evm<S>>(
                     }
 
                     println!();
+
+                    if verbosity > 2 {
+                        if let (Some(traces), Some(identified_contracts)) =
+                            (&result.traces, &result.identified_contracts)
+                        {
+                            let mut ident = identified_contracts.clone();
+                            if verbosity > 3 {
+                                // print setup calls as well
+                                traces.iter().for_each(|trace| {
+                                    trace.pretty_print(
+                                        0,
+                                        &runner.known_contracts,
+                                        &mut ident,
+                                        &runner.evm,
+                                        "",
+                                    );
+                                });
+                            } else if !traces.is_empty() {
+                                traces.last().expect("no last but not empty").pretty_print(
+                                    0,
+                                    &runner.known_contracts,
+                                    &mut ident,
+                                    &runner.evm,
+                                    "",
+                                );
+                            }
+
+                            println!();
+                        }
+                    }
                 }
             }
         }
