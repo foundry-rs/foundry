@@ -167,7 +167,7 @@ impl CallTraceArena {
                         contracts,
                         identified_contracts,
                         evm,
-                        left.clone(),
+                        &left,
                     );
                     println!(
                         "{}  └─ {} {} bytes of code",
@@ -196,7 +196,7 @@ impl CallTraceArena {
                             contracts,
                             identified_contracts,
                             evm,
-                            left.clone(),
+                            &left,
                         );
                         println!(
                             "{}  └─ {} {} bytes of code",
@@ -206,14 +206,19 @@ impl CallTraceArena {
                         );
                     } else {
                         // we couldn't identify, print the children and logs without the abi
-                        println!("{}→ new <Unknown>@{}", left, trace.addr);
+                        println!(
+                            "{}{} <Unknown>@{}",
+                            left,
+                            Colour::Yellow.paint("→ new"),
+                            trace.addr
+                        );
                         self.print_children_and_logs(
                             idx,
                             None,
                             contracts,
                             identified_contracts,
                             evm,
-                            left.clone(),
+                            &left,
                         );
                         println!(
                             "{}  └─ {} {} bytes of code",
@@ -227,15 +232,14 @@ impl CallTraceArena {
         } else {
             match (abi, name) {
                 (Some(abi), Some(name)) => {
-                    let output =
-                        Self::print_func_call(trace, Some(&abi), Some(&name), color, &left);
+                    let output = trace.print_func_call(Some(&abi), Some(&name), color, &left);
                     self.print_children_and_logs(
                         idx,
                         Some(&abi),
                         contracts,
                         identified_contracts,
                         evm,
-                        left.clone(),
+                        &left,
                     );
                     Self::print_output(color, output, left);
                 }
@@ -248,14 +252,14 @@ impl CallTraceArena {
                         // re-enter this function at this level if we found the contract
                         self.pretty_print(idx, contracts, identified_contracts, evm, left);
                     } else {
-                        let output = Self::print_func_call(trace, None, None, color, &left);
+                        let output = trace.print_func_call(None, None, color, &left);
                         self.print_children_and_logs(
                             idx,
                             None,
                             contracts,
                             identified_contracts,
                             evm,
-                            left.clone(),
+                            &left,
                         );
                         Self::print_output(color, output, left);
                     }
@@ -271,11 +275,11 @@ impl CallTraceArena {
         contracts: &BTreeMap<String, (Abi, Vec<u8>)>,
         identified_contracts: &mut BTreeMap<H160, (String, Abi)>,
         evm: &'a E,
-        left: String,
+        left: &str,
     ) {
         self.arena[node_idx].ordering.iter().for_each(|ordering| match ordering {
             LogCallOrder::Log(index) => {
-                self.print_log(&self.arena[node_idx].logs[*index], abi, &left);
+                self.arena[node_idx].print_log(*index, abi, left);
             }
             LogCallOrder::Call(index) => {
                 self.pretty_print(
@@ -289,80 +293,49 @@ impl CallTraceArena {
         });
     }
 
-    /// Prints function call, optionally returning the decoded output
-    pub fn print_func_call(
-        trace: &CallTrace,
-        abi: Option<&Abi>,
-        name: Option<&String>,
-        color: Colour,
-        left: &str,
-    ) -> Output {
-        if let (Some(abi), Some(name)) = (abi, name) {
-            if trace.data.len() >= 4 {
-                for (func_name, overloaded_funcs) in abi.functions.iter() {
-                    for func in overloaded_funcs.iter() {
-                        if func.selector() == trace.data[0..4] {
-                            let mut strings = "".to_string();
-                            if !trace.data[4..].is_empty() {
-                                let params = func
-                                    .decode_input(&trace.data[4..])
-                                    .expect("Bad func data decode");
-                                strings = params
-                                    .into_iter()
-                                    .map(format_token)
-                                    .collect::<Vec<String>>()
-                                    .join(", ");
-                            }
-
-                            println!(
-                                "{}[{}] {}::{}({})",
-                                left,
-                                trace.cost,
-                                color.paint(name),
-                                color.paint(func_name),
-                                strings
-                            );
-
-                            if !trace.output.is_empty() {
-                                return Output::Token(
-                                    func.decode_output(&trace.output[..])
-                                        .expect("Bad func output decode"),
-                                )
-                            } else {
-                                return Output::Raw(vec![])
-                            }
-                        }
+    pub fn print_output(color: Colour, output: Output, left: String) {
+        match output {
+            Output::Token(token) => {
+                let strings =
+                    token.into_iter().map(format_token).collect::<Vec<String>>().join(", ");
+                println!(
+                    "{}  └─ {} {}",
+                    left.replace("├─", "│").replace("└─", "  "),
+                    color.paint("←"),
+                    if strings.is_empty() { "()" } else { &*strings }
+                );
+            }
+            Output::Raw(bytes) => {
+                println!(
+                    "{}  └─ {} {}",
+                    left.replace("├─", "│").replace("└─", "  "),
+                    color.paint("←"),
+                    if bytes.is_empty() {
+                        "()".to_string()
+                    } else {
+                        "0x".to_string() + &hex::encode(&bytes)
                     }
-                }
-            } else {
-                // fallback function
-                println!("{}[{}] {}::fallback()", left, trace.cost, color.paint(name),);
-
-                return Output::Raw(trace.output[..].to_vec())
+                );
             }
         }
-
-        println!(
-            "{}[{}] {}::{}({})",
-            left,
-            trace.cost,
-            color.paint(format!("{}", trace.addr)),
-            if trace.data.len() >= 4 {
-                hex::encode(&trace.data[0..4])
-            } else {
-                hex::encode(&trace.data[..])
-            },
-            if trace.data.len() >= 4 {
-                hex::encode(&trace.data[4..])
-            } else {
-                hex::encode(&vec![][..])
-            }
-        );
-
-        Output::Raw(trace.output[..].to_vec())
     }
+}
 
-    pub fn print_log(&self, log: &RawLog, abi: Option<&Abi>, left: &str) {
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+pub struct CallTraceNode {
+    pub parent: Option<usize>,
+    pub children: Vec<usize>,
+    pub idx: usize,
+    pub trace: CallTrace,
+    /// Logs
+    #[serde(skip)]
+    pub logs: Vec<RawLog>,
+    pub ordering: Vec<LogCallOrder>,
+}
+
+impl CallTraceNode {
+    pub fn print_log(&self, index: usize, abi: Option<&Abi>, left: &str) {
+        let log = &self.logs[index];
         let right = "  ├─ ";
         if let Some(abi) = abi {
             for (event_name, overloaded_events) in abi.events.iter() {
@@ -410,48 +383,6 @@ impl CallTraceArena {
             Colour::Cyan.paint(format!("0x{}", hex::encode(&log.data)))
         )
     }
-
-    pub fn print_output(color: Colour, output: Output, left: String) {
-        match output {
-            Output::Token(token) => {
-                let strings = token
-                    .iter()
-                    .map(|param| format!("{}", param))
-                    .collect::<Vec<String>>()
-                    .join(", ");
-                println!(
-                    "{}  └─ {} {}",
-                    left.replace("├─", "│").replace("└─", "  "),
-                    color.paint("←"),
-                    if strings.is_empty() { "()" } else { &*strings }
-                );
-            }
-            Output::Raw(bytes) => {
-                println!(
-                    "{}  └─ {} {}",
-                    left.replace("├─", "│").replace("└─", "  "),
-                    color.paint("←"),
-                    if bytes.is_empty() {
-                        "()".to_string()
-                    } else {
-                        "0x".to_string() + &hex::encode(&bytes)
-                    }
-                );
-            }
-        }
-    }
-}
-
-#[derive(Default, Debug, Clone, Serialize, Deserialize)]
-pub struct CallTraceNode {
-    pub parent: Option<usize>,
-    pub children: Vec<usize>,
-    pub idx: usize,
-    pub trace: CallTrace,
-    /// Logs
-    #[serde(skip)]
-    pub logs: Vec<RawLog>,
-    pub ordering: Vec<LogCallOrder>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -488,6 +419,79 @@ impl CallTrace {
         self.output = new_trace.output;
         self.data = new_trace.data;
         self.addr = new_trace.addr;
+    }
+
+    /// Prints function call, returning the decoded or raw output
+    pub fn print_func_call(
+        &self,
+        abi: Option<&Abi>,
+        name: Option<&String>,
+        color: Colour,
+        left: &str,
+    ) -> Output {
+        if let (Some(abi), Some(name)) = (abi, name) {
+            if self.data.len() >= 4 {
+                for (func_name, overloaded_funcs) in abi.functions.iter() {
+                    for func in overloaded_funcs.iter() {
+                        if func.selector() == self.data[0..4] {
+                            let mut strings = "".to_string();
+                            if !self.data[4..].is_empty() {
+                                let params = func
+                                    .decode_input(&self.data[4..])
+                                    .expect("Bad func data decode");
+                                strings = params
+                                    .into_iter()
+                                    .map(format_token)
+                                    .collect::<Vec<String>>()
+                                    .join(", ");
+                            }
+
+                            println!(
+                                "{}[{}] {}::{}({})",
+                                left,
+                                self.cost,
+                                color.paint(name),
+                                color.paint(func_name),
+                                strings
+                            );
+
+                            if !self.output.is_empty() {
+                                return Output::Token(
+                                    func.decode_output(&self.output[..])
+                                        .expect("Bad func output decode"),
+                                )
+                            } else {
+                                return Output::Raw(vec![])
+                            }
+                        }
+                    }
+                }
+            } else {
+                // fallback function
+                println!("{}[{}] {}::fallback()", left, self.cost, color.paint(name),);
+
+                return Output::Raw(self.output[..].to_vec())
+            }
+        }
+
+        println!(
+            "{}[{}] {}::{}({})",
+            left,
+            self.cost,
+            color.paint(format!("{}", self.addr)),
+            if self.data.len() >= 4 {
+                hex::encode(&self.data[0..4])
+            } else {
+                hex::encode(&self.data[..])
+            },
+            if self.data.len() >= 4 {
+                hex::encode(&self.data[4..])
+            } else {
+                hex::encode(&vec![][..])
+            }
+        );
+
+        Output::Raw(self.output[..].to_vec())
     }
 }
 
