@@ -98,6 +98,10 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
         curr
     }
 
+    fn tracing_enabled(&self) -> bool {
+        self.state().trace_enabled
+    }
+
     fn gas_left(&self) -> U256 {
         // NB: We do this to avoid `function cannot return without recursing`
         U256::from(self.state().metadata().gasometer().gas())
@@ -818,7 +822,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
 
         let reason = self.execute(&mut runtime);
         // log::debug!(target: "evm", "Create execution using address {}: {:?}", address, reason);
-        
+
         match reason {
             ExitReason::Succeed(s) => {
                 let out = runtime.machine().return_value();

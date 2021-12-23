@@ -87,6 +87,10 @@ where
         self.executor.set_tracing_enabled(enabled)
     }
 
+    fn tracing_enabled(&self) -> bool {
+        self.executor.tracing_enabled()
+    }
+
     /// given an iterator of contract address to contract bytecode, initializes
     /// the state with the contract deployed at the specified address
     fn initialize_contracts<T: IntoIterator<Item = (Address, Bytes)>>(&mut self, contracts: T) {

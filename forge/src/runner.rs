@@ -241,10 +241,6 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         self.evm.reset_traces();
 
         // call the setup function in each test to reset the test's state.
-        let mut traces: Option<Vec<CallTraceArena>> = None;
-        let mut identified_contracts: Option<BTreeMap<Address, (String, Abi)>> = None;
-        let mut ident = BTreeMap::new();
-
         if setup {
             tracing::trace!("setting up");
             let setup_logs = self
@@ -253,22 +249,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
                 .wrap_err(format!("could not setup during {} test", func.signature()))?
                 .1;
             logs.extend_from_slice(&setup_logs);
-
-            if let Some(evm_traces) = self.evm.traces() {
-                if !evm_traces.is_empty() && self.evm.tracing_enabled() {
-                    let trace = evm_traces.into_iter().next().expect("no trace");
-                    trace.update_identified(
-                        0,
-                        known_contracts.expect("traces enabled but no identified_contracts"),
-                        &mut ident,
-                        self.evm,
-                    );
-                    traces = Some(vec![trace]);
-                }
-            }
         }
-
-        self.evm.reset_traces();
 
         let (status, reason, gas_used, logs) = match self.evm.call::<(), _, _>(
             self.sender,
@@ -293,22 +274,39 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
             },
         };
 
+        let mut traces: Option<Vec<CallTraceArena>> = None;
+        let mut identified_contracts: Option<BTreeMap<Address, (String, Abi)>> = None;
+
         if let Some(evm_traces) = self.evm.traces() {
             if !evm_traces.is_empty() && self.evm.tracing_enabled() {
-                let trace = evm_traces.into_iter().next().expect("no trace");
-                trace.update_identified(
+                let mut ident = BTreeMap::new();
+                // create an iter over the traces
+                let mut trace_iter = evm_traces.into_iter();
+                let mut temp_traces = Vec::new();
+                if setup {
+                    // grab the setup trace if it exists
+                    let setup = trace_iter.next().expect("no setup trace");
+                    setup.update_identified(
+                        0,
+                        known_contracts.expect("traces enabled but no identified_contracts"),
+                        &mut ident,
+                        self.evm,
+                    );
+                    temp_traces.push(setup);
+                }
+                // grab the test trace
+                let test_trace = trace_iter.next().expect("no test trace");
+                test_trace.update_identified(
                     0,
                     known_contracts.expect("traces enabled but no identified_contracts"),
                     &mut ident,
                     self.evm,
                 );
+                temp_traces.push(test_trace);
+
+                // pass back the identified contracts and traces
                 identified_contracts = Some(ident);
-                if let Some(ref mut traces) = traces {
-                    traces.push(trace);
-                } else {
-                    // we didnt have a setup
-                    traces = Some(vec![trace]);
-                }
+                traces = Some(temp_traces);
             }
         }
 

@@ -76,16 +76,11 @@ pub trait Evm<State> {
     /// Resets the EVM's state to the provided value
     fn reset(&mut self, state: State);
 
-    /// Turns on/off tracing
+    /// Turns on/off tracing, returning the previously set value
     fn set_tracing_enabled(&mut self, enabled: bool) -> bool;
 
-    /// returns whether tracing is enabled
-    fn tracing_enabled(&mut self) -> bool {
-        // kind of hack that uses an existing method to reduce code
-        let curr = self.set_tracing_enabled(false);
-        self.set_tracing_enabled(curr);
-        curr
-    }
+    /// Returns whether tracing is enabled
+    fn tracing_enabled(&self) -> bool;
 
     /// Performs a [`call_unchecked`](Self::call_unchecked), checks if execution reverted, and
     /// proceeds to return the decoded response to the user.
