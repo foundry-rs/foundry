@@ -96,7 +96,10 @@ fn main() -> eyre::Result<()> {
                     .wait()?;
                 if !is_git.success() {
                     let gitignore_path = root.join(".gitignore");
-                    std::fs::write(gitignore_path, include_str!("../../assets/.gitignoreTemplate"))?;
+                    std::fs::write(
+                        gitignore_path,
+                        include_str!("../../assets/.gitignoreTemplate"),
+                    )?;
                     Command::new("git").arg("init").current_dir(&root).spawn()?.wait()?;
                     Command::new("git").args(&["add", "."]).current_dir(&root).spawn()?.wait()?;
                     Command::new("git")
