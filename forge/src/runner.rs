@@ -256,20 +256,14 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         let mut ident = BTreeMap::new();
         if let Some(evm_traces) = self.evm.traces() {
             if !evm_traces.is_empty() {
-                let mut ident = BTreeMap::new();
-                let evm_traces = evm_traces
-                    .into_iter()
-                    .map(|trace: CallTraceArena| {
-                        trace.update_identified(
-                            0,
-                            known_contracts.expect("traces enabled but no identified_contracts"),
-                            &mut ident,
-                            self.evm,
-                        );
-                        trace
-                    })
-                    .collect();
-                traces = Some(evm_traces);
+                let trace = evm_traces.into_iter().next().expect("no trace");
+                trace.update_identified(
+                    0,
+                    known_contracts.expect("traces enabled but no identified_contracts"),
+                    &mut ident,
+                    self.evm,
+                );
+                traces = Some(vec![trace]);
             }
         }
 
@@ -300,21 +294,16 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
 
         if let Some(evm_traces) = self.evm.traces() {
             if !evm_traces.is_empty() {
-                let evm_traces = evm_traces
-                    .into_iter()
-                    .map(|trace: CallTraceArena| {
-                        trace.update_identified(
-                            0,
-                            known_contracts.expect("traces enabled but no identified_contracts"),
-                            &mut ident,
-                            self.evm,
-                        );
-                        trace
-                    })
-                    .collect::<Vec<CallTraceArena>>();
+                let trace = evm_traces.into_iter().next().expect("no trace");
+                trace.update_identified(
+                    0,
+                    known_contracts.expect("traces enabled but no identified_contracts"),
+                    &mut ident,
+                    self.evm,
+                );
                 identified_contracts = Some(ident);
                 if let Some(ref mut traces) = traces {
-                    traces.extend(evm_traces);
+                    traces.push(trace);
                 }
             }
         }

@@ -330,13 +330,27 @@ fn test<A: ArtifactOutput + 'static, S: Clone, E: evm_adapters::Evm<S>>(
                             (&result.traces, &result.identified_contracts)
                         {
                             let mut ident = identified_contracts.clone();
-                            traces[2].pretty_print(
-                                0,
-                                &runner.known_contracts,
-                                &mut ident,
-                                &runner.evm,
-                                "".to_string(),
-                            );
+                            if verbosity > 3 {
+                                // print setup calls as well
+                                traces.iter().for_each(|trace| {
+                                    trace.pretty_print(
+                                        0,
+                                        &runner.known_contracts,
+                                        &mut ident,
+                                        &runner.evm,
+                                        "".to_string(),
+                                    );
+                                });
+                            } else if !traces.is_empty() {
+                                traces.last().expect("no last but not empty").pretty_print(
+                                    0,
+                                    &runner.known_contracts,
+                                    &mut ident,
+                                    &runner.evm,
+                                    "".to_string(),
+                                );
+                            }
+
                             println!();
                         }
                     }
