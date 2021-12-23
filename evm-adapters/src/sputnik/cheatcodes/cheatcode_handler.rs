@@ -222,42 +222,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
     fn logs(&self) -> Vec<String> {
         let logs = self.state().substate.logs().to_vec();
         logs.into_iter()
-            .filter_map(|log| {
-                // convert to the ethers type
-                let log = RawLog { topics: log.topics, data: log.data };
-                HevmConsoleEvents::decode_log(&log).ok()
-            })
-            .map(|event| {
-                use HevmConsoleEvents::*;
-                match event {
-                    LogsFilter(inner) => format!("{}", inner.0),
-                    LogBytesFilter(inner) => format!("{}", inner.0),
-                    LogNamedAddressFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
-                    LogNamedBytes32Filter(inner) => {
-                        format!("{}: 0x{}", inner.key, hex::encode(inner.val))
-                    }
-                    LogNamedDecimalIntFilter(inner) => format!(
-                        "{}: {:?}",
-                        inner.key,
-                        ethers::utils::parse_units(inner.val, inner.decimals.as_u32()).unwrap()
-                    ),
-                    LogNamedDecimalUintFilter(inner) => {
-                        format!(
-                            "{}: {:?}",
-                            inner.key,
-                            ethers::utils::parse_units(inner.val, inner.decimals.as_u32()).unwrap()
-                        )
-                    }
-                    LogNamedIntFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
-                    LogNamedUintFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
-                    LogNamedBytesFilter(inner) => {
-                        format!("{}: 0x{}", inner.key, hex::encode(inner.val))
-                    }
-                    LogNamedStringFilter(inner) => format!("{}: {}", inner.key, inner.val),
-
-                    e => e.to_string(),
-                }
-            })
+            .filter_map(convert_log)
             .chain(self.console_logs.clone())
             .collect()
     }
