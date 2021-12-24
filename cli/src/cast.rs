@@ -164,23 +164,17 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::AbiDecode { sig, calldata, output } => {
             let func = foundry_utils::IntoFunction::into(sig);
-            match calldata {
-                Some(mut x) => {
-                    x = x.replace("0x", "");
-                    let data = hex::decode(x)?;
-                    let decoded_input = func.decode_input(&data[4..])?;
-                    println!("Calldata: {:?}", decoded_input);
-                }
-                None => {}
+            if let Some(mut x) = calldata {
+                x = x.replace("0x", "");
+                let data = hex::decode(x)?;
+                let decoded_input = func.decode_input(&data[4..])?;
+                println!("Calldata: {:?}", decoded_input);
             }
-            match output {
-                Some(mut x) => {
-                    x = x.replace("0x", "");
-                    let data = hex::decode(x)?;
-                    let decoded_output = func.decode_output(&data)?;
-                    println!("Output: {:?}", decoded_output);
-                }
-                None => {}
+            if let Some(mut x) = output {
+                x = x.replace("0x", "");
+                let data = hex::decode(x)?;
+                let decoded_output = func.decode_output(&data)?;
+                println!("Output: {:?}", decoded_output);
             }
         }
         Subcommands::Age { block, rpc_url } => {
