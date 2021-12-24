@@ -60,12 +60,73 @@ pub fn remove_extra_costs(gas: U256, calldata: &[u8]) -> U256 {
 
 /// Given an ABI encoded error string with the function signature `Error(string)`, it decodes
 /// it and returns the revert error message.
-pub fn decode_revert(error: &[u8]) -> std::result::Result<String, ethers_core::abi::Error> {
-    let error = error.strip_prefix(&ethers_core::utils::id("Error(string)")).unwrap_or(error);
-    if !error.is_empty() {
-        Ok(abi::decode(&[abi::ParamType::String], error)?[0].to_string())
+pub fn decode_revert(error: &[u8]) -> Result<String> {
+    if error.len() >= 4 {
+        match error[0..4] {
+            // keccak(Panic(uint256))
+            [78, 72, 123, 113] => {
+                // ref: https://soliditydeveloper.com/solidity-0.8
+                match error[error.len() - 1] {
+                    1 => {
+                        // assert
+                        Ok("Assertion violated".to_string())
+                    }
+                    17 => {
+                        // safemath over/underflow
+                        Ok("Arithmetic over/underflow".to_string())
+                    }
+                    18 => {
+                        // divide by 0
+                        Ok("Division or modulo by 0".to_string())
+                    }
+                    33 => {
+                        // conversion into non-existent enum type
+                        Ok("Conversion into non-existent enum type".to_string())
+                    }
+                    34 => {
+                        // incorrectly encoded storage byte array
+                        Ok("Incorrectly encoded storage byte array".to_string())
+                    }
+                    49 => {
+                        // pop() on empty array
+                        Ok("`pop()` on empty array".to_string())
+                    }
+                    50 => {
+                        // index out of bounds
+                        Ok("Index out of bounds".to_string())
+                    }
+                    65 => {
+                        // allocating too much memory or creating too large array
+                        Ok("Memory allocation overflow".to_string())
+                    }
+                    81 => {
+                        // calling a zero initialized variable of internal function type
+                        Ok("Calling a zero initialized variable of internal function type"
+                            .to_string())
+                    }
+                    _ => Err(eyre::Error::msg("Unsupported solidity builtin panic")),
+                }
+            }
+            // keccak(Error(string))
+            [8, 195, 121, 160] => {
+                if let Ok(decoded) = abi::decode(&[abi::ParamType::String], &error[4..]) {
+                    Ok(decoded[0].to_string())
+                } else {
+                    Err(eyre::Error::msg("Bad string decode"))
+                }
+            }
+            _ => {
+                // evm_error will sometimes not include the function selector for the error,
+                // optimistically try to decode
+                if let Ok(decoded) = abi::decode(&[abi::ParamType::String], error) {
+                    Ok(decoded[0].to_string())
+                } else {
+                    Err(eyre::Error::msg("Non-native error and not string"))
+                }
+            }
+        }
     } else {
-        Ok("No revert reason found".to_owned())
+        Err(eyre::Error::msg("Not enough error data to decode"))
     }
 }
 

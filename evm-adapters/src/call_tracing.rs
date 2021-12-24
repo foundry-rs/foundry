@@ -466,11 +466,21 @@ impl CallTrace {
                                 strings,
                             );
 
-                            if !self.output.is_empty() {
+                            if !self.output.is_empty() && self.success {
                                 return Output::Token(
                                     func.decode_output(&self.output[..])
                                         .expect("Bad func output decode"),
                                 )
+                            } else if !self.output.is_empty() && !self.success {
+                                if let Ok(decoded_error) =
+                                    foundry_utils::decode_revert(&self.output[..])
+                                {
+                                    return Output::Token(vec![ethers::abi::Token::String(
+                                        decoded_error,
+                                    )])
+                                } else {
+                                    return Output::Raw(self.output.clone())
+                                }
                             } else {
                                 return Output::Raw(vec![])
                             }
@@ -491,6 +501,11 @@ impl CallTrace {
                     }
                 );
 
+                if !self.success {
+                    if let Ok(decoded_error) = foundry_utils::decode_revert(&self.output[..]) {
+                        return Output::Token(vec![ethers::abi::Token::String(decoded_error)])
+                    }
+                }
                 return Output::Raw(self.output[..].to_vec())
             }
         }
@@ -518,6 +533,11 @@ impl CallTrace {
             },
         );
 
+        if !self.success {
+            if let Ok(decoded_error) = foundry_utils::decode_revert(&self.output[..]) {
+                return Output::Token(vec![ethers::abi::Token::String(decoded_error)])
+            }
+        }
         Output::Raw(self.output[..].to_vec())
     }
 }

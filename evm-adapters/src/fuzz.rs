@@ -101,7 +101,10 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
                     "{}, expected failure: {}, reason: '{}'",
                     func.name,
                     should_fail,
-                    foundry_utils::decode_revert(returndata.as_ref())?
+                    match foundry_utils::decode_revert(returndata.as_ref()) {
+                        Ok(e) => e,
+                        Err(e) => e.to_string(),
+                    }
                 );
 
                 // push test case to the case set
