@@ -1102,7 +1102,7 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#568d9c8697bf6ba4944543a21c9456c0c11f0caf"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/remapping-fine-tuning-v3#d3f1c8945196bc1fe812db1690fe920ba4d10ddb"
 dependencies = [
  "ethers-contract",
  "ethers-core",
@@ -1116,7 +1116,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#568d9c8697bf6ba4944543a21c9456c0c11f0caf"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/remapping-fine-tuning-v3#d3f1c8945196bc1fe812db1690fe920ba4d10ddb"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1134,7 +1134,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#568d9c8697bf6ba4944543a21c9456c0c11f0caf"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/remapping-fine-tuning-v3#d3f1c8945196bc1fe812db1690fe920ba4d10ddb"
 dependencies = [
  "Inflector",
  "anyhow",
@@ -1156,7 +1156,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#568d9c8697bf6ba4944543a21c9456c0c11f0caf"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/remapping-fine-tuning-v3#d3f1c8945196bc1fe812db1690fe920ba4d10ddb"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -1170,7 +1170,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#568d9c8697bf6ba4944543a21c9456c0c11f0caf"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/remapping-fine-tuning-v3#d3f1c8945196bc1fe812db1690fe920ba4d10ddb"
 dependencies = [
  "arrayvec 0.7.2",
  "bytes",
@@ -1198,7 +1198,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "0.2.0"
-source = "git+https://github.com/gakonst/ethers-rs#568d9c8697bf6ba4944543a21c9456c0c11f0caf"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/remapping-fine-tuning-v3#d3f1c8945196bc1fe812db1690fe920ba4d10ddb"
 dependencies = [
  "ethers-core",
  "reqwest",
@@ -1211,7 +1211,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#568d9c8697bf6ba4944543a21c9456c0c11f0caf"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/remapping-fine-tuning-v3#d3f1c8945196bc1fe812db1690fe920ba4d10ddb"
 dependencies = [
  "async-trait",
  "ethers-contract",
@@ -1234,7 +1234,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#568d9c8697bf6ba4944543a21c9456c0c11f0caf"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/remapping-fine-tuning-v3#d3f1c8945196bc1fe812db1690fe920ba4d10ddb"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -1264,7 +1264,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#568d9c8697bf6ba4944543a21c9456c0c11f0caf"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/remapping-fine-tuning-v3#d3f1c8945196bc1fe812db1690fe920ba4d10ddb"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1286,7 +1286,7 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "0.1.0"
-source = "git+https://github.com/gakonst/ethers-rs#568d9c8697bf6ba4944543a21c9456c0c11f0caf"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/remapping-fine-tuning-v3#d3f1c8945196bc1fe812db1690fe920ba4d10ddb"
 dependencies = [
  "colored",
  "dunce",
@@ -3584,9 +3584,9 @@ dependencies = [
 
 [[package]]
 name = "signature"
-version = "1.4.0"
+version = "1.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02658e48d89f2bec991f9a78e69cfa4c316f8d6a6c4ec12fae1aeb263d486788"
+checksum = "f2807892cfa58e081aa1f1111391c7a0649d4fa127a4ffbe34bcbfb35a1171a4"
 dependencies = [
  "digest 0.9.0",
  "rand_core 0.6.3",
@@ -3727,9 +3727,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "1.0.82"
+version = "1.0.83"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8daf5dd0bb60cbd4137b1b587d2fc0ae729bc07cf01cd70b36a1ed5ade3b9d59"
+checksum = "23a1dfb999630e338648c83e91c59a4e9fb7620f520c3194b6b89e276f2f1959"
 dependencies = [
  "proc-macro2",
  "quote",
