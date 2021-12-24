@@ -139,11 +139,15 @@ pub enum Subcommands {
     },
     #[structopt(name = "abi-decode")]
     #[structopt(about = "Decode ABI-encoded hex data")]
-    abiDecode {
-        #[structopt(help = "the hex data you want to decode")]
-        abi: String,
-        hex_calldata: String,
-        hex_output: String,
+    AbiDecode {
+        #[structopt(
+            help = "the function signature you want to decode, in the format `<name>(<in-types>)(<out-types>)`"
+        )]
+        sig: String,
+        #[structopt(short = "c", help = "the encoded calladata, in hex format")]
+        calldata: Option<String>,
+        #[structopt(short = "o", help = "the encoded output, in hex format")]
+        output: Option<String>,
     },
     #[structopt(name = "age")]
     #[structopt(about = "Prints the timestamp of a block")]

@@ -11,8 +11,6 @@ use opts::{
 };
 
 use ethers::{
-    contract::BaseContract,
-    core::abi::parse_abi,
     core::types::{BlockId, BlockNumber::Latest},
     providers::{Middleware, Provider},
     types::{NameOrAddress, U256},
@@ -164,17 +162,26 @@ async fn main() -> eyre::Result<()> {
                 cast_send(provider, from, to, sig, args, cast_async).await?;
             }
         }
-        Subcommands::abiDecode { abi, hex_calldata, hex_output } => {
-            let parsed_abi = BaseContract::from(parse_abi(&[&abi]).unwrap());
-            let function_name = abi.split("(").next().unwrap().replace("function ", "");
-            let decoded_input = parsed_abi
-                .decode(&function_name, hex_calldata)
-                .unwrap_or(String::from("Could not decode"));
-            let decoded_output = parsed_abi
-                .decode(&function_name, hex_output)
-                .unwrap_or(String::from("Could not decode"));
-            println!("Decoded calldata: {}", decoded_input);
-            println!("Decoded function output: {}", decoded_output);
+        Subcommands::AbiDecode { sig, calldata, output } => {
+            let func = foundry_utils::IntoFunction::into(sig);
+            match calldata {
+                Some(mut x) => {
+                    x = x.replace("0x", "");
+                    let data = hex::decode(x)?;
+                    let decoded_input = func.decode_input(&data[4..])?;
+                    println!("Calldata: {:?}", decoded_input);
+                }
+                None => {}
+            }
+            match output {
+                Some(mut x) => {
+                    x = x.replace("0x", "");
+                    let data = hex::decode(x)?;
+                    let decoded_output = func.decode_output(&data)?;
+                    println!("Output: {:?}", decoded_output);
+                }
+                None => {}
+            }
         }
         Subcommands::Age { block, rpc_url } => {
             let provider = Provider::try_from(rpc_url)?;

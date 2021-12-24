@@ -1524,6 +1524,7 @@ dependencies = [
  "forge",
  "foundry-utils",
  "glob",
+ "hex",
  "once_cell",
  "proptest",
  "regex",
