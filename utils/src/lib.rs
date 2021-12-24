@@ -115,7 +115,15 @@ pub fn decode_revert(error: &[u8]) -> Result<String> {
                     Err(eyre::Error::msg("Bad string decode"))
                 }
             }
-            _ => Err(eyre::Error::msg("Non-builtin revert")),
+            _ => {
+                // evm_error will sometimes not include the function selector for the error,
+                // optimistically try to decode
+                if let Ok(decoded) = abi::decode(&[abi::ParamType::String], error) {
+                    Ok(decoded[0].to_string())
+                } else {
+                    Err(eyre::Error::msg("Non-native error and not string"))
+                }
+            }
         }
     } else {
         Err(eyre::Error::msg("Not enough error data to decode"))
