@@ -115,6 +115,24 @@ pub fn decode_revert(error: &[u8]) -> Result<String> {
                     Err(eyre::Error::msg("Bad string decode"))
                 }
             }
+            // keccak(expectRevert(bytes))
+            [242, 141, 206, 179] => {
+                let err_data = &error[4..];
+                if err_data.len() > 64 {
+                    let len = U256::from(&err_data[32..64]).as_usize();
+                    if err_data.len() > 64 + len {
+                        let actual_err = &err_data[64..64 + len];
+                        if let Ok(decoded) = decode_revert(actual_err) {
+                            // check if its a builtin
+                            return Ok(decoded)
+                        } else if let Ok(as_str) = String::from_utf8(actual_err.to_vec()) {
+                            // check if its a true string
+                            return Ok(as_str)
+                        }
+                    }
+                }
+                Err(eyre::Error::msg("Non-native error and not string"))
+            }
             _ => {
                 // evm_error will sometimes not include the function selector for the error,
                 // optimistically try to decode

@@ -231,6 +231,12 @@ contract CheatCodes is DSTest {
         target.stringErr(99);
     }
 
+    function testExpectRevertBuiltin() public {
+        ExpectRevert target = new ExpectRevert();
+        hevm.expectRevert(abi.encodeWithSignature("Panic(uint256)", 0x11));
+        target.arithmeticErr(101);
+    }
+
     function testExpectCustomRevert() public {
         ExpectRevert target = new ExpectRevert();
         bytes memory data = abi.encodePacked(bytes4(keccak256("InputTooLarge()")));
@@ -293,6 +299,11 @@ contract ExpectRevert {
     function stringErr(uint256 a) public returns (uint256) {
         require(a < 100, "Value too large");
         return a;
+    }
+
+    function arithmeticErr(uint256 a) public returns (uint256) {
+        uint256 b = 100 - a;
+        return b;
     }
 
     function stringErr2(uint256 a) public returns (uint256) {
