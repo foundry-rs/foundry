@@ -450,6 +450,14 @@ impl CallTrace {
                                     .map(format_token)
                                     .collect::<Vec<String>>()
                                     .join(", ");
+
+                                #[cfg(feature = "sputnik")]
+                                if self.addr == *CHEATCODE_ADDRESS && func.name == "expectRevert" {
+                                    // try to decode better than just `bytes` for `expectRevert`
+                                    if let Ok(decoded) = foundry_utils::decode_revert(&self.data) {
+                                        strings = decoded;
+                                    }
+                                }
                             }
 
                             println!(
