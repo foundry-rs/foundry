@@ -490,6 +490,22 @@ impl SimpleCast {
             Ok(value)
         }
     }
+    /// Decodes abi-encoded hex input and output
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     let test_string =
+    ///     String::from("0xf242432a0000000000000000000000008dbd1b711dc621e1404633da156fcc779e1c6f3e000000000000000000000000d9f3c9cc99548bf3b44a43e0a2d07399eb918adc000000000000000000000000000000000000000000000000000000000000002a000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000");
+    ///     let signature = String::from("function safeTransferFrom(address, address, uint256, uint256, bytes)");
+    ///     let (input, output) = Cast::abi_decode(signature, Some(test_string), None);
+    ///     assert_eq!("[Address(0x8dbd1b711dc621e1404633da156fcc779e1c6f3e), Address(0xd9f3c9cc99548bf3b44a43e0a2d07399eb918adc), Uint(42), Uint(1), Bytes([])]",
+    ///     format!("{:?}", input.unwrap()));
+    ///     Ok(())
+    /// }    
+    ///
+    /// ```
     pub fn abi_decode(
         sig: String,
         calldata: Option<String>,
