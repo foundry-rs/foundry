@@ -68,6 +68,8 @@ pub async fn run(
         5 => Chain::Goerli,
         42 => Chain::Kovan,
         100 => Chain::XDai,
+        10 => Chain::Optimism,
+        69 => Chain::OptimismKovan,
         _ => eyre::bail!("unexpected chain {}", chain),
     };
     let etherscan = Client::new(chain, etherscan_api_key)
