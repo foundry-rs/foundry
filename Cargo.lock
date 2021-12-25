@@ -500,6 +500,7 @@ dependencies = [
  "ethers-signers",
  "eyre",
  "foundry-utils",
+ "hex",
  "rustc-hex",
  "serde_json",
 ]

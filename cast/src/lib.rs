@@ -44,7 +44,7 @@ where
     /// Makes a read-only call to the specified address
     ///
     /// ```no_run
-    ///
+    /// 
     /// use cast::Cast;
     /// use ethers_core::types::Address;
     /// use ethers_providers::{Provider, Http};
@@ -446,6 +446,21 @@ impl SimpleCast {
         Ok(I256::MAX)
     }
 
+    /// Returns minimum I256 value
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    /// use ethers_core::types::I256;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(I256::MIN, Cast::min_int()?);
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn min_int() -> Result<I256> {
+        Ok(I256::MIN)
+    }
     /// Returns maximum U256 value
     ///
     /// ```
@@ -496,15 +511,19 @@ impl SimpleCast {
     /// use cast::SimpleCast as Cast;
     ///
     /// fn main() -> eyre::Result<()> {
-    ///     let test_string =
+    ///     let mut test_string =
     ///     String::from("0xf242432a0000000000000000000000008dbd1b711dc621e1404633da156fcc779e1c6f3e000000000000000000000000d9f3c9cc99548bf3b44a43e0a2d07399eb918adc000000000000000000000000000000000000000000000000000000000000002a000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000");
-    ///     let signature = String::from("function safeTransferFrom(address, address, uint256, uint256, bytes)");
-    ///     let (input, output) = Cast::abi_decode(signature, Some(test_string), None);
+    ///     let mut signature = String::from("function safeTransferFrom(address, address, uint256, uint256, bytes)");
+    ///     let (mut input, mut output) = Cast::abi_decode(signature, Some(test_string), None);
     ///     assert_eq!("[Address(0x8dbd1b711dc621e1404633da156fcc779e1c6f3e), Address(0xd9f3c9cc99548bf3b44a43e0a2d07399eb918adc), Uint(42), Uint(1), Bytes([])]",
     ///     format!("{:?}", input.unwrap()));
+    ///     test_string = String::from("0x0000000000000000000000000000000000000000000000000000000000000001");
+    ///     signature = String::from("function balanceOf(address,uint256) view returns(uint256)");
+    ///     let (input2, output2) = Cast::abi_decode(signature, None, Some(test_string));
+    ///     assert_eq!("[Uint(1)]",
+    ///     format!("{:?}", output2.unwrap()));
     ///     Ok(())
     /// }    
-    ///
     /// ```
     pub fn abi_decode(
         sig: String,
