@@ -28,7 +28,6 @@ use ethers::{
     types::{Address, H160, H256, U256},
 };
 use std::convert::Infallible;
-use std::cell::RefCell;
 
 use crate::sputnik::cheatcodes::patch_hardhat_console_log_selector;
 use once_cell::sync::Lazy;
@@ -508,17 +507,31 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 state.set_code(who, code.to_vec());
             }
             HEVMCalls::Record(_) => {
-                self.state_mut().accesses = Some((RefCell::new(Default::default()), RefCell::new(Default::default())));
+                self.state_mut().accesses = Some(Default::default());
             }
             HEVMCalls::Accesses(inner) => {
                 let address = inner.0;
                 // we dont reset all records in case user wants to query multiple address
-                if let Some((read_accesses, write_accesses)) = &self.state().accesses {
+                if let Some(record_accesses) = &self.state().accesses {
                     res = ethers::abi::encode(&[
-                        read_accesses.borrow_mut().remove(&address).unwrap_or_default().into_tokens()[0].clone(), 
-                        write_accesses.borrow_mut().remove(&address).unwrap_or_default().into_tokens()[0].clone()
+                        record_accesses
+                            .reads
+                            .borrow_mut()
+                            .remove(&address)
+                            .unwrap_or_default()
+                            .into_tokens()[0]
+                            .clone(),
+                        record_accesses
+                            .writes
+                            .borrow_mut()
+                            .remove(&address)
+                            .unwrap_or_default()
+                            .into_tokens()[0]
+                            .clone(),
                     ]);
-                    if read_accesses.borrow().len() == 0 && read_accesses.borrow().len() == 0 {
+                    if record_accesses.reads.borrow().len() == 0 &&
+                        record_accesses.reads.borrow().len() == 0
+                    {
                         self.state_mut().accesses = None;
                     }
                 } else {
