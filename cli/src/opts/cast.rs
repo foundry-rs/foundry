@@ -11,6 +11,9 @@ pub enum Subcommands {
     #[structopt(name = "--max-int")]
     #[structopt(about = "maximum i256 value")]
     MaxInt,
+    #[structopt(name = "--min-int")]
+    #[structopt(about = "minimum i256 value")]
+    MinInt,
     #[structopt(name = "--max-uint")]
     #[structopt(about = "maximum u256 value")]
     MaxUint,

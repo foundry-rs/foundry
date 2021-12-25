@@ -28,6 +28,9 @@ async fn main() -> eyre::Result<()> {
         Subcommands::MaxInt => {
             println!("{}", SimpleCast::max_int()?);
         }
+        Subcommands::MinInt => {
+            println!("{}", SimpleCast::min_int()?);
+        }
         Subcommands::MaxUint => {
             println!("{}", SimpleCast::max_uint()?);
         }
