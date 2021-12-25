@@ -25,7 +25,7 @@ use structopt::StructOpt;
 #[derive(Debug, Clone, StructOpt)]
 pub struct BuildArgs {
     #[structopt(
-        help = "the project's root path, default being the current working directory",
+        help = "the project's root path. By default, this is the root directory of the current Git repository or the current working directory if it is not part of a Git repository",
         long
     )]
     pub root: Option<PathBuf>,
@@ -84,6 +84,18 @@ impl Cmd for BuildArgs {
     fn run(self) -> eyre::Result<Self::Output> {
         println!("compiling...");
         let project = self.project()?;
+
+        if !project.paths.sources.exists() {
+            eyre::bail!(
+                r#"no contracts to compile, contracts folder "{}" does not exist.
+Check the configured workspace settings:
+{}
+If you are in a subdirectory in a Git repository, try adding `--root .`"#,
+                project.paths.sources.display(),
+                project.paths
+            );
+        }
+
         let output = project.compile()?;
         if output.has_compiler_errors() {
             // return the diagnostics error back to the user.
