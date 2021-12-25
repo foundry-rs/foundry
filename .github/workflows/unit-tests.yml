@@ -14,9 +14,6 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v2
 
-      - name: Install libusb (for Ledger)
-        run: sudo apt update && sudo apt install pkg-config libudev-dev
-
       - name: Install toolchain
         uses: actions-rs/toolchain@v1
         with:
@@ -36,9 +33,6 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v2
-
-      - name: Install libusb (for Ledger)
-        run: sudo apt update && sudo apt install pkg-config libudev-dev
 
       - name: Install toolchain
         uses: actions-rs/toolchain@v1

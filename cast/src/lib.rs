@@ -430,6 +430,22 @@ impl SimpleCast {
         Ok(U256::from_str(hex)?)
     }
 
+    /// Returns maximum I256 value
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    /// use ethers_core::types::I256;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(I256::MAX, Cast::max_int()?);
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn max_int() -> Result<I256> {
+        Ok(I256::MAX)
+    }
+
     /// Returns maximum U256 value
     ///
     /// ```

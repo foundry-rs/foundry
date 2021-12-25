@@ -215,7 +215,7 @@ mod tests {
 
     #[test]
     fn forked_backend() {
-        let cfg = Config::istanbul();
+        let cfg = Config::london();
         let compiled = COMPILED.find("Greeter").expect("could not find contract");
 
         let provider = Provider::<Http>::try_from(

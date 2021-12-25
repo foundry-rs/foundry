@@ -31,12 +31,6 @@ jobs:
             aarch64-unknown-linux-gnu) sudo apt-get -y update ; sudo apt-get -y install gcc-aarch64-linux-gnu ;;
           esac
 
-      - name: Install packages (Ubuntu)
-        if: matrix.job.os == 'ubuntu-20.04'
-        run: |
-          sudo apt update
-          sudo apt install libudev-dev pkg-config
-
       - name: Extract crate information
         shell: bash
         run: |

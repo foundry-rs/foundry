@@ -7,8 +7,8 @@ use ethers::{
     middleware::SignerMiddleware,
     providers::{Http, Provider},
     signers::{
-        coins_bip39::English, HDPath as LedgerHDPath, Ledger, LocalWallet, MnemonicBuilder, Trezor,
-        TrezorHDPath,
+        coins_bip39::English, HDPath as LedgerHDPath, Ledger, LocalWallet, MnemonicBuilder, Signer,
+        Trezor, TrezorHDPath,
     },
     types::{Address, U256},
 };
@@ -65,6 +65,8 @@ impl EthereumOpts {
                 .or_else(|| self.wallet.keystore().transpose())
                 .transpose()?
                 .ok_or_else(|| eyre::eyre!("error accessing local wallet"))?;
+
+            let local = local.with_chain_id(chain_id.as_u64());
 
             Ok(Some(WalletType::Local(SignerMiddleware::new(provider, local))))
         }

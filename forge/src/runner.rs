@@ -2,6 +2,7 @@ use ethers::{
     abi::{Abi, Function, Token},
     types::{Address, Bytes},
 };
+use evm_adapters::call_tracing::CallTraceArena;
 
 use evm_adapters::{
     fuzz::{FuzzTestResult, FuzzedCases, FuzzedExecutor},
@@ -55,6 +56,12 @@ pub struct TestResult {
 
     /// What kind of test this was
     pub kind: TestKind,
+
+    /// Traces
+    pub traces: Option<Vec<CallTraceArena>>,
+
+    /// Identified contracts
+    pub identified_contracts: Option<BTreeMap<Address, (String, Abi)>>,
 }
 
 impl TestResult {
@@ -164,6 +171,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         regex: &Regex,
         fuzzer: Option<&mut TestRunner>,
         init_state: &S,
+        known_contracts: Option<&BTreeMap<String, (Abi, Vec<u8>)>>,
     ) -> Result<BTreeMap<String, TestResult>> {
         tracing::info!("starting tests");
         let start = Instant::now();
@@ -183,7 +191,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
             .map(|func| {
                 // Before each test run executes, ensure we're at our initial state.
                 self.evm.reset(init_state.clone());
-                let result = self.run_test(func, needs_setup)?;
+                let result = self.run_test(func, needs_setup, known_contracts)?;
                 Ok((func.signature(), result))
             })
             .collect::<Result<BTreeMap<_, _>>>()?;
@@ -214,7 +222,12 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
     }
 
     #[tracing::instrument(name = "test", skip_all, fields(name = %func.signature()))]
-    pub fn run_test(&mut self, func: &Function, setup: bool) -> Result<TestResult> {
+    pub fn run_test(
+        &mut self,
+        func: &Function,
+        setup: bool,
+        known_contracts: Option<&BTreeMap<String, (Abi, Vec<u8>)>>,
+    ) -> Result<TestResult> {
         let start = Instant::now();
         // the expected result depends on the function name
         // DAppTools' ds-test will not revert inside its `assertEq`-like functions
@@ -224,6 +237,8 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         tracing::debug!(func = ?func.signature(), should_fail, "unit-testing");
 
         let mut logs = self.init_logs.to_vec();
+
+        self.evm.reset_traces();
 
         // call the setup function in each test to reset the test's state.
         if setup {
@@ -250,6 +265,8 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
             Err(err) => match err {
                 EvmError::Execution { reason, gas_used, logs: execution_logs } => {
                     logs.extend(execution_logs);
+                    // add reverted logs
+                    logs.extend(self.evm.all_logs());
                     (E::revert(), Some(reason), gas_used, logs)
                 }
                 err => {
@@ -258,6 +275,44 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
                 }
             },
         };
+
+        let mut traces: Option<Vec<CallTraceArena>> = None;
+        let mut identified_contracts: Option<BTreeMap<Address, (String, Abi)>> = None;
+
+        let evm_traces = self.evm.traces();
+        if !evm_traces.is_empty() && self.evm.tracing_enabled() {
+            let mut ident = BTreeMap::new();
+            // create an iter over the traces
+            let mut trace_iter = evm_traces.into_iter();
+            let mut temp_traces = Vec::new();
+            if setup {
+                // grab the setup trace if it exists
+                let setup = trace_iter.next().expect("no setup trace");
+                setup.update_identified(
+                    0,
+                    known_contracts.expect("traces enabled but no identified_contracts"),
+                    &mut ident,
+                    self.evm,
+                );
+                temp_traces.push(setup);
+            }
+            // grab the test trace
+            let test_trace = trace_iter.next().expect("no test trace");
+            test_trace.update_identified(
+                0,
+                known_contracts.expect("traces enabled but no identified_contracts"),
+                &mut ident,
+                self.evm,
+            );
+            temp_traces.push(test_trace);
+
+            // pass back the identified contracts and traces
+            identified_contracts = Some(ident);
+            traces = Some(temp_traces);
+        }
+
+        self.evm.reset_traces();
+
         let success = self.evm.check_success(self.address, &status, should_fail);
         let duration = Instant::now().duration_since(start);
         tracing::debug!(?duration, %success, %gas_used);
@@ -269,6 +324,8 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
             counterexample: None,
             logs,
             kind: TestKind::Standard(gas_used),
+            traces,
+            identified_contracts,
         })
     }
 
@@ -279,6 +336,8 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         setup: bool,
         runner: TestRunner,
     ) -> Result<TestResult> {
+        // do not trace in fuzztests, as it's a big performance hit
+        let prev = self.evm.set_tracing_enabled(false);
         let start = Instant::now();
         let should_fail = func.name.starts_with("testFail");
         tracing::debug!(func = ?func.signature(), should_fail, "fuzzing");
@@ -306,13 +365,14 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
                 }
                 result => panic!("Unexpected test result: {:?}", result),
             }
-            // TODO custom display for Evm::ReturnReason?
-            reason = Some(format!("{:?}", err.return_reason));
+            reason = Some(err.revert_reason);
         }
 
         let duration = Instant::now().duration_since(start);
         tracing::debug!(?duration, %success);
 
+        // reset tracing to previous value in case next test *isn't* a fuzz test
+        self.evm.set_tracing_enabled(prev);
         // from that call?
         Ok(TestResult {
             success,
@@ -321,6 +381,8 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
             counterexample,
             logs: vec![],
             kind: TestKind::Fuzz(cases),
+            traces: None,
+            identified_contracts: None,
         })
     }
 }
@@ -330,16 +392,11 @@ mod tests {
     use super::*;
     use crate::test_helpers::COMPILED;
     use ethers::solc::artifacts::CompactContractRef;
-    use evm::Config;
-    use evm_adapters::sputnik::PRECOMPILES_MAP;
+    use evm_adapters::sputnik::helpers::vm;
 
     mod sputnik {
         use std::str::FromStr;
 
-        use evm_adapters::sputnik::{
-            helpers::{new_backend, new_vicinity},
-            Executor,
-        };
         use foundry_utils::get_func;
         use proptest::test_runner::Config as FuzzConfig;
 
@@ -347,24 +404,15 @@ mod tests {
 
         #[test]
         fn test_runner() {
-            let cfg = Config::istanbul();
             let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
-            let vicinity = new_vicinity();
-            let backend = new_backend(&vicinity, Default::default());
-            let precompiles = PRECOMPILES_MAP.clone();
-            let evm = Executor::new(12_000_000, &cfg, &backend, &precompiles);
+            let evm = vm();
             super::test_runner(evm, compiled);
         }
 
         #[test]
         fn test_function_overriding() {
-            let cfg = Config::istanbul();
             let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
-            let vicinity = new_vicinity();
-            let backend = new_backend(&vicinity, Default::default());
-
-            let precompiles = PRECOMPILES_MAP.clone();
-            let mut evm = Executor::new(12_000_000, &cfg, &backend, &precompiles);
+            let mut evm = vm();
             let (addr, _, _, _) = evm
                 .deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into())
                 .unwrap();
@@ -382,6 +430,7 @@ mod tests {
                     &Regex::from_str("testGreeting").unwrap(),
                     Some(&mut fuzzer),
                     &init_state,
+                    None,
                 )
                 .unwrap();
             assert!(results["testGreeting()"].success);
@@ -391,13 +440,8 @@ mod tests {
 
         #[test]
         fn test_fuzzing_counterexamples() {
-            let cfg = Config::istanbul();
             let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
-            let vicinity = new_vicinity();
-            let backend = new_backend(&vicinity, Default::default());
-
-            let precompiles = PRECOMPILES_MAP.clone();
-            let mut evm = Executor::new(12_000_000, &cfg, &backend, &precompiles);
+            let mut evm = vm();
             let (addr, _, _, _) = evm
                 .deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into())
                 .unwrap();
@@ -411,7 +455,12 @@ mod tests {
             cfg.failure_persistence = None;
             let mut fuzzer = TestRunner::new(cfg);
             let results = runner
-                .run_tests(&Regex::from_str("testFuzz.*").unwrap(), Some(&mut fuzzer), &init_state)
+                .run_tests(
+                    &Regex::from_str("testFuzz.*").unwrap(),
+                    Some(&mut fuzzer),
+                    &init_state,
+                    None,
+                )
                 .unwrap();
             for (_, res) in results {
                 assert!(!res.success);
@@ -421,13 +470,8 @@ mod tests {
 
         #[test]
         fn test_fuzzing_ok() {
-            let cfg = Config::istanbul();
             let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
-            let vicinity = new_vicinity();
-            let backend = new_backend(&vicinity, Default::default());
-
-            let precompiles = PRECOMPILES_MAP.clone();
-            let mut evm = Executor::new(u64::MAX, &cfg, &backend, &precompiles);
+            let mut evm = vm();
             let (addr, _, _, _) = evm
                 .deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into())
                 .unwrap();
@@ -446,13 +490,8 @@ mod tests {
 
         #[test]
         fn test_fuzz_shrinking() {
-            let cfg = Config::istanbul();
             let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
-            let vicinity = new_vicinity();
-            let backend = new_backend(&vicinity, Default::default());
-
-            let precompiles = PRECOMPILES_MAP.clone();
-            let mut evm = Executor::new(12_000_000, &cfg, &backend, &precompiles);
+            let mut evm = vm();
             let (addr, _, _, _) = evm
                 .deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into())
                 .unwrap();
@@ -520,7 +559,7 @@ mod tests {
         let mut runner =
             ContractRunner::new(&mut evm, compiled.abi.as_ref().unwrap(), addr, None, &[]);
 
-        let res = runner.run_tests(&".*".parse().unwrap(), None, &init_state).unwrap();
+        let res = runner.run_tests(&".*".parse().unwrap(), None, &init_state, None).unwrap();
         assert!(!res.is_empty());
         assert!(res.iter().all(|(_, result)| result.success));
     }

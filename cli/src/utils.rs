@@ -4,6 +4,7 @@ use eyre::{ContextCompat, WrapErr};
 use std::{
     env::VarError,
     path::{Path, PathBuf},
+    process::Command,
 };
 
 #[cfg(feature = "evmodin-evm")]
@@ -80,9 +81,9 @@ pub fn find_dapp_json_contract(path: &str, name: &str) -> eyre::Result<Contract>
 }
 
 pub fn find_git_root_path() -> eyre::Result<PathBuf> {
-    let repo = git2::Repository::discover(".").wrap_err("Failed to find git root path")?;
-
-    Ok(repo.path().parent().unwrap().to_path_buf())
+    let path = Command::new("git").args(&["rev-parse", "--show-toplevel"]).output()?.stdout;
+    let path = std::str::from_utf8(&path)?.trim_end_matches('\n');
+    Ok(PathBuf::from(path))
 }
 
 /// Determines the source directory to use given the root path to a project's workspace.
