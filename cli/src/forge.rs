@@ -9,7 +9,6 @@ use opts::forge::{Dependency, FullContractInfo, Opts, Subcommands};
 use std::{process::Command, str::FromStr};
 use structopt::StructOpt;
 
-#[tracing::instrument(err)]
 fn main() -> eyre::Result<()> {
     color_eyre::install()?;
     utils::subscriber();
