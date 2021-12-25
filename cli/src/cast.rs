@@ -163,18 +163,12 @@ async fn main() -> eyre::Result<()> {
             }
         }
         Subcommands::AbiDecode { sig, calldata, output } => {
-            let func = foundry_utils::IntoFunction::into(sig);
-            if let Some(mut x) = calldata {
-                x = x.replace("0x", "");
-                let data = hex::decode(x)?;
-                let decoded_input = func.decode_input(&data[4..])?;
-                println!("Calldata: {:?}", decoded_input);
+            let (input, output) = SimpleCast::abi_decode(sig, calldata, output);
+            if let Ok(x) = input {
+                println!("Calldata: {:?}", x);
             }
-            if let Some(mut x) = output {
-                x = x.replace("0x", "");
-                let data = hex::decode(x)?;
-                let decoded_output = func.decode_output(&data)?;
-                println!("Output: {:?}", decoded_output);
+            if let Ok(x) = output {
+                println!("Output: {:?}", x);
             }
         }
         Subcommands::Age { block, rpc_url } => {

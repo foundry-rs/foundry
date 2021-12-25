@@ -3,7 +3,7 @@
 //! TODO
 use chrono::NaiveDateTime;
 use ethers_core::{
-    abi::AbiParser,
+    abi::{AbiParser, Token},
     types::*,
     utils::{self, keccak256},
 };
@@ -44,7 +44,7 @@ where
     /// Makes a read-only call to the specified address
     ///
     /// ```no_run
-    /// 
+    ///
     /// use cast::Cast;
     /// use ethers_core::types::Address;
     /// use ethers_providers::{Provider, Http};
@@ -489,6 +489,26 @@ impl SimpleCast {
             value.insert(value.len() - decimals, '.');
             Ok(value)
         }
+    }
+    pub fn abi_decode(
+        sig: String,
+        calldata: Option<String>,
+        output: Option<String>,
+    ) -> (Result<Vec<Token>>, Result<Vec<Token>>) {
+        let func = foundry_utils::IntoFunction::into(sig);
+        let mut decoded_input = Ok(vec![]);
+        let mut decoded_output = Ok(vec![]);
+        if let Some(mut x) = calldata {
+            x = x.replace("0x", "");
+            let data = hex::decode(x).unwrap();
+            decoded_input = Ok(func.decode_input(&data[4..]).unwrap());
+        }
+        if let Some(mut x) = output {
+            x = x.replace("0x", "");
+            let data = hex::decode(x).unwrap();
+            decoded_output = Ok(func.decode_output(&data).unwrap());
+        }
+        (decoded_input, decoded_output)
     }
 
     /// Converts decimal input to hex
