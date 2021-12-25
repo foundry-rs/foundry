@@ -502,6 +502,7 @@ dependencies = [
  "foundry-utils",
  "rustc-hex",
  "serde_json",
+ "syn",
 ]
 
 [[package]]
@@ -1102,7 +1103,7 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#568d9c8697bf6ba4944543a21c9456c0c11f0caf"
+source = "git+https://github.com/pyk/ethers-rs?branch=optimism-support#9752b35b91e01d97cf4d8381d6229252a319e841"
 dependencies = [
  "ethers-contract",
  "ethers-core",
@@ -1116,7 +1117,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#568d9c8697bf6ba4944543a21c9456c0c11f0caf"
+source = "git+https://github.com/pyk/ethers-rs?branch=optimism-support#9752b35b91e01d97cf4d8381d6229252a319e841"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1134,7 +1135,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#568d9c8697bf6ba4944543a21c9456c0c11f0caf"
+source = "git+https://github.com/pyk/ethers-rs?branch=optimism-support#9752b35b91e01d97cf4d8381d6229252a319e841"
 dependencies = [
  "Inflector",
  "anyhow",
@@ -1151,12 +1152,13 @@ dependencies = [
  "serde_json",
  "syn",
  "url",
+ "walkdir",
 ]
 
 [[package]]
 name = "ethers-contract-derive"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#568d9c8697bf6ba4944543a21c9456c0c11f0caf"
+source = "git+https://github.com/pyk/ethers-rs?branch=optimism-support#9752b35b91e01d97cf4d8381d6229252a319e841"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -1170,7 +1172,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#568d9c8697bf6ba4944543a21c9456c0c11f0caf"
+source = "git+https://github.com/pyk/ethers-rs?branch=optimism-support#9752b35b91e01d97cf4d8381d6229252a319e841"
 dependencies = [
  "arrayvec 0.7.2",
  "bytes",
@@ -1198,7 +1200,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "0.2.0"
-source = "git+https://github.com/gakonst/ethers-rs#568d9c8697bf6ba4944543a21c9456c0c11f0caf"
+source = "git+https://github.com/pyk/ethers-rs?branch=optimism-support#9752b35b91e01d97cf4d8381d6229252a319e841"
 dependencies = [
  "ethers-core",
  "reqwest",
@@ -1211,7 +1213,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#568d9c8697bf6ba4944543a21c9456c0c11f0caf"
+source = "git+https://github.com/pyk/ethers-rs?branch=optimism-support#9752b35b91e01d97cf4d8381d6229252a319e841"
 dependencies = [
  "async-trait",
  "ethers-contract",
@@ -1234,7 +1236,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#568d9c8697bf6ba4944543a21c9456c0c11f0caf"
+source = "git+https://github.com/pyk/ethers-rs?branch=optimism-support#9752b35b91e01d97cf4d8381d6229252a319e841"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -1264,7 +1266,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#568d9c8697bf6ba4944543a21c9456c0c11f0caf"
+source = "git+https://github.com/pyk/ethers-rs?branch=optimism-support#9752b35b91e01d97cf4d8381d6229252a319e841"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1286,7 +1288,7 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "0.1.0"
-source = "git+https://github.com/gakonst/ethers-rs#568d9c8697bf6ba4944543a21c9456c0c11f0caf"
+source = "git+https://github.com/pyk/ethers-rs?branch=optimism-support#9752b35b91e01d97cf4d8381d6229252a319e841"
 dependencies = [
  "colored",
  "dunce",
@@ -3727,9 +3729,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "1.0.82"
+version = "1.0.83"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8daf5dd0bb60cbd4137b1b587d2fc0ae729bc07cf01cd70b36a1ed5ade3b9d59"
+checksum = "23a1dfb999630e338648c83e91c59a4e9fb7620f520c3194b6b89e276f2f1959"
 dependencies = [
  "proc-macro2",
  "quote",
