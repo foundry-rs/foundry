@@ -165,14 +165,15 @@ async fn main() -> eyre::Result<()> {
                 cast_send(provider, from, to, sig, args, cast_async).await?;
             }
         }
-        Subcommands::AbiDecode { sig, calldata, output } => {
-            let (input, output) = SimpleCast::abi_decode(sig, calldata, output);
-            if let Ok(x) = input {
-                println!("Calldata: {:?}", x);
-            }
-            if let Ok(x) = output {
-                println!("Output: {:?}", x);
-            }
+        Subcommands::CalldataDecode { sig, calldata } => {
+            let tokens = SimpleCast::abi_decode(&sig, &calldata, true)?;
+            let tokens = utils::format_tokens(&tokens);
+            tokens.for_each(|t| println!("{}", t));
+        }
+        Subcommands::AbiDecode { sig, calldata, input } => {
+            let tokens = SimpleCast::abi_decode(&sig, &calldata, input)?;
+            let tokens = utils::format_tokens(&tokens);
+            tokens.for_each(|t| println!("{}", t));
         }
         Subcommands::Age { block, rpc_url } => {
             let provider = Provider::try_from(rpc_url)?;
