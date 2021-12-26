@@ -505,45 +505,51 @@ impl SimpleCast {
             Ok(value)
         }
     }
-    /// Decodes abi-encoded hex input and output
+    /// Decodes abi-encoded hex input or output
     ///
     /// ```
     /// use cast::SimpleCast as Cast;
     ///
     /// fn main() -> eyre::Result<()> {
-    ///     let mut test_string =
-    ///     String::from("0xf242432a0000000000000000000000008dbd1b711dc621e1404633da156fcc779e1c6f3e000000000000000000000000d9f3c9cc99548bf3b44a43e0a2d07399eb918adc000000000000000000000000000000000000000000000000000000000000002a000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000");
-    ///     let mut signature = String::from("function safeTransferFrom(address, address, uint256, uint256, bytes)");
-    ///     let (mut input, mut output) = Cast::abi_decode(signature, Some(test_string), None);
-    ///     assert_eq!("[Address(0x8dbd1b711dc621e1404633da156fcc779e1c6f3e), Address(0xd9f3c9cc99548bf3b44a43e0a2d07399eb918adc), Uint(42), Uint(1), Bytes([])]",
-    ///     format!("{:?}", input.unwrap()));
-    ///     test_string = String::from("0x0000000000000000000000000000000000000000000000000000000000000001");
-    ///     signature = String::from("function balanceOf(address,uint256) view returns(uint256)");
-    ///     let (input2, output2) = Cast::abi_decode(signature, None, Some(test_string));
-    ///     assert_eq!("[Uint(1)]",
-    ///     format!("{:?}", output2.unwrap()));
-    ///     Ok(())
-    /// }    
+    ///     // Passing `input = false` will decode the data as the output type.
+    ///     // The input data types and the full function sig are ignored, i.e.
+    ///     // you could also pass `balanceOf()(uint256)` and it'd still work.
+    ///     let data = "0x0000000000000000000000000000000000000000000000000000000000000001";
+    ///     let sig = "balanceOf(address, uint256)(uint256)";
+    ///     let decoded = Cast::abi_decode(sig, data, false)?[0].to_string();
+    ///     assert_eq!(decoded, "1");
+    ///
+    ///     // Passing `input = true` will decode the data with the input function signature.
+    ///     let data = "0xf242432a0000000000000000000000008dbd1b711dc621e1404633da156fcc779e1c6f3e000000000000000000000000d9f3c9cc99548bf3b44a43e0a2d07399eb918adc000000000000000000000000000000000000000000000000000000000000002a000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000";
+    ///     let sig = "safeTransferFrom(address, address, uint256, uint256, bytes)";
+    ///     let decoded = Cast::abi_decode(sig, data, false)?;
+    ///     let decoded = decoded.iter().map(ToString::to_string).collect::<Vec<_>>();
+    ///     assert_eq!(
+    ///         decoded,
+    ///         vec!["8dbd1b711dc621e1404633da156fcc779e1c6f3e", "d9f3c9cc99548bf3b44a43e0a2d07399eb918adc", "2a", "1", ""]
+    ///     );
+    ///
+    ///
+    ///     # Ok(())
+    /// }
     /// ```
-    pub fn abi_decode(
-        sig: String,
-        calldata: Option<String>,
-        output: Option<String>,
-    ) -> (Result<Vec<Token>>, Result<Vec<Token>>) {
+    pub fn abi_decode(sig: &str, calldata: &str, input: bool) -> Result<Vec<Token>> {
         let func = foundry_utils::IntoFunction::into(sig);
-        let mut decoded_input = Ok(vec![]);
-        let mut decoded_output = Ok(vec![]);
-        if let Some(mut x) = calldata {
-            x = x.replace("0x", "");
-            let data = hex::decode(x).unwrap();
-            decoded_input = Ok(func.decode_input(&data[4..]).unwrap());
+        let calldata = calldata.strip_prefix("0x").unwrap_or(calldata);
+        let calldata = hex::decode(calldata)?;
+        let res = if input {
+            // need to strip the function selector
+            func.decode_input(&calldata[4..])?
+        } else {
+            func.decode_output(&calldata)?
+        };
+
+        // in case the decoding worked but nothign was decoded
+        if res.is_empty() {
+            eyre::bail!("no data was decoded")
         }
-        if let Some(mut x) = output {
-            x = x.replace("0x", "");
-            let data = hex::decode(x).unwrap();
-            decoded_output = Ok(func.decode_output(&data).unwrap());
-        }
-        (decoded_input, decoded_output)
+
+        Ok(res)
     }
 
     /// Converts decimal input to hex
