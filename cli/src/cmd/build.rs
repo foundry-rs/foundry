@@ -10,6 +10,7 @@ use ethers::{
     types::Address,
 };
 use std::{
+    collections::BTreeMap,
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -77,6 +78,9 @@ pub struct BuildArgs {
         alias = "hh"
     )]
     pub hardhat: bool,
+
+    #[structopt(help = "add linked libraries", long)]
+    pub libraries: Vec<String>,
 }
 
 impl Cmd for BuildArgs {
@@ -217,9 +221,23 @@ impl BuildArgs {
         let optimizer =
             Optimizer { enabled: Some(self.optimize), runs: Some(self.optimize_runs as usize) };
 
+        // unflatten the libraries
+        let mut libraries = BTreeMap::default();
+        for l in self.libraries.iter() {
+            let mut items = l.split(':');
+            let file = String::from(items.next().expect("could not parse libraries"));
+            let lib = String::from(items.next().expect("could not parse libraries"));
+            let addr = String::from(items.next().expect("could not parse libraries"));
+            libraries.entry(file).or_insert_with(BTreeMap::default).insert(lib, addr);
+        }
+
         // build the project w/ allowed paths = root and all the libs
-        let solc_settings =
-            Settings { optimizer, evm_version: Some(self.evm_version), ..Default::default() };
+        let solc_settings = Settings {
+            optimizer,
+            evm_version: Some(self.evm_version),
+            libraries,
+            ..Default::default()
+        };
         let mut builder = Project::builder()
             .paths(paths)
             .allowed_path(&root)
