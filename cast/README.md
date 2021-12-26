@@ -2,15 +2,15 @@
 
 ## Features
 
-- [ ] `--abi-decode`
-- [ ] `--calldata-decode`
+- [x] `--abi-decode`
+- [x] `--calldata-decode`
 - [x] `--from-ascii` (with `--from-utf8` alias)
 - [ ] `--from-bin`
 - [ ] `--from-fix`
 - [x] `--from-wei`
 - [x] `--max-int`
 - [x] `--max-uint`
-- [ ] `--min-int`
+- [x] `--min-int`
 - [x] `--to-checksum-address` (`--to-address` in dapptools)
 - [x] `--to-ascii`
 - [x] `--to-bytes32`

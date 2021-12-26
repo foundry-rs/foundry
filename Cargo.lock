@@ -500,6 +500,7 @@ dependencies = [
  "ethers-signers",
  "eyre",
  "foundry-utils",
+ "hex",
  "rustc-hex",
  "serde_json",
 ]
@@ -1336,6 +1337,7 @@ dependencies = [
 name = "evm-adapters"
 version = "0.1.0"
 dependencies = [
+ "ansi_term",
  "bytes",
  "ethers",
  "evm",
@@ -1523,6 +1525,7 @@ dependencies = [
  "forge",
  "foundry-utils",
  "glob",
+ "hex",
  "once_cell",
  "proptest",
  "regex",

@@ -108,7 +108,13 @@ impl CreateArgs {
         let mut contract_artifact = None;
 
         for (name, artifact) in compiled.into_artifacts() {
-            let artifact_contract_name = name.split(':').collect::<Vec<_>>()[1];
+            // if the contract name
+            let mut split = name.split(':');
+            let mut artifact_contract_name =
+                split.next().ok_or_else(|| eyre::Error::msg("no contract name provided"))?;
+            if let Some(new_name) = split.next() {
+                artifact_contract_name = new_name;
+            };
 
             if artifact_contract_name == self.contract.name {
                 if has_found_contract {

@@ -9,7 +9,6 @@ use opts::forge::{Dependency, FullContractInfo, Opts, Subcommands};
 use std::{process::Command, str::FromStr};
 use structopt::StructOpt;
 
-#[tracing::instrument(err)]
 fn main() -> eyre::Result<()> {
     color_eyre::install()?;
     utils::subscriber();
@@ -95,6 +94,11 @@ fn main() -> eyre::Result<()> {
                     .spawn()?
                     .wait()?;
                 if !is_git.success() {
+                    let gitignore_path = root.join(".gitignore");
+                    std::fs::write(
+                        gitignore_path,
+                        include_str!("../../assets/.gitignoreTemplate"),
+                    )?;
                     Command::new("git").arg("init").current_dir(&root).spawn()?.wait()?;
                     Command::new("git").args(&["add", "."]).current_dir(&root).spawn()?.wait()?;
                     Command::new("git")
