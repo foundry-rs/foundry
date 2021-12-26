@@ -1188,7 +1188,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
 mod tests {
     use crate::{
         fuzz::FuzzedExecutor,
-        sputnik::helpers::{vm, vm_tracing},
+        sputnik::helpers::{vm, vm_no_limit, vm_tracing},
         test_helpers::COMPILED,
         Evm,
     };
@@ -1275,7 +1275,7 @@ mod tests {
 
     #[test]
     fn cheatcodes() {
-        let mut evm = vm();
+        let mut evm = vm_no_limit();
         let compiled = COMPILED.find("CheatCodes").expect("could not find contract");
         let (addr, _, _, _) =
             evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
@@ -1318,7 +1318,7 @@ mod tests {
 
     #[test]
     fn ffi_fails_if_disabled() {
-        let mut evm = vm();
+        let mut evm = vm_no_limit();
         evm.executor.enable_ffi = false;
 
         let compiled = COMPILED.find("CheatCodes").expect("could not find contract");
@@ -1337,7 +1337,7 @@ mod tests {
     #[test]
     fn tracing_call() {
         use std::collections::BTreeMap;
-        let mut evm = vm_tracing();
+        let mut evm = vm_tracing(false);
 
         let compiled = COMPILED.find("Trace").expect("could not find contract");
         let (addr, _, _, _) = evm
@@ -1395,7 +1395,7 @@ mod tests {
     fn tracing_create() {
         use std::collections::BTreeMap;
 
-        let mut evm = vm_tracing();
+        let mut evm = vm_tracing(false);
 
         let compiled = COMPILED.find("Trace").expect("could not find contract");
         let (addr, _, _, _) = evm
