@@ -12,6 +12,7 @@ use ethers::{
 use std::{
     path::{Path, PathBuf},
     str::FromStr,
+    collections::BTreeMap,
 };
 
 use crate::{cmd::Cmd, utils};
@@ -77,6 +78,9 @@ pub struct BuildArgs {
         alias = "hh"
     )]
     pub hardhat: bool,
+
+    #[structopt(help = "add linked libraries", long)]
+    pub libraries: Vec<String>,
 }
 
 impl Cmd for BuildArgs {
@@ -216,10 +220,29 @@ impl BuildArgs {
 
         let optimizer =
             Optimizer { enabled: Some(self.optimize), runs: Some(self.optimize_runs as usize) };
+        
+        // unflatten the libraries
+        let mut libraries = BTreeMap::default();
+        for l in self.libraries.iter() {
+            let mut items = l.split(":");
+            let f = items.next().expect("could not parse libaries");
+            let c = String::from(items.next().expect("could not parse libaries"));
+            let addr = String::from(items.next().expect("could not parse libaries"));
+            if !libraries.contains_key(f) {
+                let mut inner = BTreeMap::default();
+                inner.insert(c, addr);
+                libraries.insert(String::from(f), inner);
+            }
+        }
 
         // build the project w/ allowed paths = root and all the libs
         let solc_settings =
-            Settings { optimizer, evm_version: Some(self.evm_version), ..Default::default() };
+            Settings {
+                optimizer,
+                evm_version: Some(self.evm_version),
+                libraries,
+                ..Default::default()
+            };
         let mut builder = Project::builder()
             .paths(paths)
             .allowed_path(&root)
