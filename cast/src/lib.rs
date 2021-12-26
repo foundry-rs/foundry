@@ -544,7 +544,7 @@ impl SimpleCast {
             func.decode_output(&calldata)?
         };
 
-        // in case the decoding worked but nothign was decoded
+        // in case the decoding worked but nothing was decoded
         if res.is_empty() {
             eyre::bail!("no data was decoded")
         }
