@@ -530,7 +530,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                             .clone(),
                     ]);
                     if record_accesses.reads.borrow().len() == 0 &&
-                        record_accesses.reads.borrow().len() == 0
+                        record_accesses.writes.borrow().len() == 0
                     {
                         self.state_mut().accesses = None;
                     }
