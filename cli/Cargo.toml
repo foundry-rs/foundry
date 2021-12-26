@@ -14,7 +14,7 @@ cast = { path = "../cast" }
 evm-adapters = { path = "../evm-adapters" }
 
 # ethers = "0.5"
-ethers = { git = "https://github.com/pyk/ethers-rs", branch = "optimism-support", default-features = false }
+ethers = { git = "https://github.com/pyk/ethers-rs", branch = "optimism-support", default-features = false, features = ["legacy"]}
 eyre = "0.6.5"
 color-eyre = "0.5"
 rustc-hex = "2.1.0"
