@@ -500,6 +500,7 @@ dependencies = [
  "ethers-signers",
  "eyre",
  "foundry-utils",
+ "hex",
  "rustc-hex",
  "serde_json",
 ]
@@ -1524,6 +1525,7 @@ dependencies = [
  "forge",
  "foundry-utils",
  "glob",
+ "hex",
  "once_cell",
  "proptest",
  "regex",

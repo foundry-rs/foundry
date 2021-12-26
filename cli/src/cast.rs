@@ -28,6 +28,9 @@ async fn main() -> eyre::Result<()> {
         Subcommands::MaxInt => {
             println!("{}", SimpleCast::max_int()?);
         }
+        Subcommands::MinInt => {
+            println!("{}", SimpleCast::min_int()?);
+        }
         Subcommands::MaxUint => {
             println!("{}", SimpleCast::max_uint()?);
         }
@@ -161,6 +164,16 @@ async fn main() -> eyre::Result<()> {
                 let from = eth.from.expect("No ETH_FROM or signer specified");
                 cast_send(provider, from, to, sig, args, cast_async).await?;
             }
+        }
+        Subcommands::CalldataDecode { sig, calldata } => {
+            let tokens = SimpleCast::abi_decode(&sig, &calldata, true)?;
+            let tokens = utils::format_tokens(&tokens);
+            tokens.for_each(|t| println!("{}", t));
+        }
+        Subcommands::AbiDecode { sig, calldata, input } => {
+            let tokens = SimpleCast::abi_decode(&sig, &calldata, input)?;
+            let tokens = utils::format_tokens(&tokens);
+            tokens.for_each(|t| println!("{}", t));
         }
         Subcommands::Age { block, rpc_url } => {
             let provider = Provider::try_from(rpc_url)?;

@@ -3,7 +3,7 @@
 //! TODO
 use chrono::NaiveDateTime;
 use ethers_core::{
-    abi::AbiParser,
+    abi::{AbiParser, Token},
     types::*,
     utils::{self, keccak256},
 };
@@ -446,6 +446,21 @@ impl SimpleCast {
         Ok(I256::MAX)
     }
 
+    /// Returns minimum I256 value
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    /// use ethers_core::types::I256;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(I256::MIN, Cast::min_int()?);
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn min_int() -> Result<I256> {
+        Ok(I256::MIN)
+    }
     /// Returns maximum U256 value
     ///
     /// ```
@@ -489,6 +504,52 @@ impl SimpleCast {
             value.insert(value.len() - decimals, '.');
             Ok(value)
         }
+    }
+    /// Decodes abi-encoded hex input or output
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     // Passing `input = false` will decode the data as the output type.
+    ///     // The input data types and the full function sig are ignored, i.e.
+    ///     // you could also pass `balanceOf()(uint256)` and it'd still work.
+    ///     let data = "0x0000000000000000000000000000000000000000000000000000000000000001";
+    ///     let sig = "balanceOf(address, uint256)(uint256)";
+    ///     let decoded = Cast::abi_decode(sig, data, false)?[0].to_string();
+    ///     assert_eq!(decoded, "1");
+    ///
+    ///     // Passing `input = true` will decode the data with the input function signature.
+    ///     let data = "0xf242432a0000000000000000000000008dbd1b711dc621e1404633da156fcc779e1c6f3e000000000000000000000000d9f3c9cc99548bf3b44a43e0a2d07399eb918adc000000000000000000000000000000000000000000000000000000000000002a000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000";
+    ///     let sig = "safeTransferFrom(address, address, uint256, uint256, bytes)";
+    ///     let decoded = Cast::abi_decode(sig, data, false)?;
+    ///     let decoded = decoded.iter().map(ToString::to_string).collect::<Vec<_>>();
+    ///     assert_eq!(
+    ///         decoded,
+    ///         vec!["8dbd1b711dc621e1404633da156fcc779e1c6f3e", "d9f3c9cc99548bf3b44a43e0a2d07399eb918adc", "2a", "1", ""]
+    ///     );
+    ///
+    ///
+    ///     # Ok(())
+    /// }
+    /// ```
+    pub fn abi_decode(sig: &str, calldata: &str, input: bool) -> Result<Vec<Token>> {
+        let func = foundry_utils::IntoFunction::into(sig);
+        let calldata = calldata.strip_prefix("0x").unwrap_or(calldata);
+        let calldata = hex::decode(calldata)?;
+        let res = if input {
+            // need to strip the function selector
+            func.decode_input(&calldata[4..])?
+        } else {
+            func.decode_output(&calldata)?
+        };
+
+        // in case the decoding worked but nothing was decoded
+        if res.is_empty() {
+            eyre::bail!("no data was decoded")
+        }
+
+        Ok(res)
     }
 
     /// Converts decimal input to hex

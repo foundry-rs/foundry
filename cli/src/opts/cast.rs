@@ -11,6 +11,9 @@ pub enum Subcommands {
     #[structopt(name = "--max-int")]
     #[structopt(about = "maximum i256 value")]
     MaxInt,
+    #[structopt(name = "--min-int")]
+    #[structopt(about = "minimum i256 value")]
+    MinInt,
     #[structopt(name = "--max-uint")]
     #[structopt(about = "maximum u256 value")]
     MaxUint,
@@ -136,6 +139,32 @@ pub enum Subcommands {
         cast_async: bool,
         #[structopt(flatten)]
         eth: EthereumOpts,
+    },
+    #[structopt(name = "--calldata-decode")]
+    #[structopt(
+        about = "Decode ABI-encoded hex input data. Use `--abi-decode` to decode output data"
+    )]
+    CalldataDecode {
+        #[structopt(
+            help = "the function signature you want to decode, in the format `<name>(<in-types>)(<out-types>)`"
+        )]
+        sig: String,
+        #[structopt(help = "the encoded calladata, in hex format")]
+        calldata: String,
+    },
+    #[structopt(name = "--abi-decode")]
+    #[structopt(
+        about = "Decode ABI-encoded hex output data. Pass --input to decode as input, or use `--calldata-decode`"
+    )]
+    AbiDecode {
+        #[structopt(
+            help = "the function signature you want to decode, in the format `<name>(<in-types>)(<out-types>)`"
+        )]
+        sig: String,
+        #[structopt(help = "the encoded calladata, in hex format")]
+        calldata: String,
+        #[structopt(long, short, help = "the encoded output, in hex format")]
+        input: bool,
     },
     #[structopt(name = "age")]
     #[structopt(about = "Prints the timestamp of a block")]
