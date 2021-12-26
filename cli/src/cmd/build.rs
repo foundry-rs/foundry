@@ -213,10 +213,10 @@ impl BuildArgs {
         let mut libraries = BTreeMap::default();
         for l in self.libraries.iter() {
             let mut items = l.split(":");
-            let f = String::from(items.next().expect("could not parse libraries"));
-            let c = String::from(items.next().expect("could not parse libraries"));
+            let file = String::from(items.next().expect("could not parse libraries"));
+            let lib = String::from(items.next().expect("could not parse libraries"));
             let addr = String::from(items.next().expect("could not parse libraries"));
-            libraries.entry(f).or_insert_with(BTreeMap::default).insert(c, addr);
+            libraries.entry(file).or_insert_with(BTreeMap::default).insert(lib, addr);
         }
 
         // build the project w/ allowed paths = root and all the libs
