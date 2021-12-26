@@ -34,6 +34,10 @@ interface Hevm {
     function etch(address, bytes calldata) external;
     // Expects an error on next call
     function expectRevert(bytes calldata) external;
+    // Record all storage reads and writes
+    function record() external;
+    // Gets all accessed reads and write slot from a recording session, for a given address
+    function accesses(address) external returns (bytes32[] memory reads, bytes32[] memory writes);
 }
 
 contract HasStorage {
@@ -264,6 +268,22 @@ contract CheatCodes is DSTest {
         target.stringErr(99);
     }
 
+    function testRecordAccess() public {
+        RecordAccess target = new RecordAccess();
+        hevm.record();
+        RecordAccess2 target2 = target.record();
+        (bytes32[] memory reads, bytes32[] memory writes) = hevm.accesses(address(target));
+        (bytes32[] memory reads2, bytes32[] memory writes2) = hevm.accesses(address(target2));
+        assertEq(reads.length, 2); // sstore has to do an sload to grab the original storage, so we effectively have 2 sloads
+        assertEq(writes.length, 1);
+        assertEq(reads[0], bytes32(uint256(1)));
+        assertEq(writes[0], bytes32(uint256(1)));
+        assertEq(reads2.length, 2); // sstore has to do an sload to grab the original storage, so we effectively have 2 sloads
+        assertEq(writes2.length, 1);
+        assertEq(reads2[0], bytes32(uint256(2)));
+        assertEq(writes2[0], bytes32(uint256(2)));
+    }
+
     // Test should fail if nothing is called
     // after expectRevert
     function testFailExpectRevert3() public {
@@ -287,6 +307,24 @@ contract CheatCodes is DSTest {
     }
 }
 
+contract RecordAccess {
+    function record() public returns (RecordAccess2) {
+        assembly {
+            sstore(1, add(sload(1), 1))
+        }
+        RecordAccess2 target2 = new RecordAccess2();
+        target2.record();
+        return target2;
+    }
+}
+
+contract RecordAccess2 {
+    function record() public {
+        assembly {
+            sstore(2, add(sload(2), 1))
+        }
+    }
+}
 
 error InputTooLarge();
 contract ExpectRevert {

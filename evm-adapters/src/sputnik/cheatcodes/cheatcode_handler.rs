@@ -32,6 +32,8 @@ use std::convert::Infallible;
 use crate::sputnik::cheatcodes::patch_hardhat_console_log_selector;
 use once_cell::sync::Lazy;
 
+use ethers::abi::Tokenize;
+
 // This is now getting us the right hash? Also tried [..20]
 // Lazy::new(|| Address::from_slice(&keccak256("hevm cheat code")[12..]));
 /// Address where the Vm cheatcodes contract lives
@@ -503,6 +505,38 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 let who = inner.0;
                 let code = inner.1;
                 state.set_code(who, code.to_vec());
+            }
+            HEVMCalls::Record(_) => {
+                self.state_mut().accesses = Some(Default::default());
+            }
+            HEVMCalls::Accesses(inner) => {
+                let address = inner.0;
+                // we dont reset all records in case user wants to query multiple address
+                if let Some(record_accesses) = &self.state().accesses {
+                    res = ethers::abi::encode(&[
+                        record_accesses
+                            .reads
+                            .borrow_mut()
+                            .remove(&address)
+                            .unwrap_or_default()
+                            .into_tokens()[0]
+                            .clone(),
+                        record_accesses
+                            .writes
+                            .borrow_mut()
+                            .remove(&address)
+                            .unwrap_or_default()
+                            .into_tokens()[0]
+                            .clone(),
+                    ]);
+                    if record_accesses.reads.borrow().len() == 0 &&
+                        record_accesses.writes.borrow().len() == 0
+                    {
+                        self.state_mut().accesses = None;
+                    }
+                } else {
+                    res = ethers::abi::encode(&[Token::Array(vec![]), Token::Array(vec![])]);
+                }
             }
         };
 
@@ -1154,7 +1188,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
 mod tests {
     use crate::{
         fuzz::FuzzedExecutor,
-        sputnik::helpers::{vm, vm_tracing},
+        sputnik::helpers::{vm, vm_no_limit, vm_tracing},
         test_helpers::COMPILED,
         Evm,
     };
@@ -1241,7 +1275,7 @@ mod tests {
 
     #[test]
     fn cheatcodes() {
-        let mut evm = vm();
+        let mut evm = vm_no_limit();
         let compiled = COMPILED.find("CheatCodes").expect("could not find contract");
         let (addr, _, _, _) =
             evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
@@ -1284,7 +1318,7 @@ mod tests {
 
     #[test]
     fn ffi_fails_if_disabled() {
-        let mut evm = vm();
+        let mut evm = vm_no_limit();
         evm.executor.enable_ffi = false;
 
         let compiled = COMPILED.find("CheatCodes").expect("could not find contract");
@@ -1303,7 +1337,7 @@ mod tests {
     #[test]
     fn tracing_call() {
         use std::collections::BTreeMap;
-        let mut evm = vm_tracing();
+        let mut evm = vm_tracing(false);
 
         let compiled = COMPILED.find("Trace").expect("could not find contract");
         let (addr, _, _, _) = evm
@@ -1361,7 +1395,7 @@ mod tests {
     fn tracing_create() {
         use std::collections::BTreeMap;
 
-        let mut evm = vm_tracing();
+        let mut evm = vm_tracing(false);
 
         let compiled = COMPILED.find("Trace").expect("could not find contract");
         let (addr, _, _, _) = evm

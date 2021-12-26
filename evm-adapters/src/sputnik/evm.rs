@@ -211,6 +211,15 @@ pub mod helpers {
     >;
 
     static CFG: Lazy<Config> = Lazy::new(Config::london);
+
+    /// London config without a contract size limit. Useful for testing but is a depature from
+    /// mainnet rules.
+    static CFG_NO_LMT: Lazy<Config> = Lazy::new(|| {
+        let mut cfg = Config::london();
+        cfg.create_contract_limit = None;
+        cfg
+    });
+
     static VICINITY: Lazy<MemoryVicinity> = Lazy::new(new_vicinity);
     const GAS_LIMIT: u64 = 30_000_000;
 
@@ -222,10 +231,35 @@ pub mod helpers {
     }
 
     /// Instantiates a Sputnik EVM with enabled cheatcodes + FFI and a simple non-forking in memory
-    /// backend and tracing enabled
-    pub fn vm_tracing<'a>() -> TestSputnikVM<'a, MemoryBackend<'a>> {
+    /// backend and tracing disabled, and no contract size limit
+    pub fn vm_no_limit<'a>() -> TestSputnikVM<'a, MemoryBackend<'a>> {
         let backend = new_backend(&*VICINITY, Default::default());
-        Executor::new_with_cheatcodes(backend, GAS_LIMIT, &*CFG, &*PRECOMPILES_MAP, true, true)
+        Executor::new_with_cheatcodes(
+            backend,
+            GAS_LIMIT,
+            &*CFG_NO_LMT,
+            &*PRECOMPILES_MAP,
+            true,
+            false,
+        )
+    }
+
+    /// Instantiates a Sputnik EVM with enabled cheatcodes + FFI and a simple non-forking in memory
+    /// backend and tracing enabled
+    pub fn vm_tracing<'a>(with_contract_limit: bool) -> TestSputnikVM<'a, MemoryBackend<'a>> {
+        let backend = new_backend(&*VICINITY, Default::default());
+        if with_contract_limit {
+            Executor::new_with_cheatcodes(backend, GAS_LIMIT, &*CFG, &*PRECOMPILES_MAP, true, true)
+        } else {
+            Executor::new_with_cheatcodes(
+                backend,
+                GAS_LIMIT,
+                &*CFG_NO_LMT,
+                &*PRECOMPILES_MAP,
+                true,
+                true,
+            )
+        }
     }
 
     /// Instantiates a FuzzedExecutor over provided Sputnik EVM

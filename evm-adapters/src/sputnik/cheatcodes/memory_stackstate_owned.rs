@@ -8,6 +8,14 @@ use crate::call_tracing::CallTraceArena;
 
 use ethers::types::{H160, H256, U256};
 
+use std::{cell::RefCell, collections::BTreeMap};
+
+#[derive(Clone, Default)]
+pub struct RecordAccess {
+    pub reads: RefCell<BTreeMap<H160, Vec<H256>>>,
+    pub writes: RefCell<BTreeMap<H160, Vec<H256>>>,
+}
+
 /// This struct implementation is copied from [upstream](https://github.com/rust-blockchain/evm/blob/5ecf36ce393380a89c6f1b09ef79f686fe043624/src/executor/stack/state.rs#L412) and modified to own the Backend type.
 ///
 /// We had to copy it so that we can modify the Stack's internal backend, because
@@ -24,6 +32,7 @@ pub struct MemoryStackStateOwned<'config, B> {
     pub expected_revert: Option<Vec<u8>>,
     pub next_msg_sender: Option<H160>,
     pub msg_sender: Option<(H160, H160, usize)>,
+    pub accesses: Option<RecordAccess>,
     pub all_logs: Vec<String>,
 }
 
@@ -62,6 +71,7 @@ impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
             expected_revert: None,
             next_msg_sender: None,
             msg_sender: None,
+            accesses: None,
             all_logs: Default::default(),
         }
     }
@@ -112,6 +122,9 @@ impl<'config, B: Backend> Backend for MemoryStackStateOwned<'config, B> {
     }
 
     fn storage(&self, address: H160, key: H256) -> H256 {
+        if let Some(record_accesses) = &self.accesses {
+            record_accesses.reads.borrow_mut().entry(address).or_insert_with(Vec::new).push(key);
+        }
         self.substate
             .known_storage(address, key)
             .unwrap_or_else(|| self.backend.storage(address, key))
@@ -178,6 +191,9 @@ impl<'config, B: Backend> StackState<'config> for MemoryStackStateOwned<'config,
     }
 
     fn set_storage(&mut self, address: H160, key: H256, value: H256) {
+        if let Some(record_accesses) = &self.accesses {
+            record_accesses.writes.borrow_mut().entry(address).or_insert_with(Vec::new).push(key);
+        }
         self.substate.set_storage(address, key, value)
     }
 
