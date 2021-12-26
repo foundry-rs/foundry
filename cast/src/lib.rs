@@ -522,7 +522,7 @@ impl SimpleCast {
     ///     // Passing `input = true` will decode the data with the input function signature.
     ///     let data = "0xf242432a0000000000000000000000008dbd1b711dc621e1404633da156fcc779e1c6f3e000000000000000000000000d9f3c9cc99548bf3b44a43e0a2d07399eb918adc000000000000000000000000000000000000000000000000000000000000002a000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000";
     ///     let sig = "safeTransferFrom(address, address, uint256, uint256, bytes)";
-    ///     let decoded = Cast::abi_decode(sig, data, false)?;
+    ///     let decoded = Cast::abi_decode(sig, data, true)?;
     ///     let decoded = decoded.iter().map(ToString::to_string).collect::<Vec<_>>();
     ///     assert_eq!(
     ///         decoded,
