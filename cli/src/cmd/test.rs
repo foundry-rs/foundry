@@ -352,7 +352,7 @@ fn test<A: ArtifactOutput + 'static, S: Clone, E: evm_adapters::Evm<S>>(
                                     );
                                 }
                             }
-                            
+
                             println!();
                         }
                     }
