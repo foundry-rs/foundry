@@ -329,26 +329,28 @@ fn test<A: ArtifactOutput + 'static, S: Clone, E: evm_adapters::Evm<S>>(
                         if let (Some(traces), Some(identified_contracts)) =
                             (&result.traces, &result.identified_contracts)
                         {
-                            let mut ident = identified_contracts.clone();
-                            if verbosity > 3 {
-                                // print setup calls as well
-                                traces.iter().for_each(|trace| {
-                                    trace.pretty_print(
+                            if !result.success && verbosity == 3 || verbosity > 3 {
+                                let mut ident = identified_contracts.clone();
+                                if verbosity > 4 || !result.success {
+                                    // print setup calls as well
+                                    traces.iter().for_each(|trace| {
+                                        trace.pretty_print(
+                                            0,
+                                            &runner.known_contracts,
+                                            &mut ident,
+                                            &runner.evm,
+                                            "",
+                                        );
+                                    });
+                                } else if !traces.is_empty() {
+                                    traces.last().expect("no last but not empty").pretty_print(
                                         0,
                                         &runner.known_contracts,
                                         &mut ident,
                                         &runner.evm,
                                         "",
                                     );
-                                });
-                            } else if !traces.is_empty() {
-                                traces.last().expect("no last but not empty").pretty_print(
-                                    0,
-                                    &runner.known_contracts,
-                                    &mut ident,
-                                    &runner.evm,
-                                    "",
-                                );
+                                }
                             }
 
                             println!();
