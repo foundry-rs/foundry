@@ -602,19 +602,17 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
             arena[new_trace.idx].trace.output = output.unwrap_or_default();
             arena[new_trace.idx].trace.cost = match new_trace.depth {
                 // testFunction. Children will update the gas costs as they are executed
-                0 => {
-                    arena[new_trace.idx].trace.cost
-                },
+                0 => arena[new_trace.idx].trace.cost,
                 // external contract calls
                 1 => {
                     // Update testFunction gas costs [includes refunds]
-                    let parent =  arena[new_trace.idx].parent.unwrap();
+                    let parent = arena[new_trace.idx].parent.unwrap();
                     arena[parent].trace.cost += used_gas;
 
                     used_gas
                 }
                 // inner contract calls
-                _ => total_used_gas
+                _ => total_used_gas,
             };
 
             arena[new_trace.idx].trace.success = success;
@@ -696,7 +694,12 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
             if depth == 1 {
                 let transaction_cost = gasometer::call_transaction_cost(&input, &[]);
 
-                match self.state_mut().metadata_mut().gasometer_mut().record_transaction(transaction_cost) {
+                match self
+                    .state_mut()
+                    .metadata_mut()
+                    .gasometer_mut()
+                    .record_transaction(transaction_cost)
+                {
                     Ok(()) => (),
                     Err(e) => return Capture::Exit((e.into(), Vec::new())),
                 };
