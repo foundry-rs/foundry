@@ -5,6 +5,7 @@ pub mod create;
 pub mod snapshot;
 pub mod test;
 pub mod verify;
+pub mod run;
 
 /// Common trait for all cli commands
 pub trait Cmd: structopt::StructOpt + Sized {

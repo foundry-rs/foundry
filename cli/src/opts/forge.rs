@@ -3,7 +3,7 @@ use structopt::StructOpt;
 use ethers::types::Address;
 use std::{path::PathBuf, str::FromStr};
 
-use crate::cmd::{build::BuildArgs, create, snapshot, test};
+use crate::cmd::{build::BuildArgs, create, snapshot, test, run};
 
 #[derive(Debug, StructOpt)]
 pub struct Opts {
@@ -23,6 +23,8 @@ pub enum Subcommands {
     #[structopt(about = "build your smart contracts")]
     #[structopt(alias = "b")]
     Build(BuildArgs),
+
+    Run(run::RunArgs),
 
     #[structopt(alias = "u", about = "fetches all upstream lib changes")]
     Update {
