@@ -596,10 +596,28 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         self.state_mut().trace_index = pre_trace_index;
         if let Some(new_trace) = new_trace {
             let used_gas = self.handler.used_gas();
-            let trace = &mut self.state_mut().trace_mut().arena[new_trace.idx].trace;
-            trace.output = output.unwrap_or_default();
-            trace.cost = used_gas;
-            trace.success = success;
+            let total_used_gas = self.handler.state().metadata().gasometer().total_used_gas();
+            let arena = &mut self.state_mut().trace_mut().arena;
+
+            arena[new_trace.idx].trace.output = output.unwrap_or_default();
+            arena[new_trace.idx].trace.cost = match new_trace.depth {
+                // testFunction. Children will update the gas costs as they are executed
+                0 => {
+                    arena[new_trace.idx].trace.cost
+                },
+                // external contract calls
+                1 => {
+                    // Update testFunction gas costs [includes refunds]
+                    let parent =  arena[new_trace.idx].parent.unwrap();
+                    arena[parent].trace.cost += used_gas;
+
+                    used_gas
+                }
+                // inner contract calls
+                _ => total_used_gas
+            };
+
+            arena[new_trace.idx].trace.success = success;
         }
     }
 
@@ -673,6 +691,15 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 self.fill_trace(&trace, false, None, pre_index);
                 let _ = self.handler.exit_substate(StackExitKind::Reverted);
                 return Capture::Exit((ExitError::CallTooDeep.into(), Vec::new()))
+            }
+
+            if depth == 1 {
+                let transaction_cost = gasometer::call_transaction_cost(&input, &[]);
+
+                match self.state_mut().metadata_mut().gasometer_mut().record_transaction(transaction_cost) {
+                    Ok(()) => (),
+                    Err(e) => return Capture::Exit((e.into(), Vec::new())),
+                };
             }
         }
 
