@@ -17,6 +17,8 @@ use ethers::{
 
 use evm_adapters::Evm;
 
+use ansi_term::Colour;
+
 #[derive(Debug, Clone, StructOpt)]
 pub struct RunArgs {
     #[structopt(help = "the path to the contract to run")]
@@ -78,7 +80,14 @@ impl Cmd for RunArgs {
         let result = runner.run_test(&func, false, None)?;
 
         // 6. print the result nicely
-        dbg!(&result);
+        if result.success {
+            println!("{}", Colour::Green.paint("Script ran successfully."));
+        } else {
+            println!("{}", Colour::Red.paint("Script failed."));
+        }
+        println!("Gas Used: {}", result.gas_used);
+        println!("== Logs == ");
+        result.logs.iter().for_each(|log| println!("{}", log));
 
         Ok(())
     }
