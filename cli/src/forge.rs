@@ -22,6 +22,9 @@ fn main() -> eyre::Result<()> {
         Subcommands::Build(cmd) => {
             cmd.run()?;
         }
+        Subcommands::Run(cmd) => {
+            cmd.run()?;
+        }
         Subcommands::VerifyContract { contract, address, constructor_args } => {
             let FullContractInfo { path, name } = contract;
             let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
