@@ -2,21 +2,17 @@
 
 use crate::{
     cmd::{
-        build::{BuildArgs, Env, EvmType},
+        build::{BuildArgs, EvmType},
         Cmd,
     },
+    opts::forge::EvmOpts,
     utils,
 };
 use ansi_term::Colour;
-use ethers::{
-    providers::Provider,
-    solc::{ArtifactOutput, Project},
-    types::{Address, U256},
-};
-use evm_adapters::FAUCET_ACCOUNT;
+use ethers::solc::{ArtifactOutput, Project};
 use forge::MultiContractRunnerBuilder;
 use regex::Regex;
-use std::{collections::BTreeMap, convert::TryFrom, sync::Arc};
+use std::collections::BTreeMap;
 use structopt::StructOpt;
 
 #[derive(Debug, Clone, StructOpt)]
@@ -25,7 +21,7 @@ pub struct TestArgs {
     json: bool,
 
     #[structopt(flatten)]
-    env: Env,
+    evm_opts: EvmOpts,
 
     #[structopt(
         long = "--match",
@@ -39,47 +35,6 @@ pub struct TestArgs {
     opts: BuildArgs,
 
     #[structopt(
-        long,
-        short,
-        help = "the EVM type you want to use (e.g. sputnik, evmodin)",
-        default_value = "sputnik"
-    )]
-    evm_type: EvmType,
-
-    #[structopt(
-        help = "fetch state over a remote instead of starting from empty state",
-        long,
-        short
-    )]
-    #[structopt(alias = "rpc-url")]
-    fork_url: Option<String>,
-
-    #[structopt(help = "pins the block number for the state fork", long)]
-    #[structopt(env = "DAPP_FORK_BLOCK")]
-    fork_block_number: Option<u64>,
-
-    #[structopt(
-        help = "the initial balance of each deployed test contract",
-        long,
-        default_value = "0xffffffffffffffffffffffff"
-    )]
-    initial_balance: U256,
-
-    #[structopt(
-        help = "the address which will be executing all tests",
-        long,
-        default_value = "0x0000000000000000000000000000000000000000",
-        env = "DAPP_TEST_ADDRESS"
-    )]
-    sender: Address,
-
-    #[structopt(help = "enables the FFI cheatcode", long)]
-    ffi: bool,
-
-    #[structopt(help = "verbosity of 'forge test' output (0-3)", long, default_value = "0")]
-    verbosity: u8,
-
-    #[structopt(
         help = "if set to true, the process will exit with an exit code = 0, even if the tests fail",
         long,
         env = "FORGE_ALLOW_FAILURE"
@@ -91,20 +46,7 @@ impl Cmd for TestArgs {
     type Output = TestOutcome;
 
     fn run(self) -> eyre::Result<Self::Output> {
-        let TestArgs {
-            opts,
-            env,
-            json,
-            pattern,
-            evm_type,
-            fork_url,
-            fork_block_number,
-            initial_balance,
-            sender,
-            ffi,
-            verbosity,
-            allow_failure,
-        } = self;
+        let TestArgs { opts, evm_opts, json, pattern, allow_failure } = self;
         // Setup the fuzzer
         // TODO: Add CLI Options to modify the persistence
         let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
@@ -116,72 +58,31 @@ impl Cmd for TestArgs {
         // prepare the test builder
         let builder = MultiContractRunnerBuilder::default()
             .fuzzer(fuzzer)
-            .initial_balance(initial_balance)
-            .sender(sender);
+            .initial_balance(evm_opts.initial_balance)
+            .sender(evm_opts.sender);
 
         // run the tests depending on the chosen EVM
-        match evm_type {
+        match evm_opts.evm_type {
             #[cfg(feature = "sputnik-evm")]
             EvmType::Sputnik => {
-                use evm_adapters::sputnik::{
-                    vicinity, Executor, ForkMemoryBackend, PRECOMPILES_MAP,
-                };
-                use sputnik::backend::{Backend, MemoryBackend};
-                let mut cfg = utils::sputnik_cfg(opts.evm_version);
-
-                // We disable the contract size limit by default, because Solidity
-                // test smart contracts are likely to be >24kb
-                cfg.create_contract_limit = None;
-
-                let vicinity = if let Some(ref url) = fork_url {
-                    let provider = Provider::try_from(url.as_str())?;
-                    let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
-                    rt.block_on(vicinity(&provider, fork_block_number))?
-                } else {
-                    env.sputnik_state()
-                };
-                let mut backend = MemoryBackend::new(&vicinity, Default::default());
-                // max out the balance of the faucet
-                let faucet =
-                    backend.state_mut().entry(*FAUCET_ACCOUNT).or_insert_with(Default::default);
-                faucet.balance = U256::MAX;
-
-                let backend: Box<dyn Backend> = if let Some(ref url) = fork_url {
-                    let provider = Provider::try_from(url.as_str())?;
-                    let init_state = backend.state().clone();
-                    let backend =
-                        ForkMemoryBackend::new(provider, backend, fork_block_number, init_state);
-                    Box::new(backend)
-                } else {
-                    Box::new(backend)
-                };
-                let backend = Arc::new(backend);
-
-                let precompiles = PRECOMPILES_MAP.clone();
-                let evm = Executor::new_with_cheatcodes(
-                    backend,
-                    env.gas_limit,
-                    &cfg,
-                    &precompiles,
-                    ffi,
-                    verbosity > 2,
-                );
-
-                test(builder, project, evm, pattern, json, verbosity, allow_failure)
+                let mut cfg = utils::sputnik_cfg(opts.compiler.evm_version);
+                let vicinity = evm_opts.vicinity()?;
+                let evm = utils::sputnik_helpers::evm(&evm_opts, &mut cfg, &vicinity)?;
+                test(builder, project, evm, pattern, json, evm_opts.verbosity, allow_failure)
             }
             #[cfg(feature = "evmodin-evm")]
             EvmType::EvmOdin => {
                 use evm_adapters::evmodin::EvmOdin;
                 use evmodin::tracing::NoopTracer;
 
-                let revision = utils::evmodin_cfg(opts.evm_version);
+                let revision = utils::evmodin_cfg(opts.compiler.evm_version);
 
                 // TODO: Replace this with a proper host. We'll want this to also be
                 // provided generically when we add the Forking host(s).
-                let host = env.evmodin_state();
+                let host = evm_opts.env.evmodin_state();
 
-                let evm = EvmOdin::new(host, env.gas_limit, revision, NoopTracer);
-                test(builder, project, evm, pattern, json, verbosity, allow_failure)
+                let evm = EvmOdin::new(host, evm_opts.env.gas_limit, revision, NoopTracer);
+                test(builder, project, evm, pattern, json, evm_opts.verbosity, allow_failure)
             }
         }
     }

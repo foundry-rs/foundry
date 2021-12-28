@@ -203,7 +203,7 @@ pub mod helpers {
     };
     use once_cell::sync::Lazy;
 
-    type TestSputnikVM<'a, B> = Executor<
+    pub type TestSputnikVM<'a, B> = Executor<
         // state
         CheatcodeStackState<'a, B>,
         // actual stack executor
