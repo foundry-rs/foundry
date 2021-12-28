@@ -147,8 +147,21 @@ impl RunArgs {
             })?;
             CompactContract::from(contract)
         } else {
-            let mut contracts =
-                contracts.contracts_into_iter().filter(|(_, contract)| contract.evm.is_some());
+            let mut contracts = contracts.contracts_into_iter().filter(|(_, contract)| {
+                // TODO: Should have a helper function for finding if a contract's bytecode is
+                // empty or not.
+                match contract.evm {
+                    Some(ref evm) => match evm.bytecode {
+                        Some(ref bytecode) => bytecode
+                            .object
+                            .as_bytes()
+                            .map(|x| !x.as_ref().is_empty())
+                            .unwrap_or(false),
+                        _ => false,
+                    },
+                    _ => false,
+                }
+            });
             let contract = contracts.next().ok_or_else(|| eyre::Error::msg("no contract found"))?.1;
             if contracts.peekable().peek().is_some() {
                 eyre::bail!(
