@@ -1,9 +1,9 @@
 use structopt::StructOpt;
 
-use ethers::types::Address;
+use ethers::{solc::EvmVersion, types::Address};
 use std::{path::PathBuf, str::FromStr};
 
-use crate::cmd::{build::BuildArgs, create, snapshot, test};
+use crate::cmd::{build::BuildArgs, create::CreateArgs, run::RunArgs, snapshot, test};
 
 #[derive(Debug, StructOpt)]
 pub struct Opts {
@@ -24,6 +24,10 @@ pub enum Subcommands {
     #[structopt(alias = "b")]
     Build(BuildArgs),
 
+    #[structopt(about = "run a single smart contract as a script")]
+    #[structopt(alias = "r")]
+    Run(RunArgs),
+
     #[structopt(alias = "u", about = "fetches all upstream lib changes")]
     Update {
         #[structopt(
@@ -40,10 +44,7 @@ pub enum Subcommands {
         dependencies: Vec<Dependency>,
     },
 
-    #[structopt(
-        alias = "r",
-        about = "prints the automatically inferred remappings for this repository"
-    )]
+    #[structopt(about = "prints the automatically inferred remappings for this repository")]
     Remappings {
         #[structopt(
             help = "the project's root path, default being the current working directory",
@@ -67,7 +68,7 @@ pub enum Subcommands {
     },
 
     #[structopt(alias = "c", about = "deploy a compiled contract")]
-    Create(create::CreateArgs),
+    Create(CreateArgs),
 
     #[structopt(alias = "i", about = "initializes a new forge sample repository")]
     Init {
@@ -94,6 +95,18 @@ pub enum Subcommands {
 
     #[structopt(about = "creates a snapshot of each test's gas usage")]
     Snapshot(snapshot::SnapshotArgs),
+}
+
+#[derive(Debug, Clone, StructOpt)]
+pub struct CompilerArgs {
+    #[structopt(help = "choose the evm version", long, default_value = "london")]
+    pub evm_version: EvmVersion,
+
+    #[structopt(help = "activate the solidity optimizer", long)]
+    pub optimize: bool,
+
+    #[structopt(help = "optimizer parameter runs", long, default_value = "200")]
+    pub optimize_runs: u32,
 }
 
 /// Represents the common dapp argument pattern for `<path>:<contractname>` where `<path>:` is

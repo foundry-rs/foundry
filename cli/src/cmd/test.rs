@@ -127,7 +127,7 @@ impl Cmd for TestArgs {
                     vicinity, Executor, ForkMemoryBackend, PRECOMPILES_MAP,
                 };
                 use sputnik::backend::{Backend, MemoryBackend};
-                let mut cfg = utils::sputnik_cfg(opts.evm_version);
+                let mut cfg = utils::sputnik_cfg(opts.compiler.evm_version);
 
                 // We disable the contract size limit by default, because Solidity
                 // test smart contracts are likely to be >24kb

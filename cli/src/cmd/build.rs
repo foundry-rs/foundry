@@ -4,8 +4,7 @@ use ethers::{
     solc::{
         artifacts::{Optimizer, Settings},
         remappings::Remapping,
-        EvmVersion, MinimalCombinedArtifacts, Project, ProjectCompileOutput, ProjectPathsConfig,
-        SolcConfig,
+        MinimalCombinedArtifacts, Project, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
     },
     types::Address,
 };
@@ -15,7 +14,7 @@ use std::{
     str::FromStr,
 };
 
-use crate::{cmd::Cmd, utils};
+use crate::{cmd::Cmd, opts::forge::CompilerArgs, utils};
 
 #[cfg(feature = "evmodin-evm")]
 use evmodin::util::mocked_host::MockedHost;
@@ -50,14 +49,8 @@ pub struct BuildArgs {
     #[structopt(help = "path to where the contract artifacts are stored", long = "out", short)]
     pub out_path: Option<PathBuf>,
 
-    #[structopt(help = "choose the evm version", long, default_value = "london")]
-    pub evm_version: EvmVersion,
-
-    #[structopt(help = "activate the solidity optimizer", long)]
-    pub optimize: bool,
-
-    #[structopt(help = "optimizer parameter runs", long, default_value = "200")]
-    pub optimize_runs: u32,
+    #[structopt(flatten)]
+    pub compiler: CompilerArgs,
 
     #[structopt(
         help = "if set to true, skips auto-detecting solc and uses what is in the user's $PATH ",
@@ -218,8 +211,10 @@ impl BuildArgs {
 
         let paths = paths_builder.build()?;
 
-        let optimizer =
-            Optimizer { enabled: Some(self.optimize), runs: Some(self.optimize_runs as usize) };
+        let optimizer = Optimizer {
+            enabled: Some(self.compiler.optimize),
+            runs: Some(self.compiler.optimize_runs as usize),
+        };
 
         // unflatten the libraries
         let mut libraries = BTreeMap::default();
@@ -234,7 +229,7 @@ impl BuildArgs {
         // build the project w/ allowed paths = root and all the libs
         let solc_settings = Settings {
             optimizer,
-            evm_version: Some(self.evm_version),
+            evm_version: Some(self.compiler.evm_version),
             libraries,
             ..Default::default()
         };
