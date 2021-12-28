@@ -46,6 +46,9 @@ fn main() -> eyre::Result<()> {
         Subcommands::Install { dependencies } => {
             install(std::env::current_dir()?, dependencies)?;
         }
+        Subcommands::Remove { dependencies } => {
+            remove(std::env::current_dir()?, dependencies)?;
+        }
         Subcommands::Remappings { lib_paths, root } => {
             let root = root.unwrap_or_else(|| std::env::current_dir().unwrap());
             let root = std::fs::canonicalize(root)?;
@@ -167,6 +170,43 @@ fn install(root: impl AsRef<std::path::Path>, dependencies: Vec<Dependency>) -> 
         };
 
         Command::new("git").args(&["commit", "-m", &message]).current_dir(&root).spawn()?.wait()?;
+
+        Ok(())
+    })
+}
+
+fn remove(root: impl AsRef<std::path::Path>, dependencies: Vec<Dependency>) -> eyre::Result<()> {
+    let libs = std::path::Path::new("lib");
+    let git_mod_libs = std::path::Path::new(".git/modules/lib");
+
+    dependencies.iter().try_for_each(|dep| -> eyre::Result<_> {
+        let path = libs.join(&dep.name);
+        let git_mod_path = git_mod_libs.join(&dep.name);
+        println!("Removing {} in {:?}, (url: {}, tag: {:?})", dep.name, path, dep.url, dep.tag);
+
+        // remove submodule entry from .git/config
+        Command::new("git")
+            .args(&["submodule", "deinit", "-f", &path.display().to_string()])
+            .current_dir(&root)
+            .spawn()?
+            .wait()?;
+
+        // remove the submodule repository from .git/modules directory
+        Command::new("rm")
+            .args(&["-rf", &git_mod_path.display().to_string()])
+            .current_dir(&root)
+            .spawn()?
+            .wait()?;
+
+        // remove the leftover submodule directory
+        Command::new("git")
+            .args(&["rm", "-f", &path.display().to_string()])
+            .current_dir(&root)
+            .spawn()?
+            .wait()?;
+
+        // tell git to discard the removal of the submodule
+        Command::new("git").args(&["checkout", "--", "."]).current_dir(&root).spawn()?.wait()?;
 
         Ok(())
     })

@@ -34,9 +34,13 @@ pub enum Subcommands {
 
     #[structopt(alias = "i", about = "installs one or more dependencies as git submodules")]
     Install {
-        #[structopt(
-            help = "the submodule name of the library you want to update (will update all if none is provided)"
-        )]
+        #[structopt(help = "the submodule name of the library you want to install")]
+        dependencies: Vec<Dependency>,
+    },
+
+    #[structopt(alias = "r", about = "removes one or more dependencies from git submodules")]
+    Remove {
+        #[structopt(help = "the submodule name of the library you want to remove")]
         dependencies: Vec<Dependency>,
     },
 
