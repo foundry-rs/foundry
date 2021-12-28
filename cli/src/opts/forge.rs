@@ -3,7 +3,7 @@ use structopt::StructOpt;
 use ethers::{solc::EvmVersion, types::Address};
 use std::{path::PathBuf, str::FromStr};
 
-use crate::cmd::{build::BuildArgs, create::CreateArgs, snapshot, test};
+use crate::cmd::{build::BuildArgs, create::CreateArgs, run::RunArgs, snapshot, test};
 
 #[derive(Debug, StructOpt)]
 pub struct Opts {
@@ -23,6 +23,10 @@ pub enum Subcommands {
     #[structopt(about = "build your smart contracts")]
     #[structopt(alias = "b")]
     Build(BuildArgs),
+
+    #[structopt(about = "run a single smart contract as a script")]
+    #[structopt(alias = "r")]
+    Run(RunArgs),
 
     #[structopt(alias = "u", about = "fetches all upstream lib changes")]
     Update {
