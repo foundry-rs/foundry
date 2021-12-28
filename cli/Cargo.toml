@@ -48,7 +48,7 @@ openssl = ["ethers/openssl"]
 sputnik-evm = [
     "sputnik",
     "evm-adapters/sputnik",
-	"evm-adapters/sputnik-helpers",
+    "evm-adapters/sputnik-helpers",
 ]
 
 evmodin-evm = [
