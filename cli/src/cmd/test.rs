@@ -75,14 +75,14 @@ impl Cmd for TestArgs {
                 use evm_adapters::evmodin::EvmOdin;
                 use evmodin::tracing::NoopTracer;
 
-                let revision = utils::evmodin_cfg(opts.evm_version);
+                let revision = utils::evmodin_cfg(opts.compiler.evm_version);
 
                 // TODO: Replace this with a proper host. We'll want this to also be
                 // provided generically when we add the Forking host(s).
-                let host = env.evmodin_state();
+                let host = evm_opts.env.evmodin_state();
 
-                let evm = EvmOdin::new(host, env.gas_limit, revision, NoopTracer);
-                test(builder, project, evm, pattern, json, verbosity, allow_failure)
+                let evm = EvmOdin::new(host, evm_opts.env.gas_limit, revision, NoopTracer);
+                test(builder, project, evm, pattern, json, evm_opts.verbosity, allow_failure)
             }
         }
     }

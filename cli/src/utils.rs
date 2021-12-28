@@ -175,7 +175,7 @@ pub mod sputnik_helpers {
         // test smart contracts are likely to be >24kb
         cfg.create_contract_limit = None;
 
-        let mut backend = MemoryBackend::new(&vicinity, Default::default());
+        let mut backend = MemoryBackend::new(vicinity, Default::default());
         // max out the balance of the faucet
         let faucet = backend.state_mut().entry(*FAUCET_ACCOUNT).or_insert_with(Default::default);
         faucet.balance = U256::MAX;
