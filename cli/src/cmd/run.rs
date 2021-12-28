@@ -52,6 +52,34 @@ pub struct RunArgs {
 impl Cmd for RunArgs {
     type Output = ();
     fn run(self) -> eyre::Result<Self::Output> {
+        // Keeping it like this for simplicity.
+        #[cfg(not(feature = "sputnik-evm"))]
+        unimplemented!("`run` does not work with EVMs other than Sputnik yet");
+
+        let func = IntoFunction::into(self.sig.as_deref().unwrap_or("run()"));
+        let (abi, bytecode, _) = self.build()?.into_parts();
+        // this should never fail if compilation was successful
+        let abi = abi.unwrap();
+        let bytecode = bytecode.unwrap();
+
+        // 2. instantiate the EVM w forked backend if needed / pre-funded account(s)
+        let mut cfg = crate::utils::sputnik_cfg(self.compiler.evm_version);
+        let vicinity = self.evm_opts.vicinity()?;
+        let mut evm = crate::utils::sputnik_helpers::evm(&self.evm_opts, &mut cfg, &vicinity)?;
+
+        // 3. deploy the contract
+        let (addr, _, _, logs) = evm.deploy(self.evm_opts.sender, bytecode, 0u32.into())?;
+
+        // 4. set up the runner
+        let mut runner =
+            ContractRunner::new(&mut evm, &abi, addr, Some(self.evm_opts.sender), &logs);
+
+        // 5. run the test function
+        let result = runner.run_test(&func, false, None)?;
+
+        // 6. print the result nicely
+        dbg!(&result);
+
         Ok(())
     }
 }
