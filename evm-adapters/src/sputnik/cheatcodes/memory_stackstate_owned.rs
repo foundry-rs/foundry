@@ -6,7 +6,10 @@ use sputnik::{
 
 use crate::call_tracing::CallTraceArena;
 
-use ethers::types::{H160, H256, U256};
+use ethers::{
+    abi::RawLog,
+    types::{H160, H256, U256},
+};
 
 use std::{cell::RefCell, collections::BTreeMap};
 
@@ -14,6 +17,15 @@ use std::{cell::RefCell, collections::BTreeMap};
 pub struct RecordAccess {
     pub reads: RefCell<BTreeMap<H160, Vec<H256>>>,
     pub writes: RefCell<BTreeMap<H160, Vec<H256>>>,
+}
+
+#[derive(Clone, Default, Debug)]
+pub struct ExpectedEmit {
+    pub depth: usize,
+    pub log: Option<RawLog>,
+    pub checks: [bool; 4],
+    /// Whether this expected emit was actually found in the subcall
+    pub found: bool,
 }
 
 /// This struct implementation is copied from [upstream](https://github.com/rust-blockchain/evm/blob/5ecf36ce393380a89c6f1b09ef79f686fe043624/src/executor/stack/state.rs#L412) and modified to own the Backend type.
@@ -34,6 +46,7 @@ pub struct MemoryStackStateOwned<'config, B> {
     pub msg_sender: Option<(H160, H160, usize)>,
     pub accesses: Option<RecordAccess>,
     pub all_logs: Vec<String>,
+    pub expected_emits: Vec<ExpectedEmit>,
 }
 
 impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
@@ -73,6 +86,7 @@ impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
             msg_sender: None,
             accesses: None,
             all_logs: Default::default(),
+            expected_emits: Default::default(),
         }
     }
 }

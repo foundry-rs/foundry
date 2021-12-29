@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{
     call_tracing::{CallTrace, CallTraceArena, LogCallOrder},
-    sputnik::{Executor, SputnikExecutor},
+    sputnik::{cheatcodes::memory_stackstate_owned::ExpectedEmit, Executor, SputnikExecutor},
     Evm,
 };
 
@@ -538,6 +538,19 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                     res = ethers::abi::encode(&[Token::Array(vec![]), Token::Array(vec![])]);
                 }
             }
+            HEVMCalls::ExpectEmit(inner) => {
+                let expected_emit = ExpectedEmit {
+                    depth: if let Some(depth) = self.state().metadata().depth() {
+                        depth + 1
+                    } else {
+                        0
+                    },
+                    log: None,
+                    checks: [inner.0, inner.1, inner.2, inner.3],
+                    found: false,
+                };
+                self.state_mut().expected_emits.push(expected_emit);
+            }
         };
 
         self.fill_trace(&trace, true, Some(res.clone()), pre_index);
@@ -967,11 +980,11 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
             let expected_revert = self.state_mut().expected_revert.take();
             let mut new_context = context;
             let mut new_transfer = transfer;
+            let curr_depth =
+                if let Some(depth) = self.state().metadata().depth() { depth + 1 } else { 0 };
 
             // handle `startPrank` - see apply_cheatcodes for more info
             if let Some((original_msg_sender, permanent_caller, depth)) = self.state().msg_sender {
-                let curr_depth =
-                    if let Some(depth) = self.state().metadata().depth() { depth + 1 } else { 0 };
                 if curr_depth == depth && new_context.caller == original_msg_sender {
                     new_context.caller = permanent_caller;
 
@@ -1006,6 +1019,17 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
                 true,
                 new_context,
             );
+
+            if !self.state_mut().expected_emits.is_empty() &&
+                !self
+                    .state()
+                    .expected_emits
+                    .iter()
+                    .filter(|expected| expected.depth == curr_depth)
+                    .all(|expected| expected.found)
+            {
+                return evm_error("Log != expected log")
+            }
 
             if let Some(expected_revert) = expected_revert {
                 let final_res = match res {
@@ -1154,6 +1178,48 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
             convert_log(Log { address, topics: topics.clone(), data: data.clone() })
         {
             self.state_mut().all_logs.push(decoded);
+        }
+
+        if !self.state().expected_emits.is_empty() {
+            // get expected emits
+            let expected_emits = &mut self.state_mut().expected_emits;
+
+            // do we have empty expected emits to fill?
+            if let Some(next_expect_to_fill) =
+                expected_emits.iter_mut().find(|expect| expect.log.is_none())
+            {
+                next_expect_to_fill.log =
+                    Some(RawLog { topics: topics.clone(), data: data.clone() });
+            } else {
+                // no unfilled, grab next unfound
+                // try to fill the first unfound
+                if let Some(next_expect) = expected_emits.iter_mut().find(|expect| !expect.found) {
+                    // unpack the log
+                    if let Some(RawLog { topics: expected_topics, data: expected_data }) =
+                        &next_expect.log
+                    {
+                        if expected_topics[0] == topics[0] {
+                            // same event topic 0, topic length should be the same
+                            let topics_match = topics
+                                .iter()
+                                .skip(1)
+                                .enumerate()
+                                .filter(|(i, _topic)| {
+                                    // do we want to check?
+                                    next_expect.checks[*i]
+                                })
+                                .all(|(i, topic)| topic == &expected_topics[i + 1]);
+
+                            // check data
+                            next_expect.found = if next_expect.checks[3] {
+                                expected_data == &data && topics_match
+                            } else {
+                                topics_match
+                            };
+                        }
+                    }
+                }
+            }
         }
 
         self.handler.log(address, topics, data)

@@ -38,6 +38,10 @@ interface Hevm {
     function record() external;
     // Gets all accessed reads and write slot from a recording session, for a given address
     function accesses(address) external returns (bytes32[] memory reads, bytes32[] memory writes);
+    // Prepare an expected log with (bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData).
+    // Call this function, then emit an event, then call a function. Internally after the call, we check if
+    // logs were emited in the expected order with the expected topics and data (as specified by the booleans)
+    function expectEmit(bool,bool,bool,bool) external;
 }
 
 contract HasStorage {
@@ -284,6 +288,59 @@ contract CheatCodes is DSTest {
         assertEq(writes2[0], bytes32(uint256(2)));
     }
 
+    event Transfer(address indexed from,address indexed to, uint256 amount);
+    function testExpectEmit() public {
+        ExpectEmit emitter = new ExpectEmit();
+        // check topic 1, topic 2, and data are the same as the following emitted event
+        hevm.expectEmit(true,true,false,true);
+        emit Transfer(address(this), address(1337), 1337);
+        emitter.t();
+    }
+
+    function testExpectEmitMultiple() public {
+        ExpectEmit emitter = new ExpectEmit();
+        hevm.expectEmit(true,true,false,true);
+        emit Transfer(address(this), address(1337), 1337);
+        hevm.expectEmit(true,true,false,true);
+        emit Transfer(address(this), address(1337), 1337);
+        emitter.t3();
+    }
+
+    function testExpectEmit2() public {
+        ExpectEmit emitter = new ExpectEmit();
+        hevm.expectEmit(true,false,false,true);
+        emit Transfer(address(this), address(1338), 1337);
+        emitter.t();
+    }
+
+    function testExpectEmit3() public {
+        ExpectEmit emitter = new ExpectEmit();
+        hevm.expectEmit(false,false,false,true);
+        emit Transfer(address(1338), address(1338), 1337);
+        emitter.t();
+    }
+
+    function testExpectEmit4() public {
+        ExpectEmit emitter = new ExpectEmit();
+        hevm.expectEmit(true,true,true,false);
+        emit Transfer(address(this), address(1337), 1338);
+        emitter.t();
+    }
+
+    function testExpectEmit5() public {
+        ExpectEmit emitter = new ExpectEmit();
+        hevm.expectEmit(true,true,true,false);
+        emit Transfer(address(this), address(1337), 1338);
+        emitter.t2();
+    }
+
+    function testFailExpectEmit() public {
+        ExpectEmit emitter = new ExpectEmit();
+        hevm.expectEmit(true,true,false,true);
+        emit Transfer(address(this), address(1338), 1337);
+        emitter.t();
+    }
+
     // Test should fail if nothing is called
     // after expectRevert
     function testFailExpectRevert3() public {
@@ -401,4 +458,21 @@ contract ComplexPrank {
     }
 }
 
+contract ExpectEmit {
+    event Transfer(address indexed from,address indexed to, uint256 amount);
+    event Transfer2(address indexed from,address indexed to, uint256 amount);
+    function t() public {
+        emit Transfer(msg.sender, address(1337), 1337);
+    }
+
+    function t2() public {
+        emit Transfer2(msg.sender, address(1337), 1337);
+        emit Transfer(msg.sender, address(1337), 1337);
+    }
+
+    function t3() public {
+        emit Transfer(msg.sender, address(1337), 1337);
+        emit Transfer(msg.sender, address(1337), 1337);
+    }
+}
 

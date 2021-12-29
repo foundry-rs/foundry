@@ -60,6 +60,7 @@ ethers::contract::abigen!(
             expectRevert(bytes)
             record()
             accesses(address)(bytes32[],bytes32[])
+            expectEmit(bool,bool,bool,bool)
     ]"#,
 );
 pub use hevm_mod::{HEVMCalls, HEVM_ABI};
