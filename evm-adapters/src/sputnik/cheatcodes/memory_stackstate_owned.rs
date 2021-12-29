@@ -24,6 +24,7 @@ pub struct ExpectedEmit {
     pub depth: usize,
     pub log: Option<RawLog>,
     pub checks: [bool; 4],
+    /// Whether this expected emit was actually found in the subcall
     pub found: bool,
 }
 
