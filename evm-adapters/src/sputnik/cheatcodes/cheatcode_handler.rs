@@ -1020,12 +1020,13 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
                 new_context,
             );
 
-            if !self.state_mut().expected_emits.is_empty() && !self
-                .state()
-                .expected_emits
-                .iter()
-                .filter(|expected| expected.depth == curr_depth)
-                .all(|expected| expected.found) {
+            if !self.state_mut().expected_emits.is_empty() &&
+                !self
+                    .state()
+                    .expected_emits
+                    .iter()
+                    .filter(|expected| expected.depth == curr_depth)
+                    .all(|expected| expected.found)
             {
                 return evm_error("Log != expected log")
             }
