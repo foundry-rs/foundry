@@ -26,6 +26,7 @@ pub struct ExpectedEmit {
     pub checks: [bool; 4],
     pub found: bool,
 }
+
 /// This struct implementation is copied from [upstream](https://github.com/rust-blockchain/evm/blob/5ecf36ce393380a89c6f1b09ef79f686fe043624/src/executor/stack/state.rs#L412) and modified to own the Backend type.
 ///
 /// We had to copy it so that we can modify the Stack's internal backend, because
