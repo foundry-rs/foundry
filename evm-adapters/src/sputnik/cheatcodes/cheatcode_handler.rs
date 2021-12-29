@@ -1020,15 +1020,14 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
                 new_context,
             );
 
-            if !self.state_mut().expected_emits.is_empty() {
-                for expected in self.state().expected_emits.clone().into_iter() {
-                    if curr_depth == expected.depth {
-                        // we have returned back to the expected depth
-                        if !expected.found {
-                            return evm_error("Log != expected log")
-                        }
-                    }
-                }
+            if !self.state_mut().expected_emits.is_empty() && !self
+                .state()
+                .expected_emits
+                .iter()
+                .filter(|expected| expected.depth == curr_depth)
+                .all(|expected| expected.found) {
+            {
+                return evm_error("Log != expected log")
             }
 
             if let Some(expected_revert) = expected_revert {
