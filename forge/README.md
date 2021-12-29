@@ -131,11 +131,15 @@ which implements the following methods:
 
 - `function deal(address who, uint256 amount)`: Sets an account's balance
 
-- `function etch(address where, bytes memory what)`:` Sets the contract code at
+- `function etch(address where, bytes memory what)`: Sets the contract code at
   some address contract code
 
-- `function prank(address from, address to, bytes calldata) (bool success,bytes retdata)`:
-  Performs a smart contract call as another address
+- `function prank(address from)`: Performs the next smart contract call as another address
+
+- `function prankStart(address from)`: Performs smart contract calls as another address
+
+- `function prankStop()`: Stop calling smart contract with the address set at prankStart
+
 - `function expectRevert(bytes calldata expectedError)`:
   Tells the evm to expect that the next call reverts with specified error bytes.
 
@@ -193,8 +197,12 @@ interface Vm {
     function addr(uint256) external returns (address);
     // Performs a foreign function call via terminal, (stringInputs) => (result)
     function ffi(string[] calldata) external returns (bytes memory);
-    // Calls another contract with a specified `msg.sender`, (newSender, contract, input) => (success, returnData)
-    function prank(address, address, bytes calldata) external payable returns (bool, bytes memory);
+    // Performs the next smart contract call with specified `msg.sender`, (newSender)
+    function prank(address) external;
+    // Performs all the following smart contract calls with specified `msg.sender`, (newSender)
+    function prankStart(address) external;
+    // Stop smart contract calls using the specified address with prankStart()
+    function prankStop() external;
     // Sets an address' balance, (who, newBalance)
     function deal(address, uint256) external;
     // Sets an address' code, (who, newCode)
