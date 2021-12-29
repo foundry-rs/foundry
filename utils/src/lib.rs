@@ -174,6 +174,14 @@ pub fn get_func(sig: &str) -> Result<Function> {
     Ok(func.clone())
 }
 
+// seth compatability and convenience transformer
+pub fn pre_parse_tokens<'a>(param: &'a ParamType, value:&str)-> (&'a ParamType,String) {
+    match *param {
+        ParamType::Address => (param,value.replace("0x","")),
+        _ => (param,value.to_owned())
+    }
+}
+
 /// Parses string input as Token against the expected ParamType
 pub fn parse_tokens<'a, I: IntoIterator<Item = (&'a ParamType, &'a str)>>(
     params: I,
@@ -182,10 +190,13 @@ pub fn parse_tokens<'a, I: IntoIterator<Item = (&'a ParamType, &'a str)>>(
     params
         .into_iter()
         .map(|(param, value)| {
+            pre_parse_tokens(param,value)    
+        })
+        .map(|(param, value)| {
             if lenient {
-                LenientTokenizer::tokenize(param, value)
+                LenientTokenizer::tokenize(param, value.as_str())
             } else {
-                StrictTokenizer::tokenize(param, value)
+                StrictTokenizer::tokenize(param, value.as_str())
             }
         })
         .collect::<Result<_, _>>()

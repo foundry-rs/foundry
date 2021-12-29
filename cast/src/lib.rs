@@ -3,14 +3,15 @@
 //! TODO
 use chrono::NaiveDateTime;
 use ethers_core::{
-    abi::{AbiParser, Token},
+    abi::{AbiParser, Token, ParamType},
     types::*,
     utils::{self, keccak256},
 };
+
 use ethers_providers::{Middleware, PendingTransaction};
 use eyre::Result;
 use rustc_hex::{FromHexIter, ToHex};
-use std::str::FromStr;
+use std::{str::FromStr};
 
 use foundry_utils::{encode_args, get_func, to_table};
 
@@ -80,12 +81,22 @@ where
         if decoded.is_empty() {
             Ok(format!("{}\n", res))
         } else {
-            // concatenate them
+            let output_types = &func.outputs;
             let mut s = String::new();
-            for output in decoded {
-                s.push_str(&format!("0x{}\n", output));
-            }
 
+            // seth compatible user-friendly return type convesions
+            for (i,o) in output_types.iter().enumerate() {
+                if i < decoded.len() {
+                    let decoded_str = format!("{}",&decoded[i]);
+                    let s0 = match o.kind {
+                        ParamType::Uint(_) | ParamType::Int(_) => SimpleCast::to_dec(decoded_str.as_str()).unwrap().to_string(),
+                        ParamType::Address => format!("0x{}",decoded_str),
+                        _ => decoded_str,
+                    };
+                    s.push_str(&s0);
+                }
+            }
+            
             // return string
             Ok(s)
         }
