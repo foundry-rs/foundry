@@ -297,9 +297,17 @@ contract CheatCodes is DSTest {
         emitter.t();
     }
 
+    function testExpectEmitMultiple() public {
+        ExpectEmit emitter = new ExpectEmit();
+        hevm.expectEmit(true,true,false,true);
+        emit Transfer(address(this), address(1337), 1337);
+        hevm.expectEmit(true,true,false,true);
+        emit Transfer(address(this), address(1337), 1337);
+        emitter.t3();
+    }
+
     function testExpectEmit2() public {
         ExpectEmit emitter = new ExpectEmit();
-        // check topic 1, topic 2, and data are the same as the following emitted event
         hevm.expectEmit(true,false,false,true);
         emit Transfer(address(this), address(1338), 1337);
         emitter.t();
@@ -307,7 +315,6 @@ contract CheatCodes is DSTest {
 
     function testExpectEmit3() public {
         ExpectEmit emitter = new ExpectEmit();
-        // check topic 1, topic 2, and data are the same as the following emitted event
         hevm.expectEmit(false,false,false,true);
         emit Transfer(address(1338), address(1338), 1337);
         emitter.t();
@@ -315,7 +322,6 @@ contract CheatCodes is DSTest {
 
     function testExpectEmit4() public {
         ExpectEmit emitter = new ExpectEmit();
-        // check topic 1, topic 2, and data are the same as the following emitted event
         hevm.expectEmit(true,true,true,false);
         emit Transfer(address(this), address(1337), 1338);
         emitter.t();
@@ -323,7 +329,6 @@ contract CheatCodes is DSTest {
 
     function testExpectEmit5() public {
         ExpectEmit emitter = new ExpectEmit();
-        // check topic 1, topic 2, and data are the same as the following emitted event
         hevm.expectEmit(true,true,true,false);
         emit Transfer(address(this), address(1337), 1338);
         emitter.t2();
@@ -331,7 +336,6 @@ contract CheatCodes is DSTest {
 
     function testFailExpectEmit() public {
         ExpectEmit emitter = new ExpectEmit();
-        // check topic 1, topic 2, and data are the same as the following emitted event
         hevm.expectEmit(true,true,false,true);
         emit Transfer(address(this), address(1338), 1337);
         emitter.t();
@@ -463,6 +467,11 @@ contract ExpectEmit {
 
     function t2() public {
         emit Transfer2(msg.sender, address(1337), 1337);
+        emit Transfer(msg.sender, address(1337), 1337);
+    }
+
+    function t3() public {
+        emit Transfer(msg.sender, address(1337), 1337);
         emit Transfer(msg.sender, address(1337), 1337);
     }
 }
