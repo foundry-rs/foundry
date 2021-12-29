@@ -10,6 +10,7 @@ use ethers_core::{
 use ethers_providers::{Middleware, PendingTransaction};
 use eyre::Result;
 use rustc_hex::{FromHexIter, ToHex};
+use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
 use foundry_utils::{encode_args, get_func, to_table};
@@ -550,6 +551,42 @@ impl SimpleCast {
         }
 
         Ok(res)
+    }
+
+    /// Fetches a function signature given the selector using 4byte.directory
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// async fn foo() -> eyre::Result<()> {
+    ///     let sig = Cast::fourbyte("0x32e785af").await?;
+    ///     assert_eq!(sig, "balancesMinted1(address)");
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn fourbyte(selector: &str) -> Result<String> {
+
+        #[derive(Serialize, Deserialize, Debug)]
+        struct Decoded {
+            text_signature: String
+        }
+
+        #[derive(Serialize, Deserialize, Debug)]
+        struct ApiResponse {
+            count: i64,
+            results: Vec<Decoded>
+        }
+
+        let selector_clean = &selector.replace("0x", "")[..8];
+
+        let url = format!("https://www.4byte.directory/api/v1/signatures/?hex_signature={}", selector_clean);
+        let res = reqwest::get(url).await.unwrap();
+        let api_response = res.json::<ApiResponse>().await.unwrap();
+
+        Ok(api_response.results.into_iter()
+                                .map(|d| d.text_signature)
+                                .collect::<Vec<String>>()
+                                .join("\n"))
     }
 
     /// Converts decimal input to hex

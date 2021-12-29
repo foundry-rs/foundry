@@ -166,6 +166,10 @@ pub enum Subcommands {
         #[structopt(long, short, help = "the encoded output, in hex format")]
         input: bool,
     },
+    #[structopt(name = "4byte")]
+    FourByte {
+        selector: String,
+    },
     #[structopt(name = "age")]
     #[structopt(about = "Prints the timestamp of a block")]
     Age {

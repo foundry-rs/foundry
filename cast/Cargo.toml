@@ -12,7 +12,9 @@ ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features =
 ethers-providers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-signers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 eyre = "0.6.5"
+reqwest = "0.11.8"
 rustc-hex = "2.1.0"
+serde = "1.0.132"
 serde_json = "1.0.67"
 chrono = "0.2"
 hex = "0.4.3"

@@ -175,6 +175,9 @@ async fn main() -> eyre::Result<()> {
             let tokens = utils::format_tokens(&tokens);
             tokens.for_each(|t| println!("{}", t));
         }
+        Subcommands::FourByte { selector } => {
+            println!("{}", SimpleCast::fourbyte(&selector).await?);
+        }
         Subcommands::Age { block, rpc_url } => {
             let provider = Provider::try_from(rpc_url)?;
             println!(
