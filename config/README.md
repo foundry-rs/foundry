@@ -25,6 +25,7 @@ like:
 ## defaults for _all_ profiles
 [default]
 src = "src"
+out = "out"
 libs = ["lib"]
 solc-version = "8.0.10"
 eth-rpc-url = "https://mainnet.infura.io"
@@ -33,13 +34,8 @@ eth-rpc-url = "https://mainnet.infura.io"
 [hardhat]
 ## override the default settings, but inherit everything else
 src = "contracts"
+out = "artifacts"
 libs = ["node_modules"]
-
-## set only when the `hardhat` profile is selected
-[hardhat2]
-## instead of inherting from `default`, inherit from another profile
-inherits = "hardhat"
-## --snip-- more settings 
 
 ## set only when the `spells` profile is selected
 [spells]
@@ -56,6 +52,18 @@ and merge, at the per-key level:
 3. `FOUNDRY_` or `DAPP_` prefixed environment variables.
 
 The selected profile is the value of the `FOUNDRY_PROFILE` environment variable, or if it is not set, "default".
+
+The following is a foundry.toml file with all configuration options set.
+
+TODO fill out
+```toml
+## defaults for _all_ profiles
+[default]
+
+## set only when the `hardhat` profile is selected
+[hardhat]
+
+```
 
 ## Environment Variables
 
