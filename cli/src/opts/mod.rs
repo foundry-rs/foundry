@@ -53,7 +53,9 @@ impl EthereumOpts {
                 Some(hd_path) => TrezorHDPath::Other(hd_path.clone()),
                 None => TrezorHDPath::TrezorLive(self.wallet.mnemonic_index as usize),
             };
-            let trezor = Trezor::new(derivation, chain_id.as_u64()).await?;
+
+            // cached to ~/.ethers-rs/trezor/cache/trezor.session
+            let trezor = Trezor::new(derivation, chain_id.as_u64(), None).await?;
 
             Ok(Some(WalletType::Trezor(SignerMiddleware::new(provider, trezor))))
         } else {
