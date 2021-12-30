@@ -14,3 +14,10 @@ lto = true
 codegen-units = 1
 panic = "abort"
 debug = true
+
+[patch."https://github.com/gakonst/ethers-rs"]
+ethers = { git = "https://github.com/mattsse/ethers-rs", branch = "matt/dependency-graph" }
+ethers-core = { git = "https://github.com/mattsse/ethers-rs", branch = "matt/dependency-graph" }
+ethers-providers = { git = "https://github.com/mattsse/ethers-rs", branch = "matt/dependency-graph" }
+ethers-signers = { git = "https://github.com/mattsse/ethers-rs", branch = "matt/dependency-graph" }
+ethers-etherscan = { git = "https://github.com/mattsse/ethers-rs", branch = "matt/dependency-graph" }
