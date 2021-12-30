@@ -1,9 +1,8 @@
 //! foundry configuration.
 use ethers_core::types::Address;
 use figment::{
-    error::Result,
     providers::{Env, Format, Serialized, Toml},
-    value::{magic::RelativePathBuf, Dict, Map},
+    value::{Dict, Map},
     Figment, Metadata, Profile, Provider,
 };
 use semver::Version;
@@ -36,6 +35,7 @@ pub struct Config {
     /// Sets the optimizer runs
     pub optimizer_runs: usize,
     /// Settings to pass to the `solc` compiler input
+    // TODO make this more flexible https://stackoverflow.com/questions/48998034/does-toml-support-nested-arrays-of-objects-tables
     pub solc_settings: serde_json::Value,
     /// url of the rpc server that should be used for any rpc calls
     pub eth_rpc_url: Option<String>,
@@ -50,6 +50,13 @@ pub struct Config {
 impl Config {
     /// The default profile: "default"
     pub const DEFAULT_PROFILE: Profile = Profile::const_new("default");
+
+    /// Returns the current `Config`
+    ///
+    /// See `Config::figment`
+    pub fn load() -> Result<Self, figment::Error> {
+        Config::figment().extract()
+    }
 
     /// Returns the default figment
     ///
@@ -72,6 +79,7 @@ impl Config {
     /// let my_config = Config::figment().extract::<Config>();
     /// ```
     pub fn figment() -> Figment {
+        // TODO add current dir as argument
         Figment::from(Config::default())
             .merge(Toml::file(Env::var_or("FOUNDRY_CONFIG", "foundry.toml")).nested())
             .merge(Env::prefixed("FOUNDRY_").ignore(&["PROFILE"]).global())
@@ -79,8 +87,49 @@ impl Config {
     }
 }
 
+impl Provider for Config {
+    fn metadata(&self) -> Metadata {
+        Metadata::named("Foundry Config")
+    }
+
+    #[track_caller]
+    fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
+        Serialized::defaults(self).data()
+    }
+
+    fn profile(&self) -> Option<Profile> {
+        Some(self.profile.clone())
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
-        todo!()
+        Self {
+            profile: Self::DEFAULT_PROFILE,
+            src: "src".into(),
+            test: "test".into(),
+            out: "out".into(),
+            libs: vec!["lib".into()],
+            solc_version: None,
+            optimizer: false,
+            optimizer_runs: 0,
+            solc_settings: serde_json::json!({
+               "*":{
+                  "*":[
+                     "abi",
+                     "evm.bytecode",
+                     "evm.deployedBytecode",
+                     "evm.methodIdentifiers"
+                  ],
+                  "":[
+                     "ast"
+                  ]
+               }
+            }),
+            eth_rpc_url: None,
+            verbosity: 0,
+            remappings: vec![],
+            libraries: vec![],
+        }
     }
 }
