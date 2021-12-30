@@ -580,8 +580,8 @@ impl SimpleCast {
         let selector_clean = &selector.replace("0x", "")[..8];
 
         let url = format!("https://www.4byte.directory/api/v1/signatures/?hex_signature={}", selector_clean);
-        let res = reqwest::get(url).await.unwrap();
-        let api_response = res.json::<ApiResponse>().await.unwrap();
+        let res = reqwest::get(url).await?;
+        let api_response = res.json::<ApiResponse>().await?;
 
         Ok(api_response.results.into_iter()
                                 .map(|d| d.text_signature)
