@@ -198,6 +198,7 @@ pub mod sputnik_helpers {
             &*PRECOMPILES_MAP,
             opts.ffi,
             opts.verbosity > 2,
+            opts.debug,
         ))
     }
 }

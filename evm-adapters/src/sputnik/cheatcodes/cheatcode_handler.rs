@@ -29,7 +29,7 @@ use ethers::{
 };
 use std::convert::Infallible;
 
-use crate::sputnik::cheatcodes::{runtime::{Debugger,ForgeRuntime}, patch_hardhat_console_log_selector};
+use crate::sputnik::cheatcodes::{debugger::{Debugger, DebugStep, ForgeRuntime}, patch_hardhat_console_log_selector};
 use once_cell::sync::Lazy;
 
 use ethers::abi::Tokenize;
@@ -137,6 +137,10 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
 
     fn tracing_enabled(&self) -> bool {
         self.state().trace_enabled
+    }
+
+    fn debug_steps(&self) -> Vec<Vec<DebugStep>> {
+        self.state().debug_steps.clone().unwrap_or_default()
     }
 
     fn gas_left(&self) -> U256 {
@@ -283,6 +287,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet>
         precompiles: &'b P,
         enable_ffi: bool,
         enable_trace: bool,
+        debug: bool,
     ) -> Self {
         // make this a cheatcode-enabled backend
         let backend = CheatcodeBackend { backend, cheats: Default::default() };
@@ -290,7 +295,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet>
         // create the memory stack state (owned, so that we can modify the backend via
         // self.state_mut on the transact_call fn)
         let metadata = StackSubstateMetadata::new(gas_limit, config);
-        let state = MemoryStackStateOwned::new(metadata, backend, enable_trace);
+        let state = MemoryStackStateOwned::new(metadata, backend, enable_trace, debug);
 
         // create the executor and wrap it with the cheatcode handler
         let executor = StackExecutor::new_with_precompiles(state, config, precompiles);
@@ -561,17 +566,26 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
 
     // NB: This function is copy-pasted from uptream's `execute`, adjusted so that we call the
     // Runtime with our own handler
-    pub fn execute(&mut self, runtime: &mut ForgeRuntime) -> ExitReason {
+    pub fn execute(&mut self, runtime: &mut Runtime) -> ExitReason {
         match runtime.run(self) {
             Capture::Exit(s) => s,
             Capture::Trap(_) => unreachable!("Trap is Infallible"),
         }
     }
 
-    pub fn debug_execute(&mut self, runtime: &mut ForgeRuntime) -> ExitReason {
-        let mut debugger = Debugger::new_with_runtime(runtime);
-        let res = debugger.debug_run(self);
-        debugger.print_steps();
+    /// Debug execute a transaction by grabbing the debugger from state_mut, adding the runtime.
+    pub fn debug_execute<'config>(&mut self, runtime: &mut Runtime, code: Rc<Vec<u8>>) -> ExitReason {
+        let res = {
+            let mut forge_runtime = ForgeRuntime::new_with_runtime(runtime, code);
+            let mut debugger = Debugger::new_with_runtime(&mut forge_runtime);
+            let res = debugger.debug_run(self);
+            if let Some(debug_steps) = &mut self.state_mut().debug_steps {
+                debug_steps.push(debugger.steps.clone());
+            } else {
+                panic!("here");
+            }
+            res
+        };
         match res {
             Capture::Exit(s) => s,
             Capture::Trap(_) => unreachable!("Trap is Infallible"),
@@ -754,8 +768,15 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         // each cfg is about 200 bytes, is this a lot to clone? why does this error
         // not manifest upstream?
         let config = self.config().clone();
-        let mut runtime = ForgeRuntime::new(Rc::new(code), Rc::new(input), context, &config);
-        let reason = self.debug_execute(&mut runtime);
+        let mut runtime;
+        let reason = if self.state().debug_steps.is_some() {
+            let code = Rc::new(code);
+            runtime = Runtime::new(code.clone(), Rc::new(input), context, &config);
+            self.debug_execute(&mut runtime, code)
+        } else {
+            runtime = Runtime::new(Rc::new(code), Rc::new(input), context, &config);
+            self.execute(&mut runtime)
+        };
 
         // // log::debug!(target: "evm", "Call execution using address {}: {:?}", code_address,
         // reason);
@@ -895,9 +916,15 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         }
 
         let config = self.config().clone();
-        let mut runtime = ForgeRuntime::new(Rc::new(init_code), Rc::new(Vec::new()), context, &config);
-
-        let reason = self.debug_execute(&mut runtime);
+        let mut runtime;
+        let reason = if self.state().debug_steps.is_some() {
+            let code = Rc::new(init_code);
+            runtime = Runtime::new(code.clone(), Rc::new(Vec::new()), context, &config);
+            self.debug_execute(&mut runtime, code)
+        } else {
+            runtime = Runtime::new(Rc::new(init_code), Rc::new(Vec::new()), context, &config);
+            self.execute(&mut runtime)
+        };
         // log::debug!(target: "evm", "Create execution using address {}: {:?}", address, reason);
 
         match reason {

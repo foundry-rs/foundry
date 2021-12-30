@@ -1,3 +1,4 @@
+use ui::{Tui, ApplicationExitReason, UiAgent};
 use crate::{
     cmd::Cmd,
     opts::forge::{CompilerArgs, EvmOpts},
@@ -79,15 +80,30 @@ impl Cmd for RunArgs {
         // 5. run the test function
         let result = runner.run_test(&func, false, None)?;
 
-        // 6. print the result nicely
-        if result.success {
-            println!("{}", Colour::Green.paint("Script ran successfully."));
+        if self.evm_opts.debug {
+            // 6. Boot up debugger
+            println!("debugging");
+            let steps = evm.debug_steps();
+            let tui = Tui::new(steps[1].clone(), 0)?;
+            match tui.start().expect("Failed to start tui") {
+                ApplicationExitReason::UserExit => {
+                    return Ok(());
+                }
+            }
+            
+                
         } else {
-            println!("{}", Colour::Red.paint("Script failed."));
+            // 6. print the result nicely
+            if result.success {
+                println!("{}", Colour::Green.paint("Script ran successfully."));
+            } else {
+                println!("{}", Colour::Red.paint("Script failed."));
+            }
+
+            println!("Gas Used: {}", result.gas_used);
+            println!("== Logs == ");
+            result.logs.iter().for_each(|log| println!("{}", log));
         }
-        println!("Gas Used: {}", result.gas_used);
-        println!("== Logs == ");
-        result.logs.iter().for_each(|log| println!("{}", log));
 
         Ok(())
     }

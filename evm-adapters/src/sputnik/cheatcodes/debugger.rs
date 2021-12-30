@@ -1,12 +1,7 @@
 
 use sputnik::{
-    backend::Backend,
-    executor::stack::{
-        Log, PrecompileFailure, PrecompileOutput, PrecompileSet, StackExecutor, StackExitKind,
-        StackState, StackSubstateMetadata,
-    },
-    gasometer, Capture, Config, Context, CreateScheme, ExitError, ExitReason, ExitRevert,
-    ExitSucceed, Handler, Runtime, Transfer, Resolve, Machine, Stack, Memory, Opcode
+    Capture, ExitReason,
+    ExitSucceed, Handler, Runtime, Resolve, Machine, Memory, Opcode
 };
 
 use ethers::types::H256;
@@ -15,8 +10,8 @@ use std::{fmt::Display, borrow::Cow, rc::Rc};
 /// EVM runtime.
 ///
 /// The runtime wraps an EVM `Machine` with support of return data and context.
-pub struct ForgeRuntime<'config> {
-	pub inner: Runtime<'config>,
+pub struct ForgeRuntime<'b, 'config> {
+	pub inner: &'b mut Runtime<'config>,
 	pub code: Rc<Vec<u8>>,
 }
 
@@ -29,6 +24,15 @@ pub struct DebugStep {
 	pub push_bytes: Option<Vec<u8>>,
 }
 
+impl DebugStep {
+	pub fn pretty_opcode(&self) -> String {
+		if let Some(push_bytes) = &self.push_bytes {
+			format!("{}(0x{})", self.op,  hex::encode(push_bytes))
+		} else {
+			self.op.to_string()
+		}
+	}
+}
 
 impl Display for DebugStep {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -40,21 +44,17 @@ impl Display for DebugStep {
     }
 }
 
-
-
-
-impl<'config> ForgeRuntime<'config> {
-	pub fn new(
+impl<'b, 'config> ForgeRuntime<'b, 'config> {
+	pub fn new_with_runtime(
+		runtime: &'b mut Runtime<'config>,
 		code: Rc<Vec<u8>>,
-		data: Rc<Vec<u8>>,
-		context: Context,
-		config: &'config Config,
 	) -> Self {
 		Self {
-			inner: Runtime::new(code.clone(), data, context, config),
-			code: code,
+			inner: runtime,
+			code
 		}
 	}
+
 	/// Step the runtime.
 	pub fn step<'a, H: Handler>(
 		&'a mut self,
@@ -92,16 +92,16 @@ impl<'config> ForgeRuntime<'config> {
 }
 
 pub struct Debugger<'b, 'config> {
-	pub runtime: &'b mut ForgeRuntime<'config>,
+	pub runtime: &'b mut ForgeRuntime<'b, 'config>,
 	pub steps: Vec<DebugStep>,
 }
 
 impl<'b, 'config> Debugger<'b, 'config> {
 	pub fn new_with_runtime(
-		runtime: &'b mut ForgeRuntime<'config>
+		runtime: &'b mut ForgeRuntime<'b, 'config>
 	) -> Self {
 		Self {
-			runtime,
+			runtime: runtime,
 			steps: Vec::new(),
 		}
 	}
