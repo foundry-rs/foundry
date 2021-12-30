@@ -29,7 +29,7 @@ use ethers::{
 };
 use std::convert::Infallible;
 
-use crate::sputnik::cheatcodes::patch_hardhat_console_log_selector;
+use crate::sputnik::cheatcodes::{runtime::ForgeRuntime, patch_hardhat_console_log_selector};
 use once_cell::sync::Lazy;
 
 use ethers::abi::Tokenize;
@@ -561,7 +561,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
 
     // NB: This function is copy-pasted from uptream's `execute`, adjusted so that we call the
     // Runtime with our own handler
-    pub fn execute(&mut self, runtime: &mut Runtime) -> ExitReason {
+    pub fn execute(&mut self, runtime: &mut ForgeRuntime) -> ExitReason {
         match runtime.run(self) {
             Capture::Exit(s) => s,
             Capture::Trap(_) => unreachable!("Trap is Infallible"),
@@ -742,7 +742,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         // each cfg is about 200 bytes, is this a lot to clone? why does this error
         // not manifest upstream?
         let config = self.config().clone();
-        let mut runtime = Runtime::new(Rc::new(code), Rc::new(input), context, &config);
+        let mut runtime = ForgeRuntime::new(Rc::new(code), Rc::new(input), context, &config);
         let reason = self.execute(&mut runtime);
 
         // // log::debug!(target: "evm", "Call execution using address {}: {:?}", code_address,
@@ -883,7 +883,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         }
 
         let config = self.config().clone();
-        let mut runtime = Runtime::new(Rc::new(init_code), Rc::new(Vec::new()), context, &config);
+        let mut runtime = ForgeRuntime::new(Rc::new(init_code), Rc::new(Vec::new()), context, &config);
 
         let reason = self.execute(&mut runtime);
         // log::debug!(target: "evm", "Create execution using address {}: {:?}", address, reason);
