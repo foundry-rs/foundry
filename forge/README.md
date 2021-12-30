@@ -211,6 +211,17 @@ interface Vm {
     function expectRevert(bytes calldata) external;
 }
 ```
+### `console.log`
+
+For those used to `console.log` functionality from Hardhat, there is an implementation contract [here](https://github.com/gakonst/foundry/blob/master/evm-adapters/testdata/console.sol). We currently recommend that you copy this contract, place it in your `test` folder, and import it into the contract where you wish to use `console.log`, though there should be more streamlined functionality soon.
+
+Usage follows the same format as [Hardhat](https://hardhat.org/hardhat-network/reference/#console-log):
+```solidity
+import "./Console.sol";
+...
+console.log(someValue);
+
+```
 
 ## Future Features
 
