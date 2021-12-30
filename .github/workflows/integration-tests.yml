@@ -27,6 +27,7 @@ jobs:
   tests:
     needs: prepare-matrix
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       matrix:
         repo: ${{fromJSON(needs.prepare-matrix.outputs.matrix)}}
