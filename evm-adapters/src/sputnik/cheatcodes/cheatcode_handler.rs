@@ -29,7 +29,7 @@ use ethers::{
 };
 use std::convert::Infallible;
 
-use crate::sputnik::cheatcodes::{runtime::ForgeRuntime, patch_hardhat_console_log_selector};
+use crate::sputnik::cheatcodes::{runtime::{Debugger,ForgeRuntime}, patch_hardhat_console_log_selector};
 use once_cell::sync::Lazy;
 
 use ethers::abi::Tokenize;
@@ -568,6 +568,18 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         }
     }
 
+    pub fn debug_execute(&mut self, runtime: &mut ForgeRuntime) -> ExitReason {
+        let mut debugger = Debugger::new_with_runtime(runtime);
+        let res = debugger.debug_run(self);
+        debugger.print_steps();
+        match res {
+            Capture::Exit(s) => s,
+            Capture::Trap(_) => unreachable!("Trap is Infallible"),
+        }
+    }
+
+
+
     fn start_trace(
         &mut self,
         address: H160,
@@ -743,7 +755,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         // not manifest upstream?
         let config = self.config().clone();
         let mut runtime = ForgeRuntime::new(Rc::new(code), Rc::new(input), context, &config);
-        let reason = self.execute(&mut runtime);
+        let reason = self.debug_execute(&mut runtime);
 
         // // log::debug!(target: "evm", "Call execution using address {}: {:?}", code_address,
         // reason);
@@ -885,7 +897,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         let config = self.config().clone();
         let mut runtime = ForgeRuntime::new(Rc::new(init_code), Rc::new(Vec::new()), context, &config);
 
-        let reason = self.execute(&mut runtime);
+        let reason = self.debug_execute(&mut runtime);
         // log::debug!(target: "evm", "Create execution using address {}: {:?}", address, reason);
 
         match reason {
