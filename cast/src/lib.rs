@@ -565,27 +565,27 @@ impl SimpleCast {
     /// }
     /// ```
     pub async fn fourbyte(selector: &str) -> Result<Vec<String>> {
-
         #[derive(Serialize, Deserialize, Debug)]
         struct Decoded {
-            text_signature: String
+            text_signature: String,
         }
 
         #[derive(Serialize, Deserialize, Debug)]
         struct ApiResponse {
             count: i64,
-            results: Vec<Decoded>
+            results: Vec<Decoded>,
         }
 
         let selector_clean = &selector.replace("0x", "")[..8];
 
-        let url = format!("https://www.4byte.directory/api/v1/signatures/?hex_signature={}", selector_clean);
+        let url = format!(
+            "https://www.4byte.directory/api/v1/signatures/?hex_signature={}",
+            selector_clean
+        );
         let res = reqwest::get(url).await?;
         let api_response = res.json::<ApiResponse>().await?;
 
-        Ok(api_response.results.into_iter()
-                                .map(|d| d.text_signature)
-                                .collect::<Vec<String>>())
+        Ok(api_response.results.into_iter().map(|d| d.text_signature).collect::<Vec<String>>())
     }
 
     /// Converts decimal input to hex

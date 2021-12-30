@@ -16,7 +16,7 @@ use ethers::{
     types::{NameOrAddress, U256},
 };
 use rustc_hex::ToHex;
-use std::{convert::TryFrom, str::FromStr, io, io::Write};
+use std::{convert::TryFrom, io, io::Write, str::FromStr};
 use structopt::StructOpt;
 
 #[tokio::main]
@@ -181,7 +181,7 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::FourByteDecode { calldata } => {
             let sigs = SimpleCast::fourbyte(&calldata).await?;
-            sigs.iter().enumerate().for_each(|(i, sig)| println!("{}) \"{}\"", i+1, sig));
+            sigs.iter().enumerate().for_each(|(i, sig)| println!("{}) \"{}\"", i + 1, sig));
             print!("Select a function signature by number: ");
             io::stdout().flush()?;
 
@@ -189,7 +189,7 @@ async fn main() -> eyre::Result<()> {
             io::stdin().read_line(&mut input)?;
             let i: usize = input.trim().parse()?;
 
-            let sig = &sigs[i-1];
+            let sig = &sigs[i - 1];
             let tokens = SimpleCast::abi_decode(sig, &calldata, true)?;
             let tokens = utils::format_tokens(&tokens);
 

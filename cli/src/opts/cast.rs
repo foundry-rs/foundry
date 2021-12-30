@@ -167,9 +167,7 @@ pub enum Subcommands {
         input: bool,
     },
     #[structopt(name = "4byte")]
-    #[structopt(
-        about = "Fetches function signatures given the selector from 4byte.directory"
-    )]
+    #[structopt(about = "Fetches function signatures given the selector from 4byte.directory")]
     FourByte {
         #[structopt(help = "the function selector")]
         selector: String,
