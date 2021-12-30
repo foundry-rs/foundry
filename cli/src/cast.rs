@@ -16,7 +16,7 @@ use ethers::{
     types::{NameOrAddress, U256},
 };
 use rustc_hex::ToHex;
-use std::{convert::TryFrom, str::FromStr};
+use std::{convert::TryFrom, str::FromStr, io, io::Write};
 use structopt::StructOpt;
 
 #[tokio::main]
@@ -176,7 +176,24 @@ async fn main() -> eyre::Result<()> {
             tokens.for_each(|t| println!("{}", t));
         }
         Subcommands::FourByte { selector } => {
-            println!("{}", SimpleCast::fourbyte(&selector).await?);
+            let sigs = SimpleCast::fourbyte(&selector).await?;
+            sigs.iter().for_each(|sig| println!("{}", sig));
+        }
+        Subcommands::FourByteDecode { calldata } => {
+            let sigs = SimpleCast::fourbyte(&calldata).await?;
+            sigs.iter().enumerate().for_each(|(i, sig)| println!("{}) \"{}\"", i+1, sig));
+            print!("Select a function signature by number: ");
+            io::stdout().flush()?;
+
+            let mut input = String::new();
+            io::stdin().read_line(&mut input)?;
+            let i: usize = input.trim().parse()?;
+
+            let sig = &sigs[i-1];
+            let tokens = SimpleCast::abi_decode(sig, &calldata, true)?;
+            let tokens = utils::format_tokens(&tokens);
+
+            tokens.for_each(|t| println!("{}", t));
         }
         Subcommands::Age { block, rpc_url } => {
             let provider = Provider::try_from(rpc_url)?;

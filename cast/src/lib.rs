@@ -560,11 +560,11 @@ impl SimpleCast {
     ///
     /// async fn foo() -> eyre::Result<()> {
     ///     let sig = Cast::fourbyte("0x32e785af").await?;
-    ///     assert_eq!(sig, "balancesMinted1(address)");
+    ///     println!("{:?}", sig);
     ///     Ok(())
     /// }
     /// ```
-    pub async fn fourbyte(selector: &str) -> Result<String> {
+    pub async fn fourbyte(selector: &str) -> Result<Vec<String>> {
 
         #[derive(Serialize, Deserialize, Debug)]
         struct Decoded {
@@ -585,8 +585,7 @@ impl SimpleCast {
 
         Ok(api_response.results.into_iter()
                                 .map(|d| d.text_signature)
-                                .collect::<Vec<String>>()
-                                .join("\n"))
+                                .collect::<Vec<String>>())
     }
 
     /// Converts decimal input to hex

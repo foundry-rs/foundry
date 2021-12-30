@@ -21,8 +21,8 @@
 - [ ] `--to-int256`
 - [x] `--to-uint256`
 - [x] `--to-wei`
-- [ ] `4byte`
-- [ ] `4byte-decode`
+- [x] `4byte`
+- [x] `4byte-decode`
 - [ ] `4byte-event`
 - [ ] `abi-encode`
 - [x] `age`
