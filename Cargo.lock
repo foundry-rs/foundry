@@ -1269,7 +1269,7 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "0.6.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/dependency-graph#c4d190e62f151446c4adbadd8d8bca5a19ac2455"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/dependency-graph#314a7039604a335c6f514647ccad4074708fa3dd"
 dependencies = [
  "ethers-contract",
  "ethers-core",
@@ -1283,7 +1283,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "0.6.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/dependency-graph#c4d190e62f151446c4adbadd8d8bca5a19ac2455"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/dependency-graph#314a7039604a335c6f514647ccad4074708fa3dd"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1301,7 +1301,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "0.6.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/dependency-graph#c4d190e62f151446c4adbadd8d8bca5a19ac2455"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/dependency-graph#314a7039604a335c6f514647ccad4074708fa3dd"
 dependencies = [
  "Inflector",
  "anyhow",
@@ -1324,7 +1324,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "0.6.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/dependency-graph#c4d190e62f151446c4adbadd8d8bca5a19ac2455"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/dependency-graph#314a7039604a335c6f514647ccad4074708fa3dd"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -1338,7 +1338,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "0.6.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/dependency-graph#c4d190e62f151446c4adbadd8d8bca5a19ac2455"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/dependency-graph#314a7039604a335c6f514647ccad4074708fa3dd"
 dependencies = [
  "arrayvec 0.7.2",
  "bytes",
@@ -1366,7 +1366,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "0.2.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/dependency-graph#c4d190e62f151446c4adbadd8d8bca5a19ac2455"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/dependency-graph#314a7039604a335c6f514647ccad4074708fa3dd"
 dependencies = [
  "ethers-core",
  "reqwest",
@@ -1379,7 +1379,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "0.6.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/dependency-graph#c4d190e62f151446c4adbadd8d8bca5a19ac2455"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/dependency-graph#314a7039604a335c6f514647ccad4074708fa3dd"
 dependencies = [
  "async-trait",
  "ethers-contract",
@@ -1402,7 +1402,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "0.6.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/dependency-graph#c4d190e62f151446c4adbadd8d8bca5a19ac2455"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/dependency-graph#314a7039604a335c6f514647ccad4074708fa3dd"
 dependencies = [
  "async-trait",
  "auto_impl 0.5.0",
@@ -1432,7 +1432,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "0.6.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/dependency-graph#c4d190e62f151446c4adbadd8d8bca5a19ac2455"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/dependency-graph#314a7039604a335c6f514647ccad4074708fa3dd"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1455,7 +1455,7 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "0.1.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/dependency-graph#c4d190e62f151446c4adbadd8d8bca5a19ac2455"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/dependency-graph#314a7039604a335c6f514647ccad4074708fa3dd"
 dependencies = [
  "colored",
  "dunce",
