@@ -213,7 +213,7 @@ impl Tui {
             };
             // Format line indicator. It's different if the currently executing line is here
             let linenr_format = if line_number == current_step {
-                format!("{: <3}▶", (line_number + 1))
+                format!("{: <3} ▶", (line_number + 1))
             } else {
                 format!("{: <4}", (line_number + 1))
             };
@@ -242,9 +242,11 @@ impl Tui {
             .title(" Stack ")
             .borders(Borders::ALL);
         let stack = &debug_steps[current_step].stack;
+        let min_len = usize::max(format!("{}", stack.len()).len(), 2);
+
         let text: Vec<Spans> = stack.iter().enumerate().map(|(i, stack_item)| {
             Spans::from(Span::styled(
-                format!("{}: {:?} \n", i, stack_item),
+                format!("{: <min_len$}: {:?} \n", i, stack_item, min_len=min_len),
                 Style::default().fg(Color::White)
             ))
         }).collect();
@@ -260,6 +262,9 @@ impl Tui {
             .title(" Memory ")
             .borders(Borders::ALL);
         let memory = &debug_steps[current_step].memory.data();
+        let max_i = memory.len() / 32;
+        let min_len = format!("{:x}", max_i*32).len();
+
         let text: Vec<Spans> = memory.chunks(32).enumerate().map(|(i, mem_word)| {
             let strings: String = mem_word.chunks(4).map(|bytes4| {
                 bytes4.into_iter().map(|byte| {
@@ -268,7 +273,7 @@ impl Tui {
                 }).collect::<Vec<String>>().join(" ")
             }).collect::<Vec<String>>().join("  ");
             Spans::from(Span::styled(
-                format!("{:x}: {} \n", i*32, strings),
+                format!("{:0min_len$x}: {} \n", i*32, strings, min_len=min_len),
                 Style::default().fg(Color::White)
             ))
         }).collect();
@@ -304,7 +309,7 @@ impl UiAgent for Tui {
     fn start(mut self) -> Result<ApplicationExitReason> {
         // Setup event loop and input handling
         let (tx, rx) = mpsc::channel();
-        let tick_rate = Duration::from_millis(250);
+        let tick_rate = Duration::from_millis(50);
 
         let opcode_list = self.opcode_list.clone();
         // Thread that will send interrupt singals to UI thread (this one)
@@ -454,7 +459,7 @@ impl UiAgent for Tui {
                         }
                     }
                     MouseEventKind::ScrollDown => {
-                        if self.current_step < opcode_list.len() {
+                        if self.current_step < opcode_list.len() - 1 {
                             self.current_step += 1;
                         }
                     }
