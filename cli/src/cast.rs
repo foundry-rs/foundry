@@ -274,7 +274,8 @@ async fn main() -> eyre::Result<()> {
                 }
             }
             WalletSubcommands::Address { private_key } => {
-                println!("Address: {:#x}", LocalWallet::from_str(&private_key)?.address());
+                let wallet = LocalWallet::from_str(&private_key).expect("invalid private key");
+                println!("Address: {}", SimpleCast::checksum_address(&wallet.address())?);
             }
             WalletSubcommands::Sign { message, private_key } => {
                 let wallet =
