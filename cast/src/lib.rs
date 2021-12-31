@@ -131,6 +131,38 @@ where
         Ok::<_, eyre::Error>(res)
     }
 
+    /// Estimates the gas cost of a transaction
+    ///
+    /// ```no_run
+    /// use cast::Cast;
+    /// use ethers_core::types::Address;
+    /// use ethers_providers::{Provider, Http};
+    /// use std::{str::FromStr, convert::TryFrom};
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
+    /// let cast = Cast::new(provider);
+    /// let from = "vitalik.eth";
+    /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
+    /// let sig = "greet(string)()";
+    /// let args = vec!["5".to_owned()];
+    /// let data = cast.estimate(from, to, Some((sig, args))).await?;
+    /// println!("{}", data);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn estimate<F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
+        &self,
+        from: F,
+        to: T,
+        args: Option<(&str, Vec<String>)>,
+    ) -> Result<U256> {
+        let tx = self.build_tx(from, to, args).await?.into();
+        let res = self.provider.estimate_gas(&tx).await?;
+
+        Ok::<_, eyre::Error>(res)
+    }
+
     async fn build_tx<F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
         &self,
         from: F,
