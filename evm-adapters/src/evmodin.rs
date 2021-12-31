@@ -1,7 +1,7 @@
 use crate::Evm;
 
 #[cfg(feature = "sputnik")]
-use crate::sputnik::cheatcodes::debugger::DebugStep;
+use crate::sputnik::cheatcodes::debugger::DebugArena;
 
 use ethers::types::{Address, Bytes, U256};
 
@@ -76,7 +76,7 @@ impl<S: HostExt, Tr: Tracer> Evm<S> for EvmOdin<S, Tr> {
 
     /// Grabs debug steps
     #[cfg(feature = "sputnik")]
-    fn debug_steps(&self) -> Vec<Vec<DebugStep>> {
+    fn debug_calls(&self) -> Vec<DebugArena> {
         vec![]
     }
 

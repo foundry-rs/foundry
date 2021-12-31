@@ -3,7 +3,7 @@
 /// Abstraction over [Sputnik EVM](https://github.com/rust-blockchain/evm)
 pub mod sputnik;
 #[cfg(feature = "sputnik")]
-use crate::sputnik::cheatcodes::debugger::DebugStep;
+use crate::sputnik::cheatcodes::debugger::DebugArena;
 
 /// Abstraction over [evmodin](https://github.com/rust-blockchain/evm)
 #[cfg(feature = "evmodin")]
@@ -87,7 +87,7 @@ pub trait Evm<State> {
 
     /// Grabs debug steps
     #[cfg(feature = "sputnik")]
-    fn debug_steps(&self) -> Vec<Vec<DebugStep>>;
+    fn debug_calls(&self) -> Vec<DebugArena>;
 
     /// Gets all logs from the execution, regardless of reverts
     fn all_logs(&self) -> Vec<String>;

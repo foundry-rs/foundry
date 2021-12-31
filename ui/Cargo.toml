@@ -12,3 +12,4 @@ tui = {  version = "0.16.0", default-features = false, features = ["crossterm"] 
 evm-adapters = {path = "../evm-adapters", features = ["sputnik"] }
 eyre = "0.6.5"
 hex = "*"
+ethers = { git = "https://github.com/gakonst/ethers-rs" }

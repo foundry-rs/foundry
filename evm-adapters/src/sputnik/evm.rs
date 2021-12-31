@@ -1,7 +1,7 @@
 use crate::{call_tracing::CallTraceArena, Evm, FAUCET_ACCOUNT};
 use ethers::types::{Address, Bytes, U256};
 
-use crate::sputnik::cheatcodes::debugger::DebugStep;
+use crate::sputnik::cheatcodes::debugger::DebugArena;
 
 use sputnik::{
     backend::{Backend, MemoryAccount},
@@ -95,8 +95,8 @@ where
 
     /// Grabs debug steps
     #[cfg(feature = "sputnik")]
-    fn debug_steps(&self) -> Vec<Vec<DebugStep>> {
-        self.executor.debug_steps()
+    fn debug_calls(&self) -> Vec<DebugArena> {
+        self.executor.debug_calls()
     }
 
     /// given an iterator of contract address to contract bytecode, initializes

@@ -29,6 +29,8 @@ use tui::{
     Terminal,
 };
 
+use ethers::types::Address;
+
 /// Trait for starting the ui
 pub trait Ui {
     /// Start the agent that will now take over.
@@ -42,8 +44,7 @@ pub enum TUIExitReason {
 }
 
 pub struct Tui {
-    debug_steps: Vec<DebugStep>,
-    opcode_list: Vec<String>,
+    debug_arena: Vec<(Address, Vec<DebugStep>)>,
     terminal: Terminal<CrosstermBackend<io::Stdout>>,
     /// Buffer for keys prior to execution, i.e. '10' + 'k' => move up 10 operations
     key_buffer: String,
@@ -54,15 +55,14 @@ pub struct Tui {
 impl Tui {
     /// Create a tui
     #[allow(unused_must_use)]
-    pub fn new(debug_steps: Vec<DebugStep>, current_step: usize) -> Result<Self> {
+    pub fn new(debug_arena: Vec<(Address, Vec<DebugStep>)>, current_step: usize) -> Result<Self> {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
         execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
         terminal.hide_cursor();
-        let opcode_list = debug_steps.iter().map(|step| step.pretty_opcode()).collect();
-        Ok(Tui { debug_steps, opcode_list, terminal, key_buffer: String::new(), current_step })
+        Ok(Tui { debug_arena, terminal, key_buffer: String::new(), current_step })
     }
 
     /// Grab number from buffer. Used for something like '10k' to move up 10 operations
@@ -81,8 +81,9 @@ impl Tui {
     /// Create layout and subcomponents
     fn draw_layout<B: Backend>(
         f: &mut Frame<B>,
+        address: Address,
         debug_steps: &[DebugStep],
-        opcode_list: Vec<String>,
+        opcode_list: &[String],
         current_step: usize,
         draw_memory: &mut DrawMemory,
     ) {
@@ -97,11 +98,12 @@ impl Tui {
             // split right pane horizontally to construct stack and memory
             if let [stack_pane, memory_pane] = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)].as_ref())
+                .constraints([Constraint::Ratio(1, 4), Constraint::Ratio(3, 4)].as_ref())
                 .split(right_pane)[..]
             {
                 Tui::draw_op_list(
                     f,
+                    address,
                     debug_steps,
                     opcode_list,
                     current_step,
@@ -121,15 +123,18 @@ impl Tui {
     /// Draw opcode list into main component
     fn draw_op_list<B: Backend>(
         f: &mut Frame<B>,
+        address: Address,
         debug_steps: &[DebugStep],
-        opcode_list: Vec<String>,
+        opcode_list: &[String],
         current_step: usize,
         draw_memory: &mut DrawMemory,
         area: Rect,
     ) {
         let block_source_code = Block::default()
             .title(format!(
-                " Op: #: {}, pc: {} ----- q: quit, a: JUMPDEST-, s: JUMPDEST+, j: OP+, k: OP-, g: OP0, G: OP_LAST",
+                " Op: {} - Address: {} #: {}, pc: {} ----- q: quit, a: JUMPDEST-, s: JUMPDEST+, j: OP+, k: OP-, g: OP0, G: OP_LAST",
+                draw_memory.inner_call_index,
+                address,
                 current_step,
                 if let Some(step) = debug_steps.get(current_step) { step.pc.to_string() } else { "END".to_string() }
             ))
@@ -284,8 +289,6 @@ impl Ui for Tui {
     fn start(mut self) -> Result<TUIExitReason> {
         let tick_rate = Duration::from_millis(75);
 
-        let opcode_list = self.opcode_list.clone();
-
         // setup a channel to send interrupts
         let (tx, rx) = mpsc::channel();
         thread::spawn(move || {
@@ -317,9 +320,20 @@ impl Ui for Tui {
         self.terminal.clear()?;
         let mut draw_memory: DrawMemory = DrawMemory::default();
 
-        let debug_steps = &self.debug_steps[..];
+        let debug_call: Vec<(Address, Vec<DebugStep>)> = self.debug_arena.clone();
+        let mut opcode_list: Vec<String> =
+            debug_call[0].1.iter().map(|step| step.pretty_opcode()).collect();
+        let mut last_index = 0;
         // UI thread that manages drawing
         loop {
+            if last_index != draw_memory.inner_call_index {
+                opcode_list = debug_call[draw_memory.inner_call_index]
+                    .1
+                    .iter()
+                    .map(|step| step.pretty_opcode())
+                    .collect();
+                last_index = draw_memory.inner_call_index;
+            }
             // grab interrupt
             match rx.recv()? {
                 // key press
@@ -340,6 +354,9 @@ impl Ui for Tui {
                         for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
                             if self.current_step < opcode_list.len() - 1 {
                                 self.current_step += 1;
+                            } else if draw_memory.inner_call_index < debug_call.len() - 1 {
+                                draw_memory.inner_call_index += 1;
+                                self.current_step = 0;
                             }
                         }
                         self.key_buffer.clear();
@@ -349,18 +366,24 @@ impl Ui for Tui {
                         for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
                             if self.current_step > 0 {
                                 self.current_step -= 1;
+                            } else if draw_memory.inner_call_index > 0 {
+                                draw_memory.inner_call_index -= 1;
+                                self.current_step =
+                                    debug_call[draw_memory.inner_call_index].1.len() - 1;
                             }
                         }
                         self.key_buffer.clear();
                     }
                     // Go to top of file
                     KeyCode::Char('g') => {
+                        draw_memory.inner_call_index = 0;
                         self.current_step = 0;
                         self.key_buffer.clear();
                     }
                     // Go to bottom of file
                     KeyCode::Char('G') => {
-                        self.current_step = opcode_list.len() - 1;
+                        draw_memory.inner_call_index = debug_call.len() - 1;
+                        self.current_step = debug_call[draw_memory.inner_call_index].1.len() - 1;
                         self.key_buffer.clear();
                     }
                     // Step forward
@@ -434,11 +457,18 @@ impl Ui for Tui {
                     MouseEventKind::ScrollUp => {
                         if self.current_step > 0 {
                             self.current_step -= 1;
+                        } else if draw_memory.inner_call_index > 0 {
+                            draw_memory.inner_call_index -= 1;
+                            self.current_step =
+                                debug_call[draw_memory.inner_call_index].1.len() - 1;
                         }
                     }
                     MouseEventKind::ScrollDown => {
                         if self.current_step < opcode_list.len() - 1 {
                             self.current_step += 1;
+                        } else if draw_memory.inner_call_index < debug_call.len() - 1 {
+                            draw_memory.inner_call_index += 1;
+                            self.current_step = 0;
                         }
                     }
                     _ => {}
@@ -450,8 +480,9 @@ impl Ui for Tui {
             self.terminal.draw(|f| {
                 Tui::draw_layout(
                     f,
-                    &debug_steps,
-                    opcode_list.clone(),
+                    debug_call[draw_memory.inner_call_index].0,
+                    &debug_call[draw_memory.inner_call_index].1[..],
+                    &opcode_list,
                     current_step,
                     &mut draw_memory,
                 )
@@ -470,10 +501,11 @@ enum Interrupt {
 /// This is currently used to remember last scroll
 /// position so screen doesn't wiggle as much.
 struct DrawMemory {
-    current_startline: usize,
+    pub current_startline: usize,
+    pub inner_call_index: usize,
 }
 impl DrawMemory {
     fn default() -> Self {
-        DrawMemory { current_startline: 0 }
+        DrawMemory { current_startline: 0, inner_call_index: 0 }
     }
 }

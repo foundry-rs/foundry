@@ -2,7 +2,7 @@ use sputnik::{
     Capture, ExitReason, ExitSucceed, Handler, Machine, Memory, Opcode, Resolve, Runtime,
 };
 
-use ethers::types::H256;
+use ethers::types::{Address, H256};
 
 use std::{borrow::Cow, fmt::Display, rc::Rc};
 /// EVM runtime.
@@ -14,12 +14,96 @@ pub struct ForgeRuntime<'b, 'config> {
 }
 
 #[derive(Debug, Clone)]
+/// An arena of `DebugNode`s
+pub struct DebugArena {
+    /// The arena of nodes
+    pub arena: Vec<DebugNode>,
+    /// The entry index, denoting the first node's index in the arena
+    pub entry: usize,
+}
+
+impl Default for DebugArena {
+    fn default() -> Self {
+        DebugArena { arena: vec![Default::default()], entry: 0 }
+    }
+}
+
+impl DebugArena {
+    /// Pushes a new debug node into the arena
+    pub fn push_node(&mut self, entry: usize, mut new_node: DebugNode) {
+        match new_node.depth {
+            // The entry node, just update it
+            0 => {
+                self.arena[entry] = new_node;
+            }
+            // we found the parent node, add the new node as a child
+            _ if self.arena[entry].depth == new_node.depth - 1 => {
+                new_node.idx = self.arena.len();
+                new_node.location = self.arena[entry].children.len();
+                self.arena[entry].children.push(new_node.idx);
+                self.arena.push(new_node);
+            }
+            // we haven't found the parent node, go deeper
+            _ => self.push_node(
+                *self.arena[entry].children.last().expect("Disconnected debug node"),
+                new_node,
+            ),
+        }
+    }
+
+    pub fn flatten(&self, entry: usize, flattened: &mut Vec<(Address, Vec<DebugStep>)>) {
+        let node = &self.arena[entry];
+        flattened.push((node.address, node.steps.clone()));
+        node.children.iter().for_each(|child| {
+            self.flatten(*child, flattened);
+        });
+    }
+}
+
+#[derive(Default, Debug, Clone)]
+/// A node in the arena
+pub struct DebugNode {
+    /// Parent node index in the arena
+    pub parent: Option<usize>,
+    /// Children node indexes in the arena
+    pub children: Vec<usize>,
+    /// Location in parent
+    pub location: usize,
+    /// This node's index in the arena
+    pub idx: usize,
+    /// Address context
+    pub address: Address,
+    /// Depth
+    pub depth: usize,
+    /// The debug steps
+    pub steps: Vec<DebugStep>,
+}
+
+impl DebugNode {
+    pub fn new(address: Address, depth: usize, steps: Vec<DebugStep>) -> Self {
+        Self { address, depth, steps, ..Default::default() }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct DebugStep {
     pub pc: usize,
     pub stack: Vec<H256>,
     pub memory: Memory,
     pub op: OpCode,
     pub push_bytes: Option<Vec<u8>>,
+}
+
+impl Default for DebugStep {
+    fn default() -> Self {
+        Self {
+            pc: 0,
+            stack: vec![],
+            memory: Memory::new(0),
+            op: OpCode(Opcode::INVALID, None),
+            push_bytes: None,
+        }
+    }
 }
 
 impl DebugStep {
@@ -96,86 +180,35 @@ impl<'b, 'config> ForgeRuntime<'b, 'config> {
     }
 }
 
-pub struct Debugger<'b, 'config> {
-    pub runtime: &'b mut ForgeRuntime<'b, 'config>,
-    pub steps: Vec<DebugStep>,
+#[derive(Debug, Copy, Clone)]
+pub enum CheatOp {
+    ROLL,
+    WARP,
+    FEE,
+    STORE,
+    LOAD,
+    FFI,
+    ADDR,
+    SIGN,
+    PRANK,
+    STARTPRANK,
+    STOPPRANK,
+    DEAL,
+    ETCH,
+    EXPECTREVERT,
+    RECORD,
+    ACCESSES,
+    EXPECTEMIT,
 }
 
-impl<'b, 'config> Debugger<'b, 'config> {
-    pub fn new_with_runtime(runtime: &'b mut ForgeRuntime<'b, 'config>) -> Self {
-        Self { runtime, steps: Vec::new() }
-    }
-
-    pub fn debug_step<'a, H: Handler>(
-        &'a mut self,
-        handler: &mut H,
-    ) -> Result<(), Capture<ExitReason, Resolve<'a, 'config, H>>> {
-        let pc = if let Ok(pos) = self.runtime.inner.machine().position() { *pos } else { 0 };
-        let mut push_bytes = None;
-        let step = if let Some((op, stack)) = self.runtime.inner.machine().inspect() {
-            let op = OpCode(op);
-            if let Some(push_size) = op.push_size() {
-                let push_start = pc + 1;
-                let push_end = pc + 1 + push_size as usize;
-                if push_end < self.runtime.code.len() {
-                    push_bytes = Some(self.runtime.code[push_start..push_end].to_vec());
-                } else {
-                    panic!("PUSH{} exceeds codesize?", push_size)
-                }
-            }
-            let mut stack = stack.data().clone();
-            stack.reverse();
-            DebugStep {
-                pc,
-                stack,
-                memory: self.runtime.inner.machine().memory().clone(),
-                op,
-                push_bytes,
-            }
-        } else {
-            let mut stack = self.runtime.inner.machine().stack().data().clone();
-            stack.reverse();
-            DebugStep {
-                pc,
-                stack,
-                memory: self.runtime.inner.machine().memory().clone(),
-                op: OpCode(Opcode::INVALID),
-                push_bytes,
-            }
-        };
-        self.steps.push(step);
-        self.runtime.inner.step(handler)
-    }
-
-    /// Loop stepping the runtime until it stops.
-    pub fn debug_run<H: Handler>(&mut self, handler: &mut H) -> Capture<ExitReason, ()> {
-        let mut done = false;
-        let mut res = Capture::Exit(ExitReason::Succeed(ExitSucceed::Returned));
-        while !done {
-            let r = self.debug_step(handler);
-            match r {
-                Ok(()) => {}
-                Err(e) => {
-                    done = true;
-                    match e {
-                        Capture::Exit(s) => res = Capture::Exit(s),
-                        Capture::Trap(_) => unreachable!("Trap is Infallible"),
-                    }
-                }
-            }
-        }
-        res
-    }
-
-    pub fn print_steps(&self) {
-        self.steps.iter().for_each(|step| {
-            println!("{}", step);
-        });
+impl Default for CheatOp {
+    fn default() -> Self {
+        CheatOp::ROLL
     }
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct OpCode(pub Opcode);
+pub struct OpCode(pub Opcode, pub Option<CheatOp>);
 
 impl OpCode {
     pub const fn name(&self) -> &'static str {
@@ -323,7 +356,31 @@ impl OpCode {
             Opcode::REVERT => "REVERT",
             Opcode::INVALID => "INVALID",
             Opcode::SUICIDE => "SELFDESTRUCT",
-            _ => "UNDEFINED",
+            _ => {
+                if let Some(cheat) = self.1 {
+                    match cheat {
+                        CheatOp::ROLL => "VM_ROLL",
+                        CheatOp::WARP => "VM_WARP",
+                        CheatOp::FEE => "VM_FEE",
+                        CheatOp::STORE => "VM_STORE",
+                        CheatOp::LOAD => "VM_LOAD",
+                        CheatOp::FFI => "VM_FFI",
+                        CheatOp::ADDR => "VM_ADDR",
+                        CheatOp::SIGN => "VM_SIGN",
+                        CheatOp::PRANK => "VM_PRANK",
+                        CheatOp::STARTPRANK => "VM_STARTPRANK",
+                        CheatOp::STOPPRANK => "VM_STOPPRANK",
+                        CheatOp::DEAL => "VM_DEAL",
+                        CheatOp::ETCH => "VM_ETCH",
+                        CheatOp::EXPECTREVERT => "VM_EXPECTREVERT",
+                        CheatOp::RECORD => "VM_RECORD",
+                        CheatOp::ACCESSES => "VM_ACCESSES",
+                        CheatOp::EXPECTEMIT => "VM_EXPECTEMIT",
+                    }
+                } else {
+                    "UNDEFINED"
+                }
+            }
         }
     }
 
