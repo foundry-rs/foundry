@@ -278,24 +278,42 @@ pub enum WalletSubcommands {
     New {
         #[structopt(help = "If provided, then keypair will be written to encrypted json keystore")]
         path: Option<String>,
-        #[structopt(long, short, help = "Password for json keystore", requires("path"))]
-        password: Option<String>,
+        #[structopt(
+            long,
+            short,
+            help = "Triggers a hidden password prompt for the json keystore",
+            conflicts_with = "unsafe_password",
+            requires("path")
+        )]
+        password: bool,
+        #[structopt(
+            long,
+            help = "Password for json keystore in cleartext. This is UNSAFE to use and we recommend using the --password parameter",
+            requires("path"),
+            env = "CAST_PASSWORD"
+        )]
+        unsafe_password: Option<String>,
     },
     #[structopt(name = "address", about = "Convert a private key to an address")]
     Address {
         #[structopt(
-            long = "--key",
-            short = "-k",
-            help = "the private key to generate address from"
+            long = "--unsafe-key",
+            help = "private key to generate address from in cleartext. This is UNSAFE to use and we recommend using the secure password prompt which appears when not providing this argument",
+            env = "CAST_PRIVATE_KEY"
         )]
-        private_key: String,
+        unsafe_private_key: Option<String>,
     },
     #[structopt(name = "sign", about = "Sign the message with provided private key")]
     Sign {
         #[structopt(help = "message to sign")]
         message: String,
-        #[structopt(long = "--key", short = "-k", help = "the private key for signing")]
-        private_key: String,
+        #[structopt(
+            long = "--unsafe-key",
+            help = "private key to sign with in cleartext. This is UNSAFE to use and we recommend using secure password prompt which appears when not providing this argument",
+            env = "CAST_PRIVATE_KEY",
+            conflicts_with("private_key")
+        )]
+        unsafe_private_key: Option<String>,
     },
     #[structopt(name = "verify", about = "Verify the signature on the message")]
     Verify {

@@ -23,6 +23,8 @@ use rustc_hex::ToHex;
 use std::{convert::TryFrom, str::FromStr};
 use structopt::StructOpt;
 
+use crate::utils::read_secret;
+
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
     color_eyre::install()?;
@@ -242,12 +244,12 @@ async fn main() -> eyre::Result<()> {
             println!("{}", Cast::new(provider).nonce(who, block).await?);
         }
         Subcommands::Wallet { command } => match command {
-            WalletSubcommands::New { path, password } => {
+            WalletSubcommands::New { path, password, unsafe_password } => {
                 let mut rng = thread_rng();
 
                 match path {
                     Some(path) => {
-                        let password = password.unwrap(); // guaranteed to be Some(..)
+                        let password = read_secret(password, unsafe_password)?;
                         let (key, uuid) = LocalWallet::new_keystore(&path, &mut rng, password)?;
                         let address = SimpleCast::checksum_address(&key.address())?;
                         let filepath = format!(
@@ -259,28 +261,32 @@ async fn main() -> eyre::Result<()> {
                             uuid
                         );
                         println!(
-                            "Succesfully created new keypair at `{}`. Public Key: {}.",
+                            "Succesfully created new keypair at `{}`.\nAddress: {}.",
                             filepath, address
                         );
                     }
                     None => {
                         let wallet = LocalWallet::new(&mut rng);
                         println!(
-                            "Succesfully created new keypair. Private key: {}. Public Key: {}.",
+                            "Succesfully created new keypair.\nAddress: {}.\nPrivate Key: {}.",
+                            SimpleCast::checksum_address(&wallet.address())?,
                             hex::encode(wallet.signer().to_bytes()),
-                            SimpleCast::checksum_address(&wallet.address())?
                         );
                     }
                 }
             }
-            WalletSubcommands::Address { private_key } => {
+            WalletSubcommands::Address { unsafe_private_key } => {
+                let private_key = read_secret(unsafe_private_key.is_none(), unsafe_private_key)?;
+                let private_key = private_key.strip_prefix("0x").unwrap_or(&private_key);
                 let wallet = LocalWallet::from_str(&private_key).expect("invalid private key");
                 println!("Address: {}", SimpleCast::checksum_address(&wallet.address())?);
             }
-            WalletSubcommands::Sign { message, private_key } => {
+            WalletSubcommands::Sign { message, unsafe_private_key } => {
+                let private_key = read_secret(unsafe_private_key.is_none(), unsafe_private_key)?;
+                let private_key = private_key.strip_prefix("0x").unwrap_or(&private_key);
                 let wallet =
-                    LocalWallet::from_str(&private_key).expect("invalid private key provided");
-                println!("Signed message: 0x{}", wallet.sign_message(&message).await?)
+                    LocalWallet::from_str(private_key).expect("invalid private key provided");
+                println!("Signature: 0x{}", wallet.sign_message(&message).await?)
             }
             WalletSubcommands::Verify { message, signature, address } => {
                 let pubkey = Address::from_str(&address).expect("invalid pubkey provided");
