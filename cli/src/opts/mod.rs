@@ -63,6 +63,7 @@ impl EthereumOpts {
                 .wallet
                 .private_key()
                 .transpose()
+                .or_else(|| self.wallet.interactive().transpose())
                 .or_else(|| self.wallet.mnemonic().transpose())
                 .or_else(|| self.wallet.keystore().transpose())
                 .transpose()?
@@ -83,7 +84,17 @@ pub enum WalletType {
 }
 
 #[derive(StructOpt, Debug, Clone)]
+/// The wallet options can either be:
+/// 1. Ledger
+/// 2. Trezor
+/// 3. Mnemonic (via file path)
+/// 4. Keystore (via file path)
+/// 5. Private Key (cleartext in CLI)
+/// 6. Private Key (interactively via secure prompt)
 pub struct Wallet {
+    #[structopt(long, short, help = "Interactive prompt to insert your private key")]
+    pub interactive: bool,
+
     #[structopt(long = "private-key", help = "Your private key string")]
     pub private_key: Option<String>,
 
@@ -117,6 +128,15 @@ pub struct Wallet {
 }
 
 impl Wallet {
+    fn interactive(&self) -> Result<Option<LocalWallet>> {
+        Ok(if self.interactive {
+            let private_key = rpassword::read_password()?;
+            Some(LocalWallet::from_str(&private_key)?)
+        } else {
+            None
+        })
+    }
+
     fn private_key(&self) -> Result<Option<LocalWallet>> {
         Ok(if let Some(ref private_key) = self.private_key {
             Some(LocalWallet::from_str(private_key)?)
