@@ -110,11 +110,12 @@ where
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
     /// let cast = Cast::new(provider);
+    /// let from = "vitalik.eth";
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
-    /// let sig = "function greet(string memory) public returns (string)";
-    /// let args = vec!["5".to_owned()];
-    /// let data = cast.call(to, sig, args).await?;
-    /// println!("{}", data);
+    /// let sig = "greet(string)()";
+    /// let args = vec!["hello".to_owned()];
+    /// let data = cast.send(from, to, Some((sig, args))).await?;
+    /// println!("{}", *data);
     /// # Ok(())
     /// # }
     /// ```
@@ -124,6 +125,50 @@ where
         to: T,
         args: Option<(&str, Vec<String>)>,
     ) -> Result<PendingTransaction<'_, M::Provider>> {
+        let tx = self.build_tx(from, to, args).await?;
+        let res = self.provider.send_transaction(tx, None).await?;
+
+        Ok::<_, eyre::Error>(res)
+    }
+
+    /// Estimates the gas cost of a transaction
+    ///
+    /// ```no_run
+    /// use cast::Cast;
+    /// use ethers_core::types::Address;
+    /// use ethers_providers::{Provider, Http};
+    /// use std::{str::FromStr, convert::TryFrom};
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
+    /// let cast = Cast::new(provider);
+    /// let from = "vitalik.eth";
+    /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
+    /// let sig = "greet(string)()";
+    /// let args = vec!["5".to_owned()];
+    /// let data = cast.estimate(from, to, Some((sig, args))).await?;
+    /// println!("{}", data);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn estimate<F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
+        &self,
+        from: F,
+        to: T,
+        args: Option<(&str, Vec<String>)>,
+    ) -> Result<U256> {
+        let tx = self.build_tx(from, to, args).await?.into();
+        let res = self.provider.estimate_gas(&tx).await?;
+
+        Ok::<_, eyre::Error>(res)
+    }
+
+    async fn build_tx<F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
+        &self,
+        from: F,
+        to: T,
+        args: Option<(&str, Vec<String>)>,
+    ) -> Result<Eip1559TransactionRequest> {
         let from = match from.into() {
             NameOrAddress::Name(ref ens_name) => self.provider.resolve_name(ens_name).await?,
             NameOrAddress::Address(addr) => addr,
@@ -138,9 +183,7 @@ where
             tx = tx.data(data);
         }
 
-        let res = self.provider.send_transaction(tx, None).await?;
-
-        Ok::<_, eyre::Error>(res)
+        Ok(tx)
     }
 
     /// ```no_run

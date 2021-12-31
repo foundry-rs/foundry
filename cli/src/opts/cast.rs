@@ -140,6 +140,18 @@ pub enum Subcommands {
         #[structopt(flatten)]
         eth: EthereumOpts,
     },
+    #[structopt(name = "estimate")]
+    #[structopt(about = "Estimate the gas cost of a transaction from <from> to <to> with <data>")]
+    Estimate {
+        #[structopt(help = "the address you want to transact with", parse(try_from_str = parse_name_or_address))]
+        to: NameOrAddress,
+        #[structopt(help = "the function signature you want to call")]
+        sig: String,
+        #[structopt(help = "the list of arguments you want to call the function with")]
+        args: Vec<String>,
+        #[structopt(flatten)]
+        eth: EthereumOpts,
+    },
     #[structopt(name = "--calldata-decode")]
     #[structopt(
         about = "Decode ABI-encoded hex input data. Use `--abi-decode` to decode output data"

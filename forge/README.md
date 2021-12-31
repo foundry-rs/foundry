@@ -211,6 +211,39 @@ interface Vm {
     function expectRevert(bytes calldata) external;
 }
 ```
+### `console.log`
+
+
+We support the logging functionality from Hardhat's `console.log`.
+
+If you are on a hardhat project, `import hardhat/console.sol` should just work if you use `forge test --hh`.
+
+If no, there is an implementation contract [here](https://github.com/gakonst/foundry/blob/master/evm-adapters/testdata/console.sol). We currently recommend that you copy this contract, place it in your `test` folder, and import it into the contract where you wish to use `console.log`, though there should be more streamlined functionality soon.
+
+Usage follows the same format as [Hardhat](https://hardhat.org/hardhat-network/reference/#console-log):
+```solidity
+import "./console.sol";
+...
+console.log(someValue);
+
+```
+
+## Remappings
+If you are working in a repo with NPM-style imports, like
+```
+import "@openzeppelin/contracts/access/Ownable.sol";
+```
+
+then you will need to create a `remappings.txt` file at the top level of your project directory, so that Forge knows where to find these dependencies. 
+
+For example, if you have `@openzeppelin` imports, you would 
+
+1. `forge install openzeppelin/openzeppelin-contracts` (this will add the repo to `lib/openzepplin-contracts`)
+2. Create a remappings file: `touch remappings.txt`
+3. Add this line to `remappings.txt`  
+```
+@openzeppelin/=lib/openzeppelin-contracts/
+```
 
 ## Future Features
 
