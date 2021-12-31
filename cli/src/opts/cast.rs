@@ -3,7 +3,7 @@ use std::str::FromStr;
 use ethers::types::{Address, BlockId, BlockNumber, NameOrAddress, H256};
 use structopt::StructOpt;
 
-use super::EthereumOpts;
+use super::{EthereumOpts, Wallet};
 
 #[derive(Debug, StructOpt)]
 #[structopt(about = "Perform Ethereum RPC calls from the comfort of your command line.")]
@@ -308,24 +308,15 @@ pub enum WalletSubcommands {
     },
     #[structopt(name = "address", about = "Convert a private key to an address")]
     Address {
-        #[structopt(
-            long = "--unsafe-key",
-            help = "private key to generate address from in cleartext. This is UNSAFE to use and we recommend using the secure password prompt which appears when not providing this argument",
-            env = "CAST_PRIVATE_KEY"
-        )]
-        unsafe_private_key: Option<String>,
+        #[structopt(flatten)]
+        wallet: Wallet,
     },
     #[structopt(name = "sign", about = "Sign the message with provided private key")]
     Sign {
         #[structopt(help = "message to sign")]
         message: String,
-        #[structopt(
-            long = "--unsafe-key",
-            help = "private key to sign with in cleartext. This is UNSAFE to use and we recommend using secure password prompt which appears when not providing this argument",
-            env = "CAST_PRIVATE_KEY",
-            conflicts_with("private_key")
-        )]
-        unsafe_private_key: Option<String>,
+        #[structopt(flatten)]
+        wallet: Wallet,
     },
     #[structopt(name = "verify", about = "Verify the signature on the message")]
     Verify {

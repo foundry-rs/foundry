@@ -130,7 +130,9 @@ pub struct Wallet {
 impl Wallet {
     fn interactive(&self) -> Result<Option<LocalWallet>> {
         Ok(if self.interactive {
+            println!("Insert private key:");
             let private_key = rpassword::read_password()?;
+            let private_key = private_key.strip_prefix("0x").unwrap_or(&private_key);
             Some(LocalWallet::from_str(&private_key)?)
         } else {
             None
