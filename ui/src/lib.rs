@@ -62,13 +62,7 @@ impl Tui {
         let mut terminal = Terminal::new(backend)?;
         terminal.hide_cursor();
         let opcode_list = debug_steps.iter().map(|step| step.pretty_opcode()).collect();
-        Ok(Tui {
-            debug_steps,
-            opcode_list,
-            terminal,
-            key_buffer: String::new(),
-            current_step,
-        })
+        Ok(Tui { debug_steps, opcode_list, terminal, key_buffer: String::new(), current_step })
     }
 
     /// Grab number from buffer. Used for something like '10k' to move up 10 operations
@@ -100,7 +94,7 @@ impl Tui {
             .constraints([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)].as_ref())
             .split(total_size)[..]
         {
-            // split right pane horizontally to construct stack and memory 
+            // split right pane horizontally to construct stack and memory
             if let [stack_pane, memory_pane] = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)].as_ref())
@@ -159,10 +153,10 @@ impl Tui {
 
         // actual max start line
         let mut max_start =
-            max(min(current_step as i32 - extra_top_lines, abs_max_start), abs_min_start)
-                as usize;
+            max(min(current_step as i32 - extra_top_lines, abs_max_start), abs_min_start) as usize;
 
-        // Sometimes, towards end of file, maximum and minim lines have swapped values. Swap if the case
+        // Sometimes, towards end of file, maximum and minim lines have swapped values. Swap if the
+        // case
         if min_start > max_start {
             std::mem::swap(&mut min_start, &mut max_start);
         }
@@ -176,20 +170,20 @@ impl Tui {
         }
         draw_memory.current_startline = display_start;
 
-        let max_pc_len = debug_steps.iter().fold(0, |max_val, val| val.pc.max(max_val)).to_string().len();
+        let max_pc_len =
+            debug_steps.iter().fold(0, |max_val, val| val.pc.max(max_val)).to_string().len();
 
         // Define closure that prints one more line of source code
         let mut add_new_line = |line_number| {
-            let bg_color =
-                if line_number == current_step { Color::DarkGray } else { Color::Reset };
-            
+            let bg_color = if line_number == current_step { Color::DarkGray } else { Color::Reset };
+
             // Format line number
             let line_number_format = if line_number == current_step {
                 let step: &DebugStep = &debug_steps[line_number];
-                format!("{:0>max_pc_len$x} ▶", step.pc, max_pc_len=max_pc_len)
+                format!("{:0>max_pc_len$x} ▶", step.pc, max_pc_len = max_pc_len)
             } else if line_number < debug_steps.len() {
-                    let step: &DebugStep = &debug_steps[line_number];
-                    format!("{:0>max_pc_len$x}: ", step.pc, max_pc_len=max_pc_len)
+                let step: &DebugStep = &debug_steps[line_number];
+                format!("{:0>max_pc_len$x}: ", step.pc, max_pc_len = max_pc_len)
             } else {
                 "END".to_string()
             };
@@ -288,7 +282,6 @@ impl Tui {
 
 impl Ui for Tui {
     fn start(mut self) -> Result<TUIExitReason> {
-        
         let tick_rate = Duration::from_millis(75);
 
         let opcode_list = self.opcode_list.clone();
@@ -344,9 +337,7 @@ impl Ui for Tui {
                     // Move down
                     KeyCode::Char('j') | KeyCode::Down => {
                         // grab number of times to do it
-                        for _ in
-                            0..Tui::buffer_as_number(&self.key_buffer, 1)
-                        {
+                        for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
                             if self.current_step < opcode_list.len() - 1 {
                                 self.current_step += 1;
                             }
@@ -355,9 +346,7 @@ impl Ui for Tui {
                     }
                     // Move up
                     KeyCode::Char('k') | KeyCode::Up => {
-                        for _ in
-                            0..Tui::buffer_as_number(&self.key_buffer, 1)
-                        {
+                        for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
                             if self.current_step > 0 {
                                 self.current_step -= 1;
                             }
@@ -376,9 +365,7 @@ impl Ui for Tui {
                     }
                     // Step forward
                     KeyCode::Char('s') => {
-                        for _ in
-                            0..Tui::buffer_as_number(&self.key_buffer, 1)
-                        {
+                        for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
                             let remaining_ops = opcode_list[self.current_step..].to_vec().clone();
                             self.current_step += remaining_ops
                                 .iter()
@@ -405,9 +392,7 @@ impl Ui for Tui {
                     }
                     // Step backwards
                     KeyCode::Char('a') => {
-                        for _ in
-                            0..Tui::buffer_as_number(&self.key_buffer, 1)
-                        {
+                        for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
                             let prev_ops = opcode_list[..self.current_step].to_vec().clone();
                             self.current_step = prev_ops
                                 .iter()
