@@ -117,7 +117,14 @@ impl Tui {
                 .constraints([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)].as_ref())
                 .split(right_plane)[..]
             {
-                Tui::draw_op_list(f, opcode_list, current_step, draw_memory, left_plane);
+                Tui::draw_op_list(
+                    f,
+                    &debug_steps,
+                    opcode_list,
+                    current_step,
+                    draw_memory,
+                    left_plane,
+                );
                 Tui::draw_stack(f, &debug_steps, current_step, stack_plane);
                 Tui::draw_memory(f, &debug_steps, current_step, memory_plane);
             } else {
@@ -135,6 +142,7 @@ impl Tui {
     /// TODO: syntax highlighting
     fn draw_op_list<B: Backend>(
         f: &mut Frame<B>,
+        debug_steps: &[DebugStep],
         opcode_list: Vec<String>,
         // Line (0-based) which user has selected via cursor
         current_step: usize,
@@ -143,8 +151,9 @@ impl Tui {
     ) {
         let block_source_code = Block::default()
             .title(format!(
-                " Op: {} - q: quit, a: JUMPDEST-, s: JUMPDEST+, j: OP+, k: OP-, g: OP0, G: OP_LAST",
-                current_step
+                " Op: #: {}, pc: {} ----- q: quit, a: JUMPDEST-, s: JUMPDEST+, j: OP+, k: OP-, g: OP0, G: OP_LAST",
+                current_step,
+                if let Some(step) = debug_steps.get(current_step) { step.pc.to_string() } else { "END".to_string() }
             ))
             .borders(Borders::ALL);
         let mut text_output: Vec<Spans> = Vec::new();
@@ -195,14 +204,23 @@ impl Tui {
                 if line_number == current_step { Color::DarkGray } else { Color::Reset };
             // Format line indicator. It's different if the currently executing line is here
             let linenr_format = if line_number == current_step {
-                format!("{: <3} ▶", (line_number + 1))
+                let step: &DebugStep = &debug_steps[line_number];
+                format!("{:0>4x} ▶", step.pc)
+            } else if line_number < debug_steps.len() {
+                    let step: &DebugStep = &debug_steps[line_number];
+                    format!("{:0>4x}: ", step.pc)
             } else {
-                format!("{: <4}", (line_number + 1))
+                "END".to_string()
             };
 
             if let Some(op) = opcode_list.get(line_number) {
                 text_output.push(Spans::from(Span::styled(
-                    format!("{} {} \n", linenr_format, op),
+                    format!("{} {}", linenr_format, op),
+                    Style::default().fg(Color::White).bg(linenr_bg_color),
+                )));
+            } else {
+                text_output.push(Spans::from(Span::styled(
+                    linenr_format,
                     Style::default().fg(Color::White).bg(linenr_bg_color),
                 )));
             }
@@ -250,9 +268,11 @@ impl Tui {
         current_step: usize,
         area: Rect,
     ) {
-        let stack_space =
-            Block::default().title(format!(" Memory: {} ", current_step)).borders(Borders::ALL);
-        let memory = &debug_steps[current_step].memory.data();
+        let memory = &debug_steps[current_step].memory;
+        let stack_space = Block::default()
+            .title(format!(" Memory - Max Expansion: {} bytes", memory.effective_len()))
+            .borders(Borders::ALL);
+        let memory = memory.data();
         let max_i = memory.len() / 32;
         let min_len = format!("{:x}", max_i * 32).len();
 

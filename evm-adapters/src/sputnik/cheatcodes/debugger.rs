@@ -110,8 +110,7 @@ impl<'b, 'config> Debugger<'b, 'config> {
         &'a mut self,
         handler: &mut H,
     ) -> Result<(), Capture<ExitReason, Resolve<'a, 'config, H>>> {
-        let pc =
-            if let Ok(pos) = self.runtime.inner.machine().position() { *pos } else { 0 };
+        let pc = if let Ok(pos) = self.runtime.inner.machine().position() { *pos } else { 0 };
         let mut push_bytes = None;
         let step = if let Some((op, stack)) = self.runtime.inner.machine().inspect() {
             let op = OpCode(op);

@@ -577,11 +577,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
     }
 
     /// Debug execute a transaction by grabbing the debugger from state_mut, adding the runtime.
-    pub fn debug_execute(
-        &mut self,
-        runtime: &mut Runtime,
-        code: Rc<Vec<u8>>,
-    ) -> ExitReason {
+    pub fn debug_execute(&mut self, runtime: &mut Runtime, code: Rc<Vec<u8>>) -> ExitReason {
         let res = {
             let mut forge_runtime = ForgeRuntime::new_with_runtime(runtime, code);
             let mut debugger = Debugger::new_with_runtime(&mut forge_runtime);
