@@ -6,14 +6,18 @@ use cast::{Cast, SimpleCast};
 
 mod opts;
 use opts::{
-    cast::{Opts, Subcommands},
+    cast::{Opts, Subcommands, WalletSubcommands},
     WalletType,
 };
 
 use ethers::{
-    core::types::{BlockId, BlockNumber::Latest},
+    core::{
+        rand::thread_rng,
+        types::{BlockId, BlockNumber::Latest},
+    },
     providers::{Middleware, Provider},
-    types::{NameOrAddress, U256},
+    signers::{LocalWallet, Signer},
+    types::{Address, NameOrAddress, Signature, U256},
 };
 use rustc_hex::ToHex;
 use std::{convert::TryFrom, str::FromStr};
@@ -237,6 +241,60 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).nonce(who, block).await?);
         }
+        Subcommands::Wallet { command } => match command {
+            WalletSubcommands::New { path, password } => {
+                let mut rng = thread_rng();
+
+                match path {
+                    Some(path) => {
+                        let password = password.unwrap(); // guaranteed to be Some(..)
+                        let (key, uuid) = LocalWallet::new_keystore(&path, &mut rng, password)?;
+                        let address = SimpleCast::checksum_address(&key.address())?;
+                        let filepath = format!(
+                            "{}/{}",
+                            std::fs::canonicalize(path)?
+                                .into_os_string()
+                                .into_string()
+                                .expect("failed to canonicalize file path"),
+                            uuid
+                        );
+                        println!(
+                            "Succesfully created new keypair at `{}`. Public Key: {}.",
+                            filepath, address
+                        );
+                    }
+                    None => {
+                        let wallet = LocalWallet::new(&mut rng);
+                        println!(
+                            "Succesfully created new keypair. Private key: {}. Public Key: {}.",
+                            hex::encode(wallet.signer().to_bytes()),
+                            SimpleCast::checksum_address(&wallet.address())?
+                        );
+                    }
+                }
+            }
+            WalletSubcommands::Address { private_key } => {
+                println!("Address: {:#x}", LocalWallet::from_str(&private_key)?.address());
+            }
+            WalletSubcommands::Sign { message, private_key } => {
+                let wallet =
+                    LocalWallet::from_str(&private_key).expect("invalid private key provided");
+                println!("Signed message: 0x{}", wallet.sign_message(&message).await?)
+            }
+            WalletSubcommands::Verify { message, signature, address } => {
+                let pubkey = Address::from_str(&address).expect("invalid pubkey provided");
+                let signature = Signature::from_str(&signature)?;
+                match signature.verify(message, pubkey) {
+                    Ok(_) => {
+                        println!("Validation success. Address {} signed this message.", address)
+                    }
+                    Err(_) => println!(
+                        "Validation failed. Address {} did not sign this message.",
+                        address
+                    ),
+                }
+            }
+        },
     };
 
     Ok(())

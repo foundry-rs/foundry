@@ -265,6 +265,47 @@ pub enum Subcommands {
         #[structopt(short, long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
+    #[structopt(name = "wallet", about = "Set of wallet management utilities")]
+    Wallet {
+        #[structopt(subcommand)]
+        command: WalletSubcommands,
+    },
+}
+
+#[derive(Debug, StructOpt)]
+pub enum WalletSubcommands {
+    #[structopt(name = "new", about = "Create and output a new random keypair")]
+    New {
+        #[structopt(help = "If provided, then keypair will be written to encrypted json keystore")]
+        path: Option<String>,
+        #[structopt(long, short, help = "Password for json keystore", requires("path"))]
+        password: Option<String>,
+    },
+    #[structopt(name = "address", about = "Convert a private key to an address")]
+    Address {
+        #[structopt(
+            long = "--key",
+            short = "-k",
+            help = "the private key to generate address from"
+        )]
+        private_key: String,
+    },
+    #[structopt(name = "sign", about = "Sign the message with provided private key")]
+    Sign {
+        #[structopt(help = "message to sign")]
+        message: String,
+        #[structopt(long = "--key", short = "-k", help = "the private key for signing")]
+        private_key: String,
+    },
+    #[structopt(name = "verify", about = "Verify the signature on the message")]
+    Verify {
+        #[structopt(help = "original message")]
+        message: String,
+        #[structopt(help = "signature to verify")]
+        signature: String,
+        #[structopt(long, short, help = "pubkey of message signer")]
+        address: String,
+    },
 }
 
 fn parse_name_or_address(s: &str) -> eyre::Result<NameOrAddress> {
