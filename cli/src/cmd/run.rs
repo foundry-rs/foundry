@@ -1,4 +1,3 @@
-use ui::{Tui, ApplicationExitReason, UiAgent};
 use crate::{
     cmd::Cmd,
     opts::forge::{CompilerArgs, EvmOpts},
@@ -7,6 +6,7 @@ use forge::ContractRunner;
 use foundry_utils::IntoFunction;
 use std::path::PathBuf;
 use structopt::StructOpt;
+use ui::{ApplicationExitReason, Tui, UiAgent};
 
 use ethers::{
     prelude::artifacts::CompactContract,
@@ -86,12 +86,8 @@ impl Cmd for RunArgs {
             let steps = evm.debug_steps();
             let tui = Tui::new(steps[1].clone(), 0)?;
             match tui.start().expect("Failed to start tui") {
-                ApplicationExitReason::UserExit => {
-                    return Ok(());
-                }
+                ApplicationExitReason::UserExit => return Ok(()),
             }
-            
-                
         } else {
             // 6. print the result nicely
             if result.success {

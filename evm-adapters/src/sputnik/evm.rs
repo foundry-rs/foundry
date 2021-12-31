@@ -235,7 +235,15 @@ pub mod helpers {
     /// backend and tracing disabled
     pub fn vm<'a>() -> TestSputnikVM<'a, MemoryBackend<'a>> {
         let backend = new_backend(&*VICINITY, Default::default());
-        Executor::new_with_cheatcodes(backend, GAS_LIMIT, &*CFG, &*PRECOMPILES_MAP, true, false, false)
+        Executor::new_with_cheatcodes(
+            backend,
+            GAS_LIMIT,
+            &*CFG,
+            &*PRECOMPILES_MAP,
+            true,
+            false,
+            false,
+        )
     }
 
     /// Instantiates a Sputnik EVM with enabled cheatcodes + FFI and a simple non-forking in memory
@@ -258,7 +266,15 @@ pub mod helpers {
     pub fn vm_tracing<'a>(with_contract_limit: bool) -> TestSputnikVM<'a, MemoryBackend<'a>> {
         let backend = new_backend(&*VICINITY, Default::default());
         if with_contract_limit {
-            Executor::new_with_cheatcodes(backend, GAS_LIMIT, &*CFG, &*PRECOMPILES_MAP, true, true, false)
+            Executor::new_with_cheatcodes(
+                backend,
+                GAS_LIMIT,
+                &*CFG,
+                &*PRECOMPILES_MAP,
+                true,
+                true,
+                false,
+            )
         } else {
             Executor::new_with_cheatcodes(
                 backend,
@@ -277,7 +293,15 @@ pub mod helpers {
     pub fn vm_debug<'a>(with_contract_limit: bool) -> TestSputnikVM<'a, MemoryBackend<'a>> {
         let backend = new_backend(&*VICINITY, Default::default());
         if with_contract_limit {
-            Executor::new_with_cheatcodes(backend, GAS_LIMIT, &*CFG, &*PRECOMPILES_MAP, true, false, true)
+            Executor::new_with_cheatcodes(
+                backend,
+                GAS_LIMIT,
+                &*CFG,
+                &*PRECOMPILES_MAP,
+                true,
+                false,
+                true,
+            )
         } else {
             Executor::new_with_cheatcodes(
                 backend,

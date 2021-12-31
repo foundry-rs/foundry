@@ -1,26 +1,34 @@
 use eyre::WrapErr;
-use std::time::Duration;
-use std::time::Instant;
-use std::cmp::{max, min};
+use std::{
+    cmp::{max, min},
+    time::{Duration, Instant},
+};
 
-use std::io::{self};
-use std::thread;
-use std::sync::mpsc;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, MouseEvent, MouseEventKind},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, MouseEvent,
+        MouseEventKind,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use std::{
+    io::{self},
+    sync::mpsc,
+    thread,
+};
 
-use tui::backend::{Backend, CrosstermBackend};
-use tui::layout::{Constraint, Direction, Layout, Rect};
-use tui::style::{Color, Style};
-use tui::terminal::Frame;
-use tui::widgets::{Block, Borders, Paragraph, Wrap};
-use tui::text::{Span, Spans};
-use tui::Terminal;
 use evm_adapters::sputnik::cheatcodes::debugger::DebugStep;
 use eyre::Result;
+use tui::{
+    backend::{Backend, CrosstermBackend},
+    layout::{Constraint, Direction, Layout, Rect},
+    style::{Color, Style},
+    terminal::Frame,
+    text::{Span, Spans},
+    widgets::{Block, Borders, Paragraph, Wrap},
+    Terminal,
+};
 
 /// This trait describes structure that takes care of
 /// interacting with user.
@@ -34,7 +42,6 @@ pub enum ApplicationExitReason {
     /// User wants to exit the application
     UserExit,
 }
-
 
 pub struct Tui {
     debug_steps: Vec<DebugStep>,
@@ -69,7 +76,7 @@ impl Tui {
             opcode_list,
             terminal,
             pressed_keys_buffer: String::new(),
-            current_step
+            current_step,
         })
     }
 
@@ -107,34 +114,12 @@ impl Tui {
         {
             if let [stack_plane, memory_plane] = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints(
-                    [
-                        Constraint::Ratio(1, 2),
-                        Constraint::Ratio(1, 2),
-                    ]
-                    .as_ref(),
-                )
+                .constraints([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)].as_ref())
                 .split(right_plane)[..]
             {
-                Tui::draw_op_list(
-                    f,
-                    opcode_list,
-                    current_step,
-                    draw_memory,
-                    left_plane,
-                );
-                Tui::draw_stack(
-                    f,
-                    &debug_steps,
-                    current_step,
-                    stack_plane,
-                );
-                Tui::draw_memory(
-                    f,
-                    &debug_steps,
-                    current_step,
-                    memory_plane,
-                );
+                Tui::draw_op_list(f, opcode_list, current_step, draw_memory, left_plane);
+                Tui::draw_stack(f, &debug_steps, current_step, stack_plane);
+                Tui::draw_memory(f, &debug_steps, current_step, memory_plane);
             } else {
                 panic!("Failed to generate vertically split layout 1:1:1:1.");
             }
@@ -157,7 +142,10 @@ impl Tui {
         area: Rect,
     ) {
         let block_source_code = Block::default()
-            .title(format!(" Op: {} - q: quit, a: JUMPDEST-, s: JUMPDEST+, j: OP+, k: OP-, g: OP0, G: OP_LAST", current_step))
+            .title(format!(
+                " Op: {} - q: quit, a: JUMPDEST-, s: JUMPDEST+, j: OP+, k: OP-, g: OP0, G: OP_LAST",
+                current_step
+            ))
             .borders(Borders::ALL);
         let mut text_output: Vec<Spans> = Vec::new();
 
@@ -174,16 +162,15 @@ impl Tui {
             // Magical number 4: I don't know what it's doing here, but it works this way. Otherwise
             // we just keep maximum scroll four lines early.
             let maximum_startline = (opcode_list.len() as i32 - 1) - height + 4;
-            // Minimum startline position that makes sense - we want visible code but within limits of the source code height.
-            let mut minimum_viable_startline = max(
-                current_step as i32 - height + grace_lines,
-                minimum_startline,
-            ) as usize;
-            // Maximum startline position that makes sense - we want visible code but within limits of the source code height
-            let mut maximum_viable_startline = max(
-                min(current_step as i32 - grace_lines, maximum_startline),
-                minimum_startline,
-            ) as usize;
+            // Minimum startline position that makes sense - we want visible code but within limits
+            // of the source code height.
+            let mut minimum_viable_startline =
+                max(current_step as i32 - height + grace_lines, minimum_startline) as usize;
+            // Maximum startline position that makes sense - we want visible code but within limits
+            // of the source code height
+            let mut maximum_viable_startline =
+                max(min(current_step as i32 - grace_lines, maximum_startline), minimum_startline)
+                    as usize;
             // Sometimes, towards end of file, maximum and minim viable lines have swapped values.
             // No idea why, but swapping them helps the problem.
             if minimum_viable_startline > maximum_viable_startline {
@@ -206,11 +193,8 @@ impl Tui {
         // Define closure that prints one more line of source code
         let mut add_new_line = |line_number| {
             // Define background color depending on whether we have cursor here
-            let linenr_bg_color = if line_number == current_step {
-                Color::DarkGray
-            } else {
-                Color::Reset
-            };
+            let linenr_bg_color =
+                if line_number == current_step { Color::DarkGray } else { Color::Reset };
             // Format line indicator. It's different if the currently executing line is here
             let linenr_format = if line_number == current_step {
                 format!("{: <3} ▶", (line_number + 1))
@@ -221,7 +205,7 @@ impl Tui {
             if let Some(op) = opcode_list.get(line_number) {
                 text_output.push(Spans::from(Span::styled(
                     format!("{} {} \n", linenr_format, op),
-                    Style::default().fg(Color::White).bg(linenr_bg_color)
+                    Style::default().fg(Color::White).bg(linenr_bg_color),
                 )));
             }
         };
@@ -230,56 +214,75 @@ impl Tui {
         }
         // Add one more "phantom" line so we see line where current segment execution ends
         add_new_line(opcode_list.len());
-        let paragraph = Paragraph::new(text_output)
-            .block(block_source_code)
-            .wrap(Wrap { trim: true });
+        let paragraph =
+            Paragraph::new(text_output).block(block_source_code).wrap(Wrap { trim: true });
         f.render_widget(paragraph, area);
     }
 
     /// Draw stack.
-    fn draw_stack<B: Backend>(f: &mut Frame<B>, debug_steps: &Vec<DebugStep>, current_step: usize, area: Rect) {
-        let stack_space = Block::default()
-            .title(format!(" Stack: {} ", current_step))
-            .borders(Borders::ALL);
+    fn draw_stack<B: Backend>(
+        f: &mut Frame<B>,
+        debug_steps: &Vec<DebugStep>,
+        current_step: usize,
+        area: Rect,
+    ) {
+        let stack_space =
+            Block::default().title(format!(" Stack: {} ", current_step)).borders(Borders::ALL);
         let stack = &debug_steps[current_step].stack;
         let min_len = usize::max(format!("{}", stack.len()).len(), 2);
 
-        let text: Vec<Spans> = stack.iter().enumerate().map(|(i, stack_item)| {
-            Spans::from(Span::styled(
-                format!("{: <min_len$}: {:?} \n", i, stack_item, min_len=min_len),
-                Style::default().fg(Color::White)
-            ))
-        }).collect();
-        let paragraph = Paragraph::new(text)
-            .block(stack_space)
-            .wrap(Wrap { trim: true });
+        let text: Vec<Spans> = stack
+            .iter()
+            .enumerate()
+            .map(|(i, stack_item)| {
+                Spans::from(Span::styled(
+                    format!("{: <min_len$}: {:?} \n", i, stack_item, min_len = min_len),
+                    Style::default().fg(Color::White),
+                ))
+            })
+            .collect();
+        let paragraph = Paragraph::new(text).block(stack_space).wrap(Wrap { trim: true });
         f.render_widget(paragraph, area);
     }
 
     /// Draw stack.
-    fn draw_memory<B: Backend>(f: &mut Frame<B>, debug_steps: &Vec<DebugStep>, current_step: usize, area: Rect) {
-        let stack_space = Block::default()
-            .title(format!(" Memory: {} ", current_step))
-            .borders(Borders::ALL);
+    fn draw_memory<B: Backend>(
+        f: &mut Frame<B>,
+        debug_steps: &Vec<DebugStep>,
+        current_step: usize,
+        area: Rect,
+    ) {
+        let stack_space =
+            Block::default().title(format!(" Memory: {} ", current_step)).borders(Borders::ALL);
         let memory = &debug_steps[current_step].memory.data();
         let max_i = memory.len() / 32;
-        let min_len = format!("{:x}", max_i*32).len();
+        let min_len = format!("{:x}", max_i * 32).len();
 
-        let text: Vec<Spans> = memory.chunks(32).enumerate().map(|(i, mem_word)| {
-            let strings: String = mem_word.chunks(4).map(|bytes4| {
-                bytes4.into_iter().map(|byte| {
-                    let v: Vec<u8> = vec![*byte];
-                    format!("{}", hex::encode(&v[..]))
-                }).collect::<Vec<String>>().join(" ")
-            }).collect::<Vec<String>>().join("  ");
-            Spans::from(Span::styled(
-                format!("{:0min_len$x}: {} \n", i*32, strings, min_len=min_len),
-                Style::default().fg(Color::White)
-            ))
-        }).collect();
-        let paragraph = Paragraph::new(text)
-            .block(stack_space)
-            .wrap(Wrap { trim: true });
+        let text: Vec<Spans> = memory
+            .chunks(32)
+            .enumerate()
+            .map(|(i, mem_word)| {
+                let strings: String = mem_word
+                    .chunks(4)
+                    .map(|bytes4| {
+                        bytes4
+                            .into_iter()
+                            .map(|byte| {
+                                let v: Vec<u8> = vec![*byte];
+                                format!("{}", hex::encode(&v[..]))
+                            })
+                            .collect::<Vec<String>>()
+                            .join(" ")
+                    })
+                    .collect::<Vec<String>>()
+                    .join("  ");
+                Spans::from(Span::styled(
+                    format!("{:0min_len$x}: {} \n", i * 32, strings, min_len = min_len),
+                    Style::default().fg(Color::White),
+                ))
+            })
+            .collect();
+        let paragraph = Paragraph::new(text).block(stack_space).wrap(Wrap { trim: true });
         f.render_widget(paragraph, area);
     }
 
@@ -304,7 +307,6 @@ impl Tui {
     }
 }
 
-
 impl UiAgent for Tui {
     fn start(mut self) -> Result<ApplicationExitReason> {
         // Setup event loop and input handling
@@ -326,17 +328,17 @@ impl UiAgent for Tui {
                     let event = event::read().unwrap();
                     if let Event::Key(key) = event {
                         if let Err(_) = tx.send(Interrupt::KeyPressed(key)) {
-                            return;
+                            return
                         }
                     } else if let Event::Mouse(mouse) = event {
                         if let Err(_) = tx.send(Interrupt::MouseEvent(mouse)) {
-                            return;
+                            return
                         }
                     }
                 }
                 if last_tick.elapsed() > tick_rate {
                     if let Err(_) = tx.send(Interrupt::IntervalElapsed) {
-                        return;
+                        return
                     }
                     last_tick = Instant::now();
                 }
@@ -365,7 +367,7 @@ impl UiAgent for Tui {
                             LeaveAlternateScreen,
                             DisableMouseCapture
                         )?;
-                        return Ok(ApplicationExitReason::UserExit);
+                        return Ok(ApplicationExitReason::UserExit)
                     }
                     // Move cursor down
                     KeyCode::Char('j') | KeyCode::Down => {
@@ -405,17 +407,26 @@ impl UiAgent for Tui {
                             0..Tui::get_pressed_key_buffer_as_number(&self.pressed_keys_buffer, 1)
                         {
                             let remaining_ops = opcode_list[self.current_step..].to_vec().clone();
-                            self.current_step += remaining_ops.iter().enumerate().find_map(|(i, op)| {
-                                if i < remaining_ops.len() - 1 {
-                                    match (op.contains("JUMP") && op != "JUMPDEST", &*remaining_ops[i+1]) {
-                                        (true, "JUMPDEST") => Some(i+1),
-                                        _ => None
+                            self.current_step += remaining_ops
+                                .iter()
+                                .enumerate()
+                                .find_map(|(i, op)| {
+                                    if i < remaining_ops.len() - 1 {
+                                        match (
+                                            op.contains("JUMP") && op != "JUMPDEST",
+                                            &*remaining_ops[i + 1],
+                                        ) {
+                                            (true, "JUMPDEST") => Some(i + 1),
+                                            _ => None,
+                                        }
+                                    } else {
+                                        None
                                     }
-                                } else {
-                                    None
-                                }
-                            }).unwrap_or(opcode_list.len() - 1);
-                            if self.current_step > opcode_list.len() { self.current_step = opcode_list.len() - 1};
+                                })
+                                .unwrap_or(opcode_list.len() - 1);
+                            if self.current_step > opcode_list.len() {
+                                self.current_step = opcode_list.len() - 1
+                            };
                         }
                         self.pressed_keys_buffer.clear();
                     }
@@ -425,16 +436,25 @@ impl UiAgent for Tui {
                             0..Tui::get_pressed_key_buffer_as_number(&self.pressed_keys_buffer, 1)
                         {
                             let prev_ops = opcode_list[..self.current_step].to_vec().clone();
-                            self.current_step = prev_ops.iter().enumerate().rev().find_map(|(i, op)| {
-                                if i > 0 {
-                                    match (prev_ops[i-1].contains("JUMP") && prev_ops[i-1] != "JUMPDEST", &**op) {
-                                        (true, "JUMPDEST") => Some(i - 1),
-                                        _ => None
+                            self.current_step = prev_ops
+                                .iter()
+                                .enumerate()
+                                .rev()
+                                .find_map(|(i, op)| {
+                                    if i > 0 {
+                                        match (
+                                            prev_ops[i - 1].contains("JUMP") &&
+                                                prev_ops[i - 1] != "JUMPDEST",
+                                            &**op,
+                                        ) {
+                                            (true, "JUMPDEST") => Some(i - 1),
+                                            _ => None,
+                                        }
+                                    } else {
+                                        None
                                     }
-                                } else {
-                                    None
-                                }
-                            }).unwrap_or_default();
+                                })
+                                .unwrap_or_default();
                         }
                         self.pressed_keys_buffer.clear();
                     }
@@ -496,8 +516,6 @@ struct DrawMemory {
 }
 impl DrawMemory {
     fn default() -> Self {
-        DrawMemory {
-            current_startline: 0,
-        }
+        DrawMemory { current_startline: 0 }
     }
 }

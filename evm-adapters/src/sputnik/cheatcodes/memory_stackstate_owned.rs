@@ -4,10 +4,7 @@ use sputnik::{
     ExitError, Transfer,
 };
 
-use crate::{
-    call_tracing::CallTraceArena,
-    sputnik::cheatcodes::debugger::DebugStep
-};
+use crate::{call_tracing::CallTraceArena, sputnik::cheatcodes::debugger::DebugStep};
 
 use ethers::{
     abi::RawLog,
@@ -50,7 +47,8 @@ pub struct MemoryStackStateOwned<'config, B> {
     pub accesses: Option<RecordAccess>,
     pub all_logs: Vec<String>,
     pub expected_emits: Vec<ExpectedEmit>,
-    pub debug_steps: Option<Vec<Vec<DebugStep>>> // similar to calltracearena, for each call we grab the debug steps if enabled
+    pub debug_steps: Option<Vec<Vec<DebugStep>>>, /* similar to calltracearena, for each call we
+                                                   * grab the debug steps if enabled */
 }
 
 impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
@@ -81,14 +79,19 @@ impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
                 println!("---------------------");
                 steps.iter().for_each(|step| {
                     println!("{}", step);
-                }); 
+                });
             });
         }
     }
 }
 
 impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
-    pub fn new(metadata: StackSubstateMetadata<'config>, backend: B, trace_enabled: bool, debug: bool) -> Self {
+    pub fn new(
+        metadata: StackSubstateMetadata<'config>,
+        backend: B,
+        trace_enabled: bool,
+        debug: bool,
+    ) -> Self {
         Self {
             backend,
             substate: MemoryStackSubstate::new(metadata),
@@ -102,7 +105,7 @@ impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
             accesses: None,
             all_logs: Default::default(),
             expected_emits: Default::default(),
-            debug_steps: if debug { Some(Default::default())} else { None },
+            debug_steps: if debug { Some(Default::default()) } else { None },
         }
     }
 }

@@ -19,8 +19,7 @@ use sputnik::{
     Config, CreateScheme, ExitError, ExitReason, ExitSucceed,
 };
 
-use crate::call_tracing::CallTraceArena;
-use crate::sputnik::cheatcodes::debugger::DebugStep;
+use crate::{call_tracing::CallTraceArena, sputnik::cheatcodes::debugger::DebugStep};
 
 pub use sputnik as sputnik_evm;
 use sputnik_evm::executor::stack::PrecompileSet;

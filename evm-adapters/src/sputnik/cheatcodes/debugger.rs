@@ -1,184 +1,179 @@
-
 use sputnik::{
-    Capture, ExitReason,
-    ExitSucceed, Handler, Runtime, Resolve, Machine, Memory, Opcode
+    Capture, ExitReason, ExitSucceed, Handler, Machine, Memory, Opcode, Resolve, Runtime,
 };
 
 use ethers::types::H256;
 
-use std::{fmt::Display, borrow::Cow, rc::Rc};
+use std::{borrow::Cow, fmt::Display, rc::Rc};
 /// EVM runtime.
 ///
 /// The runtime wraps an EVM `Machine` with support of return data and context.
 pub struct ForgeRuntime<'b, 'config> {
-	pub inner: &'b mut Runtime<'config>,
-	pub code: Rc<Vec<u8>>,
+    pub inner: &'b mut Runtime<'config>,
+    pub code: Rc<Vec<u8>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct DebugStep {
-	pub pc: usize,
-	pub stack: Vec<H256>,
-	pub memory: Memory,
-	pub op: OpCode,
-	pub push_bytes: Option<Vec<u8>>,
+    pub pc: usize,
+    pub stack: Vec<H256>,
+    pub memory: Memory,
+    pub op: OpCode,
+    pub push_bytes: Option<Vec<u8>>,
 }
 
 impl DebugStep {
-	pub fn pretty_opcode(&self) -> String {
-		if let Some(push_bytes) = &self.push_bytes {
-			format!("{}(0x{})", self.op,  hex::encode(push_bytes))
-		} else {
-			self.op.to_string()
-		}
-	}
+    pub fn pretty_opcode(&self) -> String {
+        if let Some(push_bytes) = &self.push_bytes {
+            format!("{}(0x{})", self.op, hex::encode(push_bytes))
+        } else {
+            self.op.to_string()
+        }
+    }
 }
 
 impl Display for DebugStep {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    	if let Some(push_bytes) = &self.push_bytes {
-    		write!(f, "pc: {:?}\nop: {}(0x{})\nstack: {:#?}\nmemory: 0x{}\n\n", self.pc, self.op, hex::encode(push_bytes), self.stack, hex::encode(self.memory.data()))
-    	} else {
-    		write!(f, "pc: {:?}\nop: {}\nstack: {:#?}\nmemory: 0x{}\n\n", self.pc, self.op, self.stack, hex::encode(self.memory.data()))	
-    	}
+        if let Some(push_bytes) = &self.push_bytes {
+            write!(
+                f,
+                "pc: {:?}\nop: {}(0x{})\nstack: {:#?}\nmemory: 0x{}\n\n",
+                self.pc,
+                self.op,
+                hex::encode(push_bytes),
+                self.stack,
+                hex::encode(self.memory.data())
+            )
+        } else {
+            write!(
+                f,
+                "pc: {:?}\nop: {}\nstack: {:#?}\nmemory: 0x{}\n\n",
+                self.pc,
+                self.op,
+                self.stack,
+                hex::encode(self.memory.data())
+            )
+        }
     }
 }
 
 impl<'b, 'config> ForgeRuntime<'b, 'config> {
-	pub fn new_with_runtime(
-		runtime: &'b mut Runtime<'config>,
-		code: Rc<Vec<u8>>,
-	) -> Self {
-		Self {
-			inner: runtime,
-			code
-		}
-	}
+    pub fn new_with_runtime(runtime: &'b mut Runtime<'config>, code: Rc<Vec<u8>>) -> Self {
+        Self { inner: runtime, code }
+    }
 
-	/// Step the runtime.
-	pub fn step<'a, H: Handler>(
-		&'a mut self,
-		handler: &mut H,
-	) -> Result<(), Capture<ExitReason, Resolve<'a, 'config, H>>> {
-		self.inner.step(handler)
-	}
+    /// Step the runtime.
+    pub fn step<'a, H: Handler>(
+        &'a mut self,
+        handler: &mut H,
+    ) -> Result<(), Capture<ExitReason, Resolve<'a, 'config, H>>> {
+        self.inner.step(handler)
+    }
 
-	/// Get a reference to the machine.
-	pub fn machine(&self) -> &Machine {
-		&self.inner.machine()
-	}
+    /// Get a reference to the machine.
+    pub fn machine(&self) -> &Machine {
+        &self.inner.machine()
+    }
 
-	/// Loop stepping the runtime until it stops.
-	pub fn run<'a, H: Handler>(
-		&'a mut self,
-		handler: &mut H,
-	) -> Capture<ExitReason, ()> {
-		let mut done = false;
-		let mut res = Capture::Exit(ExitReason::Succeed(ExitSucceed::Returned));
-		while !done {
-			let r = self.step(handler);
-			match r {
-				Ok(()) => {}
-				Err(e) => { done = true;
-					match e {
-						Capture::Exit(s) => {res = Capture::Exit(s)},
-			            Capture::Trap(_) => unreachable!("Trap is Infallible"),	
-					}
-				}
-			}
-		}
-		res
-	}
+    /// Loop stepping the runtime until it stops.
+    pub fn run<'a, H: Handler>(&'a mut self, handler: &mut H) -> Capture<ExitReason, ()> {
+        let mut done = false;
+        let mut res = Capture::Exit(ExitReason::Succeed(ExitSucceed::Returned));
+        while !done {
+            let r = self.step(handler);
+            match r {
+                Ok(()) => {}
+                Err(e) => {
+                    done = true;
+                    match e {
+                        Capture::Exit(s) => res = Capture::Exit(s),
+                        Capture::Trap(_) => unreachable!("Trap is Infallible"),
+                    }
+                }
+            }
+        }
+        res
+    }
 }
 
 pub struct Debugger<'b, 'config> {
-	pub runtime: &'b mut ForgeRuntime<'b, 'config>,
-	pub steps: Vec<DebugStep>,
+    pub runtime: &'b mut ForgeRuntime<'b, 'config>,
+    pub steps: Vec<DebugStep>,
 }
 
 impl<'b, 'config> Debugger<'b, 'config> {
-	pub fn new_with_runtime(
-		runtime: &'b mut ForgeRuntime<'b, 'config>
-	) -> Self {
-		Self {
-			runtime: runtime,
-			steps: Vec::new(),
-		}
-	}
+    pub fn new_with_runtime(runtime: &'b mut ForgeRuntime<'b, 'config>) -> Self {
+        Self { runtime, steps: Vec::new() }
+    }
 
-	pub fn debug_step<'a, H: Handler>(
-		&'a mut self,
-		handler: &mut H,
-	) -> Result<(), Capture<ExitReason, Resolve<'a, 'config, H>>> {
-		let step;
-		let pc = if let Ok(pos) = self.runtime.inner.machine().position() {
-			pos.clone()
-		} else {
-			0
-		};
-		let mut push_bytes = None;
-		if let Some((op, stack)) = self.runtime.inner.machine().inspect() {
-			let op = OpCode(op);
-			if let Some(push_size) = op.push_size() {
-				let push_start = pc + 1;
-				let push_end = pc + 1 + push_size as usize;
-				if push_end < self.runtime.code.len() {
-					push_bytes = Some(self.runtime.code[push_start..push_end].to_vec());
-				} else {
-					panic!("PUSH{} exceeds codesize?", push_size)
-				}
-			}
-			let mut stack = stack.data().clone();
-			stack.reverse();
-			step = DebugStep {
-				pc,
-				stack,
-				memory: self.runtime.inner.machine().memory().clone(),
-				op,
-				push_bytes,
-			}
-		} else {
-			let mut stack = self.runtime.inner.machine().stack().data().clone();
-			stack.reverse();
-			step = DebugStep {
-				pc,
-				stack,
-				memory: self.runtime.inner.machine().memory().clone(),
-				op: OpCode(Opcode::INVALID),
-				push_bytes,
-			}
-		}
-		self.steps.push(step);
-		self.runtime.inner.step(handler)
-	}
+    pub fn debug_step<'a, H: Handler>(
+        &'a mut self,
+        handler: &mut H,
+    ) -> Result<(), Capture<ExitReason, Resolve<'a, 'config, H>>> {
+        let step;
+        let pc =
+            if let Ok(pos) = self.runtime.inner.machine().position() { pos.clone() } else { 0 };
+        let mut push_bytes = None;
+        if let Some((op, stack)) = self.runtime.inner.machine().inspect() {
+            let op = OpCode(op);
+            if let Some(push_size) = op.push_size() {
+                let push_start = pc + 1;
+                let push_end = pc + 1 + push_size as usize;
+                if push_end < self.runtime.code.len() {
+                    push_bytes = Some(self.runtime.code[push_start..push_end].to_vec());
+                } else {
+                    panic!("PUSH{} exceeds codesize?", push_size)
+                }
+            }
+            let mut stack = stack.data().clone();
+            stack.reverse();
+            step = DebugStep {
+                pc,
+                stack,
+                memory: self.runtime.inner.machine().memory().clone(),
+                op,
+                push_bytes,
+            }
+        } else {
+            let mut stack = self.runtime.inner.machine().stack().data().clone();
+            stack.reverse();
+            step = DebugStep {
+                pc,
+                stack,
+                memory: self.runtime.inner.machine().memory().clone(),
+                op: OpCode(Opcode::INVALID),
+                push_bytes,
+            }
+        }
+        self.steps.push(step);
+        self.runtime.inner.step(handler)
+    }
 
-	/// Loop stepping the runtime until it stops.
-	pub fn debug_run<'a, H: Handler>(
-		&'a mut self,
-		handler: &mut H,
-	) -> Capture<ExitReason, ()> {
-		let mut done = false;
-		let mut res = Capture::Exit(ExitReason::Succeed(ExitSucceed::Returned));
-		while !done {
-			let r = self.debug_step(handler);
-			match r {
-				Ok(()) => {}
-				Err(e) => { done = true;
-					match e {
-						Capture::Exit(s) => {res = Capture::Exit(s)},
-			            Capture::Trap(_) => unreachable!("Trap is Infallible"),	
-					}
-				}
-			}
-		}
-		res
-	}
+    /// Loop stepping the runtime until it stops.
+    pub fn debug_run<'a, H: Handler>(&'a mut self, handler: &mut H) -> Capture<ExitReason, ()> {
+        let mut done = false;
+        let mut res = Capture::Exit(ExitReason::Succeed(ExitSucceed::Returned));
+        while !done {
+            let r = self.debug_step(handler);
+            match r {
+                Ok(()) => {}
+                Err(e) => {
+                    done = true;
+                    match e {
+                        Capture::Exit(s) => res = Capture::Exit(s),
+                        Capture::Trap(_) => unreachable!("Trap is Infallible"),
+                    }
+                }
+            }
+        }
+        res
+    }
 
-	pub fn print_steps(&self) {
-		self.steps.iter().for_each(|step| {
-			println!("{}", step);	
-		});
-	}
+    pub fn print_steps(&self) {
+        self.steps.iter().for_each(|step| {
+            println!("{}", step);
+        });
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -344,11 +339,10 @@ impl Display for OpCode {
         let name = self.name();
 
         let n = if name == "UNDEFINED" {
-            Cow::Owned(format!("UNDEFINED(0x{:02x})", self.0.0))
+            Cow::Owned(format!("UNDEFINED(0x{:02x})", self.0 .0))
         } else {
             Cow::Borrowed(name)
         };
         write!(f, "{}", n)
     }
 }
-
