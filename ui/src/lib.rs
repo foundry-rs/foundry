@@ -1,9 +1,10 @@
 use ethers::{abi::Abi, prelude::artifacts::DeployedBytecode};
 use std::{
     cmp::{max, min},
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     time::{Duration, Instant},
 };
+use tui::text::Text;
 
 use crossterm::{
     event::{
@@ -98,6 +99,7 @@ impl Tui {
     }
 
     /// Create layout and subcomponents
+    #[allow(clippy::too_many_arguments)]
     fn draw_layout<B: Backend>(
         f: &mut Frame<B>,
         address: Address,
@@ -134,17 +136,12 @@ impl Tui {
                         identified_contracts,
                         known_contracts,
                         source_code,
-                        debug_steps,
-                        opcode_list,
                         current_step,
-                        draw_memory,
                         src_pane,
                     );
                     Tui::draw_op_list(
                         f,
                         address,
-                        identified_contracts,
-                        known_contracts,
                         debug_steps,
                         opcode_list,
                         current_step,
@@ -168,15 +165,13 @@ impl Tui {
         identified_contracts: &BTreeMap<Address, (String, Abi)>,
         known_contracts: &BTreeMap<String, (Abi, DeployedBytecode)>,
         source_code: &BTreeMap<u32, String>,
-        _debug_steps: &[DebugStep],
-        _opcode_list: &[String],
         current_step: usize,
-        _draw_memory: &mut DrawMemory,
         area: Rect,
     ) {
         let block_source_code = Block::default().borders(Borders::ALL);
 
-        let mut text_output: Vec<Spans> = Vec::new();
+        let mut text_output: Text = Text::from("");
+
         if let Some(contract_name) = identified_contracts.get(&address) {
             if let Some(known) = known_contracts.get(&contract_name.0) {
                 if let Some(sourcemap) =
@@ -188,24 +183,90 @@ impl Tui {
                                 if let Some(source) = source_code.get(&source_idx) {
                                     let offset = sourcemap[current_step].offset;
                                     let len = sourcemap[current_step].length;
-                                    let src = source[offset..offset + len].split("\n").map(|s| Span::from(s.to_string())).collect::<Vec<Span>>();
-                                    text_output.push(Spans::from(src));
+                                    let mut before =
+                                        source[..offset].split('\n').collect::<Vec<&str>>();
+                                    let mut actual = source[offset..offset + len]
+                                        .split('\n')
+                                        .map(|s| s.to_string())
+                                        .collect::<Vec<String>>();
+                                    let mut after = source[offset + len..]
+                                        .split('\n')
+                                        .collect::<VecDeque<&str>>();
+                                    let mut pre = None;
+                                    if let Some(last) = before.pop() {
+                                        if last.len() > 2 && &last[last.len() - 3..] != "\n" {
+                                            pre = Some(last);
+                                        } else {
+                                            before.push(last);
+                                        }
+                                    }
+
+                                    let mut not_end = false;
+                                    if let Some(last) = actual.pop() {
+                                        if last.len() > 2 && &last[last.len() - 3..] != "\n" {
+                                            not_end = true;
+                                        }
+                                        actual.push(last);
+                                    }
+
+                                    let mut post = None;
+                                    if not_end {
+                                        post = after.pop_front();
+                                    }
+
+                                    before
+                                        .iter()
+                                        .for_each(|s| text_output.extend(Text::raw(s.to_string())));
+                                    if let Some(pre) = pre {
+                                        text_output.lines.push(Spans::from(vec![
+                                            Span::raw(pre),
+                                            Span::styled(
+                                                actual[0].to_string(),
+                                                Style::default().bg(Color::Gray),
+                                            ),
+                                        ]));
+                                        actual.iter().skip(1).for_each(|s| {
+                                            text_output.lines.push(Spans::from(Span::styled(
+                                                s.to_string(),
+                                                Style::default().bg(Color::Gray),
+                                            )))
+                                        });
+                                    } else {
+                                        actual.iter().for_each(|s| {
+                                            text_output.lines.push(Spans::from(Span::styled(
+                                                s.to_string(),
+                                                Style::default().bg(Color::Gray),
+                                            )))
+                                        });
+                                    }
+
+                                    if let Some(post) = post {
+                                        if let Some(last) = text_output.lines.last_mut() {
+                                            last.0.push(Span::raw(post));
+                                        }
+                                    }
+                                    after.iter().for_each(|s| {
+                                        if !s.is_empty() {
+                                            text_output.extend(Text::raw(s.to_string()))
+                                        }
+                                    });
                                 } else {
-                                    text_output.push(Spans::from("No source for srcmap index"));
+                                    text_output.extend(Text::from("No source for srcmap index"));
                                 }
                             } else {
-                                text_output.push(Spans::from("No srcmap index"));
+                                text_output.extend(Text::from("No srcmap index"));
                             }
                         }
-                        Err(e) => text_output.push(Spans::from(e.to_string())),
+                        Err(e) => text_output.extend(Text::from(e.to_string())),
                     }
                 } else {
-                    text_output.push(Spans::from("No sourcemap for contract"));
+                    text_output.extend(Text::from("No sourcemap for contract"));
                 }
             }
         }
+
         let paragraph =
-            Paragraph::new(text_output).block(block_source_code).wrap(Wrap { trim: true });
+            Paragraph::new(text_output).block(block_source_code).wrap(Wrap { trim: false });
         f.render_widget(paragraph, area);
     }
 
@@ -213,8 +274,6 @@ impl Tui {
     fn draw_op_list<B: Backend>(
         f: &mut Frame<B>,
         address: Address,
-        identified_contracts: &BTreeMap<Address, (String, Abi)>,
-        _known_contracts: &BTreeMap<String, (Abi, DeployedBytecode)>,
         debug_steps: &[DebugStep],
         opcode_list: &[String],
         current_step: usize,
@@ -224,7 +283,7 @@ impl Tui {
         let block_source_code = Block::default()
             .title(format!(
                 " Op: {} - Address: {} #: {}, pc: {} ----- q: quit, a: JUMPDEST-, s: JUMPDEST+, j: OP+, k: OP-, g: OP0, G: OP_LAST",
-                if let Some(contract_name) = identified_contracts.get(&address) { contract_name.0.to_string() } else { draw_memory.inner_call_index.to_string() },
+                draw_memory.inner_call_index,
                 address,
                 current_step,
                 if let Some(step) = debug_steps.get(current_step) { step.pc.to_string() } else { "END".to_string() }
