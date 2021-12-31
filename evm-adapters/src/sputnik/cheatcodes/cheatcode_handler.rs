@@ -577,7 +577,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
     }
 
     /// Debug execute a transaction by grabbing the debugger from state_mut, adding the runtime.
-    pub fn debug_execute<'config>(
+    pub fn debug_execute(
         &mut self,
         runtime: &mut Runtime,
         code: Rc<Vec<u8>>,

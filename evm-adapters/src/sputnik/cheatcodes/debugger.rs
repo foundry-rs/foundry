@@ -72,11 +72,11 @@ impl<'b, 'config> ForgeRuntime<'b, 'config> {
 
     /// Get a reference to the machine.
     pub fn machine(&self) -> &Machine {
-        &self.inner.machine()
+        self.inner.machine()
     }
 
     /// Loop stepping the runtime until it stops.
-    pub fn run<'a, H: Handler>(&'a mut self, handler: &mut H) -> Capture<ExitReason, ()> {
+    pub fn run<H: Handler>(&mut self, handler: &mut H) -> Capture<ExitReason, ()> {
         let mut done = false;
         let mut res = Capture::Exit(ExitReason::Succeed(ExitSucceed::Returned));
         while !done {
@@ -110,11 +110,10 @@ impl<'b, 'config> Debugger<'b, 'config> {
         &'a mut self,
         handler: &mut H,
     ) -> Result<(), Capture<ExitReason, Resolve<'a, 'config, H>>> {
-        let step;
         let pc =
-            if let Ok(pos) = self.runtime.inner.machine().position() { pos.clone() } else { 0 };
+            if let Ok(pos) = self.runtime.inner.machine().position() { *pos } else { 0 };
         let mut push_bytes = None;
-        if let Some((op, stack)) = self.runtime.inner.machine().inspect() {
+        let step = if let Some((op, stack)) = self.runtime.inner.machine().inspect() {
             let op = OpCode(op);
             if let Some(push_size) = op.push_size() {
                 let push_start = pc + 1;
@@ -127,7 +126,7 @@ impl<'b, 'config> Debugger<'b, 'config> {
             }
             let mut stack = stack.data().clone();
             stack.reverse();
-            step = DebugStep {
+            DebugStep {
                 pc,
                 stack,
                 memory: self.runtime.inner.machine().memory().clone(),
@@ -137,20 +136,20 @@ impl<'b, 'config> Debugger<'b, 'config> {
         } else {
             let mut stack = self.runtime.inner.machine().stack().data().clone();
             stack.reverse();
-            step = DebugStep {
+            DebugStep {
                 pc,
                 stack,
                 memory: self.runtime.inner.machine().memory().clone(),
                 op: OpCode(Opcode::INVALID),
                 push_bytes,
             }
-        }
+        };
         self.steps.push(step);
         self.runtime.inner.step(handler)
     }
 
     /// Loop stepping the runtime until it stops.
-    pub fn debug_run<'a, H: Handler>(&'a mut self, handler: &mut H) -> Capture<ExitReason, ()> {
+    pub fn debug_run<H: Handler>(&mut self, handler: &mut H) -> Capture<ExitReason, ()> {
         let mut done = false;
         let mut res = Capture::Exit(ExitReason::Succeed(ExitSucceed::Returned));
         while !done {

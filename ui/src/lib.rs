@@ -84,7 +84,7 @@ impl Tui {
     ///
     /// A default value will be return if the number is non-parsable (typically empty buffer) or is
     /// not at least 1.
-    fn get_pressed_key_buffer_as_number(buffer: &String, default_value: usize) -> usize {
+    fn get_pressed_key_buffer_as_number(buffer: &str, default_value: usize) -> usize {
         if let Ok(num) = buffer.parse() {
             if num >= 1 {
                 num
@@ -174,9 +174,7 @@ impl Tui {
             // Sometimes, towards end of file, maximum and minim viable lines have swapped values.
             // No idea why, but swapping them helps the problem.
             if minimum_viable_startline > maximum_viable_startline {
-                minimum_viable_startline ^= maximum_viable_startline;
-                maximum_viable_startline ^= minimum_viable_startline;
-                minimum_viable_startline ^= maximum_viable_startline;
+                std::mem::swap(&mut minimum_viable_startline, &mut maximum_viable_startline);
             }
             // Try to keep previous startline as it was, but scroll up or down as
             // little as possible to keep within bonds
@@ -222,7 +220,7 @@ impl Tui {
     /// Draw stack.
     fn draw_stack<B: Backend>(
         f: &mut Frame<B>,
-        debug_steps: &Vec<DebugStep>,
+        debug_steps: &[DebugStep],
         current_step: usize,
         area: Rect,
     ) {
@@ -248,7 +246,7 @@ impl Tui {
     /// Draw stack.
     fn draw_memory<B: Backend>(
         f: &mut Frame<B>,
-        debug_steps: &Vec<DebugStep>,
+        debug_steps: &[DebugStep],
         current_step: usize,
         area: Rect,
     ) {
@@ -266,10 +264,10 @@ impl Tui {
                     .chunks(4)
                     .map(|bytes4| {
                         bytes4
-                            .into_iter()
+                            .iter()
                             .map(|byte| {
                                 let v: Vec<u8> = vec![*byte];
-                                format!("{}", hex::encode(&v[..]))
+                                hex::encode(&v[..])
                             })
                             .collect::<Vec<String>>()
                             .join(" ")
@@ -327,17 +325,17 @@ impl UiAgent for Tui {
                     // as we know there already something waiting for us (see event::poll)
                     let event = event::read().unwrap();
                     if let Event::Key(key) = event {
-                        if let Err(_) = tx.send(Interrupt::KeyPressed(key)) {
+                        if tx.send(Interrupt::KeyPressed(key)).is_err() {
                             return
                         }
                     } else if let Event::Mouse(mouse) = event {
-                        if let Err(_) = tx.send(Interrupt::MouseEvent(mouse)) {
+                        if tx.send(Interrupt::MouseEvent(mouse)).is_err() {
                             return
                         }
                     }
                 }
                 if last_tick.elapsed() > tick_rate {
-                    if let Err(_) = tx.send(Interrupt::IntervalElapsed) {
+                    if tx.send(Interrupt::IntervalElapsed).is_err() {
                         return
                     }
                     last_tick = Instant::now();
@@ -489,9 +487,9 @@ impl UiAgent for Tui {
             }
             // Draw
             let current_step = self.current_step;
-            self.terminal.draw(|mut f| {
+            self.terminal.draw(|f| {
                 Tui::draw_layout_and_subcomponents(
-                    &mut f,
+                    f,
                     debug_steps,
                     opcode_list.clone(),
                     current_step,
