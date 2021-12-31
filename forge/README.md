@@ -228,6 +228,23 @@ console.log(someValue);
 
 ```
 
+## Remappings
+If you are working in a repo with NPM-style imports, like
+```
+import "@openzeppelin/contracts/access/Ownable.sol";
+```
+
+then you will need to create a `remappings.txt` file at the top level of your project directory, so that Forge knows where to find these dependencies. 
+
+For example, if you have `@openzeppelin` imports, you would 
+
+1. `forge install openzeppelin/openzeppelin-contracts` (this will add the repo to `lib/openzepplin-contracts`)
+2. Create a remappings file: `touch remappings.txt`
+3. Add this line to `remappings.txt`  
+```
+@openzeppelin/=lib/openzeppelin-contracts/
+```
+
 ## Future Features
 
 ### Dapptools feature parity
