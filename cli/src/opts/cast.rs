@@ -142,7 +142,7 @@ pub enum Subcommands {
     },
     #[structopt(name = "estimate")]
     #[structopt(
-        about = "Estimate the gas cost of a transaction send from <from> to <to> with <data>"
+        about = "Estimate the gas cost of a transaction from <from> to <to> with <data>"
     )]
     Estimate {
         #[structopt(help = "the address you want to transact with", parse(try_from_str = parse_name_or_address))]
