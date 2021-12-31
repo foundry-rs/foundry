@@ -2,5 +2,6 @@
 /target
 out/
 out.json
+.vscode/
 
 integration-tests/testdata/*
