@@ -211,3 +211,16 @@ pub fn evmodin_cfg(evm: EvmVersion) -> Revision {
         _ => panic!("Unsupported EVM version"),
     }
 }
+
+/// Securely reads a secret from stdin, or proceeds to return a fallback value
+/// which was provided in cleartext via CLI or env var
+#[allow(dead_code)]
+pub fn read_secret(secret: bool, unsafe_secret: Option<String>) -> eyre::Result<String> {
+    Ok(if secret {
+        println!("Insert secret:");
+        rpassword::read_password()?
+    } else {
+        // guaranteed to be Some(..)
+        unsafe_secret.unwrap()
+    })
+}

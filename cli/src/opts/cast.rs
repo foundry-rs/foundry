@@ -277,6 +277,65 @@ pub enum Subcommands {
         #[structopt(short, long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
+    #[structopt(name = "wallet", about = "Set of wallet management utilities")]
+    Wallet {
+        #[structopt(subcommand)]
+        command: WalletSubcommands,
+    },
+}
+
+#[derive(Debug, StructOpt)]
+pub enum WalletSubcommands {
+    #[structopt(name = "new", about = "Create and output a new random keypair")]
+    New {
+        #[structopt(help = "If provided, then keypair will be written to encrypted json keystore")]
+        path: Option<String>,
+        #[structopt(
+            long,
+            short,
+            help = "Triggers a hidden password prompt for the json keystore",
+            conflicts_with = "unsafe_password",
+            requires("path")
+        )]
+        password: bool,
+        #[structopt(
+            long,
+            help = "Password for json keystore in cleartext. This is UNSAFE to use and we recommend using the --password parameter",
+            requires("path"),
+            env = "CAST_PASSWORD"
+        )]
+        unsafe_password: Option<String>,
+    },
+    #[structopt(name = "address", about = "Convert a private key to an address")]
+    Address {
+        #[structopt(
+            long = "--unsafe-key",
+            help = "private key to generate address from in cleartext. This is UNSAFE to use and we recommend using the secure password prompt which appears when not providing this argument",
+            env = "CAST_PRIVATE_KEY"
+        )]
+        unsafe_private_key: Option<String>,
+    },
+    #[structopt(name = "sign", about = "Sign the message with provided private key")]
+    Sign {
+        #[structopt(help = "message to sign")]
+        message: String,
+        #[structopt(
+            long = "--unsafe-key",
+            help = "private key to sign with in cleartext. This is UNSAFE to use and we recommend using secure password prompt which appears when not providing this argument",
+            env = "CAST_PRIVATE_KEY",
+            conflicts_with("private_key")
+        )]
+        unsafe_private_key: Option<String>,
+    },
+    #[structopt(name = "verify", about = "Verify the signature on the message")]
+    Verify {
+        #[structopt(help = "original message")]
+        message: String,
+        #[structopt(help = "signature to verify")]
+        signature: String,
+        #[structopt(long, short, help = "pubkey of message signer")]
+        address: String,
+    },
 }
 
 fn parse_name_or_address(s: &str) -> eyre::Result<NameOrAddress> {

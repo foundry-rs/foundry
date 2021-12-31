@@ -6,18 +6,24 @@ use cast::{Cast, SimpleCast};
 
 mod opts;
 use opts::{
-    cast::{Opts, Subcommands},
+    cast::{Opts, Subcommands, WalletSubcommands},
     WalletType,
 };
 
 use ethers::{
-    core::types::{BlockId, BlockNumber::Latest},
+    core::{
+        rand::thread_rng,
+        types::{BlockId, BlockNumber::Latest},
+    },
     providers::{Middleware, Provider},
-    types::{NameOrAddress, U256},
+    signers::{LocalWallet, Signer},
+    types::{Address, NameOrAddress, Signature, U256},
 };
 use rustc_hex::ToHex;
 use std::{convert::TryFrom, str::FromStr};
 use structopt::StructOpt;
+
+use crate::utils::read_secret;
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
@@ -253,6 +259,65 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).nonce(who, block).await?);
         }
+        Subcommands::Wallet { command } => match command {
+            WalletSubcommands::New { path, password, unsafe_password } => {
+                let mut rng = thread_rng();
+
+                match path {
+                    Some(path) => {
+                        let password = read_secret(password, unsafe_password)?;
+                        let (key, uuid) = LocalWallet::new_keystore(&path, &mut rng, password)?;
+                        let address = SimpleCast::checksum_address(&key.address())?;
+                        let filepath = format!(
+                            "{}/{}",
+                            std::fs::canonicalize(path)?
+                                .into_os_string()
+                                .into_string()
+                                .expect("failed to canonicalize file path"),
+                            uuid
+                        );
+                        println!(
+                            "Successfully created new keypair at `{}`.\nAddress: {}.",
+                            filepath, address
+                        );
+                    }
+                    None => {
+                        let wallet = LocalWallet::new(&mut rng);
+                        println!(
+                            "Successfully created new keypair.\nAddress: {}.\nPrivate Key: {}.",
+                            SimpleCast::checksum_address(&wallet.address())?,
+                            hex::encode(wallet.signer().to_bytes()),
+                        );
+                    }
+                }
+            }
+            WalletSubcommands::Address { unsafe_private_key } => {
+                let private_key = read_secret(unsafe_private_key.is_none(), unsafe_private_key)?;
+                let private_key = private_key.strip_prefix("0x").unwrap_or(&private_key);
+                let wallet = LocalWallet::from_str(&private_key).expect("invalid private key");
+                println!("Address: {}", SimpleCast::checksum_address(&wallet.address())?);
+            }
+            WalletSubcommands::Sign { message, unsafe_private_key } => {
+                let private_key = read_secret(unsafe_private_key.is_none(), unsafe_private_key)?;
+                let private_key = private_key.strip_prefix("0x").unwrap_or(&private_key);
+                let wallet =
+                    LocalWallet::from_str(private_key).expect("invalid private key provided");
+                println!("Signature: 0x{}", wallet.sign_message(&message).await?)
+            }
+            WalletSubcommands::Verify { message, signature, address } => {
+                let pubkey = Address::from_str(&address).expect("invalid pubkey provided");
+                let signature = Signature::from_str(&signature)?;
+                match signature.verify(message, pubkey) {
+                    Ok(_) => {
+                        println!("Validation success. Address {} signed this message.", address)
+                    }
+                    Err(_) => println!(
+                        "Validation failed. Address {} did not sign this message.",
+                        address
+                    ),
+                }
+            }
+        },
     };
 
     Ok(())
