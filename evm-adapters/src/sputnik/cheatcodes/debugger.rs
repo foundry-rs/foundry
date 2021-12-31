@@ -120,7 +120,13 @@ impl<'b, 'config> Debugger<'b, 'config> {
 		if let Some((op, stack)) = self.runtime.inner.machine().inspect() {
 			let op = OpCode(op);
 			if let Some(push_size) = op.push_size() {
-				push_bytes = Some(self.runtime.code[pc..pc+push_size as usize].to_vec());
+				let push_start = pc + 1;
+				let push_end = pc + 1 + push_size as usize;
+				if push_end < self.runtime.code.len() {
+					push_bytes = Some(self.runtime.code[push_start..push_end].to_vec());
+				} else {
+					panic!("PUSH{} exceeds codesize?", push_size)
+				}
 			}
 			let mut stack = stack.data().clone();
 			stack.reverse();

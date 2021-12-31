@@ -157,7 +157,7 @@ impl Tui {
         area: Rect,
     ) {
         let block_source_code = Block::default()
-            .title(" Op - a: JUMPDEST-, s: JUMPDEST+, j: OP+, k: OP-, g: OP0, G: OP_LAST")
+            .title(format!(" Op: {} - q: quit, a: JUMPDEST-, s: JUMPDEST+, j: OP+, k: OP-, g: OP0, G: OP_LAST", current_step))
             .borders(Borders::ALL);
         let mut text_output: Vec<Spans> = Vec::new();
 
@@ -239,7 +239,7 @@ impl Tui {
     /// Draw stack.
     fn draw_stack<B: Backend>(f: &mut Frame<B>, debug_steps: &Vec<DebugStep>, current_step: usize, area: Rect) {
         let stack_space = Block::default()
-            .title(" Stack ")
+            .title(format!(" Stack: {} ", current_step))
             .borders(Borders::ALL);
         let stack = &debug_steps[current_step].stack;
         let min_len = usize::max(format!("{}", stack.len()).len(), 2);
@@ -259,7 +259,7 @@ impl Tui {
     /// Draw stack.
     fn draw_memory<B: Backend>(f: &mut Frame<B>, debug_steps: &Vec<DebugStep>, current_step: usize, area: Rect) {
         let stack_space = Block::default()
-            .title(" Memory ")
+            .title(format!(" Memory: {} ", current_step))
             .borders(Borders::ALL);
         let memory = &debug_steps[current_step].memory.data();
         let max_i = memory.len() / 32;
