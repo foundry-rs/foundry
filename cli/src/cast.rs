@@ -165,6 +165,22 @@ async fn main() -> eyre::Result<()> {
                 cast_send(provider, from, to, sig, args, cast_async).await?;
             }
         }
+        Subcommands::Estimate { eth, to, sig, args } => {
+            let provider = Provider::try_from(eth.rpc_url.as_str())?;
+            let cast = Cast::new(&provider);
+            // chain id does not matter here, we're just trying to get the address
+            let from = if let Some(signer) = eth.signer(0.into()).await? {
+                match signer {
+                    WalletType::Ledger(signer) => signer.address(),
+                    WalletType::Local(signer) => signer.address(),
+                    WalletType::Trezor(signer) => signer.address(),
+                }
+            } else {
+                eth.from.expect("No ETH_FROM or signer specified")
+            };
+            let gas = cast.estimate(from, to, Some((sig.as_str(), args))).await?;
+            println!("{}", gas);
+        }
         Subcommands::CalldataDecode { sig, calldata } => {
             let tokens = SimpleCast::abi_decode(&sig, &calldata, true)?;
             let tokens = utils::format_tokens(&tokens);
