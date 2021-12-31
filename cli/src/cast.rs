@@ -261,14 +261,14 @@ async fn main() -> eyre::Result<()> {
                             uuid
                         );
                         println!(
-                            "Succesfully created new keypair at `{}`.\nAddress: {}.",
+                            "Successfully created new keypair at `{}`.\nAddress: {}.",
                             filepath, address
                         );
                     }
                     None => {
                         let wallet = LocalWallet::new(&mut rng);
                         println!(
-                            "Succesfully created new keypair.\nAddress: {}.\nPrivate Key: {}.",
+                            "Successfully created new keypair.\nAddress: {}.\nPrivate Key: {}.",
                             SimpleCast::checksum_address(&wallet.address())?,
                             hex::encode(wallet.signer().to_bytes()),
                         );
