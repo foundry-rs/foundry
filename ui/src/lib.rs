@@ -1,4 +1,3 @@
-use eyre::WrapErr;
 use std::{
     cmp::{max, min},
     time::{Duration, Instant},
@@ -30,39 +29,31 @@ use tui::{
     Terminal,
 };
 
-/// This trait describes structure that takes care of
-/// interacting with user.
-pub trait UiAgent {
+/// Trait for starting the ui
+pub trait Ui {
     /// Start the agent that will now take over.
-    fn start(self) -> Result<ApplicationExitReason>;
+    fn start(self) -> Result<TUIExitReason>;
 }
 
-/// Used to indicate why did UiAgent stop
-pub enum ApplicationExitReason {
-    /// User wants to exit the application
-    UserExit,
+/// Used to indicate why the Ui stopped
+pub enum TUIExitReason {
+    /// 'q' exit
+    CharExit,
 }
 
 pub struct Tui {
     debug_steps: Vec<DebugStep>,
     opcode_list: Vec<String>,
     terminal: Terminal<CrosstermBackend<io::Stdout>>,
-    /// Pressed keys that should be stored but can't be processed now.
-    /// For example, user can press "10k". The "1" and "0" are important and should
-    /// be stored, but can't be executed because we don't know what to do (move up) until
-    /// we see the "k" character. The instant we see it, we read the whole buffer and clear it.
-    pressed_keys_buffer: String,
-    /// Remembers at which state are we currently. User can step back and forth.
+    /// Buffer for keys prior to execution, i.e. '10' + 'k' => move up 10 operations
+    key_buffer: String,
+    /// current step in the debug steps
     current_step: usize,
 }
 
 impl Tui {
-    /// Create new TUI that gathers data from the debugger.
-    ///
-    /// This consumes the debugger, as it's used to advance debugging state.
+    /// Create a tui
     #[allow(unused_must_use)]
-    // NOTE: We don't care that some actions here fail (for example mouse handling),
-    // as some features that we're trying to enable here are not necessary for desed.
     pub fn new(debug_steps: Vec<DebugStep>, current_step: usize) -> Result<Self> {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
@@ -75,16 +66,13 @@ impl Tui {
             debug_steps,
             opcode_list,
             terminal,
-            pressed_keys_buffer: String::new(),
+            key_buffer: String::new(),
             current_step,
         })
     }
 
-    /// Reads given buffer and returns it as a number.
-    ///
-    /// A default value will be return if the number is non-parsable (typically empty buffer) or is
-    /// not at least 1.
-    fn get_pressed_key_buffer_as_number(buffer: &str, default_value: usize) -> usize {
+    /// Grab number from buffer. Used for something like '10k' to move up 10 operations
+    fn buffer_as_number(buffer: &str, default_value: usize) -> usize {
         if let Ok(num) = buffer.parse() {
             if num >= 1 {
                 num
@@ -96,55 +84,51 @@ impl Tui {
         }
     }
 
-    /// Generate layout and call individual draw methods for each layout part.
-    fn draw_layout_and_subcomponents<B: Backend>(
+    /// Create layout and subcomponents
+    fn draw_layout<B: Backend>(
         f: &mut Frame<B>,
-        debug_steps: Vec<DebugStep>,
+        debug_steps: &[DebugStep],
         opcode_list: Vec<String>,
-        // Line (0-based) which user has selected via cursor
         current_step: usize,
         draw_memory: &mut DrawMemory,
     ) {
         let total_size = f.size();
 
-        if let [left_plane, right_plane] = Layout::default()
+        // split in 2 vertically
+        if let [left_pane, right_pane] = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)].as_ref())
             .split(total_size)[..]
         {
-            if let [stack_plane, memory_plane] = Layout::default()
+            // split right pane horizontally to construct stack and memory 
+            if let [stack_pane, memory_pane] = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)].as_ref())
-                .split(right_plane)[..]
+                .split(right_pane)[..]
             {
                 Tui::draw_op_list(
                     f,
-                    &debug_steps,
+                    debug_steps,
                     opcode_list,
                     current_step,
                     draw_memory,
-                    left_plane,
+                    left_pane,
                 );
-                Tui::draw_stack(f, &debug_steps, current_step, stack_plane);
-                Tui::draw_memory(f, &debug_steps, current_step, memory_plane);
+                Tui::draw_stack(f, debug_steps, current_step, stack_pane);
+                Tui::draw_memory(f, debug_steps, current_step, memory_pane);
             } else {
-                panic!("Failed to generate vertically split layout 1:1:1:1.");
+                panic!("Couldn't generate horizontal split layout 1:2.");
             }
         } else {
-            panic!("Failed to generate horizontally split layout 1:2.");
+            panic!("Couldn't generate vertical split layout 1:2.");
         }
     }
 
-    /// Draw Opcode list into main window.
-    ///
-    /// Handles scrolling and breakpoint display as well.
-    ///
-    /// TODO: syntax highlighting
+    /// Draw opcode list into main component
     fn draw_op_list<B: Backend>(
         f: &mut Frame<B>,
         debug_steps: &[DebugStep],
         opcode_list: Vec<String>,
-        // Line (0-based) which user has selected via cursor
         current_step: usize,
         draw_memory: &mut DrawMemory,
         area: Rect,
@@ -161,67 +145,64 @@ impl Tui {
         // Scroll:
         // Focused line is line that should always be at the center of the screen.
         let display_start;
-        {
-            let grace_lines = 10;
-            let height = area.height as i32;
-            let previous_startline = draw_memory.current_startline;
-            // Minimum startline that should be possible to have in any case
-            let minimum_startline = 0;
-            // Maximum startline that should be possible to have in any case
-            // Magical number 4: I don't know what it's doing here, but it works this way. Otherwise
-            // we just keep maximum scroll four lines early.
-            let maximum_startline = (opcode_list.len() as i32 - 1) - height + 4;
-            // Minimum startline position that makes sense - we want visible code but within limits
-            // of the source code height.
-            let mut minimum_viable_startline =
-                max(current_step as i32 - height + grace_lines, minimum_startline) as usize;
-            // Maximum startline position that makes sense - we want visible code but within limits
-            // of the source code height
-            let mut maximum_viable_startline =
-                max(min(current_step as i32 - grace_lines, maximum_startline), minimum_startline)
-                    as usize;
-            // Sometimes, towards end of file, maximum and minim viable lines have swapped values.
-            // No idea why, but swapping them helps the problem.
-            if minimum_viable_startline > maximum_viable_startline {
-                std::mem::swap(&mut minimum_viable_startline, &mut maximum_viable_startline);
-            }
-            // Try to keep previous startline as it was, but scroll up or down as
-            // little as possible to keep within bonds
-            if previous_startline < minimum_viable_startline {
-                display_start = minimum_viable_startline;
-            } else if previous_startline > maximum_viable_startline {
-                display_start = maximum_viable_startline;
-            } else {
-                display_start = previous_startline;
-            }
-            draw_memory.current_startline = display_start;
+        let scroll_offset = 4;
+        let extra_top_lines = 10;
+        let height = area.height as i32;
+        let prev_start = draw_memory.current_startline;
+        // Absolute minimum start line
+        let abs_min_start = 0;
+        // Adjust for weird scrolling for max top line
+        let abs_max_start = (opcode_list.len() as i32 - 1) - height + scroll_offset;
+        // actual minumum start line
+        let mut min_start =
+            max(current_step as i32 - height + extra_top_lines, abs_min_start) as usize;
+
+        // actual max start line
+        let mut max_start =
+            max(min(current_step as i32 - extra_top_lines, abs_max_start), abs_min_start)
+                as usize;
+
+        // Sometimes, towards end of file, maximum and minim lines have swapped values. Swap if the case
+        if min_start > max_start {
+            std::mem::swap(&mut min_start, &mut max_start);
         }
+
+        if prev_start < min_start {
+            display_start = min_start;
+        } else if prev_start > max_start {
+            display_start = max_start;
+        } else {
+            display_start = prev_start;
+        }
+        draw_memory.current_startline = display_start;
+
+        let max_pc_len = debug_steps.iter().fold(0, |max_val, val| val.pc.max(max_val)).to_string().len();
 
         // Define closure that prints one more line of source code
         let mut add_new_line = |line_number| {
-            // Define background color depending on whether we have cursor here
-            let linenr_bg_color =
+            let bg_color =
                 if line_number == current_step { Color::DarkGray } else { Color::Reset };
-            // Format line indicator. It's different if the currently executing line is here
-            let linenr_format = if line_number == current_step {
+            
+            // Format line number
+            let line_number_format = if line_number == current_step {
                 let step: &DebugStep = &debug_steps[line_number];
-                format!("{:0>4x} ▶", step.pc)
+                format!("{:0>max_pc_len$x} ▶", step.pc, max_pc_len=max_pc_len)
             } else if line_number < debug_steps.len() {
                     let step: &DebugStep = &debug_steps[line_number];
-                    format!("{:0>4x}: ", step.pc)
+                    format!("{:0>max_pc_len$x}: ", step.pc, max_pc_len=max_pc_len)
             } else {
                 "END".to_string()
             };
 
             if let Some(op) = opcode_list.get(line_number) {
                 text_output.push(Spans::from(Span::styled(
-                    format!("{} {}", linenr_format, op),
-                    Style::default().fg(Color::White).bg(linenr_bg_color),
+                    format!("{} {}", line_number_format, op),
+                    Style::default().fg(Color::White).bg(bg_color),
                 )));
             } else {
                 text_output.push(Spans::from(Span::styled(
-                    linenr_format,
-                    Style::default().fg(Color::White).bg(linenr_bg_color),
+                    line_number_format,
+                    Style::default().fg(Color::White).bg(bg_color),
                 )));
             }
         };
@@ -235,7 +216,7 @@ impl Tui {
         f.render_widget(paragraph, area);
     }
 
-    /// Draw stack.
+    /// Draw the stack into the stack pane
     fn draw_stack<B: Backend>(
         f: &mut Frame<B>,
         debug_steps: &[DebugStep],
@@ -261,7 +242,7 @@ impl Tui {
         f.render_widget(paragraph, area);
     }
 
-    /// Draw stack.
+    /// Draw memory in memory pane
     fn draw_memory<B: Backend>(
         f: &mut Frame<B>,
         debug_steps: &[DebugStep],
@@ -303,46 +284,22 @@ impl Tui {
         let paragraph = Paragraph::new(text).block(stack_space).wrap(Wrap { trim: true });
         f.render_widget(paragraph, area);
     }
-
-    /// Use crossterm and stdout to restore terminal state.
-    ///
-    /// This shall be called on application exit.
-    #[allow(unused_must_use)]
-    // NOTE: We don't care if we fail to do something here. Terminal might not support everything,
-    // but we try to restore as much as we can.
-    pub fn restore_terminal_state() -> Result<()> {
-        let mut stdout = io::stdout();
-        // Disable mouse control
-        execute!(stdout, event::DisableMouseCapture);
-        // Disable raw mode that messes up with user's terminal and show cursor again
-        crossterm::terminal::disable_raw_mode();
-        let backend = CrosstermBackend::new(stdout);
-        let mut terminal = Terminal::new(backend)?;
-        terminal.show_cursor();
-        // And clear as much as we can before handing the control of terminal back to user.
-        terminal.clear();
-        Ok(())
-    }
 }
 
-impl UiAgent for Tui {
-    fn start(mut self) -> Result<ApplicationExitReason> {
-        // Setup event loop and input handling
-        let (tx, rx) = mpsc::channel();
-        let tick_rate = Duration::from_millis(50);
+impl Ui for Tui {
+    fn start(mut self) -> Result<TUIExitReason> {
+        
+        let tick_rate = Duration::from_millis(75);
 
         let opcode_list = self.opcode_list.clone();
-        // Thread that will send interrupt singals to UI thread (this one)
+
+        // setup a channel to send interrupts
+        let (tx, rx) = mpsc::channel();
         thread::spawn(move || {
             let mut last_tick = Instant::now();
             loop {
-                // Oh we got an event from user
-                // UNWRAP: We need to use it because I don't know how to return Result
-                // from this, and I doubt it can even be done.
+                // poll events since last tick
                 if event::poll(tick_rate - last_tick.elapsed()).unwrap() {
-                    // Send interrupt
-                    // UNWRAP: We are guaranteed that the following call will succeed
-                    // as we know there already something waiting for us (see event::poll)
                     let event = event::read().unwrap();
                     if let Event::Key(key) = event {
                         if tx.send(Interrupt::KeyPressed(key)).is_err() {
@@ -354,6 +311,7 @@ impl UiAgent for Tui {
                         }
                     }
                 }
+                // force update if time has passed
                 if last_tick.elapsed() > tick_rate {
                     if tx.send(Interrupt::IntervalElapsed).is_err() {
                         return
@@ -363,19 +321,15 @@ impl UiAgent for Tui {
             }
         });
 
-        self.terminal.clear().with_context(|| {
-            "Failed to clear terminal during drawing state. Do you have modern term?"
-        })?;
+        self.terminal.clear()?;
         let mut draw_memory: DrawMemory = DrawMemory::default();
 
+        let debug_steps = &self.debug_steps[..];
         // UI thread that manages drawing
         loop {
-            let debug_steps = self.debug_steps.clone();
-            // Wait for interrupt
+            // grab interrupt
             match rx.recv()? {
-                // Handle user input. Vi-like controls are available,
-                // including prefixing a command with number to execute it
-                // multiple times (in case of breakpoint toggles breakpoint on given line).
+                // key press
                 Interrupt::KeyPressed(event) => match event.code {
                     // Exit
                     KeyCode::Char('q') => {
@@ -385,44 +339,45 @@ impl UiAgent for Tui {
                             LeaveAlternateScreen,
                             DisableMouseCapture
                         )?;
-                        return Ok(ApplicationExitReason::UserExit)
+                        return Ok(TUIExitReason::CharExit)
                     }
-                    // Move cursor down
+                    // Move down
                     KeyCode::Char('j') | KeyCode::Down => {
+                        // grab number of times to do it
                         for _ in
-                            0..Tui::get_pressed_key_buffer_as_number(&self.pressed_keys_buffer, 1)
+                            0..Tui::buffer_as_number(&self.key_buffer, 1)
                         {
                             if self.current_step < opcode_list.len() - 1 {
                                 self.current_step += 1;
                             }
                         }
-                        self.pressed_keys_buffer.clear();
+                        self.key_buffer.clear();
                     }
-                    // Move cursor up
+                    // Move up
                     KeyCode::Char('k') | KeyCode::Up => {
                         for _ in
-                            0..Tui::get_pressed_key_buffer_as_number(&self.pressed_keys_buffer, 1)
+                            0..Tui::buffer_as_number(&self.key_buffer, 1)
                         {
                             if self.current_step > 0 {
                                 self.current_step -= 1;
                             }
                         }
-                        self.pressed_keys_buffer.clear();
+                        self.key_buffer.clear();
                     }
                     // Go to top of file
                     KeyCode::Char('g') => {
                         self.current_step = 0;
-                        self.pressed_keys_buffer.clear();
+                        self.key_buffer.clear();
                     }
                     // Go to bottom of file
                     KeyCode::Char('G') => {
                         self.current_step = opcode_list.len() - 1;
-                        self.pressed_keys_buffer.clear();
+                        self.key_buffer.clear();
                     }
                     // Step forward
                     KeyCode::Char('s') => {
                         for _ in
-                            0..Tui::get_pressed_key_buffer_as_number(&self.pressed_keys_buffer, 1)
+                            0..Tui::buffer_as_number(&self.key_buffer, 1)
                         {
                             let remaining_ops = opcode_list[self.current_step..].to_vec().clone();
                             self.current_step += remaining_ops
@@ -446,12 +401,12 @@ impl UiAgent for Tui {
                                 self.current_step = opcode_list.len() - 1
                             };
                         }
-                        self.pressed_keys_buffer.clear();
+                        self.key_buffer.clear();
                     }
                     // Step backwards
                     KeyCode::Char('a') => {
                         for _ in
-                            0..Tui::get_pressed_key_buffer_as_number(&self.pressed_keys_buffer, 1)
+                            0..Tui::buffer_as_number(&self.key_buffer, 1)
                         {
                             let prev_ops = opcode_list[..self.current_step].to_vec().clone();
                             self.current_step = prev_ops
@@ -474,19 +429,19 @@ impl UiAgent for Tui {
                                 })
                                 .unwrap_or_default();
                         }
-                        self.pressed_keys_buffer.clear();
+                        self.key_buffer.clear();
                     }
                     KeyCode::Char(other) => match other {
                         '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' => {
-                            self.pressed_keys_buffer.push(other);
+                            self.key_buffer.push(other);
                         }
                         _ => {
                             // Invalid key, clear buffer
-                            self.pressed_keys_buffer.clear();
+                            self.key_buffer.clear();
                         }
                     },
                     _ => {
-                        self.pressed_keys_buffer.clear();
+                        self.key_buffer.clear();
                     }
                 },
                 Interrupt::MouseEvent(event) => match event.kind {
@@ -508,9 +463,9 @@ impl UiAgent for Tui {
             // Draw
             let current_step = self.current_step;
             self.terminal.draw(|f| {
-                Tui::draw_layout_and_subcomponents(
+                Tui::draw_layout(
                     f,
-                    debug_steps,
+                    &debug_steps,
                     opcode_list.clone(),
                     current_step,
                     &mut draw_memory,
