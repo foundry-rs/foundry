@@ -1,5 +1,7 @@
+use ethers::{abi::Abi, prelude::artifacts::DeployedBytecode};
 use std::{
     cmp::{max, min},
+    collections::BTreeMap,
     time::{Duration, Instant},
 };
 
@@ -50,19 +52,36 @@ pub struct Tui {
     key_buffer: String,
     /// current step in the debug steps
     current_step: usize,
+    identified_contracts: BTreeMap<Address, (String, Abi)>,
+    known_contracts: BTreeMap<String, (Abi, DeployedBytecode)>,
+    source_code: BTreeMap<u32, String>,
 }
 
 impl Tui {
     /// Create a tui
     #[allow(unused_must_use)]
-    pub fn new(debug_arena: Vec<(Address, Vec<DebugStep>)>, current_step: usize) -> Result<Self> {
+    pub fn new(
+        debug_arena: Vec<(Address, Vec<DebugStep>)>,
+        current_step: usize,
+        identified_contracts: BTreeMap<Address, (String, Abi)>,
+        known_contracts: BTreeMap<String, (Abi, DeployedBytecode)>,
+        source_code: BTreeMap<u32, String>,
+    ) -> Result<Self> {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
         execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
         terminal.hide_cursor();
-        Ok(Tui { debug_arena, terminal, key_buffer: String::new(), current_step })
+        Ok(Tui {
+            debug_arena,
+            terminal,
+            key_buffer: String::new(),
+            current_step,
+            identified_contracts,
+            known_contracts,
+            source_code,
+        })
     }
 
     /// Grab number from buffer. Used for something like '10k' to move up 10 operations
@@ -82,6 +101,9 @@ impl Tui {
     fn draw_layout<B: Backend>(
         f: &mut Frame<B>,
         address: Address,
+        identified_contracts: &BTreeMap<Address, (String, Abi)>,
+        known_contracts: &BTreeMap<String, (Abi, DeployedBytecode)>,
+        source_code: &BTreeMap<u32, String>,
         debug_steps: &[DebugStep],
         opcode_list: &[String],
         current_step: usize,
@@ -96,22 +118,42 @@ impl Tui {
             .split(total_size)[..]
         {
             // split right pane horizontally to construct stack and memory
-            if let [stack_pane, memory_pane] = Layout::default()
+            if let [op_pane, src_pane] = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Ratio(1, 4), Constraint::Ratio(3, 4)].as_ref())
-                .split(right_pane)[..]
+                .split(left_pane)[..]
             {
-                Tui::draw_op_list(
-                    f,
-                    address,
-                    debug_steps,
-                    opcode_list,
-                    current_step,
-                    draw_memory,
-                    left_pane,
-                );
-                Tui::draw_stack(f, debug_steps, current_step, stack_pane);
-                Tui::draw_memory(f, debug_steps, current_step, memory_pane);
+                if let [stack_pane, memory_pane] = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Ratio(1, 4), Constraint::Ratio(3, 4)].as_ref())
+                    .split(right_pane)[..]
+                {
+                    Tui::draw_src(
+                        f,
+                        address,
+                        identified_contracts,
+                        known_contracts,
+                        source_code,
+                        debug_steps,
+                        opcode_list,
+                        current_step,
+                        draw_memory,
+                        src_pane,
+                    );
+                    Tui::draw_op_list(
+                        f,
+                        address,
+                        identified_contracts,
+                        known_contracts,
+                        debug_steps,
+                        opcode_list,
+                        current_step,
+                        draw_memory,
+                        op_pane,
+                    );
+                    Tui::draw_stack(f, debug_steps, current_step, stack_pane);
+                    Tui::draw_memory(f, debug_steps, current_step, memory_pane);
+                }
             } else {
                 panic!("Couldn't generate horizontal split layout 1:2.");
             }
@@ -120,10 +162,59 @@ impl Tui {
         }
     }
 
+    fn draw_src<B: Backend>(
+        f: &mut Frame<B>,
+        address: Address,
+        identified_contracts: &BTreeMap<Address, (String, Abi)>,
+        known_contracts: &BTreeMap<String, (Abi, DeployedBytecode)>,
+        source_code: &BTreeMap<u32, String>,
+        _debug_steps: &[DebugStep],
+        _opcode_list: &[String],
+        current_step: usize,
+        _draw_memory: &mut DrawMemory,
+        area: Rect,
+    ) {
+        let block_source_code = Block::default().borders(Borders::ALL);
+
+        let mut text_output: Vec<Spans> = Vec::new();
+        if let Some(contract_name) = identified_contracts.get(&address) {
+            if let Some(known) = known_contracts.get(&contract_name.0) {
+                if let Some(sourcemap) =
+                    known.1.bytecode.as_ref().expect("no bytecode").source_map()
+                {
+                    match sourcemap {
+                        Ok(sourcemap) => {
+                            if let Some(source_idx) = sourcemap[current_step].index {
+                                if let Some(source) = source_code.get(&source_idx) {
+                                    let offset = sourcemap[current_step].offset;
+                                    let len = sourcemap[current_step].length;
+                                    let src = source[offset..offset + len].split("\n").map(|s| Span::from(s.to_string())).collect::<Vec<Span>>();
+                                    text_output.push(Spans::from(src));
+                                } else {
+                                    text_output.push(Spans::from("No source for srcmap index"));
+                                }
+                            } else {
+                                text_output.push(Spans::from("No srcmap index"));
+                            }
+                        }
+                        Err(e) => text_output.push(Spans::from(e.to_string())),
+                    }
+                } else {
+                    text_output.push(Spans::from("No sourcemap for contract"));
+                }
+            }
+        }
+        let paragraph =
+            Paragraph::new(text_output).block(block_source_code).wrap(Wrap { trim: true });
+        f.render_widget(paragraph, area);
+    }
+
     /// Draw opcode list into main component
     fn draw_op_list<B: Backend>(
         f: &mut Frame<B>,
         address: Address,
+        identified_contracts: &BTreeMap<Address, (String, Abi)>,
+        _known_contracts: &BTreeMap<String, (Abi, DeployedBytecode)>,
         debug_steps: &[DebugStep],
         opcode_list: &[String],
         current_step: usize,
@@ -133,7 +224,7 @@ impl Tui {
         let block_source_code = Block::default()
             .title(format!(
                 " Op: {} - Address: {} #: {}, pc: {} ----- q: quit, a: JUMPDEST-, s: JUMPDEST+, j: OP+, k: OP-, g: OP0, G: OP_LAST",
-                draw_memory.inner_call_index,
+                if let Some(contract_name) = identified_contracts.get(&address) { contract_name.0.to_string() } else { draw_memory.inner_call_index.to_string() },
                 address,
                 current_step,
                 if let Some(step) = debug_steps.get(current_step) { step.pc.to_string() } else { "END".to_string() }
@@ -386,6 +477,21 @@ impl Ui for Tui {
                         self.current_step = debug_call[draw_memory.inner_call_index].1.len() - 1;
                         self.key_buffer.clear();
                     }
+                    // Go to previous call
+                    KeyCode::Char('c') => {
+                        draw_memory.inner_call_index =
+                            draw_memory.inner_call_index.saturating_sub(1);
+                        self.current_step = debug_call[draw_memory.inner_call_index].1.len() - 1;
+                        self.key_buffer.clear();
+                    }
+                    // Go to next call
+                    KeyCode::Char('C') => {
+                        if debug_call.len() > draw_memory.inner_call_index + 1 {
+                            draw_memory.inner_call_index += 1;
+                            self.current_step = 0;
+                        }
+                        self.key_buffer.clear();
+                    }
                     // Step forward
                     KeyCode::Char('s') => {
                         for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
@@ -481,6 +587,9 @@ impl Ui for Tui {
                 Tui::draw_layout(
                     f,
                     debug_call[draw_memory.inner_call_index].0,
+                    &self.identified_contracts,
+                    &self.known_contracts,
+                    &self.source_code,
                     &debug_call[draw_memory.inner_call_index].1[..],
                     &opcode_list,
                     current_step,
