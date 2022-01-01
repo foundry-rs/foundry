@@ -26,7 +26,7 @@ pub struct CounterExample {
 impl fmt::Display for CounterExample {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let args = foundry_utils::format_tokens(&self.args).collect::<Vec<_>>().join(", ");
-        write!(f, "calldata=0x{}, args={}", hex::encode(&self.calldata), args)
+        write!(f, "calldata=0x{}, args=[{}]", hex::encode(&self.calldata), args)
     }
 }
 
