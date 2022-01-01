@@ -181,15 +181,30 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::FourByteDecode { calldata } => {
             let sigs = SimpleCast::fourbyte(&calldata).await?;
+
+            // filter for signatures that can be decoded
+            let sigs = sigs
+                .iter()
+                .filter(|sig| {
+                    let res = SimpleCast::abi_decode(sig, &calldata, true);
+                    res.is_ok()
+                })
+                .collect::<Vec<&String>>();
+
             sigs.iter().enumerate().for_each(|(i, sig)| println!("{}) \"{}\"", i + 1, sig));
-            print!("Select a function signature by number: ");
-            io::stdout().flush()?;
 
-            let mut input = String::new();
-            io::stdin().read_line(&mut input)?;
-            let i: usize = input.trim().parse()?;
+            let sig = match sigs.len() {
+                1 => sigs[0],
+                _ => {
+                    print!("Select a function signature by number: ");
+                    io::stdout().flush()?;
+                    let mut input = String::new();
+                    io::stdin().read_line(&mut input)?;
+                    let i: usize = input.trim().parse()?;
+                    &sigs[i - 1]
+                }
+            };
 
-            let sig = &sigs[i - 1];
             let tokens = SimpleCast::abi_decode(sig, &calldata, true)?;
             let tokens = utils::format_tokens(&tokens);
 
