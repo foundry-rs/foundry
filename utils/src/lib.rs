@@ -245,22 +245,26 @@ pub async fn fourbyte_possible_sigs(calldata: &str, id: Option<String>) -> Resul
                 "earliest" => {
                     sigs.sort_by(|a, b| a.1.cmp(&b.1));
                     sigs.get(0)
-                },
+                }
                 "latest" => {
                     sigs.sort_by(|a, b| b.1.cmp(&a.1));
                     sigs.get(0)
-                },
+                }
                 _ => {
                     let id: i32 = id.parse().expect("Must be integer");
-                    sigs = sigs.iter().filter(|sig| sig.1 == id).cloned().collect::<Vec<(String, i32)>>();
+                    sigs = sigs
+                        .iter()
+                        .filter(|sig| sig.1 == id)
+                        .cloned()
+                        .collect::<Vec<(String, i32)>>();
                     sigs.get(0)
                 }
             };
             match sig {
                 Some(sig) => Ok(vec![sig.clone().0]),
-                None => Ok(vec![])
+                None => Ok(vec![]),
             }
-        },
+        }
         None => {
             // filter for signatures that can be decoded
             Ok(sigs

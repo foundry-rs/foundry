@@ -181,9 +181,7 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::FourByteDecode { calldata, id } => {
             let sigs = foundry_utils::fourbyte_possible_sigs(&calldata, id).await?;
-            sigs.iter()
-                .enumerate()
-                .for_each(|(i, sig)| println!("{}) \"{}\"", i + 1, sig));
+            sigs.iter().enumerate().for_each(|(i, sig)| println!("{}) \"{}\"", i + 1, sig));
 
             let sig = match sigs.len() {
                 0 => Err(eyre::eyre!("No signatures found")),
@@ -194,7 +192,7 @@ async fn main() -> eyre::Result<()> {
                     let mut input = String::new();
                     io::stdin().read_line(&mut input)?;
                     let i: usize = input.trim().parse()?;
-                    Ok(sigs.get(i-1).expect("Invalid signature index"))
+                    Ok(sigs.get(i - 1).expect("Invalid signature index"))
                 }
             }?;
 
