@@ -3,7 +3,9 @@ use structopt::StructOpt;
 use ethers::{solc::EvmVersion, types::Address};
 use std::{path::PathBuf, str::FromStr};
 
-use crate::cmd::{build::BuildArgs, create::CreateArgs, run::RunArgs, snapshot, test};
+use crate::cmd::{
+    build::BuildArgs, create::CreateArgs, run::RunArgs, snapshot, test, verify::VerifyArgs,
+};
 
 #[derive(Debug, StructOpt)]
 pub struct Opts {
@@ -62,14 +64,7 @@ pub enum Subcommands {
     #[structopt(
         about = "verify your smart contracts source code on Etherscan. Requires `ETHERSCAN_API_KEY` to be set."
     )]
-    VerifyContract {
-        #[structopt(help = "contract source info `<path>:<contractname>`")]
-        contract: FullContractInfo,
-        #[structopt(help = "the address of the contract to verify.")]
-        address: Address,
-        #[structopt(help = "constructor args calldata arguments.")]
-        constructor_args: Vec<String>,
-    },
+    Verify(VerifyArgs),
 
     #[structopt(alias = "c", about = "deploy a compiled contract")]
     Create(CreateArgs),
@@ -194,26 +189,6 @@ impl FromStr for ContractInfo {
         let name = iter.next().unwrap().to_string();
         let path = iter.next().map(str::to_string);
         Ok(Self { path, name })
-    }
-}
-
-/// Represents the common dapp argument pattern `<path>:<contractname>`
-#[derive(Clone, Debug)]
-pub struct FullContractInfo {
-    /// Location of the contract
-    pub path: String,
-    /// Name of the contract
-    pub name: String,
-}
-
-impl FromStr for FullContractInfo {
-    type Err = eyre::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (path, name) = s
-            .split_once(':')
-            .ok_or_else(|| eyre::eyre!("Expected `<path>:<contractname>`, got `{}`", s))?;
-        Ok(Self { path: path.to_string(), name: name.to_string() })
     }
 }
 
