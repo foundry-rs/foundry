@@ -305,7 +305,7 @@ pub fn abi_decode(sig: &str, calldata: &str, input: bool) -> Result<Vec<Token>> 
 
 /// Pretty print a slice of tokens.
 pub fn format_tokens(tokens: &[Token]) -> impl Iterator<Item = String> + '_ {
-    tokens.iter().map(|param| format_token(param))
+    tokens.iter().map(format_token)
 }
 
 // Gets pretty print strings for tokens
@@ -326,15 +326,15 @@ pub fn format_token(param: &Token) -> String {
         Token::Bool(b) => format!("{}", b),
         Token::String(s) => format!("{:?}", s),
         Token::FixedArray(tokens) => {
-            let string = tokens.into_iter().map(format_token).collect::<Vec<String>>().join(", ");
+            let string = tokens.iter().map(format_token).collect::<Vec<String>>().join(", ");
             format!("[{}]", string)
         }
         Token::Array(tokens) => {
-            let string = tokens.into_iter().map(format_token).collect::<Vec<String>>().join(", ");
+            let string = tokens.iter().map(format_token).collect::<Vec<String>>().join(", ");
             format!("[{}]", string)
         }
         Token::Tuple(tokens) => {
-            let string = tokens.into_iter().map(format_token).collect::<Vec<String>>().join(", ");
+            let string = tokens.iter().map(format_token).collect::<Vec<String>>().join(", ");
             format!("({})", string)
         }
     }
