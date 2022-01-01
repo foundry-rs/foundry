@@ -110,7 +110,6 @@ impl Cmd for RunArgs {
 
         if self.evm_opts.debug {
             // 6. Boot up debugger
-
             let source_code: BTreeMap<u32, String> = sources
                 .iter()
                 .map(|(id, path)| {
@@ -140,6 +139,31 @@ impl Cmd for RunArgs {
             )?;
             match tui.start().expect("Failed to start tui") {
                 TUIExitReason::CharExit => return Ok(()),
+            }
+        } else if evm_opts.verbosity > 2 {
+            // support traces
+            if let (Some(traces), Some(identified_contracts)) =
+                (&result.traces, &result.identified_contracts)
+            {
+                if !result.success && evm_opts.verbosity == 3 || evm_opts.verbosity > 3 {
+                    let mut ident = identified_contracts.clone();
+                    if evm_opts.verbosity > 4 || !result.success {
+                        // print setup calls as well
+                        traces.iter().for_each(|trace| {
+                            trace.pretty_print(0, &known_contracts, &mut ident, runner.evm, "");
+                        });
+                    } else if !traces.is_empty() {
+                        traces.last().expect("no last but not empty").pretty_print(
+                            0,
+                            &known_contracts,
+                            &mut ident,
+                            runner.evm,
+                            "",
+                        );
+                    }
+                }
+
+                println!();
             }
         } else {
             // 6. print the result nicely
