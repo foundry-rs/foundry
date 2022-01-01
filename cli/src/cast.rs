@@ -102,7 +102,7 @@ async fn main() -> eyre::Result<()> {
                 "{}",
                 SimpleCast::to_wei(
                     U256::from_dec_str(&val)?,
-                    unit.unwrap_or_else(|| String::from("wei"))
+                    unit.unwrap_or_else(|| String::from("eth"))
                 )?
             );
         }
@@ -112,7 +112,7 @@ async fn main() -> eyre::Result<()> {
                 "{}",
                 SimpleCast::from_wei(
                     U256::from_dec_str(&val)?,
-                    unit.unwrap_or_else(|| String::from("wei"))
+                    unit.unwrap_or_else(|| String::from("eth"))
                 )?
             );
         }
