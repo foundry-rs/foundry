@@ -10,7 +10,7 @@ use ethers_core::{
 use ethers_providers::{Middleware, PendingTransaction};
 use eyre::Result;
 use rustc_hex::{FromHexIter, ToHex};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::str::FromStr;
 
 use foundry_utils::{encode_args, get_func, to_table};
@@ -565,23 +565,24 @@ impl SimpleCast {
     /// }
     /// ```
     pub async fn fourbyte(selector: &str) -> Result<Vec<String>> {
-        #[derive(Serialize, Deserialize, Debug)]
+        #[derive(Deserialize)]
         struct Decoded {
             text_signature: String,
         }
 
-        #[derive(Serialize, Deserialize, Debug)]
+        #[derive(Deserialize)]
         struct ApiResponse {
-            count: i64,
             results: Vec<Decoded>,
         }
 
-        let selector_clean = &selector.replace("0x", "")[..8];
+        let selector = &selector.strip_prefix("0x").unwrap_or(selector);
+        if selector.len() < 8 {
+            return Err(eyre::eyre!("invalid selector"))
+        }
+        let selector = &selector[..8];
 
-        let url = format!(
-            "https://www.4byte.directory/api/v1/signatures/?hex_signature={}",
-            selector_clean
-        );
+        let url =
+            format!("https://www.4byte.directory/api/v1/signatures/?hex_signature={}", selector);
         let res = reqwest::get(url).await?;
         let api_response = res.json::<ApiResponse>().await?;
 

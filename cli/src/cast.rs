@@ -201,7 +201,7 @@ async fn main() -> eyre::Result<()> {
                     let mut input = String::new();
                     io::stdin().read_line(&mut input)?;
                     let i: usize = input.trim().parse()?;
-                    &sigs[i - 1]
+                    sigs[i - 1]
                 }
             };
 
