@@ -159,7 +159,7 @@ pub struct EvmOpts {
     #[structopt(help = "enables the FFI cheatcode", long)]
     pub ffi: bool,
 
-    #[structopt(help = "verbosity of EVM output (0-3)", long, default_value = "0")]
+    #[structopt(help = "verbosity of EVM output (0-4)", long, default_value = "0")]
     pub verbosity: u8,
 }
 
