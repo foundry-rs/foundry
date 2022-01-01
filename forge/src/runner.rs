@@ -203,6 +203,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
                 .iter()
                 .filter(|func| !func.inputs.is_empty())
                 .map(|func| {
+                    self.evm.reset(init_state.clone());
                     let result = self.run_fuzz_test(func, needs_setup, fuzzer.clone())?;
                     Ok((func.signature(), result))
                 })
