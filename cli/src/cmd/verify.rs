@@ -20,7 +20,7 @@ pub async fn run(
     address: Address,
     args: Vec<String>,
 ) -> eyre::Result<()> {
-    let etherscan_api_key = utils::etherscan_api_key()?;
+    let etherscan_api_key = foundry_utils::etherscan_api_key()?;
     let rpc_url = utils::rpc_url();
     let provider = Provider::try_from(rpc_url)?;
     let chain = provider

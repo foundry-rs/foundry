@@ -2,18 +2,20 @@
 //!
 //! TODO
 use chrono::NaiveDateTime;
+use ethers_core::types::Chain;
 use ethers_core::{
     abi::{AbiParser, Token},
     types::*,
     utils::{self, keccak256},
 };
 
+use ethers_etherscan::Client;
 use ethers_providers::{Middleware, PendingTransaction};
+use eyre::Result;
 use eyre::{Context, Result};
+use foundry_utils::{encode_args, etherscan_api_key, get_func, to_table};
 use rustc_hex::{FromHexIter, ToHex};
 use std::str::FromStr;
-
-use foundry_utils::{encode_args, get_func, to_table};
 
 // TODO: CastContract with common contract initializers? Same for CastProviders?
 
@@ -45,7 +47,7 @@ where
     /// Makes a read-only call to the specified address
     ///
     /// ```no_run
-    /// 
+    ///
     /// use cast::Cast;
     /// use ethers_core::types::Address;
     /// use ethers_providers::{Provider, Http};
@@ -432,6 +434,10 @@ where
     }
 }
 
+pub struct InterfaceSource {
+    pub name: String,
+    pub source: String,
+}
 pub struct SimpleCast;
 impl SimpleCast {
     /// Converts UTF-8 text input to hex
@@ -447,8 +453,22 @@ impl SimpleCast {
         format!("0x{}", s)
     }
 
+    pub async fn generate_interface(address: String) -> Result<Vec<InterfaceSource>> {
+        let env_key = foundry_utils::etherscan_api_key()?;
+        let client = Client::new(Chain::Mainnet, env_key).unwrap();
+        let contract_source = client.contract_source_code(address.parse().unwrap()).await.unwrap();
+        let contract_abis = contract_source.abis().unwrap();
+        let mut interfaces: Vec<InterfaceSource> = vec![];
+        for (i, contract_abi) in contract_abis.iter().enumerate() {
+            let contract_name = contract_source.items[i].contract_name.clone();
+            let interface_source =
+                foundry_utils::abi_to_solidity(contract_abi.clone(), contract_name.clone())?;
+            let interface = InterfaceSource { name: contract_name, source: interface_source };
+            interfaces.push(interface);
+        }
+        Ok(interfaces)
+    }
     /// Converts hex data into text data
-    ///
     /// ```
     /// use cast::SimpleCast as Cast;
     ///

@@ -255,6 +255,32 @@ async fn main() -> eyre::Result<()> {
         Subcommands::Keccak { data } => {
             println!("{}", SimpleCast::keccak(&data)?);
         }
+
+        Subcommands::Interface { contract_address, output_location } => {
+            println!("finding interface...");
+            let output_loc = unwrap_or_stdin(output_location).ok();
+            let interfaces =
+                SimpleCast::generate_interface(unwrap_or_stdin(contract_address).unwrap()).await?;
+            match output_loc {
+                Some(loc) => {
+                    for interface in interfaces {
+                        std::fs::write(
+                            format!("./{}/{}.sol", loc, interface.name),
+                            interface.source,
+                        );
+                        println!("Saved interface at ./{}.sol", interface.name);
+                    }
+                }
+                None => {
+                    for interface in interfaces {
+                        println!(
+                            "Interface for contract {}: \n {}",
+                            interface.name, interface.source
+                        )
+                    }
+                }
+            }
+        }
         Subcommands::ResolveName { who, rpc_url, verify } => {
             let provider = Provider::try_from(rpc_url)?;
             let who = unwrap_or_stdin(who)?;
@@ -412,11 +438,6 @@ async fn main() -> eyre::Result<()> {
             }
         },
     };
-    Subcommands::Interface {contract_address, output_location} => {
-        let output = SimpleCast::generate_interface(contract_address.unwrap_or_stdin(), 
-            output.unwrap_or_stdin())?;
-        println!(output);;
-    }
     Ok(())
 }
 

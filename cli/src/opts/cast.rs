@@ -298,6 +298,13 @@ pub enum Subcommands {
         #[structopt(subcommand)]
         command: WalletSubcommands,
     },
+    #[structopt(name = "interface", about = "generate contract's interface from ABI")]
+    Interface {
+        #[structopt(help = "The contract's address")]
+        contract_address: Option<String>,
+        #[structopt(help = "output file, or empty for stdout")]
+        output_location: Option<String>,
+    },
 }
 
 #[derive(Debug, StructOpt)]
@@ -349,13 +356,6 @@ pub enum WalletSubcommands {
         signature: String,
         #[structopt(long, short, help = "pubkey of message signer")]
         address: String,
-    },
-    #[structopt(name = "interface", about = "generate contract's interface from ABI")]
-    Interface {
-        #[structopt(help = "The contract's address")]
-        contract_address: Option<String>,
-        #[structopt(help = "output file, or empty for stdout")]
-        output_location: Option<String>,
     },
 }
 
