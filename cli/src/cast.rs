@@ -7,7 +7,7 @@ use cast::{Cast, SimpleCast};
 mod opts;
 use opts::{
     cast::{Opts, Subcommands, WalletSubcommands},
-    WalletType,
+    EthereumOpts, WalletType,
 };
 
 use ethers::{
@@ -291,18 +291,39 @@ async fn main() -> eyre::Result<()> {
                     }
                 }
             }
-            WalletSubcommands::Address { unsafe_private_key } => {
-                let private_key = read_secret(unsafe_private_key.is_none(), unsafe_private_key)?;
-                let private_key = private_key.strip_prefix("0x").unwrap_or(&private_key);
-                let wallet = LocalWallet::from_str(&private_key).expect("invalid private key");
-                println!("Address: {}", SimpleCast::checksum_address(&wallet.address())?);
+            WalletSubcommands::Address { wallet } => {
+                let wallet = EthereumOpts {
+                    wallet,
+                    from: None,
+                    rpc_url: "http://localhost:8545".to_string(),
+                }
+                .signer(0.into())
+                .await?
+                .unwrap();
+
+                let addr = match wallet {
+                    WalletType::Ledger(signer) => signer.address(),
+                    WalletType::Local(signer) => signer.address(),
+                    WalletType::Trezor(signer) => signer.address(),
+                };
+                println!("Address: {}", SimpleCast::checksum_address(&addr)?);
             }
-            WalletSubcommands::Sign { message, unsafe_private_key } => {
-                let private_key = read_secret(unsafe_private_key.is_none(), unsafe_private_key)?;
-                let private_key = private_key.strip_prefix("0x").unwrap_or(&private_key);
-                let wallet =
-                    LocalWallet::from_str(private_key).expect("invalid private key provided");
-                println!("Signature: 0x{}", wallet.sign_message(&message).await?)
+            WalletSubcommands::Sign { message, wallet } => {
+                let wallet = EthereumOpts {
+                    wallet,
+                    from: None,
+                    rpc_url: "http://localhost:8545".to_string(),
+                }
+                .signer(0.into())
+                .await?
+                .unwrap();
+
+                let sig = match wallet {
+                    WalletType::Ledger(wallet) => wallet.signer().sign_message(&message).await?,
+                    WalletType::Local(wallet) => wallet.signer().sign_message(&message).await?,
+                    WalletType::Trezor(wallet) => wallet.signer().sign_message(&message).await?,
+                };
+                println!("Signature: 0x{}", sig);
             }
             WalletSubcommands::Verify { message, signature, address } => {
                 let pubkey = Address::from_str(&address).expect("invalid pubkey provided");
