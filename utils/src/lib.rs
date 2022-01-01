@@ -237,7 +237,7 @@ pub async fn fourbyte(selector: &str) -> Result<Vec<(String, i32)>> {
 }
 
 pub async fn fourbyte_possible_sigs(calldata: &str, id: Option<String>) -> Result<Vec<String>> {
-    let mut sigs = fourbyte(&calldata).await?;
+    let mut sigs = fourbyte(calldata).await?;
 
     match id {
         Some(id) => {
@@ -271,7 +271,7 @@ pub async fn fourbyte_possible_sigs(calldata: &str, id: Option<String>) -> Resul
                 .iter()
                 .map(|sig| sig.clone().0)
                 .filter(|sig| {
-                    let res = abi_decode(&sig, &calldata, true);
+                    let res = abi_decode(sig, calldata, true);
                     res.is_ok()
                 })
                 .collect::<Vec<String>>())
@@ -296,4 +296,27 @@ pub fn abi_decode(sig: &str, calldata: &str, input: bool) -> Result<Vec<Token>> 
     }
 
     Ok(res)
+}
+
+#[tokio::test]
+async fn test_fourbyte() {
+    let sigs = fourbyte("0xa9059cbb").await.unwrap();
+    assert_eq!(sigs[0].0, "func_2093253501(bytes)".to_string());
+    assert_eq!(sigs[0].1, 313067);
+}
+
+#[tokio::test]
+async fn test_fourbyte_possible_sigs() {
+    let sigs = fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", None).await.unwrap();
+    assert_eq!(sigs[0], "many_msg_babbage(bytes1)".to_string());
+    assert_eq!(sigs[1], "transfer(address,uint256)".to_string());
+
+    let sigs = fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", Some("earliest".to_string())).await.unwrap();
+    assert_eq!(sigs[0], "transfer(address,uint256)".to_string());
+
+    let sigs = fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", Some("latest".to_string())).await.unwrap();
+    assert_eq!(sigs[0], "func_2093253501(bytes)".to_string());
+
+    let sigs = fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", Some("145".to_string())).await.unwrap();
+    assert_eq!(sigs[0], "transfer(address,uint256)".to_string());
 }

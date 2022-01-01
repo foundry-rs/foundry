@@ -1552,6 +1552,7 @@ dependencies = [
  "rustc-hex",
  "serde",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]

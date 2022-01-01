@@ -16,3 +16,4 @@ reqwest = "0.11.8"
 rustc-hex = { version = "2.1.0", default-features = false }
 serde = "1.0.132"
 serde_json = { version = "1.0.67", default-features = false }
+tokio = "1.15.0"
