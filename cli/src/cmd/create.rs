@@ -5,19 +5,14 @@ use crate::{
     opts::{EthereumOpts, WalletType},
 };
 use ethers::{
-    abi::{Constructor, Contract, Token},
-    prelude::{
-        artifacts::{BytecodeObject, Source, Sources},
-        ContractFactory, Http, Middleware, MinimalCombinedArtifacts, Project, ProjectCompileOutput,
-        Provider,
-    },
-    solc::cache::SolFilesCache,
+    abi::{Abi, Constructor, Token},
+    prelude::{artifacts::BytecodeObject, ContractFactory, Http, Middleware, Provider},
 };
 use eyre::Result;
 use foundry_utils::parse_tokens;
 
 use crate::opts::forge::ContractInfo;
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 use structopt::StructOpt;
 
 #[derive(Debug, Clone, StructOpt)]
@@ -44,10 +39,7 @@ impl Cmd for CreateArgs {
         let compiled = super::compile(&project)?;
 
         // Get ABI and BIN
-        let (abi, bin) = match self.contract.path {
-            Some(ref path) => self.get_artifact_from_path(&project, path.clone())?,
-            None => self.get_artifact_from_name(compiled)?,
-        };
+        let (abi, bin, _) = super::read_artifact(&project, compiled, self.contract.clone())?;
 
         // Add arguments to constructor
         let provider = Provider::<Http>::try_from(self.eth.rpc_url.as_str())?;
@@ -80,91 +72,9 @@ impl Cmd for CreateArgs {
 }
 
 impl CreateArgs {
-    /// Find using only ContractName
-    // TODO: Is there a better / more ergonomic way to get the artifacts given a project and a
-    // contract name?
-    fn get_artifact_from_name(
-        &self,
-        compiled: ProjectCompileOutput<MinimalCombinedArtifacts>,
-    ) -> Result<(Contract, BytecodeObject)> {
-        let mut has_found_contract = false;
-        let mut contract_artifact = None;
-
-        for (name, artifact) in compiled.into_artifacts() {
-            // if the contract name
-            let mut split = name.split(':');
-            let mut artifact_contract_name =
-                split.next().ok_or_else(|| eyre::Error::msg("no contract name provided"))?;
-            if let Some(new_name) = split.next() {
-                artifact_contract_name = new_name;
-            };
-
-            if artifact_contract_name == self.contract.name {
-                if has_found_contract {
-                    eyre::bail!("contract with duplicate name. pass path")
-                }
-                has_found_contract = true;
-                contract_artifact = Some(artifact);
-            }
-        }
-
-        Ok(match contract_artifact {
-            Some(artifact) => (
-                artifact.abi.ok_or_else(|| {
-                    eyre::Error::msg(format!("abi not found for {}", self.contract.name))
-                })?,
-                artifact.bin.ok_or_else(|| {
-                    eyre::Error::msg(format!("bytecode not found for {}", self.contract.name))
-                })?,
-            ),
-            None => {
-                eyre::bail!("could not find artifact")
-            }
-        })
-    }
-
-    /// Find using src/ContractSource.sol:ContractName
-    // TODO: Is there a better / more ergonomic way to get the artifacts given a project and a
-    // path?
-    fn get_artifact_from_path(
-        &self,
-        project: &Project,
-        path: String,
-    ) -> Result<(Contract, BytecodeObject)> {
-        // Get sources from the requested location
-        let abs_path = std::fs::canonicalize(PathBuf::from(path))?;
-        let mut sources = Sources::new();
-        sources.insert(abs_path.clone(), Source::read(&abs_path)?);
-
-        // Get artifact from the contract name and sources
-        let mut config = SolFilesCache::builder().insert_files(sources.clone(), None)?;
-        config.files.entry(abs_path).and_modify(|f| f.artifacts = vec![self.contract.name.clone()]);
-
-        let artifacts = config
-            .read_artifacts::<MinimalCombinedArtifacts>(project.artifacts_path())?
-            .into_values()
-            .collect::<Vec<_>>();
-
-        if artifacts.is_empty() {
-            eyre::bail!("could not find artifact")
-        } else if artifacts.len() > 1 {
-            eyre::bail!("duplicate contract name in the same source file")
-        }
-        let artifact = artifacts[0].clone();
-
-        Ok((
-            artifact.abi.ok_or_else(|| {
-                eyre::Error::msg(format!("abi not found for {}", self.contract.name))
-            })?,
-            artifact.bin.ok_or_else(|| {
-                eyre::Error::msg(format!("bytecode not found for {}", self.contract.name))
-            })?,
-        ))
-    }
-
     async fn deploy<M: Middleware + 'static>(
         self,
-        abi: Contract,
+        abi: Abi,
         bin: BytecodeObject,
         args: Vec<Token>,
         provider: M,
