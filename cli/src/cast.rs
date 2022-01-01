@@ -196,7 +196,7 @@ async fn main() -> eyre::Result<()> {
                 }
             }?;
 
-            let tokens = SimpleCast::abi_decode(&sig, &calldata, true)?;
+            let tokens = SimpleCast::abi_decode(sig, &calldata, true)?;
             let tokens = utils::format_tokens(&tokens);
 
             tokens.for_each(|t| println!("{}", t));
