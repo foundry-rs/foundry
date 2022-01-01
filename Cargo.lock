@@ -501,9 +501,7 @@ dependencies = [
  "eyre",
  "foundry-utils",
  "hex",
- "reqwest",
  "rustc-hex",
- "serde",
  "serde_json",
 ]
 
@@ -1549,7 +1547,10 @@ version = "0.1.0"
 dependencies = [
  "ethers-core",
  "eyre",
+ "hex",
+ "reqwest",
  "rustc-hex",
+ "serde",
  "serde_json",
 ]
 

@@ -179,6 +179,8 @@ pub enum Subcommands {
     FourByteDecode {
         #[structopt(help = "the ABI-encoded calldata")]
         calldata: String,
+        #[structopt(long, help = "the 4byte selector id to use, can also be earliest/latest")]
+        id: Option<String>,
     },
     #[structopt(name = "age")]
     #[structopt(about = "Prints the timestamp of a block")]

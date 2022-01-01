@@ -10,7 +10,6 @@ use ethers_core::{
 use ethers_providers::{Middleware, PendingTransaction};
 use eyre::Result;
 use rustc_hex::{FromHexIter, ToHex};
-use serde::Deserialize;
 use std::str::FromStr;
 
 use foundry_utils::{encode_args, get_func, to_table};
@@ -535,58 +534,7 @@ impl SimpleCast {
     /// }
     /// ```
     pub fn abi_decode(sig: &str, calldata: &str, input: bool) -> Result<Vec<Token>> {
-        let func = foundry_utils::IntoFunction::into(sig);
-        let calldata = calldata.strip_prefix("0x").unwrap_or(calldata);
-        let calldata = hex::decode(calldata)?;
-        let res = if input {
-            // need to strip the function selector
-            func.decode_input(&calldata[4..])?
-        } else {
-            func.decode_output(&calldata)?
-        };
-
-        // in case the decoding worked but nothing was decoded
-        if res.is_empty() {
-            eyre::bail!("no data was decoded")
-        }
-
-        Ok(res)
-    }
-
-    /// Fetches a function signature given the selector using 4byte.directory
-    ///
-    /// ```
-    /// use cast::SimpleCast as Cast;
-    ///
-    /// async fn foo() -> eyre::Result<()> {
-    ///     let sig = Cast::fourbyte("0x32e785af").await?;
-    ///     println!("{:?}", sig);
-    ///     Ok(())
-    /// }
-    /// ```
-    pub async fn fourbyte(selector: &str) -> Result<Vec<String>> {
-        #[derive(Deserialize)]
-        struct Decoded {
-            text_signature: String,
-        }
-
-        #[derive(Deserialize)]
-        struct ApiResponse {
-            results: Vec<Decoded>,
-        }
-
-        let selector = &selector.strip_prefix("0x").unwrap_or(selector);
-        if selector.len() < 8 {
-            return Err(eyre::eyre!("invalid selector"))
-        }
-        let selector = &selector[..8];
-
-        let url =
-            format!("https://www.4byte.directory/api/v1/signatures/?hex_signature={}", selector);
-        let res = reqwest::get(url).await?;
-        let api_response = res.json::<ApiResponse>().await?;
-
-        Ok(api_response.results.into_iter().map(|d| d.text_signature).collect::<Vec<String>>())
+        foundry_utils::abi_decode(sig, calldata, input)
     }
 
     /// Converts decimal input to hex

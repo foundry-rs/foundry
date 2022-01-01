@@ -176,36 +176,29 @@ async fn main() -> eyre::Result<()> {
             tokens.for_each(|t| println!("{}", t));
         }
         Subcommands::FourByte { selector } => {
-            let sigs = SimpleCast::fourbyte(&selector).await?;
-            sigs.iter().for_each(|sig| println!("{}", sig));
+            let sigs = foundry_utils::fourbyte(&selector).await?;
+            sigs.iter().for_each(|sig| println!("{}", sig.0));
         }
-        Subcommands::FourByteDecode { calldata } => {
-            let sigs = SimpleCast::fourbyte(&calldata).await?;
-
-            // filter for signatures that can be decoded
-            let sigs = sigs
-                .iter()
-                .filter(|sig| {
-                    let res = SimpleCast::abi_decode(sig, &calldata, true);
-                    res.is_ok()
-                })
-                .collect::<Vec<&String>>();
-
-            sigs.iter().enumerate().for_each(|(i, sig)| println!("{}) \"{}\"", i + 1, sig));
+        Subcommands::FourByteDecode { calldata, id } => {
+            let sigs = foundry_utils::fourbyte_possible_sigs(&calldata, id).await?;
+            sigs.iter()
+                .enumerate()
+                .for_each(|(i, sig)| println!("{}) \"{}\"", i + 1, sig));
 
             let sig = match sigs.len() {
-                1 => sigs[0],
+                0 => Err(eyre::eyre!("No signatures found")),
+                1 => Ok(sigs.get(0).unwrap()),
                 _ => {
                     print!("Select a function signature by number: ");
                     io::stdout().flush()?;
                     let mut input = String::new();
                     io::stdin().read_line(&mut input)?;
                     let i: usize = input.trim().parse()?;
-                    sigs[i - 1]
+                    Ok(sigs.get(i-1).expect("Invalid signature index"))
                 }
-            };
+            }?;
 
-            let tokens = SimpleCast::abi_decode(sig, &calldata, true)?;
+            let tokens = SimpleCast::abi_decode(&sig, &calldata, true)?;
             let tokens = utils::format_tokens(&tokens);
 
             tokens.for_each(|t| println!("{}", t));
