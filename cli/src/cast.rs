@@ -412,9 +412,10 @@ async fn main() -> eyre::Result<()> {
             }
         },
     };
-    Subcommands::Interface {contract_address, output} => {
-        SimpleCast::generate_interface(contract_address.unwrap_or_stdin(), 
-            output.unwrap_or_stdin());
+    Subcommands::Interface {contract_address, output_location} => {
+        let output = SimpleCast::generate_interface(contract_address.unwrap_or_stdin(), 
+            output.unwrap_or_stdin())?;
+        println!(output);;
     }
     Ok(())
 }

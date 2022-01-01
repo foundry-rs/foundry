@@ -355,7 +355,7 @@ pub enum WalletSubcommands {
         #[structopt(help = "The contract's address")]
         contract_address: Option<String>,
         #[structopt(help = "output file, or empty for stdout")]
-        output: Option<String>,
+        output_location: Option<String>,
     },
 }
 
