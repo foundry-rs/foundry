@@ -589,22 +589,7 @@ impl SimpleCast {
     /// }
     /// ```
     pub fn abi_decode(sig: &str, calldata: &str, input: bool) -> Result<Vec<Token>> {
-        let func = foundry_utils::IntoFunction::into(sig);
-        let calldata = calldata.strip_prefix("0x").unwrap_or(calldata);
-        let calldata = hex::decode(calldata)?;
-        let res = if input {
-            // need to strip the function selector
-            func.decode_input(&calldata[4..])?
-        } else {
-            func.decode_output(&calldata)?
-        };
-
-        // in case the decoding worked but nothing was decoded
-        if res.is_empty() {
-            eyre::bail!("no data was decoded")
-        }
-
-        Ok(res)
+        foundry_utils::abi_decode(sig, calldata, input)
     }
 
     /// Converts decimal input to hex

@@ -8,6 +8,7 @@ use ethers_core::{
     types::*,
 };
 use eyre::{Result, WrapErr};
+use serde::Deserialize;
 
 const BASE_TX_COST: u64 = 21000;
 
@@ -208,4 +209,124 @@ pub fn encode_args(func: &Function, args: &[impl AsRef<str>]) -> Result<Vec<u8>>
         .collect::<Vec<_>>();
     let tokens = parse_tokens(params, true)?;
     Ok(func.encode_input(&tokens)?)
+}
+
+/// Fetches a function signature given the selector using 4byte.directory
+pub async fn fourbyte(selector: &str) -> Result<Vec<(String, i32)>> {
+    #[derive(Deserialize)]
+    struct Decoded {
+        text_signature: String,
+        id: i32,
+    }
+
+    #[derive(Deserialize)]
+    struct ApiResponse {
+        results: Vec<Decoded>,
+    }
+
+    let selector = &selector.strip_prefix("0x").unwrap_or(selector);
+    if selector.len() < 8 {
+        return Err(eyre::eyre!("Invalid selector"))
+    }
+    let selector = &selector[..8];
+
+    let url = format!("https://www.4byte.directory/api/v1/signatures/?hex_signature={}", selector);
+    let res = reqwest::get(url).await?;
+    let api_response = res.json::<ApiResponse>().await?;
+
+    Ok(api_response
+        .results
+        .into_iter()
+        .map(|d| (d.text_signature, d.id))
+        .collect::<Vec<(String, i32)>>())
+}
+
+pub async fn fourbyte_possible_sigs(calldata: &str, id: Option<String>) -> Result<Vec<String>> {
+    let mut sigs = fourbyte(calldata).await?;
+
+    match id {
+        Some(id) => {
+            let sig = match &id[..] {
+                "earliest" => {
+                    sigs.sort_by(|a, b| a.1.cmp(&b.1));
+                    sigs.get(0)
+                }
+                "latest" => {
+                    sigs.sort_by(|a, b| b.1.cmp(&a.1));
+                    sigs.get(0)
+                }
+                _ => {
+                    let id: i32 = id.parse().expect("Must be integer");
+                    sigs = sigs
+                        .iter()
+                        .filter(|sig| sig.1 == id)
+                        .cloned()
+                        .collect::<Vec<(String, i32)>>();
+                    sigs.get(0)
+                }
+            };
+            match sig {
+                Some(sig) => Ok(vec![sig.clone().0]),
+                None => Ok(vec![]),
+            }
+        }
+        None => {
+            // filter for signatures that can be decoded
+            Ok(sigs
+                .iter()
+                .map(|sig| sig.clone().0)
+                .filter(|sig| {
+                    let res = abi_decode(sig, calldata, true);
+                    res.is_ok()
+                })
+                .collect::<Vec<String>>())
+        }
+    }
+}
+
+pub fn abi_decode(sig: &str, calldata: &str, input: bool) -> Result<Vec<Token>> {
+    let func = IntoFunction::into(sig);
+    let calldata = calldata.strip_prefix("0x").unwrap_or(calldata);
+    let calldata = hex::decode(calldata)?;
+    let res = if input {
+        // need to strip the function selector
+        func.decode_input(&calldata[4..])?
+    } else {
+        func.decode_output(&calldata)?
+    };
+
+    // in case the decoding worked but nothing was decoded
+    if res.is_empty() {
+        eyre::bail!("no data was decoded")
+    }
+
+    Ok(res)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_fourbyte() {
+        let sigs = fourbyte("0xa9059cbb").await.unwrap();
+        assert_eq!(sigs[0].0, "func_2093253501(bytes)".to_string());
+        assert_eq!(sigs[0].1, 313067);
+    }
+
+    #[tokio::test]
+    async fn test_fourbyte_possible_sigs() {
+        let sigs = fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", None).await.unwrap();
+        assert_eq!(sigs[0], "many_msg_babbage(bytes1)".to_string());
+        assert_eq!(sigs[1], "transfer(address,uint256)".to_string());
+
+        let sigs = fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", Some("earliest".to_string())).await.unwrap();
+        assert_eq!(sigs[0], "transfer(address,uint256)".to_string());
+
+        let sigs = fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", Some("latest".to_string())).await.unwrap();
+        assert_eq!(sigs[0], "func_2093253501(bytes)".to_string());
+
+        let sigs = fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", Some("145".to_string())).await.unwrap();
+        assert_eq!(sigs[0], "transfer(address,uint256)".to_string());
+    }
 }
