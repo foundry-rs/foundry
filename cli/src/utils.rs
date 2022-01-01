@@ -6,7 +6,6 @@ use ethers::{
 use evm_adapters::sputnik::Executor;
 use eyre::{ContextCompat, WrapErr};
 use std::{
-    env::VarError,
     path::{Path, PathBuf},
     process::Command,
 };

@@ -11,7 +11,6 @@ use ethers_core::{
 
 use ethers_etherscan::Client;
 use ethers_providers::{Middleware, PendingTransaction};
-use eyre::Result;
 use eyre::{Context, Result};
 use foundry_utils::{encode_args, etherscan_api_key, get_func, to_table};
 use rustc_hex::{FromHexIter, ToHex};
