@@ -182,6 +182,11 @@ pub fn parse_tokens<'a, I: IntoIterator<Item = (&'a ParamType, &'a str)>>(
     params
         .into_iter()
         .map(|(param, value)| {
+            let value = match param {
+                // allow addresses to be passed with "0x"
+                ParamType::Address => value.strip_prefix("0x").unwrap_or(value),
+                _ => value,
+            };
             if lenient {
                 LenientTokenizer::tokenize(param, value)
             } else {
