@@ -241,27 +241,36 @@ fn fuzz_param(param: &ParamType) -> impl Strategy<Value = Token> {
             any::<[u8; 20]>().prop_map(|x| Address::from_slice(&x).into_token()).boxed()
         }
         ParamType::Bytes => any::<Vec<u8>>().prop_map(|x| Bytes::from(x).into_token()).boxed(),
+        // For ints and uints we sample from a U256, then wrap it to the correct size with a
+        // modulo operation. Note that this introduces modulo bias, but it can be removed with
+        // rejection sampling if it's determined the bias is too severe. Rejection sampling may
+        // slow down tests as it resamples bad values, so may want to benchmark the performance
+        // hit and weigh that against the current bias before implementing
         ParamType::Int(n) => match n / 8 {
-            1 => any::<i8>().prop_map(|x| x.into_token()).boxed(),
-            2 => any::<i16>().prop_map(|x| x.into_token()).boxed(),
-            3..=4 => any::<i32>().prop_map(|x| x.into_token()).boxed(),
-            5..=8 => any::<i64>().prop_map(|x| x.into_token()).boxed(),
-            9..=16 => any::<i128>().prop_map(|x| x.into_token()).boxed(),
-            17..=32 => (any::<bool>(), any::<[u8; 32]>())
-                .prop_filter_map("i256s cannot overflow", |(sign, bytes)| {
+            32 => any::<[u8; 32]>()
+                .prop_map(move |x| I256::from_raw(U256::from(&x)).into_token())
+                .boxed(),
+            y @ 1..=31 => (any::<bool>(), any::<[u8; 32]>())
+                .prop_map(move |(sign, x)| {
                     let sign = if sign { Sign::Positive } else { Sign::Negative };
-                    I256::checked_from_sign_and_abs(sign, U256::from(bytes)).map(|x| x.into_token())
+                    // Generate a uintN in the correct range, then shift it to the range of intN
+                    // with subtraction
+                    let uint = U256::from(&x) % U256::from(2).pow(U256::from(y * 8));
+                    let max_int = U256::from(2).pow(U256::from(y * 8 - 1));
+                    I256::overflowing_from_sign_and_abs(sign, uint.overflowing_sub(max_int).0)
+                        .0
+                        .into_token()
                 })
                 .boxed(),
             _ => panic!("unsupported solidity type int{}", n),
         },
         ParamType::Uint(n) => match n / 8 {
-            1 => any::<u8>().prop_map(|x| x.into_token()).boxed(),
-            2 => any::<u16>().prop_map(|x| x.into_token()).boxed(),
-            3..=4 => any::<u32>().prop_map(|x| x.into_token()).boxed(),
-            5..=8 => any::<u64>().prop_map(|x| x.into_token()).boxed(),
-            9..=16 => any::<u128>().prop_map(|x| x.into_token()).boxed(),
-            17..=32 => any::<[u8; 32]>().prop_map(|x| U256::from(&x).into_token()).boxed(),
+            32 => any::<[u8; 32]>().prop_map(move |x| U256::from(&x).into_token()).boxed(),
+            y @ 1..=31 => any::<[u8; 32]>()
+                .prop_map(move |x| {
+                    (U256::from(&x) % (U256::from(2).pow(U256::from(y * 8)))).into_token()
+                })
+                .boxed(),
             _ => panic!("unsupported solidity type uint{}", n),
         },
         ParamType::Bool => any::<bool>().prop_map(|x| x.into_token()).boxed(),
