@@ -25,7 +25,8 @@ pub struct CounterExample {
 
 impl fmt::Display for CounterExample {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "calldata=0x{}, args={:?}", hex::encode(&self.calldata), self.args)
+        let args = foundry_utils::format_tokens(&self.args).collect::<Vec<_>>().join(", ");
+        write!(f, "calldata=0x{}, args=[{}]", hex::encode(&self.calldata), args)
     }
 }
 
@@ -368,7 +369,9 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
                 }
                 result => panic!("Unexpected test result: {:?}", result),
             }
-            reason = Some(err.revert_reason);
+            if !err.revert_reason.is_empty() {
+                reason = Some(err.revert_reason);
+            }
         }
 
         let duration = Instant::now().duration_since(start);

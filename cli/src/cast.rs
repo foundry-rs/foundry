@@ -189,12 +189,12 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::CalldataDecode { sig, calldata } => {
             let tokens = SimpleCast::abi_decode(&sig, &calldata, true)?;
-            let tokens = utils::format_tokens(&tokens);
+            let tokens = foundry_utils::format_tokens(&tokens);
             tokens.for_each(|t| println!("{}", t));
         }
         Subcommands::AbiDecode { sig, calldata, input } => {
             let tokens = SimpleCast::abi_decode(&sig, &calldata, input)?;
-            let tokens = utils::format_tokens(&tokens);
+            let tokens = foundry_utils::format_tokens(&tokens);
             tokens.for_each(|t| println!("{}", t));
         }
         Subcommands::FourByte { selector } => {
@@ -219,7 +219,7 @@ async fn main() -> eyre::Result<()> {
             }?;
 
             let tokens = SimpleCast::abi_decode(sig, &calldata, true)?;
-            let tokens = utils::format_tokens(&tokens);
+            let tokens = foundry_utils::format_tokens(&tokens);
 
             tokens.for_each(|t| println!("{}", t));
         }

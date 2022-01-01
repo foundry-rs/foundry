@@ -303,6 +303,43 @@ pub fn abi_decode(sig: &str, calldata: &str, input: bool) -> Result<Vec<Token>> 
     Ok(res)
 }
 
+/// Pretty print a slice of tokens.
+pub fn format_tokens(tokens: &[Token]) -> impl Iterator<Item = String> + '_ {
+    tokens.iter().map(format_token)
+}
+
+// Gets pretty print strings for tokens
+pub fn format_token(param: &Token) -> String {
+    match param {
+        Token::Address(addr) => format!("{:?}", addr),
+        Token::FixedBytes(bytes) => format!("0x{}", hex::encode(&bytes)),
+        Token::Bytes(bytes) => format!("0x{}", hex::encode(&bytes)),
+        Token::Int(mut num) => {
+            if num.bit(255) {
+                num = num - 1;
+                format!("-{}", num.overflowing_neg().0)
+            } else {
+                num.to_string()
+            }
+        }
+        Token::Uint(num) => num.to_string(),
+        Token::Bool(b) => format!("{}", b),
+        Token::String(s) => format!("{:?}", s),
+        Token::FixedArray(tokens) => {
+            let string = tokens.iter().map(format_token).collect::<Vec<String>>().join(", ");
+            format!("[{}]", string)
+        }
+        Token::Array(tokens) => {
+            let string = tokens.iter().map(format_token).collect::<Vec<String>>().join(", ");
+            format!("[{}]", string)
+        }
+        Token::Tuple(tokens) => {
+            let string = tokens.iter().map(format_token).collect::<Vec<String>>().join(", ");
+            format!("({})", string)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
