@@ -3,15 +3,15 @@
 //! TODO
 use chrono::NaiveDateTime;
 use ethers_core::{
-    abi::{AbiParser, Token, ParamType},
+    abi::{AbiParser, Token},
     types::*,
     utils::{self, keccak256},
 };
 
 use ethers_providers::{Middleware, PendingTransaction};
-use eyre::Result;
+use eyre::{Context, Result};
 use rustc_hex::{FromHexIter, ToHex};
-use std::{str::FromStr};
+use std::str::FromStr;
 
 use foundry_utils::{encode_args, get_func, to_table};
 
@@ -76,30 +76,31 @@ where
         let res = self.provider.call(&tx, None).await?;
 
         // decode args into tokens
-        let decoded = func.decode_output(res.as_ref())?;
+        let decoded = func.decode_output(res.as_ref()).wrap_err(
+            "could not decode output. did you specify the wrong function return data type perhaps?",
+        )?;
         // handle case when return type is not specified
-        if decoded.is_empty() {
-            Ok(format!("{}\n", res))
+        Ok(if decoded.is_empty() {
+            format!("{}\n", res)
         } else {
-            let output_types = &func.outputs;
-            let mut s = String::new();
+            // seth compatible user-friendly return type conversions
+            let out = decoded
+                .iter()
+                .map(|item| {
+                    match item {
+                        Token::Address(inner) => format!("{:?}", inner),
+                        // add 0x
+                        Token::Bytes(inner) => format!("0x{}", hex::encode(inner)),
+                        Token::FixedBytes(inner) => format!("0x{}", hex::encode(inner)),
+                        // print as decimal
+                        Token::Uint(inner) | Token::Int(inner) => inner.to_string(),
+                        _ => format!("{}", item),
+                    }
+                })
+                .collect::<Vec<_>>();
 
-            // seth compatible user-friendly return type convesions
-            for (i,o) in output_types.iter().enumerate() {
-                if i < decoded.len() {
-                    let decoded_str = format!("{}",&decoded[i]);
-                    let s0 = match o.kind {
-                        ParamType::Uint(_) | ParamType::Int(_) => SimpleCast::to_dec(decoded_str.as_str()).unwrap().to_string(),
-                        ParamType::Address => format!("0x{}",decoded_str),
-                        _ => decoded_str,
-                    };
-                    s.push_str(&s0);
-                }
-            }
-            
-            // return string
-            Ok(s)
-        }
+            out.join("\n")
+        })
     }
 
     pub async fn balance<T: Into<NameOrAddress> + Send + Sync>(
