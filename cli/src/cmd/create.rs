@@ -33,9 +33,6 @@ pub struct CreateArgs {
 
     #[structopt(help = "contract source info `<path>:<contractname>` or `<contractname>`")]
     contract: ContractInfo,
-
-    #[structopt(long, help = "verify on Etherscan")]
-    verify: bool,
 }
 
 impl Cmd for CreateArgs {
@@ -44,21 +41,7 @@ impl Cmd for CreateArgs {
     fn run(self) -> Result<Self::Output> {
         // Find Project & Compile
         let project = self.opts.project()?;
-        println!("compiling...");
-        let compiled = project.compile()?;
-
-        if self.verify && self.contract.path.is_none() {
-            eyre::bail!("verifying requires giving out the source path");
-        }
-
-        if compiled.has_compiler_errors() {
-            // return the diagnostics error back to the user.
-            eyre::bail!(compiled.to_string())
-        } else if compiled.is_unchanged() {
-            println!("no files changed, compilation skippped.");
-        } else {
-            println!("success.");
-        }
+        let compiled = super::compile(&project)?;
 
         // Get ABI and BIN
         let (abi, bin) = match self.contract.path {
