@@ -3,7 +3,7 @@ use ethers_core::{
     abi::{
         self, parse_abi,
         token::{LenientTokenizer, StrictTokenizer, Tokenizer},
-        AbiParser, Function, ParamType, Token,
+        Abi, AbiParser, Function, ParamType, Token,
     },
     types::*,
 };
@@ -385,4 +385,56 @@ pub fn etherscan_api_key() -> eyre::Result<String> {
         }
     })
 >>>>>>> 2ff02af (chore: move etherscan_api_key to foundry-utils crate)
+}
+// Kudos to https://github.com/maxme/abi2solidity for the algorithm
+pub fn abi_to_solidity(contract_abi: Abi, contract_name: String) -> Result<String> {
+    let mut out: Vec<String> = vec![];
+    let functions_iterator = contract_abi.functions();
+    out.push(String::from("Interface"));
+    out.push(contract_name);
+    out.push(String::from(" { \n"));
+    for function in functions_iterator {
+        out.push(String::from("     "));
+        out.push(function.name.clone());
+        out.push(String::from("("));
+        if function.inputs.len() != 0 {
+            for input in function.inputs.clone() {
+                out.push(String::from(" "));
+                out.push(input.kind.to_string());
+                out.push(String::from(" "));
+                out.push(input.name.to_string());
+                out.push(String::from(", "));
+            }
+            out.pop();
+        }
+        out.push(String::from(") "));
+        match function.state_mutability {
+            abi::StateMutability::Pure => {
+                out.push(String::from("pure "));
+            }
+            abi::StateMutability::View => {
+                out.push(String::from("view "));
+            }
+            abi::StateMutability::Payable => {
+                out.push(String::from("payable "));
+            }
+            _ => {}
+        }
+        if function.outputs.len() != 0 {
+            out.push(String::from("returns"));
+            out.push(String::from("("));
+            for output in function.outputs.clone() {
+                out.push(String::from(" "));
+                out.push(output.kind.to_string());
+                out.push(String::from(" "));
+                out.push(output.name.to_string());
+                out.push(String::from(", "));
+            }
+            out.pop();
+            out.push(String::from(")"));
+        }
+        out.push(String::from("\n"));
+    }
+    out.push(String::from("}"));
+    Ok(out.join(""))
 }

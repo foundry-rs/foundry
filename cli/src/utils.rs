@@ -33,23 +33,6 @@ pub fn subscriber() {
         .init();
 }
 
-/// Reads the `ETHERSCAN_API_KEY` env variable
-pub fn etherscan_api_key() -> eyre::Result<String> {
-    std::env::var("ETHERSCAN_API_KEY").map_err(|err| match err {
-        VarError::NotPresent => {
-            eyre::eyre!(
-                r#"
-  You need an Etherscan Api Key to verify contracts.
-  Create one at https://etherscan.io/myapikey
-  Then export it with \`export ETHERSCAN_API_KEY=xxxxxxxx'"#
-            )
-        }
-        VarError::NotUnicode(err) => {
-            eyre::eyre!("Invalid `ETHERSCAN_API_KEY`: {:?}", err)
-        }
-    })
-}
-
 /// The rpc url to use
 /// If the `ETH_RPC_URL` is not present, it falls back to the default `http://127.0.0.1:8545`
 pub fn rpc_url() -> String {
@@ -122,7 +105,7 @@ fn find_fave_or_alt_path(root: impl AsRef<Path>, fave: &str, alt: &str) -> PathB
     if !p.exists() {
         let alt = root.join(alt);
         if alt.exists() {
-            return alt
+            return alt;
         }
     }
     p
