@@ -81,7 +81,7 @@ impl Cmd for BuildArgs {
     fn run(self) -> eyre::Result<Self::Output> {
         println!("compiling...");
         let project = self.project()?;
-        Ok(super::compile(&project)?)
+        super::compile(&project)
     }
 }
 
