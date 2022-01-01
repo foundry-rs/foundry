@@ -1,7 +1,6 @@
 //! Verify contract source on etherscan
 
 use crate::utils;
-
 use cast::SimpleCast;
 use ethers::{
     abi::{Address, Function, FunctionExt},
@@ -11,6 +10,7 @@ use ethers::{
     providers::Middleware,
 };
 use eyre::ContextCompat;
+use foundry_utils::etherscan_api_key;
 use std::convert::TryFrom;
 
 /// Run the verify command to submit the contract's source code for verification on etherscan

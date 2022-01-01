@@ -9,6 +9,7 @@ use ethers_core::{
 };
 use eyre::{Result, WrapErr};
 use serde::Deserialize;
+use std::env::VarError;
 
 const BASE_TX_COST: u64 = 21000;
 
@@ -125,10 +126,10 @@ pub fn decode_revert(error: &[u8]) -> Result<String> {
                         let actual_err = &err_data[64..64 + len];
                         if let Ok(decoded) = decode_revert(actual_err) {
                             // check if its a builtin
-                            return Ok(decoded)
+                            return Ok(decoded);
                         } else if let Ok(as_str) = String::from_utf8(actual_err.to_vec()) {
                             // check if its a true string
-                            return Ok(as_str)
+                            return Ok(as_str);
                         }
                     }
                 }
@@ -211,6 +212,7 @@ pub fn encode_args(func: &Function, args: &[impl AsRef<str>]) -> Result<Vec<u8>>
     Ok(func.encode_input(&tokens)?)
 }
 
+<<<<<<< HEAD
 /// Fetches a function signature given the selector using 4byte.directory
 pub async fn fourbyte(selector: &str) -> Result<Vec<(String, i32)>> {
     #[derive(Deserialize)]
@@ -366,4 +368,21 @@ mod tests {
         let sigs = fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", Some("145".to_string())).await.unwrap();
         assert_eq!(sigs[0], "transfer(address,uint256)".to_string());
     }
+=======
+/// Reads the `ETHERSCAN_API_KEY` env variable
+pub fn etherscan_api_key() -> eyre::Result<String> {
+    std::env::var("ETHERSCAN_API_KEY").map_err(|err| match err {
+        VarError::NotPresent => {
+            eyre::eyre!(
+                r#"
+  You need an Etherscan Api Key to verify contracts.
+  Create one at https://etherscan.io/myapikey
+  Then export it with \`export ETHERSCAN_API_KEY=xxxxxxxx'"#
+            )
+        }
+        VarError::NotUnicode(err) => {
+            eyre::eyre!("Invalid `ETHERSCAN_API_KEY`: {:?}", err)
+        }
+    })
+>>>>>>> 2ff02af (chore: move etherscan_api_key to foundry-utils crate)
 }
