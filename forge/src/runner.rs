@@ -369,7 +369,9 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
                 }
                 result => panic!("Unexpected test result: {:?}", result),
             }
-            reason = Some(err.revert_reason);
+            if !err.revert_reason.is_empty() {
+                reason = Some(err.revert_reason);
+            }
         }
 
         let duration = Instant::now().duration_since(start);
