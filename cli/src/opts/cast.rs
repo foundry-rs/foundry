@@ -350,6 +350,13 @@ pub enum WalletSubcommands {
         #[structopt(long, short, help = "pubkey of message signer")]
         address: String,
     },
+    #[structopt(name = "interface", about = "generate contract's interface from ABI")]
+    Interface {
+        #[structopt(help = "The contract's address")]
+        contract_address: Option<String>,
+        #[structopt(help = "output file, or empty for stdout")]
+        output: Option<String>,
+    },
 }
 
 fn parse_name_or_address(s: &str) -> eyre::Result<NameOrAddress> {
