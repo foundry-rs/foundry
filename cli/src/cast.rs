@@ -294,7 +294,7 @@ async fn main() -> eyre::Result<()> {
             WalletSubcommands::Address { unsafe_private_key } => {
                 let private_key = read_secret(unsafe_private_key.is_none(), unsafe_private_key)?;
                 let private_key = private_key.strip_prefix("0x").unwrap_or(&private_key);
-                let wallet = LocalWallet::from_str(&private_key).expect("invalid private key");
+                let wallet = LocalWallet::from_str(private_key).expect("invalid private key");
                 println!("Address: {}", SimpleCast::checksum_address(&wallet.address())?);
             }
             WalletSubcommands::Sign { message, unsafe_private_key } => {
