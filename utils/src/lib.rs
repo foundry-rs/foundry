@@ -298,25 +298,30 @@ pub fn abi_decode(sig: &str, calldata: &str, input: bool) -> Result<Vec<Token>> 
     Ok(res)
 }
 
-#[tokio::test]
-async fn test_fourbyte() {
-    let sigs = fourbyte("0xa9059cbb").await.unwrap();
-    assert_eq!(sigs[0].0, "func_2093253501(bytes)".to_string());
-    assert_eq!(sigs[0].1, 313067);
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-#[tokio::test]
-async fn test_fourbyte_possible_sigs() {
-    let sigs = fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", None).await.unwrap();
-    assert_eq!(sigs[0], "many_msg_babbage(bytes1)".to_string());
-    assert_eq!(sigs[1], "transfer(address,uint256)".to_string());
+    #[tokio::test]
+    async fn test_fourbyte() {
+        let sigs = fourbyte("0xa9059cbb").await.unwrap();
+        assert_eq!(sigs[0].0, "func_2093253501(bytes)".to_string());
+        assert_eq!(sigs[0].1, 313067);
+    }
 
-    let sigs = fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", Some("earliest".to_string())).await.unwrap();
-    assert_eq!(sigs[0], "transfer(address,uint256)".to_string());
+    #[tokio::test]
+    async fn test_fourbyte_possible_sigs() {
+        let sigs = fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", None).await.unwrap();
+        assert_eq!(sigs[0], "many_msg_babbage(bytes1)".to_string());
+        assert_eq!(sigs[1], "transfer(address,uint256)".to_string());
 
-    let sigs = fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", Some("latest".to_string())).await.unwrap();
-    assert_eq!(sigs[0], "func_2093253501(bytes)".to_string());
+        let sigs = fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", Some("earliest".to_string())).await.unwrap();
+        assert_eq!(sigs[0], "transfer(address,uint256)".to_string());
 
-    let sigs = fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", Some("145".to_string())).await.unwrap();
-    assert_eq!(sigs[0], "transfer(address,uint256)".to_string());
+        let sigs = fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", Some("latest".to_string())).await.unwrap();
+        assert_eq!(sigs[0], "func_2093253501(bytes)".to_string());
+
+        let sigs = fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", Some("145".to_string())).await.unwrap();
+        assert_eq!(sigs[0], "transfer(address,uint256)".to_string());
+    }
 }
