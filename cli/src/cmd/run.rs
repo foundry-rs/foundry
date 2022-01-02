@@ -1,5 +1,5 @@
 use crate::{
-    cmd::Cmd,
+    cmd::{compile, Cmd},
     opts::forge::{CompilerArgs, EvmOpts},
 };
 use forge::ContractRunner;
@@ -125,17 +125,7 @@ impl RunArgs {
             builder = builder.no_auto_detect();
         }
         let project = builder.build()?;
-
-        println!("compiling...");
-        let output = project.compile()?;
-        if output.has_compiler_errors() {
-            // return the diagnostics error back to the user.
-            eyre::bail!(output.to_string())
-        } else if output.is_unchanged() {
-            println!("no files changed, compilation skippped.");
-        } else {
-            println!("success.");
-        };
+        let output = compile(&project)?;
 
         // get the contracts
         let contracts = output.output();

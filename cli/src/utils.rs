@@ -1,5 +1,4 @@
 use ethers::{
-    abi::Token,
     providers::Provider,
     solc::{artifacts::Contract, EvmVersion},
 };
@@ -127,16 +126,6 @@ fn find_fave_or_alt_path(root: impl AsRef<Path>, fave: &str, alt: &str) -> PathB
         }
     }
     p
-}
-
-// need some special handling to print the types nicely
-#[allow(dead_code)]
-pub fn format_tokens(tokens: &[Token]) -> impl Iterator<Item = String> + '_ {
-    tokens.iter().map(|token| match token {
-        Token::Address(inner) => format!("{:?}", inner),
-        Token::Uint(inner) => format!("{}", inner),
-        other => other.to_string(),
-    })
 }
 
 #[cfg(feature = "sputnik-evm")]

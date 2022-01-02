@@ -178,6 +178,22 @@ pub enum Subcommands {
         #[structopt(long, short, help = "the encoded output, in hex format")]
         input: bool,
     },
+    #[structopt(name = "4byte")]
+    #[structopt(about = "Fetches function signatures given the selector from 4byte.directory")]
+    FourByte {
+        #[structopt(help = "the function selector")]
+        selector: String,
+    },
+    #[structopt(name = "4byte-decode")]
+    #[structopt(
+        about = "Decodes transaction calldata by fetching the signature using 4byte.directory"
+    )]
+    FourByteDecode {
+        #[structopt(help = "the ABI-encoded calldata")]
+        calldata: String,
+        #[structopt(long, help = "the 4byte selector id to use, can also be earliest/latest")]
+        id: Option<String>,
+    },
     #[structopt(name = "age")]
     #[structopt(about = "Prints the timestamp of a block")]
     Age {
