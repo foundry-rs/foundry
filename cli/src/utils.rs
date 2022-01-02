@@ -122,7 +122,7 @@ fn find_fave_or_alt_path(root: impl AsRef<Path>, fave: &str, alt: &str) -> PathB
     if !p.exists() {
         let alt = root.join(alt);
         if alt.exists() {
-            return alt;
+            return alt
         }
     }
     p
