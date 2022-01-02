@@ -328,11 +328,6 @@ pub enum WalletSubcommands {
         starts_with: Option<String>,
         #[structopt(long, help = "Suffix for vanity address")]
         ends_with: Option<String>,
-        #[structopt(
-            long,
-            help = "The maximum number of threads for vanity address generation. Default: 100"
-        )]
-        max_threads: Option<u128>,
     },
     #[structopt(name = "address", about = "Convert a private key to an address")]
     Address {
