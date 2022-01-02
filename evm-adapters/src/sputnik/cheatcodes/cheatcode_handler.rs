@@ -93,7 +93,7 @@ pub(crate) fn convert_log(log: Log) -> Option<String> {
             format!(
                 "{}: {:?}",
                 inner.key,
-                ethers::utils::parse_units(inner.val, inner.decimals.as_u32()).unwrap()
+                ethers::utils::format_units(inner.val, inner.decimals.as_u32()).unwrap()
             )
         }
         LogNamedIntFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
