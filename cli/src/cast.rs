@@ -257,18 +257,18 @@ async fn main() -> eyre::Result<()> {
         }
 
         Subcommands::Interface { contract_address, output_location } => {
-            let output_loc = unwrap_or_stdin(output_location).ok();
             println!("Generating interfaces from etherscan's ABI..");
             let interfaces =
                 SimpleCast::generate_interface(unwrap_or_stdin(contract_address).unwrap()).await?;
-            match output_loc {
+            match output_location {
                 Some(loc) => {
+                    std::fs::create_dir_all(output_location);
                     for interface in interfaces {
                         std::fs::write(
                             format!("./{}/{}.sol", loc, interface.name),
                             interface.source,
                         )?;
-                        println!("Saved interface at ./{}.sol", interface.name);
+                        println!("Saved interface at ./{}/{}.sol", loc, interface.name);
                     }
                 }
                 None => {
