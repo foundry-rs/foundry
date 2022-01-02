@@ -19,8 +19,17 @@ use ethers::{
     signers::{LocalWallet, Signer},
     types::{Address, NameOrAddress, Signature, U256},
 };
+use regex::RegexSet;
 use rustc_hex::ToHex;
-use std::{convert::TryFrom, str::FromStr};
+use std::{
+    convert::TryFrom,
+    str::FromStr,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc::channel,
+        Arc,
+    },
+};
 use structopt::StructOpt;
 
 use crate::utils::read_secret;
@@ -290,6 +299,67 @@ async fn main() -> eyre::Result<()> {
                         );
                     }
                 }
+            }
+            WalletSubcommands::Vanity { starts_with, ends_with, max_threads } => {
+                let mut regexs = vec![];
+                if let Some(prefix) = starts_with {
+                    hex::decode(&prefix).expect("invalid prefix hex provided");
+                    regexs.push(format!(r"^{}", prefix));
+                }
+                if let Some(suffix) = ends_with {
+                    hex::decode(&suffix).expect("invalid suffix hex provided");
+                    regexs.push(format!(r"{}$", suffix));
+                }
+
+                assert!(
+                    regexs.iter().map(|p| p.len() - 1).sum::<usize>() <= 40,
+                    "vanity patterns length exceeded. cannot be more than 40 characters",
+                );
+
+                let regex = RegexSet::new(regexs)?;
+
+                let max_threads = match max_threads {
+                    Some(num) => {
+                        assert!(num > 0, "number of threads cannot be 0");
+                        num
+                    }
+                    None => 100, // default
+                };
+
+                println!("Starting to generate vanity address...");
+                let found = Arc::new(AtomicBool::new(false));
+                let (tx, rx) = channel::<LocalWallet>();
+                let mut workers = vec![];
+                for _ in 0..max_threads {
+                    let (tx, found, regex) = (tx.clone(), found.clone(), regex.clone());
+                    workers.push(std::thread::spawn(move || {
+                        loop {
+                            if found.load(Ordering::SeqCst) {
+                                break;
+                            }
+
+                            let wallet = LocalWallet::new(&mut thread_rng());
+                            let addr = hex::encode(wallet.address().to_fixed_bytes());
+                            if regex.matches(&addr).into_iter().collect::<Vec<_>>().len() == 2 {
+                                tx.send(wallet).expect("failed to send wallet on the channel");
+                                found.store(true, Ordering::SeqCst);
+                                break; // short-circuit the thread that computed the address
+                            }
+                        }
+                    }));
+                }
+
+                for worker in workers {
+                    worker.join().expect("failed to join the thread");
+                }
+
+                let wallet = rx.recv()?;
+
+                println!(
+                    "Successfully created new keypair.\nAddress: {}.\nPrivate Key: {}.",
+                    SimpleCast::checksum_address(&wallet.address())?,
+                    hex::encode(wallet.signer().to_bytes()),
+                );
             }
             WalletSubcommands::Address { wallet } => {
                 let wallet = EthereumOpts {
