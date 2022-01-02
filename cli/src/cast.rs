@@ -362,15 +362,15 @@ async fn main() -> eyre::Result<()> {
                     workers.push(std::thread::spawn(move || {
                         loop {
                             if found.load(Ordering::SeqCst) {
-                                break;
+                                break
                             }
 
                             let wallet = LocalWallet::new(&mut thread_rng());
                             let addr = hex::encode(wallet.address().to_fixed_bytes());
-                            if regex.matches(&addr).into_iter().collect::<Vec<_>>().len() == 2 {
+                            if regex.matches(&addr).into_iter().count() == regex.patterns().len() {
                                 tx.send(wallet).expect("failed to send wallet on the channel");
                                 found.store(true, Ordering::SeqCst);
-                                break; // short-circuit the thread that computed the address
+                                break // short-circuit the thread that computed the address
                             }
                         }
                     }));
