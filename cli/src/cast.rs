@@ -26,6 +26,7 @@ use std::{
     convert::TryFrom,
     io::{self, Write},
     str::FromStr,
+    time::Instant,
 };
 use structopt::StructOpt;
 
@@ -326,11 +327,15 @@ async fn main() -> eyre::Result<()> {
             WalletSubcommands::Vanity { starts_with, ends_with } => {
                 let mut regexs = vec![];
                 if let Some(prefix) = starts_with {
-                    hex::decode(&prefix).expect("invalid prefix hex provided");
+                    let pad_width = prefix.len() + prefix.len() % 2;
+                    hex::decode(format!("{:0>width$}", prefix, width = pad_width))
+                        .expect("invalid prefix hex provided");
                     regexs.push(format!(r"^{}", prefix));
                 }
                 if let Some(suffix) = ends_with {
-                    hex::decode(&suffix).expect("invalid suffix hex provided");
+                    let pad_width = suffix.len() + suffix.len() % 2;
+                    hex::decode(format!("{:0>width$}", suffix, width = pad_width))
+                        .expect("invalid suffix hex provided");
                     regexs.push(format!(r"{}$", suffix));
                 }
 
@@ -342,6 +347,7 @@ async fn main() -> eyre::Result<()> {
                 let regex = RegexSet::new(regexs)?;
 
                 println!("Starting to generate vanity address...");
+                let timer = Instant::now();
                 let wallet = std::iter::repeat_with(move || LocalWallet::new(&mut thread_rng()))
                     .par_bridge()
                     .find_any(|wallet| {
@@ -351,7 +357,8 @@ async fn main() -> eyre::Result<()> {
                     .expect("failed to generate vanity wallet");
 
                 println!(
-                    "Successfully created new keypair.\nAddress: {}.\nPrivate Key: {}.",
+                    "Successfully created new keypair in {} seconds.\nAddress: {}.\nPrivate Key: {}.",
+                    timer.elapsed().as_secs(),
                     SimpleCast::checksum_address(&wallet.address())?,
                     hex::encode(wallet.signer().to_bytes()),
                 );
