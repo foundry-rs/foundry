@@ -303,6 +303,8 @@ pub enum Subcommands {
     Interface {
         #[structopt(help = "The contract's address")]
         contract_address: Option<String>,
+        #[structopt(help = "pragma version")]
+        pragma: Option<String>,
         #[structopt(help = "output file, or empty for stdout")]
         output_location: Option<PathBuf>,
     },

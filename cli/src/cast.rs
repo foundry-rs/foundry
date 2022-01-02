@@ -256,22 +256,28 @@ async fn main() -> eyre::Result<()> {
             println!("{}", SimpleCast::keccak(&data)?);
         }
 
-        Subcommands::Interface { contract_address, output_location } => {
+        Subcommands::Interface { contract_address, pragma, output_location } => {
             println!("Generating interfaces from etherscan's ABI..");
             let interfaces =
                 SimpleCast::generate_interface(unwrap_or_stdin(contract_address).unwrap()).await?;
+            let version = pragma.unwrap();
+            let mut output_string: String;
+            if &version == "" {
+                output_string = "pragma solidity ^0.8.10".to_owned();
+            } else {
+                output_string = version;
+            }
             match output_location {
                 Some(loc) => {
-                    let mut output_string: String = "".to_owned();
                     for interface in interfaces {
-                        output_string.push_str(&interface.source);
-                        output_string.push_str("\n");
+                        output_string = format!("{}\n{}\n", &output_string, interface.source);
                     }
                     std::fs::create_dir_all(&loc.parent().unwrap())?;
                     std::fs::write(&loc, output_string)?;
                     println!("Saved interface at {}", loc.to_str().unwrap());
                 }
                 None => {
+                    println!("{}", output_string);
                     for interface in interfaces {
                         println!("{}", interface.source);
                     }

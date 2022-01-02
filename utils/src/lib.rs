@@ -390,8 +390,7 @@ pub fn etherscan_api_key() -> eyre::Result<String> {
 pub fn abi_to_solidity(contract_abi: Abi, contract_name: String) -> Result<String> {
     let mut out: Vec<String> = vec![];
     let functions_iterator = contract_abi.functions();
-    out.push(String::from("pragma solidity ^0.8.10 \n"));
-    out.push(String::from("Interface "));
+    out.push(String::from("interface "));
     out.push(contract_name);
     out.push(String::from(" { \n"));
     for function in functions_iterator {
