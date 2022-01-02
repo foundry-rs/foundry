@@ -261,22 +261,19 @@ async fn main() -> eyre::Result<()> {
             let interfaces =
                 SimpleCast::generate_interface(unwrap_or_stdin(contract_address).unwrap()).await?;
             match output_location {
-                Some(loc) => {
-                    std::fs::create_dir_all(loc.clone());
+                Some(mut loc) => {
+                    std::fs::create_dir_all(&loc);
+                    loc = std::fs::canonicalize(loc).unwrap();
                     for interface in interfaces {
-                        std::fs::write(
-                            format!("./{}/{}.sol", loc, interface.name),
-                            interface.source,
-                        )?;
-                        println!("Saved interface at ./{}/{}.sol", loc, interface.name);
+                        loc.push(format!("{}.sol", interface.name));
+                        println!("{:?}", loc);
+                        std::fs::write(&loc, interface.source)?;
+                        println!("Saved interface at {}", loc.to_str().unwrap());
                     }
                 }
                 None => {
                     for interface in interfaces {
-                        println!(
-                            "Interface for contract {}: \n {}",
-                            interface.name, interface.source
-                        )
+                        println!("{}", interface.source);
                     }
                 }
             }

@@ -1,3 +1,4 @@
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use ethers::types::{Address, BlockId, BlockNumber, NameOrAddress, H256};
@@ -303,7 +304,7 @@ pub enum Subcommands {
         #[structopt(help = "The contract's address")]
         contract_address: Option<String>,
         #[structopt(help = "output file, or empty for stdout")]
-        output_location: Option<String>,
+        output_location: Option<PathBuf>,
     },
 }
 
