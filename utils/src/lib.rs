@@ -403,19 +403,12 @@ pub fn abi_to_solidity(contract_abi: &Abi, contract_name: &str) -> Result<String
                 .map(|output| format!("{} {}", output.kind, output.name))
                 .collect::<Vec<String>>()
                 .join(", ");
-            let mut mutability: &str = "";
-            match function.state_mutability {
-                abi::StateMutability::Pure => {
-                    mutability = "pure";
-                }
-                abi::StateMutability::View => {
-                    mutability = "view";
-                }
-                abi::StateMutability::Payable => {
-                    mutability = "payable";
-                }
-                _ => {}
-            }
+            let mutability = match function.state_mutability {
+                abi::StateMutability::Pure => "pure",
+                abi::StateMutability::View => "view",
+                abi::StateMutability::Payable => "payable",
+                _ => "",
+            };
             if outputs.len() == 0 {
                 format!("\n     function {}({}) {} external;", function.name, inputs, mutability)
             } else {
