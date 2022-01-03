@@ -931,7 +931,6 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         let pre_index = self.state().trace_index;
 
         let address = self.create_address(scheme);
-
         let trace = self.start_trace(address, init_code.clone(), value, true);
 
         macro_rules! try_or_fail {
@@ -1342,6 +1341,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
         // modify execution context depending on the cheatcode
         let expected_revert = self.state_mut().expected_revert.take();
         let mut new_caller = caller;
+        let mut new_scheme = scheme;
         let curr_depth =
             if let Some(depth) = self.state().metadata().depth() { depth + 1 } else { 0 };
 
@@ -1356,7 +1356,18 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
         if let Some(caller) = self.state_mut().next_msg_sender.take() {
             new_caller = caller;
         }
-        let res = self.create_inner(new_caller, scheme, value, init_code, target_gas, true);
+
+        if caller != new_caller {
+            new_scheme = match scheme {
+                CreateScheme::Legacy { .. } => CreateScheme::Legacy { caller: new_caller },
+                CreateScheme::Create2 { code_hash, salt, .. } => {
+                    CreateScheme::Create2 { caller: new_caller, code_hash, salt }
+                }
+                _ => scheme,
+            };
+        }
+
+        let res = self.create_inner(new_caller, new_scheme, value, init_code, target_gas, true);
         if !self.state_mut().expected_emits.is_empty() &&
             !self
                 .state()
