@@ -1263,7 +1263,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
         if let Some(caller) = self.state_mut().next_msg_sender.take() {
             new_caller = caller;
         }
-        let res = self.create_inner(new_caller, scheme, value, init_code.clone(), target_gas, true);
+        let res = self.create_inner(new_caller, scheme, value, init_code, target_gas, true);
         if !self.state_mut().expected_emits.is_empty() &&
             !self
                 .state()
