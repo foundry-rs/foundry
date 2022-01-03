@@ -437,6 +437,7 @@ pub struct InterfaceSource {
     pub name: String,
     pub source: String,
 }
+
 pub struct SimpleCast;
 impl SimpleCast {
     /// Converts UTF-8 text input to hex
