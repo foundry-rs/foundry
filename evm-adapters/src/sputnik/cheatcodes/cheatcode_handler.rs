@@ -1276,7 +1276,6 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
         }
 
         if let Some(expected_revert) = expected_revert {
-            println!("expected revert {:?}\n {:?}", expected_revert, res);
             let final_res = match res {
                 Capture::Exit((ExitReason::Revert(_e), None, data)) => {
                     if data.len() >= 4 && data[0..4] == [8, 195, 121, 160] {
@@ -1289,7 +1288,6 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
                             .into_bytes()
                             .expect("Can never fail because it is bytes");
                         if decoded_data == *expected_revert {
-                            println!("was decoded data");
                             return Capture::Exit((
                                 ExitReason::Succeed(ExitSucceed::Returned),
                                 Some(Address::from_slice(
