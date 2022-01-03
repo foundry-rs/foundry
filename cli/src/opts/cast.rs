@@ -305,6 +305,8 @@ pub enum Subcommands {
         contract_address: Option<String>,
         #[structopt(help = "pragma version")]
         pragma: Option<String>,
+        #[structopt(help = "chain")]
+        chain: Option<ethers::core::types::Chain>,
         #[structopt(help = "output file, or empty for stdout")]
         output_location: Option<PathBuf>,
     },

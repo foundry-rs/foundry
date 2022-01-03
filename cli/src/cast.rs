@@ -13,7 +13,7 @@ use opts::{
 use ethers::{
     core::{
         rand::thread_rng,
-        types::{BlockId, BlockNumber::Latest},
+        types::{BlockId, BlockNumber::Latest, Chain},
     },
     providers::{Middleware, Provider},
     signers::{LocalWallet, Signer},
@@ -256,10 +256,13 @@ async fn main() -> eyre::Result<()> {
             println!("{}", SimpleCast::keccak(&data)?);
         }
 
-        Subcommands::Interface { contract_address, pragma, output_location } => {
+        Subcommands::Interface { contract_address, pragma, chain, output_location } => {
             println!("Generating interfaces from etherscan's ABI..");
-            let interfaces =
-                SimpleCast::generate_interface(unwrap_or_stdin(contract_address).unwrap()).await?;
+            let interfaces = SimpleCast::generate_interface(
+                unwrap_or_stdin(contract_address).unwrap(),
+                chain.unwrap_or(Chain::Mainnet),
+            )
+            .await?;
             let mut output_string = match pragma {
                 Some(version) => {
                     if version.len() == 0 {

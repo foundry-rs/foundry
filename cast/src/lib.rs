@@ -453,11 +453,11 @@ impl SimpleCast {
         format!("0x{}", s)
     }
 
-    pub async fn generate_interface(address: String) -> Result<Vec<InterfaceSource>> {
+    pub async fn generate_interface(address: String, chain: Chain) -> Result<Vec<InterfaceSource>> {
         let env_key = foundry_utils::etherscan_api_key()?;
-        let client = Client::new(Chain::Mainnet, env_key).unwrap();
-        let contract_source = client.contract_source_code(address.parse().unwrap()).await.unwrap();
-        let contract_abis = contract_source.abis().unwrap();
+        let client = Client::new(chain, env_key)?;
+        let contract_source = client.contract_source_code(address.parse().unwrap()).await?;
+        let contract_abis = contract_source.abis()?;
         let mut interfaces: Vec<InterfaceSource> = vec![];
         for (i, contract_abi) in contract_abis.iter().enumerate() {
             let contract_name = contract_source.items[i].contract_name.clone();
