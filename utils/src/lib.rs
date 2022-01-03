@@ -420,7 +420,7 @@ pub fn abi_to_solidity(contract_abi: &Abi, contract_name: &str) -> Result<String
                 format!("\n     function {}({}) {} external;", function.name, inputs, mutability)
             } else {
                 format!(
-                    "\n     function {}({}) {} external returns({});",
+                    "\n     function {}({}) {} external returns ({});",
                     function.name, inputs, mutability, outputs
                 )
             }
