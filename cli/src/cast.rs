@@ -260,13 +260,16 @@ async fn main() -> eyre::Result<()> {
             println!("Generating interfaces from etherscan's ABI..");
             let interfaces =
                 SimpleCast::generate_interface(unwrap_or_stdin(contract_address).unwrap()).await?;
-            let version = pragma.unwrap();
-            let mut output_string: String;
-            if &version == "" {
-                output_string = "pragma solidity ^0.8.10".to_owned();
-            } else {
-                output_string = version;
-            }
+            let mut output_string = match pragma {
+                Some(version) => {
+                    if version.len() == 0 {
+                        "pragma solidity ^0.8.10".to_owned()
+                    } else {
+                        format!("pragma solidity {}", version)
+                    }
+                }
+                None => "pragma solidity ^0.8.10".to_owned(),
+            };
             match output_location {
                 Some(loc) => {
                     for interface in interfaces {
