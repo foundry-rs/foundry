@@ -376,11 +376,11 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                     if call {
                         return ExpectRevertReturn::Call(evm_error(
                             "Expected revert call did not revert",
-                        ));
+                        ))
                     } else {
                         return ExpectRevertReturn::Create(evm_create_error(
                             "Expected revert create did not revert",
-                        ));
+                        ))
                     }
                 }
             }
@@ -399,7 +399,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                             return ExpectRevertReturn::Call(Capture::Exit((
                                 ExitReason::Succeed(ExitSucceed::Returned),
                                 DUMMY_OUTPUT.to_vec(),
-                            )));
+                            )))
                         } else {
                             return ExpectRevertReturn::Create(Capture::Exit((
                                 ExitReason::Succeed(ExitSucceed::Returned),
@@ -409,20 +409,20 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                                         [0..20],
                                 )),
                                 Vec::new(),
-                            )));
+                            )))
                         }
                     } else if call {
                         return ExpectRevertReturn::Call(evm_error(&*format!(
                             "Error != expected error: '{}' != '{}'",
                             String::from_utf8_lossy(&decoded_data[..]),
                             String::from_utf8_lossy(&expected_revert)
-                        )));
+                        )))
                     } else {
                         return ExpectRevertReturn::Create(evm_create_error(&*format!(
                             "Error != expected error: '{}' != '{}'",
                             String::from_utf8_lossy(&decoded_data[..]),
                             String::from_utf8_lossy(&expected_revert)
-                        )));
+                        )))
                     }
                 }
 
@@ -431,7 +431,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                         return ExpectRevertReturn::Call(Capture::Exit((
                             ExitReason::Succeed(ExitSucceed::Returned),
                             DUMMY_OUTPUT.to_vec(),
-                        )));
+                        )))
                     } else {
                         return ExpectRevertReturn::Create(Capture::Exit((
                             ExitReason::Succeed(ExitSucceed::Returned),
@@ -440,7 +440,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                                     .expect("valid address hex")[0..20],
                             )),
                             Vec::new(),
-                        )));
+                        )))
                     }
                 } else if call {
                     ExpectRevertReturn::Call(evm_error(&*format!(
@@ -543,7 +543,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
             HEVMCalls::Addr(inner) => {
                 let sk = inner.0;
                 if sk.is_zero() {
-                    return evm_error("Bad Cheat Code. Private Key cannot be 0.");
+                    return evm_error("Bad Cheat Code. Private Key cannot be 0.")
                 }
                 // 256 bit priv key -> 32 byte slice
                 let mut bs: [u8; 32] = [0; 32];
@@ -559,7 +559,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 let sk = inner.0;
                 let digest = inner.1;
                 if sk.is_zero() {
-                    return evm_error("Bad Cheat Code. Private Key cannot be 0.");
+                    return evm_error("Bad Cheat Code. Private Key cannot be 0.")
                 }
                 // 256 bit priv key -> 32 byte slice
                 let mut bs: [u8; 32] = [0; 32];
@@ -635,7 +635,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 if self.state().expected_revert.is_some() {
                     return evm_error(
                         "You must call another function prior to expecting a second revert.",
-                    );
+                    )
                 } else {
                     self.state_mut().expected_revert = Some(inner.0.to_vec());
                 }
@@ -674,8 +674,8 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                             .into_tokens()[0]
                             .clone(),
                     ]);
-                    if record_accesses.reads.borrow().len() == 0
-                        && record_accesses.writes.borrow().len() == 0
+                    if record_accesses.reads.borrow().len() == 0 &&
+                        record_accesses.writes.borrow().len() == 0
                     {
                         self.state_mut().accesses = None;
                     }
@@ -788,7 +788,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                     Ok(v) => v,
                     Err(e) => {
                         self.fill_trace(&trace, false, None, pre_index);
-                        return Capture::Exit((e.into(), Vec::new()));
+                        return Capture::Exit((e.into(), Vec::new()))
                     }
                 }
             };
@@ -830,7 +830,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
             if depth > self.config().call_stack_limit {
                 self.fill_trace(&trace, false, None, pre_index);
                 let _ = self.handler.exit_substate(StackExitKind::Reverted);
-                return Capture::Exit((ExitError::CallTooDeep.into(), Vec::new()));
+                return Capture::Exit((ExitError::CallTooDeep.into(), Vec::new()))
             }
         }
 
@@ -840,7 +840,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 Err(e) => {
                     self.fill_trace(&trace, false, None, pre_index);
                     let _ = self.handler.exit_substate(StackExitKind::Reverted);
-                    return Capture::Exit((ExitReason::Error(e), Vec::new()));
+                    return Capture::Exit((ExitReason::Error(e), Vec::new()))
                 }
             }
         }
@@ -859,7 +859,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                             Ok(_) => continue,
                             Err(error) => {
                                 self.fill_trace(&trace, false, Some(output.clone()), pre_index);
-                                return Capture::Exit((ExitReason::Error(error), output));
+                                return Capture::Exit((ExitReason::Error(error), output))
                             }
                         }
                     }
@@ -881,7 +881,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                     let _ = self.handler.exit_substate(StackExitKind::Failed);
                     Capture::Exit((e, Vec::new()))
                 }
-            };
+            }
         }
 
         // each cfg is about 200 bytes, is this a lot to clone? why does this error
@@ -940,7 +940,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                     Ok(v) => v,
                     Err(e) => {
                         self.fill_trace(&trace, false, None, pre_index);
-                        return Capture::Exit((e.into(), None, Vec::new()));
+                        return Capture::Exit((e.into(), None, Vec::new()))
                     }
                 }
             };
@@ -949,7 +949,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         fn check_first_byte(config: &Config, code: &[u8]) -> Result<(), ExitError> {
             if config.disallow_executable_format {
                 if let Some(0xef) = code.get(0) {
-                    return Err(ExitError::InvalidCode);
+                    return Err(ExitError::InvalidCode)
                 }
             }
             Ok(())
@@ -965,13 +965,13 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         if let Some(depth) = self.state().metadata().depth() {
             if depth > self.config().call_stack_limit {
                 self.fill_trace(&trace, false, None, pre_index);
-                return Capture::Exit((ExitError::CallTooDeep.into(), None, Vec::new()));
+                return Capture::Exit((ExitError::CallTooDeep.into(), None, Vec::new()))
             }
         }
 
         if self.balance(caller) < value {
             self.fill_trace(&trace, false, None, pre_index);
-            return Capture::Exit((ExitError::OutOfFund.into(), None, Vec::new()));
+            return Capture::Exit((ExitError::OutOfFund.into(), None, Vec::new()))
         }
 
         let after_gas = if take_l64 && self.config().call_l64_after_gas {
@@ -1000,13 +1000,13 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
             if self.code_size(address) != U256::zero() {
                 self.fill_trace(&trace, false, None, pre_index);
                 let _ = self.handler.exit_substate(StackExitKind::Failed);
-                return Capture::Exit((ExitError::CreateCollision.into(), None, Vec::new()));
+                return Capture::Exit((ExitError::CreateCollision.into(), None, Vec::new()))
             }
 
             if self.handler.nonce(address) > U256::zero() {
                 self.fill_trace(&trace, false, None, pre_index);
                 let _ = self.handler.exit_substate(StackExitKind::Failed);
-                return Capture::Exit((ExitError::CreateCollision.into(), None, Vec::new()));
+                return Capture::Exit((ExitError::CreateCollision.into(), None, Vec::new()))
             }
 
             self.state_mut().reset_storage(address);
@@ -1019,7 +1019,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
             Err(e) => {
                 self.fill_trace(&trace, false, None, pre_index);
                 let _ = self.handler.exit_substate(StackExitKind::Reverted);
-                return Capture::Exit((ExitReason::Error(e), None, Vec::new()));
+                return Capture::Exit((ExitReason::Error(e), None, Vec::new()))
             }
         }
 
@@ -1042,7 +1042,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                     self.state_mut().metadata_mut().gasometer_mut().fail();
                     self.fill_trace(&trace, false, None, pre_index);
                     let _ = self.handler.exit_substate(StackExitKind::Failed);
-                    return Capture::Exit((e.into(), None, Vec::new()));
+                    return Capture::Exit((e.into(), None, Vec::new()))
                 }
 
                 if let Some(limit) = self.config().create_contract_limit {
@@ -1054,7 +1054,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                             ExitError::CreateContractLimit.into(),
                             None,
                             Vec::new(),
-                        ));
+                        ))
                     }
                 }
 
@@ -1165,15 +1165,15 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
                 new_context,
             );
 
-            if !self.state_mut().expected_emits.is_empty()
-                && !self
+            if !self.state_mut().expected_emits.is_empty() &&
+                !self
                     .state()
                     .expected_emits
                     .iter()
                     .filter(|expected| expected.depth == curr_depth)
                     .all(|expected| expected.found)
             {
-                return evm_error("Log != expected log");
+                return evm_error("Log != expected log")
             }
 
             self.expected_revert(ExpectRevertReturn::Call(res), expected_revert, true)
@@ -1357,15 +1357,15 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
             new_caller = caller;
         }
         let res = self.create_inner(new_caller, scheme, value, init_code, target_gas, true);
-        if !self.state_mut().expected_emits.is_empty()
-            && !self
+        if !self.state_mut().expected_emits.is_empty() &&
+            !self
                 .state()
                 .expected_emits
                 .iter()
                 .filter(|expected| expected.depth == curr_depth)
                 .all(|expected| expected.found)
         {
-            return evm_create_error("Log != expected log");
+            return evm_create_error("Log != expected log")
         }
 
         self.expected_revert(ExpectRevertReturn::Create(res), expected_revert, false)
@@ -1498,7 +1498,7 @@ mod tests {
         for func in abi.functions().filter(|func| func.name.starts_with("test")) {
             // Skip the FFI unit test if not in a unix system
             if func.name == "testFFI" && !cfg!(unix) {
-                continue;
+                continue
             }
 
             let should_fail = func.name.starts_with("testFail");
