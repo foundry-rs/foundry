@@ -183,6 +183,13 @@ contract CheatCodes is DSTest {
         prank.bar(address(this));
     }
 
+    function testPrankConstructor() public {
+        PrankConstructor prank = new PrankConstructor(address(this));
+        address new_sender = address(1337);
+        hevm.prank(new_sender);
+        PrankConstructor prank2 = new PrankConstructor(address(1337));
+    }
+
     function testPrankStart() public {
         Prank prank = new Prank();
         address new_sender = address(1337);
@@ -237,6 +244,11 @@ contract CheatCodes is DSTest {
         hevm.expectRevert("Value too large");
         target.stringErr(101);
         target.stringErr(99);
+    }
+
+    function testExpectRevertConstructor() public {
+        hevm.expectRevert("Value too large Constructor");
+        ExpectRevertConstructor target = new ExpectRevertConstructor(101);
     }
 
     function testExpectRevertBuiltin() public {
@@ -414,6 +426,16 @@ contract ExpectRevert {
     }
 }
 
+contract ExpectRevertConstructor {
+    constructor(uint256 a) {
+        require(a < 100, "Value too large Constructor");
+    }
+
+    function a() public returns(uint256) {
+        return 1;
+    }
+}
+
 contract ExpectRevertCallee {
     function stringErr(uint256 a) public returns (uint256) {
         require(a < 100, "Value too largeCallee");
@@ -435,6 +457,12 @@ contract Prank {
 
     function payableBar(address expectedMsgSender) payable public {
         bar(expectedMsgSender);
+    }
+}
+
+contract PrankConstructor {
+    constructor(address expectedMsgSender) {
+        require(msg.sender == expectedMsgSender, "bad prank");
     }
 }
 

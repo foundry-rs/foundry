@@ -322,6 +322,15 @@ fn evm_error(retdata: &str) -> Capture<(ExitReason, Vec<u8>), Infallible> {
     ))
 }
 
+// helper for creating an exit type for create
+fn evm_create_error(retdata: &str) -> Capture<(ExitReason, Option<Address>, Vec<u8>), Infallible> {
+    Capture::Exit((
+        ExitReason::Revert(ExitRevert::Reverted),
+        None,
+        ethers::abi::encode(&[Token::String(retdata.to_owned())]),
+    ))
+}
+
 impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> {
     /// Given a transaction's calldata, it tries to parse it a console call and print the call
     fn console_log(&mut self, input: Vec<u8>) -> Capture<(ExitReason, Vec<u8>), Infallible> {
@@ -1237,7 +1246,92 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
         init_code: Vec<u8>,
         target_gas: Option<u64>,
     ) -> Capture<(ExitReason, Option<H160>, Vec<u8>), Self::CreateInterrupt> {
-        self.create_inner(caller, scheme, value, init_code, target_gas, true)
+        // modify execution context depending on the cheatcode
+        let expected_revert = self.state_mut().expected_revert.take();
+        let mut new_caller = caller;
+        let curr_depth =
+            if let Some(depth) = self.state().metadata().depth() { depth + 1 } else { 0 };
+
+        // handle `startPrank` - see apply_cheatcodes for more info
+        if let Some((original_msg_sender, permanent_caller, depth)) = self.state().msg_sender {
+            if curr_depth == depth && new_caller == original_msg_sender {
+                new_caller = permanent_caller;
+            }
+        }
+
+        // handle normal `prank`
+        if let Some(caller) = self.state_mut().next_msg_sender.take() {
+            new_caller = caller;
+        }
+        let res = self.create_inner(new_caller, scheme, value, init_code.clone(), target_gas, true);
+        if !self.state_mut().expected_emits.is_empty() &&
+            !self
+                .state()
+                .expected_emits
+                .iter()
+                .filter(|expected| expected.depth == curr_depth)
+                .all(|expected| expected.found)
+        {
+            return evm_create_error("Log != expected log")
+        }
+
+        if let Some(expected_revert) = expected_revert {
+            println!("expected revert {:?}\n {:?}", expected_revert, res);
+            let final_res = match res {
+                Capture::Exit((ExitReason::Revert(_e), None, data)) => {
+                    if data.len() >= 4 && data[0..4] == [8, 195, 121, 160] {
+                        // its a revert string
+                        let decoded_data =
+                            ethers::abi::decode(&[ethers::abi::ParamType::Bytes], &data[4..])
+                                .expect("String error code, but not actual string");
+                        let decoded_data = decoded_data[0]
+                            .clone()
+                            .into_bytes()
+                            .expect("Can never fail because it is bytes");
+                        if decoded_data == *expected_revert {
+                            println!("was decoded data");
+                            return Capture::Exit((
+                                ExitReason::Succeed(ExitSucceed::Returned),
+                                Some(Address::from_slice(
+                                    &hex::decode("0000000000000000000000000000000000000001")
+                                        .expect("valid address hex")
+                                        [0..20],
+                                )),
+                                Vec::new(), /* on a successful deployment, solidity expects no
+                                             * bytes as a return value */
+                            ))
+                        } else {
+                            return evm_create_error(&*format!(
+                                "Error != expected error: '{}' != '{}'",
+                                String::from_utf8_lossy(&decoded_data[..]),
+                                String::from_utf8_lossy(&expected_revert)
+                            ))
+                        }
+                    }
+
+                    if data == *expected_revert {
+                        Capture::Exit((
+                            ExitReason::Succeed(ExitSucceed::Returned),
+                            Some(Address::from_slice(
+                                &hex::decode("0000000000000000000000000000000000000001")
+                                    .expect("valid address hex")[0..20],
+                            )),
+                            Vec::new(),
+                        ))
+                    } else {
+                        evm_create_error(&*format!(
+                            "Error data != expected error data: 0x{} != 0x{}",
+                            hex::encode(data),
+                            hex::encode(expected_revert)
+                        ))
+                    }
+                }
+                _ => evm_create_error("Expected revert call did not revert"),
+            };
+            final_res
+        } else {
+            res
+        }
     }
 
     fn pre_validate(
