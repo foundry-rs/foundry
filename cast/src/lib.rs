@@ -460,8 +460,7 @@ impl SimpleCast {
         let mut interfaces: Vec<InterfaceSource> = vec![];
         for (i, contract_abi) in contract_abis.iter().enumerate() {
             let contract_name = contract_source.items[i].contract_name.clone();
-            let interface_source =
-                foundry_utils::abi_to_solidity(contract_abi.clone(), contract_name.clone())?;
+            let interface_source = foundry_utils::abi_to_solidity(contract_abi, &contract_name)?;
             let interface = InterfaceSource { name: contract_name, source: interface_source };
             interfaces.push(interface);
         }
