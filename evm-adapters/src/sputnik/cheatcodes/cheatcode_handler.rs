@@ -66,6 +66,10 @@ impl ExpectRevertReturn {
             _ => panic!("tried to get create response inner from a call"),
         }
     }
+
+    pub fn is_call(&self) -> bool {
+        matches!(self, ExpectRevertReturn::Call(..))
+    }
 }
 
 /// For certain cheatcodes, we may internally change the status of the call, i.e. in
@@ -357,8 +361,8 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         &mut self,
         res: ExpectRevertReturn,
         expected_revert: Option<Vec<u8>>,
-        call: bool,
     ) -> ExpectRevertReturn {
+        let call = res.is_call();
         if let Some(expected_revert) = expected_revert {
             let data;
             match res {
@@ -1175,8 +1179,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
                 return evm_error("Log != expected log")
             }
 
-            self.expected_revert(ExpectRevertReturn::Call(res), expected_revert, true)
-                .into_call_inner()
+            self.expected_revert(ExpectRevertReturn::Call(res), expected_revert).into_call_inner()
         }
     }
 
@@ -1379,8 +1382,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
             return evm_create_error("Log != expected log")
         }
 
-        self.expected_revert(ExpectRevertReturn::Create(res), expected_revert, false)
-            .into_create_inner()
+        self.expected_revert(ExpectRevertReturn::Create(res), expected_revert).into_create_inner()
     }
 
     fn pre_validate(
