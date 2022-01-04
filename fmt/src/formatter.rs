@@ -4,8 +4,8 @@ use std::fmt::Write;
 
 use indent_write::fmt::IndentWriter;
 use solang::parser::pt::{
-    ContractDefinition, DocComment, EnumDefinition, FunctionDefinition, Identifier, Loc,
-    SourceUnit, SourceUnitPart, StringLiteral, VariableDefinition,
+    ContractDefinition, DocComment, EnumDefinition, FunctionDefinition, FunctionTy, Identifier,
+    Loc, SourceUnit, SourceUnitPart, StringLiteral, VariableDefinition,
 };
 
 use crate::{
@@ -54,16 +54,22 @@ impl<'a, W: Write> Formatter<'a, W> {
         }
     }
 
+    fn level(&mut self) -> &mut usize {
+        if let Some((level, _)) = self.bufs.last_mut() {
+            level
+        } else {
+            &mut self.level
+        }
+    }
+
     fn indent(&mut self, delta: usize) {
-        let level =
-            if let Some((level, _)) = self.bufs.last_mut() { level } else { &mut self.level };
+        let level = self.level();
 
         *level = level.saturating_add(delta)
     }
 
     fn dedent(&mut self, delta: usize) {
-        let level =
-            if let Some((level, _)) = self.bufs.last_mut() { level } else { &mut self.level };
+        let level = self.level();
 
         *level = level.saturating_sub(delta)
     }
@@ -387,7 +393,13 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             writeln!(self)?;
         }
 
-        self.visit_source(func.loc)?;
+        // Constructor functions LOCs are saved with trailing spaces, we need a workaround for now.
+        if func.ty == FunctionTy::Constructor {
+            let constructor_definition = self.visit_to_string(&mut func.loc)?;
+            write!(self, "{}", constructor_definition.trim_end())?;
+        } else {
+            self.visit_source(func.loc)?;
+        }
 
         if let Some(body) = &mut func.body {
             write!(self, " ")?;
