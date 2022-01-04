@@ -32,6 +32,8 @@ use structopt::StructOpt;
 
 use crate::utils::read_secret;
 
+const FLASHBOTS_URL: &str = "https://rpc.flashbots.net";
+
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
     color_eyre::install()?;
@@ -157,8 +159,13 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(&provider).transaction(hash, field, to_json).await?)
         }
-        Subcommands::SendTx { eth, to, sig, cast_async, args } => {
-            let provider = Provider::try_from(eth.rpc_url.as_str())?;
+        Subcommands::SendTx { eth, to, sig, cast_async, flashbots, args } => {
+            let provider;
+            if flashbots {
+                provider = Provider::try_from(FLASHBOTS_URL)?;
+            } else {
+                provider = Provider::try_from(eth.rpc_url.as_str())?;
+            }
             let chain_id = Cast::new(&provider).chain_id().await?;
 
             if let Some(signer) = eth.signer_with(chain_id, provider.clone()).await? {

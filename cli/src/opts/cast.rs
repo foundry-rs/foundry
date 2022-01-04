@@ -139,6 +139,8 @@ pub enum Subcommands {
         cast_async: bool,
         #[structopt(flatten)]
         eth: EthereumOpts,
+        #[structopt(long, help="use the flashbots RPC URL")]
+        flashbots: bool,
     },
     #[structopt(name = "estimate")]
     #[structopt(about = "Estimate the gas cost of a transaction from <from> to <to> with <data>")]
