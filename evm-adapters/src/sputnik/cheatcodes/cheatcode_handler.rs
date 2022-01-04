@@ -30,7 +30,7 @@ use ethers::{
 use std::convert::Infallible;
 
 use crate::sputnik::cheatcodes::{
-    debugger::{CheatOp, DebugArena, DebugNode, DebugStep, ForgeRuntime, OpCode},
+    debugger::{CheatOp, DebugArena, DebugNode, DebugStep, OpCode},
     patch_hardhat_console_log_selector,
 };
 use once_cell::sync::Lazy;
@@ -353,7 +353,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                     address: *CHEATCODE_ADDRESS,
                     depth,
                     steps: vec![DebugStep {
-                        op: OpCode(Opcode(0x0C), Some(cheatop)),
+                        op: OpCode::from(cheatop),
                         memory: Memory::new(0),
                         ..Default::default()
                     }],
@@ -619,25 +619,29 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         address: Address,
         code: Rc<Vec<u8>>,
     ) -> ExitReason {
-        let mut forge_runtime = ForgeRuntime::new_with_runtime(runtime, code);
         let depth = if let Some(depth) = self.state().metadata().depth() { depth + 1 } else { 0 };
 
-        match self.debug_run(&mut forge_runtime, address, depth) {
+        match self.debug_run(runtime, address, depth, code) {
             Capture::Exit(s) => s,
             Capture::Trap(_) => unreachable!("Trap is Infallible"),
         }
     }
 
-    pub fn debug_step(&mut self, runtime: &ForgeRuntime, steps: &mut Vec<DebugStep>) -> bool {
-        let pc = if let Ok(pos) = runtime.inner.machine().position() { *pos } else { 0 };
+    fn debug_step(
+        &mut self,
+        runtime: &mut Runtime,
+        code: Rc<Vec<u8>>,
+        steps: &mut Vec<DebugStep>,
+    ) -> bool {
+        let pc = runtime.machine().position().as_ref().map(|p| *p).unwrap_or_default();
         let mut push_bytes = None;
-        if let Some((op, stack)) = runtime.inner.machine().inspect() {
-            let wrapped_op = OpCode(op, None);
+        if let Some((op, stack)) = runtime.machine().inspect() {
+            let wrapped_op = OpCode::from(op);
             if let Some(push_size) = wrapped_op.push_size() {
                 let push_start = pc + 1;
                 let push_end = pc + 1 + push_size as usize;
-                if push_end < runtime.code.len() {
-                    push_bytes = Some(runtime.code[push_start..push_end].to_vec());
+                if push_end < code.len() {
+                    push_bytes = Some(code[push_start..push_end].to_vec());
                 } else {
                     panic!("PUSH{} exceeds codesize?", push_size)
                 }
@@ -647,7 +651,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
             steps.push(DebugStep {
                 pc,
                 stack,
-                memory: runtime.inner.machine().memory().clone(),
+                memory: runtime.machine().memory().clone(),
                 op: wrapped_op,
                 push_bytes,
             });
@@ -658,19 +662,21 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 Opcode::CALLCODE |
                 Opcode::DELEGATECALL |
                 Opcode::STATICCALL => {
-                    // this would create an interrupt, construct a new vec
+                    // this would create an interrupt, have `debug_run` construct a new vec
+                    // to commit the current vector of steps into the debugarena
+                    // this maintains the call heirarchy correctly
                     true
                 }
                 _ => false,
             }
         } else {
-            let mut stack = runtime.inner.machine().stack().data().clone();
+            let mut stack = runtime.machine().stack().data().clone();
             stack.reverse();
             steps.push(DebugStep {
                 pc,
                 stack,
-                memory: runtime.inner.machine().memory().clone(),
-                op: OpCode(Opcode::INVALID, None),
+                memory: runtime.machine().memory().clone(),
+                op: OpCode::from(Opcode::INVALID),
                 push_bytes,
             });
             true
@@ -680,15 +686,16 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
     /// Loop stepping the runtime until it stops.
     fn debug_run(
         &mut self,
-        runtime: &mut ForgeRuntime,
+        runtime: &mut Runtime,
         address: Address,
         depth: usize,
+        code: Rc<Vec<u8>>,
     ) -> Capture<ExitReason, ()> {
         let mut done = false;
         let mut res = Capture::Exit(ExitReason::Succeed(ExitSucceed::Returned));
         let mut steps = Vec::new();
         while !done {
-            if self.debug_step(runtime, &mut steps) {
+            if self.debug_step(runtime, code.clone(), &mut steps) {
                 self.state_mut().debug_mut().push_node(
                     0,
                     DebugNode { address, depth, steps: steps.clone(), ..Default::default() },

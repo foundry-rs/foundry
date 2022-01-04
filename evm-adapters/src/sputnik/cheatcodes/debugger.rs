@@ -1,17 +1,8 @@
-use sputnik::{
-    Capture, ExitReason, ExitSucceed, Handler, Machine, Memory, Opcode, Resolve, Runtime,
-};
+use sputnik::{Memory, Opcode};
 
 use ethers::types::{Address, H256};
 
-use std::{borrow::Cow, fmt::Display, rc::Rc};
-/// EVM runtime.
-///
-/// The runtime wraps an EVM `Machine` with support of return data and context.
-pub struct ForgeRuntime<'b, 'config> {
-    pub inner: &'b mut Runtime<'config>,
-    pub code: Rc<Vec<u8>>,
-}
+use std::{borrow::Cow, fmt::Display};
 
 #[derive(Debug, Clone)]
 /// An arena of `DebugNode`s
@@ -51,6 +42,12 @@ impl DebugArena {
         }
     }
 
+    /// Recursively traverses the tree of debug step nodes and flattens it into a
+    /// vector where each element contains
+    /// 1. the address of the contract being executed
+    /// 2. a vector of all the debug steps along that contract's execution path.
+    ///  
+    /// This then makes it easy to pretty print the execution steps.
     pub fn flatten(&self, entry: usize, flattened: &mut Vec<(Address, Vec<DebugStep>)>) {
         let node = &self.arena[entry];
         flattened.push((node.address, node.steps.clone()));
@@ -141,45 +138,6 @@ impl Display for DebugStep {
     }
 }
 
-impl<'b, 'config> ForgeRuntime<'b, 'config> {
-    pub fn new_with_runtime(runtime: &'b mut Runtime<'config>, code: Rc<Vec<u8>>) -> Self {
-        Self { inner: runtime, code }
-    }
-
-    /// Step the runtime.
-    pub fn step<'a, H: Handler>(
-        &'a mut self,
-        handler: &mut H,
-    ) -> Result<(), Capture<ExitReason, Resolve<'a, 'config, H>>> {
-        self.inner.step(handler)
-    }
-
-    /// Get a reference to the machine.
-    pub fn machine(&self) -> &Machine {
-        self.inner.machine()
-    }
-
-    /// Loop stepping the runtime until it stops.
-    pub fn run<H: Handler>(&mut self, handler: &mut H) -> Capture<ExitReason, ()> {
-        let mut done = false;
-        let mut res = Capture::Exit(ExitReason::Succeed(ExitSucceed::Returned));
-        while !done {
-            let r = self.step(handler);
-            match r {
-                Ok(()) => {}
-                Err(e) => {
-                    done = true;
-                    match e {
-                        Capture::Exit(s) => res = Capture::Exit(s),
-                        Capture::Trap(_) => unreachable!("Trap is Infallible"),
-                    }
-                }
-            }
-        }
-        res
-    }
-}
-
 #[derive(Debug, Copy, Clone)]
 pub enum CheatOp {
     ROLL,
@@ -201,6 +159,36 @@ pub enum CheatOp {
     EXPECTEMIT,
 }
 
+impl From<CheatOp> for OpCode {
+    fn from(cheat: CheatOp) -> OpCode {
+        OpCode(Opcode(0x0C), Some(cheat))
+    }
+}
+
+impl CheatOp {
+    pub const fn name(&self) -> &'static str {
+        match self {
+            CheatOp::ROLL => "VM_ROLL",
+            CheatOp::WARP => "VM_WARP",
+            CheatOp::FEE => "VM_FEE",
+            CheatOp::STORE => "VM_STORE",
+            CheatOp::LOAD => "VM_LOAD",
+            CheatOp::FFI => "VM_FFI",
+            CheatOp::ADDR => "VM_ADDR",
+            CheatOp::SIGN => "VM_SIGN",
+            CheatOp::PRANK => "VM_PRANK",
+            CheatOp::STARTPRANK => "VM_STARTPRANK",
+            CheatOp::STOPPRANK => "VM_STOPPRANK",
+            CheatOp::DEAL => "VM_DEAL",
+            CheatOp::ETCH => "VM_ETCH",
+            CheatOp::EXPECTREVERT => "VM_EXPECTREVERT",
+            CheatOp::RECORD => "VM_RECORD",
+            CheatOp::ACCESSES => "VM_ACCESSES",
+            CheatOp::EXPECTEMIT => "VM_EXPECTEMIT",
+        }
+    }
+}
+
 impl Default for CheatOp {
     fn default() -> Self {
         CheatOp::ROLL
@@ -209,6 +197,12 @@ impl Default for CheatOp {
 
 #[derive(Debug, Clone, Copy)]
 pub struct OpCode(pub Opcode, pub Option<CheatOp>);
+
+impl From<Opcode> for OpCode {
+    fn from(op: Opcode) -> OpCode {
+        OpCode(op, None)
+    }
+}
 
 impl OpCode {
     pub const fn name(&self) -> &'static str {
@@ -358,25 +352,7 @@ impl OpCode {
             Opcode::SUICIDE => "SELFDESTRUCT",
             _ => {
                 if let Some(cheat) = self.1 {
-                    match cheat {
-                        CheatOp::ROLL => "VM_ROLL",
-                        CheatOp::WARP => "VM_WARP",
-                        CheatOp::FEE => "VM_FEE",
-                        CheatOp::STORE => "VM_STORE",
-                        CheatOp::LOAD => "VM_LOAD",
-                        CheatOp::FFI => "VM_FFI",
-                        CheatOp::ADDR => "VM_ADDR",
-                        CheatOp::SIGN => "VM_SIGN",
-                        CheatOp::PRANK => "VM_PRANK",
-                        CheatOp::STARTPRANK => "VM_STARTPRANK",
-                        CheatOp::STOPPRANK => "VM_STOPPRANK",
-                        CheatOp::DEAL => "VM_DEAL",
-                        CheatOp::ETCH => "VM_ETCH",
-                        CheatOp::EXPECTREVERT => "VM_EXPECTREVERT",
-                        CheatOp::RECORD => "VM_RECORD",
-                        CheatOp::ACCESSES => "VM_ACCESSES",
-                        CheatOp::EXPECTEMIT => "VM_EXPECTEMIT",
-                    }
+                    cheat.name()
                 } else {
                     "UNDEFINED"
                 }

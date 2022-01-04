@@ -224,10 +224,13 @@ impl Tui {
                                         (before.len().saturating_sub(above), mid_len + below)
                                     };
 
+                                    // text_output.extend(Text::from(format!("{:?}", before)));
+                                    // text_output.extend(Text::from(format!("{:?}", actual)));
                                     let max_line_num = num_lines.to_string().len();
-                                    // We check if there is other text on the same line before the highlight starts
+                                    // We check if there is other text on the same line before the
+                                    // highlight starts
                                     if let Some(last) = before.pop() {
-                                        if last.len() > 2 && &last[last.len() - 3..] != "\n" {
+                                        if last.len() > 1 && &last[last.len() - 2..] != "\n" {
                                             before.iter().skip(start_line).for_each(|line| {
                                                 text_output.lines.push(Spans::from(vec![
                                                     Span::styled(
@@ -240,7 +243,9 @@ impl Tui {
                                                             .fg(Color::Gray)
                                                             .bg(Color::DarkGray),
                                                     ),
-                                                    Span::raw(" ".to_string() + &line.to_string()),
+                                                    Span::raw(
+                                                        "\u{2800} ".to_string() + &line.to_string(),
+                                                    ),
                                                 ]));
                                                 line_number += 1;
                                             });
@@ -256,7 +261,7 @@ impl Tui {
                                                         .fg(Color::Cyan)
                                                         .bg(Color::DarkGray),
                                                 ),
-                                                Span::raw(" "),
+                                                Span::raw("\u{2800} "),
                                                 Span::raw(last),
                                                 Span::styled(
                                                     actual[0].to_string(),
@@ -279,12 +284,12 @@ impl Tui {
                                                             .fg(Color::Cyan)
                                                             .bg(Color::DarkGray),
                                                     ),
-                                                    Span::raw(" "),
+                                                    Span::raw("\u{2800} "),
                                                     Span::styled(
                                                         // this is a hack to add coloring
                                                         // because tui does weird trimming
                                                         if s.is_empty() || s == "\n" {
-                                                            "\u{2800} ".to_string()
+                                                            "\u{2800} \n".to_string()
                                                         } else {
                                                             s.to_string()
                                                         },
@@ -296,6 +301,7 @@ impl Tui {
                                                 line_number += 1;
                                             });
                                         } else {
+                                            before.push(last);
                                             before.iter().skip(start_line).for_each(|line| {
                                                 text_output.lines.push(Spans::from(vec![
                                                     Span::styled(
@@ -308,8 +314,12 @@ impl Tui {
                                                             .fg(Color::Gray)
                                                             .bg(Color::DarkGray),
                                                     ),
-                                                    Span::raw(" ".to_string() + &line.to_string()),
+                                                    Span::styled(
+                                                        "\u{2800} ".to_string() + &line.to_string(),
+                                                        Style::default(),
+                                                    ),
                                                 ]));
+
                                                 line_number += 1;
                                             });
                                             actual.iter().for_each(|s| {
@@ -324,10 +334,10 @@ impl Tui {
                                                             .fg(Color::Cyan)
                                                             .bg(Color::DarkGray),
                                                     ),
-                                                    Span::raw(" "),
+                                                    Span::raw("\u{2800} "),
                                                     Span::styled(
                                                         if s.is_empty() || s == "\n" {
-                                                            "\u{2800} ".to_string()
+                                                            "\u{2800} \n".to_string()
                                                         } else {
                                                             s.to_string()
                                                         },
@@ -353,7 +363,7 @@ impl Tui {
                                     }
 
                                     // add after highlighted text
-                                    while before.len() + actual.len() + after.len() > end_line {
+                                    while mid_len + after.len() > end_line {
                                         after.pop_back();
                                     }
                                     after.iter().for_each(|line| {
@@ -368,7 +378,7 @@ impl Tui {
                                                     .fg(Color::Gray)
                                                     .bg(Color::DarkGray),
                                             ),
-                                            Span::raw(" ".to_string() + &line.to_string()),
+                                            Span::raw("\u{2800} ".to_string() + &line.to_string()),
                                         ]));
                                         line_number += 1;
                                     });
@@ -578,18 +588,18 @@ impl Ui for Tui {
                     let event = event::read().unwrap();
                     if let Event::Key(key) = event {
                         if tx.send(Interrupt::KeyPressed(key)).is_err() {
-                            return;
+                            return
                         }
                     } else if let Event::Mouse(mouse) = event {
                         if tx.send(Interrupt::MouseEvent(mouse)).is_err() {
-                            return;
+                            return
                         }
                     }
                 }
                 // force update if time has passed
                 if last_tick.elapsed() > tick_rate {
                     if tx.send(Interrupt::IntervalElapsed).is_err() {
-                        return;
+                        return
                     }
                     last_tick = Instant::now();
                 }
@@ -625,7 +635,7 @@ impl Ui for Tui {
                             LeaveAlternateScreen,
                             DisableMouseCapture
                         )?;
-                        return Ok(TUIExitReason::CharExit);
+                        return Ok(TUIExitReason::CharExit)
                     }
                     // Move down
                     KeyCode::Char('j') | KeyCode::Down => {
@@ -718,8 +728,8 @@ impl Ui for Tui {
                                 .find_map(|(i, op)| {
                                     if i > 0 {
                                         match (
-                                            prev_ops[i - 1].contains("JUMP")
-                                                && prev_ops[i - 1] != "JUMPDEST",
+                                            prev_ops[i - 1].contains("JUMP") &&
+                                                prev_ops[i - 1] != "JUMPDEST",
                                             &**op,
                                         ) {
                                             (true, "JUMPDEST") => Some(i - 1),

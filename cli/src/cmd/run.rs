@@ -121,15 +121,11 @@ impl Cmd for RunArgs {
                 })
                 .collect();
 
-            println!("{:?}", source_code);
-
             let calls = evm.debug_calls();
             println!("debugging {}", calls.len());
             let mut flattened = Vec::new();
             calls[0].flatten(0, &mut flattened);
             flattened = flattened[1..].to_vec();
-            // flattened.iter().for_each(|flat| {println!("{:?}", flat.1[0..5].iter().map(|step|
-            // step.pretty_opcode()).collect::<Vec<String>>().join(", "))});
             let tui = Tui::new(
                 flattened,
                 0,
