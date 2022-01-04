@@ -258,7 +258,7 @@ impl Tui {
                                                         max_line_num = max_line_num
                                                     ),
                                                     Style::default()
-                                                        .fg(Color::Cyan)
+                                                        .fg(Color::Green)
                                                         .bg(Color::DarkGray),
                                                 ),
                                                 Span::raw("\u{2800} "),
@@ -281,7 +281,7 @@ impl Tui {
                                                             max_line_num = max_line_num
                                                         ),
                                                         Style::default()
-                                                            .fg(Color::Cyan)
+                                                            .fg(Color::Green)
                                                             .bg(Color::DarkGray),
                                                     ),
                                                     Span::raw("\u{2800} "),
@@ -331,7 +331,7 @@ impl Tui {
                                                             max_line_num = max_line_num
                                                         ),
                                                         Style::default()
-                                                            .fg(Color::Cyan)
+                                                            .fg(Color::Green)
                                                             .bg(Color::DarkGray),
                                                     ),
                                                     Span::raw("\u{2800} "),
@@ -343,7 +343,7 @@ impl Tui {
                                                         },
                                                         Style::default()
                                                             .fg(Color::White)
-                                                            .bg(Color::Black),
+                                                            .bg(Color::DarkGray),
                                                     ),
                                                 ]));
                                                 line_number += 1;
