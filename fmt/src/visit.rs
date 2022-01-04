@@ -1,5 +1,6 @@
 //! Visitor helpers to traverse the [solang](https://github.com/hyperledger-labs/solang) Solidity Parse Tree
 
+use crate::loc::LineOfCode;
 use solang::parser::pt::*;
 
 /// The error type a [Visitor] may return
@@ -10,7 +11,13 @@ pub type VResult = Result<(), Box<dyn std::error::Error>>;
 ///
 /// Currently the main implementor of this trait is the [`Formatter`](crate::Formatter) struct.
 pub trait Visitor {
+    fn visit_source(&mut self, _loc: Loc) -> VResult;
+
     fn visit_source_unit(&mut self, _source_unit: &mut SourceUnit) -> VResult {
+        Ok(())
+    }
+
+    fn visit_doc_comment(&mut self, _doc_comment: &mut DocComment) -> VResult {
         Ok(())
     }
 
@@ -46,15 +53,21 @@ pub trait Visitor {
         Ok(())
     }
 
-    fn visit_stmt(&mut self, _stmt: &mut Statement) -> VResult {
+    fn visit_statement(&mut self, stmt: &mut Statement) -> VResult {
+        self.visit_source(stmt.loc())?;
+
         Ok(())
     }
 
-    fn visit_assembly(&mut self, _stmt: &mut AssemblyStatement) -> VResult {
+    fn visit_assembly(&mut self, stmt: &mut AssemblyStatement) -> VResult {
+        self.visit_source(stmt.loc())?;
+
         Ok(())
     }
 
-    fn visit_arg(&mut self, _stmt: &mut NamedArgument) -> VResult {
+    fn visit_arg(&mut self, arg: &mut NamedArgument) -> VResult {
+        self.visit_source(arg.loc)?;
+
         Ok(())
     }
 
@@ -62,7 +75,7 @@ pub trait Visitor {
         Ok(())
     }
 
-    fn visit_emit(&mut self, _stmt: &mut Expression) -> VResult {
+    fn visit_emit(&mut self, _expr: &mut Expression) -> VResult {
         Ok(())
     }
 
@@ -94,15 +107,21 @@ pub trait Visitor {
         Ok(())
     }
 
-    fn visit_struct(&mut self, _struct: &mut StructDefinition) -> VResult {
+    fn visit_struct(&mut self, structure: &mut StructDefinition) -> VResult {
+        self.visit_source(structure.loc)?;
+
         Ok(())
     }
 
-    fn visit_event(&mut self, _event: &mut EventDefinition) -> VResult {
+    fn visit_event(&mut self, event: &mut EventDefinition) -> VResult {
+        self.visit_source(event.loc)?;
+
         Ok(())
     }
 
-    fn visit_event_parameter(&mut self, _param: &mut EventParameter) -> VResult {
+    fn visit_event_parameter(&mut self, param: &mut EventParameter) -> VResult {
+        self.visit_source(param.loc)?;
+
         Ok(())
     }
 
@@ -110,7 +129,9 @@ pub trait Visitor {
         Ok(())
     }
 
-    fn visit_using(&mut self, _using: &mut Using) -> VResult {
+    fn visit_using(&mut self, using: &mut Using) -> VResult {
+        self.visit_source(using.loc)?;
+
         Ok(())
     }
 }
@@ -125,11 +146,18 @@ pub trait Visitable {
     fn visit(&mut self, v: &mut impl Visitor) -> VResult;
 }
 
-impl<T: Visitable> Visitable for Vec<T> {
+impl Visitable for Loc {
     fn visit(&mut self, v: &mut impl Visitor) -> VResult {
-        for t in self {
-            t.visit(v)?;
-        }
+        v.visit_source(*self)?;
+
+        Ok(())
+    }
+}
+
+impl Visitable for DocComment {
+    fn visit(&mut self, v: &mut impl Visitor) -> VResult {
+        v.visit_doc_comment(self)?;
+
         Ok(())
     }
 }

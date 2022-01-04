@@ -1,13 +1,17 @@
-pub mod cmd;
-mod opts;
-mod utils;
+use std::{path::PathBuf, process::Command, str::FromStr};
+
+use ethers::solc::{remappings::Remapping, Project, ProjectPathsConfig};
+use structopt::StructOpt;
+use walkdir::WalkDir;
+
+use forge_fmt::{Formatter, FormatterConfig, Visitable};
+use opts::forge::{Dependency, FullContractInfo, Opts, Subcommands};
 
 use crate::cmd::Cmd;
 
-use ethers::solc::{remappings::Remapping, Project, ProjectPathsConfig};
-use opts::forge::{Dependency, FullContractInfo, Opts, Subcommands};
-use std::{process::Command, str::FromStr};
-use structopt::StructOpt;
+pub mod cmd;
+mod opts;
+mod utils;
 
 #[tracing::instrument(err)]
 fn main() -> eyre::Result<()> {
@@ -128,6 +132,44 @@ fn main() -> eyre::Result<()> {
         }
         Subcommands::Snapshot(cmd) => {
             cmd.run()?;
+        }
+        Subcommands::Fmt { root } => {
+            let root = root.unwrap_or_else(|| std::env::current_dir().unwrap());
+
+            let paths: Box<dyn Iterator<Item = PathBuf>> = if root.is_dir() {
+                Box::new(
+                    WalkDir::new(root)
+                        .follow_links(true)
+                        .into_iter()
+                        .filter_map(|e| e.ok())
+                        .filter(|e| e.file_name().to_string_lossy().ends_with(".sol"))
+                        .map(|e| e.into_path()),
+                )
+            } else if root.file_name().unwrap().to_string_lossy().ends_with(".sol") {
+                Box::new(std::iter::once(root))
+            } else {
+                Box::new(std::iter::empty())
+            };
+
+            for path in paths {
+                let source = std::fs::read_to_string(&path)?;
+                let mut source_unit = solang::parser::parse(&source, 0).unwrap();
+
+                let mut output = String::new();
+                let mut formatter =
+                    Formatter::new(&mut output, &source, FormatterConfig::default());
+
+                source_unit.visit(&mut formatter).unwrap();
+
+                solang::parser::parse(&output, 0).map_err(|diags| {
+                    eyre::eyre!(
+                        "Failed to construct valid Solidity code. Leaving source unchanged.\nDebug info: {:?}",
+                        diags
+                    )
+                })?;
+
+                std::fs::write(path, output)?;
+            }
         }
     }
 

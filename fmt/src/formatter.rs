@@ -4,10 +4,14 @@ use std::fmt::Write;
 
 use indent_write::fmt::IndentWriter;
 use solang::parser::pt::{
-    ContractDefinition, EnumDefinition, Identifier, SourceUnit, SourceUnitPart, StringLiteral,
+    ContractDefinition, DocComment, EnumDefinition, FunctionDefinition, Identifier, Loc,
+    SourceUnit, SourceUnitPart, StringLiteral, VariableDefinition,
 };
 
-use crate::visit::{VResult, Visitable, Visitor};
+use crate::{
+    loc::LineOfCode,
+    visit::{VResult, Visitable, Visitor},
+};
 
 /// Contains the config and rule set
 #[derive(Debug, Clone)]
@@ -29,23 +33,39 @@ impl Default for FormatterConfig {
 /// A Solidity formatter
 pub struct Formatter<'a, W> {
     w: &'a mut W,
+    source: &'a str,
     config: FormatterConfig,
     level: usize,
     pending_indent: bool,
+    bufs: Vec<(usize, String)>,
     current_line: usize,
 }
 
 impl<'a, W: Write> Formatter<'a, W> {
-    pub fn new(w: &'a mut W, config: FormatterConfig) -> Self {
-        Self { w, config, level: 0, pending_indent: true, current_line: 0 }
+    pub fn new(w: &'a mut W, source: &'a str, config: FormatterConfig) -> Self {
+        Self {
+            w,
+            source,
+            config,
+            level: 0,
+            pending_indent: true,
+            bufs: Vec::new(),
+            current_line: 0,
+        }
     }
 
-    fn indent(&mut self, level: usize) {
-        self.level = self.level.saturating_add(level)
+    fn indent(&mut self, delta: usize) {
+        let level =
+            if let Some((level, _)) = self.bufs.last_mut() { level } else { &mut self.level };
+
+        *level = level.saturating_add(delta)
     }
 
-    fn dedent(&mut self, level: usize) {
-        self.level = self.level.saturating_sub(level)
+    fn dedent(&mut self, delta: usize) {
+        let level =
+            if let Some((level, _)) = self.bufs.last_mut() { level } else { &mut self.level };
+
+        *level = level.saturating_sub(delta)
     }
 
     /// Write opening bracket with respect to `config.bracket_spacing` setting:
@@ -101,16 +121,33 @@ impl<'a, W: Write> Formatter<'a, W> {
 
         Ok(())
     }
+
+    fn visit_to_string(
+        &mut self,
+        visitable: &mut impl Visitable,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        self.bufs.push((0, String::new()));
+        Visitable::visit(visitable, self)?;
+        let (_, result) = self.bufs.pop().unwrap();
+
+        Ok(result)
+    }
 }
 
 impl<'a, W: Write> Write for Formatter<'a, W> {
     fn write_str(&mut self, s: &str) -> std::fmt::Result {
-        let indent = " ".repeat(self.config.tab_width * self.level);
+        let (level, w): (usize, &mut dyn Write) = if let Some((level, buf)) = self.bufs.last_mut() {
+            (*level, buf)
+        } else {
+            (self.level, self.w)
+        };
+
+        let indent = " ".repeat(self.config.tab_width * level);
 
         if self.pending_indent {
-            IndentWriter::new(&indent, &mut self.w).write_str(s)?;
+            IndentWriter::new(&indent, w).write_str(s)?;
         } else {
-            self.w.write_str(s)?;
+            w.write_str(s)?;
         }
         self.current_line += s.len();
 
@@ -125,6 +162,12 @@ impl<'a, W: Write> Write for Formatter<'a, W> {
 
 // Traverse the Solidity Parse Tree and write to the code formatter
 impl<'a, W: Write> Visitor for Formatter<'a, W> {
+    fn visit_source(&mut self, loc: Loc) -> VResult {
+        write!(self, "{}", String::from_utf8(self.source.as_bytes()[loc.1..loc.2].to_vec())?)?;
+
+        Ok(())
+    }
+
     fn visit_source_unit(&mut self, source_unit: &mut SourceUnit) -> VResult {
         // TODO: do we need to put pragma and import directives at the top of the file?
         // source_unit.0.sort_by_key(|item| match item {
@@ -134,16 +177,22 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         // });
 
         let source_unit_parts = source_unit.0.len();
-        for (i, unit) in source_unit.0.iter_mut().enumerate() {
-            let is_declaration = !matches!(
-                unit,
-                SourceUnitPart::ImportDirective(_, _) | SourceUnitPart::PragmaDirective(_, _, _)
-            );
+        let mut source_unit_parts_iter = source_unit.0.iter_mut().enumerate().peekable();
+        while let Some((i, unit)) = source_unit_parts_iter.next() {
+            let is_pragma =
+                |u: &SourceUnitPart| matches!(u, SourceUnitPart::PragmaDirective(_, _, _));
+            let is_import = |u: &SourceUnitPart| matches!(u, SourceUnitPart::ImportDirective(_, _));
+            let is_declaration = |u: &SourceUnitPart| !(is_pragma(u) || is_import(u));
 
             unit.visit(self)?;
             writeln!(self)?;
 
-            if i != source_unit_parts - 1 && is_declaration {
+            let next = source_unit_parts_iter.peek();
+
+            if i != source_unit_parts - 1 && is_declaration(unit) ||
+                is_pragma(unit) ||
+                next.map(|(_, unit)| is_declaration(unit)).unwrap_or(false)
+            {
                 writeln!(self)?;
             }
         }
@@ -151,7 +200,18 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    fn visit_doc_comment(&mut self, doc_comment: &mut DocComment) -> VResult {
+        write!(self, "/// @{} {}", doc_comment.tag, doc_comment.value)?;
+
+        Ok(())
+    }
+
     fn visit_contract(&mut self, contract: &mut ContractDefinition) -> VResult {
+        for doc_comment in &mut contract.doc {
+            doc_comment.visit(self)?;
+            writeln!(self)?;
+        }
+
         write!(self, "{} {} ", contract.ty, contract.name.name)?;
 
         if !contract.base.is_empty() {
@@ -161,11 +221,10 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 .base
                 .iter_mut()
                 .map(|base| {
-                    // TODO: write `base.args`
-
-                    base.name.name.to_string()
+                    // TODO
+                    self.visit_to_string(&mut base.loc)
                 })
-                .collect::<Vec<_>>();
+                .collect::<Result<Vec<_>, _>>()?;
 
             let multiline = self.is_separated_multiline(&bases, ", ");
 
@@ -181,6 +240,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             if multiline {
                 self.dedent(1);
                 writeln!(self)?;
+            } else {
+                write!(self, " ")?;
             }
         }
 
@@ -190,16 +251,26 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             writeln!(self, "{{")?;
 
             self.indent(1);
-            // let contract_parts = contract.parts.len();
-            for (_i, part) in contract.parts.iter_mut().enumerate() {
+            let contract_parts_len = contract.parts.len();
+            let mut contract_parts_iter = contract.parts.iter_mut().enumerate().peekable();
+            while let Some((i, part)) = contract_parts_iter.next() {
                 part.visit(self)?;
                 writeln!(self)?;
 
-                // TODO: if source has zero blank lines between declarations, leave it as is. If one
+                // If source has zero blank lines between declarations, leave it as is. If one
                 //  or more, separate declarations with one blank line.
-                // if i != contract_parts - 1 {
-                //     writeln!(self)?;
-                // }
+                if i != contract_parts_len - 1 {
+                    if let Some((_, next_part)) = contract_parts_iter.peek() {
+                        let empty_lines =
+                            self.source[part.loc().2 + 1..next_part.loc().1].matches('\n').count();
+
+                        if empty_lines > 1 {
+                            writeln!(self)?;
+                        }
+                    } else {
+                        writeln!(self)?;
+                    }
+                }
             }
             self.dedent(1);
 
@@ -210,11 +281,19 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_pragma(&mut self, ident: &mut Identifier, str: &mut StringLiteral) -> VResult {
-        // Ranges like `>=0.4.21<0.6.0` or `>=0.4.21 <0.6.0` are not parseable by `semver`
-        // TODO: semver-solidity crate :D
-        let semver = semver::VersionReq::parse(&str.string)?;
+        write!(self, "pragma {}", &ident.name)?;
 
-        write!(self, "pragma {} {};", &ident.name, semver)?;
+        if ident.name == "solidity" {
+            // Ranges like `>=0.4.21<0.6.0` or `>=0.4.21 <0.6.0` are not parseable by `semver`
+            // TODO: semver-solidity crate :D
+            if let Ok(semver) = semver::VersionReq::parse(&str.string) {
+                write!(self, "{};", semver)?;
+            } else {
+                write!(self, "{};", str.string)?;
+            }
+        } else {
+            write!(self, "{};", str.string)?;
+        }
 
         Ok(())
     }
@@ -298,6 +377,31 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
             write!(self, "}}")?;
         }
+
+        Ok(())
+    }
+
+    fn visit_function(&mut self, func: &mut FunctionDefinition) -> VResult {
+        for doc_comment in &mut func.doc {
+            doc_comment.visit(self)?;
+            writeln!(self)?;
+        }
+
+        self.visit_source(func.loc)?;
+
+        if let Some(body) = &mut func.body {
+            write!(self, " ")?;
+            self.visit_statement(body)?;
+        } else {
+            write!(self, ";")?;
+        }
+
+        Ok(())
+    }
+
+    fn visit_var_def(&mut self, var: &mut VariableDefinition) -> VResult {
+        self.visit_source(var.loc)?;
+        write!(self, ";")?;
 
         Ok(())
     }
@@ -388,7 +492,7 @@ mod tests {
 
         let mut source_unit = solang::parser::parse(source, 1).unwrap();
         let mut result = String::new();
-        let mut f = Formatter::new(&mut result, config);
+        let mut f = Formatter::new(&mut result, &source, config);
 
         source_unit.visit(&mut f).unwrap();
 

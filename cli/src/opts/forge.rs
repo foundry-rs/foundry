@@ -91,6 +91,15 @@ pub enum Subcommands {
 
     #[structopt(about = "creates a snapshot of each test's gas usage")]
     Snapshot(snapshot::SnapshotArgs),
+
+    #[structopt(about = "formats all src files")]
+    Fmt {
+        #[structopt(
+            help = "the project's root or file path, default being the current working directory",
+            long
+        )]
+        root: Option<PathBuf>,
+    },
 }
 
 /// Represents the common dapp argument pattern for `<path>:<contractname>` where `<path>:` is

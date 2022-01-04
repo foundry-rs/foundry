@@ -1701,6 +1701,7 @@ dependencies = [
  "evmodin",
  "eyre",
  "forge",
+ "forge-fmt",
  "foundry-utils",
  "git2",
  "glob",
@@ -1711,11 +1712,13 @@ dependencies = [
  "rustc-hex",
  "semver 1.0.4",
  "serde_json",
+ "solang",
  "structopt",
  "tempdir",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "walkdir",
 ]
 
 [[package]]
