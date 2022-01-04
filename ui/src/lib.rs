@@ -183,72 +183,194 @@ impl Tui {
                                 if let Some(source) = source_code.get(&source_idx) {
                                     let offset = sourcemap[current_step].offset;
                                     let len = sourcemap[current_step].length;
-                                    let mut before =
-                                        source[..offset].split('\n').collect::<Vec<&str>>();
-                                    let mut actual = source[offset..offset + len]
-                                        .split('\n')
+
+                                    let mut before = source[..offset]
+                                        .split_inclusive('\n')
+                                        .collect::<Vec<&str>>();
+                                    let actual = source[offset..offset + len]
+                                        .split_inclusive('\n')
                                         .map(|s| s.to_string())
                                         .collect::<Vec<String>>();
                                     let mut after = source[offset + len..]
-                                        .split('\n')
+                                        .split_inclusive('\n')
                                         .collect::<VecDeque<&str>>();
-                                    let mut pre = None;
+
+                                    let mut line_number = 0;
+
+                                    let num_lines = before.len() + actual.len() + after.len();
+                                    let height = area.height as usize;
+                                    let needed_highlight = actual.len();
+                                    let mid_len = before.len() + actual.len();
+                                    let (start_line, end_line) = if needed_highlight > height {
+                                        // highlighted section is more lines than we have avail
+                                        (before.len(), before.len() + needed_highlight)
+                                    } else if height > num_lines {
+                                        // we can fit entire source
+                                        (0, num_lines)
+                                    } else {
+                                        let remaining = height - needed_highlight;
+                                        let mut above = remaining / 2;
+                                        let mut below = remaining / 2;
+                                        if below > after.len() {
+                                            // unused space below the highlight
+                                            above += below - after.len();
+                                        } else if above > before.len() {
+                                            // we have unused space above the highlight
+                                            below += above - before.len();
+                                        } else {
+                                            // no unused space
+                                        }
+
+                                        (before.len().saturating_sub(above), mid_len + below)
+                                    };
+
+                                    let max_line_num = num_lines.to_string().len();
+                                    // We check if there is other text on the same line before the highlight starts
                                     if let Some(last) = before.pop() {
                                         if last.len() > 2 && &last[last.len() - 3..] != "\n" {
-                                            pre = Some(last);
+                                            before.iter().skip(start_line).for_each(|line| {
+                                                text_output.lines.push(Spans::from(vec![
+                                                    Span::styled(
+                                                        format!(
+                                                            "{: >max_line_num$}",
+                                                            line_number.to_string(),
+                                                            max_line_num = max_line_num
+                                                        ),
+                                                        Style::default()
+                                                            .fg(Color::Gray)
+                                                            .bg(Color::DarkGray),
+                                                    ),
+                                                    Span::raw(" ".to_string() + &line.to_string()),
+                                                ]));
+                                                line_number += 1;
+                                            });
+
+                                            text_output.lines.push(Spans::from(vec![
+                                                Span::styled(
+                                                    format!(
+                                                        "{: >max_line_num$}",
+                                                        line_number.to_string(),
+                                                        max_line_num = max_line_num
+                                                    ),
+                                                    Style::default()
+                                                        .fg(Color::Cyan)
+                                                        .bg(Color::DarkGray),
+                                                ),
+                                                Span::raw(" "),
+                                                Span::raw(last),
+                                                Span::styled(
+                                                    actual[0].to_string(),
+                                                    Style::default()
+                                                        .fg(Color::White)
+                                                        .bg(Color::DarkGray),
+                                                ),
+                                            ]));
+                                            line_number += 1;
+
+                                            actual.iter().skip(1).for_each(|s| {
+                                                text_output.lines.push(Spans::from(vec![
+                                                    Span::styled(
+                                                        format!(
+                                                            "{: >max_line_num$}",
+                                                            line_number.to_string(),
+                                                            max_line_num = max_line_num
+                                                        ),
+                                                        Style::default()
+                                                            .fg(Color::Cyan)
+                                                            .bg(Color::DarkGray),
+                                                    ),
+                                                    Span::raw(" "),
+                                                    Span::styled(
+                                                        // this is a hack to add coloring
+                                                        // because tui does weird trimming
+                                                        if s.is_empty() || s == "\n" {
+                                                            "\u{2800} ".to_string()
+                                                        } else {
+                                                            s.to_string()
+                                                        },
+                                                        Style::default()
+                                                            .fg(Color::White)
+                                                            .bg(Color::DarkGray),
+                                                    ),
+                                                ]));
+                                                line_number += 1;
+                                            });
                                         } else {
-                                            before.push(last);
+                                            before.iter().skip(start_line).for_each(|line| {
+                                                text_output.lines.push(Spans::from(vec![
+                                                    Span::styled(
+                                                        format!(
+                                                            "{: >max_line_num$}",
+                                                            line_number.to_string(),
+                                                            max_line_num = max_line_num
+                                                        ),
+                                                        Style::default()
+                                                            .fg(Color::Gray)
+                                                            .bg(Color::DarkGray),
+                                                    ),
+                                                    Span::raw(" ".to_string() + &line.to_string()),
+                                                ]));
+                                                line_number += 1;
+                                            });
+                                            actual.iter().for_each(|s| {
+                                                text_output.lines.push(Spans::from(vec![
+                                                    Span::styled(
+                                                        format!(
+                                                            "{: >max_line_num$}",
+                                                            line_number.to_string(),
+                                                            max_line_num = max_line_num
+                                                        ),
+                                                        Style::default()
+                                                            .fg(Color::Cyan)
+                                                            .bg(Color::DarkGray),
+                                                    ),
+                                                    Span::raw(" "),
+                                                    Span::styled(
+                                                        if s.is_empty() || s == "\n" {
+                                                            "\u{2800} ".to_string()
+                                                        } else {
+                                                            s.to_string()
+                                                        },
+                                                        Style::default()
+                                                            .fg(Color::White)
+                                                            .bg(Color::Black),
+                                                    ),
+                                                ]));
+                                                line_number += 1;
+                                            });
                                         }
                                     }
 
-                                    let mut not_end = false;
-                                    if let Some(last) = actual.pop() {
+                                    // fill in the rest of the line as unhighlighted
+                                    if let Some(last) = actual.last() {
                                         if last.len() > 2 && &last[last.len() - 3..] != "\n" {
-                                            not_end = true;
+                                            if let Some(post) = after.pop_front() {
+                                                if let Some(last) = text_output.lines.last_mut() {
+                                                    last.0.push(Span::raw(post));
+                                                }
+                                            }
                                         }
-                                        actual.push(last);
                                     }
 
-                                    let mut post = None;
-                                    if not_end {
-                                        post = after.pop_front();
+                                    // add after highlighted text
+                                    while before.len() + actual.len() + after.len() > end_line {
+                                        after.pop_back();
                                     }
-
-                                    before
-                                        .iter()
-                                        .for_each(|s| text_output.extend(Text::raw(s.to_string())));
-                                    if let Some(pre) = pre {
+                                    after.iter().for_each(|line| {
                                         text_output.lines.push(Spans::from(vec![
-                                            Span::raw(pre),
                                             Span::styled(
-                                                actual[0].to_string(),
-                                                Style::default().bg(Color::Gray),
+                                                format!(
+                                                    "{: >max_line_num$}",
+                                                    line_number.to_string(),
+                                                    max_line_num = max_line_num
+                                                ),
+                                                Style::default()
+                                                    .fg(Color::Gray)
+                                                    .bg(Color::DarkGray),
                                             ),
+                                            Span::raw(" ".to_string() + &line.to_string()),
                                         ]));
-                                        actual.iter().skip(1).for_each(|s| {
-                                            text_output.lines.push(Spans::from(Span::styled(
-                                                s.to_string(),
-                                                Style::default().bg(Color::Gray),
-                                            )))
-                                        });
-                                    } else {
-                                        actual.iter().for_each(|s| {
-                                            text_output.lines.push(Spans::from(Span::styled(
-                                                s.to_string(),
-                                                Style::default().bg(Color::Gray),
-                                            )))
-                                        });
-                                    }
-
-                                    if let Some(post) = post {
-                                        if let Some(last) = text_output.lines.last_mut() {
-                                            last.0.push(Span::raw(post));
-                                        }
-                                    }
-                                    after.iter().for_each(|s| {
-                                        if !s.is_empty() {
-                                            text_output.extend(Text::raw(s.to_string()))
-                                        }
+                                        line_number += 1;
                                     });
                                 } else {
                                     text_output.extend(Text::from("No source for srcmap index"));
@@ -257,12 +379,19 @@ impl Tui {
                                 text_output.extend(Text::from("No srcmap index"));
                             }
                         }
-                        Err(e) => text_output.extend(Text::from(e.to_string())),
+                        Err(e) => text_output.extend(Text::from(format!(
+                            "Error in source map parsing: {}, please open an issue",
+                            e
+                        ))),
                     }
                 } else {
                     text_output.extend(Text::from("No sourcemap for contract"));
                 }
+            } else {
+                text_output.extend(Text::from(format!("Unknown contract at address {}", address)));
             }
+        } else {
+            text_output.extend(Text::from(format!("Unknown contract at address {}", address)));
         }
 
         let paragraph =
@@ -340,7 +469,7 @@ impl Tui {
                 let step: &DebugStep = &debug_steps[line_number];
                 format!("{:0>max_pc_len$x}: ", step.pc, max_pc_len = max_pc_len)
             } else {
-                "END".to_string()
+                "END CALL".to_string()
             };
 
             if let Some(op) = opcode_list.get(line_number) {
@@ -449,18 +578,18 @@ impl Ui for Tui {
                     let event = event::read().unwrap();
                     if let Event::Key(key) = event {
                         if tx.send(Interrupt::KeyPressed(key)).is_err() {
-                            return
+                            return;
                         }
                     } else if let Event::Mouse(mouse) = event {
                         if tx.send(Interrupt::MouseEvent(mouse)).is_err() {
-                            return
+                            return;
                         }
                     }
                 }
                 // force update if time has passed
                 if last_tick.elapsed() > tick_rate {
                     if tx.send(Interrupt::IntervalElapsed).is_err() {
-                        return
+                        return;
                     }
                     last_tick = Instant::now();
                 }
@@ -496,7 +625,7 @@ impl Ui for Tui {
                             LeaveAlternateScreen,
                             DisableMouseCapture
                         )?;
-                        return Ok(TUIExitReason::CharExit)
+                        return Ok(TUIExitReason::CharExit);
                     }
                     // Move down
                     KeyCode::Char('j') | KeyCode::Down => {
@@ -589,8 +718,8 @@ impl Ui for Tui {
                                 .find_map(|(i, op)| {
                                     if i > 0 {
                                         match (
-                                            prev_ops[i - 1].contains("JUMP") &&
-                                                prev_ops[i - 1] != "JUMPDEST",
+                                            prev_ops[i - 1].contains("JUMP")
+                                                && prev_ops[i - 1] != "JUMPDEST",
                                             &**op,
                                         ) {
                                             (true, "JUMPDEST") => Some(i - 1),
