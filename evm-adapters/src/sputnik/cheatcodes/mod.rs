@@ -553,7 +553,7 @@ pub static HARDHAT_CONSOLE_SELECTOR_PATCHES: Lazy<HashMap<Selector, Selector>> =
         // log(bool,uint256,string,address)
         ([165, 199, 13, 41], [254, 221, 31, 255]),
         // logInt(int256)
-        ([78, 12, 29, 29], [101, 37, 181, 245])
+        ([78, 12, 29, 29], [101, 37, 181, 245]),
     ])
 });
 

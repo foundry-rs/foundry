@@ -1331,16 +1331,10 @@ mod tests {
         // after the evm call is done, we call `logs` and print it all to the user
         let (_, _, _, logs) =
             evm.call::<(), _, _>(Address::zero(), addr, "test_log_types()", (), 0.into()).unwrap();
-        let expected = [
-            "String",
-            "1337",
-            "-20",
-            "1245",
-            "true"
-        ]
-        .iter()
-        .map(ToString::to_string)
-        .collect::<Vec<_>>();
+        let expected = ["String", "1337", "-20", "1245", "true"]
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
         assert_eq!(logs, expected);
     }
 
