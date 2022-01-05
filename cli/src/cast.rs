@@ -306,7 +306,7 @@ async fn main() -> eyre::Result<()> {
                         let address = SimpleCast::checksum_address(&key.address())?;
                         let filepath = format!(
                             "{}/{}",
-                            std::fs::canonicalize(path)?
+                            dunce::canonicalize(path)?
                                 .into_os_string()
                                 .into_string()
                                 .expect("failed to canonicalize file path"),

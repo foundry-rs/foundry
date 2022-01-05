@@ -54,7 +54,7 @@ fn main() -> eyre::Result<()> {
         }
         Subcommands::Remappings { lib_paths, root } => {
             let root = root.unwrap_or_else(|| std::env::current_dir().unwrap());
-            let root = std::fs::canonicalize(root)?;
+            let root = dunce::canonicalize(root)?;
 
             let lib_paths = if lib_paths.is_empty() { vec![root.join("lib")] } else { lib_paths };
             let remappings: Vec<_> = lib_paths.iter().flat_map(Remapping::find_many).collect();
@@ -66,7 +66,7 @@ fn main() -> eyre::Result<()> {
             if !root.exists() {
                 std::fs::create_dir_all(&root)?;
             }
-            let root = std::fs::canonicalize(root)?;
+            let root = dunce::canonicalize(root)?;
 
             // if a template is provided, then this command is just an alias to `git clone <url>
             // <path>`
