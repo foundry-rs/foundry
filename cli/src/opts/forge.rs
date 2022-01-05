@@ -159,7 +159,16 @@ pub struct EvmOpts {
     #[structopt(help = "enables the FFI cheatcode", long)]
     pub ffi: bool,
 
-    #[structopt(help = "verbosity of EVM output (0-3)", long, default_value = "0")]
+    #[structopt(
+        help = r#"Verbosity mode of EVM output as number of occurences of the `v` flag (-v, -vv, -vvv, etc.)
+    3: print test trace for failing tests
+    4: always print test trace, print setup for failing tests
+    5: always print test trace and setup
+"#,
+        long,
+        short,
+        parse(from_occurrences)
+    )]
     pub verbosity: u8,
 }
 
