@@ -135,7 +135,7 @@ fn main() -> eyre::Result<()> {
         Subcommands::Snapshot(cmd) => {
             cmd.run()?;
         }
-        Subcommands::Fmt { root } => {
+        Subcommands::Fmt { root, check } => {
             let root = root.unwrap_or_else(|| std::env::current_dir().unwrap());
 
             let paths: Box<dyn Iterator<Item = PathBuf>> = if root.is_dir() {
@@ -170,7 +170,13 @@ fn main() -> eyre::Result<()> {
                     )
                 })?;
 
-                std::fs::write(path, output)?;
+                if check {
+                    if source != output {
+                        std::process::exit(1);
+                    }
+                } else {
+                    std::fs::write(path, output)?;
+                }
             }
         }
     }

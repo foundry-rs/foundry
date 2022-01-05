@@ -107,6 +107,8 @@ pub enum Subcommands {
             long
         )]
         root: Option<PathBuf>,
+        #[structopt(help = "run formatter in check mode", long)]
+        check: bool,
     },
 }
 
