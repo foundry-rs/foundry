@@ -91,9 +91,9 @@ pub(crate) fn convert_log(log: Log) -> Option<String> {
         ),
         LogNamedDecimalUintFilter(inner) => {
             format!(
-                "{}: {:?}",
+                "{}: {}",
                 inner.key,
-                ethers::utils::format_units(inner.val, inner.decimals.as_u32()).unwrap().parse::<f64>().unwrap()
+                ethers::utils::format_units(inner.val, inner.decimals.as_u32()).unwrap()
             )
         }
         LogNamedIntFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
