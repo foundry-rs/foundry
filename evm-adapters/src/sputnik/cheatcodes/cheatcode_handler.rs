@@ -1321,6 +1321,30 @@ mod tests {
     }
 
     #[test]
+    fn console_logs_types() {
+        let mut evm = vm();
+
+        let compiled = COMPILED.find("ConsoleLogs").expect("could not find contract");
+        let (addr, _, _, _) =
+            evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
+
+        // after the evm call is done, we call `logs` and print it all to the user
+        let (_, _, _, logs) =
+            evm.call::<(), _, _>(Address::zero(), addr, "test_log_types()", (), 0.into()).unwrap();
+        let expected = [
+            "String",
+            "1337",
+            "-20",
+            "1245",
+            "true"
+        ]
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+        assert_eq!(logs, expected);
+    }
+
+    #[test]
     fn logs_external_contract() {
         let mut evm = vm();
 

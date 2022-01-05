@@ -540,7 +540,7 @@ pub static HARDHAT_CONSOLE_SELECTOR_PATCHES: Lazy<HashMap<Selector, Selector>> =
         ([211, 42, 101, 72], [245, 188, 34, 73]),
         // log(uint256,uint256)
         ([108, 15, 105, 128], [246, 102, 113, 90]),
-        // log(uint256)
+        // log(uint256) and logUint(uint256)
         ([245, 177, 187, 169], [248, 44, 80, 241]),
         // log(string,address,uint256,uint256)
         ([218, 163, 148, 189], [248, 245, 27, 30]),
@@ -553,9 +553,7 @@ pub static HARDHAT_CONSOLE_SELECTOR_PATCHES: Lazy<HashMap<Selector, Selector>> =
         // log(bool,uint256,string,address)
         ([165, 199, 13, 41], [254, 221, 31, 255]),
         // logInt(int256)
-        ([155, 94, 97, 79], [101, 37, 181, 245]),
-        // logUint(uint256)
-        ([226, 35, 89, 127], [153, 5, 183, 68]),
+        ([78, 12, 29, 29], [101, 37, 181, 245])
     ])
 });
 
