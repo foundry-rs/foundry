@@ -371,20 +371,17 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
     ) -> ExpectRevertReturn {
         let call = res.is_call();
         if let Some(expected_revert) = expected_revert {
-            let data;
-            match res {
+            let data = match res {
                 ExpectRevertReturn::Create(Capture::Exit((
                     ExitReason::Revert(_e),
                     None,
                     revdata,
-                ))) => {
-                    data = Some(revdata);
-                }
+                ))) => Some(revdata),
                 ExpectRevertReturn::Call(Capture::Exit((ExitReason::Revert(_e), revdata))) => {
-                    data = Some(revdata);
+                    Some(revdata)
                 }
                 _ => return revert_return_evm_error("Expected revert did not revert", call),
-            }
+            };
             let final_res = if let Some(data) = data {
                 if data.len() >= 4 && data[0..4] == [8, 195, 121, 160] {
                     // its a revert string
