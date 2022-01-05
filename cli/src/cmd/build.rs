@@ -139,7 +139,7 @@ impl BuildArgs {
         let root = self.root.clone().unwrap_or_else(|| {
             utils::find_git_root_path().unwrap_or_else(|_| std::env::current_dir().unwrap())
         });
-        let root = std::fs::canonicalize(&root)?;
+        let root = dunce::canonicalize(&root)?;
 
         // 2. Set the contracts dir
         let contracts = self.contracts_path(&root);

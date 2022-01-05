@@ -1525,6 +1525,7 @@ dependencies = [
  "ansi_term",
  "cast",
  "color-eyre",
+ "dunce",
  "ethers",
  "evm",
  "evm-adapters",
