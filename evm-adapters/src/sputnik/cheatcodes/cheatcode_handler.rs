@@ -27,7 +27,7 @@ use ethers::{
     signers::{LocalWallet, Signer},
     types::{Address, H160, H256, U256},
 };
-use std::convert::Infallible;
+use std::{convert::Infallible, str::FromStr};
 
 use crate::sputnik::cheatcodes::patch_hardhat_console_log_selector;
 use once_cell::sync::Lazy;
@@ -348,12 +348,19 @@ fn evm_error(retdata: &str) -> Capture<(ExitReason, Vec<u8>), Infallible> {
 }
 
 // helper for creating an exit type for create
-fn evm_create_error(retdata: &str) -> Capture<(ExitReason, Option<Address>, Vec<u8>), Infallible> {
-    Capture::Exit((
-        ExitReason::Revert(ExitRevert::Reverted),
-        None,
-        ethers::abi::encode(&[Token::String(retdata.to_owned())]),
-    ))
+fn revert_return_evm_error(retdata: &str, call: bool) -> ExpectRevertReturn {
+    if call {
+        ExpectRevertReturn::Call(Capture::Exit((
+            ExitReason::Revert(ExitRevert::Reverted),
+            ethers::abi::encode(&[Token::String(retdata.to_owned())]),
+        )))
+    } else {
+        ExpectRevertReturn::Create(Capture::Exit((
+            ExitReason::Revert(ExitRevert::Reverted),
+            None,
+            ethers::abi::encode(&[Token::String(retdata.to_owned())]),
+        )))
+    }
 }
 
 impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> {
@@ -376,17 +383,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 ExpectRevertReturn::Call(Capture::Exit((ExitReason::Revert(_e), revdata))) => {
                     data = Some(revdata);
                 }
-                _ => {
-                    if call {
-                        return ExpectRevertReturn::Call(evm_error(
-                            "Expected revert call did not revert",
-                        ))
-                    } else {
-                        return ExpectRevertReturn::Create(evm_create_error(
-                            "Expected revert create did not revert",
-                        ))
-                    }
-                }
+                _ => return revert_return_evm_error("Expected revert did not revert", call),
             }
             let final_res = if let Some(data) = data {
                 if data.len() >= 4 && data[0..4] == [8, 195, 121, 160] {
@@ -407,64 +404,53 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                         } else {
                             return ExpectRevertReturn::Create(Capture::Exit((
                                 ExitReason::Succeed(ExitSucceed::Returned),
-                                Some(Address::from_slice(
-                                    &hex::decode("0000000000000000000000000000000000000001")
-                                        .expect("valid address hex")
-                                        [0..20],
-                                )),
+                                Some(
+                                    Address::from_str("0000000000000000000000000000000000000001")
+                                        .unwrap(),
+                                ),
                                 Vec::new(),
                             )))
                         }
-                    } else if call {
-                        return ExpectRevertReturn::Call(evm_error(&*format!(
-                            "Error != expected error: '{}' != '{}'",
-                            String::from_utf8_lossy(&decoded_data[..]),
-                            String::from_utf8_lossy(&expected_revert)
-                        )))
                     } else {
-                        return ExpectRevertReturn::Create(evm_create_error(&*format!(
-                            "Error != expected error: '{}' != '{}'",
-                            String::from_utf8_lossy(&decoded_data[..]),
-                            String::from_utf8_lossy(&expected_revert)
-                        )))
+                        return revert_return_evm_error(
+                            &*format!(
+                                "Error != expected error: '{}' != '{}'",
+                                String::from_utf8_lossy(&decoded_data[..]),
+                                String::from_utf8_lossy(&expected_revert)
+                            ),
+                            call,
+                        )
                     }
                 }
 
                 if data == *expected_revert {
                     if call {
-                        return ExpectRevertReturn::Call(Capture::Exit((
+                        ExpectRevertReturn::Call(Capture::Exit((
                             ExitReason::Succeed(ExitSucceed::Returned),
                             DUMMY_OUTPUT.to_vec(),
                         )))
                     } else {
-                        return ExpectRevertReturn::Create(Capture::Exit((
+                        ExpectRevertReturn::Create(Capture::Exit((
                             ExitReason::Succeed(ExitSucceed::Returned),
-                            Some(Address::from_slice(
-                                &hex::decode("0000000000000000000000000000000000000001")
-                                    .expect("valid address hex")[0..20],
-                            )),
+                            Some(
+                                Address::from_str("0000000000000000000000000000000000000001")
+                                    .unwrap(),
+                            ),
                             Vec::new(),
                         )))
                     }
-                } else if call {
-                    ExpectRevertReturn::Call(evm_error(&*format!(
-                        "Error data != expected error data: 0x{} != 0x{}",
-                        hex::encode(data),
-                        hex::encode(expected_revert)
-                    )))
                 } else {
-                    ExpectRevertReturn::Create(evm_create_error(&*format!(
-                        "Error data != expected error data: 0x{} != 0x{}",
-                        hex::encode(data),
-                        hex::encode(expected_revert)
-                    )))
+                    revert_return_evm_error(
+                        &*format!(
+                            "Error data != expected error data: 0x{} != 0x{}",
+                            hex::encode(data),
+                            hex::encode(expected_revert)
+                        ),
+                        call,
+                    )
                 }
-            } else if call {
-                ExpectRevertReturn::Call(evm_error("Expected revert call did not revert"))
             } else {
-                ExpectRevertReturn::Create(evm_create_error(
-                    "Expected revert create did not revert",
-                ))
+                revert_return_evm_error("Expected revert did not revert with data", call)
             };
             final_res
         } else {
@@ -1379,7 +1365,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
                 .filter(|expected| expected.depth == curr_depth)
                 .all(|expected| expected.found)
         {
-            return evm_create_error("Log != expected log")
+            return revert_return_evm_error("Log != expected log", false).into_create_inner()
         }
 
         self.expected_revert(ExpectRevertReturn::Create(res), expected_revert).into_create_inner()
