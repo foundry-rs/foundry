@@ -1378,7 +1378,6 @@ mod tests {
             .unwrap();
         assert_eq!(slot, 10.into());
 
-        let init_state = evm.state().clone();
         let evm = FuzzedExecutor::new(&mut evm, runner, Address::zero());
 
         let abi = compiled.abi.as_ref().unwrap();
@@ -1394,7 +1393,7 @@ mod tests {
                     evm.as_mut().call_unchecked(Address::zero(), addr, func, (), 0.into()).unwrap();
                 assert!(evm.as_mut().check_success(addr, &reason, should_fail));
             } else {
-                assert!(evm.fuzz(func, addr, should_fail, &init_state).is_ok());
+                assert!(evm.fuzz(func, addr, should_fail).is_ok());
             }
 
             evm.as_mut().reset(state.clone());
