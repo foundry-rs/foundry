@@ -4,6 +4,11 @@ pub use runner::{ContractRunner, TestKind, TestKindGas, TestResult};
 mod multi_runner;
 pub use multi_runner::{MultiContractRunner, MultiContractRunnerBuilder};
 
+pub trait TestFilter {
+    fn matches_test(&self, test_name: &str) -> bool;
+    fn matches_contract(&self, contract_name: &str) -> bool;
+}
+
 #[cfg(test)]
 pub mod test_helpers {
     use ethers::{
