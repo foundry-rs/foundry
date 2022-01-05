@@ -1,4 +1,4 @@
-use solang::parser::pt::{AssemblyExpression, AssemblyStatement, ContractPart, Loc, Statement};
+use solang_parser::pt::{AssemblyExpression, AssemblyStatement, ContractPart, Loc, Statement};
 
 pub trait LineOfCode {
     fn loc(&self) -> Loc;

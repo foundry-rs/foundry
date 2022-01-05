@@ -155,7 +155,7 @@ fn main() -> eyre::Result<()> {
 
             for path in paths {
                 let source = std::fs::read_to_string(&path)?;
-                let mut source_unit = solang::parser::parse(&source, 0).unwrap();
+                let mut source_unit = solang_parser::parse(&source, 0).unwrap();
 
                 let mut output = String::new();
                 let mut formatter =
@@ -163,7 +163,7 @@ fn main() -> eyre::Result<()> {
 
                 source_unit.visit(&mut formatter).unwrap();
 
-                solang::parser::parse(&output, 0).map_err(|diags| {
+                solang_parser::parse(&output, 0).map_err(|diags| {
                     eyre::eyre!(
                         "Failed to construct valid Solidity code. Leaving source unchanged.\nDebug info: {:?}",
                         diags

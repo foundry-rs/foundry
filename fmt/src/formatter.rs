@@ -3,7 +3,7 @@
 use std::fmt::Write;
 
 use indent_write::fmt::IndentWriter;
-use solang::parser::pt::{
+use solang_parser::pt::{
     ContractDefinition, DocComment, EnumDefinition, FunctionDefinition, FunctionTy, Identifier,
     Loc, SourceUnit, SourceUnitPart, StringLiteral, VariableDefinition,
 };
@@ -502,7 +502,7 @@ mod tests {
             }
         }
 
-        let mut source_unit = solang::parser::parse(source, 1).unwrap();
+        let mut source_unit = solang_parser::parse(source, 1).unwrap();
         let mut result = String::new();
         let mut f = Formatter::new(&mut result, &source, config);
 

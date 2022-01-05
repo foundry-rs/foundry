@@ -1,7 +1,7 @@
 //! Visitor helpers to traverse the [solang](https://github.com/hyperledger-labs/solang) Solidity Parse Tree
 
 use crate::loc::LineOfCode;
-use solang::parser::pt::*;
+use solang_parser::pt::*;
 
 /// The error type a [Visitor] may return
 pub type VResult = Result<(), Box<dyn std::error::Error>>;
