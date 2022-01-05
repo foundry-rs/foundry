@@ -5,6 +5,10 @@
       {
         "name": "n",
         "type": "uint8"
+      },
+      {
+        "name": "x",
+        "type": "address"
       }
     ],
     "name": "guess",
@@ -19,8 +23,12 @@
     "name": "isComplete",
     "outputs": [
       {
-        "name": "",
+        "name": "example",
         "type": "bool"
+      },
+      {
+        "name": "",
+        "type": "string"
       }
     ],
     "payable": false,

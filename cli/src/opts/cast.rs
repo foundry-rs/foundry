@@ -1,5 +1,7 @@
-use std::path::{Path, PathBuf};
-use std::str::FromStr;
+use std::{
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 use ethers::types::{Address, BlockId, BlockNumber, NameOrAddress, H256};
 use structopt::StructOpt;

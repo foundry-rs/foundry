@@ -2,10 +2,9 @@
 //!
 //! TODO
 use chrono::NaiveDateTime;
-use ethers_core::types::Chain;
 use ethers_core::{
     abi::{AbiParser, Token},
-    types::*,
+    types::{Chain, *},
     utils::{self, keccak256},
 };
 
@@ -46,7 +45,7 @@ where
     /// Makes a read-only call to the specified address
     ///
     /// ```no_run
-    ///
+    /// 
     /// use cast::Cast;
     /// use ethers_core::types::Address;
     /// use ethers_providers::{Provider, Http};

@@ -126,10 +126,10 @@ pub fn decode_revert(error: &[u8]) -> Result<String> {
                         let actual_err = &err_data[64..64 + len];
                         if let Ok(decoded) = decode_revert(actual_err) {
                             // check if its a builtin
-                            return Ok(decoded);
+                            return Ok(decoded)
                         } else if let Ok(as_str) = String::from_utf8(actual_err.to_vec()) {
                             // check if its a true string
-                            return Ok(as_str);
+                            return Ok(as_str)
                         }
                     }
                 }
@@ -227,7 +227,7 @@ pub async fn fourbyte(selector: &str) -> Result<Vec<(String, i32)>> {
 
     let selector = &selector.strip_prefix("0x").unwrap_or(selector);
     if selector.len() < 8 {
-        return Err(eyre::eyre!("Invalid selector"));
+        return Err(eyre::eyre!("Invalid selector"))
     }
     let selector = &selector[..8];
 
@@ -359,7 +359,7 @@ pub fn etherscan_api_key() -> eyre::Result<String> {
 
 // Kudos to https://github.com/maxme/abi2solidity for the algorithm
 pub fn abi_to_solidity(contract_abi: &Abi, contract_name: &str) -> Result<String> {
-    let functions_iterator = contract_abi.functions().into_iter();
+    let functions_iterator = contract_abi.functions();
     let functions = functions_iterator
         .map(|function| {
             let inputs = function
@@ -380,7 +380,7 @@ pub fn abi_to_solidity(contract_abi: &Abi, contract_name: &str) -> Result<String
                 abi::StateMutability::Payable => "payable",
                 _ => "",
             };
-            if outputs.len() == 0 {
+            if outputs.is_empty() {
                 format!("\n     function {}({}) {} external;", function.name, inputs, mutability)
             } else {
                 format!(
