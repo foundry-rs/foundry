@@ -420,5 +420,24 @@ pub fn abi_to_solidity(contract_abi: &Abi, contract_name: &str) -> Result<String
         })
         .collect::<Vec<String>>()
         .join("");
-    Ok(format!("interface {} {{{}\n}}", contract_name, functions))
+    Ok(format!("interface {} {{{}\n}}\n", contract_name, functions))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::abi_to_solidity;
+    use ethers_core::abi::Abi;
+
+    #[test]
+    fn abi2solidity() {
+        let contract_abi: Abi =
+            serde_json::from_slice(&std::fs::read("testdata/interfaceTestABI.json").unwrap())
+                .unwrap();
+        assert_eq!(
+            std::str::from_utf8(&std::fs::read("testdata/interfaceTest.sol").unwrap())
+                .unwrap()
+                .to_string(),
+            abi_to_solidity(&contract_abi, "test").unwrap()
+        );
+    }
 }
