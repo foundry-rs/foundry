@@ -1,8 +1,4 @@
-use crate::{
-    runner::TestResult,
-    ContractRunner,
-    TestFilter,
-};
+use crate::{runner::TestResult, ContractRunner, TestFilter};
 
 use ethers::solc::Artifact;
 
