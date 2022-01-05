@@ -432,5 +432,11 @@ mod tests {
                 .to_string(),
             abi_to_solidity(&contract_abi, "test").unwrap()
         );
+        assert_eq!(
+            std::str::from_utf8(&std::fs::read("testdata/interfaceTestNoName.sol").unwrap())
+                .unwrap()
+                .to_string(),
+            abi_to_solidity(&contract_abi, "").unwrap()
+        );
     }
 }
