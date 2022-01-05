@@ -592,6 +592,27 @@ impl SimpleCast {
         foundry_utils::abi_decode(sig, calldata, input)
     }
 
+    /// Performs ABI encoding based off of the function signature. Does not include
+    /// the function selector in the result.
+    ///
+    /// ```
+    /// # use cast::SimpleCast as Cast;
+    ///
+    /// # fn main() -> eyre::Result<()> {
+    ///     assert_eq!(
+    ///         "0x0000000000000000000000000000000000000000000000000000000000000001",
+    ///         Cast::abi_encode("f(uint a)", &["1"]).unwrap().as_str()
+    ///     );
+    /// #    Ok(())
+    /// # }
+    /// ```
+    pub fn abi_encode(sig: &str, args: &[impl AsRef<str>]) -> Result<String> {
+        let func = AbiParser::default().parse_function(sig.as_ref())?;
+        let calldata = encode_args(&func, args)?.to_hex::<String>();
+        let encoded = &calldata[8..];
+        Ok(format!("0x{}", encoded))
+    }
+
     /// Converts decimal input to hex
     ///
     /// ```
