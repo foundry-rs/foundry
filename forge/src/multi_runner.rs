@@ -1,4 +1,9 @@
-use crate::{runner::TestResult, ContractRunner};
+use crate::{
+    runner::TestResult,
+    ContractRunner,
+    TestFilter,
+};
+
 use ethers::solc::Artifact;
 
 use evm_adapters::Evm;
@@ -11,7 +16,6 @@ use ethers::{
 };
 
 use proptest::test_runner::TestRunner;
-use regex::Regex;
 
 use eyre::Result;
 use std::{collections::BTreeMap, marker::PhantomData};
@@ -140,7 +144,7 @@ where
 {
     pub fn test(
         &mut self,
-        pattern: Regex,
+        filter: &impl TestFilter,
     ) -> Result<BTreeMap<String, BTreeMap<String, TestResult>>> {
         // TODO: Convert to iterator, ideally parallel one?
         let contracts = std::mem::take(&mut self.contracts);
@@ -148,8 +152,9 @@ where
         let init_state: S = self.evm.state().clone();
         let results = contracts
             .iter()
+            .filter(|(name, _)| filter.matches_contract(name))
             .map(|(name, (abi, address, logs))| {
-                let result = self.run_tests(name, abi, *address, logs, &pattern, &init_state)?;
+                let result = self.run_tests(name, abi, *address, logs, filter, &init_state)?;
                 Ok((name.clone(), result))
             })
             .filter_map(|x: Result<_>| x.ok())
@@ -174,12 +179,12 @@ where
         contract: &Abi,
         address: Address,
         init_logs: &[String],
-        pattern: &Regex,
+        filter: &impl TestFilter,
         init_state: &S,
     ) -> Result<BTreeMap<String, TestResult>> {
         let mut runner =
             ContractRunner::new(&mut self.evm, contract, address, self.sender, init_logs);
-        runner.run_tests(pattern, self.fuzzer.as_mut(), init_state, Some(&self.known_contracts))
+        runner.run_tests(filter, self.fuzzer.as_mut(), init_state, Some(&self.known_contracts))
     }
 }
 
