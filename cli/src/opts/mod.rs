@@ -84,13 +84,16 @@ pub enum WalletType {
 }
 
 #[derive(StructOpt, Debug, Clone)]
-/// The wallet options can either be:
-/// 1. Ledger
-/// 2. Trezor
-/// 3. Mnemonic (via file path)
-/// 4. Keystore (via file path)
-/// 5. Private Key (cleartext in CLI)
-/// 6. Private Key (interactively via secure prompt)
+#[cfg_attr(not(doc), allow(missing_docs))]
+#[cfg_attr(doc, doc = r#"
+The wallet options can either be:
+1. Ledger
+2. Trezor
+3. Mnemonic (via file path)
+4. Keystore (via file path)
+5. Private Key (cleartext in CLI)
+6. Private Key (interactively via secure prompt)
+"#)]
 pub struct Wallet {
     #[structopt(long, short, help = "Interactive prompt to insert your private key")]
     pub interactive: bool,
