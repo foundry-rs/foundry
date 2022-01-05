@@ -212,7 +212,6 @@ pub fn encode_args(func: &Function, args: &[impl AsRef<str>]) -> Result<Vec<u8>>
     Ok(func.encode_input(&tokens)?)
 }
 
-<<<<<<< HEAD
 /// Fetches a function signature given the selector using 4byte.directory
 pub async fn fourbyte(selector: &str) -> Result<Vec<(String, i32)>> {
     #[derive(Deserialize)]
@@ -228,7 +227,7 @@ pub async fn fourbyte(selector: &str) -> Result<Vec<(String, i32)>> {
 
     let selector = &selector.strip_prefix("0x").unwrap_or(selector);
     if selector.len() < 8 {
-        return Err(eyre::eyre!("Invalid selector"))
+        return Err(eyre::eyre!("Invalid selector"));
     }
     let selector = &selector[..8];
 
@@ -341,34 +340,6 @@ pub fn format_token(param: &Token) -> String {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_fourbyte() {
-        let sigs = fourbyte("0xa9059cbb").await.unwrap();
-        assert_eq!(sigs[0].0, "func_2093253501(bytes)".to_string());
-        assert_eq!(sigs[0].1, 313067);
-    }
-
-    #[tokio::test]
-    async fn test_fourbyte_possible_sigs() {
-        let sigs = fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", None).await.unwrap();
-        assert_eq!(sigs[0], "many_msg_babbage(bytes1)".to_string());
-        assert_eq!(sigs[1], "transfer(address,uint256)".to_string());
-
-        let sigs = fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", Some("earliest".to_string())).await.unwrap();
-        assert_eq!(sigs[0], "transfer(address,uint256)".to_string());
-
-        let sigs = fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", Some("latest".to_string())).await.unwrap();
-        assert_eq!(sigs[0], "func_2093253501(bytes)".to_string());
-
-        let sigs = fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", Some("145".to_string())).await.unwrap();
-        assert_eq!(sigs[0], "transfer(address,uint256)".to_string());
-    }
-=======
 /// Reads the `ETHERSCAN_API_KEY` env variable
 pub fn etherscan_api_key() -> eyre::Result<String> {
     std::env::var("ETHERSCAN_API_KEY").map_err(|err| match err {
@@ -384,7 +355,6 @@ pub fn etherscan_api_key() -> eyre::Result<String> {
             eyre::eyre!("Invalid `ETHERSCAN_API_KEY`: {:?}", err)
         }
     })
->>>>>>> 2ff02af (chore: move etherscan_api_key to foundry-utils crate)
 }
 // Kudos to https://github.com/maxme/abi2solidity for the algorithm
 pub fn abi_to_solidity(contract_abi: &Abi, contract_name: &str) -> Result<String> {
@@ -425,9 +395,31 @@ pub fn abi_to_solidity(contract_abi: &Abi, contract_name: &str) -> Result<String
 
 #[cfg(test)]
 mod tests {
-    use super::abi_to_solidity;
+    use super::*;
     use ethers_core::abi::Abi;
 
+    #[tokio::test]
+    async fn test_fourbyte() {
+        let sigs = fourbyte("0xa9059cbb").await.unwrap();
+        assert_eq!(sigs[0].0, "func_2093253501(bytes)".to_string());
+        assert_eq!(sigs[0].1, 313067);
+    }
+
+    #[tokio::test]
+    async fn test_fourbyte_possible_sigs() {
+        let sigs = fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", None).await.unwrap();
+        assert_eq!(sigs[0], "many_msg_babbage(bytes1)".to_string());
+        assert_eq!(sigs[1], "transfer(address,uint256)".to_string());
+
+        let sigs = fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", Some("earliest".to_string())).await.unwrap();
+        assert_eq!(sigs[0], "transfer(address,uint256)".to_string());
+
+        let sigs = fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", Some("latest".to_string())).await.unwrap();
+        assert_eq!(sigs[0], "func_2093253501(bytes)".to_string());
+
+        let sigs = fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", Some("145".to_string())).await.unwrap();
+        assert_eq!(sigs[0], "transfer(address,uint256)".to_string());
+    }
     #[test]
     fn abi2solidity() {
         let contract_abi: Abi =
