@@ -1,5 +1,5 @@
 use crate::{
-    cmd::{build::BuildArgs, Cmd},
+    cmd::{build::BuildArgs, compile, Cmd},
     opts::forge::EvmOpts,
 };
 use ethers::{
