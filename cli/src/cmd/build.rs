@@ -79,30 +79,8 @@ pub struct BuildArgs {
 impl Cmd for BuildArgs {
     type Output = ProjectCompileOutput<MinimalCombinedArtifacts>;
     fn run(self) -> eyre::Result<Self::Output> {
-        println!("compiling...");
         let project = self.project()?;
-
-        if !project.paths.sources.exists() {
-            eyre::bail!(
-                r#"no contracts to compile, contracts folder "{}" does not exist.
-Check the configured workspace settings:
-{}
-If you are in a subdirectory in a Git repository, try adding `--root .`"#,
-                project.paths.sources.display(),
-                project.paths
-            );
-        }
-
-        let output = project.compile()?;
-        if output.has_compiler_errors() {
-            // return the diagnostics error back to the user.
-            eyre::bail!(output.to_string())
-        } else if output.is_unchanged() {
-            println!("no files changed, compilation skippped.");
-        } else {
-            println!("success.");
-        }
-        Ok(output)
+        super::compile(&project)
     }
 }
 
@@ -161,7 +139,7 @@ impl BuildArgs {
         let root = self.root.clone().unwrap_or_else(|| {
             utils::find_git_root_path().unwrap_or_else(|_| std::env::current_dir().unwrap())
         });
-        let root = std::fs::canonicalize(&root)?;
+        let root = dunce::canonicalize(&root)?;
 
         // 2. Set the contracts dir
         let contracts = self.contracts_path(&root);

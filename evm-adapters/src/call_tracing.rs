@@ -7,6 +7,8 @@ use std::collections::BTreeMap;
 
 use ansi_term::Colour;
 
+use foundry_utils::format_token;
+
 #[cfg(feature = "sputnik")]
 use crate::sputnik::cheatcodes::{cheatcode_handler::CHEATCODE_ADDRESS, HEVM_ABI};
 
@@ -38,8 +40,7 @@ impl Output {
     pub fn print(self, color: Colour, left: &str) {
         match self {
             Output::Token(token) => {
-                let strings =
-                    token.into_iter().map(format_token).collect::<Vec<String>>().join(", ");
+                let strings = token.iter().map(format_token).collect::<Vec<_>>().join(", ");
                 println!(
                     "{}  └─ {} {}",
                     left.replace("├─", "│").replace("└─", "  "),
@@ -342,7 +343,7 @@ impl CallTraceNode {
                         let params = event.parse_log(log.clone()).expect("Bad event").params;
                         let strings = params
                             .into_iter()
-                            .map(|param| format!("{}: {}", param.name, format_token(param.value)))
+                            .map(|param| format!("{}: {}", param.name, format_token(&param.value)))
                             .collect::<Vec<String>>()
                             .join(", ");
                         println!(
@@ -445,11 +446,8 @@ impl CallTrace {
                                 let params = func
                                     .decode_input(&self.data[4..])
                                     .expect("Bad func data decode");
-                                strings = params
-                                    .into_iter()
-                                    .map(format_token)
-                                    .collect::<Vec<String>>()
-                                    .join(", ");
+                                strings =
+                                    params.iter().map(format_token).collect::<Vec<_>>().join(", ");
 
                                 #[cfg(feature = "sputnik")]
                                 if self.addr == *CHEATCODE_ADDRESS && func.name == "expectRevert" {
@@ -547,39 +545,6 @@ impl CallTrace {
             }
         }
         Output::Raw(self.output[..].to_vec())
-    }
-}
-
-// Gets pretty print strings for tokens
-fn format_token(param: ethers::abi::Token) -> String {
-    use ethers::abi::Token;
-    match param {
-        Token::Address(addr) => format!("{:?}", addr),
-        Token::FixedBytes(bytes) => format!("0x{}", hex::encode(&bytes)),
-        Token::Bytes(bytes) => format!("0x{}", hex::encode(&bytes)),
-        Token::Int(mut num) => {
-            if num.bit(255) {
-                num = num - 1;
-                format!("-{}", num.overflowing_neg().0)
-            } else {
-                num.to_string()
-            }
-        }
-        Token::Uint(num) => num.to_string(),
-        Token::Bool(b) => format!("{}", b),
-        Token::String(s) => s,
-        Token::FixedArray(tokens) => {
-            let string = tokens.into_iter().map(format_token).collect::<Vec<String>>().join(", ");
-            format!("[{}]", string)
-        }
-        Token::Array(tokens) => {
-            let string = tokens.into_iter().map(format_token).collect::<Vec<String>>().join(", ");
-            format!("[{}]", string)
-        }
-        Token::Tuple(tokens) => {
-            let string = tokens.into_iter().map(format_token).collect::<Vec<String>>().join(", ");
-            format!("({})", string)
-        }
     }
 }
 

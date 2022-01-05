@@ -50,6 +50,7 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
         func: &Function,
         address: Address,
         should_fail: bool,
+        init_state: &S,
     ) -> FuzzTestResult<E::ReturnReason>
     where
         // We need to be able to clone the state so as to snapshot it and reset
@@ -58,9 +59,6 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
         S: Clone,
     {
         let strat = fuzz_calldata(func);
-
-        // Snapshot the state before the test starts running
-        let pre_test_state = self.evm.borrow().state().clone();
 
         // stores the consumed gas and calldata of every successful fuzz call
         let fuzz_cases: RefCell<Vec<FuzzCase>> = RefCell::new(Default::default());
@@ -76,7 +74,7 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
             .run(&strat, |calldata| {
                 let mut evm = self.evm.borrow_mut();
                 // Before each test, we must reset to the initial state
-                evm.reset(pre_test_state.clone());
+                evm.reset(init_state.clone());
 
                 let (returndata, reason, gas, _) = evm
                     .call_raw(self.sender, address, calldata.clone(), 0.into(), false)
@@ -241,27 +239,36 @@ fn fuzz_param(param: &ParamType) -> impl Strategy<Value = Token> {
             any::<[u8; 20]>().prop_map(|x| Address::from_slice(&x).into_token()).boxed()
         }
         ParamType::Bytes => any::<Vec<u8>>().prop_map(|x| Bytes::from(x).into_token()).boxed(),
+        // For ints and uints we sample from a U256, then wrap it to the correct size with a
+        // modulo operation. Note that this introduces modulo bias, but it can be removed with
+        // rejection sampling if it's determined the bias is too severe. Rejection sampling may
+        // slow down tests as it resamples bad values, so may want to benchmark the performance
+        // hit and weigh that against the current bias before implementing
         ParamType::Int(n) => match n / 8 {
-            1 => any::<i8>().prop_map(|x| x.into_token()).boxed(),
-            2 => any::<i16>().prop_map(|x| x.into_token()).boxed(),
-            3..=4 => any::<i32>().prop_map(|x| x.into_token()).boxed(),
-            5..=8 => any::<i64>().prop_map(|x| x.into_token()).boxed(),
-            9..=16 => any::<i128>().prop_map(|x| x.into_token()).boxed(),
-            17..=32 => (any::<bool>(), any::<[u8; 32]>())
-                .prop_filter_map("i256s cannot overflow", |(sign, bytes)| {
+            32 => any::<[u8; 32]>()
+                .prop_map(move |x| I256::from_raw(U256::from(&x)).into_token())
+                .boxed(),
+            y @ 1..=31 => (any::<bool>(), any::<[u8; 32]>())
+                .prop_map(move |(sign, x)| {
                     let sign = if sign { Sign::Positive } else { Sign::Negative };
-                    I256::checked_from_sign_and_abs(sign, U256::from(bytes)).map(|x| x.into_token())
+                    // Generate a uintN in the correct range, then shift it to the range of intN
+                    // with subtraction
+                    let uint = U256::from(&x) % U256::from(2).pow(U256::from(y * 8));
+                    let max_int = U256::from(2).pow(U256::from(y * 8 - 1));
+                    I256::overflowing_from_sign_and_abs(sign, uint.overflowing_sub(max_int).0)
+                        .0
+                        .into_token()
                 })
                 .boxed(),
             _ => panic!("unsupported solidity type int{}", n),
         },
         ParamType::Uint(n) => match n / 8 {
-            1 => any::<u8>().prop_map(|x| x.into_token()).boxed(),
-            2 => any::<u16>().prop_map(|x| x.into_token()).boxed(),
-            3..=4 => any::<u32>().prop_map(|x| x.into_token()).boxed(),
-            5..=8 => any::<u64>().prop_map(|x| x.into_token()).boxed(),
-            9..=16 => any::<u128>().prop_map(|x| x.into_token()).boxed(),
-            17..=32 => any::<[u8; 32]>().prop_map(|x| U256::from(&x).into_token()).boxed(),
+            32 => any::<[u8; 32]>().prop_map(move |x| U256::from(&x).into_token()).boxed(),
+            y @ 1..=31 => any::<[u8; 32]>()
+                .prop_map(move |x| {
+                    (U256::from(&x) % (U256::from(2).pow(U256::from(y * 8)))).into_token()
+                })
+                .boxed(),
             _ => panic!("unsupported solidity type uint{}", n),
         },
         ParamType::Bool => any::<bool>().prop_map(|x| x.into_token()).boxed(),
@@ -306,10 +313,11 @@ mod tests {
         let (addr, _, _, _) =
             evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
 
+        let init_state = evm.state().clone();
         let evm = fuzzvm(&mut evm);
 
         let func = compiled.abi.unwrap().function("testFuzzedRevert").unwrap();
-        let res = evm.fuzz(&func, addr, false);
+        let res = evm.fuzz(&func, addr, false, &init_state);
         let error = res.test_error.unwrap();
         let revert_reason = error.revert_reason;
         assert_eq!(revert_reason, "fuzztest-revert");

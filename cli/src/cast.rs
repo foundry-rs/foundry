@@ -19,8 +19,15 @@ use ethers::{
     signers::{LocalWallet, Signer},
     types::{Address, NameOrAddress, Signature, U256},
 };
+use rayon::prelude::*;
+use regex::RegexSet;
 use rustc_hex::ToHex;
-use std::{convert::TryFrom, str::FromStr};
+use std::{
+    convert::TryFrom,
+    io::{self, Write},
+    str::FromStr,
+    time::Instant,
+};
 use structopt::StructOpt;
 
 use crate::utils::read_secret;
@@ -189,12 +196,41 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::CalldataDecode { sig, calldata } => {
             let tokens = SimpleCast::abi_decode(&sig, &calldata, true)?;
-            let tokens = utils::format_tokens(&tokens);
+            let tokens = foundry_utils::format_tokens(&tokens);
             tokens.for_each(|t| println!("{}", t));
         }
         Subcommands::AbiDecode { sig, calldata, input } => {
             let tokens = SimpleCast::abi_decode(&sig, &calldata, input)?;
-            let tokens = utils::format_tokens(&tokens);
+            let tokens = foundry_utils::format_tokens(&tokens);
+            tokens.for_each(|t| println!("{}", t));
+        }
+        Subcommands::AbiEncode { sig, args } => {
+            println!("{}", SimpleCast::abi_encode(&sig, &args)?);
+        }
+        Subcommands::FourByte { selector } => {
+            let sigs = foundry_utils::fourbyte(&selector).await?;
+            sigs.iter().for_each(|sig| println!("{}", sig.0));
+        }
+        Subcommands::FourByteDecode { calldata, id } => {
+            let sigs = foundry_utils::fourbyte_possible_sigs(&calldata, id).await?;
+            sigs.iter().enumerate().for_each(|(i, sig)| println!("{}) \"{}\"", i + 1, sig));
+
+            let sig = match sigs.len() {
+                0 => Err(eyre::eyre!("No signatures found")),
+                1 => Ok(sigs.get(0).unwrap()),
+                _ => {
+                    print!("Select a function signature by number: ");
+                    io::stdout().flush()?;
+                    let mut input = String::new();
+                    io::stdin().read_line(&mut input)?;
+                    let i: usize = input.trim().parse()?;
+                    Ok(sigs.get(i - 1).expect("Invalid signature index"))
+                }
+            }?;
+
+            let tokens = SimpleCast::abi_decode(sig, &calldata, true)?;
+            let tokens = foundry_utils::format_tokens(&tokens);
+
             tokens.for_each(|t| println!("{}", t));
         }
         Subcommands::Age { block, rpc_url } => {
@@ -270,7 +306,7 @@ async fn main() -> eyre::Result<()> {
                         let address = SimpleCast::checksum_address(&key.address())?;
                         let filepath = format!(
                             "{}/{}",
-                            std::fs::canonicalize(path)?
+                            dunce::canonicalize(path)?
                                 .into_os_string()
                                 .into_string()
                                 .expect("failed to canonicalize file path"),
@@ -290,6 +326,45 @@ async fn main() -> eyre::Result<()> {
                         );
                     }
                 }
+            }
+            WalletSubcommands::Vanity { starts_with, ends_with } => {
+                let mut regexs = vec![];
+                if let Some(prefix) = starts_with {
+                    let pad_width = prefix.len() + prefix.len() % 2;
+                    hex::decode(format!("{:0>width$}", prefix, width = pad_width))
+                        .expect("invalid prefix hex provided");
+                    regexs.push(format!(r"^{}", prefix));
+                }
+                if let Some(suffix) = ends_with {
+                    let pad_width = suffix.len() + suffix.len() % 2;
+                    hex::decode(format!("{:0>width$}", suffix, width = pad_width))
+                        .expect("invalid suffix hex provided");
+                    regexs.push(format!(r"{}$", suffix));
+                }
+
+                assert!(
+                    regexs.iter().map(|p| p.len() - 1).sum::<usize>() <= 40,
+                    "vanity patterns length exceeded. cannot be more than 40 characters",
+                );
+
+                let regex = RegexSet::new(regexs)?;
+
+                println!("Starting to generate vanity address...");
+                let timer = Instant::now();
+                let wallet = std::iter::repeat_with(move || LocalWallet::new(&mut thread_rng()))
+                    .par_bridge()
+                    .find_any(|wallet| {
+                        let addr = hex::encode(wallet.address().to_fixed_bytes());
+                        regex.matches(&addr).into_iter().count() == regex.patterns().len()
+                    })
+                    .expect("failed to generate vanity wallet");
+
+                println!(
+                    "Successfully created new keypair in {} seconds.\nAddress: {}.\nPrivate Key: {}.",
+                    timer.elapsed().as_secs(),
+                    SimpleCast::checksum_address(&wallet.address())?,
+                    hex::encode(wallet.signer().to_bytes()),
+                );
             }
             WalletSubcommands::Address { wallet } => {
                 let wallet = EthereumOpts {

@@ -178,6 +178,32 @@ pub enum Subcommands {
         #[structopt(long, short, help = "the encoded output, in hex format")]
         input: bool,
     },
+    #[structopt(name = "abi-encode")]
+    #[structopt(
+        help = "ABI encodes the given arguments with the function signature, excluidng the selector"
+    )]
+    AbiEncode {
+        #[structopt(help = "the function signature")]
+        sig: String,
+        #[structopt(help = "the list of function arguments")]
+        args: Vec<String>,
+    },
+    #[structopt(name = "4byte")]
+    #[structopt(about = "Fetches function signatures given the selector from 4byte.directory")]
+    FourByte {
+        #[structopt(help = "the function selector")]
+        selector: String,
+    },
+    #[structopt(name = "4byte-decode")]
+    #[structopt(
+        about = "Decodes transaction calldata by fetching the signature using 4byte.directory"
+    )]
+    FourByteDecode {
+        #[structopt(help = "the ABI-encoded calldata")]
+        calldata: String,
+        #[structopt(long, help = "the 4byte selector id to use, can also be earliest/latest")]
+        id: Option<String>,
+    },
     #[structopt(name = "age")]
     #[structopt(about = "Prints the timestamp of a block")]
     Age {
@@ -294,17 +320,24 @@ pub enum WalletSubcommands {
             long,
             short,
             help = "Triggers a hidden password prompt for the json keystore",
-            conflicts_with = "unsafe_password",
-            requires("path")
+            conflicts_with = "unsafe-password",
+            requires = "path"
         )]
         password: bool,
         #[structopt(
             long,
             help = "Password for json keystore in cleartext. This is UNSAFE to use and we recommend using the --password parameter",
-            requires("path"),
+            requires = "path",
             env = "CAST_PASSWORD"
         )]
         unsafe_password: Option<String>,
+    },
+    #[structopt(name = "vanity", about = "Generate a vanity address")]
+    Vanity {
+        #[structopt(long, help = "Prefix for vanity address", required_unless = "ends-with")]
+        starts_with: Option<String>,
+        #[structopt(long, help = "Suffix for vanity address")]
+        ends_with: Option<String>,
     },
     #[structopt(name = "address", about = "Convert a private key to an address")]
     Address {

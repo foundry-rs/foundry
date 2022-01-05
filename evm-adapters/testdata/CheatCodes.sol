@@ -16,7 +16,7 @@ interface Hevm {
     function load(address,bytes32) external returns (bytes32);
     // Stores a value to an address' storage slot, (who, slot, value)
     function store(address,bytes32,bytes32) external;
-    // Signs data, (privateKey, digest) => (r, v, s)
+    // Signs data, (privateKey, digest) => (v, r, s)
     function sign(uint256,bytes32) external returns (uint8,bytes32,bytes32);
     // Gets address for a given private key, (privateKey) => (address)
     function addr(uint256) external returns (address);

@@ -25,7 +25,8 @@ pub struct CounterExample {
 
 impl fmt::Display for CounterExample {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "calldata=0x{}, args={:?}", hex::encode(&self.calldata), self.args)
+        let args = foundry_utils::format_tokens(&self.args).collect::<Vec<_>>().join(", ");
+        write!(f, "calldata=0x{}, args=[{}]", hex::encode(&self.calldata), args)
     }
 }
 
@@ -203,7 +204,9 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
                 .iter()
                 .filter(|func| !func.inputs.is_empty())
                 .map(|func| {
-                    let result = self.run_fuzz_test(func, needs_setup, fuzzer.clone())?;
+                    self.evm.reset(init_state.clone());
+                    let result =
+                        self.run_fuzz_test(func, needs_setup, fuzzer.clone(), init_state)?;
                     Ok((func.signature(), result))
                 })
                 .collect::<Result<BTreeMap<_, _>>>()?;
@@ -337,6 +340,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
         func: &Function,
         setup: bool,
         runner: TestRunner,
+        init_state: &S,
     ) -> Result<TestResult> {
         // do not trace in fuzztests, as it's a big performance hit
         let prev = self.evm.set_tracing_enabled(false);
@@ -351,7 +355,8 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
 
         // instantiate the fuzzed evm in line
         let evm = FuzzedExecutor::new(self.evm, runner, self.sender);
-        let FuzzTestResult { cases, test_error } = evm.fuzz(func, self.address, should_fail);
+        let FuzzTestResult { cases, test_error } =
+            evm.fuzz(func, self.address, should_fail, init_state);
 
         let success = test_error.is_none();
         let mut counterexample = None;
@@ -367,7 +372,9 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
                 }
                 result => panic!("Unexpected test result: {:?}", result),
             }
-            reason = Some(err.revert_reason);
+            if !err.revert_reason.is_empty() {
+                reason = Some(err.revert_reason);
+            }
         }
 
         let duration = Instant::now().duration_since(start);
@@ -478,6 +485,7 @@ mod tests {
                 .deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into())
                 .unwrap();
 
+            let init_state = evm.state().clone();
             let mut runner =
                 ContractRunner::new(&mut evm, compiled.abi.as_ref().unwrap(), addr, None, &[]);
 
@@ -485,7 +493,7 @@ mod tests {
             cfg.failure_persistence = None;
             let fuzzer = TestRunner::new(cfg);
             let func = get_func("testStringFuzz(string)").unwrap();
-            let res = runner.run_fuzz_test(&func, true, fuzzer).unwrap();
+            let res = runner.run_fuzz_test(&func, true, fuzzer, &init_state).unwrap();
             assert!(res.success);
             assert!(res.counterexample.is_none());
         }
@@ -498,6 +506,8 @@ mod tests {
                 .deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into())
                 .unwrap();
 
+            let init_state = evm.state().clone();
+
             let mut runner =
                 ContractRunner::new(&mut evm, compiled.abi.as_ref().unwrap(), addr, None, &[]);
 
@@ -505,7 +515,7 @@ mod tests {
             cfg.failure_persistence = None;
             let fuzzer = TestRunner::new(cfg);
             let func = get_func("function testShrinking(uint256 x, uint256 y) public").unwrap();
-            let res = runner.run_fuzz_test(&func, true, fuzzer).unwrap();
+            let res = runner.run_fuzz_test(&func, true, fuzzer, &init_state).unwrap();
             assert!(!res.success);
 
             // get the counterexample with shrinking enabled by default
@@ -521,7 +531,7 @@ mod tests {
             // we reduce the shrinking iters and observe a larger result
             cfg.max_shrink_iters = 5;
             let fuzzer = TestRunner::new(cfg);
-            let res = runner.run_fuzz_test(&func, true, fuzzer).unwrap();
+            let res = runner.run_fuzz_test(&func, true, fuzzer, &init_state).unwrap();
             assert!(!res.success);
 
             // get the non-shrunk result
@@ -535,8 +545,8 @@ mod tests {
 
     mod evmodin {
         use super::*;
-        use ::evmodin::{tracing::NoopTracer, util::mocked_host::MockedHost, Revision};
         use evm_adapters::evmodin::EvmOdin;
+        use evmodin::{tracing::NoopTracer, util::mocked_host::MockedHost, Revision};
 
         #[test]
         #[ignore]

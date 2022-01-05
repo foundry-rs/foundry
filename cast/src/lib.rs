@@ -7,8 +7,9 @@ use ethers_core::{
     types::*,
     utils::{self, keccak256},
 };
+
 use ethers_providers::{Middleware, PendingTransaction};
-use eyre::Result;
+use eyre::{Context, Result};
 use rustc_hex::{FromHexIter, ToHex};
 use std::str::FromStr;
 
@@ -75,20 +76,31 @@ where
         let res = self.provider.call(&tx, None).await?;
 
         // decode args into tokens
-        let decoded = func.decode_output(res.as_ref())?;
+        let decoded = func.decode_output(res.as_ref()).wrap_err(
+            "could not decode output. did you specify the wrong function return data type perhaps?",
+        )?;
         // handle case when return type is not specified
-        if decoded.is_empty() {
-            Ok(format!("{}\n", res))
+        Ok(if decoded.is_empty() {
+            format!("{}\n", res)
         } else {
-            // concatenate them
-            let mut s = String::new();
-            for output in decoded {
-                s.push_str(&format!("0x{}\n", output));
-            }
+            // seth compatible user-friendly return type conversions
+            let out = decoded
+                .iter()
+                .map(|item| {
+                    match item {
+                        Token::Address(inner) => format!("{:?}", inner),
+                        // add 0x
+                        Token::Bytes(inner) => format!("0x{}", hex::encode(inner)),
+                        Token::FixedBytes(inner) => format!("0x{}", hex::encode(inner)),
+                        // print as decimal
+                        Token::Uint(inner) | Token::Int(inner) => inner.to_string(),
+                        _ => format!("{}", item),
+                    }
+                })
+                .collect::<Vec<_>>();
 
-            // return string
-            Ok(s)
-        }
+            out.join("\n")
+        })
     }
 
     pub async fn balance<T: Into<NameOrAddress> + Send + Sync>(
@@ -577,22 +589,28 @@ impl SimpleCast {
     /// }
     /// ```
     pub fn abi_decode(sig: &str, calldata: &str, input: bool) -> Result<Vec<Token>> {
-        let func = foundry_utils::IntoFunction::into(sig);
-        let calldata = calldata.strip_prefix("0x").unwrap_or(calldata);
-        let calldata = hex::decode(calldata)?;
-        let res = if input {
-            // need to strip the function selector
-            func.decode_input(&calldata[4..])?
-        } else {
-            func.decode_output(&calldata)?
-        };
+        foundry_utils::abi_decode(sig, calldata, input)
+    }
 
-        // in case the decoding worked but nothing was decoded
-        if res.is_empty() {
-            eyre::bail!("no data was decoded")
-        }
-
-        Ok(res)
+    /// Performs ABI encoding based off of the function signature. Does not include
+    /// the function selector in the result.
+    ///
+    /// ```
+    /// # use cast::SimpleCast as Cast;
+    ///
+    /// # fn main() -> eyre::Result<()> {
+    ///     assert_eq!(
+    ///         "0x0000000000000000000000000000000000000000000000000000000000000001",
+    ///         Cast::abi_encode("f(uint a)", &["1"]).unwrap().as_str()
+    ///     );
+    /// #    Ok(())
+    /// # }
+    /// ```
+    pub fn abi_encode(sig: &str, args: &[impl AsRef<str>]) -> Result<String> {
+        let func = AbiParser::default().parse_function(sig.as_ref())?;
+        let calldata = encode_args(&func, args)?.to_hex::<String>();
+        let encoded = &calldata[8..];
+        Ok(format!("0x{}", encoded))
     }
 
     /// Converts decimal input to hex
