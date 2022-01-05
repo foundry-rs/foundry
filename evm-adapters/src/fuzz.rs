@@ -50,6 +50,7 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
         func: &Function,
         address: Address,
         should_fail: bool,
+        init_state: &S,
     ) -> FuzzTestResult<E::ReturnReason>
     where
         // We need to be able to clone the state so as to snapshot it and reset
@@ -58,9 +59,6 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
         S: Clone,
     {
         let strat = fuzz_calldata(func);
-
-        // Snapshot the state before the test starts running
-        let pre_test_state = self.evm.borrow().state().clone();
 
         // stores the consumed gas and calldata of every successful fuzz call
         let fuzz_cases: RefCell<Vec<FuzzCase>> = RefCell::new(Default::default());
@@ -76,7 +74,7 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
             .run(&strat, |calldata| {
                 let mut evm = self.evm.borrow_mut();
                 // Before each test, we must reset to the initial state
-                evm.reset(pre_test_state.clone());
+                evm.reset(init_state.clone());
 
                 let (returndata, reason, gas, _) = evm
                     .call_raw(self.sender, address, calldata.clone(), 0.into(), false)
@@ -315,10 +313,11 @@ mod tests {
         let (addr, _, _, _) =
             evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
 
+        let init_state = evm.state().clone();
         let evm = fuzzvm(&mut evm);
 
         let func = compiled.abi.unwrap().function("testFuzzedRevert").unwrap();
-        let res = evm.fuzz(&func, addr, false);
+        let res = evm.fuzz(&func, addr, false, &init_state);
         let error = res.test_error.unwrap();
         let revert_reason = error.revert_reason;
         assert_eq!(revert_reason, "fuzztest-revert");
