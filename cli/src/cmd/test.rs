@@ -11,7 +11,6 @@ use crate::{
 use ansi_term::Colour;
 use ethers::solc::{ArtifactOutput, Project};
 use forge::{MultiContractRunnerBuilder, TestFilter};
-use regex::Regex;
 use std::collections::BTreeMap;
 use structopt::{
     StructOpt,
@@ -52,7 +51,7 @@ pub struct Filter {
     contract_pattern_inverse: Option<regex::Regex>,
 }
 
-impl forge::TestFilter for Filter {
+impl TestFilter for Filter {
     fn matches_test(&self, test_name: &str) -> bool {
         let mut ok = true;
         // Handle the deprecated option match
