@@ -13,7 +13,6 @@ pub mod cmd;
 mod opts;
 mod utils;
 
-#[tracing::instrument(err)]
 fn main() -> eyre::Result<()> {
     color_eyre::install()?;
     utils::subscriber();
@@ -27,6 +26,9 @@ fn main() -> eyre::Result<()> {
         Subcommands::Build(cmd) => {
             cmd.run()?;
         }
+        Subcommands::Run(cmd) => {
+            cmd.run()?;
+        }
         Subcommands::VerifyContract { contract, address, constructor_args } => {
             let FullContractInfo { path, name } = contract;
             let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
@@ -36,28 +38,23 @@ fn main() -> eyre::Result<()> {
             cmd.run()?;
         }
         Subcommands::Update { lib } => {
-            // TODO: Should we add some sort of progress bar here? Would be nice
-            // but not a requirement.
-            // open the repo
-            let repo = git2::Repository::open(".")?;
+            let mut cmd = Command::new("git");
+
+            cmd.args(&["submodule", "update", "--init", "--recursive"]);
 
             // if a lib is specified, open it
             if let Some(lib) = lib {
-                println!("Updating submodule {:?}", lib);
-                repo.find_submodule(
-                    &lib.into_os_string().into_string().expect("invalid submodule path"),
-                )?
-                .update(true, None)?;
-            } else {
-                Command::new("git")
-                    .args(&["submodule", "update", "--init", "--recursive"])
-                    .spawn()?
-                    .wait()?;
+                cmd.args(&["--", lib.display().to_string().as_str()]);
             }
+
+            cmd.spawn()?.wait()?;
         }
         // TODO: Make it work with updates?
         Subcommands::Install { dependencies } => {
             install(std::env::current_dir()?, dependencies)?;
+        }
+        Subcommands::Remove { dependencies } => {
+            remove(std::env::current_dir()?, dependencies)?;
         }
         Subcommands::Remappings { lib_paths, root } => {
             let root = root.unwrap_or_else(|| std::env::current_dir().unwrap());
@@ -102,11 +99,16 @@ fn main() -> eyre::Result<()> {
 
                 // sets up git
                 let is_git = Command::new("git")
-                    .args(&["rev-parse,--is-inside-work-tree"])
+                    .args(&["rev-parse", "--is-inside-work-tree"])
                     .current_dir(&root)
                     .spawn()?
                     .wait()?;
                 if !is_git.success() {
+                    let gitignore_path = root.join(".gitignore");
+                    std::fs::write(
+                        gitignore_path,
+                        include_str!("../../assets/.gitignoreTemplate"),
+                    )?;
                     Command::new("git").arg("init").current_dir(&root).spawn()?.wait()?;
                     Command::new("git").args(&["add", "."]).current_dir(&root).spawn()?.wait()?;
                     Command::new("git")
@@ -213,6 +215,43 @@ fn install(root: impl AsRef<std::path::Path>, dependencies: Vec<Dependency>) -> 
         };
 
         Command::new("git").args(&["commit", "-m", &message]).current_dir(&root).spawn()?.wait()?;
+
+        Ok(())
+    })
+}
+
+fn remove(root: impl AsRef<std::path::Path>, dependencies: Vec<Dependency>) -> eyre::Result<()> {
+    let libs = std::path::Path::new("lib");
+    let git_mod_libs = std::path::Path::new(".git/modules/lib");
+
+    dependencies.iter().try_for_each(|dep| -> eyre::Result<_> {
+        let path = libs.join(&dep.name);
+        let git_mod_path = git_mod_libs.join(&dep.name);
+        println!("Removing {} in {:?}, (url: {}, tag: {:?})", dep.name, path, dep.url, dep.tag);
+
+        // remove submodule entry from .git/config
+        Command::new("git")
+            .args(&["submodule", "deinit", "-f", &path.display().to_string()])
+            .current_dir(&root)
+            .spawn()?
+            .wait()?;
+
+        // remove the submodule repository from .git/modules directory
+        Command::new("rm")
+            .args(&["-rf", &git_mod_path.display().to_string()])
+            .current_dir(&root)
+            .spawn()?
+            .wait()?;
+
+        // remove the leftover submodule directory
+        Command::new("git")
+            .args(&["rm", "-f", &path.display().to_string()])
+            .current_dir(&root)
+            .spawn()?
+            .wait()?;
+
+        // tell git to discard the removal of the submodule
+        Command::new("git").args(&["checkout", "--", "."]).current_dir(&root).spawn()?.wait()?;
 
         Ok(())
     })

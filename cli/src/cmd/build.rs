@@ -4,17 +4,17 @@ use ethers::{
     solc::{
         artifacts::{Optimizer, Settings},
         remappings::Remapping,
-        EvmVersion, MinimalCombinedArtifacts, Project, ProjectCompileOutput, ProjectPathsConfig,
-        SolcConfig,
+        MinimalCombinedArtifacts, Project, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
     },
     types::Address,
 };
 use std::{
+    collections::BTreeMap,
     path::{Path, PathBuf},
     str::FromStr,
 };
 
-use crate::{cmd::Cmd, utils};
+use crate::{cmd::Cmd, opts::forge::CompilerArgs, utils};
 
 #[cfg(feature = "evmodin-evm")]
 use evmodin::util::mocked_host::MockedHost;
@@ -25,7 +25,7 @@ use structopt::StructOpt;
 #[derive(Debug, Clone, StructOpt)]
 pub struct BuildArgs {
     #[structopt(
-        help = "the project's root path, default being the current working directory",
+        help = "the project's root path. By default, this is the root directory of the current Git repository or the current working directory if it is not part of a Git repository",
         long
     )]
     pub root: Option<PathBuf>,
@@ -49,14 +49,8 @@ pub struct BuildArgs {
     #[structopt(help = "path to where the contract artifacts are stored", long = "out", short)]
     pub out_path: Option<PathBuf>,
 
-    #[structopt(help = "choose the evm version", long, default_value = "london")]
-    pub evm_version: EvmVersion,
-
-    #[structopt(help = "activate the solidity optimizer", long)]
-    pub optimize: bool,
-
-    #[structopt(help = "optimizer parameter runs", long, default_value = "200")]
-    pub optimize_runs: u32,
+    #[structopt(flatten)]
+    pub compiler: CompilerArgs,
 
     #[structopt(
         help = "if set to true, skips auto-detecting solc and uses what is in the user's $PATH ",
@@ -77,23 +71,16 @@ pub struct BuildArgs {
         alias = "hh"
     )]
     pub hardhat: bool,
+
+    #[structopt(help = "add linked libraries", long)]
+    pub libraries: Vec<String>,
 }
 
 impl Cmd for BuildArgs {
     type Output = ProjectCompileOutput<MinimalCombinedArtifacts>;
     fn run(self) -> eyre::Result<Self::Output> {
-        println!("compiling...");
         let project = self.project()?;
-        let output = project.compile()?;
-        if output.has_compiler_errors() {
-            // return the diagnostics error back to the user.
-            eyre::bail!(output.to_string())
-        } else if output.is_unchanged() {
-            println!("no files changed, compilation skippped.");
-        } else {
-            println!("success.");
-        }
-        Ok(output)
+        super::compile(&project)
     }
 }
 
@@ -202,12 +189,28 @@ impl BuildArgs {
 
         let paths = paths_builder.build()?;
 
-        let optimizer =
-            Optimizer { enabled: Some(self.optimize), runs: Some(self.optimize_runs as usize) };
+        let optimizer = Optimizer {
+            enabled: Some(self.compiler.optimize),
+            runs: Some(self.compiler.optimize_runs as usize),
+        };
+
+        // unflatten the libraries
+        let mut libraries = BTreeMap::default();
+        for l in self.libraries.iter() {
+            let mut items = l.split(':');
+            let file = String::from(items.next().expect("could not parse libraries"));
+            let lib = String::from(items.next().expect("could not parse libraries"));
+            let addr = String::from(items.next().expect("could not parse libraries"));
+            libraries.entry(file).or_insert_with(BTreeMap::default).insert(lib, addr);
+        }
 
         // build the project w/ allowed paths = root and all the libs
-        let solc_settings =
-            Settings { optimizer, evm_version: Some(self.evm_version), ..Default::default() };
+        let solc_settings = Settings {
+            optimizer,
+            evm_version: Some(self.compiler.evm_version),
+            libraries,
+            ..Default::default()
+        };
         let mut builder = Project::builder()
             .paths(paths)
             .allowed_path(&root)

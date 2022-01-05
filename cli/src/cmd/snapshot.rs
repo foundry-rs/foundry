@@ -24,7 +24,7 @@ use structopt::StructOpt;
 /// A regex that matches a basic snapshot entry like
 /// `testDeposit() (gas: 58804)`
 pub static RE_BASIC_SNAPSHOT_ENTRY: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?P<sig>(\w+)\s*\((.*?)\))\s*\(((gas:)?\s*(?P<gas>\d+)|(μ:\s*(?P<avg>\d+),\s*~:\s*(?P<med>\d+)))\)").unwrap()
+    Regex::new(r"(?P<sig>(\w+)\s*\((.*?)\))\s*\(((gas:)?\s*(?P<gas>\d+)|(runs:\s*(?P<runs>\d+),\s*μ:\s*(?P<avg>\d+),\s*~:\s*(?P<med>\d+)))\)").unwrap()
 });
 
 #[derive(Debug, Clone, StructOpt)]
@@ -164,15 +164,19 @@ impl FromStr for SnapshotEntry {
                             gas_used: TestKindGas::Standard(gas.as_str().parse().unwrap()),
                         })
                     } else {
-                        cap.name("avg").and_then(|avg| cap.name("med").map(|med| (avg, med))).map(
-                            |(avg, med)| SnapshotEntry {
+                        cap.name("runs")
+                            .and_then(|runs| {
+                                cap.name("avg")
+                                    .and_then(|avg| cap.name("med").map(|med| (runs, avg, med)))
+                            })
+                            .map(|(runs, avg, med)| SnapshotEntry {
                                 signature: sig.as_str().to_string(),
                                 gas_used: TestKindGas::Fuzz {
+                                    runs: runs.as_str().parse().unwrap(),
                                     median: med.as_str().parse().unwrap(),
                                     mean: avg.as_str().parse().unwrap(),
                                 },
-                            },
-                        )
+                            })
                     }
                 })
             })
@@ -345,13 +349,13 @@ mod tests {
 
     #[test]
     fn can_parse_fuzz_snapshot_entry() {
-        let s = "deposit() (μ: 100, ~:200)";
+        let s = "deposit() (runs: 256, μ: 100, ~:200)";
         let entry = SnapshotEntry::from_str(s).unwrap();
         assert_eq!(
             entry,
             SnapshotEntry {
                 signature: "deposit()".to_string(),
-                gas_used: TestKindGas::Fuzz { median: 200, mean: 100 }
+                gas_used: TestKindGas::Fuzz { runs: 256, median: 200, mean: 100 }
             }
         );
     }

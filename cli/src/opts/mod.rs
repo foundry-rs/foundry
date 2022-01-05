@@ -7,8 +7,8 @@ use ethers::{
     middleware::SignerMiddleware,
     providers::{Http, Provider},
     signers::{
-        coins_bip39::English, HDPath as LedgerHDPath, Ledger, LocalWallet, MnemonicBuilder, Trezor,
-        TrezorHDPath,
+        coins_bip39::English, HDPath as LedgerHDPath, Ledger, LocalWallet, MnemonicBuilder, Signer,
+        Trezor, TrezorHDPath,
     },
     types::{Address, U256},
 };
@@ -53,7 +53,9 @@ impl EthereumOpts {
                 Some(hd_path) => TrezorHDPath::Other(hd_path.clone()),
                 None => TrezorHDPath::TrezorLive(self.wallet.mnemonic_index as usize),
             };
-            let trezor = Trezor::new(derivation, chain_id.as_u64()).await?;
+
+            // cached to ~/.ethers-rs/trezor/cache/trezor.session
+            let trezor = Trezor::new(derivation, chain_id.as_u64(), None).await?;
 
             Ok(Some(WalletType::Trezor(SignerMiddleware::new(provider, trezor))))
         } else {
@@ -61,10 +63,13 @@ impl EthereumOpts {
                 .wallet
                 .private_key()
                 .transpose()
+                .or_else(|| self.wallet.interactive().transpose())
                 .or_else(|| self.wallet.mnemonic().transpose())
                 .or_else(|| self.wallet.keystore().transpose())
                 .transpose()?
                 .ok_or_else(|| eyre::eyre!("error accessing local wallet"))?;
+
+            let local = local.with_chain_id(chain_id.as_u64());
 
             Ok(Some(WalletType::Local(SignerMiddleware::new(provider, local))))
         }
@@ -79,7 +84,20 @@ pub enum WalletType {
 }
 
 #[derive(StructOpt, Debug, Clone)]
+#[cfg_attr(not(doc), allow(missing_docs))]
+#[cfg_attr(doc, doc = r#"
+The wallet options can either be:
+1. Ledger
+2. Trezor
+3. Mnemonic (via file path)
+4. Keystore (via file path)
+5. Private Key (cleartext in CLI)
+6. Private Key (interactively via secure prompt)
+"#)]
 pub struct Wallet {
+    #[structopt(long, short, help = "Interactive prompt to insert your private key")]
+    pub interactive: bool,
+
     #[structopt(long = "private-key", help = "Your private key string")]
     pub private_key: Option<String>,
 
@@ -113,6 +131,17 @@ pub struct Wallet {
 }
 
 impl Wallet {
+    fn interactive(&self) -> Result<Option<LocalWallet>> {
+        Ok(if self.interactive {
+            println!("Insert private key:");
+            let private_key = rpassword::read_password()?;
+            let private_key = private_key.strip_prefix("0x").unwrap_or(&private_key);
+            Some(LocalWallet::from_str(private_key)?)
+        } else {
+            None
+        })
+    }
+
     fn private_key(&self) -> Result<Option<LocalWallet>> {
         Ok(if let Some(ref private_key) = self.private_key {
             Some(LocalWallet::from_str(private_key)?)

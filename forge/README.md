@@ -131,13 +131,19 @@ which implements the following methods:
 
 - `function deal(address who, uint256 amount)`: Sets an account's balance
 
-- `function etch(address where, bytes memory what)`:` Sets the contract code at
+- `function etch(address where, bytes memory what)`: Sets the contract code at
   some address contract code
 
-- `function prank(address from, address to, bytes calldata) (bool success,bytes retdata)`:
-  Performs a smart contract call as another address
+- `function prank(address from)`: Performs the next smart contract call as another address (prank just changes msg.sender. Tx still occurs as normal)
+
+- `function startPrank(address from)`: Performs smart contract calls as another address. The account impersonation lasts until the end of the transaction, or until `stopPrank` is called.
+
+- `function stopPrank()`: Stop calling smart contracts with the address set at `startPrank`
+
 - `function expectRevert(bytes calldata expectedError)`:
   Tells the evm to expect that the next call reverts with specified error bytes.
+  
+- `function expectEmit(bool,bool,bool,bool) external`: Expects the next emitted event. Params check topic 1, topic 2, topic 3 and data are the same.
 
 The below example uses the `warp` cheatcode to override the timestamp & `expectRevert` to expect a specific revert string:
 
@@ -176,6 +182,33 @@ contract MyTest {
 }
 ```
 
+Below is another example using the `expectEmit` cheatcode to check events:
+
+```solidity
+interface Vm {
+    function expectEmit(bool,bool,bool,bool) external;
+}
+
+contract T is DSTest {
+    Vm vm = Vm(HEVM_ADDRESS);
+    event Transfer(address indexed from,address indexed to, uint256 amount);
+    function testExpectEmit() public {
+        ExpectEmit emitter = new ExpectEmit();
+        // check topic 1, topic 2, and data are the same as the following emitted event
+        hevm.expectEmit(true,true,false,true);
+        emit Transfer(address(this), address(1337), 1337);
+        emitter.t();
+    }
+}
+
+contract ExpectEmit {
+    event Transfer(address indexed from,address indexed to, uint256 amount);
+    function t() public {
+        emit Transfer(msg.sender, address(1337), 1337);
+    }
+}
+```
+
 A full interface for all cheatcodes is here:
 ```solidity
 interface Vm {
@@ -193,15 +226,54 @@ interface Vm {
     function addr(uint256) external returns (address);
     // Performs a foreign function call via terminal, (stringInputs) => (result)
     function ffi(string[] calldata) external returns (bytes memory);
-    // Calls another contract with a specified `msg.sender`, (newSender, contract, input) => (success, returnData)
-    function prank(address, address, bytes calldata) external payable returns (bool, bytes memory);
+    // Performs the next smart contract call with specified `msg.sender`, (newSender)
+    function prank(address) external;
+    // Performs all the following smart contract calls with specified `msg.sender`, (newSender)
+    function startPrank(address) external;
+    // Stop smart contract calls using the specified address with prankStart()
+    function stopPrank() external;
     // Sets an address' balance, (who, newBalance)
     function deal(address, uint256) external;
     // Sets an address' code, (who, newCode)
     function etch(address, bytes calldata) external;
     // Expects an error on next call
     function expectRevert(bytes calldata) external;
+    // Expects the next emitted event. Params check topic 1, topic 2, topic 3 and data are the same.
+    function expectEmit(bool, bool, bool, bool) external;
 }
+```
+### `console.log`
+
+
+We support the logging functionality from Hardhat's `console.log`.
+
+If you are on a hardhat project, `import hardhat/console.sol` should just work if you use `forge test --hh`.
+
+If no, there is an implementation contract [here](https://github.com/gakonst/foundry/blob/master/evm-adapters/testdata/console.sol). We currently recommend that you copy this contract, place it in your `test` folder, and import it into the contract where you wish to use `console.log`, though there should be more streamlined functionality soon.
+
+Usage follows the same format as [Hardhat](https://hardhat.org/hardhat-network/reference/#console-log):
+```solidity
+import "./console.sol";
+...
+console.log(someValue);
+
+```
+
+## Remappings
+If you are working in a repo with NPM-style imports, like
+```
+import "@openzeppelin/contracts/access/Ownable.sol";
+```
+
+then you will need to create a `remappings.txt` file at the top level of your project directory, so that Forge knows where to find these dependencies. 
+
+For example, if you have `@openzeppelin` imports, you would 
+
+1. `forge install openzeppelin/openzeppelin-contracts` (this will add the repo to `lib/openzepplin-contracts`)
+2. Create a remappings file: `touch remappings.txt`
+3. Add this line to `remappings.txt`  
+```
+@openzeppelin/=lib/openzeppelin-contracts/
 ```
 
 ## Future Features

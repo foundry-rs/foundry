@@ -2,15 +2,15 @@
 
 ## Features
 
-- [ ] `--abi-decode`
-- [ ] `--calldata-decode`
+- [x] `--abi-decode`
+- [x] `--calldata-decode`
 - [x] `--from-ascii` (with `--from-utf8` alias)
 - [ ] `--from-bin`
 - [ ] `--from-fix`
 - [x] `--from-wei`
-- [ ] `--max-int`
+- [x] `--max-int`
 - [x] `--max-uint`
-- [ ] `--min-int`
+- [x] `--min-int`
 - [x] `--to-checksum-address` (`--to-address` in dapptools)
 - [x] `--to-ascii`
 - [x] `--to-bytes32`
@@ -21,8 +21,8 @@
 - [ ] `--to-int256`
 - [x] `--to-uint256`
 - [x] `--to-wei`
-- [ ] `4byte`
-- [ ] `4byte-decode`
+- [x] `4byte`
+- [x] `4byte-decode`
 - [ ] `4byte-event`
 - [ ] `abi-encode`
 - [x] `age`
@@ -48,7 +48,7 @@
 - [ ] `ls`
 - [ ] `mktx`
 - [x] `namehash`
-- [ ] `nonce`
+- [x] `nonce`
 - [ ] `publish`
 - [ ] `receipt`
 - [x] `resolve-name`

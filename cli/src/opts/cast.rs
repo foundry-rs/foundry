@@ -3,11 +3,17 @@ use std::str::FromStr;
 use ethers::types::{Address, BlockId, BlockNumber, NameOrAddress, H256};
 use structopt::StructOpt;
 
-use super::EthereumOpts;
+use super::{EthereumOpts, Wallet};
 
 #[derive(Debug, StructOpt)]
 #[structopt(about = "Perform Ethereum RPC calls from the comfort of your command line.")]
 pub enum Subcommands {
+    #[structopt(name = "--max-int")]
+    #[structopt(about = "maximum i256 value")]
+    MaxInt,
+    #[structopt(name = "--min-int")]
+    #[structopt(about = "minimum i256 value")]
+    MinInt,
     #[structopt(name = "--max-uint")]
     #[structopt(about = "maximum u256 value")]
     MaxUint,
@@ -134,6 +140,70 @@ pub enum Subcommands {
         #[structopt(flatten)]
         eth: EthereumOpts,
     },
+    #[structopt(name = "estimate")]
+    #[structopt(about = "Estimate the gas cost of a transaction from <from> to <to> with <data>")]
+    Estimate {
+        #[structopt(help = "the address you want to transact with", parse(try_from_str = parse_name_or_address))]
+        to: NameOrAddress,
+        #[structopt(help = "the function signature you want to call")]
+        sig: String,
+        #[structopt(help = "the list of arguments you want to call the function with")]
+        args: Vec<String>,
+        #[structopt(flatten)]
+        eth: EthereumOpts,
+    },
+    #[structopt(name = "--calldata-decode")]
+    #[structopt(
+        about = "Decode ABI-encoded hex input data. Use `--abi-decode` to decode output data"
+    )]
+    CalldataDecode {
+        #[structopt(
+            help = "the function signature you want to decode, in the format `<name>(<in-types>)(<out-types>)`"
+        )]
+        sig: String,
+        #[structopt(help = "the encoded calladata, in hex format")]
+        calldata: String,
+    },
+    #[structopt(name = "--abi-decode")]
+    #[structopt(
+        about = "Decode ABI-encoded hex output data. Pass --input to decode as input, or use `--calldata-decode`"
+    )]
+    AbiDecode {
+        #[structopt(
+            help = "the function signature you want to decode, in the format `<name>(<in-types>)(<out-types>)`"
+        )]
+        sig: String,
+        #[structopt(help = "the encoded calladata, in hex format")]
+        calldata: String,
+        #[structopt(long, short, help = "the encoded output, in hex format")]
+        input: bool,
+    },
+    #[structopt(name = "abi-encode")]
+    #[structopt(
+        help = "ABI encodes the given arguments with the function signature, excluidng the selector"
+    )]
+    AbiEncode {
+        #[structopt(help = "the function signature")]
+        sig: String,
+        #[structopt(help = "the list of function arguments")]
+        args: Vec<String>,
+    },
+    #[structopt(name = "4byte")]
+    #[structopt(about = "Fetches function signatures given the selector from 4byte.directory")]
+    FourByte {
+        #[structopt(help = "the function selector")]
+        selector: String,
+    },
+    #[structopt(name = "4byte-decode")]
+    #[structopt(
+        about = "Decodes transaction calldata by fetching the signature using 4byte.directory"
+    )]
+    FourByteDecode {
+        #[structopt(help = "the ABI-encoded calldata")]
+        calldata: String,
+        #[structopt(long, help = "the 4byte selector id to use, can also be earliest/latest")]
+        id: Option<String>,
+    },
     #[structopt(name = "age")]
     #[structopt(about = "Prints the timestamp of a block")]
     Age {
@@ -232,6 +302,63 @@ pub enum Subcommands {
         who: NameOrAddress,
         #[structopt(short, long, env = "ETH_RPC_URL")]
         rpc_url: String,
+    },
+    #[structopt(name = "wallet", about = "Set of wallet management utilities")]
+    Wallet {
+        #[structopt(subcommand)]
+        command: WalletSubcommands,
+    },
+}
+
+#[derive(Debug, StructOpt)]
+pub enum WalletSubcommands {
+    #[structopt(name = "new", about = "Create and output a new random keypair")]
+    New {
+        #[structopt(help = "If provided, then keypair will be written to encrypted json keystore")]
+        path: Option<String>,
+        #[structopt(
+            long,
+            short,
+            help = "Triggers a hidden password prompt for the json keystore",
+            conflicts_with = "unsafe-password",
+            requires = "path"
+        )]
+        password: bool,
+        #[structopt(
+            long,
+            help = "Password for json keystore in cleartext. This is UNSAFE to use and we recommend using the --password parameter",
+            requires = "path",
+            env = "CAST_PASSWORD"
+        )]
+        unsafe_password: Option<String>,
+    },
+    #[structopt(name = "vanity", about = "Generate a vanity address")]
+    Vanity {
+        #[structopt(long, help = "Prefix for vanity address", required_unless = "ends-with")]
+        starts_with: Option<String>,
+        #[structopt(long, help = "Suffix for vanity address")]
+        ends_with: Option<String>,
+    },
+    #[structopt(name = "address", about = "Convert a private key to an address")]
+    Address {
+        #[structopt(flatten)]
+        wallet: Wallet,
+    },
+    #[structopt(name = "sign", about = "Sign the message with provided private key")]
+    Sign {
+        #[structopt(help = "message to sign")]
+        message: String,
+        #[structopt(flatten)]
+        wallet: Wallet,
+    },
+    #[structopt(name = "verify", about = "Verify the signature on the message")]
+    Verify {
+        #[structopt(help = "original message")]
+        message: String,
+        #[structopt(help = "signature to verify")]
+        signature: String,
+        #[structopt(long, short, help = "pubkey of message signer")]
+        address: String,
     },
 }
 

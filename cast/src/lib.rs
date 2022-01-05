@@ -3,12 +3,13 @@
 //! TODO
 use chrono::NaiveDateTime;
 use ethers_core::{
-    abi::AbiParser,
+    abi::{AbiParser, Token},
     types::*,
     utils::{self, keccak256},
 };
+
 use ethers_providers::{Middleware, PendingTransaction};
-use eyre::Result;
+use eyre::{Context, Result};
 use rustc_hex::{FromHexIter, ToHex};
 use std::str::FromStr;
 
@@ -75,20 +76,31 @@ where
         let res = self.provider.call(&tx, None).await?;
 
         // decode args into tokens
-        let decoded = func.decode_output(res.as_ref())?;
+        let decoded = func.decode_output(res.as_ref()).wrap_err(
+            "could not decode output. did you specify the wrong function return data type perhaps?",
+        )?;
         // handle case when return type is not specified
-        if decoded.is_empty() {
-            Ok(format!("{}\n", res))
+        Ok(if decoded.is_empty() {
+            format!("{}\n", res)
         } else {
-            // concatenate them
-            let mut s = String::new();
-            for output in decoded {
-                s.push_str(&format!("0x{}\n", output));
-            }
+            // seth compatible user-friendly return type conversions
+            let out = decoded
+                .iter()
+                .map(|item| {
+                    match item {
+                        Token::Address(inner) => format!("{:?}", inner),
+                        // add 0x
+                        Token::Bytes(inner) => format!("0x{}", hex::encode(inner)),
+                        Token::FixedBytes(inner) => format!("0x{}", hex::encode(inner)),
+                        // print as decimal
+                        Token::Uint(inner) | Token::Int(inner) => inner.to_string(),
+                        _ => format!("{}", item),
+                    }
+                })
+                .collect::<Vec<_>>();
 
-            // return string
-            Ok(s)
-        }
+            out.join("\n")
+        })
     }
 
     pub async fn balance<T: Into<NameOrAddress> + Send + Sync>(
@@ -110,11 +122,12 @@ where
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
     /// let cast = Cast::new(provider);
+    /// let from = "vitalik.eth";
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
-    /// let sig = "function greet(string memory) public returns (string)";
-    /// let args = vec!["5".to_owned()];
-    /// let data = cast.call(to, sig, args).await?;
-    /// println!("{}", data);
+    /// let sig = "greet(string)()";
+    /// let args = vec!["hello".to_owned()];
+    /// let data = cast.send(from, to, Some((sig, args))).await?;
+    /// println!("{}", *data);
     /// # Ok(())
     /// # }
     /// ```
@@ -124,6 +137,50 @@ where
         to: T,
         args: Option<(&str, Vec<String>)>,
     ) -> Result<PendingTransaction<'_, M::Provider>> {
+        let tx = self.build_tx(from, to, args).await?;
+        let res = self.provider.send_transaction(tx, None).await?;
+
+        Ok::<_, eyre::Error>(res)
+    }
+
+    /// Estimates the gas cost of a transaction
+    ///
+    /// ```no_run
+    /// use cast::Cast;
+    /// use ethers_core::types::Address;
+    /// use ethers_providers::{Provider, Http};
+    /// use std::{str::FromStr, convert::TryFrom};
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
+    /// let cast = Cast::new(provider);
+    /// let from = "vitalik.eth";
+    /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
+    /// let sig = "greet(string)()";
+    /// let args = vec!["5".to_owned()];
+    /// let data = cast.estimate(from, to, Some((sig, args))).await?;
+    /// println!("{}", data);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn estimate<F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
+        &self,
+        from: F,
+        to: T,
+        args: Option<(&str, Vec<String>)>,
+    ) -> Result<U256> {
+        let tx = self.build_tx(from, to, args).await?.into();
+        let res = self.provider.estimate_gas(&tx).await?;
+
+        Ok::<_, eyre::Error>(res)
+    }
+
+    async fn build_tx<F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
+        &self,
+        from: F,
+        to: T,
+        args: Option<(&str, Vec<String>)>,
+    ) -> Result<Eip1559TransactionRequest> {
         let from = match from.into() {
             NameOrAddress::Name(ref ens_name) => self.provider.resolve_name(ens_name).await?,
             NameOrAddress::Address(addr) => addr,
@@ -138,9 +195,7 @@ where
             tx = tx.data(data);
         }
 
-        let res = self.provider.send_transaction(tx, None).await?;
-
-        Ok::<_, eyre::Error>(res)
+        Ok(tx)
     }
 
     /// ```no_run
@@ -430,6 +485,37 @@ impl SimpleCast {
         Ok(U256::from_str(hex)?)
     }
 
+    /// Returns maximum I256 value
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    /// use ethers_core::types::I256;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(I256::MAX, Cast::max_int()?);
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn max_int() -> Result<I256> {
+        Ok(I256::MAX)
+    }
+
+    /// Returns minimum I256 value
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    /// use ethers_core::types::I256;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(I256::MIN, Cast::min_int()?);
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn min_int() -> Result<I256> {
+        Ok(I256::MIN)
+    }
     /// Returns maximum U256 value
     ///
     /// ```
@@ -473,6 +559,58 @@ impl SimpleCast {
             value.insert(value.len() - decimals, '.');
             Ok(value)
         }
+    }
+    /// Decodes abi-encoded hex input or output
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     // Passing `input = false` will decode the data as the output type.
+    ///     // The input data types and the full function sig are ignored, i.e.
+    ///     // you could also pass `balanceOf()(uint256)` and it'd still work.
+    ///     let data = "0x0000000000000000000000000000000000000000000000000000000000000001";
+    ///     let sig = "balanceOf(address, uint256)(uint256)";
+    ///     let decoded = Cast::abi_decode(sig, data, false)?[0].to_string();
+    ///     assert_eq!(decoded, "1");
+    ///
+    ///     // Passing `input = true` will decode the data with the input function signature.
+    ///     let data = "0xf242432a0000000000000000000000008dbd1b711dc621e1404633da156fcc779e1c6f3e000000000000000000000000d9f3c9cc99548bf3b44a43e0a2d07399eb918adc000000000000000000000000000000000000000000000000000000000000002a000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000";
+    ///     let sig = "safeTransferFrom(address, address, uint256, uint256, bytes)";
+    ///     let decoded = Cast::abi_decode(sig, data, true)?;
+    ///     let decoded = decoded.iter().map(ToString::to_string).collect::<Vec<_>>();
+    ///     assert_eq!(
+    ///         decoded,
+    ///         vec!["8dbd1b711dc621e1404633da156fcc779e1c6f3e", "d9f3c9cc99548bf3b44a43e0a2d07399eb918adc", "2a", "1", ""]
+    ///     );
+    ///
+    ///
+    ///     # Ok(())
+    /// }
+    /// ```
+    pub fn abi_decode(sig: &str, calldata: &str, input: bool) -> Result<Vec<Token>> {
+        foundry_utils::abi_decode(sig, calldata, input)
+    }
+
+    /// Performs ABI encoding based off of the function signature. Does not include
+    /// the function selector in the result.
+    ///
+    /// ```
+    /// # use cast::SimpleCast as Cast;
+    ///
+    /// # fn main() -> eyre::Result<()> {
+    ///     assert_eq!(
+    ///         "0x0000000000000000000000000000000000000000000000000000000000000001",
+    ///         Cast::abi_encode("f(uint a)", &["1"]).unwrap().as_str()
+    ///     );
+    /// #    Ok(())
+    /// # }
+    /// ```
+    pub fn abi_encode(sig: &str, args: &[impl AsRef<str>]) -> Result<String> {
+        let func = AbiParser::default().parse_function(sig.as_ref())?;
+        let calldata = encode_args(&func, args)?.to_hex::<String>();
+        let encoded = &calldata[8..];
+        Ok(format!("0x{}", encoded))
     }
 
     /// Converts decimal input to hex

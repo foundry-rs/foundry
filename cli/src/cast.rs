@@ -6,18 +6,31 @@ use cast::{Cast, SimpleCast};
 
 mod opts;
 use opts::{
-    cast::{Opts, Subcommands},
-    WalletType,
+    cast::{Opts, Subcommands, WalletSubcommands},
+    EthereumOpts, WalletType,
 };
 
 use ethers::{
-    core::types::{BlockId, BlockNumber::Latest},
+    core::{
+        rand::thread_rng,
+        types::{BlockId, BlockNumber::Latest},
+    },
     providers::{Middleware, Provider},
-    types::{NameOrAddress, U256},
+    signers::{LocalWallet, Signer},
+    types::{Address, NameOrAddress, Signature, U256},
 };
+use rayon::prelude::*;
+use regex::RegexSet;
 use rustc_hex::ToHex;
-use std::{convert::TryFrom, str::FromStr};
+use std::{
+    convert::TryFrom,
+    io::{self, Write},
+    str::FromStr,
+    time::Instant,
+};
 use structopt::StructOpt;
+
+use crate::utils::read_secret;
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
@@ -25,6 +38,12 @@ async fn main() -> eyre::Result<()> {
 
     let opts = Opts::from_args();
     match opts.sub {
+        Subcommands::MaxInt => {
+            println!("{}", SimpleCast::max_int()?);
+        }
+        Subcommands::MinInt => {
+            println!("{}", SimpleCast::min_int()?);
+        }
         Subcommands::MaxUint => {
             println!("{}", SimpleCast::max_uint()?);
         }
@@ -90,7 +109,7 @@ async fn main() -> eyre::Result<()> {
                 "{}",
                 SimpleCast::to_wei(
                     U256::from_dec_str(&val)?,
-                    unit.unwrap_or_else(|| String::from("wei"))
+                    unit.unwrap_or_else(|| String::from("eth"))
                 )?
             );
         }
@@ -100,7 +119,7 @@ async fn main() -> eyre::Result<()> {
                 "{}",
                 SimpleCast::from_wei(
                     U256::from_dec_str(&val)?,
-                    unit.unwrap_or_else(|| String::from("wei"))
+                    unit.unwrap_or_else(|| String::from("eth"))
                 )?
             );
         }
@@ -158,6 +177,61 @@ async fn main() -> eyre::Result<()> {
                 let from = eth.from.expect("No ETH_FROM or signer specified");
                 cast_send(provider, from, to, sig, args, cast_async).await?;
             }
+        }
+        Subcommands::Estimate { eth, to, sig, args } => {
+            let provider = Provider::try_from(eth.rpc_url.as_str())?;
+            let cast = Cast::new(&provider);
+            // chain id does not matter here, we're just trying to get the address
+            let from = if let Some(signer) = eth.signer(0.into()).await? {
+                match signer {
+                    WalletType::Ledger(signer) => signer.address(),
+                    WalletType::Local(signer) => signer.address(),
+                    WalletType::Trezor(signer) => signer.address(),
+                }
+            } else {
+                eth.from.expect("No ETH_FROM or signer specified")
+            };
+            let gas = cast.estimate(from, to, Some((sig.as_str(), args))).await?;
+            println!("{}", gas);
+        }
+        Subcommands::CalldataDecode { sig, calldata } => {
+            let tokens = SimpleCast::abi_decode(&sig, &calldata, true)?;
+            let tokens = foundry_utils::format_tokens(&tokens);
+            tokens.for_each(|t| println!("{}", t));
+        }
+        Subcommands::AbiDecode { sig, calldata, input } => {
+            let tokens = SimpleCast::abi_decode(&sig, &calldata, input)?;
+            let tokens = foundry_utils::format_tokens(&tokens);
+            tokens.for_each(|t| println!("{}", t));
+        }
+        Subcommands::AbiEncode { sig, args } => {
+            println!("{}", SimpleCast::abi_encode(&sig, &args)?);
+        }
+        Subcommands::FourByte { selector } => {
+            let sigs = foundry_utils::fourbyte(&selector).await?;
+            sigs.iter().for_each(|sig| println!("{}", sig.0));
+        }
+        Subcommands::FourByteDecode { calldata, id } => {
+            let sigs = foundry_utils::fourbyte_possible_sigs(&calldata, id).await?;
+            sigs.iter().enumerate().for_each(|(i, sig)| println!("{}) \"{}\"", i + 1, sig));
+
+            let sig = match sigs.len() {
+                0 => Err(eyre::eyre!("No signatures found")),
+                1 => Ok(sigs.get(0).unwrap()),
+                _ => {
+                    print!("Select a function signature by number: ");
+                    io::stdout().flush()?;
+                    let mut input = String::new();
+                    io::stdin().read_line(&mut input)?;
+                    let i: usize = input.trim().parse()?;
+                    Ok(sigs.get(i - 1).expect("Invalid signature index"))
+                }
+            }?;
+
+            let tokens = SimpleCast::abi_decode(sig, &calldata, true)?;
+            let tokens = foundry_utils::format_tokens(&tokens);
+
+            tokens.for_each(|t| println!("{}", t));
         }
         Subcommands::Age { block, rpc_url } => {
             let provider = Provider::try_from(rpc_url)?;
@@ -221,6 +295,125 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).nonce(who, block).await?);
         }
+        Subcommands::Wallet { command } => match command {
+            WalletSubcommands::New { path, password, unsafe_password } => {
+                let mut rng = thread_rng();
+
+                match path {
+                    Some(path) => {
+                        let password = read_secret(password, unsafe_password)?;
+                        let (key, uuid) = LocalWallet::new_keystore(&path, &mut rng, password)?;
+                        let address = SimpleCast::checksum_address(&key.address())?;
+                        let filepath = format!(
+                            "{}/{}",
+                            std::fs::canonicalize(path)?
+                                .into_os_string()
+                                .into_string()
+                                .expect("failed to canonicalize file path"),
+                            uuid
+                        );
+                        println!(
+                            "Successfully created new keypair at `{}`.\nAddress: {}.",
+                            filepath, address
+                        );
+                    }
+                    None => {
+                        let wallet = LocalWallet::new(&mut rng);
+                        println!(
+                            "Successfully created new keypair.\nAddress: {}.\nPrivate Key: {}.",
+                            SimpleCast::checksum_address(&wallet.address())?,
+                            hex::encode(wallet.signer().to_bytes()),
+                        );
+                    }
+                }
+            }
+            WalletSubcommands::Vanity { starts_with, ends_with } => {
+                let mut regexs = vec![];
+                if let Some(prefix) = starts_with {
+                    let pad_width = prefix.len() + prefix.len() % 2;
+                    hex::decode(format!("{:0>width$}", prefix, width = pad_width))
+                        .expect("invalid prefix hex provided");
+                    regexs.push(format!(r"^{}", prefix));
+                }
+                if let Some(suffix) = ends_with {
+                    let pad_width = suffix.len() + suffix.len() % 2;
+                    hex::decode(format!("{:0>width$}", suffix, width = pad_width))
+                        .expect("invalid suffix hex provided");
+                    regexs.push(format!(r"{}$", suffix));
+                }
+
+                assert!(
+                    regexs.iter().map(|p| p.len() - 1).sum::<usize>() <= 40,
+                    "vanity patterns length exceeded. cannot be more than 40 characters",
+                );
+
+                let regex = RegexSet::new(regexs)?;
+
+                println!("Starting to generate vanity address...");
+                let timer = Instant::now();
+                let wallet = std::iter::repeat_with(move || LocalWallet::new(&mut thread_rng()))
+                    .par_bridge()
+                    .find_any(|wallet| {
+                        let addr = hex::encode(wallet.address().to_fixed_bytes());
+                        regex.matches(&addr).into_iter().count() == regex.patterns().len()
+                    })
+                    .expect("failed to generate vanity wallet");
+
+                println!(
+                    "Successfully created new keypair in {} seconds.\nAddress: {}.\nPrivate Key: {}.",
+                    timer.elapsed().as_secs(),
+                    SimpleCast::checksum_address(&wallet.address())?,
+                    hex::encode(wallet.signer().to_bytes()),
+                );
+            }
+            WalletSubcommands::Address { wallet } => {
+                let wallet = EthereumOpts {
+                    wallet,
+                    from: None,
+                    rpc_url: "http://localhost:8545".to_string(),
+                }
+                .signer(0.into())
+                .await?
+                .unwrap();
+
+                let addr = match wallet {
+                    WalletType::Ledger(signer) => signer.address(),
+                    WalletType::Local(signer) => signer.address(),
+                    WalletType::Trezor(signer) => signer.address(),
+                };
+                println!("Address: {}", SimpleCast::checksum_address(&addr)?);
+            }
+            WalletSubcommands::Sign { message, wallet } => {
+                let wallet = EthereumOpts {
+                    wallet,
+                    from: None,
+                    rpc_url: "http://localhost:8545".to_string(),
+                }
+                .signer(0.into())
+                .await?
+                .unwrap();
+
+                let sig = match wallet {
+                    WalletType::Ledger(wallet) => wallet.signer().sign_message(&message).await?,
+                    WalletType::Local(wallet) => wallet.signer().sign_message(&message).await?,
+                    WalletType::Trezor(wallet) => wallet.signer().sign_message(&message).await?,
+                };
+                println!("Signature: 0x{}", sig);
+            }
+            WalletSubcommands::Verify { message, signature, address } => {
+                let pubkey = Address::from_str(&address).expect("invalid pubkey provided");
+                let signature = Signature::from_str(&signature)?;
+                match signature.verify(message, pubkey) {
+                    Ok(_) => {
+                        println!("Validation success. Address {} signed this message.", address)
+                    }
+                    Err(_) => println!(
+                        "Validation failed. Address {} did not sign this message.",
+                        address
+                    ),
+                }
+            }
+        },
     };
 
     Ok(())

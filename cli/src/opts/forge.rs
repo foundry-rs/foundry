@@ -1,9 +1,9 @@
 use structopt::StructOpt;
 
-use ethers::types::Address;
+use ethers::{solc::EvmVersion, types::Address};
 use std::{path::PathBuf, str::FromStr};
 
-use crate::cmd::{build::BuildArgs, create, snapshot, test};
+use crate::cmd::{build::BuildArgs, create::CreateArgs, run::RunArgs, snapshot, test};
 
 #[derive(Debug, StructOpt)]
 pub struct Opts {
@@ -24,6 +24,10 @@ pub enum Subcommands {
     #[structopt(alias = "b")]
     Build(BuildArgs),
 
+    #[structopt(about = "run a single smart contract as a script")]
+    #[structopt(alias = "r")]
+    Run(RunArgs),
+
     #[structopt(alias = "u", about = "fetches all upstream lib changes")]
     Update {
         #[structopt(
@@ -34,16 +38,17 @@ pub enum Subcommands {
 
     #[structopt(alias = "i", about = "installs one or more dependencies as git submodules")]
     Install {
-        #[structopt(
-            help = "the submodule name of the library you want to update (will update all if none is provided)"
-        )]
+        #[structopt(help = "the submodule name of the library you want to install")]
         dependencies: Vec<Dependency>,
     },
 
-    #[structopt(
-        alias = "r",
-        about = "prints the automatically inferred remappings for this repository"
-    )]
+    #[structopt(alias = "r", about = "removes one or more dependencies from git submodules")]
+    Remove {
+        #[structopt(help = "the submodule name of the library you want to remove")]
+        dependencies: Vec<Dependency>,
+    },
+
+    #[structopt(about = "prints the automatically inferred remappings for this repository")]
     Remappings {
         #[structopt(
             help = "the project's root path, default being the current working directory",
@@ -54,7 +59,9 @@ pub enum Subcommands {
         lib_paths: Vec<PathBuf>,
     },
 
-    #[structopt(about = "build your smart contracts. Requires `ETHERSCAN_API_KEY` to be set.")]
+    #[structopt(
+        about = "verify your smart contracts source code on Etherscan. Requires `ETHERSCAN_API_KEY` to be set."
+    )]
     VerifyContract {
         #[structopt(help = "contract source info `<path>:<contractname>`")]
         contract: FullContractInfo,
@@ -65,7 +72,7 @@ pub enum Subcommands {
     },
 
     #[structopt(alias = "c", about = "deploy a compiled contract")]
-    Create(create::CreateArgs),
+    Create(CreateArgs),
 
     #[structopt(alias = "i", about = "initializes a new forge sample repository")]
     Init {
@@ -75,6 +82,7 @@ pub enum Subcommands {
         template: Option<String>,
     },
 
+    #[structopt(about = "generate shell completions script")]
     Completions {
         #[structopt(help = "the shell you are using")]
         shell: structopt::clap::Shell,
@@ -100,6 +108,81 @@ pub enum Subcommands {
         )]
         root: Option<PathBuf>,
     },
+}
+
+#[derive(Debug, Clone, StructOpt)]
+pub struct CompilerArgs {
+    #[structopt(help = "choose the evm version", long, default_value = "london")]
+    pub evm_version: EvmVersion,
+
+    #[structopt(help = "activate the solidity optimizer", long)]
+    pub optimize: bool,
+
+    #[structopt(help = "optimizer parameter runs", long, default_value = "200")]
+    pub optimize_runs: u32,
+}
+
+use crate::cmd::build::{Env, EvmType};
+use ethers::types::U256;
+
+#[derive(Debug, Clone, StructOpt)]
+pub struct EvmOpts {
+    #[structopt(flatten)]
+    pub env: Env,
+
+    #[structopt(
+        long,
+        short,
+        help = "the EVM type you want to use (e.g. sputnik, evmodin)",
+        default_value = "sputnik"
+    )]
+    pub evm_type: EvmType,
+
+    #[structopt(
+        help = "fetch state over a remote instead of starting from empty state",
+        long,
+        short
+    )]
+    #[structopt(alias = "rpc-url")]
+    pub fork_url: Option<String>,
+
+    #[structopt(help = "pins the block number for the state fork", long)]
+    #[structopt(env = "DAPP_FORK_BLOCK")]
+    pub fork_block_number: Option<u64>,
+
+    #[structopt(
+        help = "the initial balance of each deployed test contract",
+        long,
+        default_value = "0xffffffffffffffffffffffff"
+    )]
+    pub initial_balance: U256,
+
+    #[structopt(
+        help = "the address which will be executing all tests",
+        long,
+        default_value = "0x0000000000000000000000000000000000000000",
+        env = "DAPP_TEST_ADDRESS"
+    )]
+    pub sender: Address,
+
+    #[structopt(help = "enables the FFI cheatcode", long)]
+    pub ffi: bool,
+
+    #[structopt(help = "verbosity of EVM output (0-3)", long, default_value = "0")]
+    pub verbosity: u8,
+}
+
+impl EvmOpts {
+    #[cfg(feature = "sputnik-evm")]
+    pub fn vicinity(&self) -> eyre::Result<sputnik::backend::MemoryVicinity> {
+        Ok(if let Some(ref url) = self.fork_url {
+            let provider = ethers::providers::Provider::try_from(url.as_str())?;
+            let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
+            rt.block_on(evm_adapters::sputnik::vicinity(&provider, self.fork_block_number))?
+        } else {
+            self.env.sputnik_state()
+        })
+    }
 }
 
 /// Represents the common dapp argument pattern for `<path>:<contractname>` where `<path>:` is

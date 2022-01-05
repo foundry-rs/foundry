@@ -68,6 +68,7 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
         // stores the latest reason of a test call, this will hold the return reason of failed test
         // case if the runner failed
         let return_reason: RefCell<Option<E::ReturnReason>> = RefCell::new(None);
+        let revert_reason = RefCell::new(None);
 
         let mut runner = self.runner.clone();
         tracing::debug!(func = ?func.name, should_fail, "fuzzing");
@@ -88,13 +89,22 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
                 // store the result of this test case
                 let _ = return_reason.borrow_mut().insert(reason);
 
+                if !success {
+                    let revert =
+                        foundry_utils::decode_revert(returndata.as_ref()).unwrap_or_default();
+                    let _ = revert_reason.borrow_mut().insert(revert);
+                }
+
                 // This will panic and get caught by the executor
                 proptest::prop_assert!(
                     success,
                     "{}, expected failure: {}, reason: '{}'",
                     func.name,
                     should_fail,
-                    foundry_utils::decode_revert(returndata.as_ref())?
+                    match foundry_utils::decode_revert(returndata.as_ref()) {
+                        Ok(e) => e,
+                        Err(e) => e.to_string(),
+                    }
                 );
 
                 // push test case to the case set
@@ -106,6 +116,7 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
             .map(|test_error| FuzzError {
                 test_error,
                 return_reason: return_reason.into_inner().expect("Reason must be set"),
+                revert_reason: revert_reason.into_inner().expect("Revert error string must be set"),
             });
 
         FuzzTestResult { cases: FuzzedCases::new(fuzz_cases.into_inner()), test_error }
@@ -138,6 +149,8 @@ pub struct FuzzError<Reason> {
     pub test_error: TestError<Bytes>,
     /// The return reason of the offending call
     pub return_reason: Reason,
+    /// The revert string of the offending call
+    pub revert_reason: String,
 }
 
 /// Container type for all successful test cases
@@ -228,27 +241,36 @@ fn fuzz_param(param: &ParamType) -> impl Strategy<Value = Token> {
             any::<[u8; 20]>().prop_map(|x| Address::from_slice(&x).into_token()).boxed()
         }
         ParamType::Bytes => any::<Vec<u8>>().prop_map(|x| Bytes::from(x).into_token()).boxed(),
+        // For ints and uints we sample from a U256, then wrap it to the correct size with a
+        // modulo operation. Note that this introduces modulo bias, but it can be removed with
+        // rejection sampling if it's determined the bias is too severe. Rejection sampling may
+        // slow down tests as it resamples bad values, so may want to benchmark the performance
+        // hit and weigh that against the current bias before implementing
         ParamType::Int(n) => match n / 8 {
-            1 => any::<i8>().prop_map(|x| x.into_token()).boxed(),
-            2 => any::<i16>().prop_map(|x| x.into_token()).boxed(),
-            3..=4 => any::<i32>().prop_map(|x| x.into_token()).boxed(),
-            5..=8 => any::<i64>().prop_map(|x| x.into_token()).boxed(),
-            9..=16 => any::<i128>().prop_map(|x| x.into_token()).boxed(),
-            17..=32 => (any::<bool>(), any::<[u8; 32]>())
-                .prop_filter_map("i256s cannot overflow", |(sign, bytes)| {
+            32 => any::<[u8; 32]>()
+                .prop_map(move |x| I256::from_raw(U256::from(&x)).into_token())
+                .boxed(),
+            y @ 1..=31 => (any::<bool>(), any::<[u8; 32]>())
+                .prop_map(move |(sign, x)| {
                     let sign = if sign { Sign::Positive } else { Sign::Negative };
-                    I256::checked_from_sign_and_abs(sign, U256::from(bytes)).map(|x| x.into_token())
+                    // Generate a uintN in the correct range, then shift it to the range of intN
+                    // with subtraction
+                    let uint = U256::from(&x) % U256::from(2).pow(U256::from(y * 8));
+                    let max_int = U256::from(2).pow(U256::from(y * 8 - 1));
+                    I256::overflowing_from_sign_and_abs(sign, uint.overflowing_sub(max_int).0)
+                        .0
+                        .into_token()
                 })
                 .boxed(),
             _ => panic!("unsupported solidity type int{}", n),
         },
         ParamType::Uint(n) => match n / 8 {
-            1 => any::<u8>().prop_map(|x| x.into_token()).boxed(),
-            2 => any::<u16>().prop_map(|x| x.into_token()).boxed(),
-            3..=4 => any::<u32>().prop_map(|x| x.into_token()).boxed(),
-            5..=8 => any::<u64>().prop_map(|x| x.into_token()).boxed(),
-            9..=16 => any::<u128>().prop_map(|x| x.into_token()).boxed(),
-            17..=32 => any::<[u8; 32]>().prop_map(|x| U256::from(&x).into_token()).boxed(),
+            32 => any::<[u8; 32]>().prop_map(move |x| U256::from(&x).into_token()).boxed(),
+            y @ 1..=31 => any::<[u8; 32]>()
+                .prop_map(move |x| {
+                    (U256::from(&x) % (U256::from(2).pow(U256::from(y * 8)))).into_token()
+                })
+                .boxed(),
             _ => panic!("unsupported solidity type uint{}", n),
         },
         ParamType::Bool => any::<bool>().prop_map(|x| x.into_token()).boxed(),
@@ -271,5 +293,34 @@ fn fuzz_param(param: &ParamType) -> impl Strategy<Value = Token> {
         ParamType::Tuple(params) => {
             params.iter().map(fuzz_param).collect::<Vec<_>>().prop_map(Token::Tuple).boxed()
         }
+    }
+}
+
+#[cfg(test)]
+#[cfg(feature = "sputnik")]
+mod tests {
+    use super::*;
+
+    use crate::{
+        sputnik::helpers::{fuzzvm, vm},
+        test_helpers::COMPILED,
+        Evm,
+    };
+
+    #[test]
+    fn prints_fuzzed_revert_reasons() {
+        let mut evm = vm();
+
+        let compiled = COMPILED.find("FuzzTests").expect("could not find contract");
+        let (addr, _, _, _) =
+            evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
+
+        let evm = fuzzvm(&mut evm);
+
+        let func = compiled.abi.unwrap().function("testFuzzedRevert").unwrap();
+        let res = evm.fuzz(&func, addr, false);
+        let error = res.test_error.unwrap();
+        let revert_reason = error.revert_reason;
+        assert_eq!(revert_reason, "fuzztest-revert");
     }
 }

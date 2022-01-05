@@ -4,13 +4,6 @@ pub use runner::{ContractRunner, TestKind, TestKindGas, TestResult};
 mod multi_runner;
 pub use multi_runner::{MultiContractRunner, MultiContractRunnerBuilder};
 
-use ethers::abi;
-use eyre::Result;
-
-pub fn decode_revert(error: &[u8]) -> Result<String> {
-    Ok(abi::decode(&[abi::ParamType::String], &error[4..])?[0].to_string())
-}
-
 #[cfg(test)]
 pub mod test_helpers {
     use ethers::{

@@ -16,7 +16,7 @@ interface Hevm {
     function load(address,bytes32) external returns (bytes32);
     // Stores a value to an address' storage slot, (who, slot, value)
     function store(address,bytes32,bytes32) external;
-    // Signs data, (privateKey, digest) => (r, v, s)
+    // Signs data, (privateKey, digest) => (v, r, s)
     function sign(uint256,bytes32) external returns (uint8,bytes32,bytes32);
     // Gets address for a given private key, (privateKey) => (address)
     function addr(uint256) external returns (address);
@@ -34,6 +34,14 @@ interface Hevm {
     function etch(address, bytes calldata) external;
     // Expects an error on next call
     function expectRevert(bytes calldata) external;
+    // Record all storage reads and writes
+    function record() external;
+    // Gets all accessed reads and write slot from a recording session, for a given address
+    function accesses(address) external returns (bytes32[] memory reads, bytes32[] memory writes);
+    // Prepare an expected log with (bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData).
+    // Call this function, then emit an event, then call a function. Internally after the call, we check if
+    // logs were emited in the expected order with the expected topics and data (as specified by the booleans)
+    function expectEmit(bool,bool,bool,bool) external;
 }
 
 contract HasStorage {
@@ -186,6 +194,25 @@ contract CheatCodes is DSTest {
         prank.bar(address(this));
     }
 
+    function testPrankPayable() public {
+        Prank prank = new Prank();
+        uint256 ownerBalance = address(this).balance;
+
+        address new_sender = address(1337);
+        hevm.deal(new_sender, 10 ether);
+        
+        hevm.prank(new_sender);
+        prank.payableBar{value: 1 ether}(new_sender);
+        assertEq(new_sender.balance, 9 ether);
+
+        hevm.startPrank(new_sender);
+        prank.payableBar{value: 1 ether}(new_sender);
+        hevm.stopPrank();
+        assertEq(new_sender.balance, 8 ether);
+
+        assertEq(ownerBalance, address(this).balance);
+    }
+
     function testPrankStartComplex() public {
         // A -> B, B starts pranking, doesnt call stopPrank, A calls C calls D
         // C -> D would be pranked
@@ -210,6 +237,12 @@ contract CheatCodes is DSTest {
         hevm.expectRevert("Value too large");
         target.stringErr(101);
         target.stringErr(99);
+    }
+
+    function testExpectRevertBuiltin() public {
+        ExpectRevert target = new ExpectRevert();
+        hevm.expectRevert(abi.encodeWithSignature("Panic(uint256)", 0x11));
+        target.arithmeticErr(101);
     }
 
     function testExpectCustomRevert() public {
@@ -239,6 +272,81 @@ contract CheatCodes is DSTest {
         target.stringErr(99);
     }
 
+    function testRecordAccess() public {
+        RecordAccess target = new RecordAccess();
+        hevm.record();
+        RecordAccess2 target2 = target.record();
+        (bytes32[] memory reads, bytes32[] memory writes) = hevm.accesses(address(target));
+        (bytes32[] memory reads2, bytes32[] memory writes2) = hevm.accesses(address(target2));
+        assertEq(reads.length, 2); // sstore has to do an sload to grab the original storage, so we effectively have 2 sloads
+        assertEq(writes.length, 1);
+        assertEq(reads[0], bytes32(uint256(1)));
+        assertEq(writes[0], bytes32(uint256(1)));
+        assertEq(reads2.length, 2); // sstore has to do an sload to grab the original storage, so we effectively have 2 sloads
+        assertEq(writes2.length, 1);
+        assertEq(reads2[0], bytes32(uint256(2)));
+        assertEq(writes2[0], bytes32(uint256(2)));
+    }
+
+    event Transfer(address indexed from,address indexed to, uint256 amount);
+    function testExpectEmit() public {
+        ExpectEmit emitter = new ExpectEmit();
+        // check topic 1, topic 2, and data are the same as the following emitted event
+        hevm.expectEmit(true,true,false,true);
+        emit Transfer(address(this), address(1337), 1337);
+        emitter.t();
+    }
+
+    function testExpectEmitMultiple() public {
+        ExpectEmit emitter = new ExpectEmit();
+        hevm.expectEmit(true,true,false,true);
+        emit Transfer(address(this), address(1337), 1337);
+        hevm.expectEmit(true,true,false,true);
+        emit Transfer(address(this), address(1337), 1337);
+        emitter.t3();
+    }
+
+    function testExpectEmit2() public {
+        ExpectEmit emitter = new ExpectEmit();
+        hevm.expectEmit(true,false,false,true);
+        emit Transfer(address(this), address(1338), 1337);
+        emitter.t();
+    }
+
+    function testExpectEmit3() public {
+        ExpectEmit emitter = new ExpectEmit();
+        hevm.expectEmit(false,false,false,true);
+        emit Transfer(address(1338), address(1338), 1337);
+        emitter.t();
+    }
+
+    function testExpectEmit4() public {
+        ExpectEmit emitter = new ExpectEmit();
+        hevm.expectEmit(true,true,true,false);
+        emit Transfer(address(this), address(1337), 1338);
+        emitter.t();
+    }
+
+    function testExpectEmit5() public {
+        ExpectEmit emitter = new ExpectEmit();
+        hevm.expectEmit(true,true,true,false);
+        emit Transfer(address(this), address(1337), 1338);
+        emitter.t2();
+    }
+
+    function testFailExpectEmit() public {
+        ExpectEmit emitter = new ExpectEmit();
+        hevm.expectEmit(true,true,false,true);
+        emit Transfer(address(this), address(1338), 1337);
+        emitter.t();
+    }
+
+    // Test should fail if nothing is called
+    // after expectRevert
+    function testFailExpectRevert3() public {
+        hevm.expectRevert("revert");
+    }  
+
     function getCode(address who) internal returns (bytes memory o_code) {
         assembly {
             // retrieve the size of the code, this needs assembly
@@ -256,6 +364,24 @@ contract CheatCodes is DSTest {
     }
 }
 
+contract RecordAccess {
+    function record() public returns (RecordAccess2) {
+        assembly {
+            sstore(1, add(sload(1), 1))
+        }
+        RecordAccess2 target2 = new RecordAccess2();
+        target2.record();
+        return target2;
+    }
+}
+
+contract RecordAccess2 {
+    function record() public {
+        assembly {
+            sstore(2, add(sload(2), 1))
+        }
+    }
+}
 
 error InputTooLarge();
 contract ExpectRevert {
@@ -268,6 +394,11 @@ contract ExpectRevert {
     function stringErr(uint256 a) public returns (uint256) {
         require(a < 100, "Value too large");
         return a;
+    }
+
+    function arithmeticErr(uint256 a) public returns (uint256) {
+        uint256 b = 100 - a;
+        return b;
     }
 
     function stringErr2(uint256 a) public returns (uint256) {
@@ -301,6 +432,10 @@ contract Prank {
         InnerPrank inner = new InnerPrank();
         inner.bar(address(this));
     }
+
+    function payableBar(address expectedMsgSender) payable public {
+        bar(expectedMsgSender);
+    }
 }
 
 contract InnerPrank {
@@ -323,4 +458,21 @@ contract ComplexPrank {
     }
 }
 
+contract ExpectEmit {
+    event Transfer(address indexed from,address indexed to, uint256 amount);
+    event Transfer2(address indexed from,address indexed to, uint256 amount);
+    function t() public {
+        emit Transfer(msg.sender, address(1337), 1337);
+    }
+
+    function t2() public {
+        emit Transfer2(msg.sender, address(1337), 1337);
+        emit Transfer(msg.sender, address(1337), 1337);
+    }
+
+    function t3() public {
+        emit Transfer(msg.sender, address(1337), 1337);
+        emit Transfer(msg.sender, address(1337), 1337);
+    }
+}
 

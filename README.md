@@ -19,13 +19,6 @@ Foundry consists of:
 
 ![demo](./assets/demo.svg)
 
-## Dependencies
-
-Currently both Forge and Cast rely on the
-[libudev-dev](https://packages.debian.org/sid/libudev-dev) package. This package
-may be preinstalled for your system, but is also available in most packages
-managers.
-
 ## Forge
 
 ```
@@ -161,6 +154,10 @@ Join the [foundry telegram](https://t.me/foundry_rs) to chat with the community!
 - [Rohit Narurkar](https://twitter.com/rohitnarurkar): Created the Rust Solidity
   version manager [svm-rs](https://github.com/roynalnaruto/svm-rs) which we use
   to auto-detect and manage multiple Solidity versions.
+- [Brock Elmore](https://twitter.com/brockjelmore): For extending the VM's
+  cheatcodes and implementing
+  [structured call tracing](https://github.com/gakonst/foundry/pull/192), a
+  critical feature for debugging smart contract calls.
 - All the other
   [contributors](https://github.com/gakonst/foundry/graphs/contributors) to the
   [ethers-rs](https://github.com/gakonst/ethers-rs) &
