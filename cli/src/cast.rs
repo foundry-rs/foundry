@@ -32,8 +32,6 @@ use structopt::StructOpt;
 
 use crate::utils::read_secret;
 
-const FLASHBOTS_URL: &str = "https://rpc.flashbots.net";
-
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
     color_eyre::install()?;
@@ -159,12 +157,8 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(&provider).transaction(hash, field, to_json).await?)
         }
-        Subcommands::SendTx { eth, to, sig, cast_async, flashbots, args } => {
-            let provider = if flashbots {
-                Provider::try_from(FLASHBOTS_URL)?
-            } else {
-                Provider::try_from(eth.rpc_url.as_str())?
-            };
+        Subcommands::SendTx { eth, to, sig, cast_async, args } => {
+            let provider = Provider::try_from(eth.rpc_url()?)?;
             let chain_id = Cast::new(&provider).chain_id().await?;
 
             if let Some(signer) = eth.signer_with(chain_id, provider.clone()).await? {
@@ -185,7 +179,7 @@ async fn main() -> eyre::Result<()> {
             }
         }
         Subcommands::Estimate { eth, to, sig, args } => {
-            let provider = Provider::try_from(eth.rpc_url.as_str())?;
+            let provider = Provider::try_from(eth.rpc_url()?)?;
             let cast = Cast::new(&provider);
             // chain id does not matter here, we're just trying to get the address
             let from = if let Some(signer) = eth.signer(0.into()).await? {
@@ -373,7 +367,8 @@ async fn main() -> eyre::Result<()> {
                 let wallet = EthereumOpts {
                     wallet,
                     from: None,
-                    rpc_url: "http://localhost:8545".to_string(),
+                    rpc_url: Some("http://localhost:8545".to_string()),
+                    flashbots: false,
                 }
                 .signer(0.into())
                 .await?
@@ -390,7 +385,8 @@ async fn main() -> eyre::Result<()> {
                 let wallet = EthereumOpts {
                     wallet,
                     from: None,
-                    rpc_url: "http://localhost:8545".to_string(),
+                    rpc_url: Some("http://localhost:8545".to_string()),
+                    flashbots: false,
                 }
                 .signer(0.into())
                 .await?
