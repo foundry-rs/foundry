@@ -15,6 +15,7 @@ contract ConsoleLogs {
 	function test_log_types() public {
 		console.logString("String");
 		console.logInt(1337);
+		console.logInt(-20);
 		console.logUint(1245);
 		console.logBool(true);
 	}

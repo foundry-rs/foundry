@@ -1334,6 +1334,7 @@ mod tests {
         let expected = [
             "String",
             "1337",
+            "-20",
             "1245",
             "true"
         ]
