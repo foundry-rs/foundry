@@ -545,8 +545,8 @@ mod tests {
 
     mod evmodin {
         use super::*;
+        use ::evmodin::{tracing::NoopTracer, util::mocked_host::MockedHost, Revision};
         use evm_adapters::evmodin::EvmOdin;
-        use evmodin::{tracing::NoopTracer, util::mocked_host::MockedHost, Revision};
 
         #[test]
         #[ignore]
