@@ -89,6 +89,8 @@ you can do it with the `--remappings` flag like below:
 $ forge build --remappings @openzeppelin/=node_modules/@openzeppelin/
 ```
 
+Alternatively you could provide a `remappings.txt` file in the project root.
+
 Most of the arguments can also be provided via environment variables, which you
 can find by looking for the `env` tooltip in the command's help menu
 (`forge build --help`).
