@@ -1,4 +1,7 @@
-use ethers::{abi::Abi, prelude::artifacts::DeployedBytecode};
+use ethers::{
+    abi::Abi,
+    prelude::artifacts::{Bytecode, DeployedBytecode},
+};
 use std::{
     cmp::{max, min},
     collections::{BTreeMap, VecDeque},
@@ -47,14 +50,14 @@ pub enum TUIExitReason {
 }
 
 pub struct Tui {
-    debug_arena: Vec<(Address, Vec<DebugStep>)>,
+    debug_arena: Vec<(Address, Vec<DebugStep>, bool)>,
     terminal: Terminal<CrosstermBackend<io::Stdout>>,
     /// Buffer for keys prior to execution, i.e. '10' + 'k' => move up 10 operations
     key_buffer: String,
     /// current step in the debug steps
     current_step: usize,
     identified_contracts: BTreeMap<Address, (String, Abi)>,
-    known_contracts: BTreeMap<String, (Abi, DeployedBytecode)>,
+    known_contracts: BTreeMap<String, (Abi, Bytecode, DeployedBytecode)>,
     source_code: BTreeMap<u32, String>,
 }
 
@@ -62,10 +65,10 @@ impl Tui {
     /// Create a tui
     #[allow(unused_must_use)]
     pub fn new(
-        debug_arena: Vec<(Address, Vec<DebugStep>)>,
+        debug_arena: Vec<(Address, Vec<DebugStep>, bool)>,
         current_step: usize,
         identified_contracts: BTreeMap<Address, (String, Abi)>,
-        known_contracts: BTreeMap<String, (Abi, DeployedBytecode)>,
+        known_contracts: BTreeMap<String, (Abi, Bytecode, DeployedBytecode)>,
         source_code: BTreeMap<u32, String>,
     ) -> Result<Self> {
         enable_raw_mode()?;
@@ -104,11 +107,12 @@ impl Tui {
         f: &mut Frame<B>,
         address: Address,
         identified_contracts: &BTreeMap<Address, (String, Abi)>,
-        known_contracts: &BTreeMap<String, (Abi, DeployedBytecode)>,
+        known_contracts: &BTreeMap<String, (Abi, Bytecode, DeployedBytecode)>,
         source_code: &BTreeMap<u32, String>,
         debug_steps: &[DebugStep],
         opcode_list: &[String],
         current_step: usize,
+        creation: bool,
         draw_memory: &mut DrawMemory,
     ) {
         let total_size = f.size();
@@ -137,6 +141,7 @@ impl Tui {
                         known_contracts,
                         source_code,
                         current_step,
+                        creation,
                         src_pane,
                     );
                     Tui::draw_op_list(
@@ -163,24 +168,32 @@ impl Tui {
         f: &mut Frame<B>,
         address: Address,
         identified_contracts: &BTreeMap<Address, (String, Abi)>,
-        known_contracts: &BTreeMap<String, (Abi, DeployedBytecode)>,
+        known_contracts: &BTreeMap<String, (Abi, Bytecode, DeployedBytecode)>,
         source_code: &BTreeMap<u32, String>,
         current_step: usize,
+        creation: bool,
         area: Rect,
     ) {
-        let block_source_code = Block::default().borders(Borders::ALL);
+        let block_source_code =
+            Block::default().title(format!("Creation {}", creation)).borders(Borders::ALL);
 
         let mut text_output: Text = Text::from("");
 
         if let Some(contract_name) = identified_contracts.get(&address) {
             if let Some(known) = known_contracts.get(&contract_name.0) {
-                if let Some(sourcemap) =
-                    known.1.bytecode.as_ref().expect("no bytecode").source_map()
-                {
+                if let Some(sourcemap) = if creation {
+                    known.1.source_map()
+                } else {
+                    known.2.bytecode.as_ref().expect("no bytecode").source_map()
+                } {
                     match sourcemap {
                         Ok(sourcemap) => {
                             if let Some(source_idx) = sourcemap[current_step].index {
                                 if let Some(source) = source_code.get(&source_idx) {
+                                    text_output.extend(Text::raw(format!(
+                                        "{:?}",
+                                        sourcemap[current_step]
+                                    )));
                                     let offset = sourcemap[current_step].offset;
                                     let len = sourcemap[current_step].length;
 
@@ -609,7 +622,7 @@ impl Ui for Tui {
         self.terminal.clear()?;
         let mut draw_memory: DrawMemory = DrawMemory::default();
 
-        let debug_call: Vec<(Address, Vec<DebugStep>)> = self.debug_arena.clone();
+        let debug_call: Vec<(Address, Vec<DebugStep>, bool)> = self.debug_arena.clone();
         let mut opcode_list: Vec<String> =
             debug_call[0].1.iter().map(|step| step.pretty_opcode()).collect();
         let mut last_index = 0;
@@ -791,6 +804,7 @@ impl Ui for Tui {
                     &debug_call[draw_memory.inner_call_index].1[..],
                     &opcode_list,
                     current_step,
+                    debug_call[draw_memory.inner_call_index].2,
                     &mut draw_memory,
                 )
             })?;

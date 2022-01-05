@@ -48,9 +48,9 @@ impl DebugArena {
     /// 2. a vector of all the debug steps along that contract's execution path.
     ///  
     /// This then makes it easy to pretty print the execution steps.
-    pub fn flatten(&self, entry: usize, flattened: &mut Vec<(Address, Vec<DebugStep>)>) {
+    pub fn flatten(&self, entry: usize, flattened: &mut Vec<(Address, Vec<DebugStep>, bool)>) {
         let node = &self.arena[entry];
-        flattened.push((node.address, node.steps.clone()));
+        flattened.push((node.address, node.steps.clone(), node.creation));
         node.children.iter().for_each(|child| {
             self.flatten(*child, flattened);
         });
@@ -74,6 +74,8 @@ pub struct DebugNode {
     pub depth: usize,
     /// The debug steps
     pub steps: Vec<DebugStep>,
+    /// Contract Creation
+    pub creation: bool,
 }
 
 impl DebugNode {

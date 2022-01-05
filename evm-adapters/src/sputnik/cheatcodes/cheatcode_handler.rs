@@ -618,10 +618,11 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         runtime: &mut Runtime,
         address: Address,
         code: Rc<Vec<u8>>,
+        creation: bool,
     ) -> ExitReason {
         let depth = if let Some(depth) = self.state().metadata().depth() { depth + 1 } else { 0 };
 
-        match self.debug_run(runtime, address, depth, code) {
+        match self.debug_run(runtime, address, depth, code, creation) {
             Capture::Exit(s) => s,
             Capture::Trap(_) => unreachable!("Trap is Infallible"),
         }
@@ -690,6 +691,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         address: Address,
         depth: usize,
         code: Rc<Vec<u8>>,
+        creation: bool,
     ) -> Capture<ExitReason, ()> {
         let mut done = false;
         let mut res = Capture::Exit(ExitReason::Succeed(ExitSucceed::Returned));
@@ -698,7 +700,13 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
             if self.debug_step(runtime, code.clone(), &mut steps) {
                 self.state_mut().debug_mut().push_node(
                     0,
-                    DebugNode { address, depth, steps: steps.clone(), ..Default::default() },
+                    DebugNode {
+                        address,
+                        depth,
+                        steps: steps.clone(),
+                        creation,
+                        ..Default::default()
+                    },
                 );
                 steps = Vec::new();
             }
@@ -709,7 +717,13 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                     done = true;
                     self.state_mut().debug_mut().push_node(
                         0,
-                        DebugNode { address, depth, steps: steps.clone(), ..Default::default() },
+                        DebugNode {
+                            address,
+                            depth,
+                            steps: steps.clone(),
+                            creation,
+                            ..Default::default()
+                        },
                     );
                     match e {
                         Capture::Exit(s) => res = Capture::Exit(s),
@@ -899,7 +913,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         let reason = if self.state().debug_enabled {
             let code = Rc::new(code);
             runtime = Runtime::new(code.clone(), Rc::new(input), context, &config);
-            self.debug_execute(&mut runtime, code_address, code)
+            self.debug_execute(&mut runtime, code_address, code, false)
         } else {
             runtime = Runtime::new(Rc::new(code), Rc::new(input), context, &config);
             self.execute(&mut runtime)
@@ -1047,7 +1061,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         let reason = if self.state().debug_enabled {
             let code = Rc::new(init_code);
             runtime = Runtime::new(code.clone(), Rc::new(Vec::new()), context, &config);
-            self.debug_execute(&mut runtime, address, code)
+            self.debug_execute(&mut runtime, address, code, true)
         } else {
             runtime = Runtime::new(Rc::new(init_code), Rc::new(Vec::new()), context, &config);
             self.execute(&mut runtime)

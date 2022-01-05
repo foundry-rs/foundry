@@ -1,8 +1,11 @@
 use crate::{
-    cmd::Cmd,
-    opts::forge::{CompilerArgs, EvmOpts},
+    cmd::{build::BuildArgs, Cmd},
+    opts::forge::EvmOpts,
 };
-use ethers::{abi::Abi, prelude::artifacts::DeployedBytecode};
+use ethers::{
+    abi::Abi,
+    prelude::artifacts::{Bytecode, DeployedBytecode},
+};
 use forge::ContractRunner;
 use foundry_utils::IntoFunction;
 use std::{collections::BTreeMap, path::PathBuf};
@@ -27,10 +30,17 @@ pub struct RunArgs {
     pub path: PathBuf,
 
     #[structopt(flatten)]
-    pub compiler: CompilerArgs,
+    pub evm_opts: EvmOpts,
 
     #[structopt(flatten)]
-    pub evm_opts: EvmOpts,
+    opts: BuildArgs,
+
+    #[structopt(
+        long,
+        short = "tc",
+        help = "the contract you want to call and deploy, only necessary if there are more than 1 contract (Interfaces do not count) definitions on the script"
+    )]
+    pub contract: Option<String>,
 
     #[structopt(
         long,
@@ -38,19 +48,6 @@ pub struct RunArgs {
         help = "the function you want to call on the script contract, defaults to run()"
     )]
     pub sig: Option<String>,
-
-    #[structopt(
-        long,
-        short,
-        help = "the contract you want to call and deploy, only necessary if there are more than 1 contract (Interfaces do not count) definitions on the script"
-    )]
-    pub contract: Option<String>,
-
-    #[structopt(
-        help = "if set to true, skips auto-detecting solc and uses what is in the user's $PATH ",
-        long
-    )]
-    pub no_auto_detect: bool,
 }
 
 impl Cmd for RunArgs {
@@ -65,11 +62,45 @@ impl Cmd for RunArgs {
             evm_opts.verbosity = 3;
         }
 
+        let project = self.opts.project()?;
+        println!("compiling broader repo...");
+        let output = project.compile()?;
+        if output.has_compiler_errors() {
+            // return the diagnostics error back to the user.
+            eyre::bail!(output.to_string())
+        } else if output.is_unchanged() {
+            println!("no files changed, compilation skippped.");
+        } else {
+            println!("success.");
+        }
+
+        // This is just the contracts compiled, but we need to merge this with the read cached
+        // artifacts
+
         let func = IntoFunction::into(self.sig.as_deref().unwrap_or("run()"));
-        let BuildOutput { contract, highlevel_known_contracts, sources } = self.build()?;
-        let known_contracts: BTreeMap<String, (Abi, Vec<u8>)> = highlevel_known_contracts
+        let BuildOutput { contract, mut highlevel_known_contracts, sources } = self.build()?;
+
+        let contracts = output.output();
+
+        for (contract_name, contract) in contracts.contracts_into_iter() {
+            highlevel_known_contracts.insert(
+                contract_name.to_string(),
+                (
+                    contract.abi.clone().expect("no abi"),
+                    contract.evm.clone().expect("no evm").bytecode.expect("no creation bytecode"),
+                    contract
+                        .evm
+                        .clone()
+                        .expect("no evm")
+                        .deployed_bytecode
+                        .expect("no deployed bytecode"),
+                ),
+            );
+        }
+
+        let known_contracts = highlevel_known_contracts
             .iter()
-            .map(|(name, (abi, deployed_b))| {
+            .map(|(name, (abi, _b, deployed_b))| {
                 (
                     name.clone(),
                     (
@@ -85,7 +116,7 @@ impl Cmd for RunArgs {
                     ),
                 )
             })
-            .collect();
+            .collect::<BTreeMap<String, (Abi, Vec<u8>)>>();
         let (abi, bytecode, runtime_bytecode) = contract.into_parts();
 
         // this should never fail if compilation was successful
@@ -94,7 +125,7 @@ impl Cmd for RunArgs {
         let _runtime_bytecode = runtime_bytecode.unwrap();
 
         // 2. instantiate the EVM w forked backend if needed / pre-funded account(s)
-        let mut cfg = crate::utils::sputnik_cfg(self.compiler.evm_version);
+        let mut cfg = crate::utils::sputnik_cfg(self.opts.compiler.evm_version);
         let vicinity = self.evm_opts.vicinity()?;
         let mut evm = crate::utils::sputnik_helpers::evm(&evm_opts, &mut cfg, &vicinity)?;
 
@@ -180,7 +211,7 @@ impl Cmd for RunArgs {
 
 pub struct BuildOutput {
     pub contract: CompactContract,
-    pub highlevel_known_contracts: BTreeMap<String, (Abi, DeployedBytecode)>,
+    pub highlevel_known_contracts: BTreeMap<String, (Abi, Bytecode, DeployedBytecode)>,
     pub sources: BTreeMap<u32, String>,
 }
 
@@ -192,13 +223,13 @@ impl RunArgs {
         let paths = ProjectPathsConfig::builder().root(&self.path).sources(&self.path).build()?;
 
         let optimizer = Optimizer {
-            enabled: Some(self.compiler.optimize),
-            runs: Some(self.compiler.optimize_runs as usize),
+            enabled: Some(self.opts.compiler.optimize),
+            runs: Some(self.opts.compiler.optimize_runs as usize),
         };
 
         let solc_settings = Settings {
             optimizer,
-            evm_version: Some(self.compiler.evm_version),
+            evm_version: Some(self.opts.compiler.evm_version),
             ..Default::default()
         };
         let solc_cfg = SolcConfig::builder().settings(solc_settings).build()?;
@@ -212,7 +243,7 @@ impl RunArgs {
             .no_artifacts()
             // no cache
             .ephemeral();
-        if self.no_auto_detect {
+        if self.opts.no_auto_detect {
             builder = builder.no_auto_detect();
         }
         let project = builder.build()?;
@@ -237,7 +268,7 @@ impl RunArgs {
             .collect();
 
         // deployed bytecode one for
-        let mut highlevel_known_contracts: BTreeMap<String, (Abi, DeployedBytecode)> =
+        let mut highlevel_known_contracts: BTreeMap<String, (Abi, Bytecode, DeployedBytecode)> =
             Default::default();
 
         // get the specific contract
@@ -252,6 +283,7 @@ impl RunArgs {
                 contract_name.to_string(),
                 (
                     contract.abi.clone().expect("no abi"),
+                    contract.evm.clone().expect("no evm").bytecode.expect("no creation bytecode"),
                     contract
                         .evm
                         .clone()
@@ -283,6 +315,7 @@ impl RunArgs {
                 contract_name,
                 (
                     contract.abi.clone().expect("no abi"),
+                    contract.evm.clone().expect("no evm").bytecode.expect("no creation bytecode"),
                     contract
                         .evm
                         .clone()
