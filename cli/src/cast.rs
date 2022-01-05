@@ -160,12 +160,11 @@ async fn main() -> eyre::Result<()> {
             println!("{}", Cast::new(&provider).transaction(hash, field, to_json).await?)
         }
         Subcommands::SendTx { eth, to, sig, cast_async, flashbots, args } => {
-            let provider;
-            if flashbots {
-                provider = Provider::try_from(FLASHBOTS_URL)?;
+            let provider = if flashbots {
+                Provider::try_from(FLASHBOTS_URL)?
             } else {
-                provider = Provider::try_from(eth.rpc_url.as_str())?;
-            }
+                Provider::try_from(eth.rpc_url.as_str())?
+            };
             let chain_id = Cast::new(&provider).chain_id().await?;
 
             if let Some(signer) = eth.signer_with(chain_id, provider.clone()).await? {
