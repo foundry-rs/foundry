@@ -13,9 +13,48 @@ use ethers::solc::{ArtifactOutput, Project};
 use forge::MultiContractRunnerBuilder;
 use regex::Regex;
 use std::collections::BTreeMap;
-use structopt::StructOpt;
+use structopt::{
+    StructOpt,
+    clap::AppSettings
+};
 
 #[derive(Debug, Clone, StructOpt)]
+pub struct Filter {
+    #[structopt(
+        long = "--match",
+        short = "-m",
+        help = "only run test methods matching regex (deprecated, see --match-test, --match-contract)",
+    )]
+    pattern: Option<regex::Regex>,
+
+    #[structopt(
+        long = "--match-test",
+        help = "only run test methods matching regex",
+    )]
+    test_pattern: Option<regex::Regex>,
+
+    #[structopt(
+        long = "--no-match-test",
+        help = "only run test methods not matching regex",
+    )]
+    test_pattern_inverse: Option<regex::Regex>,
+
+    #[structopt(
+        long = "--match-contract",
+        help = "only run test methods in contracts matching regex",
+    )]
+    contract_pattern: Option<regex::Regex>,
+
+    #[structopt(
+        long = "--no-match-contract",
+        help = "only run test methods in contracts not matching regex",
+    )]
+    contract_pattern_inverse: Option<regex::Regex>,
+}
+
+#[derive(Debug, Clone, StructOpt)]
+// This is required to group Filter options in help output
+#[structopt(global_settings = &[AppSettings::DeriveDisplayOrder])]
 pub struct TestArgs {
     #[structopt(help = "print the test results in json format", long, short)]
     json: bool,
@@ -23,13 +62,8 @@ pub struct TestArgs {
     #[structopt(flatten)]
     evm_opts: EvmOpts,
 
-    #[structopt(
-        long = "--match",
-        short = "-m",
-        help = "only run test methods matching regex",
-        default_value = ".*"
-    )]
-    pattern: regex::Regex,
+    #[structopt(flatten)]
+    filter: Filter,
 
     #[structopt(flatten)]
     opts: BuildArgs,
