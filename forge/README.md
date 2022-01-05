@@ -142,6 +142,8 @@ which implements the following methods:
 
 - `function expectRevert(bytes calldata expectedError)`:
   Tells the evm to expect that the next call reverts with specified error bytes.
+  
+- `function expectEmit(bool,bool,bool,bool) external`: Expects the next emitted event. Params check topic 1, topic 2, topic 3 and data are the same.
 
 The below example uses the `warp` cheatcode to override the timestamp & `expectRevert` to expect a specific revert string:
 
@@ -180,6 +182,33 @@ contract MyTest {
 }
 ```
 
+Below is another example using the `expectEmit` cheatcode to check events:
+
+```solidity
+interface Vm {
+    function expectEmit(bool,bool,bool,bool) external;
+}
+
+contract T is DSTest {
+    Vm vm = Vm(HEVM_ADDRESS);
+    event Transfer(address indexed from,address indexed to, uint256 amount);
+    function testExpectEmit() public {
+        ExpectEmit emitter = new ExpectEmit();
+        // check topic 1, topic 2, and data are the same as the following emitted event
+        hevm.expectEmit(true,true,false,true);
+        emit Transfer(address(this), address(1337), 1337);
+        emitter.t();
+    }
+}
+
+contract ExpectEmit {
+    event Transfer(address indexed from,address indexed to, uint256 amount);
+    function t() public {
+        emit Transfer(msg.sender, address(1337), 1337);
+    }
+}
+```
+
 A full interface for all cheatcodes is here:
 ```solidity
 interface Vm {
@@ -209,6 +238,8 @@ interface Vm {
     function etch(address, bytes calldata) external;
     // Expects an error on next call
     function expectRevert(bytes calldata) external;
+    // Expects the next emitted event. Params check topic 1, topic 2, topic 3 and data are the same.
+    function expectEmit(bool, bool, bool, bool) external;
 }
 ```
 ### `console.log`

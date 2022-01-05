@@ -178,6 +178,16 @@ pub enum Subcommands {
         #[structopt(long, short, help = "the encoded output, in hex format")]
         input: bool,
     },
+    #[structopt(name = "abi-encode")]
+    #[structopt(
+        help = "ABI encodes the given arguments with the function signature, excluidng the selector"
+    )]
+    AbiEncode {
+        #[structopt(help = "the function signature")]
+        sig: String,
+        #[structopt(help = "the list of function arguments")]
+        args: Vec<String>,
+    },
     #[structopt(name = "4byte")]
     #[structopt(about = "Fetches function signatures given the selector from 4byte.directory")]
     FourByte {

@@ -89,6 +89,23 @@ you can do it with the `--remappings` flag like below:
 $ forge build --remappings @openzeppelin/=node_modules/@openzeppelin/
 ```
 
+Alternatively you could provide a `remappings.txt` file in the project root
+containing a line separated list of your package names and the path to them. For
+example:
+
+```bash
+$ cat remappings.txt
+ds-test=lib/ds-test/src
+@openzeppelin=node_modules/openzeppelin-contracts/contracts
+```
+
+This then allows you to import the dependencies in your Solidity code like:
+
+```solidity
+import "ds-test/...";
+import "@openzeppelin/...";
+```
+
 Most of the arguments can also be provided via environment variables, which you
 can find by looking for the `env` tooltip in the command's help menu
 (`forge build --help`).

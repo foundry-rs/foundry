@@ -123,7 +123,7 @@ fn get_artifact_from_path(
     name: String,
 ) -> eyre::Result<(Abi, BytecodeObject, BytecodeObject)> {
     // Get sources from the requested location
-    let abs_path = std::fs::canonicalize(PathBuf::from(path))?;
+    let abs_path = dunce::canonicalize(PathBuf::from(path))?;
     let mut sources = Sources::new();
     sources.insert(abs_path.clone(), Source::read(&abs_path)?);
 

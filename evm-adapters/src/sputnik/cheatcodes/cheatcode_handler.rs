@@ -116,9 +116,9 @@ pub(crate) fn convert_log(log: Log) -> Option<String> {
         ),
         LogNamedDecimalUintFilter(inner) => {
             format!(
-                "{}: {:?}",
+                "{}: {}",
                 inner.key,
-                ethers::utils::parse_units(inner.val, inner.decimals.as_u32()).unwrap()
+                ethers::utils::format_units(inner.val, inner.decimals.as_u32()).unwrap()
             )
         }
         LogNamedIntFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
@@ -1414,7 +1414,7 @@ mod tests {
             "addr: 0x2222222222222222222222222222222222222222",
             "key: 0x41b1a0649752af1b28b3dc29a1556eee781e4a4c3a1f7f53f90fa834de098c4d",
             "key: 123000000000000000000",
-            "key: 1234000000000000000000",
+            "key: 0.000000000000001234",
             "key: 123",
             "key: 1234",
             "key: 0x4567",
@@ -1448,6 +1448,24 @@ mod tests {
         .iter()
         .map(ToString::to_string)
         .collect::<Vec<_>>();
+        assert_eq!(logs, expected);
+    }
+
+    #[test]
+    fn console_logs_types() {
+        let mut evm = vm();
+
+        let compiled = COMPILED.find("ConsoleLogs").expect("could not find contract");
+        let (addr, _, _, _) =
+            evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
+
+        // after the evm call is done, we call `logs` and print it all to the user
+        let (_, _, _, logs) =
+            evm.call::<(), _, _>(Address::zero(), addr, "test_log_types()", (), 0.into()).unwrap();
+        let expected = ["String", "1337", "-20", "1245", "true"]
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
         assert_eq!(logs, expected);
     }
 
