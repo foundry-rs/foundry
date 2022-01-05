@@ -204,6 +204,9 @@ async fn main() -> eyre::Result<()> {
             let tokens = foundry_utils::format_tokens(&tokens);
             tokens.for_each(|t| println!("{}", t));
         }
+        Subcommands::AbiEncode { sig, args } => {
+            println!("{}", SimpleCast::abi_encode(&sig, &args)?);
+        }
         Subcommands::FourByte { selector } => {
             let sigs = foundry_utils::fourbyte(&selector).await?;
             sigs.iter().for_each(|sig| println!("{}", sig.0));
