@@ -1209,7 +1209,7 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "0.6.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/add-source-map-parser#191c79ac4238f9ffc57d4137c1e03462704f31c0"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/add-source-map-parser#ed889c0ae31fcf39e924af6a15434c24d851fe47"
 dependencies = [
  "ethers-contract",
  "ethers-core",
@@ -1223,7 +1223,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "0.6.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/add-source-map-parser#191c79ac4238f9ffc57d4137c1e03462704f31c0"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/add-source-map-parser#ed889c0ae31fcf39e924af6a15434c24d851fe47"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1241,7 +1241,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "0.6.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/add-source-map-parser#191c79ac4238f9ffc57d4137c1e03462704f31c0"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/add-source-map-parser#ed889c0ae31fcf39e924af6a15434c24d851fe47"
 dependencies = [
  "Inflector",
  "anyhow",
@@ -1264,7 +1264,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "0.6.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/add-source-map-parser#191c79ac4238f9ffc57d4137c1e03462704f31c0"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/add-source-map-parser#ed889c0ae31fcf39e924af6a15434c24d851fe47"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -1278,7 +1278,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "0.6.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/add-source-map-parser#191c79ac4238f9ffc57d4137c1e03462704f31c0"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/add-source-map-parser#ed889c0ae31fcf39e924af6a15434c24d851fe47"
 dependencies = [
  "arrayvec 0.7.2",
  "bytes",
@@ -1306,7 +1306,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "0.2.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/add-source-map-parser#191c79ac4238f9ffc57d4137c1e03462704f31c0"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/add-source-map-parser#ed889c0ae31fcf39e924af6a15434c24d851fe47"
 dependencies = [
  "ethers-core",
  "reqwest",
@@ -1319,7 +1319,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "0.6.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/add-source-map-parser#191c79ac4238f9ffc57d4137c1e03462704f31c0"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/add-source-map-parser#ed889c0ae31fcf39e924af6a15434c24d851fe47"
 dependencies = [
  "async-trait",
  "ethers-contract",
@@ -1342,7 +1342,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "0.6.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/add-source-map-parser#191c79ac4238f9ffc57d4137c1e03462704f31c0"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/add-source-map-parser#ed889c0ae31fcf39e924af6a15434c24d851fe47"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -1372,7 +1372,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "0.6.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/add-source-map-parser#191c79ac4238f9ffc57d4137c1e03462704f31c0"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/add-source-map-parser#ed889c0ae31fcf39e924af6a15434c24d851fe47"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1395,7 +1395,7 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "0.1.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/add-source-map-parser#191c79ac4238f9ffc57d4137c1e03462704f31c0"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/add-source-map-parser#ed889c0ae31fcf39e924af6a15434c24d851fe47"
 dependencies = [
  "colored",
  "dunce",
@@ -3794,9 +3794,9 @@ checksum = "6e63cff320ae2c57904679ba7cb63280a3dc4613885beafb148ee7bf9aa9042d"
 
 [[package]]
 name = "spki"
-version = "0.5.3"
+version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "964d3a6f8b7ef6d6d20887f4c30c4848f4ffa05f600c87277d30a5b4fe32cb4b"
+checksum = "44d01ac02a6ccf3e07db148d2be087da624fea0221a16152ed01f0496a6b0a27"
 dependencies = [
  "base64ct",
  "der",

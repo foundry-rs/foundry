@@ -140,7 +140,7 @@ impl Tui {
                         identified_contracts,
                         known_contracts,
                         source_code,
-                        current_step,
+                        debug_steps[current_step].ic,
                         creation,
                         src_pane,
                     );
@@ -164,13 +164,14 @@ impl Tui {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn draw_src<B: Backend>(
         f: &mut Frame<B>,
         address: Address,
         identified_contracts: &BTreeMap<Address, (String, Abi)>,
         known_contracts: &BTreeMap<String, (Abi, Bytecode, DeployedBytecode)>,
         source_code: &BTreeMap<u32, String>,
-        current_step: usize,
+        ic: usize,
         creation: bool,
         area: Rect,
     ) {
@@ -188,14 +189,11 @@ impl Tui {
                 } {
                     match sourcemap {
                         Ok(sourcemap) => {
-                            if let Some(source_idx) = sourcemap[current_step].index {
+                            if let Some(source_idx) = sourcemap[ic].index {
                                 if let Some(source) = source_code.get(&source_idx) {
-                                    text_output.extend(Text::raw(format!(
-                                        "{:?}",
-                                        sourcemap[current_step]
-                                    )));
-                                    let offset = sourcemap[current_step].offset;
-                                    let len = sourcemap[current_step].length;
+                                    text_output.extend(Text::raw(format!("{:?}", sourcemap[ic])));
+                                    let offset = sourcemap[ic].offset;
+                                    let len = sourcemap[ic].length;
 
                                     let mut before = source[..offset]
                                         .split_inclusive('\n')
@@ -256,9 +254,7 @@ impl Tui {
                                                             .fg(Color::Gray)
                                                             .bg(Color::DarkGray),
                                                     ),
-                                                    Span::raw(
-                                                        "\u{2800} ".to_string() + &line.to_string(),
-                                                    ),
+                                                    Span::raw("\u{2800} ".to_string() + line),
                                                 ]));
                                                 line_number += 1;
                                             });
@@ -328,7 +324,7 @@ impl Tui {
                                                             .bg(Color::DarkGray),
                                                     ),
                                                     Span::styled(
-                                                        "\u{2800} ".to_string() + &line.to_string(),
+                                                        "\u{2800} ".to_string() + line,
                                                         Style::default(),
                                                     ),
                                                 ]));
@@ -391,7 +387,7 @@ impl Tui {
                                                     .fg(Color::Gray)
                                                     .bg(Color::DarkGray),
                                             ),
-                                            Span::raw("\u{2800} ".to_string() + &line.to_string()),
+                                            Span::raw("\u{2800} ".to_string() + line),
                                         ]));
                                         line_number += 1;
                                     });

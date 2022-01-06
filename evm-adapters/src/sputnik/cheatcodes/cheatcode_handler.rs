@@ -8,6 +8,7 @@ use crate::{
     sputnik::{cheatcodes::memory_stackstate_owned::ExpectedEmit, Executor, SputnikExecutor},
     Evm,
 };
+use std::collections::BTreeMap;
 
 use sputnik::{
     backend::Backend,
@@ -633,6 +634,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         runtime: &mut Runtime,
         code: Rc<Vec<u8>>,
         steps: &mut Vec<DebugStep>,
+        pc_ic: Rc<BTreeMap<usize, usize>>,
     ) -> bool {
         let pc = runtime.machine().position().as_ref().map(|p| *p).unwrap_or_default();
         let mut push_bytes = None;
@@ -655,6 +657,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 memory: runtime.machine().memory().clone(),
                 op: wrapped_op,
                 push_bytes,
+                ic: *pc_ic.get(&pc).as_ref().copied().unwrap_or(&0usize),
             });
             match op {
                 Opcode::CREATE |
@@ -679,6 +682,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 memory: runtime.machine().memory().clone(),
                 op: OpCode::from(Opcode::INVALID),
                 push_bytes,
+                ic: *pc_ic.get(&pc).as_ref().copied().unwrap_or(&0usize),
             });
             true
         }
@@ -696,8 +700,37 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         let mut done = false;
         let mut res = Capture::Exit(ExitReason::Succeed(ExitSucceed::Returned));
         let mut steps = Vec::new();
+        let pc = if creation {
+            &mut self.state_mut().debug_instruction_pointers.0
+        } else {
+            &mut self.state_mut().debug_instruction_pointers.1
+        };
+        let ics = if let Some(pc_ic) = pc.get(&address) {
+            pc_ic.clone()
+        } else {
+            let mut pc_ic: BTreeMap<usize, usize> = BTreeMap::new();
+
+            let mut i = 0;
+            let mut push_ctr = 0usize;
+            while i < code.len() {
+                let wrapped_op = OpCode::from(Opcode(code[i]));
+                pc_ic.insert(i, i - push_ctr);
+
+                if let Some(push_size) = wrapped_op.push_size() {
+                    i += push_size as usize;
+                    i += 1;
+                    push_ctr += push_size as usize;
+                } else {
+                    i += 1;
+                }
+            }
+            let pc_ic = Rc::new(pc_ic);
+
+            pc.insert(address, pc_ic.clone());
+            pc_ic
+        };
         while !done {
-            if self.debug_step(runtime, code.clone(), &mut steps) {
+            if self.debug_step(runtime, code.clone(), &mut steps, ics.clone()) {
                 self.state_mut().debug_mut().push_node(
                     0,
                     DebugNode {

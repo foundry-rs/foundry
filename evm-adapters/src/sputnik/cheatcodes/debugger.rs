@@ -91,6 +91,7 @@ pub struct DebugStep {
     pub memory: Memory,
     pub op: OpCode,
     pub push_bytes: Option<Vec<u8>>,
+    pub ic: usize,
 }
 
 impl Default for DebugStep {
@@ -101,6 +102,7 @@ impl Default for DebugStep {
             memory: Memory::new(0),
             op: OpCode(Opcode::INVALID, None),
             push_bytes: None,
+            ic: 0,
         }
     }
 }

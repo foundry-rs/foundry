@@ -11,7 +11,7 @@ use ethers::{
     types::{H160, H256, U256},
 };
 
-use std::{cell::RefCell, collections::BTreeMap};
+use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
 #[derive(Clone, Default)]
 pub struct RecordAccess {
@@ -49,6 +49,8 @@ pub struct MemoryStackStateOwned<'config, B> {
     pub expected_emits: Vec<ExpectedEmit>,
     pub debug_enabled: bool,
     pub debug_steps: Vec<DebugArena>,
+    /// Instruction pointers that maps an address to a mapping of pc to ic
+    pub debug_instruction_pointers: Dip,
 }
 
 impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
@@ -78,6 +80,9 @@ impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
     }
 }
 
+pub type Dip =
+    (BTreeMap<H160, Rc<BTreeMap<usize, usize>>>, BTreeMap<H160, Rc<BTreeMap<usize, usize>>>);
+
 impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
     pub fn new(
         metadata: StackSubstateMetadata<'config>,
@@ -100,6 +105,7 @@ impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
             expected_emits: Default::default(),
             debug_enabled,
             debug_steps: vec![Default::default()],
+            debug_instruction_pointers: (BTreeMap::new(), BTreeMap::new()),
         }
     }
 }
