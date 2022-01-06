@@ -187,6 +187,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_helpers::Filter;
     use ethers::solc::ProjectPathsConfig;
     use std::path::PathBuf;
 
@@ -212,7 +213,7 @@ mod tests {
 
     fn test_multi_runner<S: Clone, E: Evm<S>>(evm: E) {
         let mut runner = runner(evm);
-        let results = runner.test(Regex::new(".*").unwrap()).unwrap();
+        let results = runner.test(&Filter::new(".*", ".*")).unwrap();
 
         // 6 contracts being built
         assert_eq!(results.keys().len(), 5);
@@ -222,7 +223,7 @@ mod tests {
         }
 
         // can also filter
-        let only_gm = runner.test(Regex::new("testGm.*").unwrap()).unwrap();
+        let only_gm = runner.test(&Filter::new("testGm.*", ".*")).unwrap();
         assert_eq!(only_gm.len(), 1);
 
         assert_eq!(only_gm["GmTest"].len(), 1);
@@ -239,7 +240,7 @@ mod tests {
             let evm = vm();
 
             let mut runner = runner(evm);
-            let results = runner.test(Regex::new(".*").unwrap()).unwrap();
+            let results = runner.test(&Filter::new(".*", ".*")).unwrap();
 
             let reasons = results["DebugLogsTest"]
                 .iter()

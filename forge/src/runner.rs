@@ -397,13 +397,11 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::COMPILED;
+    use crate::test_helpers::{Filter, COMPILED};
     use ethers::solc::artifacts::CompactContractRef;
     use evm_adapters::sputnik::helpers::vm;
 
     mod sputnik {
-        use std::str::FromStr;
-
         use foundry_utils::get_func;
         use proptest::test_runner::Config as FuzzConfig;
 
@@ -433,12 +431,7 @@ mod tests {
             cfg.failure_persistence = None;
             let mut fuzzer = TestRunner::new(cfg);
             let results = runner
-                .run_tests(
-                    &Regex::from_str("testGreeting").unwrap(),
-                    Some(&mut fuzzer),
-                    &init_state,
-                    None,
-                )
+                .run_tests(&Filter::new("testGreeting", ".*"), Some(&mut fuzzer), &init_state, None)
                 .unwrap();
             assert!(results["testGreeting()"].success);
             assert!(results["testGreeting(string)"].success);
@@ -462,12 +455,7 @@ mod tests {
             cfg.failure_persistence = None;
             let mut fuzzer = TestRunner::new(cfg);
             let results = runner
-                .run_tests(
-                    &Regex::from_str("testFuzz.*").unwrap(),
-                    Some(&mut fuzzer),
-                    &init_state,
-                    None,
-                )
+                .run_tests(&Filter::new("testFuzz.*", ".*"), Some(&mut fuzzer), &init_state, None)
                 .unwrap();
             for (_, res) in results {
                 assert!(!res.success);
@@ -566,7 +554,7 @@ mod tests {
         let mut runner =
             ContractRunner::new(&mut evm, compiled.abi.as_ref().unwrap(), addr, None, &[]);
 
-        let res = runner.run_tests(&".*".parse().unwrap(), None, &init_state, None).unwrap();
+        let res = runner.run_tests(&Filter::new(".*", ".*"), None, &init_state, None).unwrap();
         assert!(!res.is_empty());
         assert!(res.iter().all(|(_, result)| result.success));
     }
