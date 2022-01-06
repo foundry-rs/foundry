@@ -184,8 +184,10 @@ pub fn parse_tokens<'a, I: IntoIterator<Item = (&'a ParamType, &'a str)>>(
         .into_iter()
         .map(|(param, value)| {
             let value = match param {
-                // allow addresses to be passed with "0x"
+                // allow addresses and bytes to be passed with "0x"
                 ParamType::Address => value.strip_prefix("0x").unwrap_or(value),
+                ParamType::Bytes => value.strip_prefix("0x").unwrap_or(value),
+                ParamType::FixedBytes(_size) => value.strip_prefix("0x").unwrap_or(value),
                 _ => value,
             };
             if lenient {
