@@ -115,7 +115,7 @@ where
     ///
     /// ```no_run
     /// use cast::Cast;
-    /// use ethers_core::types::Address;
+    /// use ethers_core::types::{Address, Chain};
     /// use ethers_providers::{Provider, Http};
     /// use std::{str::FromStr, convert::TryFrom};
     ///
@@ -126,7 +126,7 @@ where
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let sig = "greet(string)()";
     /// let args = vec!["hello".to_owned()];
-    /// let data = cast.send(from, to, Some((sig, args))).await?;
+    /// let data = cast.send(from, to, Some((sig, args)), Chain::Mainnet, None).await?;
     /// println!("{}", *data);
     /// # Ok(())
     /// # }
@@ -149,7 +149,7 @@ where
     ///
     /// ```no_run
     /// use cast::Cast;
-    /// use ethers_core::types::Address;
+    /// use ethers_core::types::{Address, Chain};
     /// use ethers_providers::{Provider, Http};
     /// use std::{str::FromStr, convert::TryFrom};
     ///
@@ -160,7 +160,7 @@ where
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let sig = "greet(string)()";
     /// let args = vec!["5".to_owned()];
-    /// let data = cast.estimate(from, to, Some((sig, args))).await?;
+    /// let data = cast.estimate(from, to, Some((sig, args)), Chain::Mainnet, None).await?;
     /// println!("{}", data);
     /// # Ok(())
     /// # }
