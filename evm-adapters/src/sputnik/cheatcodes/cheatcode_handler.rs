@@ -385,59 +385,66 @@ fn revert_return_evm<T: ToString>(
 }
 
 impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> {
+    /// Checks whether the provided call reverted with an expected revert reason.
     fn expected_revert(
         &mut self,
         res: ExpectRevertReturn,
         expected_revert: Option<Vec<u8>>,
     ) -> ExpectRevertReturn {
-        let call = res.is_call();
-        if let Some(expected_revert) = expected_revert {
-            let data = match res {
-                ExpectRevertReturn::Create(Capture::Exit((
-                    ExitReason::Revert(_e),
-                    None,
-                    revdata,
-                ))) => Some(revdata),
-                ExpectRevertReturn::Call(Capture::Exit((ExitReason::Revert(_e), revdata))) => {
-                    Some(revdata)
-                }
-                _ => return revert_return_evm(call, None, || "Expected revert did not revert"),
-            };
-            let final_res = if let Some(data) = data {
-                if data.len() >= 4 && data[0..4] == [8, 195, 121, 160] {
-                    // its a revert string
-                    let decoded_data =
-                        ethers::abi::decode(&[ethers::abi::ParamType::Bytes], &data[4..])
-                            .expect("String error code, but not actual string");
-                    let decoded_data = decoded_data[0]
-                        .clone()
-                        .into_bytes()
-                        .expect("Can never fail because it is bytes");
+        // return early if there was no revert expected
+        let expected_revert = match expected_revert {
+            Some(inner) => inner,
+            None => return res,
+        };
 
-                    let err = || {
-                        format!(
-                            "Error != expected error: '{}' != '{}'",
-                            String::from_utf8_lossy(&decoded_data[..]),
-                            String::from_utf8_lossy(&expected_revert)
-                        )
-                    };
-                    revert_return_evm(call, Some((&decoded_data, &expected_revert)), err)
-                } else {
-                    let err = || {
-                        format!(
-                            "Error data != expected error data: 0x{} != 0x{}",
-                            hex::encode(&data),
-                            hex::encode(&expected_revert)
-                        )
-                    };
-                    revert_return_evm(call, Some((&data, &expected_revert)), err)
-                }
-            } else {
-                revert_return_evm(call, None, || "Expected revert did not revert with data")
+        let call = res.is_call();
+
+        // If the call was successful (i.e. did not revert) return
+        // an error. Otherwise, get the return data
+        let data = match res {
+            ExpectRevertReturn::Create(Capture::Exit((ExitReason::Revert(_e), None, revdata))) => {
+                Some(revdata)
+            }
+            ExpectRevertReturn::Call(Capture::Exit((ExitReason::Revert(_e), revdata))) => {
+                Some(revdata)
+            }
+            _ => return revert_return_evm(call, None, || "Expected revert did not revert"),
+        };
+
+        // if there was no revert data return an error
+        let data = match data {
+            Some(inner) => inner,
+            None => {
+                return revert_return_evm(call, None, || "Expected revert did not revert with data")
+            }
+        };
+
+        // do the actual check
+        if data.len() >= 4 && data[0..4] == [8, 195, 121, 160] {
+            // its a revert string
+            let decoded_data = ethers::abi::decode(&[ethers::abi::ParamType::Bytes], &data[4..])
+                .expect("String error code, but not actual string");
+
+            let decoded_data =
+                decoded_data[0].clone().into_bytes().expect("Can never fail because it is bytes");
+
+            let err = || {
+                format!(
+                    "Error != expected error: '{}' != '{}'",
+                    String::from_utf8_lossy(&decoded_data[..]),
+                    String::from_utf8_lossy(&expected_revert)
+                )
             };
-            final_res
+            revert_return_evm(call, Some((&decoded_data, &expected_revert)), err)
         } else {
-            res
+            let err = || {
+                format!(
+                    "Error data != expected error data: 0x{} != 0x{}",
+                    hex::encode(&data),
+                    hex::encode(&expected_revert)
+                )
+            };
+            revert_return_evm(call, Some((&data, &expected_revert)), err)
         }
     }
 
