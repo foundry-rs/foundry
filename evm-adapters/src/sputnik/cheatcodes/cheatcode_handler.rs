@@ -347,26 +347,39 @@ fn evm_error(retdata: &str) -> Capture<(ExitReason, Vec<u8>), Infallible> {
     ))
 }
 
-// helper for creating an exit type for create
-fn revert_return_evm(retdata: &str, succeed: bool, call: bool) -> ExpectRevertReturn {
-    match (succeed, call) {
+// helper for creating the Expected Revert return type, based on if there was a call or a create,
+// and if there was any decoded retdata that matched the expected revert value.
+fn revert_return_evm<T: ToString>(
+    call: bool,
+    result: Option<(&[u8], &[u8])>,
+    err: impl FnOnce() -> T,
+) -> ExpectRevertReturn {
+    let success =
+        result.map(|(retdata, expected_revert)| retdata == expected_revert).unwrap_or(false);
+
+    match (success, call) {
+        // Success case for CALLs needs to return a dummy output value which
+        // can be decoded
         (true, true) => ExpectRevertReturn::Call(Capture::Exit((
             ExitReason::Succeed(ExitSucceed::Returned),
             DUMMY_OUTPUT.to_vec(),
         ))),
-        (false, true) => ExpectRevertReturn::Call(Capture::Exit((
-            ExitReason::Revert(ExitRevert::Reverted),
-            ethers::abi::encode(&[Token::String(retdata.to_owned())]),
-        ))),
+        // Success case for CREATE doesn't need to return any value but must return a
+        // dummy address
         (true, false) => ExpectRevertReturn::Create(Capture::Exit((
             ExitReason::Succeed(ExitSucceed::Returned),
             Some(Address::from_str("0000000000000000000000000000000000000001").unwrap()),
             Vec::new(),
         ))),
+        // Failure cases just return the abi encoded error
+        (false, true) => ExpectRevertReturn::Call(Capture::Exit((
+            ExitReason::Revert(ExitRevert::Reverted),
+            ethers::abi::encode(&[Token::String(err().to_string())]),
+        ))),
         (false, false) => ExpectRevertReturn::Create(Capture::Exit((
             ExitReason::Revert(ExitRevert::Reverted),
             None,
-            ethers::abi::encode(&[Token::String(retdata.to_owned())]),
+            ethers::abi::encode(&[Token::String(err().to_string())]),
         ))),
     }
 }
@@ -388,7 +401,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 ExpectRevertReturn::Call(Capture::Exit((ExitReason::Revert(_e), revdata))) => {
                     Some(revdata)
                 }
-                _ => return revert_return_evm("Expected revert did not revert", false, call),
+                _ => return revert_return_evm(call, None, || "Expected revert did not revert"),
             };
             let final_res = if let Some(data) = data {
                 if data.len() >= 4 && data[0..4] == [8, 195, 121, 160] {
@@ -400,36 +413,27 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                         .clone()
                         .into_bytes()
                         .expect("Can never fail because it is bytes");
-                    if decoded_data == *expected_revert {
-                        return revert_return_evm("", true, call)
-                    } else {
-                        return revert_return_evm(
-                            &*format!(
-                                "Error != expected error: '{}' != '{}'",
-                                String::from_utf8_lossy(&decoded_data[..]),
-                                String::from_utf8_lossy(&expected_revert)
-                            ),
-                            false,
-                            call,
-                        )
-                    }
-                }
 
-                if data == *expected_revert {
-                    revert_return_evm("", true, call)
+                    let err = || {
+                        format!(
+                            "Error != expected error: '{}' != '{}'",
+                            String::from_utf8_lossy(&decoded_data[..]),
+                            String::from_utf8_lossy(&expected_revert)
+                        )
+                    };
+                    revert_return_evm(call, Some((&decoded_data, &expected_revert)), err)
                 } else {
-                    revert_return_evm(
-                        &*format!(
+                    let err = || {
+                        format!(
                             "Error data != expected error data: 0x{} != 0x{}",
-                            hex::encode(data),
-                            hex::encode(expected_revert)
-                        ),
-                        false,
-                        call,
-                    )
+                            hex::encode(&data),
+                            hex::encode(&expected_revert)
+                        )
+                    };
+                    revert_return_evm(call, Some((&data, &expected_revert)), err)
                 }
             } else {
-                revert_return_evm("Expected revert did not revert with data", false, call)
+                revert_return_evm(call, None, || "Expected revert did not revert with data")
             };
             final_res
         } else {
@@ -1344,7 +1348,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
                 .filter(|expected| expected.depth == curr_depth)
                 .all(|expected| expected.found)
         {
-            return revert_return_evm("Log != expected log", false, false).into_create_inner()
+            return revert_return_evm(false, None, || "Log != expected log").into_create_inner()
         }
 
         self.expected_revert(ExpectRevertReturn::Create(res), expected_revert).into_create_inner()
