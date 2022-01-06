@@ -42,7 +42,7 @@ impl Cmd for CreateArgs {
         let (abi, bin, _) = super::read_artifact(&project, compiled, self.contract.clone())?;
 
         // Add arguments to constructor
-        let provider = Provider::<Http>::try_from(self.eth.rpc_url.as_str())?;
+        let provider = Provider::<Http>::try_from(self.eth.rpc_url()?)?;
         let params = match abi.constructor {
             Some(ref v) => self.parse_constructor_args(v)?,
             None => vec![],
