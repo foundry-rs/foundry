@@ -636,10 +636,13 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         steps: &mut Vec<DebugStep>,
         pc_ic: Rc<BTreeMap<usize, usize>>,
     ) -> bool {
+        // grab the pc, opcode and stack
         let pc = runtime.machine().position().as_ref().map(|p| *p).unwrap_or_default();
         let mut push_bytes = None;
         if let Some((op, stack)) = runtime.machine().inspect() {
             let wrapped_op = OpCode::from(op);
+
+            // check how big the push size is
             if let Some(push_size) = wrapped_op.push_size() {
                 let push_start = pc + 1;
                 let push_end = pc + 1 + push_size as usize;
@@ -649,6 +652,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                     panic!("PUSH{} exceeds codesize?", push_size)
                 }
             }
+            // grab the stack data and reverse it (last element is "top" of stack)
             let mut stack = stack.data().clone();
             stack.reverse();
             steps.push(DebugStep {
@@ -674,6 +678,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 _ => false,
             }
         } else {
+            // failure case.
             let mut stack = runtime.machine().stack().data().clone();
             stack.reverse();
             steps.push(DebugStep {
@@ -688,7 +693,6 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         }
     }
 
-    /// Loop stepping the runtime until it stops.
     fn debug_run(
         &mut self,
         runtime: &mut Runtime,
@@ -700,14 +704,19 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         let mut done = false;
         let mut res = Capture::Exit(ExitReason::Succeed(ExitSucceed::Returned));
         let mut steps = Vec::new();
+        // grab the debug instruction pointers for either construct or runtime bytecode
         let pc = if creation {
             &mut self.state_mut().debug_instruction_pointers.0
         } else {
             &mut self.state_mut().debug_instruction_pointers.1
         };
         let ics = if let Some(pc_ic) = pc.get(&address) {
+            // grabs an Rc<BTreemap> of an already created pc -> ic mapping
             pc_ic.clone()
         } else {
+            // builds a program counter to instruction counter map
+            // basically this strips away bytecodes to make it work
+            // with the sourcemap output from the solc compiler
             let mut pc_ic: BTreeMap<usize, usize> = BTreeMap::new();
 
             let mut i = 0;
@@ -730,6 +739,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
             pc_ic
         };
         while !done {
+            // debug step doesnt actually execute the step, it just peeks into the machine
             if self.debug_step(runtime, code.clone(), &mut steps, ics.clone()) {
                 self.state_mut().debug_mut().push_node(
                     0,
@@ -743,6 +753,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 );
                 steps = Vec::new();
             }
+            // actually executes the opcode step
             let r = runtime.step(self);
             match r {
                 Ok(()) => {}
@@ -1233,6 +1244,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
                 new_context,
             );
 
+            // handle expected emits
             if !self.state_mut().expected_emits.is_empty() &&
                 !self
                     .state()
@@ -1244,6 +1256,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
                 return evm_error("Log != expected log")
             }
 
+            // handle expected reverts
             if let Some(expected_revert) = expected_revert {
                 let final_res = match res {
                     Capture::Exit((ExitReason::Revert(_e), data)) => {

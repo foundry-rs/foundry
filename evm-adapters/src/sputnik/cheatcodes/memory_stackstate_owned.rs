@@ -37,17 +37,29 @@ pub struct ExpectedEmit {
 pub struct MemoryStackStateOwned<'config, B> {
     pub backend: B,
     pub substate: MemoryStackSubstate<'config>,
+    /// Tracing enabled
     pub trace_enabled: bool,
+    /// Current call index used for incrementing traces index vec below
     pub call_index: usize,
+    /// Temporary value used for putting logs in the correct trace
     pub trace_index: usize,
+    /// Arena allocator that holds a tree of traces
     pub traces: Vec<CallTraceArena>,
+    /// Expected revert storage of bytes
     pub expected_revert: Option<Vec<u8>>,
+    /// Msg.sender of next call
     pub next_msg_sender: Option<H160>,
+    /// Tuple of (address that called startPrank, new address to use, depth)
     pub msg_sender: Option<(H160, H160, usize)>,
+    /// List of accesses done during a call
     pub accesses: Option<RecordAccess>,
+    /// All logs accumulated (regardless of revert status)
     pub all_logs: Vec<String>,
+    /// Expected events by end of the next call
     pub expected_emits: Vec<ExpectedEmit>,
+    /// Debug enabled
     pub debug_enabled: bool,
+    /// An arena allocator of DebugNodes for debugging purposes
     pub debug_steps: Vec<DebugArena>,
     /// Instruction pointers that maps an address to a mapping of pc to ic
     pub debug_instruction_pointers: Dip,

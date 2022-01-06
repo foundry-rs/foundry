@@ -175,8 +175,9 @@ impl Tui {
         creation: bool,
         area: Rect,
     ) {
-        let block_source_code =
-            Block::default().title(format!("Contract construction: {}", creation)).borders(Borders::ALL);
+        let block_source_code = Block::default()
+            .title(format!("Contract construction: {}", creation))
+            .borders(Borders::ALL);
 
         let mut text_output: Text = Text::from("");
 
@@ -261,7 +262,11 @@ impl Tui {
                                                             .fg(Color::Gray)
                                                             .bg(Color::DarkGray),
                                                     ),
-                                                    Span::styled("\u{2800} ".to_string() + line, Style::default().add_modifier(Modifier::DIM)),
+                                                    Span::styled(
+                                                        "\u{2800} ".to_string() + line,
+                                                        Style::default()
+                                                            .add_modifier(Modifier::DIM),
+                                                    ),
                                                 ]));
                                                 line_number += 1;
                                             });
@@ -334,7 +339,8 @@ impl Tui {
                                                     ),
                                                     Span::styled(
                                                         "\u{2800} ".to_string() + line,
-                                                        Style::default().add_modifier(Modifier::DIM),
+                                                        Style::default()
+                                                            .add_modifier(Modifier::DIM),
                                                     ),
                                                 ]));
 
@@ -397,7 +403,10 @@ impl Tui {
                                                     .fg(Color::Gray)
                                                     .bg(Color::DarkGray),
                                             ),
-                                            Span::styled("\u{2800} ".to_string() + line, Style::default().add_modifier(Modifier::DIM),),
+                                            Span::styled(
+                                                "\u{2800} ".to_string() + line,
+                                                Style::default().add_modifier(Modifier::DIM),
+                                            ),
                                         ]));
                                         line_number += 1;
                                     });
