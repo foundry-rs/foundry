@@ -71,39 +71,30 @@ impl Cmd for RunArgs {
         // if we have a high verbosity, we want all possible compiler data not just for this
         // contract in case the transaction interacts with others
         if evm_opts.debug || evm_opts.verbosity > 3 {
-            let project = self.opts.project()?;
-            println!("compiling broader repo...");
-            let output = project.compile()?;
-            if output.has_compiler_errors() {
-                // return the diagnostics error back to the user.
-                eyre::bail!(output.to_string())
-            } else if output.is_unchanged() {
-                println!("no files changed, compilation skippped.");
-            } else {
-                println!("success.");
-            }
+            if let Ok(project) = self.opts.project() {
+                let output = compile(&project)?;
+                let contracts = output.output();
 
-            let contracts = output.output();
-
-            for (contract_name, contract) in contracts.contracts_into_iter() {
-                highlevel_known_contracts.insert(
-                    contract_name.to_string(),
-                    (
-                        contract.abi.clone().expect("no abi"),
-                        contract
-                            .evm
-                            .clone()
-                            .expect("no evm")
-                            .bytecode
-                            .expect("no creation bytecode"),
-                        contract
-                            .evm
-                            .clone()
-                            .expect("no evm")
-                            .deployed_bytecode
-                            .expect("no deployed bytecode"),
-                    ),
-                );
+                for (contract_name, contract) in contracts.contracts_into_iter() {
+                    highlevel_known_contracts.insert(
+                        contract_name.to_string(),
+                        (
+                            contract.abi.clone().expect("no abi"),
+                            contract
+                                .evm
+                                .clone()
+                                .expect("no evm")
+                                .bytecode
+                                .expect("no creation bytecode"),
+                            contract
+                                .evm
+                                .clone()
+                                .expect("no evm")
+                                .deployed_bytecode
+                                .expect("no deployed bytecode"),
+                        ),
+                    );
+                }
             }
         }
 
