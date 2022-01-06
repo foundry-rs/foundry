@@ -359,16 +359,13 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
 
         // instantiate the fuzzed evm in line
         let evm = FuzzedExecutor::new(self.evm, runner, self.sender);
-        println!("starting fuzz");
         let FuzzTestResult { cases, test_error } = evm.fuzz(func, self.address, should_fail);
 
-        println!("done fuzzing");
         let mut traces: Option<Vec<CallTraceArena>> = None;
         let mut identified_contracts: Option<BTreeMap<Address, (String, Abi)>> = None;
 
         if prev {
             if let Some(ref error) = test_error {
-                println!("generating trace for fuzz");
                 // we want traces for a failed fuzz
                 if let TestError::Fail(_reason, bytes) = &error.test_error {
                     let _ = self.evm.set_tracing_enabled(true);
