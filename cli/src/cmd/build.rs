@@ -94,7 +94,7 @@ impl BuildArgs {
             root.join("contracts")
         } else {
             // no contract source directory was provided, determine the source directory
-            utils::find_contracts_dir(&root)
+            ProjectPathsConfig::find_source_dir(&root)
         }
     }
 
@@ -107,7 +107,7 @@ impl BuildArgs {
             root.join("artifacts")
         } else {
             // no artifacts source directory was provided, determine the artifacts directory
-            utils::find_artifacts_dir(&root)
+            ProjectPathsConfig::find_artifacts_dir(&root)
         }
     }
 
@@ -119,7 +119,7 @@ impl BuildArgs {
                 vec![root.join("node_modules")]
             } else {
                 // no libs directories provided
-                utils::find_libs(&root)
+                ProjectPathsConfig::find_libs(&root)
             }
         } else {
             let mut libs = self.lib_paths.clone();
