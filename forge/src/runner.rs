@@ -543,7 +543,7 @@ mod tests {
         }
     }
 
-    mod evmodin {
+    mod evmodin_test {
         use super::*;
         use evm_adapters::evmodin::EvmOdin;
         use evmodin::{tracing::NoopTracer, util::mocked_host::MockedHost, Revision};
