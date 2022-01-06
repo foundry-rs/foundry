@@ -28,7 +28,7 @@ use eyre::Result;
 use tui::{
     backend::{Backend, CrosstermBackend},
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
     terminal::Frame,
     text::{Span, Spans},
     widgets::{Block, Borders, Paragraph, Wrap},
@@ -191,7 +191,6 @@ impl Tui {
                         Ok(sourcemap) => {
                             if let Some(source_idx) = sourcemap[ic].index {
                                 if let Some(source) = source_code.get(&source_idx) {
-                                    text_output.extend(Text::raw(format!("{:?}", sourcemap[ic])));
                                     let offset = sourcemap[ic].offset;
                                     let len = sourcemap[ic].length;
 
@@ -254,7 +253,7 @@ impl Tui {
                                                             .fg(Color::Gray)
                                                             .bg(Color::DarkGray),
                                                     ),
-                                                    Span::raw("\u{2800} ".to_string() + line),
+                                                    Span::styled("\u{2800} ".to_string() + line, Style::default().add_modifier(Modifier::DIM)),
                                                 ]));
                                                 line_number += 1;
                                             });
@@ -267,16 +266,17 @@ impl Tui {
                                                         max_line_num = max_line_num
                                                     ),
                                                     Style::default()
-                                                        .fg(Color::Green)
-                                                        .bg(Color::DarkGray),
+                                                        .fg(Color::Cyan)
+                                                        .bg(Color::DarkGray)
+                                                        .add_modifier(Modifier::BOLD),
                                                 ),
                                                 Span::raw("\u{2800} "),
                                                 Span::raw(last),
                                                 Span::styled(
                                                     actual[0].to_string(),
                                                     Style::default()
-                                                        .fg(Color::White)
-                                                        .bg(Color::DarkGray),
+                                                        .fg(Color::Cyan)
+                                                        .add_modifier(Modifier::BOLD),
                                                 ),
                                             ]));
                                             line_number += 1;
@@ -290,8 +290,9 @@ impl Tui {
                                                             max_line_num = max_line_num
                                                         ),
                                                         Style::default()
-                                                            .fg(Color::Green)
-                                                            .bg(Color::DarkGray),
+                                                            .fg(Color::Cyan)
+                                                            .bg(Color::DarkGray)
+                                                            .add_modifier(Modifier::BOLD),
                                                     ),
                                                     Span::raw("\u{2800} "),
                                                     Span::styled(
@@ -303,8 +304,8 @@ impl Tui {
                                                             s.to_string()
                                                         },
                                                         Style::default()
-                                                            .fg(Color::White)
-                                                            .bg(Color::DarkGray),
+                                                            .fg(Color::Cyan)
+                                                            .add_modifier(Modifier::BOLD),
                                                     ),
                                                 ]));
                                                 line_number += 1;
@@ -325,7 +326,7 @@ impl Tui {
                                                     ),
                                                     Span::styled(
                                                         "\u{2800} ".to_string() + line,
-                                                        Style::default(),
+                                                        Style::default().add_modifier(Modifier::DIM),
                                                     ),
                                                 ]));
 
@@ -340,8 +341,9 @@ impl Tui {
                                                             max_line_num = max_line_num
                                                         ),
                                                         Style::default()
-                                                            .fg(Color::Green)
-                                                            .bg(Color::DarkGray),
+                                                            .fg(Color::Cyan)
+                                                            .bg(Color::DarkGray)
+                                                            .add_modifier(Modifier::BOLD),
                                                     ),
                                                     Span::raw("\u{2800} "),
                                                     Span::styled(
@@ -351,8 +353,8 @@ impl Tui {
                                                             s.to_string()
                                                         },
                                                         Style::default()
-                                                            .fg(Color::White)
-                                                            .bg(Color::DarkGray),
+                                                            .fg(Color::Cyan)
+                                                            .add_modifier(Modifier::BOLD),
                                                     ),
                                                 ]));
                                                 line_number += 1;
@@ -387,7 +389,7 @@ impl Tui {
                                                     .fg(Color::Gray)
                                                     .bg(Color::DarkGray),
                                             ),
-                                            Span::raw("\u{2800} ".to_string() + line),
+                                            Span::styled("\u{2800} ".to_string() + line, Style::default().add_modifier(Modifier::DIM),),
                                         ]));
                                         line_number += 1;
                                     });
