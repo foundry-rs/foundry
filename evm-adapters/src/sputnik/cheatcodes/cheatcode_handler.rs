@@ -27,7 +27,7 @@ use ethers::{
     signers::{LocalWallet, Signer},
     types::{Address, H160, H256, U256},
 };
-use std::convert::Infallible;
+use std::{convert::Infallible, str::FromStr};
 
 use crate::sputnik::cheatcodes::patch_hardhat_console_log_selector;
 use once_cell::sync::Lazy;
@@ -46,6 +46,31 @@ pub static CHEATCODE_ADDRESS: Lazy<Address> = Lazy::new(|| {
 pub static CONSOLE_ADDRESS: Lazy<Address> = Lazy::new(|| {
     Address::from_slice(&hex::decode("000000000000000000636F6e736F6c652e6c6f67").unwrap())
 });
+
+/// Wrapper around both return types for expectRevert in call or create
+enum ExpectRevertReturn {
+    Call(Capture<(ExitReason, Vec<u8>), Infallible>),
+    Create(Capture<(ExitReason, Option<H160>, Vec<u8>), Infallible>),
+}
+
+impl ExpectRevertReturn {
+    pub fn into_call_inner(self) -> Capture<(ExitReason, Vec<u8>), Infallible> {
+        match self {
+            ExpectRevertReturn::Call(inner) => inner,
+            _ => panic!("tried to get call response inner from a create"),
+        }
+    }
+    pub fn into_create_inner(self) -> Capture<(ExitReason, Option<H160>, Vec<u8>), Infallible> {
+        match self {
+            ExpectRevertReturn::Create(inner) => inner,
+            _ => panic!("tried to get create response inner from a call"),
+        }
+    }
+
+    pub fn is_call(&self) -> bool {
+        matches!(self, ExpectRevertReturn::Call(..))
+    }
+}
 
 /// For certain cheatcodes, we may internally change the status of the call, i.e. in
 /// `expectRevert`. Solidity will see a successful call and attempt to abi.decode for the called
@@ -322,7 +347,107 @@ fn evm_error(retdata: &str) -> Capture<(ExitReason, Vec<u8>), Infallible> {
     ))
 }
 
+// helper for creating the Expected Revert return type, based on if there was a call or a create,
+// and if there was any decoded retdata that matched the expected revert value.
+fn revert_return_evm<T: ToString>(
+    call: bool,
+    result: Option<(&[u8], &[u8])>,
+    err: impl FnOnce() -> T,
+) -> ExpectRevertReturn {
+    let success =
+        result.map(|(retdata, expected_revert)| retdata == expected_revert).unwrap_or(false);
+
+    match (success, call) {
+        // Success case for CALLs needs to return a dummy output value which
+        // can be decoded
+        (true, true) => ExpectRevertReturn::Call(Capture::Exit((
+            ExitReason::Succeed(ExitSucceed::Returned),
+            DUMMY_OUTPUT.to_vec(),
+        ))),
+        // Success case for CREATE doesn't need to return any value but must return a
+        // dummy address
+        (true, false) => ExpectRevertReturn::Create(Capture::Exit((
+            ExitReason::Succeed(ExitSucceed::Returned),
+            Some(Address::from_str("0000000000000000000000000000000000000001").unwrap()),
+            Vec::new(),
+        ))),
+        // Failure cases just return the abi encoded error
+        (false, true) => ExpectRevertReturn::Call(Capture::Exit((
+            ExitReason::Revert(ExitRevert::Reverted),
+            ethers::abi::encode(&[Token::String(err().to_string())]),
+        ))),
+        (false, false) => ExpectRevertReturn::Create(Capture::Exit((
+            ExitReason::Revert(ExitRevert::Reverted),
+            None,
+            ethers::abi::encode(&[Token::String(err().to_string())]),
+        ))),
+    }
+}
+
 impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> {
+    /// Checks whether the provided call reverted with an expected revert reason.
+    fn expected_revert(
+        &mut self,
+        res: ExpectRevertReturn,
+        expected_revert: Option<Vec<u8>>,
+    ) -> ExpectRevertReturn {
+        // return early if there was no revert expected
+        let expected_revert = match expected_revert {
+            Some(inner) => inner,
+            None => return res,
+        };
+
+        let call = res.is_call();
+
+        // If the call was successful (i.e. did not revert) return
+        // an error. Otherwise, get the return data
+        let data = match res {
+            ExpectRevertReturn::Create(Capture::Exit((ExitReason::Revert(_e), None, revdata))) => {
+                Some(revdata)
+            }
+            ExpectRevertReturn::Call(Capture::Exit((ExitReason::Revert(_e), revdata))) => {
+                Some(revdata)
+            }
+            _ => return revert_return_evm(call, None, || "Expected revert did not revert"),
+        };
+
+        // if there was no revert data return an error
+        let data = match data {
+            Some(inner) => inner,
+            None => {
+                return revert_return_evm(call, None, || "Expected revert did not revert with data")
+            }
+        };
+
+        // do the actual check
+        if data.len() >= 4 && data[0..4] == [8, 195, 121, 160] {
+            // its a revert string
+            let decoded_data = ethers::abi::decode(&[ethers::abi::ParamType::Bytes], &data[4..])
+                .expect("String error code, but not actual string");
+
+            let decoded_data =
+                decoded_data[0].clone().into_bytes().expect("Can never fail because it is bytes");
+
+            let err = || {
+                format!(
+                    "Error != expected error: '{}' != '{}'",
+                    String::from_utf8_lossy(&decoded_data[..]),
+                    String::from_utf8_lossy(&expected_revert)
+                )
+            };
+            revert_return_evm(call, Some((&decoded_data, &expected_revert)), err)
+        } else {
+            let err = || {
+                format!(
+                    "Error data != expected error data: 0x{} != 0x{}",
+                    hex::encode(&data),
+                    hex::encode(&expected_revert)
+                )
+            };
+            revert_return_evm(call, Some((&data, &expected_revert)), err)
+        }
+    }
+
     /// Given a transaction's calldata, it tries to parse it a console call and print the call
     fn console_log(&mut self, input: Vec<u8>) -> Capture<(ExitReason, Vec<u8>), Infallible> {
         // replacing hardhat style selectors (`uint`) with abigen style (`uint256`)
@@ -786,7 +911,6 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         let pre_index = self.state().trace_index;
 
         let address = self.create_address(scheme);
-
         let trace = self.start_trace(address, init_code.clone(), value, true);
 
         macro_rules! try_or_fail {
@@ -1031,51 +1155,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
                 return evm_error("Log != expected log")
             }
 
-            if let Some(expected_revert) = expected_revert {
-                let final_res = match res {
-                    Capture::Exit((ExitReason::Revert(_e), data)) => {
-                        if data.len() >= 4 && data[0..4] == [8, 195, 121, 160] {
-                            // its a revert string
-                            let decoded_data =
-                                ethers::abi::decode(&[ethers::abi::ParamType::Bytes], &data[4..])
-                                    .expect("String error code, but not actual string");
-                            let decoded_data = decoded_data[0]
-                                .clone()
-                                .into_bytes()
-                                .expect("Can never fail because it is bytes");
-                            if decoded_data == *expected_revert {
-                                return Capture::Exit((
-                                    ExitReason::Succeed(ExitSucceed::Returned),
-                                    DUMMY_OUTPUT.to_vec(),
-                                ))
-                            } else {
-                                return evm_error(&*format!(
-                                    "Error != expected error: '{}' != '{}'",
-                                    String::from_utf8_lossy(&decoded_data[..]),
-                                    String::from_utf8_lossy(&expected_revert)
-                                ))
-                            }
-                        }
-
-                        if data == *expected_revert {
-                            Capture::Exit((
-                                ExitReason::Succeed(ExitSucceed::Returned),
-                                DUMMY_OUTPUT.to_vec(),
-                            ))
-                        } else {
-                            evm_error(&*format!(
-                                "Error data != expected error data: 0x{} != 0x{}",
-                                hex::encode(data),
-                                hex::encode(expected_revert)
-                            ))
-                        }
-                    }
-                    _ => evm_error("Expected revert call did not revert"),
-                };
-                final_res
-            } else {
-                res
-            }
+            self.expected_revert(ExpectRevertReturn::Call(res), expected_revert).into_call_inner()
         }
     }
 
@@ -1237,7 +1317,48 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
         init_code: Vec<u8>,
         target_gas: Option<u64>,
     ) -> Capture<(ExitReason, Option<H160>, Vec<u8>), Self::CreateInterrupt> {
-        self.create_inner(caller, scheme, value, init_code, target_gas, true)
+        // modify execution context depending on the cheatcode
+        let expected_revert = self.state_mut().expected_revert.take();
+        let mut new_caller = caller;
+        let mut new_scheme = scheme;
+        let curr_depth =
+            if let Some(depth) = self.state().metadata().depth() { depth + 1 } else { 0 };
+
+        // handle `startPrank` - see apply_cheatcodes for more info
+        if let Some((original_msg_sender, permanent_caller, depth)) = self.state().msg_sender {
+            if curr_depth == depth && new_caller == original_msg_sender {
+                new_caller = permanent_caller;
+            }
+        }
+
+        // handle normal `prank`
+        if let Some(caller) = self.state_mut().next_msg_sender.take() {
+            new_caller = caller;
+        }
+
+        if caller != new_caller {
+            new_scheme = match scheme {
+                CreateScheme::Legacy { .. } => CreateScheme::Legacy { caller: new_caller },
+                CreateScheme::Create2 { code_hash, salt, .. } => {
+                    CreateScheme::Create2 { caller: new_caller, code_hash, salt }
+                }
+                _ => scheme,
+            };
+        }
+
+        let res = self.create_inner(new_caller, new_scheme, value, init_code, target_gas, true);
+        if !self.state_mut().expected_emits.is_empty() &&
+            !self
+                .state()
+                .expected_emits
+                .iter()
+                .filter(|expected| expected.depth == curr_depth)
+                .all(|expected| expected.found)
+        {
+            return revert_return_evm(false, None, || "Log != expected log").into_create_inner()
+        }
+
+        self.expected_revert(ExpectRevertReturn::Create(res), expected_revert).into_create_inner()
     }
 
     fn pre_validate(
