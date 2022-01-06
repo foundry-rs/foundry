@@ -37,10 +37,10 @@ pub struct RunArgs {
 
     #[structopt(
         long,
-        short = "tc",
+        short,
         help = "the contract you want to call and deploy, only necessary if there are more than 1 contract (Interfaces do not count) definitions on the script"
     )]
-    pub contract: Option<String>,
+    pub target_contract: Option<String>,
 
     #[structopt(
         long,
@@ -62,40 +62,49 @@ impl Cmd for RunArgs {
             evm_opts.verbosity = 3;
         }
 
-        let project = self.opts.project()?;
-        println!("compiling broader repo...");
-        let output = project.compile()?;
-        if output.has_compiler_errors() {
-            // return the diagnostics error back to the user.
-            eyre::bail!(output.to_string())
-        } else if output.is_unchanged() {
-            println!("no files changed, compilation skippped.");
-        } else {
-            println!("success.");
-        }
-
         // This is just the contracts compiled, but we need to merge this with the read cached
         // artifacts
 
         let func = IntoFunction::into(self.sig.as_deref().unwrap_or("run()"));
         let BuildOutput { contract, mut highlevel_known_contracts, sources } = self.build()?;
 
-        let contracts = output.output();
+        // if we have a high verbosity, we want all possible compiler data not just for this
+        // contract in case the transaction interacts with others
+        if evm_opts.debug || evm_opts.verbosity > 3 {
+            let project = self.opts.project()?;
+            println!("compiling broader repo...");
+            let output = project.compile()?;
+            if output.has_compiler_errors() {
+                // return the diagnostics error back to the user.
+                eyre::bail!(output.to_string())
+            } else if output.is_unchanged() {
+                println!("no files changed, compilation skippped.");
+            } else {
+                println!("success.");
+            }
 
-        for (contract_name, contract) in contracts.contracts_into_iter() {
-            highlevel_known_contracts.insert(
-                contract_name.to_string(),
-                (
-                    contract.abi.clone().expect("no abi"),
-                    contract.evm.clone().expect("no evm").bytecode.expect("no creation bytecode"),
-                    contract
-                        .evm
-                        .clone()
-                        .expect("no evm")
-                        .deployed_bytecode
-                        .expect("no deployed bytecode"),
-                ),
-            );
+            let contracts = output.output();
+
+            for (contract_name, contract) in contracts.contracts_into_iter() {
+                highlevel_known_contracts.insert(
+                    contract_name.to_string(),
+                    (
+                        contract.abi.clone().expect("no abi"),
+                        contract
+                            .evm
+                            .clone()
+                            .expect("no evm")
+                            .bytecode
+                            .expect("no creation bytecode"),
+                        contract
+                            .evm
+                            .clone()
+                            .expect("no evm")
+                            .deployed_bytecode
+                            .expect("no deployed bytecode"),
+                    ),
+                );
+            }
         }
 
         let known_contracts = highlevel_known_contracts
@@ -262,7 +271,7 @@ impl RunArgs {
             Default::default();
 
         // get the specific contract
-        let contract = if let Some(ref contract_name) = self.contract {
+        let contract = if let Some(ref contract_name) = self.target_contract {
             let (_name, contract) = contracts
                 .contracts_into_iter()
                 .find(|(name, _contract)| name == contract_name)
