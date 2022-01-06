@@ -1,3 +1,5 @@
+use crate::TestFilter;
+
 use ethers::{
     abi::{Abi, Function, Token},
     types::{Address, Bytes},
@@ -9,7 +11,6 @@ use evm_adapters::{
     Evm, EvmError,
 };
 use eyre::{Context, Result};
-use regex::Regex;
 use std::{collections::BTreeMap, fmt, marker::PhantomData, time::Instant};
 
 use proptest::test_runner::{TestError, TestRunner};
@@ -171,7 +172,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
     /// Runs all tests for a contract whose names match the provided regular expression
     pub fn run_tests(
         &mut self,
-        regex: &Regex,
+        filter: &impl TestFilter,
         fuzzer: Option<&mut TestRunner>,
         init_state: &S,
         known_contracts: Option<&BTreeMap<String, (Abi, Vec<u8>)>>,
@@ -184,7 +185,7 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
             .functions()
             .into_iter()
             .filter(|func| func.name.starts_with("test"))
-            .filter(|func| regex.is_match(&func.name))
+            .filter(|func| filter.matches_test(&func.name))
             .collect::<Vec<_>>();
 
         // run all unit tests
@@ -396,13 +397,11 @@ impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::COMPILED;
+    use crate::test_helpers::{Filter, COMPILED};
     use ethers::solc::artifacts::CompactContractRef;
     use evm_adapters::sputnik::helpers::vm;
 
     mod sputnik {
-        use std::str::FromStr;
-
         use foundry_utils::get_func;
         use proptest::test_runner::Config as FuzzConfig;
 
@@ -432,12 +431,7 @@ mod tests {
             cfg.failure_persistence = None;
             let mut fuzzer = TestRunner::new(cfg);
             let results = runner
-                .run_tests(
-                    &Regex::from_str("testGreeting").unwrap(),
-                    Some(&mut fuzzer),
-                    &init_state,
-                    None,
-                )
+                .run_tests(&Filter::new("testGreeting", ".*"), Some(&mut fuzzer), &init_state, None)
                 .unwrap();
             assert!(results["testGreeting()"].success);
             assert!(results["testGreeting(string)"].success);
@@ -461,12 +455,7 @@ mod tests {
             cfg.failure_persistence = None;
             let mut fuzzer = TestRunner::new(cfg);
             let results = runner
-                .run_tests(
-                    &Regex::from_str("testFuzz.*").unwrap(),
-                    Some(&mut fuzzer),
-                    &init_state,
-                    None,
-                )
+                .run_tests(&Filter::new("testFuzz.*", ".*"), Some(&mut fuzzer), &init_state, None)
                 .unwrap();
             for (_, res) in results {
                 assert!(!res.success);
@@ -565,7 +554,7 @@ mod tests {
         let mut runner =
             ContractRunner::new(&mut evm, compiled.abi.as_ref().unwrap(), addr, None, &[]);
 
-        let res = runner.run_tests(&".*".parse().unwrap(), None, &init_state, None).unwrap();
+        let res = runner.run_tests(&Filter::new(".*", ".*"), None, &init_state, None).unwrap();
         assert!(!res.is_empty());
         assert!(res.iter().all(|(_, result)| result.success));
     }

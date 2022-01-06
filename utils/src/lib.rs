@@ -7,6 +7,7 @@ use ethers_core::{
     },
     types::*,
 };
+use ethers_etherscan::Client;
 use eyre::{Result, WrapErr};
 use serde::Deserialize;
 
@@ -175,6 +176,27 @@ pub fn get_func(sig: &str) -> Result<Function> {
     Ok(func.clone())
 }
 
+pub async fn get_func_etherscan(
+    function_name: &str,
+    contract: Address,
+    args: Vec<String>,
+    chain: Chain,
+    etherscan_api_key: String,
+) -> Result<Function> {
+    let client = Client::new(chain, etherscan_api_key)?;
+    let abi = client.contract_abi(contract).await?;
+    let funcs = abi.functions.get(function_name).unwrap();
+
+    for func in funcs {
+        let res = encode_args(func, &args);
+        if res.is_ok() {
+            return Ok(func.clone())
+        }
+    }
+
+    Err(eyre::eyre!("Function not found"))
+}
+
 /// Parses string input as Token against the expected ParamType
 pub fn parse_tokens<'a, I: IntoIterator<Item = (&'a ParamType, &'a str)>>(
     params: I,
@@ -184,8 +206,10 @@ pub fn parse_tokens<'a, I: IntoIterator<Item = (&'a ParamType, &'a str)>>(
         .into_iter()
         .map(|(param, value)| {
             let value = match param {
-                // allow addresses to be passed with "0x"
+                // allow addresses and bytes to be passed with "0x"
                 ParamType::Address => value.strip_prefix("0x").unwrap_or(value),
+                ParamType::Bytes => value.strip_prefix("0x").unwrap_or(value),
+                ParamType::FixedBytes(_size) => value.strip_prefix("0x").unwrap_or(value),
                 _ => value,
             };
             if lenient {

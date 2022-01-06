@@ -15,22 +15,27 @@ use ethers::{
 use eyre::Result;
 use structopt::StructOpt;
 
+const FLASHBOTS_URL: &str = "https://rpc.flashbots.net";
+
 #[derive(StructOpt, Debug, Clone)]
 pub struct EthereumOpts {
     #[structopt(env = "ETH_RPC_URL", long = "rpc-url", help = "The tracing / archival node's URL")]
-    pub rpc_url: String,
+    pub rpc_url: Option<String>,
 
     #[structopt(env = "ETH_FROM", short, long = "from", help = "The sender account")]
     pub from: Option<Address>,
 
     #[structopt(flatten)]
     pub wallet: Wallet,
+
+    #[structopt(long, help = "Use the flashbots RPC URL (https://rpc.flashbots.net)")]
+    pub flashbots: bool,
 }
 
 impl EthereumOpts {
     #[allow(unused)]
     pub async fn signer(&self, chain_id: U256) -> eyre::Result<Option<WalletType>> {
-        self.signer_with(chain_id, Provider::try_from(self.rpc_url.as_str())?).await
+        self.signer_with(chain_id, Provider::try_from(self.rpc_url()?)?).await
     }
 
     /// Returns a [`SignerMiddleware`] corresponding to the provided private key, mnemonic or hw
@@ -72,6 +77,14 @@ impl EthereumOpts {
             let local = local.with_chain_id(chain_id.as_u64());
 
             Ok(Some(WalletType::Local(SignerMiddleware::new(provider, local))))
+        }
+    }
+
+    pub fn rpc_url(&self) -> Result<&str> {
+        if self.flashbots {
+            Ok(FLASHBOTS_URL)
+        } else {
+            self.rpc_url.as_deref().ok_or_else(|| eyre::Error::msg("no Ethereum RPC provided, maybe you forgot to set the --rpc-url or the ETH_RPC_URL parameter? Alternatively, consider using the --flashbots flag to get frontrunning protection"))
         }
     }
 }

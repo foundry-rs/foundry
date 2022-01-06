@@ -10,12 +10,79 @@ use crate::{
 };
 use ansi_term::Colour;
 use ethers::solc::{ArtifactOutput, Project};
-use forge::MultiContractRunnerBuilder;
-use regex::Regex;
+use forge::{MultiContractRunnerBuilder, TestFilter};
 use std::collections::BTreeMap;
-use structopt::StructOpt;
+use structopt::{clap::AppSettings, StructOpt};
 
 #[derive(Debug, Clone, StructOpt)]
+pub struct Filter {
+    #[structopt(
+        long = "--match",
+        short = "-m",
+        help = "only run test methods matching regex (deprecated, see --match-test, --match-contract)"
+    )]
+    pattern: Option<regex::Regex>,
+
+    #[structopt(
+        long = "--match-test",
+        help = "only run test methods matching regex",
+        conflicts_with = "pattern"
+    )]
+    test_pattern: Option<regex::Regex>,
+
+    #[structopt(
+        long = "--no-match-test",
+        help = "only run test methods not matching regex",
+        conflicts_with = "pattern"
+    )]
+    test_pattern_inverse: Option<regex::Regex>,
+
+    #[structopt(
+        long = "--match-contract",
+        help = "only run test methods in contracts matching regex",
+        conflicts_with = "pattern"
+    )]
+    contract_pattern: Option<regex::Regex>,
+
+    #[structopt(
+        long = "--no-match-contract",
+        help = "only run test methods in contracts not matching regex",
+        conflicts_with = "pattern"
+    )]
+    contract_pattern_inverse: Option<regex::Regex>,
+}
+
+impl TestFilter for Filter {
+    fn matches_test(&self, test_name: &str) -> bool {
+        let mut ok = true;
+        // Handle the deprecated option match
+        if let Some(re) = &self.pattern {
+            ok &= re.is_match(test_name);
+        }
+        if let Some(re) = &self.test_pattern {
+            ok &= re.is_match(test_name);
+        }
+        if let Some(re) = &self.test_pattern_inverse {
+            ok &= !re.is_match(test_name);
+        }
+        ok
+    }
+
+    fn matches_contract(&self, contract_name: &str) -> bool {
+        let mut ok = true;
+        if let Some(re) = &self.contract_pattern {
+            ok &= re.is_match(contract_name);
+        }
+        if let Some(re) = &self.contract_pattern_inverse {
+            ok &= !re.is_match(contract_name);
+        }
+        ok
+    }
+}
+
+#[derive(Debug, Clone, StructOpt)]
+// This is required to group Filter options in help output
+#[structopt(global_settings = &[AppSettings::DeriveDisplayOrder])]
 pub struct TestArgs {
     #[structopt(help = "print the test results in json format", long, short)]
     json: bool,
@@ -23,13 +90,8 @@ pub struct TestArgs {
     #[structopt(flatten)]
     evm_opts: EvmOpts,
 
-    #[structopt(
-        long = "--match",
-        short = "-m",
-        help = "only run test methods matching regex",
-        default_value = ".*"
-    )]
-    pattern: regex::Regex,
+    #[structopt(flatten)]
+    filter: Filter,
 
     #[structopt(flatten)]
     opts: BuildArgs,
@@ -46,7 +108,7 @@ impl Cmd for TestArgs {
     type Output = TestOutcome;
 
     fn run(self) -> eyre::Result<Self::Output> {
-        let TestArgs { opts, evm_opts, json, pattern, allow_failure } = self;
+        let TestArgs { opts, evm_opts, json, filter, allow_failure } = self;
         // Setup the fuzzer
         // TODO: Add CLI Options to modify the persistence
         let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
@@ -68,7 +130,7 @@ impl Cmd for TestArgs {
                 let mut cfg = utils::sputnik_cfg(opts.compiler.evm_version);
                 let vicinity = evm_opts.vicinity()?;
                 let evm = utils::sputnik_helpers::evm(&evm_opts, &mut cfg, &vicinity)?;
-                test(builder, project, evm, pattern, json, evm_opts.verbosity, allow_failure)
+                test(builder, project, evm, filter, json, evm_opts.verbosity, allow_failure)
             }
             #[cfg(feature = "evmodin-evm")]
             EvmType::EvmOdin => {
@@ -82,7 +144,7 @@ impl Cmd for TestArgs {
                 let host = evm_opts.env.evmodin_state();
 
                 let evm = EvmOdin::new(host, evm_opts.env.gas_limit, revision, NoopTracer);
-                test(builder, project, evm, pattern, json, evm_opts.verbosity, allow_failure)
+                test(builder, project, evm, filter, json, evm_opts.verbosity, allow_failure)
             }
         }
     }
@@ -163,14 +225,14 @@ fn test<A: ArtifactOutput + 'static, S: Clone, E: evm_adapters::Evm<S>>(
     builder: MultiContractRunnerBuilder,
     project: Project<A>,
     evm: E,
-    pattern: Regex,
+    filter: Filter,
     json: bool,
     verbosity: u8,
     allow_failure: bool,
 ) -> eyre::Result<TestOutcome> {
     let mut runner = builder.build(project, evm)?;
 
-    let results = runner.test(pattern)?;
+    let results = runner.test(&filter)?;
 
     if json {
         let res = serde_json::to_string(&results)?;

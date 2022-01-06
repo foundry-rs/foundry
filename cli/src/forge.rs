@@ -36,7 +36,7 @@ fn main() -> eyre::Result<()> {
         Subcommands::Update { lib } => {
             let mut cmd = Command::new("git");
 
-            cmd.args(&["submodule", "update", "--init", "--recursive"]);
+            cmd.args(&["submodule", "update", "--remote", "--init", "--recursive"]);
 
             // if a lib is specified, open it
             if let Some(lib) = lib {
