@@ -1656,6 +1656,7 @@ name = "foundry-utils"
 version = "0.1.0"
 dependencies = [
  "ethers-core",
+ "ethers-etherscan",
  "eyre",
  "hex",
  "reqwest",
