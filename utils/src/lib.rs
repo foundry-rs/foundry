@@ -7,6 +7,7 @@ use ethers_core::{
     },
     types::*,
 };
+use ethers_etherscan::Client;
 use eyre::{Result, WrapErr};
 use serde::Deserialize;
 
@@ -173,6 +174,27 @@ pub fn get_func(sig: &str) -> Result<Function> {
         abi.functions.iter().next().ok_or_else(|| eyre::eyre!("function name not found"))?;
     let func = func.get(0).ok_or_else(|| eyre::eyre!("functions array empty"))?;
     Ok(func.clone())
+}
+
+pub async fn get_func_etherscan(
+    function_name: &str,
+    contract: Address,
+    args: Vec<String>,
+    chain: Chain,
+    etherscan_api_key: String,
+) -> Result<Function> {
+    let client = Client::new(chain, etherscan_api_key)?;
+    let abi = client.contract_abi(contract).await?;
+    let funcs = abi.functions.get(function_name).unwrap();
+
+    for func in funcs {
+        let res = encode_args(func, &args);
+        if res.is_ok() {
+            return Ok(func.clone())
+        }
+    }
+
+    Err(eyre::eyre!("Function not found"))
 }
 
 /// Parses string input as Token against the expected ParamType

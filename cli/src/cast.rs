@@ -17,7 +17,7 @@ use ethers::{
     },
     providers::{Middleware, Provider},
     signers::{LocalWallet, Signer},
-    types::{Address, NameOrAddress, Signature, U256},
+    types::{Address, Chain, NameOrAddress, Signature, U256},
 };
 use rayon::prelude::*;
 use regex::RegexSet;
@@ -157,28 +157,56 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(&provider).transaction(hash, field, to_json).await?)
         }
-        Subcommands::SendTx { eth, to, sig, cast_async, args } => {
+        Subcommands::SendTx { eth, to, sig, cast_async, args, chain, etherscan_api_key } => {
             let provider = Provider::try_from(eth.rpc_url()?)?;
             let chain_id = Cast::new(&provider).chain_id().await?;
 
             if let Some(signer) = eth.signer_with(chain_id, provider.clone()).await? {
                 match signer {
                     WalletType::Ledger(signer) => {
-                        cast_send(&signer, signer.address(), to, sig, args, cast_async).await?;
+                        cast_send(
+                            &signer,
+                            signer.address(),
+                            to,
+                            (sig, args),
+                            chain,
+                            etherscan_api_key,
+                            cast_async,
+                        )
+                        .await?;
                     }
                     WalletType::Local(signer) => {
-                        cast_send(&signer, signer.address(), to, sig, args, cast_async).await?;
+                        cast_send(
+                            &signer,
+                            signer.address(),
+                            to,
+                            (sig, args),
+                            chain,
+                            etherscan_api_key,
+                            cast_async,
+                        )
+                        .await?;
                     }
                     WalletType::Trezor(signer) => {
-                        cast_send(&signer, signer.address(), to, sig, args, cast_async).await?;
+                        cast_send(
+                            &signer,
+                            signer.address(),
+                            to,
+                            (sig, args),
+                            chain,
+                            etherscan_api_key,
+                            cast_async,
+                        )
+                        .await?;
                     }
                 }
             } else {
                 let from = eth.from.expect("No ETH_FROM or signer specified");
-                cast_send(provider, from, to, sig, args, cast_async).await?;
+                cast_send(provider, from, to, (sig, args), chain, etherscan_api_key, cast_async)
+                    .await?;
             }
         }
-        Subcommands::Estimate { eth, to, sig, args } => {
+        Subcommands::Estimate { eth, to, sig, args, chain, etherscan_api_key } => {
             let provider = Provider::try_from(eth.rpc_url()?)?;
             let cast = Cast::new(&provider);
             // chain id does not matter here, we're just trying to get the address
@@ -191,7 +219,9 @@ async fn main() -> eyre::Result<()> {
             } else {
                 eth.from.expect("No ETH_FROM or signer specified")
             };
-            let gas = cast.estimate(from, to, Some((sig.as_str(), args))).await?;
+            let gas = cast
+                .estimate(from, to, Some((sig.as_str(), args)), chain, etherscan_api_key)
+                .await?;
             println!("{}", gas);
         }
         Subcommands::CalldataDecode { sig, calldata } => {
@@ -441,16 +471,20 @@ async fn cast_send<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>
     provider: M,
     from: F,
     to: T,
-    sig: String,
-    args: Vec<String>,
+    args: (String, Vec<String>),
+    chain: Chain,
+    etherscan_api_key: Option<String>,
     cast_async: bool,
 ) -> eyre::Result<()>
 where
     M::Error: 'static,
 {
     let cast = Cast::new(provider);
-    let pending_tx =
-        cast.send(from, to, if !sig.is_empty() { Some((&sig, args)) } else { None }).await?;
+
+    let sig = args.0;
+    let params = args.1;
+    let params = if !sig.is_empty() { Some((&sig[..], params)) } else { None };
+    let pending_tx = cast.send(from, to, params, chain, etherscan_api_key).await?;
     let tx_hash = *pending_tx;
 
     if cast_async {

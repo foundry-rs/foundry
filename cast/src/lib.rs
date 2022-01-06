@@ -13,7 +13,7 @@ use eyre::{Context, Result};
 use rustc_hex::{FromHexIter, ToHex};
 use std::str::FromStr;
 
-use foundry_utils::{encode_args, get_func, to_table};
+use foundry_utils::{encode_args, get_func, get_func_etherscan, to_table};
 
 // TODO: CastContract with common contract initializers? Same for CastProviders?
 
@@ -115,7 +115,7 @@ where
     ///
     /// ```no_run
     /// use cast::Cast;
-    /// use ethers_core::types::Address;
+    /// use ethers_core::types::{Address, Chain};
     /// use ethers_providers::{Provider, Http};
     /// use std::{str::FromStr, convert::TryFrom};
     ///
@@ -126,7 +126,7 @@ where
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let sig = "greet(string)()";
     /// let args = vec!["hello".to_owned()];
-    /// let data = cast.send(from, to, Some((sig, args))).await?;
+    /// let data = cast.send(from, to, Some((sig, args)), Chain::Mainnet, None).await?;
     /// println!("{}", *data);
     /// # Ok(())
     /// # }
@@ -136,8 +136,10 @@ where
         from: F,
         to: T,
         args: Option<(&str, Vec<String>)>,
+        chain: Chain,
+        etherscan_api_key: Option<String>,
     ) -> Result<PendingTransaction<'_, M::Provider>> {
-        let tx = self.build_tx(from, to, args).await?;
+        let tx = self.build_tx(from, to, args, chain, etherscan_api_key).await?;
         let res = self.provider.send_transaction(tx, None).await?;
 
         Ok::<_, eyre::Error>(res)
@@ -147,7 +149,7 @@ where
     ///
     /// ```no_run
     /// use cast::Cast;
-    /// use ethers_core::types::Address;
+    /// use ethers_core::types::{Address, Chain};
     /// use ethers_providers::{Provider, Http};
     /// use std::{str::FromStr, convert::TryFrom};
     ///
@@ -158,7 +160,7 @@ where
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let sig = "greet(string)()";
     /// let args = vec!["5".to_owned()];
-    /// let data = cast.estimate(from, to, Some((sig, args))).await?;
+    /// let data = cast.estimate(from, to, Some((sig, args)), Chain::Mainnet, None).await?;
     /// println!("{}", data);
     /// # Ok(())
     /// # }
@@ -168,8 +170,10 @@ where
         from: F,
         to: T,
         args: Option<(&str, Vec<String>)>,
+        chain: Chain,
+        etherscan_api_key: Option<String>,
     ) -> Result<U256> {
-        let tx = self.build_tx(from, to, args).await?.into();
+        let tx = self.build_tx(from, to, args, chain, etherscan_api_key).await?.into();
         let res = self.provider.estimate_gas(&tx).await?;
 
         Ok::<_, eyre::Error>(res)
@@ -180,8 +184,15 @@ where
         from: F,
         to: T,
         args: Option<(&str, Vec<String>)>,
+        chain: Chain,
+        etherscan_api_key: Option<String>,
     ) -> Result<Eip1559TransactionRequest> {
         let from = match from.into() {
+            NameOrAddress::Name(ref ens_name) => self.provider.resolve_name(ens_name).await?,
+            NameOrAddress::Address(addr) => addr,
+        };
+
+        let to = match to.into() {
             NameOrAddress::Name(ref ens_name) => self.provider.resolve_name(ens_name).await?,
             NameOrAddress::Address(addr) => addr,
         };
@@ -190,7 +201,18 @@ where
         let mut tx = Eip1559TransactionRequest::new().from(from).to(to);
 
         if let Some((sig, args)) = args {
-            let func = get_func(sig)?;
+            let func = if sig.contains('(') {
+                get_func(sig)?
+            } else {
+                get_func_etherscan(
+                    sig,
+                    to,
+                    args.clone(),
+                    chain,
+                    etherscan_api_key.expect("Must set ETHERSCAN_API_KEY"),
+                )
+                .await?
+            };
             let data = encode_args(&func, &args)?;
             tx = tx.data(data);
         }
