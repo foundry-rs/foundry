@@ -176,12 +176,13 @@ impl Tui {
         area: Rect,
     ) {
         let block_source_code =
-            Block::default().title(format!("Creation {}", creation)).borders(Borders::ALL);
+            Block::default().title(format!("Contract construction: {}", creation)).borders(Borders::ALL);
 
         let mut text_output: Text = Text::from("");
 
         if let Some(contract_name) = identified_contracts.get(&address) {
             if let Some(known) = known_contracts.get(&contract_name.0) {
+                // grab either the creation source map or runtime sourcemap
                 if let Some(sourcemap) = if creation {
                     known.1.source_map()
                 } else {
@@ -189,11 +190,18 @@ impl Tui {
                 } {
                     match sourcemap {
                         Ok(sourcemap) => {
+                            // we are handed a vector of SourceElements that give
+                            // us a span of sourcecode that is currently being executed
+                            // This includes an offset and length. This vector is in
+                            // instruction pointer order, meaning the location of
+                            // the instruction - sum(push_bytes[..pc])
                             if let Some(source_idx) = sourcemap[ic].index {
                                 if let Some(source) = source_code.get(&source_idx) {
                                     let offset = sourcemap[ic].offset;
                                     let len = sourcemap[ic].length;
 
+                                    // split source into before, relevant, and after chunks
+                                    // split by line as well to do some formatting stuff
                                     let mut before = source[..offset]
                                         .split_inclusive('\n')
                                         .collect::<Vec<&str>>();
@@ -211,6 +219,8 @@ impl Tui {
                                     let height = area.height as usize;
                                     let needed_highlight = actual.len();
                                     let mid_len = before.len() + actual.len();
+
+                                    // adjust what text we show of the source code
                                     let (start_line, end_line) = if needed_highlight > height {
                                         // highlighted section is more lines than we have avail
                                         (before.len(), before.len() + needed_highlight)
@@ -234,8 +244,6 @@ impl Tui {
                                         (before.len().saturating_sub(above), mid_len + below)
                                     };
 
-                                    // text_output.extend(Text::from(format!("{:?}", before)));
-                                    // text_output.extend(Text::from(format!("{:?}", actual)));
                                     let max_line_num = num_lines.to_string().len();
                                     // We check if there is other text on the same line before the
                                     // highlight starts
@@ -401,7 +409,7 @@ impl Tui {
                             }
                         }
                         Err(e) => text_output.extend(Text::from(format!(
-                            "Error in source map parsing: {}, please open an issue",
+                            "Error in source map parsing: '{}', please open an issue",
                             e
                         ))),
                     }
