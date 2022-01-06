@@ -1794,6 +1794,7 @@ dependencies = [
  "dirs-next",
  "ethers-core",
  "ethers-solc",
+ "eyre",
  "figment",
  "semver",
  "serde",

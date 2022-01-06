@@ -1,5 +1,6 @@
 //! foundry configuration.
 use ethers_core::types::Address;
+use ethers_solc::{remappings::Remapping, ProjectPathsConfig};
 use figment::{
     providers::{Env, Format, Serialized, Toml},
     value::{Dict, Map},
@@ -28,6 +29,8 @@ pub struct Config {
     pub out: PathBuf,
     /// all library folders to include, `lib`, `node_modules`
     pub libs: Vec<PathBuf>,
+    /// whether to enable cache
+    pub cache: bool,
     /// concrete solc version to use if any,
     pub solc_version: Option<Version>,
     /// Whether to activate optimizer
@@ -42,7 +45,7 @@ pub struct Config {
     /// verbosity to use
     pub verbosity: u8,
     /// `Remappings` to use for this repo
-    pub remappings: Vec<String>,
+    pub remappings: Vec<Remapping>,
     /// library addresses to link
     pub libraries: Vec<Address>,
 }
@@ -50,6 +53,12 @@ pub struct Config {
 impl Config {
     /// The default profile: "default"
     pub const DEFAULT_PROFILE: Profile = Profile::const_new("default");
+
+    /// The hardhat profile: "hardhat"
+    pub const HARDHAT_PROFILE: Profile = Profile::const_new("hardhat");
+
+    /// File name of config toml file
+    pub const FILE_NAME: &'static str = "foundry.toml";
 
     /// Returns the current `Config`
     ///
@@ -79,9 +88,61 @@ impl Config {
     /// let my_config = Config::figment().extract::<Config>();
     /// ```
     pub fn figment() -> Figment {
-        // TODO add current dir as argument
-        Figment::from(Config::default())
-            .merge(Toml::file(Env::var_or("FOUNDRY_CONFIG", "foundry.toml")).nested())
+        Config::default().into()
+    }
+
+    /// Returns the default figment enhanced with additional context extracted from the provided
+    /// root, like remappings and directories.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use foundry_config::Config;
+    /// use serde::Deserialize;
+    ///
+    /// let my_config = Config::figment_with_root(".").extract::<Config>();
+    /// ```
+    pub fn figment_with_root(root: impl Into<PathBuf>) -> Figment {
+        Self::with_root(root).into()
+    }
+
+    /// Creates a new Config that adds additional context extracted from the provided root.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use foundry_config::Config;
+    /// let my_config = Config::with_root(".");
+    /// ```
+    pub fn with_root(root: impl Into<PathBuf>) -> Self {
+        let mut config = Config::default();
+        // autodetect paths
+        let paths = ProjectPathsConfig::builder().build_with_root(root);
+
+        config.src = paths.sources.file_name().unwrap().into();
+        config.out = paths.artifacts.file_name().unwrap().into();
+        config.libs =
+            paths.libraries.into_iter().map(|lib| lib.file_name().unwrap().into()).collect();
+        config.remappings = paths.remappings;
+
+        config
+    }
+
+    /// Returns the default config but with hardhat paths
+    pub fn hardhat() -> Self {
+        let mut config = Config::default();
+        config.src = "contracts".into();
+        config.out = "artifacts".into();
+        config.libs = vec!["node_modules".into()];
+
+        config
+    }
+}
+
+impl Into<Figment> for Config {
+    fn into(self) -> Figment {
+        Figment::from(self)
+            .merge(Toml::file(Env::var_or("FOUNDRY_CONFIG", Self::FILE_NAME)).nested())
             .merge(Env::prefixed("FOUNDRY_").ignore(&["PROFILE"]).global())
             .select(Profile::from_env_or("FOUNDRY_PROFILE", Self::DEFAULT_PROFILE))
     }
@@ -110,9 +171,10 @@ impl Default for Config {
             test: "test".into(),
             out: "out".into(),
             libs: vec!["lib".into()],
+            cache: true,
             solc_version: None,
             optimizer: false,
-            optimizer_runs: 0,
+            optimizer_runs: 200,
             solc_settings: serde_json::json!({
                "*":{
                   "*":[
