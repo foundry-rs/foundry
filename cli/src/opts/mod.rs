@@ -28,7 +28,7 @@ pub struct EthereumOpts {
     #[structopt(flatten)]
     pub wallet: Wallet,
 
-    #[structopt(long, help = "Use the flashbots RPC URL")]
+    #[structopt(long, help = "Use the flashbots RPC URL (https://rpc.flashbots.net)")]
     pub flashbots: bool,
 }
 
