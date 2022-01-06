@@ -72,28 +72,18 @@ impl Cmd for RunArgs {
         // contract in case the transaction interacts with others
         if evm_opts.debug || evm_opts.verbosity > 3 {
             if let Ok(project) = self.opts.project() {
-                let output = compile(&project)?;
-                let contracts = output.output();
-
-                for (contract_name, contract) in contracts.contracts_into_iter() {
-                    highlevel_known_contracts.insert(
-                        contract_name.to_string(),
-                        (
-                            contract.abi.clone().expect("no abi"),
-                            contract
-                                .evm
-                                .clone()
-                                .expect("no evm")
-                                .bytecode
-                                .expect("no creation bytecode"),
-                            contract
-                                .evm
-                                .clone()
-                                .expect("no evm")
-                                .deployed_bytecode
-                                .expect("no deployed bytecode"),
-                        ),
-                    );
+                println!("Compiling full repo to aid in debugging/tracing");
+                if let Ok(output) = compile(&project) {
+                    let contracts = output.output();
+                    for (contract_name, contract) in contracts.contracts_into_iter() {
+                        insert_contract_info(
+                            &mut highlevel_known_contracts,
+                            contract_name.to_string(),
+                            &contract,
+                        );
+                    }
+                } else {
+                    println!("No extra contracts compiled");
                 }
             }
         }
@@ -269,18 +259,10 @@ impl RunArgs {
                 .ok_or_else(|| {
                     eyre::Error::msg("contract not found, did you type the name wrong?")
                 })?;
-            highlevel_known_contracts.insert(
+            insert_contract_info(
+                &mut highlevel_known_contracts,
                 contract_name.to_string(),
-                (
-                    contract.abi.clone().expect("no abi"),
-                    contract.evm.clone().expect("no evm").bytecode.expect("no creation bytecode"),
-                    contract
-                        .evm
-                        .clone()
-                        .expect("no evm")
-                        .deployed_bytecode
-                        .expect("no deployed bytecode"),
-                ),
+                &contract,
             );
             CompactContract::from(contract)
         } else {
@@ -301,19 +283,7 @@ impl RunArgs {
             });
             let (contract_name, contract) =
                 contracts.next().ok_or_else(|| eyre::Error::msg("no contract found"))?;
-            highlevel_known_contracts.insert(
-                contract_name,
-                (
-                    contract.abi.clone().expect("no abi"),
-                    contract.evm.clone().expect("no evm").bytecode.expect("no creation bytecode"),
-                    contract
-                        .evm
-                        .clone()
-                        .expect("no evm")
-                        .deployed_bytecode
-                        .expect("no deployed bytecode"),
-                ),
-            );
+            insert_contract_info(&mut highlevel_known_contracts, contract_name, &contract);
             if contracts.peekable().peek().is_some() {
                 eyre::bail!(
                     ">1 contracts found, please provide a contract name to choose one of them"
@@ -323,4 +293,16 @@ impl RunArgs {
         };
         Ok(BuildOutput { contract, highlevel_known_contracts, sources })
     }
+}
+
+fn insert_contract_info(
+    highlevel_known_contracts: &mut BTreeMap<String, (Abi, Bytecode, DeployedBytecode)>,
+    name: String,
+    contract: &ethers::solc::artifacts::Contract,
+) {
+    let abi = contract.abi.clone().expect("no abi");
+    let evm = contract.evm.clone().expect("no evm");
+    let creation_bytecode = evm.bytecode.expect("no creation bytecode");
+    let runtime_bytecode = evm.deployed_bytecode.expect("no deployed bytecode");
+    highlevel_known_contracts.insert(name, (abi, creation_bytecode, runtime_bytecode));
 }

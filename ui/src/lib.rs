@@ -604,7 +604,8 @@ impl Tui {
 
 impl Ui for Tui {
     fn start(mut self) -> Result<TUIExitReason> {
-        let tick_rate = Duration::from_millis(75);
+        // this is the recommend tick rate from tui-rs, based on their examples
+        let tick_rate = Duration::from_millis(200);
 
         // setup a channel to send interrupts
         let (tx, rx) = mpsc::channel();

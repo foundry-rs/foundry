@@ -84,13 +84,22 @@ impl DebugNode {
     }
 }
 
+/// A `DebugStep` is a snapshot of the EVM's runtime state. It holds the current program counter
+/// (where in the program you are), the stack and memory (prior to the opcodes execution), any bytes
+/// to be pushed onto the stack, and the instruction counter for use with sourcemaps  
 #[derive(Debug, Clone)]
 pub struct DebugStep {
+    /// Program Counter
     pub pc: usize,
+    /// Stack *prior* to running this struct's associated opcode
     pub stack: Vec<H256>,
+    /// Memory *prior* to running this struct's associated opcode
     pub memory: Memory,
+    /// Opcode to be executed
     pub op: OpCode,
+    /// Optional bytes that are being pushed onto the stack
     pub push_bytes: Option<Vec<u8>>,
+    /// Instruction counter, used for sourcemap mapping to source code
     pub ic: usize,
 }
 
@@ -108,6 +117,7 @@ impl Default for DebugStep {
 }
 
 impl DebugStep {
+    /// Pretty print the step's opcode
     pub fn pretty_opcode(&self) -> String {
         if let Some(push_bytes) = &self.push_bytes {
             format!("{}(0x{})", self.op, hex::encode(push_bytes))
@@ -142,6 +152,7 @@ impl Display for DebugStep {
     }
 }
 
+/// CheatOps are `forge` specific identifiers for cheatcodes since cheatcodes don't touch the evm
 #[derive(Debug, Copy, Clone)]
 pub enum CheatOp {
     ROLL,
@@ -170,6 +181,7 @@ impl From<CheatOp> for OpCode {
 }
 
 impl CheatOp {
+    /// Gets the `CheatOp` as a string for printing purposes
     pub const fn name(&self) -> &'static str {
         match self {
             CheatOp::ROLL => "VM_ROLL",
@@ -209,6 +221,7 @@ impl From<Opcode> for OpCode {
 }
 
 impl OpCode {
+    /// Gets the name of the opcode as a string
     pub const fn name(&self) -> &'static str {
         match self.0 {
             Opcode::STOP => "STOP",
@@ -364,6 +377,7 @@ impl OpCode {
         }
     }
 
+    /// Optionally return the push size of the opcode if it is a push
     pub fn push_size(self) -> Option<u8> {
         self.0.is_push()
     }

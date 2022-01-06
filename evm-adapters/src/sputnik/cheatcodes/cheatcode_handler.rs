@@ -344,6 +344,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         Capture::Exit((ExitReason::Succeed(ExitSucceed::Stopped), vec![]))
     }
 
+    /// Adds CheatOp to the latest DebugArena
     fn add_debug(&mut self, cheatop: CheatOp) {
         if self.state().debug_enabled {
             let depth =
@@ -613,8 +614,8 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         }
     }
 
-    /// Debug execute a transaction by grabbing the debugger from state_mut, adding the runtime.
-    pub fn debug_execute(
+    /// Executes the call/create while also tracking the state of the machine (including opcodes)  
+    fn debug_execute(
         &mut self,
         runtime: &mut Runtime,
         address: Address,
@@ -629,6 +630,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         }
     }
 
+    /// Does *not* actually perform a step, just records the debug information for the step
     fn debug_step(
         &mut self,
         runtime: &mut Runtime,
@@ -639,22 +641,26 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         // grab the pc, opcode and stack
         let pc = runtime.machine().position().as_ref().map(|p| *p).unwrap_or_default();
         let mut push_bytes = None;
+
         if let Some((op, stack)) = runtime.machine().inspect() {
+            // wrap the op to make it compatible with opcode extensions for cheatops
             let wrapped_op = OpCode::from(op);
 
-            // check how big the push size is
+            // check how big the push size is, and grab the pushed bytes if possible
             if let Some(push_size) = wrapped_op.push_size() {
                 let push_start = pc + 1;
                 let push_end = pc + 1 + push_size as usize;
                 if push_end < code.len() {
                     push_bytes = Some(code[push_start..push_end].to_vec());
                 } else {
-                    panic!("PUSH{} exceeds codesize?", push_size)
+                    panic!("PUSH{} exceeds limit of codesize", push_size)
                 }
             }
+
             // grab the stack data and reverse it (last element is "top" of stack)
             let mut stack = stack.data().clone();
             stack.reverse();
+            // push the step into the vector
             steps.push(DebugStep {
                 pc,
                 stack,
@@ -705,12 +711,13 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         let mut res = Capture::Exit(ExitReason::Succeed(ExitSucceed::Returned));
         let mut steps = Vec::new();
         // grab the debug instruction pointers for either construct or runtime bytecode
-        let pc = if creation {
+        let dip = if creation {
             &mut self.state_mut().debug_instruction_pointers.0
         } else {
             &mut self.state_mut().debug_instruction_pointers.1
         };
-        let ics = if let Some(pc_ic) = pc.get(&address) {
+        // get the program counter => instruction counter mapping from memory or construct it
+        let ics = if let Some(pc_ic) = dip.get(&address) {
             // grabs an Rc<BTreemap> of an already created pc -> ic mapping
             pc_ic.clone()
         } else {
@@ -735,11 +742,13 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
             }
             let pc_ic = Rc::new(pc_ic);
 
-            pc.insert(address, pc_ic.clone());
+            dip.insert(address, pc_ic.clone());
             pc_ic
         };
         while !done {
             // debug step doesnt actually execute the step, it just peeks into the machine
+            // will return true or false, which signifies whether to push the steps
+            // as a node and reset the steps vector or not
             if self.debug_step(runtime, code.clone(), &mut steps, ics.clone()) {
                 self.state_mut().debug_mut().push_node(
                     0,
@@ -759,6 +768,8 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 Ok(()) => {}
                 Err(e) => {
                     done = true;
+                    // we wont hit an interrupt when we finish stepping
+                    // so we have add the accumulated steps as if debug_step returned true
                     self.state_mut().debug_mut().push_node(
                         0,
                         DebugNode {

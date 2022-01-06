@@ -92,6 +92,14 @@ impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
     }
 }
 
+/// Debug Instruction pointers: a tuple with 2 maps, the first being for creation
+/// sourcemaps, the second for runtime sourcemaps.
+///
+/// Each has a structure of (Address => (program_counter => instruction_counter))
+/// For sourcemap usage, we need to convert a program counter to an instruction counter and use the
+/// instruction counter as the index into the sourcemap vector. An instruction counter (pointer) is
+/// just the program counter minus the sum of push bytes (i.e. PUSH1(0x01), would apply a -1 effect
+/// to all subsequent instruction counters)
 pub type Dip =
     (BTreeMap<H160, Rc<BTreeMap<usize, usize>>>, BTreeMap<H160, Rc<BTreeMap<usize, usize>>>);
 
