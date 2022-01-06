@@ -158,7 +158,7 @@ async fn main() -> eyre::Result<()> {
             println!("{}", Cast::new(&provider).transaction(hash, field, to_json).await?)
         }
         Subcommands::SendTx { eth, to, sig, cast_async, args } => {
-            let provider = Provider::try_from(eth.rpc_url.as_str())?;
+            let provider = Provider::try_from(eth.rpc_url()?)?;
             let chain_id = Cast::new(&provider).chain_id().await?;
 
             if let Some(signer) = eth.signer_with(chain_id, provider.clone()).await? {
@@ -179,7 +179,7 @@ async fn main() -> eyre::Result<()> {
             }
         }
         Subcommands::Estimate { eth, to, sig, args } => {
-            let provider = Provider::try_from(eth.rpc_url.as_str())?;
+            let provider = Provider::try_from(eth.rpc_url()?)?;
             let cast = Cast::new(&provider);
             // chain id does not matter here, we're just trying to get the address
             let from = if let Some(signer) = eth.signer(0.into()).await? {
@@ -370,7 +370,8 @@ async fn main() -> eyre::Result<()> {
                 let wallet = EthereumOpts {
                     wallet,
                     from: None,
-                    rpc_url: "http://localhost:8545".to_string(),
+                    rpc_url: Some("http://localhost:8545".to_string()),
+                    flashbots: false,
                 }
                 .signer(0.into())
                 .await?
@@ -387,7 +388,8 @@ async fn main() -> eyre::Result<()> {
                 let wallet = EthereumOpts {
                     wallet,
                     from: None,
-                    rpc_url: "http://localhost:8545".to_string(),
+                    rpc_url: Some("http://localhost:8545".to_string()),
+                    flashbots: false,
                 }
                 .signer(0.into())
                 .await?
