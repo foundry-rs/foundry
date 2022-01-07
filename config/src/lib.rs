@@ -48,6 +48,21 @@ pub struct Config {
     pub remappings: Vec<Remapping>,
     /// library addresses to link
     pub libraries: Vec<Address>,
+
+    /// PRIVATE: This structure may grow, As such, constructing this structure should
+    /// _always_ be done using a public constructor or update syntax:
+    ///
+    /// ```rust
+    /// use foundry_config::Config;
+    ///
+    /// let config = Config {
+    ///     src: "other".into(),
+    ///     ..Default::default()
+    /// };
+    /// ```
+    #[doc(hidden)]
+    #[serde(skip)]
+    pub __non_exhaustive: (),
 }
 
 impl Config {
@@ -65,6 +80,52 @@ impl Config {
     /// See `Config::figment`
     pub fn load() -> Result<Self, figment::Error> {
         Config::figment().extract()
+    }
+
+    /// Extract a `Config` from `provider`, panicking if extraction fails.
+    ///
+    /// # Panics
+    ///
+    /// If extraction fails, prints an error message indicating the failure and
+    /// panics. For a version that doesn't panic, use [`Config::try_from()`].
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use foundry_config::Config;
+    /// use figment::providers::{Toml, Format, Env};
+    ///
+    /// // Use foundry's default `Figment`, but allow values from `other.toml`
+    /// // to supersede its values.
+    /// let figment = Config::figment()
+    ///     .merge(Toml::file("other.toml").nested());
+    ///
+    /// let config = Config::from(figment);
+    /// ```
+    pub fn from<T: Provider>(provider: T) -> Self {
+        Self::try_from(provider).expect("failed to extract from provider")
+    }
+
+    /// Attempts to extract a `Config` from `provider`, returning the result.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use foundry_config::Config;
+    /// use figment::providers::{Toml, Format, Env};
+    ///
+    /// // Use foundry's default `Figment`, but allow values from `other.toml`
+    /// // to supersede its values.
+    /// let figment = Config::figment()
+    ///     .merge(Toml::file("other.toml").nested());
+    ///
+    /// let config = Config::try_from(figment);
+    /// ```
+    pub fn try_from<T: Provider>(provider: T) -> Result<Self, figment::Error> {
+        let figment = Figment::from(provider);
+        let mut config = figment.extract::<Self>()?;
+        config.profile = figment.profile().clone();
+        Ok(config)
     }
 
     /// Returns the default figment
@@ -115,27 +176,44 @@ impl Config {
     /// let my_config = Config::with_root(".");
     /// ```
     pub fn with_root(root: impl Into<PathBuf>) -> Self {
-        let mut config = Config::default();
         // autodetect paths
         let paths = ProjectPathsConfig::builder().build_with_root(root);
 
-        config.src = paths.sources.file_name().unwrap().into();
-        config.out = paths.artifacts.file_name().unwrap().into();
-        config.libs =
-            paths.libraries.into_iter().map(|lib| lib.file_name().unwrap().into()).collect();
-        config.remappings = paths.remappings;
-
-        config
+        Config {
+            src: paths.sources.file_name().unwrap().into(),
+            out: paths.artifacts.file_name().unwrap().into(),
+            libs: paths.libraries.into_iter().map(|lib| lib.file_name().unwrap().into()).collect(),
+            remappings: paths.remappings,
+            ..Config::default()
+        }
     }
 
     /// Returns the default config but with hardhat paths
     pub fn hardhat() -> Self {
-        let mut config = Config::default();
-        config.src = "contracts".into();
-        config.out = "artifacts".into();
-        config.libs = vec!["node_modules".into()];
+        Config {
+            src: "contracts".into(),
+            out: "artifacts".into(),
+            libs: vec!["node_modules".into()],
+            ..Config::default()
+        }
+    }
 
-        config
+    /// Extracts a basic subset of the config, used for initialisations.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use foundry_config::Config;
+    /// let my_config = Config::with_root(".").into_basic();
+    /// ```
+    pub fn into_basic(self) -> BasicConfig {
+        BasicConfig {
+            profile: self.profile,
+            src: self.src,
+            out: self.out,
+            libs: self.libs,
+            remappings: self.remappings,
+        }
     }
 }
 
@@ -192,6 +270,197 @@ impl Default for Config {
             verbosity: 0,
             remappings: vec![],
             libraries: vec![],
+            __non_exhaustive: (),
         }
+    }
+}
+
+/// A subset of the foundry `Config`
+/// used to initialize a `foundry.toml` file
+///
+/// # Example
+///
+/// ```rust
+/// use foundry_config::{Config, BasicConfig};
+/// use serde::Deserialize;
+///
+/// let my_config = Config::figment().extract::<BasicConfig>();
+/// ```
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct BasicConfig {
+    #[serde(skip_deserializing)]
+    pub profile: Profile,
+    /// path of the source contracts dir, like `src` or `contracts`
+    pub src: PathBuf,
+    /// path to where artifacts shut be written to
+    pub out: PathBuf,
+    /// all library folders to include, `lib`, `node_modules`
+    pub libs: Vec<PathBuf>,
+    /// `Remappings` to use for this repo
+    pub remappings: Vec<Remapping>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use figment::Figment;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_figment_is_default() {
+        figment::Jail::expect_with(|_| {
+            let mut default: Config = Config::figment().extract().unwrap();
+            default.profile = Config::default().profile;
+            assert_eq!(default, Config::default());
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_default_round_trip() {
+        figment::Jail::expect_with(|_| {
+            let original = Config::figment();
+            let roundtrip = Figment::from(Config::from(&original));
+            for figment in &[original, roundtrip] {
+                let config = Config::from(figment);
+                assert_eq!(config, Config::default());
+            }
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_profile_env() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env("FOUNDRY_PROFILE", "default");
+            let figment = Config::figment();
+            assert_eq!(figment.profile(), "default");
+
+            jail.set_env("FOUNDRY_PROFILE", "hardhat");
+            let figment: Figment = Config::hardhat().into();
+            assert_eq!(figment.profile(), "hardhat");
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_toml_file() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                src = "some-source"
+                out = "some-out"
+                cache = true
+                eth_rpc_url = "https://example.com/"
+                verbosity = 3
+            "#,
+            )?;
+
+            let config = Config::from(Config::figment());
+            assert_eq!(
+                config,
+                Config {
+                    src: "some-source".into(),
+                    out: "some-out".into(),
+                    cache: true,
+                    eth_rpc_url: Some("https://example.com/".to_string()),
+                    verbosity: 3,
+                    ..Config::default()
+                }
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_precedence() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                src = "mysrc"
+                out = "myout"
+                verbosity = 3
+            "#,
+            )?;
+
+            let config = Config::from(Config::figment());
+            assert_eq!(
+                config,
+                Config {
+                    src: "mysrc".into(),
+                    out: "myout".into(),
+                    verbosity: 3,
+                    ..Config::default()
+                }
+            );
+
+            jail.set_env("FOUNDRY_SRC", r#"other-src"#);
+            let config = Config::from(Config::figment());
+            assert_eq!(
+                config,
+                Config {
+                    src: "other-src".into(),
+                    out: "myout".into(),
+                    verbosity: 3,
+                    ..Config::default()
+                }
+            );
+
+            jail.set_env("FOUNDRY_PROFILE", "foo");
+            let val: Result<String, _> = Config::figment().extract_inner("profile");
+            assert!(val.is_err());
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_extract_basic() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                src = "mysrc"
+                out = "myout"
+                verbosity = 3
+
+                [other]
+                src = "other-src"
+            "#,
+            )?;
+
+            let base = Config::figment().extract::<BasicConfig>().unwrap();
+            let default = Config::default();
+            assert_eq!(
+                base,
+                BasicConfig {
+                    profile: Config::DEFAULT_PROFILE,
+                    src: "mysrc".into(),
+                    out: "myout".into(),
+                    libs: default.libs.clone(),
+                    remappings: default.remappings.clone()
+                }
+            );
+            jail.set_env("FOUNDRY_PROFILE", r#"other"#);
+            let base = Config::figment().extract::<BasicConfig>().unwrap();
+            assert_eq!(
+                base,
+                BasicConfig {
+                    profile: Config::DEFAULT_PROFILE,
+                    src: "other-src".into(),
+                    out: "myout".into(),
+                    libs: default.libs.clone(),
+                    remappings: default.remappings.clone()
+                }
+            );
+
+            Ok(())
+        });
     }
 }
