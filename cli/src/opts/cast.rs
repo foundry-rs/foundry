@@ -1,7 +1,4 @@
-use std::{
-    path::{Path, PathBuf},
-    str::FromStr,
-};
+use std::{path::PathBuf, str::FromStr};
 
 use ethers::types::{Address, BlockId, BlockNumber, NameOrAddress, H256};
 use structopt::StructOpt;
@@ -309,8 +306,10 @@ pub enum Subcommands {
         pragma: Option<String>,
         #[structopt(short, help = "chain")]
         chain: Option<ethers::core::types::Chain>,
-        #[structopt(short, help = "output file, or empty for stdout")]
+        #[structopt(short, help = "output file or relative path")]
         output_location: Option<PathBuf>,
+        #[structopt(short, env = "ETHERSCAN_API_KEY", help = "etherscan API key")]
+        etherscan_api_key: Option<String>,
     },
 }
 

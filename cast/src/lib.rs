@@ -3,7 +3,7 @@
 //! TODO
 use chrono::NaiveDateTime;
 use ethers_core::{
-    abi::{AbiParser, Token},
+    abi::{Abi, AbiParser, Token},
     types::{Chain, *},
     utils::{self, keccak256},
 };
@@ -11,8 +11,9 @@ use ethers_core::{
 use ethers_etherscan::Client;
 use ethers_providers::{Middleware, PendingTransaction};
 use eyre::{Context, Result};
-use foundry_utils::{encode_args, etherscan_api_key, get_func, to_table};
+use foundry_utils::{encode_args, get_func, to_table};
 use rustc_hex::{FromHexIter, ToHex};
+use std::path::Path;
 use std::str::FromStr;
 
 // TODO: CastContract with common contract initializers? Same for CastProviders?
@@ -45,7 +46,7 @@ where
     /// Makes a read-only call to the specified address
     ///
     /// ```no_run
-    /// 
+    ///
     /// use cast::Cast;
     /// use ethers_core::types::Address;
     /// use ethers_providers::{Provider, Http};
@@ -452,16 +453,35 @@ impl SimpleCast {
         format!("0x{}", s)
     }
 
-    pub async fn generate_interface(address: String, chain: Chain) -> Result<Vec<InterfaceSource>> {
-        let env_key = foundry_utils::etherscan_api_key()?;
-        let client = Client::new(chain, env_key)?;
-        let contract_source = client.contract_source_code(address.parse().unwrap()).await?;
-        let contract_abis = contract_source.abis()?;
+    pub async fn generate_interface(
+        address_or_path: String,
+        chain: Chain,
+        etherscan_api_key: Option<String>,
+    ) -> Result<Vec<InterfaceSource>> {
+        let mut contract_names: Vec<String> = Vec::new();
+        let contract_abis: Vec<Abi> = if Path::new(&address_or_path).exists() {
+            println!("Reading ABI from local file at {}", &address_or_path);
+            contract_names.push("autogen".to_owned());
+            let file = std::fs::read_to_string(&address_or_path).expect("unable to read abi file");
+            vec![serde_json::from_str(&file).expect("unable to parse json ABI")]
+        } else {
+            println!("Requesting ABI from etherscan for contract at: {}", &address_or_path);
+            let client = Client::new(chain, etherscan_api_key.unwrap())?;
+            let contract_source =
+                client.contract_source_code(address_or_path.parse().unwrap()).await?;
+            contract_names = contract_source
+                .items
+                .iter()
+                .map(|item| item.contract_name.clone())
+                .collect::<Vec<String>>();
+            contract_source.abis()?
+        };
         let mut interfaces: Vec<InterfaceSource> = vec![];
         for (i, contract_abi) in contract_abis.iter().enumerate() {
-            let contract_name = contract_source.items[i].contract_name.clone();
-            let interface_source = foundry_utils::abi_to_solidity(contract_abi, &contract_name)?;
-            let interface = InterfaceSource { name: contract_name, source: interface_source };
+            let contract_name = &contract_names[i];
+            let interface_source = foundry_utils::abi_to_solidity(&contract_abi, contract_name)?;
+            let interface =
+                InterfaceSource { name: contract_name.to_owned(), source: interface_source };
             interfaces.push(interface);
         }
         Ok(interfaces)

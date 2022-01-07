@@ -256,11 +256,17 @@ async fn main() -> eyre::Result<()> {
             println!("{}", SimpleCast::keccak(&data)?);
         }
 
-        Subcommands::Interface { contract_address, pragma, chain, output_location } => {
-            println!("Generating interfaces from etherscan's ABI..");
+        Subcommands::Interface {
+            contract_address,
+            pragma,
+            chain,
+            output_location,
+            etherscan_api_key,
+        } => {
             let interfaces = SimpleCast::generate_interface(
                 unwrap_or_stdin(contract_address).unwrap(),
                 chain.unwrap_or(Chain::Mainnet),
+                etherscan_api_key,
             )
             .await?;
             let mut output_string = match pragma {
@@ -283,7 +289,7 @@ async fn main() -> eyre::Result<()> {
                     println!("Saved interface at {}", loc.to_str().unwrap());
                 }
                 None => {
-                    println!("{}", output_string);
+                    println!("\n{}", output_string);
                     for interface in interfaces {
                         println!("{}", interface.source);
                     }
