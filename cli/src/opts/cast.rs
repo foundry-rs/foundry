@@ -303,13 +303,13 @@ pub enum Subcommands {
     },
     #[structopt(name = "interface", about = "generate contract's interface from ABI")]
     Interface {
-        #[structopt(help = "The contract's address")]
+        #[structopt(short = "s", help = "The contract's address")]
         contract_address: Option<String>,
-        #[structopt(help = "pragma version")]
+        #[structopt(short, help = "pragma version")]
         pragma: Option<String>,
-        #[structopt(help = "chain")]
+        #[structopt(short, help = "chain")]
         chain: Option<ethers::core::types::Chain>,
-        #[structopt(help = "output file, or empty for stdout")]
+        #[structopt(short, help = "output file, or empty for stdout")]
         output_location: Option<PathBuf>,
     },
 }
