@@ -358,8 +358,11 @@ pub fn etherscan_api_key() -> eyre::Result<String> {
 }
 
 // Kudos to https://github.com/maxme/abi2solidity for the algorithm
-pub fn abi_to_solidity(contract_abi: &Abi, contract_name: &str) -> Result<String> {
+pub fn abi_to_solidity(contract_abi: &Abi, mut contract_name: &str) -> Result<String> {
     let functions_iterator = contract_abi.functions();
+    if contract_name.trim().is_empty() {
+        contract_name = "Interface";
+    };
     let functions = functions_iterator
         .map(|function| {
             let inputs = function

@@ -461,7 +461,7 @@ impl SimpleCast {
         let mut contract_names: Vec<String> = Vec::new();
         let contract_abis: Vec<Abi> = if Path::new(&address_or_path).exists() {
             println!("Reading ABI from local file at {}", &address_or_path);
-            contract_names.push("autogen".to_owned());
+            contract_names.push("Interface".to_owned());
             let file = std::fs::read_to_string(&address_or_path).expect("unable to read abi file");
             vec![serde_json::from_str(&file).expect("unable to parse json ABI")]
         } else {
