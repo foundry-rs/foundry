@@ -19,7 +19,6 @@ use ethers::{
     signers::{LocalWallet, Signer},
     types::{Address, Chain, NameOrAddress, Signature, U256},
 };
-use foundry_utils::resolve_addr;
 use rayon::prelude::*;
 use regex::RegexSet;
 use rustc_hex::ToHex;
@@ -501,7 +500,6 @@ where
     let sig = args.0;
     let params = args.1;
     let params = if !sig.is_empty() { Some((&sig[..], params)) } else { None };
-    let to = resolve_addr(to, chain)?;
     let pending_tx = cast.send(from, to, params, chain, etherscan_api_key).await?;
     let tx_hash = *pending_tx;
 
