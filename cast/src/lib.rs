@@ -12,6 +12,7 @@ use ethers_providers::{Middleware, PendingTransaction};
 use eyre::{Context, Result};
 use rustc_hex::{FromHexIter, ToHex};
 use std::str::FromStr;
+use reqwest;
 
 use foundry_utils::{encode_args, get_func, get_func_etherscan, to_table};
 
@@ -859,6 +860,23 @@ impl SimpleCast {
         let calldata = encode_args(&func, args)?;
         Ok(format!("0x{}", calldata.to_hex::<String>()))
     }
+
+	pub async fn etherscan_source(
+		contract_address: &str,
+		etherscan_api_key: &str) -> Result<String> {
+			let url = format!("https://api.etherscan.io/api?module=contract&action=getsourcecode&address={contract_address}&apikey={api_key}",
+			contract_address = contract_address,
+						api_key = etherscan_api_key);
+
+			let response = reqwest::get(&url).await?.text().await?;
+			let json: serde_json::Value = serde_json::from_str(&response)?;
+
+			if json["status"].as_str() != Some("1") {
+				return Err(eyre::eyre!("etherscan api returned error: {}", json["result"].as_str().unwrap()));
+			}
+
+			Ok(json["result"][0]["SourceCode"].to_string())
+		}
 }
 
 fn strip_0x(s: &str) -> &str {
