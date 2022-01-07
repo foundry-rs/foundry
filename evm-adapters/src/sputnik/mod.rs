@@ -29,6 +29,7 @@ use sputnik_evm::executor::stack::PrecompileSet;
 pub async fn vicinity<M: Middleware>(
     provider: &M,
     pin_block: Option<u64>,
+    origin: Option<H160>,
 ) -> Result<MemoryVicinity, M::Error> {
     let block_number = if let Some(pin_block) = pin_block {
         pin_block
@@ -43,7 +44,7 @@ pub async fn vicinity<M: Middleware>(
     let block = block.expect("block not found");
 
     Ok(MemoryVicinity {
-        origin: Default::default(),
+        origin: origin.unwrap_or_default(),
         chain_id,
         block_hashes: Vec::new(),
         block_number: block.number.expect("block number not found").as_u64().into(),
