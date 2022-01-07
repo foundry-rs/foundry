@@ -13,7 +13,7 @@ sputnik = { package = "evm", git = "https://github.com/rust-blockchain/evm",  op
 
 evmodin = { git = "https://github.com/vorot93/evmodin",  optional = true }
 
-ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["solc-full"] }
+ethers = { git = "https://github.com/roynalnaruto/ethers-rs-1", branch = "feat/tokenlist", default-features = false, features = ["solc-full"] }
 eyre = "0.6.5"
 once_cell = "1.8.0"
 tracing = "0.1.28"
@@ -31,7 +31,7 @@ ansi_term = "0.12.1"
 
 [dev-dependencies]
 evmodin = { git = "https://github.com/vorot93/evmodin", features = ["util"] }
-ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["solc-full", "solc-tests"] }
+ethers = { git = "https://github.com/roynalnaruto/ethers-rs-1", branch = "feat/tokenlist", default-features = false, features = ["solc-full", "solc-tests"] }
 
 [features]
 sputnik-helpers = ["sputnik"]

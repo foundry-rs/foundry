@@ -467,6 +467,26 @@ where
     })
 }
 
+fn parse_token_name_address<T: Into<NameOrAddress>>(
+    to: T,
+    chain: Chain,
+) -> eyre::Result<NameOrAddress> {
+    Ok(match to.into() {
+        NameOrAddress::Address(addr) => NameOrAddress::Address(addr),
+        NameOrAddress::Name(token_or_ens) => {
+            if let Some(token) = ethers::tokenlist::token(&token_or_ens) {
+                NameOrAddress::Address(
+                    token
+                        .address(chain)
+                        .ok_or(eyre::eyre!("no token address for provided chain"))?,
+                )
+            } else {
+                NameOrAddress::Name(token_or_ens)
+            }
+        }
+    })
+}
+
 async fn cast_send<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
     provider: M,
     from: F,
@@ -484,6 +504,7 @@ where
     let sig = args.0;
     let params = args.1;
     let params = if !sig.is_empty() { Some((&sig[..], params)) } else { None };
+    let to = parse_token_name_address(to, chain)?;
     let pending_tx = cast.send(from, to, params, chain, etherscan_api_key).await?;
     let tx_hash = *pending_tx;
 

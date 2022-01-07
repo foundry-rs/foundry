@@ -14,3 +14,14 @@ lto = true
 codegen-units = 1
 panic = "abort"
 debug = true
+
+[patch.crates-io]
+ethers = { git = "https://github.com/roynalnaruto/ethers-rs-1", branch = "feat/tokenlist", default-features = false }
+ethers-core = { git = "https://github.com/roynalnaruto/ethers-rs-1", branch = "feat/tokenlist", default-features = false }
+ethers-providers = { git = "https://github.com/roynalnaruto/ethers-rs-1", branch = "feat/tokenlist", default-features = false }
+ethers-signers = { git = "https://github.com/roynalnaruto/ethers-rs-1", branch = "feat/tokenlist", default-features = false }
+ethers-etherscan = { git = "https://github.com/roynalnaruto/ethers-rs-1", branch = "feat/tokenlist", default-features = false }
+ethers-solc = { git = "https://github.com/roynalnaruto/ethers-rs-1", branch = "feat/tokenlist", default-features = false }
+ethers-contract = { git = "https://github.com/roynalnaruto/ethers-rs-1", branch = "feat/tokenlist", default-features = false }
+ethers-middleware = { git = "https://github.com/roynalnaruto/ethers-rs-1", branch = "feat/tokenlist", default-features = false }
+ethers-tokenlist = { git = "https://github.com/roynalnaruto/ethers-rs-1", branch = "feat/tokenlist", default-features = false }
