@@ -302,8 +302,8 @@ pub enum Subcommands {
     Interface {
         #[structopt(short = "s", help = "The contract's address")]
         contract_address: Option<String>,
-        #[structopt(short, help = "pragma version")]
-        pragma: Option<String>,
+        #[structopt(short, default_value = "^0.8.10", help = "pragma version")]
+        pragma: String,
         #[structopt(short, help = "chain")]
         chain: Option<ethers::core::types::Chain>,
         #[structopt(short, help = "output file or relative path")]

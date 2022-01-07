@@ -269,16 +269,7 @@ async fn main() -> eyre::Result<()> {
                 etherscan_api_key,
             )
             .await?;
-            let mut output_string = match pragma {
-                Some(version) => {
-                    if version.len() == 0 {
-                        "pragma solidity ^0.8.10".to_owned()
-                    } else {
-                        format!("pragma solidity {}", version)
-                    }
-                }
-                None => "pragma solidity ^0.8.10".to_owned(),
-            };
+            let mut output_string = format!("pragma solidity {}", pragma);
             match output_location {
                 Some(loc) => {
                     for interface in interfaces {
