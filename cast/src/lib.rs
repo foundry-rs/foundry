@@ -47,7 +47,7 @@ where
     /// ```no_run
     /// 
     /// use cast::Cast;
-    /// use ethers_core::types::Address;
+    /// use ethers_core::types::{Address, Chain};
     /// use ethers_providers::{Provider, Http};
     /// use std::{str::FromStr, convert::TryFrom};
     ///
@@ -57,22 +57,21 @@ where
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let sig = "function greeting(uint256 i) public returns (string)";
     /// let args = vec!["5".to_owned()];
-    /// let data = cast.call(to, sig, args).await?;
+    /// let data = cast.call(Address::zero(), to, (sig, args), Chain::Mainnet, None).await?;
     /// println!("{}", data);
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn call<T: Into<NameOrAddress>>(
+    pub async fn call<F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
         &self,
+        from: F,
         to: T,
-        sig: &str,
-        args: Vec<String>,
+        args: (&str, Vec<String>),
+        chain: Chain,
+        etherscan_api_key: Option<String>,
     ) -> Result<String> {
-        let func = get_func(sig)?;
-        let data = encode_args(&func, &args)?;
-
-        // make the call
-        let tx = Eip1559TransactionRequest::new().to(to).data(data).into();
+        let func = get_func(args.0)?;
+        let tx = self.build_tx(from, to, Some(args), chain, etherscan_api_key).await?.into();
         let res = self.provider.call(&tx, None).await?;
 
         // decode args into tokens
