@@ -8,6 +8,7 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 # ethers = "0.5"
+ethers-addressbook = { git = "https://github.com/roynalnaruto/ethers-rs-1", branch = "feat/tokenlist", default-features = false }
 ethers-core = { git = "https://github.com/roynalnaruto/ethers-rs-1", branch = "feat/tokenlist", default-features = false }
 ethers-etherscan = { git = "https://github.com/roynalnaruto/ethers-rs-1", branch = "feat/tokenlist", default-features = false }
 
