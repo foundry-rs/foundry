@@ -13,7 +13,7 @@ use opts::{
 use ethers::{
     core::{
         rand::thread_rng,
-        types::{BlockId, BlockNumber::Latest, Chain},
+        types::{BlockId, BlockNumber::Latest},
     },
     providers::{Middleware, Provider},
     signers::{LocalWallet, Signer},
@@ -265,7 +265,7 @@ async fn main() -> eyre::Result<()> {
         } => {
             let interfaces = SimpleCast::generate_interface(
                 unwrap_or_stdin(contract_address).unwrap(),
-                chain.unwrap_or(Chain::Mainnet),
+                chain,
                 etherscan_api_key,
             )
             .await?;
