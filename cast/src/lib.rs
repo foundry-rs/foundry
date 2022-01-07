@@ -45,7 +45,7 @@ where
     /// Makes a read-only call to the specified address
     ///
     /// ```no_run
-    /// 
+    ///
     /// use cast::Cast;
     /// use ethers_core::types::{Address, Chain};
     /// use ethers_providers::{Provider, Http};
@@ -191,7 +191,10 @@ where
             NameOrAddress::Address(addr) => addr,
         };
 
-        let to = match to.into() {
+        // Queries the addressbook for the address if present.
+        let to = foundry_utils::resolve_addr(to, chain)?;
+
+        let to = match to {
             NameOrAddress::Name(ref ens_name) => self.provider.resolve_name(ens_name).await?,
             NameOrAddress::Address(addr) => addr,
         };
