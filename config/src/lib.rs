@@ -8,7 +8,7 @@ use figment::{
 };
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 
 /// Foundry configuration
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -215,14 +215,21 @@ impl Config {
             remappings: self.remappings,
         }
     }
+
+    /// Serialize the config type as a String of TOML.
+    ///
+    /// This serializes to a table with the name of the profile
+    pub fn to_string_pretty(&self) -> Result<String, toml::ser::Error> {
+        toml::to_string_pretty(&HashMap::from([(self.profile.to_string(), self)]))
+    }
 }
 
-impl Into<Figment> for Config {
-    fn into(self) -> Figment {
-        Figment::from(self)
-            .merge(Toml::file(Env::var_or("FOUNDRY_CONFIG", Self::FILE_NAME)).nested())
+impl From<Config> for Figment {
+    fn from(c: Config) -> Figment {
+        Figment::from(c)
+            .merge(Toml::file(Env::var_or("FOUNDRY_CONFIG", Config::FILE_NAME)).nested())
             .merge(Env::prefixed("FOUNDRY_").ignore(&["PROFILE"]).global())
-            .select(Profile::from_env_or("FOUNDRY_PROFILE", Self::DEFAULT_PROFILE))
+            .select(Profile::from_env_or("FOUNDRY_PROFILE", Config::DEFAULT_PROFILE))
     }
 }
 
@@ -288,7 +295,7 @@ impl Default for Config {
 /// ```
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct BasicConfig {
-    #[serde(skip_deserializing)]
+    #[serde(skip)]
     pub profile: Profile,
     /// path of the source contracts dir, like `src` or `contracts`
     pub src: PathBuf,
@@ -298,6 +305,15 @@ pub struct BasicConfig {
     pub libs: Vec<PathBuf>,
     /// `Remappings` to use for this repo
     pub remappings: Vec<Remapping>,
+}
+
+impl BasicConfig {
+    /// Serialize the config as a String of TOML.
+    ///
+    /// This serializes to a table with the name of the profile
+    pub fn to_string_pretty(&self) -> Result<String, toml::ser::Error> {
+        toml::to_string_pretty(&HashMap::from([(self.profile.to_string(), self)]))
+    }
 }
 
 #[cfg(test)]
@@ -456,7 +472,7 @@ mod tests {
                     src: "other-src".into(),
                     out: "myout".into(),
                     libs: default.libs.clone(),
-                    remappings: default.remappings.clone()
+                    remappings: default.remappings
                 }
             );
 
