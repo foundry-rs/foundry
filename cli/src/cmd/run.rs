@@ -224,7 +224,7 @@ impl RunArgs {
         let (project, output) = if let Ok(mut project) = self.opts.project() {
             // TODO: caching causes no output until https://github.com/gakonst/ethers-rs/issues/727
             // is fixed
-            // project.cached = false;
+            project.cached = false;
             project.no_artifacts = true;
             // target contract may not be in the compilation path, add it and manually compile
             match manual_compile(&project, vec![root.clone()]) {
