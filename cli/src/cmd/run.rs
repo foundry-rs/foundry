@@ -188,41 +188,41 @@ pub struct BuildOutput {
 }
 
 impl RunArgs {
+    fn target_project(&self) -> eyre::Result<Project<MinimalCombinedArtifacts>> {
+        let paths = ProjectPathsConfig::builder()
+            .root(&self.path)
+            .sources(&self.path)
+            .build()?;
+
+        let optimizer = Optimizer {
+            enabled: Some(self.opts.compiler.optimize),
+            runs: Some(self.opts.compiler.optimize_runs as usize),
+        };
+
+        let solc_settings = Settings {
+            optimizer,
+            evm_version: Some(self.opts.compiler.evm_version),
+            ..Default::default()
+        };
+        let solc_cfg = SolcConfig::builder().settings(solc_settings).build()?;
+
+        // setup the compiler
+        let mut builder = Project::builder()
+            .paths(paths)
+            .allowed_path(&self.path)
+            .solc_config(solc_cfg)
+            // we do not want to generate any compilation artifacts in the script run mode
+            .no_artifacts()
+            // no cache
+            .ephemeral();
+        if self.opts.no_auto_detect {
+            builder = builder.no_auto_detect();
+        }
+        Ok(builder.build()?)
+    }
+
     /// Compiles the file with auto-detection and compiler params.
     pub fn build(&self) -> eyre::Result<BuildOutput> {
-        fn target_project(run_args: &RunArgs) -> eyre::Result<Project<MinimalCombinedArtifacts>> {
-            let paths = ProjectPathsConfig::builder()
-                .root(&run_args.path)
-                .sources(&run_args.path)
-                .build()?;
-
-            let optimizer = Optimizer {
-                enabled: Some(run_args.opts.compiler.optimize),
-                runs: Some(run_args.opts.compiler.optimize_runs as usize),
-            };
-
-            let solc_settings = Settings {
-                optimizer,
-                evm_version: Some(run_args.opts.compiler.evm_version),
-                ..Default::default()
-            };
-            let solc_cfg = SolcConfig::builder().settings(solc_settings).build()?;
-
-            // setup the compiler
-            let mut builder = Project::builder()
-                .paths(paths)
-                .allowed_path(&run_args.path)
-                .solc_config(solc_cfg)
-                // we do not want to generate any compilation artifacts in the script run mode
-                .no_artifacts()
-                // no cache
-                .ephemeral();
-            if run_args.opts.no_auto_detect {
-                builder = builder.no_auto_detect();
-            }
-            Ok(builder.build()?)
-        }
-
         let root = dunce::canonicalize(&self.path)?;
         let (project, output) = if let Ok(mut project) = self.opts.project() {
             // TODO: caching causes no output until https://github.com/gakonst/ethers-rs/issues/727
@@ -234,7 +234,7 @@ impl RunArgs {
                 Ok(output) => (project, output),
                 Err(e) => {
                     println!("No extra contracts compiled {:?}", e);
-                    let mut target_project = target_project(self)?;
+                    let mut target_project = self.target_project()?;
                     target_project.cached = false;
                     target_project.no_artifacts = true;
                     let res = compile(&target_project)?;
@@ -242,7 +242,7 @@ impl RunArgs {
                 }
             }
         } else {
-            let mut target_project = target_project(self)?;
+            let mut target_project = self.target_project()?;
             target_project.cached = false;
             target_project.no_artifacts = true;
             let res = compile(&target_project)?;
