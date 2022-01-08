@@ -1198,9 +1198,8 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#a77bf845d2707b793f0f40df52cdb5c9c481ad74"
 dependencies = [
- "ethers-addressbook",
+ "ethers-addressbook 0.1.0",
  "ethers-contract",
  "ethers-core",
  "ethers-etherscan",
@@ -1208,6 +1207,16 @@ dependencies = [
  "ethers-providers",
  "ethers-signers",
  "ethers-solc",
+]
+
+[[package]]
+name = "ethers-addressbook"
+version = "0.1.0"
+dependencies = [
+ "ethers-core",
+ "once_cell",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1224,7 +1233,6 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#a77bf845d2707b793f0f40df52cdb5c9c481ad74"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1242,7 +1250,6 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#a77bf845d2707b793f0f40df52cdb5c9c481ad74"
 dependencies = [
  "Inflector",
  "anyhow",
@@ -1265,7 +1272,6 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#a77bf845d2707b793f0f40df52cdb5c9c481ad74"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -1279,7 +1285,6 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#a77bf845d2707b793f0f40df52cdb5c9c481ad74"
 dependencies = [
  "arrayvec 0.7.2",
  "bytes",
@@ -1307,7 +1312,6 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "0.2.0"
-source = "git+https://github.com/gakonst/ethers-rs#a77bf845d2707b793f0f40df52cdb5c9c481ad74"
 dependencies = [
  "ethers-core",
  "reqwest",
@@ -1320,7 +1324,6 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#a77bf845d2707b793f0f40df52cdb5c9c481ad74"
 dependencies = [
  "async-trait",
  "ethers-contract",
@@ -1343,7 +1346,6 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#a77bf845d2707b793f0f40df52cdb5c9c481ad74"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -1373,7 +1375,6 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#a77bf845d2707b793f0f40df52cdb5c9c481ad74"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1396,11 +1397,11 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "0.1.0"
-source = "git+https://github.com/gakonst/ethers-rs#a77bf845d2707b793f0f40df52cdb5c9c481ad74"
 dependencies = [
  "colored",
  "dunce",
  "ethers-core",
+ "fs_extra",
  "futures-util",
  "getrandom 0.2.3",
  "glob",
@@ -1417,6 +1418,7 @@ dependencies = [
  "sha2 0.9.9",
  "solang-parser",
  "svm-rs",
+ "tempfile",
  "thiserror",
  "tiny-keccak",
  "tokio",
@@ -1636,6 +1638,7 @@ dependencies = [
  "color-eyre",
  "dunce",
  "ethers",
+ "ethers-solc",
  "evm",
  "evm-adapters",
  "evmodin",
@@ -1653,17 +1656,18 @@ dependencies = [
  "semver",
  "serde_json",
  "structopt",
- "tempdir",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "walkdir",
 ]
 
 [[package]]
 name = "foundry-utils"
 version = "0.1.0"
 dependencies = [
- "ethers-addressbook",
+ "ethers-addressbook 0.1.0 (git+https://github.com/gakonst/ethers-rs)",
  "ethers-core",
  "ethers-etherscan",
  "eyre",
@@ -1674,6 +1678,12 @@ dependencies = [
  "serde_json",
  "tokio",
 ]
+
+[[package]]
+name = "fs_extra"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2022715d62ab30faffd124d40b76f4134a550a87792276512b18d63272333394"
 
 [[package]]
 name = "fuchsia-cprng"
@@ -3047,19 +3057,6 @@ checksum = "643f8f41a8ebc4c5dc4515c82bb8abd397b527fc20fd681b7c011c2aee5d44fb"
 
 [[package]]
 name = "rand"
-version = "0.4.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "552840b97013b1a26992c11eac34bdd778e464601a4c2054b5f0bff7c6761293"
-dependencies = [
- "fuchsia-cprng",
- "libc",
- "rand_core 0.3.1",
- "rdrand",
- "winapi",
-]
-
-[[package]]
-name = "rand"
 version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6d71dacdc3c88c1fde3885a3be3fbab9f35724e6ce99467f7d9c5026132184ca"
@@ -3913,7 +3910,7 @@ dependencies = [
 [[package]]
 name = "solang-parser"
 version = "0.1.1"
-source = "git+https://github.com/hyperledger-labs/solang#2fcd9894513699782c7abcd6c59a7a6c9392da55"
+source = "git+https://github.com/hyperledger-labs/solang#10cdb80b467b3ba1e9dde5d5e53dbae740bcfb51"
 dependencies = [
  "lalrpop",
  "lalrpop-util",
@@ -4075,16 +4072,6 @@ name = "tap"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
-
-[[package]]
-name = "tempdir"
-version = "0.3.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "15f2b5fb00ccdf689e0149d1b1b3c03fead81c2b37735d812fa8bddbbf41b6d8"
-dependencies = [
- "rand 0.4.6",
- "remove_dir_all",
-]
 
 [[package]]
 name = "tempfile"
