@@ -2,27 +2,25 @@ use crate::{
     cmd::{build::BuildArgs, compile, Cmd},
     opts::forge::EvmOpts,
 };
-use ethers::{
-    abi::Abi,
-    prelude::artifacts::{Bytecode, DeployedBytecode},
-};
+use ethers::abi::Abi;
 use forge::ContractRunner;
 use foundry_utils::IntoFunction;
 use std::{collections::BTreeMap, path::PathBuf};
 use structopt::StructOpt;
 use ui::{TUIExitReason, Tui, Ui};
 
-use ethers::{
-    prelude::artifacts::CompactContract,
-    solc::{
-        artifacts::{Optimizer, Settings},
-        Project, ProjectPathsConfig, SolcConfig,
-    },
+use ethers::solc::{
+    artifacts::{Optimizer, Settings},
+    Project, ProjectPathsConfig, SolcConfig,
 };
 
 use evm_adapters::Evm;
 
 use ansi_term::Colour;
+use ethers::{
+    prelude::{artifacts::ContractBytecode, Artifact},
+    solc::artifacts::{CompactContractSome, ContractBytecodeSome},
+};
 
 #[derive(Debug, Clone, StructOpt)]
 pub struct RunArgs {
@@ -74,14 +72,12 @@ impl Cmd for RunArgs {
             if let Ok(project) = self.opts.project() {
                 println!("Compiling full repo to aid in debugging/tracing");
                 if let Ok(output) = compile(&project) {
-                    let contracts = output.output();
-                    for (contract_name, contract) in contracts.contracts_into_iter() {
-                        insert_contract_info(
-                            &mut highlevel_known_contracts,
-                            contract_name.to_string(),
-                            &contract,
-                        );
-                    }
+                    highlevel_known_contracts.extend(
+                        output
+                            .output()
+                            .contracts_into_iter()
+                            .map(|(name, c)| (name, ContractBytecode::from(c).unwrap())),
+                    );
                 } else {
                     println!("No extra contracts compiled");
                 }
@@ -90,29 +86,20 @@ impl Cmd for RunArgs {
 
         let known_contracts = highlevel_known_contracts
             .iter()
-            .map(|(name, (abi, _b, deployed_b))| {
+            .map(|(name, c)| {
                 (
                     name.clone(),
                     (
-                        abi.clone(),
-                        deployed_b
-                            .clone()
-                            .bytecode
-                            .expect("no bytes")
-                            .object
-                            .into_bytes()
-                            .expect("not bytecode")
-                            .to_vec(),
+                        c.abi.clone(),
+                        c.deployed_bytecode.clone().into_bytes().expect("not bytecode").to_vec(),
                     ),
                 )
             })
             .collect::<BTreeMap<String, (Abi, Vec<u8>)>>();
-        let (abi, bytecode, runtime_bytecode) = contract.into_parts();
 
+        let CompactContractSome { abi, bin, .. } = contract;
         // this should never fail if compilation was successful
-        let abi = abi.unwrap();
-        let bytecode = bytecode.unwrap();
-        let _runtime_bytecode = runtime_bytecode.unwrap();
+        let bytecode = bin.into_bytes().unwrap();
 
         // 2. instantiate the EVM w forked backend if needed / pre-funded account(s)
         let mut cfg = crate::utils::sputnik_cfg(self.opts.compiler.evm_version);
@@ -200,15 +187,13 @@ impl Cmd for RunArgs {
 }
 
 pub struct BuildOutput {
-    pub contract: CompactContract,
-    pub highlevel_known_contracts: BTreeMap<String, (Abi, Bytecode, DeployedBytecode)>,
+    pub contract: CompactContractSome,
+    pub highlevel_known_contracts: BTreeMap<String, ContractBytecodeSome>,
     pub sources: BTreeMap<u32, String>,
 }
 
 impl RunArgs {
     /// Compiles the file with auto-detection and compiler params.
-    // TODO: This is too verbose. We definitely want an easier way to do "take this file, detect
-    // its solc version and give me all its ABIs & Bytecodes in memory w/o touching disk".
     pub fn build(&self) -> eyre::Result<BuildOutput> {
         let paths = ProjectPathsConfig::builder().root(&self.path).sources(&self.path).build()?;
 
@@ -240,69 +225,36 @@ impl RunArgs {
         let output = compile(&project)?;
 
         // get the contracts
-        let contracts = output.output();
-        let sources = contracts
-            .sources
-            .iter()
-            .map(|(path, source_file)| (source_file.id, path.clone()))
-            .collect();
-
-        // deployed bytecode one for
-        let mut highlevel_known_contracts: BTreeMap<String, (Abi, Bytecode, DeployedBytecode)> =
-            Default::default();
-
+        let (sources, mut contracts) = output.output().split();
         // get the specific contract
-        let contract = if let Some(ref contract_name) = self.target_contract {
-            let (_name, contract) = contracts
-                .contracts_into_iter()
-                .find(|(name, _contract)| name == contract_name)
+        let (name, contract_bytecode) = if let Some(contract_name) = self.target_contract.clone() {
+            let contract_bytecode: ContractBytecode = contracts
+                .remove(&contract_name)
                 .ok_or_else(|| {
                     eyre::Error::msg("contract not found, did you type the name wrong?")
-                })?;
-            insert_contract_info(
-                &mut highlevel_known_contracts,
-                contract_name.to_string(),
-                &contract,
-            );
-            CompactContract::from(contract)
+                })?
+                .into();
+            (contract_name, contract_bytecode.unwrap())
         } else {
-            let mut contracts = contracts.contracts_into_iter().filter(|(_fname, contract)| {
-                // TODO: Should have a helper function for finding if a contract's bytecode is
-                // empty or not.
-                match contract.evm {
-                    Some(ref evm) => match evm.bytecode {
-                        Some(ref bytecode) => bytecode
-                            .object
-                            .as_bytes()
-                            .map(|x| !x.as_ref().is_empty())
-                            .unwrap_or(false),
-                        _ => false,
-                    },
-                    _ => false,
-                }
-            });
-            let (contract_name, contract) =
-                contracts.next().ok_or_else(|| eyre::Error::msg("no contract found"))?;
-            insert_contract_info(&mut highlevel_known_contracts, contract_name, &contract);
-            if contracts.peekable().peek().is_some() {
-                eyre::bail!(
-                    ">1 contracts found, please provide a contract name to choose one of them"
-                )
-            }
-            CompactContract::from(contract)
+            contracts
+                .into_contracts()
+                .filter_map(|(name, c)| {
+                    let c: ContractBytecode = c.into();
+                    ContractBytecodeSome::try_from(c).ok().map(|c| (name, c))
+                })
+                .filter(|(_, c)| c.bytecode.object.is_non_empty_bytecode())
+                .next()
+                .ok_or_else(|| eyre::Error::msg("no contract found"))?
         };
-        Ok(BuildOutput { contract, highlevel_known_contracts, sources })
-    }
-}
 
-fn insert_contract_info(
-    highlevel_known_contracts: &mut BTreeMap<String, (Abi, Bytecode, DeployedBytecode)>,
-    name: String,
-    contract: &ethers::solc::artifacts::Contract,
-) {
-    let abi = contract.abi.clone().expect("no abi");
-    let evm = contract.evm.clone().expect("no evm");
-    let creation_bytecode = evm.bytecode.expect("no creation bytecode");
-    let runtime_bytecode = evm.deployed_bytecode.expect("no deployed bytecode");
-    highlevel_known_contracts.insert(name, (abi, creation_bytecode, runtime_bytecode));
+        let contract = contract_bytecode.clone().into_compact_contract().unwrap();
+        // deployed bytecode one for
+        let highlevel_known_contracts = BTreeMap::from([(name, contract_bytecode)]);
+
+        Ok(BuildOutput {
+            contract,
+            highlevel_known_contracts,
+            sources: sources.into_ids().collect(),
+        })
+    }
 }

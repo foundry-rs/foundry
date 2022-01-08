@@ -1,7 +1,4 @@
-use ethers::{
-    abi::Abi,
-    prelude::artifacts::{Bytecode, DeployedBytecode},
-};
+use ethers::abi::Abi;
 use std::{
     cmp::{max, min},
     collections::{BTreeMap, VecDeque},
@@ -17,6 +14,7 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use ethers::solc::artifacts::ContractBytecodeSome;
 use std::{
     io::{self},
     sync::mpsc,
@@ -57,7 +55,7 @@ pub struct Tui {
     /// current step in the debug steps
     current_step: usize,
     identified_contracts: BTreeMap<Address, (String, Abi)>,
-    known_contracts: BTreeMap<String, (Abi, Bytecode, DeployedBytecode)>,
+    known_contracts: BTreeMap<String, ContractBytecodeSome>,
     source_code: BTreeMap<u32, String>,
 }
 
@@ -68,7 +66,7 @@ impl Tui {
         debug_arena: Vec<(Address, Vec<DebugStep>, bool)>,
         current_step: usize,
         identified_contracts: BTreeMap<Address, (String, Abi)>,
-        known_contracts: BTreeMap<String, (Abi, Bytecode, DeployedBytecode)>,
+        known_contracts: BTreeMap<String, ContractBytecodeSome>,
         source_code: BTreeMap<u32, String>,
     ) -> Result<Self> {
         enable_raw_mode()?;
@@ -107,7 +105,7 @@ impl Tui {
         f: &mut Frame<B>,
         address: Address,
         identified_contracts: &BTreeMap<Address, (String, Abi)>,
-        known_contracts: &BTreeMap<String, (Abi, Bytecode, DeployedBytecode)>,
+        known_contracts: &BTreeMap<String, ContractBytecodeSome>,
         source_code: &BTreeMap<u32, String>,
         debug_steps: &[DebugStep],
         opcode_list: &[String],
@@ -169,7 +167,7 @@ impl Tui {
         f: &mut Frame<B>,
         address: Address,
         identified_contracts: &BTreeMap<Address, (String, Abi)>,
-        known_contracts: &BTreeMap<String, (Abi, Bytecode, DeployedBytecode)>,
+        known_contracts: &BTreeMap<String, ContractBytecodeSome>,
         source_code: &BTreeMap<u32, String>,
         ic: usize,
         creation: bool,
@@ -185,9 +183,9 @@ impl Tui {
             if let Some(known) = known_contracts.get(&contract_name.0) {
                 // grab either the creation source map or runtime sourcemap
                 if let Some(sourcemap) = if creation {
-                    known.1.source_map()
+                    known.bytecode.source_map()
                 } else {
-                    known.2.bytecode.as_ref().expect("no bytecode").source_map()
+                    known.deployed_bytecode.bytecode.as_ref().expect("no bytecode").source_map()
                 } {
                     match sourcemap {
                         Ok(sourcemap) => {
