@@ -1254,9 +1254,9 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "0.6.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/solc-utils#d7031afd0d3e8adf1ef3d2b138987af9c4f995cd"
+source = "git+https://github.com/brockelmore/ethers-rs#4f29551205196197630406f4be23bf2c51fdd8ed"
 dependencies = [
- "ethers-addressbook",
+ "ethers-addressbook 0.1.0 (git+https://github.com/brockelmore/ethers-rs)",
  "ethers-contract",
  "ethers-core",
  "ethers-etherscan",
@@ -1269,7 +1269,18 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "0.1.0"
-source = "git+https://github.com/gakonst/ethers-rs#a77bf845d2707b793f0f40df52cdb5c9c481ad74"
+source = "git+https://github.com/brockelmore/ethers-rs#4f29551205196197630406f4be23bf2c51fdd8ed"
+dependencies = [
+ "ethers-core",
+ "once_cell",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "ethers-addressbook"
+version = "0.1.0"
+source = "git+https://github.com/gakonst/ethers-rs#8e0eddbb5769d46ca65b9f6d3ace6feef97dc816"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -1280,7 +1291,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "0.6.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/solc-utils#d7031afd0d3e8adf1ef3d2b138987af9c4f995cd"
+source = "git+https://github.com/brockelmore/ethers-rs#4f29551205196197630406f4be23bf2c51fdd8ed"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1298,7 +1309,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "0.6.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/solc-utils#d7031afd0d3e8adf1ef3d2b138987af9c4f995cd"
+source = "git+https://github.com/brockelmore/ethers-rs#4f29551205196197630406f4be23bf2c51fdd8ed"
 dependencies = [
  "Inflector",
  "anyhow",
@@ -1321,7 +1332,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "0.6.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/solc-utils#d7031afd0d3e8adf1ef3d2b138987af9c4f995cd"
+source = "git+https://github.com/brockelmore/ethers-rs#4f29551205196197630406f4be23bf2c51fdd8ed"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -1335,7 +1346,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "0.6.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/solc-utils#d7031afd0d3e8adf1ef3d2b138987af9c4f995cd"
+source = "git+https://github.com/brockelmore/ethers-rs#4f29551205196197630406f4be23bf2c51fdd8ed"
 dependencies = [
  "arrayvec 0.7.2",
  "bytes",
@@ -1363,7 +1374,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "0.2.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/solc-utils#d7031afd0d3e8adf1ef3d2b138987af9c4f995cd"
+source = "git+https://github.com/brockelmore/ethers-rs#4f29551205196197630406f4be23bf2c51fdd8ed"
 dependencies = [
  "ethers-core",
  "reqwest",
@@ -1376,7 +1387,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "0.6.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/solc-utils#d7031afd0d3e8adf1ef3d2b138987af9c4f995cd"
+source = "git+https://github.com/brockelmore/ethers-rs#4f29551205196197630406f4be23bf2c51fdd8ed"
 dependencies = [
  "async-trait",
  "ethers-contract",
@@ -1399,7 +1410,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "0.6.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/solc-utils#d7031afd0d3e8adf1ef3d2b138987af9c4f995cd"
+source = "git+https://github.com/brockelmore/ethers-rs#4f29551205196197630406f4be23bf2c51fdd8ed"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -1429,7 +1440,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "0.6.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/solc-utils#d7031afd0d3e8adf1ef3d2b138987af9c4f995cd"
+source = "git+https://github.com/brockelmore/ethers-rs#4f29551205196197630406f4be23bf2c51fdd8ed"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1452,7 +1463,7 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "0.1.0"
-source = "git+https://github.com/mattsse/ethers-rs?branch=matt/solc-utils#d7031afd0d3e8adf1ef3d2b138987af9c4f995cd"
+source = "git+https://github.com/brockelmore/ethers-rs#4f29551205196197630406f4be23bf2c51fdd8ed"
 dependencies = [
  "colored",
  "dunce",
@@ -1720,7 +1731,7 @@ dependencies = [
 name = "foundry-utils"
 version = "0.1.0"
 dependencies = [
- "ethers-addressbook",
+ "ethers-addressbook 0.1.0 (git+https://github.com/gakonst/ethers-rs)",
  "ethers-core",
  "ethers-etherscan",
  "eyre",
@@ -2211,9 +2222,9 @@ checksum = "ce23b50ad8242c51a442f3ff322d56b02f08852c77e4c0b4d3fd684abc89c683"
 
 [[package]]
 name = "indexmap"
-version = "1.7.0"
+version = "1.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc633605454125dec4b66843673f01c7df2b89479b32e0ed634e43a91cff62a5"
+checksum = "282a6247722caba404c065016bbfa522806e51714c34f5dfc3e4a3a46fcb4223"
 dependencies = [
  "autocfg 1.0.1",
  "hashbrown 0.11.2",

@@ -556,6 +556,9 @@ impl Tui {
         f.render_widget(paragraph, area);
     }
 
+    // cargo r --manifest-path ../foundry/Cargo.toml --bin forge run ./src/test/Locke.t.sol -t
+    // StreamTest --sig "test_fundStream()" --debug
+
     /// Draw memory in memory pane
     fn draw_memory<B: Backend>(
         f: &mut Frame<B>,
@@ -602,6 +605,14 @@ impl Tui {
 
 impl Ui for Tui {
     fn start(mut self) -> Result<TUIExitReason> {
+        // if something panics inside here, we should do everything we can to
+        // not corrupt the user's terminal.
+        std::panic::set_hook(Box::new(|e| {
+            disable_raw_mode().expect("Unable to disable raw mode");
+            execute!(std::io::stdout(), LeaveAlternateScreen, DisableMouseCapture)
+                .expect("unable to execute disable mouse capture");
+            println!("{}", e);
+        }));
         // this is the recommend tick rate from tui-rs, based on their examples
         let tick_rate = Duration::from_millis(200);
 
@@ -784,7 +795,6 @@ impl Ui for Tui {
                     }
                 },
                 Interrupt::MouseEvent(event) => match event.kind {
-                    // Button pressed, mark current line as breakpoint
                     MouseEventKind::ScrollUp => {
                         if self.current_step > 0 {
                             self.current_step -= 1;

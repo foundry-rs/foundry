@@ -1,5 +1,5 @@
 use crate::{
-    cmd::{build::BuildArgs, compile, Cmd},
+    cmd::{build::BuildArgs, compile, manual_compile, Cmd},
     opts::forge::EvmOpts,
 };
 use ethers::abi::Abi;
@@ -11,7 +11,7 @@ use ui::{TUIExitReason, Tui, Ui};
 
 use ethers::solc::{
     artifacts::{Optimizer, Settings},
-    Project, ProjectPathsConfig, SolcConfig,
+    MinimalCombinedArtifacts, Project, ProjectPathsConfig, SolcConfig,
 };
 
 use evm_adapters::Evm;
@@ -60,29 +60,8 @@ impl Cmd for RunArgs {
             evm_opts.verbosity = 3;
         }
 
-        // This is just the contracts compiled, but we need to merge this with the read cached
-        // artifacts
-
         let func = IntoFunction::into(self.sig.as_deref().unwrap_or("run()"));
-        let BuildOutput { contract, mut highlevel_known_contracts, sources } = self.build()?;
-
-        // if we have a high verbosity, we want all possible compiler data not just for this
-        // contract in case the transaction interacts with others
-        if evm_opts.debug || evm_opts.verbosity > 3 {
-            if let Ok(project) = self.opts.project() {
-                println!("Compiling full repo to aid in debugging/tracing");
-                if let Ok(output) = compile(&project) {
-                    highlevel_known_contracts.extend(
-                        output
-                            .output()
-                            .contracts_into_iter()
-                            .map(|(name, c)| (name, ContractBytecode::from(c).unwrap())),
-                    );
-                } else {
-                    println!("No extra contracts compiled");
-                }
-            }
-        }
+        let BuildOutput { project, contract, highlevel_known_contracts, sources } = self.build()?;
 
         let known_contracts = highlevel_known_contracts
             .iter()
@@ -118,14 +97,29 @@ impl Cmd for RunArgs {
 
         if self.evm_opts.debug {
             // 6. Boot up debugger
+
             let source_code: BTreeMap<u32, String> = sources
                 .iter()
                 .map(|(id, path)| {
-                    (
-                        *id,
-                        std::fs::read_to_string(path)
-                            .expect("Something went wrong reading the file"),
-                    )
+                    if let Some(resolved) =
+                        project.paths.resolve_library_import(&PathBuf::from(path))
+                    {
+                        (
+                            *id,
+                            std::fs::read_to_string(resolved).expect(&*format!(
+                                "Something went wrong reading the source file: {:?}",
+                                path
+                            )),
+                        )
+                    } else {
+                        (
+                            *id,
+                            std::fs::read_to_string(path).expect(&*format!(
+                                "Something went wrong reading the source file: {:?}",
+                                path
+                            )),
+                        )
+                    }
                 })
                 .collect();
 
@@ -187,6 +181,7 @@ impl Cmd for RunArgs {
 }
 
 pub struct BuildOutput {
+    pub project: Project<MinimalCombinedArtifacts>,
     pub contract: CompactContractSome,
     pub highlevel_known_contracts: BTreeMap<String, ContractBytecodeSome>,
     pub sources: BTreeMap<u32, String>,
@@ -195,40 +190,74 @@ pub struct BuildOutput {
 impl RunArgs {
     /// Compiles the file with auto-detection and compiler params.
     pub fn build(&self) -> eyre::Result<BuildOutput> {
-        let paths = ProjectPathsConfig::builder().root(&self.path).sources(&self.path).build()?;
+        fn target_project(run_args: &RunArgs) -> eyre::Result<Project<MinimalCombinedArtifacts>> {
+            let paths = ProjectPathsConfig::builder()
+                .root(&run_args.path)
+                .sources(&run_args.path)
+                .build()?;
 
-        let optimizer = Optimizer {
-            enabled: Some(self.opts.compiler.optimize),
-            runs: Some(self.opts.compiler.optimize_runs as usize),
-        };
+            let optimizer = Optimizer {
+                enabled: Some(run_args.opts.compiler.optimize),
+                runs: Some(run_args.opts.compiler.optimize_runs as usize),
+            };
 
-        let solc_settings = Settings {
-            optimizer,
-            evm_version: Some(self.opts.compiler.evm_version),
-            ..Default::default()
-        };
-        let solc_cfg = SolcConfig::builder().settings(solc_settings).build()?;
+            let solc_settings = Settings {
+                optimizer,
+                evm_version: Some(run_args.opts.compiler.evm_version),
+                ..Default::default()
+            };
+            let solc_cfg = SolcConfig::builder().settings(solc_settings).build()?;
 
-        // setup the compiler
-        let mut builder = Project::builder()
-            .paths(paths)
-            .allowed_path(&self.path)
-            .solc_config(solc_cfg)
-            // we do not want to generate any compilation artifacts in the script run mode
-            .no_artifacts()
-            // no cache
-            .ephemeral();
-        if self.opts.no_auto_detect {
-            builder = builder.no_auto_detect();
+            // setup the compiler
+            let mut builder = Project::builder()
+                .paths(paths)
+                .allowed_path(&run_args.path)
+                .solc_config(solc_cfg)
+                // we do not want to generate any compilation artifacts in the script run mode
+                .no_artifacts()
+                // no cache
+                .ephemeral();
+            if run_args.opts.no_auto_detect {
+                builder = builder.no_auto_detect();
+            }
+            Ok(builder.build()?)
         }
-        let project = builder.build()?;
-        let output = compile(&project)?;
+
+        let root = dunce::canonicalize(&self.path)?;
+        let (project, output) = if let Ok(mut project) = self.opts.project() {
+            // TODO: caching causes no output until https://github.com/gakonst/ethers-rs/issues/727
+            // is fixed
+            // project.cached = false;
+            project.no_artifacts = true;
+            // target contract may not be in the compilation path, add it and manually compile
+            match manual_compile(&project, vec![root.clone()]) {
+                Ok(output) => (project, output),
+                Err(e) => {
+                    println!("No extra contracts compiled {:?}", e);
+                    let mut target_project = target_project(self)?;
+                    target_project.cached = false;
+                    target_project.no_artifacts = true;
+                    let res = compile(&target_project)?;
+                    (target_project, res)
+                }
+            }
+        } else {
+            let mut target_project = target_project(self)?;
+            target_project.cached = false;
+            target_project.no_artifacts = true;
+            let res = compile(&target_project)?;
+            (target_project, res)
+        };
+        println!("success.");
 
         // get the contracts
         let (sources, mut contracts) = output.output().split();
         // get the specific contract
         let (name, contract_bytecode) = if let Some(contract_name) = self.target_contract.clone() {
             let contract_bytecode: ContractBytecode = contracts
+                .0
+                .remove(root.to_str().expect("OsString from path"))
+                .ok_or_else(|| eyre::Error::msg("contract path not compiled. Please report a bug"))?
                 .remove(&contract_name)
                 .ok_or_else(|| {
                     eyre::Error::msg("contract not found, did you type the name wrong?")
@@ -236,15 +265,22 @@ impl RunArgs {
                 .into();
             (contract_name, contract_bytecode.unwrap())
         } else {
-            contracts
-                .into_contracts()
+            let contract = contracts
+                .0
+                .remove(root.to_str().expect("OsString from path"))
+                .ok_or_else(|| {
+                    eyre::Error::msg(
+                        "contract path not found; This is likely a bug, please report it",
+                    )
+                })?
+                .into_iter()
                 .filter_map(|(name, c)| {
                     let c: ContractBytecode = c.into();
                     ContractBytecodeSome::try_from(c).ok().map(|c| (name, c))
                 })
-                .filter(|(_, c)| c.bytecode.object.is_non_empty_bytecode())
-                .next()
-                .ok_or_else(|| eyre::Error::msg("no contract found"))?
+                .find(|(_, c)| c.bytecode.object.is_non_empty_bytecode())
+                .ok_or_else(|| eyre::Error::msg("no contract found"))?;
+            (contract.0, contract.1)
         };
 
         let contract = contract_bytecode.clone().into_compact_contract().unwrap();
@@ -252,6 +288,7 @@ impl RunArgs {
         let highlevel_known_contracts = BTreeMap::from([(name, contract_bytecode)]);
 
         Ok(BuildOutput {
+            project,
             contract,
             highlevel_known_contracts,
             sources: sources.into_ids().collect(),
