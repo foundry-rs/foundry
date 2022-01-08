@@ -862,11 +862,25 @@ impl SimpleCast {
     }
 
 	pub async fn etherscan_source(
+		chain: Chain,
 		contract_address: &str,
 		etherscan_api_key: &str) -> Result<String> {
-			let url = format!("https://api.etherscan.io/api?module=contract&action=getsourcecode&address={contract_address}&apikey={api_key}",
-			contract_address = contract_address,
-						api_key = etherscan_api_key);
+			let base_url = match chain {
+								Chain::Mainnet => "https://api.etherscan.io/api?",
+								// Chain::Ropsten | Chain::Kovan | Chain::Rinkeby | Chain::Goerli => base_url = format!("https://api-{chain}.etherscan.io/api?", chain = chain.to_string().as_str()),
+								Chain::Ropsten => "https://api-ropsten.etherscan.io/api?",
+								Chain::Kovan => "https://api-kovan.etherscan.io/api?",
+								Chain::Rinkeby => "https://api-rinkeby.etherscan.io/api?",
+								Chain::Goerli => "https://api-goerli.etherscan.io/api?",
+								Chain::Polygon => "https://api.polygonscan.com/api?",
+								Chain::PolygonMumbai => "https://api-testnet.polygonscan.com/api?",
+								_ => panic!("Chain not supported"),
+							};
+
+			let url = format!("{base_url}module=contract&action=getsourcecode&address={addr}&apikey={api_key}",
+								base_url = base_url,
+								addr = contract_address,
+								api_key = etherscan_api_key);
 
 			let response = reqwest::get(&url).await?.text().await?;
 			let json: serde_json::Value = serde_json::from_str(&response)?;
