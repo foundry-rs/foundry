@@ -10,7 +10,7 @@ use ethers::{
         coins_bip39::English, HDPath as LedgerHDPath, Ledger, LocalWallet, MnemonicBuilder, Signer,
         Trezor, TrezorHDPath,
     },
-    types::{Address, U256},
+    types::{Address, Chain, U256},
 };
 use eyre::Result;
 use structopt::StructOpt;
@@ -30,9 +30,28 @@ pub struct EthereumOpts {
 
     #[structopt(long, help = "Use the flashbots RPC URL (https://rpc.flashbots.net)")]
     pub flashbots: bool,
+
+    #[structopt(long, env = "ETHERSCAN_API_KEY")]
+    pub etherscan_api_key: Option<String>,
+    #[structopt(long, env = "CHAIN", default_value = "mainnet")]
+    pub chain: Chain,
 }
 
 impl EthereumOpts {
+    /// Returns the sender address of the signer or `from`
+    #[allow(unused)]
+    pub async fn sender(&self) -> Address {
+        if let Ok(Some(signer)) = self.signer(0.into()).await {
+            match signer {
+                WalletType::Ledger(signer) => signer.address(),
+                WalletType::Local(signer) => signer.address(),
+                WalletType::Trezor(signer) => signer.address(),
+            }
+        } else {
+            self.from.unwrap_or_else(Address::zero)
+        }
+    }
+
     #[allow(unused)]
     pub async fn signer(&self, chain_id: U256) -> eyre::Result<Option<WalletType>> {
         self.signer_with(chain_id, Provider::try_from(self.rpc_url()?)?).await

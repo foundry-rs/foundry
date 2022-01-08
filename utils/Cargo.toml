@@ -10,6 +10,8 @@ license = "MIT OR Apache-2.0"
 # ethers = "0.5"
 ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
+ethers-addressbook = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
+
 
 eyre = { version = "0.6.5", default-features = false }
 hex = "0.4.3"

@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use ethers::types::{Address, BlockId, BlockNumber, Chain, NameOrAddress, H256};
+use ethers::types::{Address, BlockId, BlockNumber, NameOrAddress, H256};
 use structopt::StructOpt;
 
 use super::{EthereumOpts, Wallet};
@@ -87,8 +87,8 @@ pub enum Subcommands {
         address: NameOrAddress,
         sig: String,
         args: Vec<String>,
-        #[structopt(long, env = "ETH_RPC_URL")]
-        rpc_url: String,
+        #[structopt(flatten)]
+        eth: EthereumOpts,
     },
     #[structopt(about = "Pack a signature and an argument list into hexadecimal calldata.")]
     Calldata {
@@ -137,10 +137,6 @@ pub enum Subcommands {
         args: Vec<String>,
         #[structopt(long, env = "CAST_ASYNC")]
         cast_async: bool,
-        #[structopt(long, env = "ETHERSCAN_API_KEY")]
-        etherscan_api_key: Option<String>,
-        #[structopt(long, env = "CHAIN", default_value = "mainnet")]
-        chain: Chain,
         #[structopt(flatten)]
         eth: EthereumOpts,
     },
@@ -153,10 +149,6 @@ pub enum Subcommands {
         sig: String,
         #[structopt(help = "the list of arguments you want to call the function with")]
         args: Vec<String>,
-        #[structopt(long, env = "ETHERSCAN_API_KEY")]
-        etherscan_api_key: Option<String>,
-        #[structopt(long, env = "CHAIN", default_value = "mainnet")]
-        chain: Chain,
         #[structopt(flatten)]
         eth: EthereumOpts,
     },

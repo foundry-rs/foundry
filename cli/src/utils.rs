@@ -5,11 +5,7 @@ use ethers::{
 
 use evm_adapters::sputnik::Executor;
 use eyre::{ContextCompat, WrapErr};
-use std::{
-    env::VarError,
-    path::{Path, PathBuf},
-    process::Command,
-};
+use std::{env::VarError, path::PathBuf, process::Command};
 
 #[cfg(feature = "evmodin-evm")]
 use evmodin::Revision;
@@ -90,42 +86,6 @@ pub fn find_git_root_path() -> eyre::Result<PathBuf> {
     let path = Command::new("git").args(&["rev-parse", "--show-toplevel"]).output()?.stdout;
     let path = std::str::from_utf8(&path)?.trim_end_matches('\n');
     Ok(PathBuf::from(path))
-}
-
-/// Determines the source directory to use given the root path to a project's workspace.
-///
-/// By default the dapptools style `src` directory takes precedence unless it does not exist but
-/// hardhat style `contracts` exists, in which case `<root>/contracts` will be returned.
-pub fn find_contracts_dir(root: impl AsRef<Path>) -> PathBuf {
-    find_fave_or_alt_path(root, "src", "contracts")
-}
-
-/// Determines the artifacts directory to use given the root path to a project's workspace.
-///
-/// By default the dapptools style `out` directory takes precedence unless it does not exist but
-/// hardhat style `artifacts` exists, in which case `<root>/artifacts` will be returned.
-pub fn find_artifacts_dir(root: impl AsRef<Path>) -> PathBuf {
-    find_fave_or_alt_path(root, "out", "artifacts")
-}
-
-pub fn find_libs(root: impl AsRef<Path>) -> Vec<PathBuf> {
-    vec![find_fave_or_alt_path(root, "lib", "node_modules")]
-}
-
-/// Returns the right subpath in a dir
-///
-/// Returns `<root>/<fave>` if it exists or `<root>/<alt>` does not exist,
-/// Returns `<root>/<alt>` if it exists and `<root>/<fave>` does not exist.
-fn find_fave_or_alt_path(root: impl AsRef<Path>, fave: &str, alt: &str) -> PathBuf {
-    let root = root.as_ref();
-    let p = root.join(fave);
-    if !p.exists() {
-        let alt = root.join(alt);
-        if alt.exists() {
-            return alt
-        }
-    }
-    p
 }
 
 #[cfg(feature = "sputnik-evm")]

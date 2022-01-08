@@ -47,7 +47,7 @@ where
     /// ```no_run
     /// 
     /// use cast::Cast;
-    /// use ethers_core::types::Address;
+    /// use ethers_core::types::{Address, Chain};
     /// use ethers_providers::{Provider, Http};
     /// use std::{str::FromStr, convert::TryFrom};
     ///
@@ -57,25 +57,25 @@ where
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let sig = "function greeting(uint256 i) public returns (string)";
     /// let args = vec!["5".to_owned()];
-    /// let data = cast.call(to, sig, args).await?;
+    /// let data = cast.call(Address::zero(), to, (sig, args), Chain::Mainnet, None).await?;
     /// println!("{}", data);
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn call<T: Into<NameOrAddress>>(
+    pub async fn call<F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
         &self,
+        from: F,
         to: T,
-        sig: &str,
-        args: Vec<String>,
+        args: (&str, Vec<String>),
+        chain: Chain,
+        etherscan_api_key: Option<String>,
     ) -> Result<String> {
-        let func = get_func(sig)?;
-        let data = encode_args(&func, &args)?;
-
-        // make the call
-        let tx = Eip1559TransactionRequest::new().to(to).data(data).into();
+        let (tx, func) = self.build_tx(from, to, Some(args), chain, etherscan_api_key).await?;
+        let tx = tx.into();
         let res = self.provider.call(&tx, None).await?;
 
         // decode args into tokens
+        let func = func.expect("no valid function signature was provided.");
         let decoded = func.decode_output(res.as_ref()).wrap_err(
             "could not decode output. did you specify the wrong function return data type perhaps?",
         )?;
@@ -139,7 +139,7 @@ where
         chain: Chain,
         etherscan_api_key: Option<String>,
     ) -> Result<PendingTransaction<'_, M::Provider>> {
-        let tx = self.build_tx(from, to, args, chain, etherscan_api_key).await?;
+        let (tx, _) = self.build_tx(from, to, args, chain, etherscan_api_key).await?;
         let res = self.provider.send_transaction(tx, None).await?;
 
         Ok::<_, eyre::Error>(res)
@@ -173,7 +173,8 @@ where
         chain: Chain,
         etherscan_api_key: Option<String>,
     ) -> Result<U256> {
-        let tx = self.build_tx(from, to, args, chain, etherscan_api_key).await?.into();
+        let (tx, _) = self.build_tx(from, to, args, chain, etherscan_api_key).await?;
+        let tx = tx.into();
         let res = self.provider.estimate_gas(&tx).await?;
 
         Ok::<_, eyre::Error>(res)
@@ -186,13 +187,16 @@ where
         args: Option<(&str, Vec<String>)>,
         chain: Chain,
         etherscan_api_key: Option<String>,
-    ) -> Result<Eip1559TransactionRequest> {
+    ) -> Result<(Eip1559TransactionRequest, Option<ethers_core::abi::Function>)> {
         let from = match from.into() {
             NameOrAddress::Name(ref ens_name) => self.provider.resolve_name(ens_name).await?,
             NameOrAddress::Address(addr) => addr,
         };
 
-        let to = match to.into() {
+        // Queries the addressbook for the address if present.
+        let to = foundry_utils::resolve_addr(to, chain)?;
+
+        let to = match to {
             NameOrAddress::Name(ref ens_name) => self.provider.resolve_name(ens_name).await?,
             NameOrAddress::Address(addr) => addr,
         };
@@ -200,7 +204,7 @@ where
         // make the call
         let mut tx = Eip1559TransactionRequest::new().from(from).to(to);
 
-        if let Some((sig, args)) = args {
+        let func = if let Some((sig, args)) = args {
             let func = if sig.contains('(') {
                 get_func(sig)?
             } else {
@@ -215,9 +219,12 @@ where
             };
             let data = encode_args(&func, &args)?;
             tx = tx.data(data);
-        }
+            Some(func)
+        } else {
+            None
+        };
 
-        Ok(tx)
+        Ok((tx, func))
     }
 
     /// ```no_run

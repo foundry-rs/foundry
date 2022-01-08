@@ -437,9 +437,9 @@ checksum = "771fe0050b883fcc3ea2359b1a96bcfbc090b7116eae7c3c512c7a083fdf23d3"
 
 [[package]]
 name = "bumpalo"
-version = "3.8.0"
+version = "3.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f1e260c3a9040a7c19a12468758f4c16f31a81a1fe087482be9570ec864bb6c"
+checksum = "a4a45a46ab1f2412e53d3a0ade76ffad2025804294569aae387231a0cd6e0899"
 
 [[package]]
 name = "byte-slice-cast"
@@ -617,7 +617,7 @@ dependencies = [
  "k256",
  "lazy_static",
  "serde",
- "sha2 0.9.8",
+ "sha2 0.9.9",
  "thiserror",
 ]
 
@@ -634,7 +634,7 @@ dependencies = [
  "hmac 0.11.0",
  "pbkdf2 0.8.0",
  "rand 0.8.4",
- "sha2 0.9.8",
+ "sha2 0.9.9",
  "thiserror",
 ]
 
@@ -654,7 +654,7 @@ dependencies = [
  "ripemd160",
  "serde",
  "serde_derive",
- "sha2 0.9.8",
+ "sha2 0.9.9",
  "sha3 0.9.1",
  "thiserror",
 ]
@@ -1065,9 +1065,9 @@ checksum = "453440c271cf5577fd2a40e4942540cb7d0d2f85e27c8d07dd0023c925a67541"
 
 [[package]]
 name = "ecdsa"
-version = "0.13.3"
+version = "0.13.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e91ae02c7618ee05108cd86a0be2f5586d1f0d965bede7ecfd46815f1b860227"
+checksum = "d0d69ae62e0ce582d56380743515fefaf1a8c70cec685d9677636d7e30ae9dc9"
 dependencies = [
  "der",
  "elliptic-curve",
@@ -1181,7 +1181,7 @@ dependencies = [
  "scrypt 0.7.0",
  "serde",
  "serde_json",
- "sha2 0.9.8",
+ "sha2 0.9.9",
  "sha3 0.9.1",
  "thiserror",
  "uuid",
@@ -1256,6 +1256,7 @@ name = "ethers"
 version = "0.6.0"
 source = "git+https://github.com/mattsse/ethers-rs?branch=matt/solc-utils#d7031afd0d3e8adf1ef3d2b138987af9c4f995cd"
 dependencies = [
+ "ethers-addressbook",
  "ethers-contract",
  "ethers-core",
  "ethers-etherscan",
@@ -1263,6 +1264,17 @@ dependencies = [
  "ethers-providers",
  "ethers-signers",
  "ethers-solc",
+]
+
+[[package]]
+name = "ethers-addressbook"
+version = "0.1.0"
+source = "git+https://github.com/gakonst/ethers-rs#a77bf845d2707b793f0f40df52cdb5c9c481ad74"
+dependencies = [
+ "ethers-core",
+ "once_cell",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1432,7 +1444,7 @@ dependencies = [
  "home",
  "rand 0.8.4",
  "semver",
- "sha2 0.9.8",
+ "sha2 0.9.9",
  "thiserror",
  "trezor-client",
 ]
@@ -1458,7 +1470,7 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
- "sha2 0.9.8",
+ "sha2 0.9.9",
  "solang-parser",
  "svm-rs",
  "thiserror",
@@ -1708,6 +1720,7 @@ dependencies = [
 name = "foundry-utils"
 version = "0.1.0"
 dependencies = [
+ "ethers-addressbook",
  "ethers-core",
  "ethers-etherscan",
  "eyre",
@@ -1931,9 +1944,9 @@ dependencies = [
 
 [[package]]
 name = "h2"
-version = "0.3.9"
+version = "0.3.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f072413d126e57991455e0a922b31e4c8ba7c2ffbebf6b78b4f8521397d65cd"
+checksum = "0c9de88456263e249e241fcd211d3954e2c9b0ef7ccfc235a444eb367cae3689"
 dependencies = [
  "bytes",
  "fnv",
@@ -2276,7 +2289,7 @@ dependencies = [
  "ecdsa",
  "elliptic-curve",
  "sec1",
- "sha2 0.9.8",
+ "sha2 0.9.9",
  "sha3 0.9.1",
 ]
 
@@ -2673,7 +2686,7 @@ dependencies = [
  "rustc-hex",
  "scrypt 0.5.0",
  "secp256k1",
- "sha2 0.9.8",
+ "sha2 0.9.9",
  "subtle",
  "tiny-keccak",
  "zeroize",
@@ -2770,7 +2783,7 @@ dependencies = [
  "crypto-mac 0.10.1",
  "hmac 0.10.1",
  "password-hash 0.1.4",
- "sha2 0.9.8",
+ "sha2 0.9.9",
 ]
 
 [[package]]
@@ -2783,7 +2796,7 @@ dependencies = [
  "crypto-mac 0.11.1",
  "hmac 0.11.0",
  "password-hash 0.2.3",
- "sha2 0.9.8",
+ "sha2 0.9.9",
 ]
 
 [[package]]
@@ -3436,7 +3449,7 @@ dependencies = [
  "parity-crypto",
  "primitive-types",
  "ripemd160",
- "sha2 0.9.8",
+ "sha2 0.9.9",
  "substrate-bn",
 ]
 
@@ -3664,7 +3677,7 @@ dependencies = [
  "rand 0.7.3",
  "rand_core 0.5.1",
  "salsa20 0.7.2",
- "sha2 0.9.8",
+ "sha2 0.9.9",
  "subtle",
 ]
 
@@ -3679,7 +3692,7 @@ dependencies = [
  "password-hash 0.2.3",
  "pbkdf2 0.8.0",
  "salsa20 0.8.1",
- "sha2 0.9.8",
+ "sha2 0.9.9",
 ]
 
 [[package]]
@@ -3842,9 +3855,9 @@ dependencies = [
 
 [[package]]
 name = "sha2"
-version = "0.9.8"
+version = "0.9.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b69f9a4c9740d74c5baa3fd2e547f9525fa8088a8a958e0ca2409a514e33f5fa"
+checksum = "4d58a1e1bf39749807d89cf2d98ac2dfa0ff1cb3faa38fbb64dd88ac8013d800"
 dependencies = [
  "block-buffer 0.9.0",
  "cfg-if 1.0.0",
@@ -4105,7 +4118,7 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
- "sha2 0.9.8",
+ "sha2 0.9.9",
  "structopt",
  "tempfile",
  "thiserror",

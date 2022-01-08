@@ -56,7 +56,8 @@ fn main() -> eyre::Result<()> {
             let root = root.unwrap_or_else(|| std::env::current_dir().unwrap());
             let root = dunce::canonicalize(root)?;
 
-            let lib_paths = if lib_paths.is_empty() { vec![root.join("lib")] } else { lib_paths };
+            let lib_paths =
+                if lib_paths.is_empty() { ProjectPathsConfig::find_libs(&root) } else { lib_paths };
             let remappings: Vec<_> = lib_paths.iter().flat_map(Remapping::find_many).collect();
             remappings.iter().for_each(|x| println!("{}", x));
         }
