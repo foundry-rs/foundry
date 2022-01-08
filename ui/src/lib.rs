@@ -271,7 +271,7 @@ impl Tui {
                                     // We check if there is other text on the same line before the
                                     // highlight starts
                                     if let Some(last) = before.pop() {
-                                        if last.len() > 1 && &last[last.len() - 1..] != "\n" {
+                                        if !last.ends_with('\n') {
                                             before.iter().skip(start_line).for_each(|line| {
                                                 text_output.lines.push(Spans::from(vec![
                                                     Span::styled(
@@ -428,7 +428,7 @@ impl Tui {
 
                                     // fill in the rest of the line as unhighlighted
                                     if let Some(last) = actual.last() {
-                                        if last.len() > 1 && &last[last.len() - 1..] != "\n" {
+                                        if !last.ends_with('\n') {
                                             if let Some(post) = after.pop_front() {
                                                 if let Some(last) = text_output.lines.last_mut() {
                                                     last.0.push(Span::raw(post));
