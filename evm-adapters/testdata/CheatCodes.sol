@@ -44,6 +44,8 @@ interface Hevm {
     function expectEmit(bool,bool,bool,bool) external;
     // Mocks a call to an address, returning specified data.
     function mockCall(address,bytes calldata,bytes calldata) external;
+    // Clears all mocked calls
+    function clearMockedCalls() external;
 }
 
 contract HasStorage {
@@ -402,6 +404,24 @@ contract CheatCodes is DSTest {
 
         // post-mock
         assertEq(target.sum(), 10);
+    }
+
+    function testClearMockedCalls() public {
+        MockMe target = new MockMe();
+
+        hevm.mockCall(
+            address(target),
+            abi.encodeWithSelector(target.numberB.selector),
+            abi.encode(10)
+        );
+
+        assertEq(target.numberA(), 1);
+        assertEq(target.numberB(), 10); 
+
+        hevm.clearMockedCalls();
+
+        assertEq(target.numberA(), 1);
+        assertEq(target.numberB(), 2);
     }
 
     function getCode(address who) internal returns (bytes memory o_code) {

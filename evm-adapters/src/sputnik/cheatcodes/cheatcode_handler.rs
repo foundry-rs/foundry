@@ -678,6 +678,9 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
             HEVMCalls::MockCall(inner) => {
                 self.state_mut().mocked_calls.insert((inner.0, inner.1.to_vec()), inner.2.to_vec());
             }
+            HEVMCalls::ClearMockedCalls(_) => {
+                self.state_mut().mocked_calls = Default::default();
+            }
         };
 
         self.fill_trace(&trace, true, Some(res.clone()), pre_index);

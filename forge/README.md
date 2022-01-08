@@ -242,6 +242,8 @@ interface Vm {
     function expectEmit(bool, bool, bool, bool) external;
     // Mocks a call to an address, returning the specified data.
     function mockCall(address, bytes calldata, bytes calldata) external;
+    // Clears all mocked calls
+    function clearMockedCalls() external;
 }
 ```
 ### `console.log`
