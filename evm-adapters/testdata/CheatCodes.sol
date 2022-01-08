@@ -387,6 +387,23 @@ contract CheatCodes is DSTest {
         assertEq(target.numberB(), 10);
     }
 
+    function testMockInner() public {
+        MockMe inner = new MockMe();
+        MockInner target = new MockInner(address(inner));
+
+        // pre-mock
+        assertEq(target.sum(), 3);
+
+        hevm.mockCall(
+            address(inner),
+            abi.encodeWithSelector(inner.numberB.selector),
+            abi.encode(9)
+        );
+
+        // post-mock
+        assertEq(target.sum(), 10);
+    }
+
     function getCode(address who) internal returns (bytes memory o_code) {
         assembly {
             // retrieve the size of the code, this needs assembly
@@ -545,6 +562,18 @@ contract MockMe {
 
     function numberB() public returns (uint256) {
         return 2;
+    }
+}
+
+contract MockInner {
+    MockMe private inner;
+
+    constructor(address _inner) {
+        inner = MockMe(_inner);
+    }
+
+    function sum() public returns (uint256) {
+        return inner.numberA() + inner.numberB();
     }
 }
 
