@@ -178,7 +178,11 @@ impl EvmOpts {
         Ok(if let Some(ref url) = self.fork_url {
             let provider = ethers::providers::Provider::try_from(url.as_str())?;
             let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
-            rt.block_on(evm_adapters::sputnik::vicinity(&provider, self.fork_block_number))?
+            rt.block_on(evm_adapters::sputnik::vicinity(
+                &provider,
+                self.fork_block_number,
+                Some(self.env.tx_origin),
+            ))?
         } else {
             self.env.sputnik_state()
         })
