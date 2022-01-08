@@ -267,6 +267,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
     }
 
     fn clear_logs(&mut self) {
+        self.console_logs.clear();
         self.state_mut().substate.logs_mut().clear()
     }
 
@@ -1438,6 +1439,10 @@ mod tests {
         .iter()
         .map(ToString::to_string)
         .collect::<Vec<_>>();
+        assert_eq!(logs, expected);
+
+        let (_, _, _, logs) =
+            evm.call::<(), _, _>(Address::zero(), addr, "test_log()", (), 0.into()).unwrap();
         assert_eq!(logs, expected);
     }
 
