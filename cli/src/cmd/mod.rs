@@ -55,8 +55,7 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
     Ok(output)
 }
 
-/// Manually compile a project with added sources, optionally forcinbg compilation regardless of
-/// file changes
+/// Manually compile a project with added sources
 pub fn manual_compile(
     project: &Project<MinimalCombinedArtifacts>,
     added_sources: Vec<PathBuf>,
