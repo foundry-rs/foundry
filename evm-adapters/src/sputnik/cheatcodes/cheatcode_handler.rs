@@ -5,7 +5,10 @@ use super::{
 };
 use crate::{
     call_tracing::{CallTrace, CallTraceArena, LogCallOrder},
-    sputnik::{cheatcodes::memory_stackstate_owned::ExpectedEmit, Executor, SputnikExecutor},
+    sputnik::{
+        cheatcodes::memory_stackstate_owned::{ExpectedEmit, MockedCall},
+        Executor, SputnikExecutor,
+    },
     Evm,
 };
 
@@ -676,7 +679,19 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 self.state_mut().expected_emits.push(expected_emit);
             }
             HEVMCalls::MockCall(inner) => {
-                self.state_mut().mocked_calls.insert((inner.0, inner.1.to_vec()), inner.2.to_vec());
+                let calldata = inner.1.to_vec();
+                if calldata.len() < 4 {
+                    return evm_error("Calldata for mocked call must be at least 4 bytes")
+                }
+
+                let selector: [u8; 4] =
+                    calldata[0..=3].try_into().expect("calldata should always be at least 4 bytes");
+                let mocked_call = if calldata.len() == 4 {
+                    MockedCall::Selector(inner.2.to_vec())
+                } else {
+                    MockedCall::SelectorAndData(calldata, inner.2.to_vec())
+                };
+                self.state_mut().mocked_calls.insert((inner.0, selector), mocked_call);
             }
             HEVMCalls::ClearMockedCalls(_) => {
                 self.state_mut().mocked_calls = Default::default();
@@ -1138,10 +1153,29 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
             }
 
             // handle mocked calls
-            if let Some(ret) = self.state().mocked_calls.get(&(code_address, input.clone())) {
-                return Capture::Exit((ExitReason::Succeed(ExitSucceed::Returned), ret.clone()))
+            if input.len() >= 4 {
+                let selector: [u8; 4] =
+                    input[0..=3].try_into().expect("calldata should always be at least 4 bytes");
+                if let Some(mocked_call) = self.state().mocked_calls.get(&(code_address, selector))
+                {
+                    match mocked_call {
+                        MockedCall::Selector(ret) => {
+                            return Capture::Exit((
+                                ExitReason::Succeed(ExitSucceed::Returned),
+                                ret.clone(),
+                            ))
+                        }
+                        MockedCall::SelectorAndData(data, ret) => {
+                            if &input == data {
+                                return Capture::Exit((
+                                    ExitReason::Succeed(ExitSucceed::Returned),
+                                    ret.clone(),
+                                ))
+                            }
+                        }
+                    }
+                }
             }
-
             // perform the call
             let res = self.call_inner(
                 code_address,

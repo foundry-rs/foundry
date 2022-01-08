@@ -43,6 +43,9 @@ interface Hevm {
     // logs were emited in the expected order with the expected topics and data (as specified by the booleans)
     function expectEmit(bool,bool,bool,bool) external;
     // Mocks a call to an address, returning specified data.
+    // If the transaction data argument is only 4 bytes, then those 4 bytes
+    // will be treated as a selector and the entire function specified by that selector
+    // is mocked.
     function mockCall(address,bytes calldata,bytes calldata) external;
     // Clears all mocked calls
     function clearMockedCalls() external;
@@ -364,14 +367,14 @@ contract CheatCodes is DSTest {
         hevm.expectRevert("revert");
     }
 
-    function testMockCall() public {
+    function testMockArbitraryCall() public {
         hevm.mockCall(address(0xbeef), abi.encode("wowee"), abi.encode("epic"));
         (bool ok, bytes memory ret) = address(0xbeef).call(abi.encode("wowee"));
         assertTrue(ok);
         assertEq(abi.decode(ret, (string)), "epic");
     }
 
-    function testMockAdvanced() public {
+    function testMockContract() public {
         MockMe target = new MockMe();
 
         // pre-mock
@@ -404,6 +407,34 @@ contract CheatCodes is DSTest {
 
         // post-mock
         assertEq(target.sum(), 10);
+    }
+
+    function testMockSelector() public {
+        MockMe target = new MockMe();
+        assertEq(target.add(5, 5), 10);
+
+        hevm.mockCall(
+            address(target),
+            abi.encodeWithSelector(target.add.selector),
+            abi.encode(11)
+        );
+
+        assertEq(target.add(5, 5), 11);
+    }
+
+    function testMockCalldata() public {
+        MockMe target = new MockMe();
+        assertEq(target.add(5, 5), 10);
+        assertEq(target.add(6, 4), 10);
+
+        hevm.mockCall(
+            address(target),
+            abi.encodeWithSelector(target.add.selector, 5, 5),
+            abi.encode(11)
+        );
+
+        assertEq(target.add(5, 5), 11); 
+        assertEq(target.add(6, 4), 10);
     }
 
     function testClearMockedCalls() public {
@@ -583,6 +614,10 @@ contract MockMe {
     function numberB() public returns (uint256) {
         return 2;
     }
+
+    function add(uint256 a, uint256 b) public returns (uint256) {
+        return a + b;
+    }
 }
 
 contract MockInner {
@@ -596,4 +631,3 @@ contract MockInner {
         return inner.numberA() + inner.numberB();
     }
 }
-

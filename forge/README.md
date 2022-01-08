@@ -240,8 +240,11 @@ interface Vm {
     function expectRevert(bytes calldata) external;
     // Expects the next emitted event. Params check topic 1, topic 2, topic 3 and data are the same.
     function expectEmit(bool, bool, bool, bool) external;
-    // Mocks a call to an address, returning the specified data.
-    function mockCall(address, bytes calldata, bytes calldata) external;
+    // Mocks a call to an address, returning specified data.
+    // If the transaction data argument is only 4 bytes, then those 4 bytes
+    // will be treated as a selector and the entire function specified by that selector
+    // is mocked.
+    function mockCall(address,bytes calldata,bytes calldata) external;
     // Clears all mocked calls
     function clearMockedCalls() external;
 }

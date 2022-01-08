@@ -31,6 +31,12 @@ pub struct ExpectedEmit {
     pub found: bool,
 }
 
+#[derive(Clone, Debug)]
+pub enum MockedCall {
+    Selector(Vec<u8>),
+    SelectorAndData(Vec<u8>, Vec<u8>),
+}
+
 /// This struct implementation is copied from [upstream](https://github.com/rust-blockchain/evm/blob/5ecf36ce393380a89c6f1b09ef79f686fe043624/src/executor/stack/state.rs#L412) and modified to own the Backend type.
 ///
 /// We had to copy it so that we can modify the Stack's internal backend, because
@@ -50,7 +56,7 @@ pub struct MemoryStackStateOwned<'config, B> {
     pub accesses: Option<RecordAccess>,
     pub all_logs: Vec<String>,
     pub expected_emits: Vec<ExpectedEmit>,
-    pub mocked_calls: HashMap<(H160, Vec<u8>), Vec<u8>>,
+    pub mocked_calls: HashMap<(H160, [u8; 4]), MockedCall>,
 }
 
 impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
