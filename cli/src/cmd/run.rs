@@ -189,10 +189,7 @@ pub struct BuildOutput {
 
 impl RunArgs {
     fn target_project(&self) -> eyre::Result<Project<MinimalCombinedArtifacts>> {
-        let paths = ProjectPathsConfig::builder()
-            .root(&self.path)
-            .sources(&self.path)
-            .build()?;
+        let paths = ProjectPathsConfig::builder().root(&self.path).sources(&self.path).build()?;
 
         let optimizer = Optimizer {
             enabled: Some(self.opts.compiler.optimize),
@@ -257,7 +254,11 @@ impl RunArgs {
             let contract_bytecode: ContractBytecode = contracts
                 .0
                 .remove(root.to_str().expect("OsString from path"))
-                .ok_or_else(|| eyre::Error::msg("contract path not compiled. Please report a bug"))?
+                .ok_or_else(|| {
+                    eyre::Error::msg(
+                        "contract path not found; This is likely a bug, please report it",
+                    )
+                })?
                 .remove(&contract_name)
                 .ok_or_else(|| {
                     eyre::Error::msg("contract not found, did you type the name wrong?")

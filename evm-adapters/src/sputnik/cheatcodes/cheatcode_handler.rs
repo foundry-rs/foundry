@@ -874,7 +874,8 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
             // debug step doesnt actually execute the step, it just peeks into the machine
             // will return true or false, which signifies whether to push the steps
             // as a node and reset the steps vector or not
-            if self.debug_step(runtime, code.clone(), &mut steps, ics.clone()) && !steps.is_empty() {
+            if self.debug_step(runtime, code.clone(), &mut steps, ics.clone()) && !steps.is_empty()
+            {
                 self.state_mut().debug_mut().push_node(
                     0,
                     DebugNode {
