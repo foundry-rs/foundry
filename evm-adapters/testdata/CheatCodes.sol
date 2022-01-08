@@ -42,6 +42,8 @@ interface Hevm {
     // Call this function, then emit an event, then call a function. Internally after the call, we check if
     // logs were emited in the expected order with the expected topics and data (as specified by the booleans)
     function expectEmit(bool,bool,bool,bool) external;
+    // Mocks a call to an address, returning specified data.
+    function mockCall(address,bytes calldata,bytes calldata) external;
 }
 
 contract HasStorage {
@@ -358,7 +360,32 @@ contract CheatCodes is DSTest {
     // after expectRevert
     function testFailExpectRevert3() public {
         hevm.expectRevert("revert");
-    }  
+    }
+
+    function testMockCall() public {
+        hevm.mockCall(address(0xbeef), abi.encode("wowee"), abi.encode("epic"));
+        (bool ok, bytes memory ret) = address(0xbeef).call(abi.encode("wowee"));
+        assertTrue(ok);
+        assertEq(abi.decode(ret, (string)), "epic");
+    }
+
+    function testMockAdvanced() public {
+        MockMe target = new MockMe();
+
+        // pre-mock
+        assertEq(target.numberA(), 1);
+        assertEq(target.numberB(), 2);
+
+        hevm.mockCall(
+            address(target),
+            abi.encodeWithSelector(target.numberB.selector),
+            abi.encode(10)
+        );
+
+        // post-mock
+        assertEq(target.numberA(), 1);
+        assertEq(target.numberB(), 10);
+    }
 
     function getCode(address who) internal returns (bytes memory o_code) {
         assembly {
@@ -508,6 +535,16 @@ contract ExpectEmit {
     function t3() public {
         emit Transfer(msg.sender, address(1337), 1337);
         emit Transfer(msg.sender, address(1337), 1337);
+    }
+}
+
+contract MockMe {
+    function numberA() public returns (uint256) {
+        return 1;
+    }
+
+    function numberB() public returns (uint256) {
+        return 2;
     }
 }
 

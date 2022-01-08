@@ -61,6 +61,7 @@ ethers::contract::abigen!(
             record()
             accesses(address)(bytes32[],bytes32[])
             expectEmit(bool,bool,bool,bool)
+            mockCall(address,bytes,bytes)
     ]"#,
 );
 pub use hevm_mod::{HEVMCalls, HEVM_ABI};

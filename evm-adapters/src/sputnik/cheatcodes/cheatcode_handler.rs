@@ -192,7 +192,6 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
         }
 
         // Initialize initial addresses for EIP-2929
-        // Initialize initial addresses for EIP-2929
         if self.config().increase_state_access_gas {
             let addresses = core::iter::once(caller).chain(core::iter::once(address));
             self.state_mut().metadata_mut().access_addresses(addresses);
@@ -676,6 +675,9 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 };
                 self.state_mut().expected_emits.push(expected_emit);
             }
+            HEVMCalls::MockCall(inner) => {
+                self.state_mut().mocked_calls.insert((inner.0, inner.1.to_vec()), inner.2.to_vec());
+            }
         };
 
         self.fill_trace(&trace, true, Some(res.clone()), pre_index);
@@ -1130,6 +1132,11 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
                     new_transfer =
                         Some(Transfer { source: caller, target: t.target, value: t.value });
                 }
+            }
+
+            // handle mocked calls
+            if let Some(ret) = self.state().mocked_calls.get(&(code_address, input.clone())) {
+                return Capture::Exit((ExitReason::Succeed(ExitSucceed::Returned), ret.clone()))
             }
 
             // perform the call

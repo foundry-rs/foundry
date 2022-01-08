@@ -240,6 +240,8 @@ interface Vm {
     function expectRevert(bytes calldata) external;
     // Expects the next emitted event. Params check topic 1, topic 2, topic 3 and data are the same.
     function expectEmit(bool, bool, bool, bool) external;
+    // Mocks a call to an address, returning the specified data.
+    function mockCall(address, bytes calldata, bytes calldata) external;
 }
 ```
 ### `console.log`

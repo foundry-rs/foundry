@@ -11,7 +11,10 @@ use ethers::{
     types::{H160, H256, U256},
 };
 
-use std::{cell::RefCell, collections::BTreeMap};
+use std::{
+    cell::RefCell,
+    collections::{BTreeMap, HashMap},
+};
 
 #[derive(Clone, Default)]
 pub struct RecordAccess {
@@ -47,6 +50,7 @@ pub struct MemoryStackStateOwned<'config, B> {
     pub accesses: Option<RecordAccess>,
     pub all_logs: Vec<String>,
     pub expected_emits: Vec<ExpectedEmit>,
+    pub mocked_calls: HashMap<(H160, Vec<u8>), Vec<u8>>,
 }
 
 impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
@@ -87,6 +91,7 @@ impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
             accesses: None,
             all_logs: Default::default(),
             expected_emits: Default::default(),
+            mocked_calls: Default::default(),
         }
     }
 }
