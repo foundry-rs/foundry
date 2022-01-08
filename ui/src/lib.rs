@@ -25,7 +25,7 @@ use evm_adapters::sputnik::cheatcodes::debugger::DebugStep;
 use eyre::Result;
 use tui::{
     backend::{Backend, CrosstermBackend},
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     terminal::Frame,
     text::{Span, Spans},
@@ -116,50 +116,74 @@ impl Tui {
         let total_size = f.size();
 
         // split in 2 vertically
-        if let [left_pane, right_pane] = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)].as_ref())
+
+        if let [app, footer] = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Ratio(98, 100), Constraint::Ratio(2, 100)].as_ref())
             .split(total_size)[..]
         {
-            // split right pane horizontally to construct stack and memory
-            if let [op_pane, src_pane] = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Ratio(1, 4), Constraint::Ratio(3, 4)].as_ref())
-                .split(left_pane)[..]
+            if let [left_pane, right_pane] = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)].as_ref())
+                .split(app)[..]
             {
-                if let [stack_pane, memory_pane] = Layout::default()
+                // split right pane horizontally to construct stack and memory
+                if let [op_pane, src_pane] = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([Constraint::Ratio(1, 4), Constraint::Ratio(3, 4)].as_ref())
-                    .split(right_pane)[..]
+                    .split(left_pane)[..]
                 {
-                    Tui::draw_src(
-                        f,
-                        address,
-                        identified_contracts,
-                        known_contracts,
-                        source_code,
-                        debug_steps[current_step].ic,
-                        creation,
-                        src_pane,
-                    );
-                    Tui::draw_op_list(
-                        f,
-                        address,
-                        debug_steps,
-                        opcode_list,
-                        current_step,
-                        draw_memory,
-                        op_pane,
-                    );
-                    Tui::draw_stack(f, debug_steps, current_step, stack_pane);
-                    Tui::draw_memory(f, debug_steps, current_step, memory_pane);
+                    if let [stack_pane, memory_pane] = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([Constraint::Ratio(1, 4), Constraint::Ratio(3, 4)].as_ref())
+                        .split(right_pane)[..]
+                    {
+                        Tui::draw_footer(f, footer);
+                        Tui::draw_src(
+                            f,
+                            address,
+                            identified_contracts,
+                            known_contracts,
+                            source_code,
+                            debug_steps[current_step].ic,
+                            creation,
+                            src_pane,
+                        );
+                        Tui::draw_op_list(
+                            f,
+                            address,
+                            debug_steps,
+                            opcode_list,
+                            current_step,
+                            draw_memory,
+                            op_pane,
+                        );
+                        Tui::draw_stack(f, debug_steps, current_step, stack_pane);
+                        Tui::draw_memory(f, debug_steps, current_step, memory_pane);
+                    }
+                } else {
+                    panic!("Couldn't generate horizontal split layout 1:2.");
                 }
             } else {
-                panic!("Couldn't generate horizontal split layout 1:2.");
+                panic!("Couldn't generate vertical split layout 1:2.");
             }
         } else {
-            panic!("Couldn't generate vertical split layout 1:2.");
+            panic!("Couldn't generate application & footer")
         }
+    }
+
+    fn draw_footer<B: Backend>(f: &mut Frame<B>, area: Rect) {
+        let block_controls = Block::default();
+
+        let text_output = Text::from(Span::styled(
+            "[q]: Quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end",
+            Style::default().add_modifier(Modifier::DIM)
+        ));
+        let paragraph = Paragraph::new(text_output)
+            .block(block_controls)
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: false });
+        f.render_widget(paragraph, area);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -247,7 +271,7 @@ impl Tui {
                                     // We check if there is other text on the same line before the
                                     // highlight starts
                                     if let Some(last) = before.pop() {
-                                        if last.len() > 1 && &last[last.len() - 2..] != "\n" {
+                                        if last.len() > 1 && &last[last.len() - 1..] != "\n" {
                                             before.iter().skip(start_line).for_each(|line| {
                                                 text_output.lines.push(Spans::from(vec![
                                                     Span::styled(
@@ -372,11 +396,39 @@ impl Tui {
                                                 line_number += 1;
                                             });
                                         }
+                                    } else {
+                                        actual.iter().for_each(|s| {
+                                            text_output.lines.push(Spans::from(vec![
+                                                Span::styled(
+                                                    format!(
+                                                        "{: >max_line_num$}",
+                                                        line_number.to_string(),
+                                                        max_line_num = max_line_num
+                                                    ),
+                                                    Style::default()
+                                                        .fg(Color::Cyan)
+                                                        .bg(Color::DarkGray)
+                                                        .add_modifier(Modifier::BOLD),
+                                                ),
+                                                Span::raw("\u{2800} "),
+                                                Span::styled(
+                                                    if s.is_empty() || s == "\n" {
+                                                        "\u{2800} \n".to_string()
+                                                    } else {
+                                                        s.to_string()
+                                                    },
+                                                    Style::default()
+                                                        .fg(Color::Cyan)
+                                                        .add_modifier(Modifier::BOLD),
+                                                ),
+                                            ]));
+                                            line_number += 1;
+                                        });
                                     }
 
                                     // fill in the rest of the line as unhighlighted
                                     if let Some(last) = actual.last() {
-                                        if last.len() > 2 && &last[last.len() - 3..] != "\n" {
+                                        if last.len() > 1 && &last[last.len() - 1..] != "\n" {
                                             if let Some(post) = after.pop_front() {
                                                 if let Some(last) = text_output.lines.last_mut() {
                                                     last.0.push(Span::raw(post));
@@ -447,10 +499,8 @@ impl Tui {
     ) {
         let block_source_code = Block::default()
             .title(format!(
-                " Op: {} - Address: {} #: {}, pc: {} ----- q: quit, a: JUMPDEST-, s: JUMPDEST+, j: OP+, k: OP-, g: OP0, G: OP_LAST",
-                draw_memory.inner_call_index,
+                " Address: {}, pc: {} - q: quit, a: JUMPDEST-, s: JUMPDEST+, j: OP+, k: OP-, g: OP0, G: OP_LAST",
                 address,
-                current_step,
                 if let Some(step) = debug_steps.get(current_step) { step.pc.to_string() } else { "END".to_string() }
             ))
             .borders(Borders::ALL);

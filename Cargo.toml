@@ -14,11 +14,3 @@ lto = true
 codegen-units = 1
 panic = "abort"
 debug = true
-
-
-[patch."https://github.com/gakonst/ethers-rs"]
-ethers = { git = "https://github.com/brockelmore/ethers-rs" }
-ethers-core = { git = "https://github.com/brockelmore/ethers-rs" }
-ethers-providers = { git = "https://github.com/brockelmore/ethers-rs" }
-ethers-signers = { git = "https://github.com/brockelmore/ethers-rs" }
-ethers-etherscan = { git = "https://github.com/brockelmore/ethers-rs" }
