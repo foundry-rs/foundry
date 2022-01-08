@@ -49,7 +49,7 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
     } else if output.is_unchanged() {
         println!("no files changed, compilation skippped.");
     } else if output.has_compiler_warnings() {
-        println!("{}", output.to_string());
+        println!("{}", output);
         println!("success (with warnings)");
     } else {
         println!("success.");
