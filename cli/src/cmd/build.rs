@@ -52,6 +52,9 @@ pub struct BuildArgs {
     #[structopt(flatten)]
     pub compiler: CompilerArgs,
 
+    #[structopt(help = "ignore warnings with specific error codes", long)]
+    pub ignored_error_codes: Vec<u64>,
+
     #[structopt(
         help = "if set to true, skips auto-detecting solc and uses what is in the user's $PATH ",
         long
@@ -219,6 +222,10 @@ impl BuildArgs {
 
         if self.no_auto_detect {
             builder = builder.no_auto_detect();
+        }
+
+        for error_code in &self.ignored_error_codes {
+            builder = builder.ignore_error_code(*error_code);
         }
 
         let project = builder.build()?;

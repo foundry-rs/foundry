@@ -10,6 +10,7 @@ pub mod verify;
 use crate::opts::forge::ContractInfo;
 use ethers::{
     abi::Abi,
+    prelude::Graph,
     solc::{
         artifacts::{Source, Sources},
         cache::SolFilesCache,
@@ -45,12 +46,43 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
     println!("compiling...");
     let output = project.compile()?;
     if output.has_compiler_errors() {
-        // return the diagnostics error back to the user.
         eyre::bail!(output.to_string())
     } else if output.is_unchanged() {
         println!("no files changed, compilation skippped.");
     } else {
         println!("success.");
+    }
+    Ok(output)
+}
+
+/// Manually compile a project with added sources
+pub fn manual_compile(
+    project: &Project<MinimalCombinedArtifacts>,
+    added_sources: Vec<PathBuf>,
+) -> eyre::Result<ProjectCompileOutput<MinimalCombinedArtifacts>> {
+    let mut sources = project.paths.read_input_files()?;
+    sources.extend(Source::read_all_files(added_sources)?);
+    println!("compiling...");
+    if project.auto_detect {
+        tracing::trace!("using solc auto detection to compile sources");
+        let output = project.svm_compile(sources)?;
+        if output.has_compiler_errors() {
+            // return the diagnostics error back to the user.
+            eyre::bail!(output.to_string())
+        }
+        return Ok(output)
+    }
+
+    let mut solc = project.solc.clone();
+    if !project.allowed_lib_paths.is_empty() {
+        solc = solc.arg("--allow-paths").arg(project.allowed_lib_paths.to_string());
+    }
+
+    let sources = Graph::resolve_sources(&project.paths, sources)?.into_sources();
+    let output = project.compile_with_version(&solc, sources)?;
+    if output.has_compiler_errors() {
+        // return the diagnostics error back to the user.
+        eyre::bail!(output.to_string())
     }
     Ok(output)
 }
