@@ -5,6 +5,7 @@ members = [
     "cast",
     "forge",
     "cli",
+    "cli/test-utils",
 ]
 
 # Binary size optimizations

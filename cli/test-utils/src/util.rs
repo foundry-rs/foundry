@@ -1,26 +1,31 @@
-use ethers_solc::{
-    project_util::TempProject, ArtifactOutput, MinimalCombinedArtifacts, PathStyle,
-    ProjectPathsConfig,
-};
+use ethers_solc::{project_util::TempProject, ArtifactOutput, MinimalCombinedArtifacts, PathStyle};
 use std::{
     env,
     ffi::OsStr,
-    fmt::Formatter,
-    fs, io,
-    io::Write,
     path::{Path, PathBuf},
     process::{self, Command},
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
-    thread,
-    time::Duration,
 };
 
-static TEST_DIR: &'static str = "forge-tests";
 // identifier for tests
 static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
+
+/// Setup an empty test project and return a command pointing to the forge
+/// executable whose CWD is set to the project's root.
+///
+/// The name given will be used to create the directory. Generally, it should
+/// correspond to the test name.
+pub fn setup(name: &str, style: PathStyle) -> (TestProject, TestCommand) {
+    setup_project(TestProject::new(name, style))
+}
+
+pub fn setup_project(test: TestProject) -> (TestProject, TestCommand) {
+    let cmd = test.command();
+    (test, cmd)
+}
 
 /// `TestProject` represents a temporary project to run tests against.
 ///
@@ -39,7 +44,7 @@ impl TestProject {
     /// to a logical grouping of tests.
     pub fn new(name: &str, style: PathStyle) -> Self {
         let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
-        let project = pretty_err(name, TempProject::with_style(&format!("{}/{}", name, id), style));
+        let project = pretty_err(name, TempProject::with_style(&format!("{}-{}", name, id), style));
         Self::with_project(project)
     }
 
@@ -158,6 +163,46 @@ impl TestCommand {
         }
     }
 
+    /// Runs the command and asserts that something was printed to stderr.
+    pub fn assert_non_empty_stderr(&mut self) {
+        let o = self.cmd.output().unwrap();
+        if o.status.success() || o.stderr.is_empty() {
+            panic!(
+                "\n\n===== {:?} =====\n\
+                 command succeeded but expected failure!\
+                 \n\ncwd: {}\
+                 \n\nstatus: {}\
+                 \n\nstdout: {}\n\nstderr: {}\
+                 \n\n=====\n",
+                self.cmd,
+                self.project.inner.paths(),
+                o.status,
+                String::from_utf8_lossy(&o.stdout),
+                String::from_utf8_lossy(&o.stderr)
+            );
+        }
+    }
+
+    /// Runs the command and asserts that nothing was printed to stdout.
+    pub fn assert_empty_stdout(&mut self) {
+        let o = self.cmd.output().unwrap();
+        if !o.status.success() || !o.stderr.is_empty() {
+            panic!(
+                "\n\n===== {:?} =====\n\
+                 command succeeded but expected failure!\
+                 \n\ncwd: {}\
+                 \n\nstatus: {}\
+                 \n\nstdout: {}\n\nstderr: {}\
+                 \n\n=====\n",
+                self.cmd,
+                self.project.inner.paths(),
+                o.status,
+                String::from_utf8_lossy(&o.stdout),
+                String::from_utf8_lossy(&o.stderr)
+            );
+        }
+    }
+
     fn expect_success(&self, out: process::Output) -> process::Output {
         if !out.status.success() {
             let suggest = if out.stderr.is_empty() {
@@ -190,15 +235,10 @@ impl TestCommand {
 /// Return a recursive listing of all files and directories in the given
 /// directory. This is useful for debugging transient and odd failures in
 /// integration tests.
-fn dir_list<P: AsRef<Path>>(dir: P) -> Vec<String> {
+pub fn dir_list<P: AsRef<Path>>(dir: P) -> Vec<String> {
     walkdir::WalkDir::new(dir)
         .follow_links(true)
         .into_iter()
         .map(|result| result.unwrap().path().to_string_lossy().into_owned())
         .collect()
-}
-
-/// Creates a new named tempdir
-pub(crate) fn tempdir(name: &str) -> io::Result<tempfile::TempDir> {
-    tempfile::Builder::new().prefix(name).tempdir()
 }
