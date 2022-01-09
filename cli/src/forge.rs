@@ -165,7 +165,8 @@ fn main() -> eyre::Result<()> {
 
                 solang_parser::parse(&output, 0).map_err(|diags| {
                     eyre::eyre!(
-                        "Failed to construct valid Solidity code. Leaving source unchanged.\nDebug info: {:?}",
+                        "Failed to construct valid Solidity code for {}. Leaving source unchanged.\nDebug info: {:?}",
+                        path.to_string_lossy(),
                         diags
                     )
                 })?;

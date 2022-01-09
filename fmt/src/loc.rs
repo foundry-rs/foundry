@@ -1,4 +1,6 @@
-use solang_parser::pt::{AssemblyExpression, AssemblyStatement, ContractPart, Loc, Statement};
+use solang_parser::pt::{
+    AssemblyExpression, AssemblyStatement, ContractPart, FunctionDefinition, Loc, Statement,
+};
 
 pub trait LineOfCode {
     fn loc(&self) -> Loc;
@@ -11,7 +13,7 @@ impl LineOfCode for ContractPart {
             ContractPart::EventDefinition(event) => event.loc,
             ContractPart::EnumDefinition(enumeration) => enumeration.loc,
             ContractPart::VariableDefinition(variable) => variable.loc,
-            ContractPart::FunctionDefinition(function) => function.loc,
+            ContractPart::FunctionDefinition(function) => function.loc(),
             ContractPart::StraySemicolon(loc) => *loc,
             ContractPart::Using(using) => using.loc,
         }
@@ -47,5 +49,15 @@ impl LineOfCode for AssemblyExpression {
             AssemblyExpression::StringLiteral(literal) => &literal.loc,
             AssemblyExpression::Variable(ident) => &ident.loc,
         }
+    }
+}
+
+impl LineOfCode for FunctionDefinition {
+    fn loc(&self) -> Loc {
+        Loc(
+            self.loc.0,
+            self.loc.1,
+            self.body.as_ref().map(|body| body.loc().2).unwrap_or(self.loc.2),
+        )
     }
 }

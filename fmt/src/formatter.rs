@@ -4,8 +4,8 @@ use std::fmt::Write;
 
 use indent_write::fmt::IndentWriter;
 use solang_parser::pt::{
-    ContractDefinition, DocComment, EnumDefinition, FunctionDefinition, FunctionTy, Identifier,
-    Loc, SourceUnit, SourceUnitPart, StringLiteral, VariableDefinition,
+    ContractDefinition, DocComment, EnumDefinition, FunctionDefinition, Identifier, Loc,
+    SourceUnit, SourceUnitPart, StringLiteral,
 };
 
 use crate::{
@@ -30,6 +30,15 @@ impl Default for FormatterConfig {
     }
 }
 
+// TODO: use it inside Formatter since they're sharing same fields
+#[derive(Default)]
+struct FormatBuffer {
+    level: usize,
+    current_line: usize,
+    pending_indent: bool,
+    w: String,
+}
+
 /// A Solidity formatter
 pub struct Formatter<'a, W> {
     w: &'a mut W,
@@ -37,8 +46,8 @@ pub struct Formatter<'a, W> {
     config: FormatterConfig,
     level: usize,
     pending_indent: bool,
-    bufs: Vec<(usize, String)>,
     current_line: usize,
+    bufs: Vec<FormatBuffer>,
 }
 
 impl<'a, W: Write> Formatter<'a, W> {
@@ -55,8 +64,8 @@ impl<'a, W: Write> Formatter<'a, W> {
     }
 
     fn level(&mut self) -> &mut usize {
-        if let Some((level, _)) = self.bufs.last_mut() {
-            level
+        if let Some(buf) = self.bufs.last_mut() {
+            &mut buf.level
         } else {
             &mut self.level
         }
@@ -77,19 +86,19 @@ impl<'a, W: Write> Formatter<'a, W> {
     /// Write opening bracket with respect to `config.bracket_spacing` setting:
     /// `"{ "` if `true`, `"{"` if `false`
     fn write_opening_bracket(&mut self) -> std::fmt::Result {
-        self.write_str(if self.config.bracket_spacing { "{ " } else { "{" })
+        write!(self, "{}", if self.config.bracket_spacing { "{ " } else { "{" })
     }
 
     /// Write closing bracket with respect to `config.bracket_spacing` setting:
     /// `" }"` if `true`, `"}"` if `false`
     fn write_closing_bracket(&mut self) -> std::fmt::Result {
-        self.write_str(if self.config.bracket_spacing { " }" } else { "}" })
+        write!(self, "{}", if self.config.bracket_spacing { " }" } else { "}" })
     }
 
     /// Write empty brackets with respect to `config.bracket_spacing` setting:
     /// `"{ }"` if `true`, `"{}"` if `false`
     fn write_empty_brackets(&mut self) -> std::fmt::Result {
-        self.write_str(if self.config.bracket_spacing { "{ }" } else { "{}" })
+        write!(self, "{}", if self.config.bracket_spacing { "{ }" } else { "{}" })
     }
 
     /// Length of the line consisting of `items` separated by `separator` with respect to
@@ -132,34 +141,34 @@ impl<'a, W: Write> Formatter<'a, W> {
         &mut self,
         visitable: &mut impl Visitable,
     ) -> Result<String, Box<dyn std::error::Error>> {
-        self.bufs.push((0, String::new()));
+        self.bufs.push(FormatBuffer::default());
         Visitable::visit(visitable, self)?;
-        let (_, result) = self.bufs.pop().unwrap();
+        let buf = self.bufs.pop().unwrap();
 
-        Ok(result)
+        Ok(buf.w)
     }
 }
 
 impl<'a, W: Write> Write for Formatter<'a, W> {
     fn write_str(&mut self, s: &str) -> std::fmt::Result {
-        let (level, w): (usize, &mut dyn Write) = if let Some((level, buf)) = self.bufs.last_mut() {
-            (*level, buf)
-        } else {
-            (self.level, self.w)
-        };
+        let (level, current_line, pending_indent, w): (_, _, _, &mut dyn Write) =
+            if let Some(buf) = self.bufs.last_mut() {
+                (buf.level, &mut buf.current_line, &mut buf.pending_indent, &mut buf.w)
+            } else {
+                (self.level, &mut self.current_line, &mut self.pending_indent, self.w)
+            };
 
-        let indent = " ".repeat(self.config.tab_width * level);
-
-        if self.pending_indent {
+        if *pending_indent {
+            let indent = " ".repeat(self.config.tab_width * level);
             IndentWriter::new(&indent, w).write_str(s)?;
         } else {
             w.write_str(s)?;
         }
-        self.current_line += s.len();
+        *current_line += s.len();
 
-        self.pending_indent = s.ends_with('\n');
-        if self.pending_indent {
-            self.current_line = 0;
+        *pending_indent = s.ends_with('\n');
+        if *pending_indent {
+            *current_line = 0;
         }
 
         Ok(())
@@ -169,7 +178,21 @@ impl<'a, W: Write> Write for Formatter<'a, W> {
 // Traverse the Solidity Parse Tree and write to the code formatter
 impl<'a, W: Write> Visitor for Formatter<'a, W> {
     fn visit_source(&mut self, loc: Loc) -> VResult {
-        write!(self, "{}", String::from_utf8(self.source.as_bytes()[loc.1..loc.2].to_vec())?)?;
+        let source = String::from_utf8(self.source.as_bytes()[loc.1..loc.2].to_vec())?;
+        let mut lines = source.splitn(2, '\n');
+
+        write!(self, "{}", lines.next().unwrap())?;
+        if let Some(remainder) = lines.next() {
+            // Call with `self.write_str` and not `write!`, so we can have `\n` at the beginning
+            // without triggering an indentation
+            self.write_str(&format!("\n{}", remainder))?;
+        }
+
+        Ok(())
+    }
+
+    fn visit_stray_semicolon(&mut self) -> VResult {
+        write!(self, ";")?;
 
         Ok(())
     }
@@ -207,7 +230,27 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_doc_comment(&mut self, doc_comment: &mut DocComment) -> VResult {
-        write!(self, "/// @{} {}", doc_comment.tag, doc_comment.value)?;
+        match doc_comment {
+            DocComment::Line { comment } => {
+                write!(self, "/// @{}", comment.tag)?;
+                if !comment.value.is_empty() {
+                    let mut lines = comment.value.split('\n');
+                    write!(self, " {}", lines.next().unwrap())?;
+
+                    for line in lines {
+                        writeln!(self)?; // Write newline separately to trigger an indentation
+                        write!(self, "/// {}", line)?;
+                    }
+                }
+            }
+            DocComment::Block { comments } => {
+                writeln!(self, "/**")?;
+                for comment in comments {
+                    write!(self, "@{} {}", comment.tag, comment.value)?;
+                }
+                write!(self, "\n*/")?;
+            }
+        };
 
         Ok(())
     }
@@ -268,7 +311,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 if i != contract_parts_len - 1 {
                     if let Some((_, next_part)) = contract_parts_iter.peek() {
                         let empty_lines =
-                            self.source[part.loc().2 + 1..next_part.loc().1].matches('\n').count();
+                            self.source[part.loc().2..next_part.loc().1].matches('\n').count();
 
                         if empty_lines > 1 {
                             writeln!(self)?;
@@ -287,7 +330,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_pragma(&mut self, ident: &mut Identifier, str: &mut StringLiteral) -> VResult {
-        write!(self, "pragma {}", &ident.name)?;
+        write!(self, "pragma {} ", &ident.name)?;
 
         if ident.name == "solidity" {
             // Ranges like `>=0.4.21<0.6.0` or `>=0.4.21 <0.6.0` are not parseable by `semver`
@@ -393,27 +436,11 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             writeln!(self)?;
         }
 
-        // Constructor functions LOCs are saved with trailing spaces, we need a workaround for now.
-        if func.ty == FunctionTy::Constructor {
-            let constructor_definition = self.visit_to_string(&mut func.loc)?;
-            write!(self, "{}", constructor_definition.trim_end())?;
-        } else {
-            self.visit_source(func.loc)?;
-        }
+        self.visit_source(func.loc())?;
 
-        if let Some(body) = &mut func.body {
-            write!(self, " ")?;
-            self.visit_statement(body)?;
-        } else {
+        if func.body.is_none() {
             write!(self, ";")?;
         }
-
-        Ok(())
-    }
-
-    fn visit_var_def(&mut self, var: &mut VariableDefinition) -> VResult {
-        self.visit_source(var.loc)?;
-        write!(self, ";")?;
 
         Ok(())
     }

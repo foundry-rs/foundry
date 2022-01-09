@@ -79,7 +79,10 @@ pub trait Visitor {
         Ok(())
     }
 
-    fn visit_var_def(&mut self, _var: &mut VariableDefinition) -> VResult {
+    fn visit_var_def(&mut self, var: &mut VariableDefinition) -> VResult {
+        self.visit_source(var.loc)?;
+        self.visit_stray_semicolon()?;
+
         Ok(())
     }
 
@@ -125,12 +128,13 @@ pub trait Visitor {
         Ok(())
     }
 
-    fn visit_stray(&mut self) -> VResult {
+    fn visit_stray_semicolon(&mut self) -> VResult {
         Ok(())
     }
 
     fn visit_using(&mut self, using: &mut Using) -> VResult {
         self.visit_source(using.loc)?;
+        self.visit_stray_semicolon()?;
 
         Ok(())
     }
@@ -179,7 +183,7 @@ impl Visitable for SourceUnitPart {
             SourceUnitPart::EventDefinition(event) => v.visit_event(event),
             SourceUnitPart::FunctionDefinition(function) => v.visit_function(function),
             SourceUnitPart::VariableDefinition(variable) => v.visit_var_def(variable),
-            SourceUnitPart::StraySemicolon(_) => v.visit_stray(),
+            SourceUnitPart::StraySemicolon(_) => v.visit_stray_semicolon(),
         }
     }
 }
@@ -187,9 +191,9 @@ impl Visitable for SourceUnitPart {
 impl Visitable for Import {
     fn visit(&mut self, v: &mut impl Visitor) -> VResult {
         match self {
-            Import::Plain(import) => v.visit_import_plain(import),
-            Import::GlobalSymbol(global, import_as) => v.visit_import_global(global, import_as),
-            Import::Rename(from, imports) => v.visit_import_renames(imports, from),
+            Import::Plain(import, _) => v.visit_import_plain(import),
+            Import::GlobalSymbol(global, import_as, _) => v.visit_import_global(global, import_as),
+            Import::Rename(from, imports, _) => v.visit_import_renames(imports, from),
         }
     }
 }
@@ -202,7 +206,7 @@ impl Visitable for ContractPart {
             ContractPart::EnumDefinition(enumeration) => v.visit_enum(enumeration),
             ContractPart::VariableDefinition(variable) => v.visit_var_def(variable),
             ContractPart::FunctionDefinition(function) => v.visit_function(function),
-            ContractPart::StraySemicolon(_) => v.visit_stray(),
+            ContractPart::StraySemicolon(_) => v.visit_stray_semicolon(),
             ContractPart::Using(using) => v.visit_using(using),
         }
     }
