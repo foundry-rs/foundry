@@ -45,7 +45,6 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
     println!("compiling...");
     let output = project.compile()?;
     if output.has_compiler_errors() {
-        // return the diagnostics error back to the user.
         eyre::bail!(output.to_string())
     } else if output.is_unchanged() {
         println!("no files changed, compilation skippped.");

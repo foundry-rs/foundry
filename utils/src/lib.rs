@@ -403,11 +403,11 @@ mod tests {
             ))
         );
 
-        // DAI:rinkeby exists in ethers-adddressbook (0x8ad3aa5d5ff084307d28c8f514d7a193b2bfe725)
+        // DAI:goerli exists in ethers-adddressbook (0x11fE4B6AE13d2a6055C8D9cF65c55bac32B5d844)
         assert_eq!(
-            resolve_addr(NameOrAddress::Name("dai".to_string()), Chain::Rinkeby).ok(),
+            resolve_addr(NameOrAddress::Name("dai".to_string()), Chain::Goerli).ok(),
             Some(NameOrAddress::Address(
-                Address::from_str("0x8ad3aa5d5ff084307d28c8f514d7a193b2bfe725").unwrap()
+                Address::from_str("0x11fE4B6AE13d2a6055C8D9cF65c55bac32B5d844").unwrap()
             ))
         );
 
