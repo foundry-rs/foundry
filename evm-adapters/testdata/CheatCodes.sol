@@ -43,16 +43,14 @@ interface Hevm {
     // logs were emited in the expected order with the expected topics and data (as specified by the booleans)
     function expectEmit(bool,bool,bool,bool) external;
     // Mocks a call to an address, returning specified data.
-    // If the transaction data argument is only 4 bytes, then those 4 bytes
-    // will be treated as a selector and the entire function specified by that selector
-    // is mocked.
+    // Calldata can either be strict or a partial match, e.g. if you only
+    // pass a Solidity selector to the expected calldata, then the entire Solidity
+    // function will be mocked.
     function mockCall(address,bytes calldata,bytes calldata) external;
     // Clears all mocked calls
     function clearMockedCalls() external;
     // Expect a call to an address with the specified calldata.
-    // If the transaction data argument is only 4 bytes, then those 4 bytes
-    // will be treated as a selector and any call to the address with the specified selector
-    // will pass the check.
+    // Calldata can either be strict or a partial match
     function expectCall(address,bytes calldata) external;
 }
 
