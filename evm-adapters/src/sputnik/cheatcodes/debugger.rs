@@ -101,6 +101,8 @@ pub struct DebugStep {
     pub push_bytes: Option<Vec<u8>>,
     /// Instruction counter, used for sourcemap mapping to source code
     pub ic: usize,
+    /// Cumulative gas usage
+    pub total_gas_used: u64,
 }
 
 impl Default for DebugStep {
@@ -112,6 +114,7 @@ impl Default for DebugStep {
             op: OpCode(Opcode::INVALID, None),
             push_bytes: None,
             ic: 0,
+            total_gas_used: 0,
         }
     }
 }

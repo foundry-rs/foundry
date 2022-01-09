@@ -92,12 +92,12 @@ impl Cmd for RunArgs {
         let mut runner =
             ContractRunner::new(&mut evm, &abi, addr, Some(self.evm_opts.sender), &logs);
 
-        // 5. run the test function
-        let result = runner.run_test(&func, false, Some(&known_contracts))?;
+        // 5. run the test function & potentially the setup
+        let needs_setup = abi.functions().any(|func| func.name == "setUp");
+        let result = runner.run_test(&func, needs_setup, Some(&known_contracts))?;
 
         if self.evm_opts.debug {
             // 6. Boot up debugger
-
             let source_code: BTreeMap<u32, String> = sources
                 .iter()
                 .map(|(id, path)| {
@@ -124,9 +124,10 @@ impl Cmd for RunArgs {
                 .collect();
 
             let calls = evm.debug_calls();
-            println!("debugging {}", calls.len());
+            println!("debugging");
+            let index = if needs_setup && calls.len() > 1 { 1 } else { 0 };
             let mut flattened = Vec::new();
-            calls[0].flatten(0, &mut flattened);
+            calls[index].flatten(0, &mut flattened);
             flattened = flattened[1..].to_vec();
             let tui = Tui::new(
                 flattened,
@@ -248,32 +249,35 @@ impl RunArgs {
         println!("success.");
 
         // get the contracts
-        let (sources, mut contracts) = output.output().split();
+        let (sources, contracts) = output.output().split();
+
         // get the specific contract
-        let (name, contract_bytecode) = if let Some(contract_name) = self.target_contract.clone() {
+        let contract_bytecode = if let Some(contract_name) = self.target_contract.clone() {
             let contract_bytecode: ContractBytecode = contracts
                 .0
-                .remove(root.to_str().expect("OsString from path"))
+                .get(root.to_str().expect("OsString from path"))
                 .ok_or_else(|| {
                     eyre::Error::msg(
                         "contract path not found; This is likely a bug, please report it",
                     )
                 })?
-                .remove(&contract_name)
+                .get(&contract_name)
                 .ok_or_else(|| {
                     eyre::Error::msg("contract not found, did you type the name wrong?")
                 })?
+                .clone()
                 .into();
-            (contract_name, contract_bytecode.unwrap())
+            contract_bytecode.unwrap()
         } else {
             let contract = contracts
                 .0
-                .remove(root.to_str().expect("OsString from path"))
+                .get(root.to_str().expect("OsString from path"))
                 .ok_or_else(|| {
                     eyre::Error::msg(
                         "contract path not found; This is likely a bug, please report it",
                     )
                 })?
+                .clone()
                 .into_iter()
                 .filter_map(|(name, c)| {
                     let c: ContractBytecode = c.into();
@@ -281,12 +285,26 @@ impl RunArgs {
                 })
                 .find(|(_, c)| c.bytecode.object.is_non_empty_bytecode())
                 .ok_or_else(|| eyre::Error::msg("no contract found"))?;
-            (contract.0, contract.1)
+            contract.1
         };
 
-        let contract = contract_bytecode.clone().into_compact_contract().unwrap();
-        // deployed bytecode one for
-        let highlevel_known_contracts = BTreeMap::from([(name, contract_bytecode)]);
+        let contract = contract_bytecode.into_compact_contract().unwrap();
+
+        let mut highlevel_known_contracts = BTreeMap::new();
+
+        // build the entire highlevel_known_contracts based on all compiled contracts
+        contracts.0.into_iter().for_each(|(src, mapping)| {
+            mapping.into_iter().for_each(|(name, c)| {
+                let cb: ContractBytecode = c.into();
+                if let Ok(cbs) = ContractBytecodeSome::try_from(cb) {
+                    if highlevel_known_contracts.contains_key(&name) {
+                        highlevel_known_contracts.insert(src.to_string() + ":" + &name, cbs);
+                    } else {
+                        highlevel_known_contracts.insert(name, cbs);
+                    }
+                }
+            });
+        });
 
         Ok(BuildOutput {
             project,

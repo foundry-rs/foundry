@@ -794,6 +794,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 op: wrapped_op,
                 push_bytes,
                 ic: *pc_ic.get(&pc).as_ref().copied().unwrap_or(&0usize),
+                total_gas_used: self.handler.used_gas(),
             });
             match op {
                 Opcode::CREATE |
@@ -820,6 +821,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 op: OpCode::from(Opcode::INVALID),
                 push_bytes,
                 ic: *pc_ic.get(&pc).as_ref().copied().unwrap_or(&0usize),
+                total_gas_used: self.handler.used_gas(),
             });
             true
         }

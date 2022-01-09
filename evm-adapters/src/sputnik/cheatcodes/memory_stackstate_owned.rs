@@ -72,6 +72,7 @@ impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
 
     pub fn increment_call_index(&mut self) {
         self.traces.push(Default::default());
+        self.debug_steps.push(Default::default());
         self.call_index += 1;
     }
     pub fn trace_mut(&mut self) -> &mut CallTraceArena {

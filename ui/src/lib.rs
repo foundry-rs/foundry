@@ -499,9 +499,14 @@ impl Tui {
     ) {
         let block_source_code = Block::default()
             .title(format!(
-                " Address: {}, pc: {} - q: quit, a: JUMPDEST-, s: JUMPDEST+, j: OP+, k: OP-, g: OP0, G: OP_LAST",
+                " Address: {}, pc: {}, call's gas used: {} ",
                 address,
-                if let Some(step) = debug_steps.get(current_step) { step.pc.to_string() } else { "END".to_string() }
+                if let Some(step) = debug_steps.get(current_step) {
+                    step.pc.to_string()
+                } else {
+                    "END".to_string()
+                },
+                debug_steps[current_step].total_gas_used,
             ))
             .borders(Borders::ALL);
         let mut text_output: Vec<Spans> = Vec::new();
