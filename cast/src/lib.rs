@@ -12,7 +12,6 @@ use ethers_providers::{Middleware, PendingTransaction};
 use eyre::{Context, Result};
 use rustc_hex::{FromHexIter, ToHex};
 use std::str::FromStr;
-use reqwest;
 
 use foundry_utils::{encode_args, get_func, get_func_etherscan, to_table};
 
@@ -861,62 +860,68 @@ impl SimpleCast {
         Ok(format!("0x{}", calldata.to_hex::<String>()))
     }
 
-	/// Fetches source code of verified contracts from etherscan.
+    /// Fetches source code of verified contracts from etherscan.
     ///
     /// ```
     /// # use cast::SimpleCast as Cast;
     ///
     /// # fn main() -> eyre::Result<()> {
     ///     assert_eq!(
-	/// 		"{{\r\n  \"language\": \"Solidity\",\r\n  
-	/// 			\"sources\": {\r\n    \"Demo.sol\": {\r\n      
-	/// 			\"content\": \"pragma solidity ^0.8.6;\\r\\n\\r\\ncontract Demo {\\r\\n    
-	/// 			function foo() public pure returns(string memory) {\\r\\n        
-	/// 			return \\\"First contribution to Foundry!\\\";\\r\\n    }\\r\\n}\"\r\n    }\r\n  },\r\n  
-	/// 			\"settings\": {\r\n    \"optimizer\": {\r\n      \"enabled\": false,\r\n      \"runs\": 200\r\n    },
-	/// 			\r\n    \"outputSelection\": {\r\n      \"*\": {\r\n        \"*\": [\r\n          \"evm.bytecode\",\r\n          
-	/// 			\"evm.deployedBytecode\",\r\n          \"devdoc\",\r\n          \"userdoc\",\r\n          \"metadata\",\r\n          
-	/// 			\"abi\"\r\n        ]\r\n      }\r\n    }\r\n  }\r\n}}",
+    ///             "{{\r\n  \"language\": \"Solidity\",\r\n  
+    ///             \"sources\": {\r\n    \"Demo.sol\": {\r\n      
+    ///             \"content\": \"pragma solidity ^0.8.6;\\r\\n\\r\\ncontract Demo {\\r\\n    
+    ///             function foo() public pure returns(string memory) {\\r\\n        
+    ///             return \\\"First contribution to Foundry!\\\";\\r\\n    }\\r\\n}\"\r\n    }\r\n  },\r\n  
+    ///             \"settings\": {\r\n    \"optimizer\": {\r\n      \"enabled\": false,\r\n      \"runs\": 200\r\n    },
+    ///             \r\n    \"outputSelection\": {\r\n      \"*\": {\r\n        \"*\": [\r\n          \"evm.bytecode\",\r\n          
+    ///             \"evm.deployedBytecode\",\r\n          \"devdoc\",\r\n          \"userdoc\",\r\n          \"metadata\",\r\n          
+    ///             \"abi\"\r\n        ]\r\n      }\r\n    }\r\n  }\r\n}}",
     ///         Cast::etherscan_source(Chain::Ropsten, "0x6C3ecefeaE570BFb889d277e8207b18130d7FF2B", "etherscan-api-key").unwrap().as_str()
     ///     );
     /// #    Ok(())
     /// # }
     /// ```
-	pub async fn etherscan_source(
-		chain: Chain,
-		contract_address: String,
-		etherscan_api_key: String) -> Result<String> {
-			let base_url = match chain {
-								Chain::Mainnet => "https://api.etherscan.io/api?",
-								// Chain::Ropsten | Chain::Kovan | Chain::Rinkeby | Chain::Goerli => base_url = format!("https://api-{chain}.etherscan.io/api?", chain = chain.to_string().as_str()),
-								Chain::Ropsten => "https://api-ropsten.etherscan.io/api?",
-								Chain::Kovan => "https://api-kovan.etherscan.io/api?",
-								Chain::Rinkeby => "https://api-rinkeby.etherscan.io/api?",
-								Chain::Goerli => "https://api-goerli.etherscan.io/api?",
-								Chain::Polygon => "https://api.polygonscan.com/api?",
-								Chain::PolygonMumbai => "https://api-testnet.polygonscan.com/api?",
-								_ => return Err(eyre::eyre!("source fetching only works on mainnet, ropsten, kovan, rinkeby, goerli, polygon, and polygon-mumbai.")),
-							};
+    pub async fn etherscan_source(
+        chain: Chain,
+        contract_address: String,
+        etherscan_api_key: String,
+    ) -> Result<String> {
+        let base_url = match chain {
+                                Chain::Mainnet => "https://api.etherscan.io/api?",
+                                // Chain::Ropsten | Chain::Kovan | Chain::Rinkeby | Chain::Goerli => base_url = format!("https://api-{chain}.etherscan.io/api?", chain = chain.to_string().as_str()),
+                                Chain::Ropsten => "https://api-ropsten.etherscan.io/api?",
+                                Chain::Kovan => "https://api-kovan.etherscan.io/api?",
+                                Chain::Rinkeby => "https://api-rinkeby.etherscan.io/api?",
+                                Chain::Goerli => "https://api-goerli.etherscan.io/api?",
+                                Chain::Polygon => "https://api.polygonscan.com/api?",
+                                Chain::PolygonMumbai => "https://api-testnet.polygonscan.com/api?",
+                                _ => return Err(eyre::eyre!("source fetching only works on mainnet, ropsten, kovan, rinkeby, goerli, polygon, and polygon-mumbai.")),
+                            };
 
-			let url = format!("{base_url}module=contract&action=getsourcecode&address={addr}&apikey={api_key}",
-								base_url = base_url,
-								addr = contract_address,
-								api_key = etherscan_api_key);
+        let url = format!(
+            "{base_url}module=contract&action=getsourcecode&address={addr}&apikey={api_key}",
+            base_url = base_url,
+            addr = contract_address,
+            api_key = etherscan_api_key
+        );
 
-			let response = reqwest::get(&url).await?.text().await?;
-			let json: serde_json::Value = serde_json::from_str(&response)?;
+        let response = reqwest::get(&url).await?.text().await?;
+        let json: serde_json::Value = serde_json::from_str(&response)?;
 
-			if json["status"].as_str() == Some("0") {
-				return Err(eyre::eyre!("etherscan api returned error: {}", json["result"].as_str().unwrap()));
-			}
-			
-			// Don't know why this doesn't work
-			// if json["result"][0]["SourceCode"].to_string().is_empty() {
-			// 	return Err(eyre::eyre!("unverified contract"));
-			// }
+        if json["status"].as_str() == Some("0") {
+            return Err(eyre::eyre!(
+                "etherscan api returned error: {}",
+                json["result"].as_str().unwrap()
+            ))
+        }
 
-			Ok(json["result"][0]["SourceCode"].to_string())
-		}
+        // Don't know why this doesn't work
+        // if json["result"][0]["SourceCode"].to_string().is_empty() {
+        // 	return Err(eyre::eyre!("unverified contract"));
+        // }
+
+        Ok(json["result"][0]["SourceCode"].to_string())
+    }
 }
 
 fn strip_0x(s: &str) -> &str {
