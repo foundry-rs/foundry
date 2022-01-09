@@ -868,7 +868,15 @@ impl SimpleCast {
     ///
     /// # fn main() -> eyre::Result<()> {
     ///     assert_eq!(
-	/// 		"{{\r\n  \"language\": \"Solidity\",\r\n...",
+	/// 		"{{\r\n  \"language\": \"Solidity\",\r\n  
+	/// 			\"sources\": {\r\n    \"Demo.sol\": {\r\n      
+	/// 			\"content\": \"pragma solidity ^0.8.6;\\r\\n\\r\\ncontract Demo {\\r\\n    
+	/// 			function foo() public pure returns(string memory) {\\r\\n        
+	/// 			return \\\"First contribution to Foundry!\\\";\\r\\n    }\\r\\n}\"\r\n    }\r\n  },\r\n  
+	/// 			\"settings\": {\r\n    \"optimizer\": {\r\n      \"enabled\": false,\r\n      \"runs\": 200\r\n    },
+	/// 			\r\n    \"outputSelection\": {\r\n      \"*\": {\r\n        \"*\": [\r\n          \"evm.bytecode\",\r\n          
+	/// 			\"evm.deployedBytecode\",\r\n          \"devdoc\",\r\n          \"userdoc\",\r\n          \"metadata\",\r\n          
+	/// 			\"abi\"\r\n        ]\r\n      }\r\n    }\r\n  }\r\n}}",
     ///         Cast::etherscan_source(Chain::Ropsten, "0x6C3ecefeaE570BFb889d277e8207b18130d7FF2B", "etherscan-api-key").unwrap().as_str()
     ///     );
     /// #    Ok(())
