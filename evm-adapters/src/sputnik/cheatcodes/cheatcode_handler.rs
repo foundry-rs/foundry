@@ -1415,15 +1415,13 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
                         ExitReason::Succeed(ExitSucceed::Returned),
                         mock_retdata.clone(),
                     ))
-                } else {
-                    if let Some((_, mock_retdata)) =
-                        mocks.iter().find(|(mock, _)| *mock == &input[..mock.len()])
-                    {
-                        return Capture::Exit((
-                            ExitReason::Succeed(ExitSucceed::Returned),
-                            mock_retdata.clone(),
-                        ))
-                    }
+                } else if let Some((_, mock_retdata)) =
+                    mocks.iter().find(|(mock, _)| *mock == &input[..mock.len()])
+                {
+                    return Capture::Exit((
+                        ExitReason::Succeed(ExitSucceed::Returned),
+                        mock_retdata.clone(),
+                    ))
                 }
             }
 
