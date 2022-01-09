@@ -49,6 +49,11 @@ interface Hevm {
     function mockCall(address,bytes calldata,bytes calldata) external;
     // Clears all mocked calls
     function clearMockedCalls() external;
+    // Expect a call to an address with the specified calldata.
+    // If the transaction data argument is only 4 bytes, then those 4 bytes
+    // will be treated as a selector and any call to the address with the specified selector
+    // will pass the check.
+    function expectCall(address,bytes calldata) external;
 }
 
 contract HasStorage {
@@ -455,6 +460,65 @@ contract CheatCodes is DSTest {
         assertEq(target.numberB(), 2);
     }
 
+    function testExpectCallWithData() public {
+        MockMe target = new MockMe();
+        hevm.expectCall(
+            address(target),
+            abi.encodeWithSelector(target.add.selector, 1, 2)
+        );
+        target.add(1, 2);
+    }
+
+    function testFailExpectCallWithData() public {
+        MockMe target = new MockMe();
+        hevm.expectCall(
+            address(target),
+            abi.encodeWithSelector(target.add.selector, 1, 2)
+        );
+        target.add(3, 3);
+    }
+
+    function testExpectInnerCall() public {
+        MockMe inner = new MockMe();
+        MockInner target = new MockInner(address(inner));
+
+        hevm.expectCall(
+            address(inner),
+            abi.encodeWithSelector(inner.numberB.selector)
+        );
+        target.sum();
+    }
+
+    function testFailExpectInnerCall() public {
+        MockMe inner = new MockMe();
+        MockInner target = new MockInner(address(inner));
+
+        hevm.expectCall(
+            address(inner),
+            abi.encodeWithSelector(inner.numberB.selector)
+        );
+
+        // this function does not call inner
+        target.hello();
+    }
+
+    function testExpectSelectorCall() public {
+        MockMe target = new MockMe();
+        hevm.expectCall(
+            address(target),
+            abi.encodeWithSelector(target.add.selector)
+        );
+        target.add(5, 5);
+    }
+
+    function testFailExpectSelectorCall() public {
+        MockMe target = new MockMe();
+        hevm.expectCall(
+            address(target),
+            abi.encodeWithSelector(target.add.selector)
+        );
+    }
+
     function getCode(address who) internal returns (bytes memory o_code) {
         assembly {
             // retrieve the size of the code, this needs assembly
@@ -629,5 +693,9 @@ contract MockInner {
 
     function sum() public returns (uint256) {
         return inner.numberA() + inner.numberB();
+    }
+
+    function hello() public returns (string memory) {
+        return "hi";
     }
 }

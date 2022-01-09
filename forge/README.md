@@ -247,6 +247,11 @@ interface Vm {
     function mockCall(address,bytes calldata,bytes calldata) external;
     // Clears all mocked calls
     function clearMockedCalls() external;
+    // Expect a call to an address with the specified calldata.
+    // If the transaction data argument is only 4 bytes, then those 4 bytes
+    // will be treated as a selector and any call to the address with the specified selector
+    // will pass the check.
+    function expectCall(address,bytes calldata) external;
 }
 ```
 ### `console.log`

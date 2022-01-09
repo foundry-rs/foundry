@@ -63,6 +63,7 @@ ethers::contract::abigen!(
             expectEmit(bool,bool,bool,bool)
             mockCall(address,bytes,bytes)
             clearMockedCalls()
+            expectCall(address,bytes)
     ]"#,
 );
 pub use hevm_mod::{HEVMCalls, HEVM_ABI};
