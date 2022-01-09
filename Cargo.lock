@@ -516,6 +516,7 @@ dependencies = [
  "eyre",
  "foundry-utils",
  "hex",
+ "reqwest",
  "rustc-hex",
  "serde_json",
 ]

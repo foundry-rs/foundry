@@ -861,10 +861,23 @@ impl SimpleCast {
         Ok(format!("0x{}", calldata.to_hex::<String>()))
     }
 
+	/// Fetches source code of verified contracts from etherscan.
+    ///
+    /// ```
+    /// # use cast::SimpleCast as Cast;
+    ///
+    /// # fn main() -> eyre::Result<()> {
+    ///     assert_eq!(
+	/// 		"{{\r\n  \"language\": \"Solidity\",\r\n...",
+    ///         Cast::etherscan_source(Chain::Ropsten, "0x6C3ecefeaE570BFb889d277e8207b18130d7FF2B", "etherscan-api-key").unwrap().as_str()
+    ///     );
+    /// #    Ok(())
+    /// # }
+    /// ```
 	pub async fn etherscan_source(
 		chain: Chain,
-		contract_address: &str,
-		etherscan_api_key: &str) -> Result<String> {
+		contract_address: String,
+		etherscan_api_key: String) -> Result<String> {
 			let base_url = match chain {
 								Chain::Mainnet => "https://api.etherscan.io/api?",
 								// Chain::Ropsten | Chain::Kovan | Chain::Rinkeby | Chain::Goerli => base_url = format!("https://api-{chain}.etherscan.io/api?", chain = chain.to_string().as_str()),
@@ -874,7 +887,7 @@ impl SimpleCast {
 								Chain::Goerli => "https://api-goerli.etherscan.io/api?",
 								Chain::Polygon => "https://api.polygonscan.com/api?",
 								Chain::PolygonMumbai => "https://api-testnet.polygonscan.com/api?",
-								_ => panic!("Chain not supported"),
+								_ => return Err(eyre::eyre!("source fetching only works on mainnet, ropsten, kovan, rinkeby, goerli, polygon, and polygon-mumbai.")),
 							};
 
 			let url = format!("{base_url}module=contract&action=getsourcecode&address={addr}&apikey={api_key}",
@@ -885,9 +898,14 @@ impl SimpleCast {
 			let response = reqwest::get(&url).await?.text().await?;
 			let json: serde_json::Value = serde_json::from_str(&response)?;
 
-			if json["status"].as_str() != Some("1") {
+			if json["status"].as_str() == Some("0") {
 				return Err(eyre::eyre!("etherscan api returned error: {}", json["result"].as_str().unwrap()));
 			}
+			
+			// Don't know why this doesn't work
+			// if json["result"][0]["SourceCode"].to_string().is_empty() {
+			// 	return Err(eyre::eyre!("unverified contract"));
+			// }
 
 			Ok(json["result"][0]["SourceCode"].to_string())
 		}

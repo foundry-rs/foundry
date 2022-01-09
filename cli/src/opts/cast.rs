@@ -292,6 +292,16 @@ pub enum Subcommands {
         #[clap(short, long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
+    #[clap(name = "etherscan-source")]
+    #[clap(about = "Prints the source code of a contract from Etherscan")]
+    EtherscanSource {
+        #[clap(long, env = "CHAIN", default_value = "mainnet")]
+        chain: Chain,
+        #[clap(help = "the contract address")]
+        address: String,
+        #[clap(long, env = "ETHERSCAN_API_KEY")]
+        etherscan_api_key: String,
+    },
     #[clap(name = "wallet", about = "Set of wallet management utilities")]
     Wallet {
         #[clap(subcommand)]
