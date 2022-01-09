@@ -19,7 +19,7 @@ use sputnik::{
     Config, CreateScheme, ExitError, ExitReason, ExitSucceed,
 };
 
-use crate::call_tracing::CallTraceArena;
+use crate::{call_tracing::CallTraceArena, sputnik::cheatcodes::debugger::DebugArena};
 
 pub use sputnik as sputnik_evm;
 use sputnik_evm::executor::stack::PrecompileSet;
@@ -66,6 +66,7 @@ pub trait SputnikExecutor<S> {
     fn expected_revert(&self) -> Option<&[u8]>;
     fn set_tracing_enabled(&mut self, enabled: bool) -> bool;
     fn tracing_enabled(&self) -> bool;
+    fn debug_calls(&self) -> Vec<DebugArena>;
     fn all_logs(&self) -> Vec<String>;
     fn gas_left(&self) -> U256;
     fn transact_call(
@@ -135,6 +136,10 @@ impl<'a, 'b, S: StackState<'a>, P: PrecompileSet> SputnikExecutor<S>
 
     fn tracing_enabled(&self) -> bool {
         false
+    }
+
+    fn debug_calls(&self) -> Vec<DebugArena> {
+        vec![]
     }
 
     fn all_logs(&self) -> Vec<String> {

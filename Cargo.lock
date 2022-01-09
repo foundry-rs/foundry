@@ -500,6 +500,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "cassowary"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df8670b8c7b9dae1793364eafadf7239c40d669904660c5960d74cfd80b46a53"
+
+[[package]]
 name = "cast"
 version = "0.1.0"
 dependencies = [
@@ -794,9 +800,9 @@ dependencies = [
 
 [[package]]
 name = "crossbeam-channel"
-version = "0.5.1"
+version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "06ed27e177f16d65f0f0c22a213e17c696ace5dd64b14258b52f9417ccb52db4"
+checksum = "e54ea8bc3fb1ee042f5aace6e3c6e025d3874866da222930f70ce62aceba0bfa"
 dependencies = [
  "cfg-if 1.0.0",
  "crossbeam-utils",
@@ -815,9 +821,9 @@ dependencies = [
 
 [[package]]
 name = "crossbeam-epoch"
-version = "0.9.5"
+version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ec02e091aa634e2c3ada4a392989e7c3116673ef0ac5b72232439094d73b7fd"
+checksum = "97242a70df9b89a65d0b6df3c4bf5b9ce03c5b7309019777fbde37e7537f8762"
 dependencies = [
  "cfg-if 1.0.0",
  "crossbeam-utils",
@@ -828,12 +834,62 @@ dependencies = [
 
 [[package]]
 name = "crossbeam-utils"
-version = "0.8.5"
+version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d82cfc11ce7f2c3faef78d8a684447b40d503d9681acebed6cb728d45940c4db"
+checksum = "cfcae03edb34f947e64acdb1c33ec169824e20657e9ecb61cef6c8c74dcb8120"
 dependencies = [
  "cfg-if 1.0.0",
  "lazy_static",
+]
+
+[[package]]
+name = "crossterm"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c0ebde6a9dd5e331cd6c6f48253254d117642c31653baa475e394657c59c1f7d"
+dependencies = [
+ "bitflags",
+ "crossterm_winapi 0.8.0",
+ "libc",
+ "mio",
+ "parking_lot",
+ "signal-hook",
+ "signal-hook-mio",
+ "winapi",
+]
+
+[[package]]
+name = "crossterm"
+version = "0.22.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c85525306c4291d1b73ce93c8acf9c339f9b213aef6c1d85c3830cbf1c16325c"
+dependencies = [
+ "bitflags",
+ "crossterm_winapi 0.9.0",
+ "libc",
+ "mio",
+ "parking_lot",
+ "signal-hook",
+ "signal-hook-mio",
+ "winapi",
+]
+
+[[package]]
+name = "crossterm_winapi"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a6966607622438301997d3dac0d2f6e9a90c68bb6bc1785ea98456ab93c0507"
+dependencies = [
+ "winapi",
+]
+
+[[package]]
+name = "crossterm_winapi"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ae1b35a484aa10e07fe0638d02301c5ad24de82d310ccbd2f3693da5f09bf1c"
+dependencies = [
+ "winapi",
 ]
 
 [[package]]
@@ -1198,7 +1254,7 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#48bd3f13e23722de4a6d0a0b80307fa3214a87ce"
+source = "git+https://github.com/gakonst/ethers-rs#1287614e532662f0f2bf9caed24679a2b0843771"
 dependencies = [
  "ethers-addressbook",
  "ethers-contract",
@@ -1213,7 +1269,7 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "0.1.0"
-source = "git+https://github.com/gakonst/ethers-rs#48bd3f13e23722de4a6d0a0b80307fa3214a87ce"
+source = "git+https://github.com/gakonst/ethers-rs#1287614e532662f0f2bf9caed24679a2b0843771"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -1224,7 +1280,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#48bd3f13e23722de4a6d0a0b80307fa3214a87ce"
+source = "git+https://github.com/gakonst/ethers-rs#1287614e532662f0f2bf9caed24679a2b0843771"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1242,7 +1298,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#48bd3f13e23722de4a6d0a0b80307fa3214a87ce"
+source = "git+https://github.com/gakonst/ethers-rs#1287614e532662f0f2bf9caed24679a2b0843771"
 dependencies = [
  "Inflector",
  "anyhow",
@@ -1265,7 +1321,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#48bd3f13e23722de4a6d0a0b80307fa3214a87ce"
+source = "git+https://github.com/gakonst/ethers-rs#1287614e532662f0f2bf9caed24679a2b0843771"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -1279,7 +1335,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#48bd3f13e23722de4a6d0a0b80307fa3214a87ce"
+source = "git+https://github.com/gakonst/ethers-rs#1287614e532662f0f2bf9caed24679a2b0843771"
 dependencies = [
  "arrayvec 0.7.2",
  "bytes",
@@ -1307,7 +1363,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "0.2.0"
-source = "git+https://github.com/gakonst/ethers-rs#48bd3f13e23722de4a6d0a0b80307fa3214a87ce"
+source = "git+https://github.com/gakonst/ethers-rs#1287614e532662f0f2bf9caed24679a2b0843771"
 dependencies = [
  "ethers-core",
  "reqwest",
@@ -1320,7 +1376,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#48bd3f13e23722de4a6d0a0b80307fa3214a87ce"
+source = "git+https://github.com/gakonst/ethers-rs#1287614e532662f0f2bf9caed24679a2b0843771"
 dependencies = [
  "async-trait",
  "ethers-contract",
@@ -1343,7 +1399,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#48bd3f13e23722de4a6d0a0b80307fa3214a87ce"
+source = "git+https://github.com/gakonst/ethers-rs#1287614e532662f0f2bf9caed24679a2b0843771"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -1373,7 +1429,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#48bd3f13e23722de4a6d0a0b80307fa3214a87ce"
+source = "git+https://github.com/gakonst/ethers-rs#1287614e532662f0f2bf9caed24679a2b0843771"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1396,7 +1452,7 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "0.1.0"
-source = "git+https://github.com/gakonst/ethers-rs#48bd3f13e23722de4a6d0a0b80307fa3214a87ce"
+source = "git+https://github.com/gakonst/ethers-rs#1287614e532662f0f2bf9caed24679a2b0843771"
 dependencies = [
  "colored",
  "dunce",
@@ -1547,6 +1603,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e88a8acf291dafb59c2d96e8f59828f3838bb1a70398823ade51a84de6a6deed"
 
 [[package]]
+name = "fastrand"
+version = "1.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "779d043b6a0b90cc4c0ed7ee380a6504394cee7efd7db050e3774eee387324b2"
+dependencies = [
+ "instant",
+]
+
+[[package]]
 name = "ff"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1657,6 +1722,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "ui",
 ]
 
 [[package]]
@@ -2154,9 +2220,9 @@ checksum = "ce23b50ad8242c51a442f3ff322d56b02f08852c77e4c0b4d3fd684abc89c683"
 
 [[package]]
 name = "indexmap"
-version = "1.7.0"
+version = "1.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc633605454125dec4b66843673f01c7df2b89479b32e0ed634e43a91cff62a5"
+checksum = "282a6247722caba404c065016bbfa522806e51714c34f5dfc3e4a3a46fcb4223"
 dependencies = [
  "autocfg 1.0.1",
  "hashbrown 0.11.2",
@@ -3864,6 +3930,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "signal-hook"
+version = "0.3.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "647c97df271007dcea485bb74ffdb57f2e683f1306c854f468a0c244badabf2d"
+dependencies = [
+ "libc",
+ "signal-hook-registry",
+]
+
+[[package]]
+name = "signal-hook-mio"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "29fd5867f1c4f2c5be079aee7a2adf1152ebb04a4bc4d341f504b7dece607ed4"
+dependencies = [
+ "libc",
+ "mio",
+ "signal-hook",
+]
+
+[[package]]
 name = "signal-hook-registry"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4088,13 +4175,13 @@ dependencies = [
 
 [[package]]
 name = "tempfile"
-version = "3.2.0"
+version = "3.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dac1c663cfc93810f88aed9b8941d48cabf856a1b111c29a40439018d870eb22"
+checksum = "5cdb1ef4eaeeaddc8fbd371e5017057064af0911902ef36b39801f67cc6d79e4"
 dependencies = [
  "cfg-if 1.0.0",
+ "fastrand",
  "libc",
- "rand 0.8.4",
  "redox_syscall",
  "remove_dir_all",
  "winapi",
@@ -4418,6 +4505,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "59547bce71d9c38b83d9c0e92b6066c4253371f15005def0c30d9657f50c7642"
 
 [[package]]
+name = "tui"
+version = "0.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "39c8ce4e27049eed97cfa363a5048b09d995e209994634a0efc26a14ab6c0c23"
+dependencies = [
+ "bitflags",
+ "cassowary",
+ "crossterm 0.20.0",
+ "unicode-segmentation",
+ "unicode-width",
+]
+
+[[package]]
 name = "tungstenite"
 version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4444,6 +4544,18 @@ name = "typenum"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dcf81ac59edc17cc8697ff311e8f5ef2d99fcbd9817b34cec66f90b6c3dfd987"
+
+[[package]]
+name = "ui"
+version = "0.1.0"
+dependencies = [
+ "crossterm 0.22.1",
+ "ethers",
+ "evm-adapters",
+ "eyre",
+ "hex",
+ "tui",
+]
 
 [[package]]
 name = "uint"

@@ -9,6 +9,8 @@ pub use cheatcode_handler::CheatcodeHandler;
 
 pub mod backend;
 
+pub mod debugger;
+
 use ethers::types::{Address, Selector, H256, U256};
 use once_cell::sync::Lazy;
 use sputnik::backend::{Backend, MemoryAccount, MemoryBackend};
