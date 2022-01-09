@@ -5,10 +5,7 @@ use super::{
 };
 use crate::{
     call_tracing::{CallTrace, CallTraceArena, LogCallOrder},
-    sputnik::{
-        cheatcodes::memory_stackstate_owned::{ExpectedCall, ExpectedEmit, MockedCall},
-        Executor, SputnikExecutor,
-    },
+    sputnik::{cheatcodes::memory_stackstate_owned::ExpectedEmit, Executor, SputnikExecutor},
     Evm,
 };
 
@@ -220,15 +217,15 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
                 self.state_mut().increment_call_index();
 
                 // check if all expected calls were made
-                if !self.state().expected_calls.is_empty() {
-                    let ((address, selector), _) =
-                        self.state().expected_calls.iter().next().expect("should never happen");
+                if let Some((address, expecteds)) =
+                    self.state().expected_calls.iter().find(|(_, expecteds)| !expecteds.is_empty())
+                {
                     return (
                         ExitReason::Revert(ExitRevert::Reverted),
                         ethers::abi::encode(&[Token::String(format!(
-                            "Expected a call to 0x{} on selector {}, but got none",
+                            "Expected a call to 0x{} with data {}, but got none",
                             address,
-                            ethers::types::Bytes::from(selector)
+                            ethers::types::Bytes::from(expecteds[0].clone())
                         ))]),
                     )
                 }
@@ -693,37 +690,17 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 self.state_mut().expected_emits.push(expected_emit);
             }
             HEVMCalls::MockCall(inner) => {
-                let calldata = inner.1.to_vec();
-                if calldata.len() < 4 {
-                    return evm_error("Calldata for mocked call must be at least 4 bytes")
-                }
-
-                let selector: [u8; 4] =
-                    calldata[0..=3].try_into().expect("calldata should always be at least 4 bytes");
-                let mocked_call = if calldata.len() == 4 {
-                    MockedCall::Selector(inner.2.to_vec())
-                } else {
-                    MockedCall::SelectorAndData(calldata, inner.2.to_vec())
-                };
-                self.state_mut().mocked_calls.insert((inner.0, selector), mocked_call);
+                self.state_mut()
+                    .mocked_calls
+                    .entry(inner.0)
+                    .or_default()
+                    .insert(inner.1.to_vec(), inner.2.to_vec());
             }
             HEVMCalls::ClearMockedCalls(_) => {
                 self.state_mut().mocked_calls = Default::default();
             }
             HEVMCalls::ExpectCall(inner) => {
-                let calldata = inner.1.to_vec();
-                if calldata.len() < 4 {
-                    return evm_error("Calldata for mocked call must be at least 4 bytes")
-                }
-
-                let selector: [u8; 4] =
-                    calldata[0..=3].try_into().expect("calldata should always be at least 4 bytes");
-                let expected_call = if calldata.len() == 4 {
-                    ExpectedCall::Selector
-                } else {
-                    ExpectedCall::SelectorAndData(calldata)
-                };
-                self.state_mut().expected_calls.insert((inner.0, selector), expected_call);
+                self.state_mut().expected_calls.entry(inner.0).or_default().push(inner.1.to_vec());
             }
         };
 
@@ -1181,44 +1158,30 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
                 }
             }
 
-            if input.len() >= 4 {
-                let selector: [u8; 4] =
-                    input[0..=3].try_into().expect("calldata should always be at least 4 bytes");
-
-                // handle expected calls
-                if let Some(expected_call) =
-                    self.state().expected_calls.get(&(code_address, selector))
+            // handle expected calls
+            if let Some(expecteds) = self.state_mut().expected_calls.get_mut(&code_address) {
+                if let Some(found_match) =
+                    expecteds.iter().position(|expected| expected == &input[..expected.len()])
                 {
-                    match expected_call {
-                        ExpectedCall::Selector => {
-                            self.state_mut().expected_calls.remove(&(code_address, selector));
-                        }
-                        ExpectedCall::SelectorAndData(data) => {
-                            if &input == data {
-                                self.state_mut().expected_calls.remove(&(code_address, selector));
-                            }
-                        }
-                    }
+                    expecteds.remove(found_match);
                 }
+            }
 
-                // handle mocked calls
-                if let Some(mocked_call) = self.state().mocked_calls.get(&(code_address, selector))
-                {
-                    match mocked_call {
-                        MockedCall::Selector(ret) => {
-                            return Capture::Exit((
-                                ExitReason::Succeed(ExitSucceed::Returned),
-                                ret.clone(),
-                            ))
-                        }
-                        MockedCall::SelectorAndData(data, ret) => {
-                            if &input == data {
-                                return Capture::Exit((
-                                    ExitReason::Succeed(ExitSucceed::Returned),
-                                    ret.clone(),
-                                ))
-                            }
-                        }
+            // handle mocked calls
+            if let Some(mocks) = self.state().mocked_calls.get(&code_address) {
+                if let Some(mock_retdata) = mocks.get(&input) {
+                    return Capture::Exit((
+                        ExitReason::Succeed(ExitSucceed::Returned),
+                        mock_retdata.clone(),
+                    ))
+                } else {
+                    if let Some((_, mock_retdata)) =
+                        mocks.iter().find(|(mock, _)| *mock == &input[..mock.len()])
+                    {
+                        return Capture::Exit((
+                            ExitReason::Succeed(ExitSucceed::Returned),
+                            mock_retdata.clone(),
+                        ))
                     }
                 }
             }

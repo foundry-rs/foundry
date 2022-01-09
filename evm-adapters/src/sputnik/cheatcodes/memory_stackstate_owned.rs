@@ -11,10 +11,7 @@ use ethers::{
     types::{H160, H256, U256},
 };
 
-use std::{
-    cell::RefCell,
-    collections::{BTreeMap, HashMap},
-};
+use std::{cell::RefCell, collections::BTreeMap};
 
 #[derive(Clone, Default)]
 pub struct RecordAccess {
@@ -29,18 +26,6 @@ pub struct ExpectedEmit {
     pub checks: [bool; 4],
     /// Whether this expected emit was actually found in the subcall
     pub found: bool,
-}
-
-#[derive(Clone, Debug)]
-pub enum MockedCall {
-    Selector(Vec<u8>),
-    SelectorAndData(Vec<u8>, Vec<u8>),
-}
-
-#[derive(Clone, Debug)]
-pub enum ExpectedCall {
-    Selector,
-    SelectorAndData(Vec<u8>),
 }
 
 /// This struct implementation is copied from [upstream](https://github.com/rust-blockchain/evm/blob/5ecf36ce393380a89c6f1b09ef79f686fe043624/src/executor/stack/state.rs#L412) and modified to own the Backend type.
@@ -62,8 +47,8 @@ pub struct MemoryStackStateOwned<'config, B> {
     pub accesses: Option<RecordAccess>,
     pub all_logs: Vec<String>,
     pub expected_emits: Vec<ExpectedEmit>,
-    pub mocked_calls: HashMap<(H160, [u8; 4]), MockedCall>,
-    pub expected_calls: HashMap<(H160, [u8; 4]), ExpectedCall>,
+    pub mocked_calls: BTreeMap<H160, BTreeMap<Vec<u8>, Vec<u8>>>,
+    pub expected_calls: BTreeMap<H160, Vec<Vec<u8>>>,
 }
 
 impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
