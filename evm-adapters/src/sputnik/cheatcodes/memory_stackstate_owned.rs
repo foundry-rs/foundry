@@ -4,14 +4,14 @@ use sputnik::{
     ExitError, Transfer,
 };
 
-use crate::call_tracing::CallTraceArena;
+use crate::{call_tracing::CallTraceArena, sputnik::cheatcodes::debugger::DebugArena};
 
 use ethers::{
     abi::RawLog,
     types::{H160, H256, U256},
 };
 
-use std::{cell::RefCell, collections::BTreeMap};
+use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
 #[derive(Clone, Default)]
 pub struct RecordAccess {
@@ -37,16 +37,32 @@ pub struct ExpectedEmit {
 pub struct MemoryStackStateOwned<'config, B> {
     pub backend: B,
     pub substate: MemoryStackSubstate<'config>,
+    /// Tracing enabled
     pub trace_enabled: bool,
+    /// Current call index used for incrementing traces index vec below
     pub call_index: usize,
+    /// Temporary value used for putting logs in the correct trace
     pub trace_index: usize,
+    /// Arena allocator that holds a tree of traces
     pub traces: Vec<CallTraceArena>,
+    /// Expected revert storage of bytes
     pub expected_revert: Option<Vec<u8>>,
+    /// Msg.sender of next call
     pub next_msg_sender: Option<H160>,
+    /// Tuple of (address that called startPrank, new address to use, depth)
     pub msg_sender: Option<(H160, H160, usize)>,
+    /// List of accesses done during a call
     pub accesses: Option<RecordAccess>,
+    /// All logs accumulated (regardless of revert status)
     pub all_logs: Vec<String>,
+    /// Expected events by end of the next call
     pub expected_emits: Vec<ExpectedEmit>,
+    /// Debug enabled
+    pub debug_enabled: bool,
+    /// An arena allocator of DebugNodes for debugging purposes
+    pub debug_steps: Vec<DebugArena>,
+    /// Instruction pointers that maps an address to a mapping of pc to ic
+    pub debug_instruction_pointers: Dip,
 }
 
 impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
@@ -56,10 +72,15 @@ impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
 
     pub fn increment_call_index(&mut self) {
         self.traces.push(Default::default());
+        self.debug_steps.push(Default::default());
         self.call_index += 1;
     }
     pub fn trace_mut(&mut self) -> &mut CallTraceArena {
         &mut self.traces[self.call_index]
+    }
+
+    pub fn debug_mut(&mut self) -> &mut DebugArena {
+        &mut self.debug_steps[self.call_index]
     }
 
     pub fn trace(&self) -> &CallTraceArena {
@@ -72,8 +93,24 @@ impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
     }
 }
 
+/// Debug Instruction pointers: a tuple with 2 maps, the first being for creation
+/// sourcemaps, the second for runtime sourcemaps.
+///
+/// Each has a structure of (Address => (program_counter => instruction_counter))
+/// For sourcemap usage, we need to convert a program counter to an instruction counter and use the
+/// instruction counter as the index into the sourcemap vector. An instruction counter (pointer) is
+/// just the program counter minus the sum of push bytes (i.e. PUSH1(0x01), would apply a -1 effect
+/// to all subsequent instruction counters)
+pub type Dip =
+    (BTreeMap<H160, Rc<BTreeMap<usize, usize>>>, BTreeMap<H160, Rc<BTreeMap<usize, usize>>>);
+
 impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
-    pub fn new(metadata: StackSubstateMetadata<'config>, backend: B, trace_enabled: bool) -> Self {
+    pub fn new(
+        metadata: StackSubstateMetadata<'config>,
+        backend: B,
+        trace_enabled: bool,
+        debug_enabled: bool,
+    ) -> Self {
         Self {
             backend,
             substate: MemoryStackSubstate::new(metadata),
@@ -87,6 +124,9 @@ impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
             accesses: None,
             all_logs: Default::default(),
             expected_emits: Default::default(),
+            debug_enabled,
+            debug_steps: vec![Default::default()],
+            debug_instruction_pointers: (BTreeMap::new(), BTreeMap::new()),
         }
     }
 }

@@ -12,6 +12,7 @@ foundry-utils = { path = "../utils" }
 forge = { path = "../forge" }
 cast = { path = "../cast" }
 evm-adapters = { path = "../evm-adapters" }
+ui = { path = "../ui" }
 dunce = "1.0.2"
 # ethers = "0.5"
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }

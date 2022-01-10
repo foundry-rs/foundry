@@ -170,6 +170,9 @@ pub struct EvmOpts {
         parse(from_occurrences)
     )]
     pub verbosity: u8,
+
+    #[structopt(help = "enable debugger", long)]
+    pub debug: bool,
 }
 
 impl EvmOpts {
