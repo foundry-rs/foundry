@@ -882,8 +882,8 @@ impl SimpleCast {
         contract_address: String,
         etherscan_api_key: String,
     ) -> Result<String> {
-        let client = Client::new(chain, etherscan_api_key).unwrap();
-        let meta = client.contract_source_code(contract_address.parse().unwrap()).await.unwrap();
+        let client = Client::new(chain, etherscan_api_key)?;
+        let meta = client.contract_source_code(contract_address.parse()?).await?;
         let code = meta.source_code();
 
         if code.is_empty() {
