@@ -21,7 +21,8 @@ macro_rules! pretty_eq {
         let expected = &*$expected;
         let got = &*$got;
         if expected != got {
-            panic!("
+            panic!(
+                "
 outputs differ!
 
 expected:
@@ -33,7 +34,9 @@ got:
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 {}
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-", expected, got);
+",
+                expected, got
+            );
         }
-    }
+    };
 }
