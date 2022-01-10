@@ -7,7 +7,9 @@ use crate::{
 use ethers::{
     abi::{Abi, Constructor, Token},
     prelude::{artifacts::BytecodeObject, ContractFactory, Http, Middleware, Provider},
+    types::Chain,
 };
+
 use eyre::Result;
 use foundry_utils::parse_tokens;
 
@@ -79,6 +81,7 @@ impl CreateArgs {
         args: Vec<Token>,
         provider: M,
     ) -> Result<()> {
+        let chain = provider.get_chainid().await?.as_u64();
         let deployer_address =
             provider.default_sender().expect("no sender address set for provider");
         let bin = bin.into_bytes().unwrap_or_else(|| {
@@ -87,7 +90,12 @@ impl CreateArgs {
         let factory = ContractFactory::new(abi, bin, Arc::new(provider));
 
         let deployer = factory.deploy_tokens(args)?;
-        let deployed_contract = deployer.send().await?;
+        let deployed_contract = match chain {
+            10 | 69 => deployer.legacy(),
+            _ => deployer,
+        }
+        .send()
+        .await?;
 
         println!("Deployer: {:?}", deployer_address);
         println!("Deployed to: {:?}", deployed_contract.address());
