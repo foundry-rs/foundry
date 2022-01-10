@@ -1,3 +1,5 @@
+extern crate core;
+
 // Macros useful for testing.
 mod macros;
 

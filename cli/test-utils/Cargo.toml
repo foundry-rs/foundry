@@ -2,7 +2,7 @@
 name = "foundry-cli-test-utils"
 version = "0.1.0"
 description = """
-foundery cli test utilities
+foundry cli test utilities
 """
 edition = "2021"
 

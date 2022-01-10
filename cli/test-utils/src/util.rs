@@ -1,4 +1,7 @@
-use ethers_solc::{project_util::TempProject, ArtifactOutput, MinimalCombinedArtifacts, PathStyle};
+use ethers_solc::{
+    cache::SolFilesCache, project_util::TempProject, ArtifactOutput, MinimalCombinedArtifacts,
+    PathStyle, ProjectPathsConfig,
+};
 use std::{
     env,
     ffi::OsStr,
@@ -63,6 +66,40 @@ impl TestProject {
         &self.inner
     }
 
+    pub fn paths(&self) -> &ProjectPathsConfig {
+        self.inner().paths()
+    }
+
+    /// Creates all project dirs and ensure they were created
+    pub fn assert_create_dirs_exists(&self) {
+        self.paths().create_all().unwrap_or_else(|_| panic!("Failed to create project paths"));
+        SolFilesCache::default().write(&self.paths().cache).expect("Failed to create cache");
+        self.assert_all_paths_exist();
+    }
+
+    pub fn assert_style_paths_exist(&self, style: PathStyle) {
+        let paths = style.paths(&self.paths().root).unwrap();
+        config_paths_exist(&paths, self.inner().project().cached);
+    }
+
+    /// Asserts all project paths exist
+    ///
+    ///   - sources
+    ///   - artifacts
+    ///   - libs
+    ///   - cache
+    pub fn assert_all_paths_exist(&self) {
+        let paths = self.paths();
+        config_paths_exist(paths, self.inner().project().cached);
+    }
+
+    /// Asserts that the artifacts dir and cache don't exist
+    pub fn assert_cleaned(&self) {
+        let paths = self.paths();
+        assert!(!paths.cache.exists());
+        assert!(!paths.artifacts.exists());
+    }
+
     /// Creates a new command that is set to use the forge executable for this project
     pub fn command(&self) -> TestCommand {
         let mut cmd = self.bin();
@@ -75,6 +112,15 @@ impl TestProject {
         let forge = self.root.join(format!("../forge{}", env::consts::EXE_SUFFIX));
         process::Command::new(forge)
     }
+}
+
+fn config_paths_exist(paths: &ProjectPathsConfig, cached: bool) {
+    if cached {
+        assert!(paths.cache.exists());
+    }
+    assert!(paths.sources.exists());
+    assert!(paths.artifacts.exists());
+    paths.libraries.iter().for_each(|lib| assert!(lib.exists()));
 }
 
 fn pretty_err<T, E: std::error::Error>(path: impl AsRef<Path>, res: Result<T, E>) -> T {
@@ -167,6 +213,26 @@ impl TestCommand {
     pub fn assert_non_empty_stderr(&mut self) {
         let o = self.cmd.output().unwrap();
         if o.status.success() || o.stderr.is_empty() {
+            panic!(
+                "\n\n===== {:?} =====\n\
+                 command succeeded but expected failure!\
+                 \n\ncwd: {}\
+                 \n\nstatus: {}\
+                 \n\nstdout: {}\n\nstderr: {}\
+                 \n\n=====\n",
+                self.cmd,
+                self.project.inner.paths(),
+                o.status,
+                String::from_utf8_lossy(&o.stdout),
+                String::from_utf8_lossy(&o.stderr)
+            );
+        }
+    }
+
+    /// Runs the command and asserts that something was printed to stdout.
+    pub fn assert_non_empty_stdout(&mut self) {
+        let o = self.cmd.output().unwrap();
+        if !o.status.success() || o.stdout.is_empty() {
             panic!(
                 "\n\n===== {:?} =====\n\
                  command succeeded but expected failure!\
