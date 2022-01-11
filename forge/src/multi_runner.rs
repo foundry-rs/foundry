@@ -47,7 +47,7 @@ impl MultiContractRunnerBuilder {
             // return the diagnostics error back to the user.
             eyre::bail!(output.to_string())
         } else if output.is_unchanged() {
-            println!("no files changed, compilation skippped.");
+            println!("no files changed, compilation skipped.");
         } else {
             println!("success.");
         }

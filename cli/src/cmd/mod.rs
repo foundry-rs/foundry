@@ -49,7 +49,7 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
     if output.has_compiler_errors() {
         eyre::bail!(output.to_string())
     } else if output.is_unchanged() {
-        println!("no files changed, compilation skippped.");
+        println!("no files changed, compilation skipped.");
     } else {
         println!("success.");
     }

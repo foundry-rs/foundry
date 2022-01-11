@@ -190,7 +190,7 @@ OPTIONS:
         --ffi
             enables the FFI cheatcode
     -v, --verbosity
-            Verbosity mode of EVM output as number of occurences of the `v` flag (-v, -vv, -vvv, etc.)
+            Verbosity mode of EVM output as number of occurrences of the `v` flag (-v, -vv, -vvv, etc.)
                 3: print test trace for failing tests
                 4: always print test trace, print setup for failing tests
                 5: always print test trace and setup
@@ -265,7 +265,7 @@ You can optionally specify a regular expression, to only run matching functions:
 ```bash
 $ forge test -m Cannot
 $HOME/oss/foundry/target/release/forge test -m Cannot
-no files changed, compilation skippped.
+no files changed, compilation skipped.
 Running 1 test for "Greet.json":Greet
 [PASS] testCannotGm (gas: 6819)
 
@@ -279,7 +279,7 @@ the `--json` flag
 
 ```bash
 $ forge test --json
-no files changed, compilation skippped.
+no files changed, compilation skipped.
 {"\"Gm.json\":Gm":{"testNonOwnerCannotGm":{"success":true,"reason":null,"gas_used":3782,"counterexample":null,"logs":[]},"testOwnerCannotGmOnBadBlocks":{"success":true,"reason":null,"gas_used":7771,"counterexample":null,"logs":[]},"testOwnerCanGmOnGoodBlocks":{"success":true,"reason":null,"gas_used":31696,"counterexample":null,"logs":[]}},"\"Greet.json\":Greet":{"testWorksForAllGreetings":{"success":true,"reason":null,"gas_used":null,"counterexample":null,"logs":[]},"testCannotGm":{"success":true,"reason":null,"gas_used":6819,"counterexample":null,"logs":[]},"testCanSetGreeting":{"success":true,"reason":null,"gas_used":31070,"counterexample":null,"logs":[]}}}
 ```
 

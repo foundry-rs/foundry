@@ -39,7 +39,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet>
     Executor<MemoryStackState<'a, 'a, B>, StackExecutor<'a, 'b, MemoryStackState<'a, 'a, B>, P>>
 {
     /// Given a gas limit, vm version, initial chain configuration and initial state
-    // TOOD: See if we can make lifetimes better here
+    // TODO: See if we can make lifetimes better here
     pub fn new(gas_limit: u64, config: &'a Config, backend: &'a B, precompiles: &'b P) -> Self {
         // setup gasometer
         let metadata = StackSubstateMetadata::new(gas_limit, config);

@@ -151,7 +151,7 @@ pub struct EvmOpts {
     pub ffi: bool,
 
     #[clap(
-        help = r#"Verbosity mode of EVM output as number of occurences of the `v` flag (-v, -vv, -vvv, etc.)
+        help = r#"Verbosity mode of EVM output as number of occurrences of the `v` flag (-v, -vv, -vvv, etc.)
     3: print test trace for failing tests
     4: always print test trace, print setup for failing tests
     5: always print test trace and setup

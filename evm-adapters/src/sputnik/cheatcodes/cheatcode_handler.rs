@@ -621,7 +621,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
             HEVMCalls::Prank(inner) => {
                 self.add_debug(CheatOp::PRANK);
                 let caller = inner.0;
-                if let Some((orginal_pranker, caller, depth)) = self.state().msg_sender {
+                if let Some((original_pranker, caller, depth)) = self.state().msg_sender {
                     let start_prank_depth = if let Some(depth) = self.state().metadata().depth() {
                         depth + 1
                     } else {
@@ -630,7 +630,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                     // we allow someone to do a 1 time prank even when startPrank is set if
                     // and only if we ensure that the startPrank *cannot* be applied to the
                     // following call
-                    if start_prank_depth == depth && caller == orginal_pranker {
+                    if start_prank_depth == depth && caller == original_pranker {
                         return evm_error("You have an active `startPrank` at this frame depth already. Use either `prank` or `startPrank`, not both");
                     }
                 }
@@ -760,7 +760,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         Capture::Exit((ExitReason::Succeed(ExitSucceed::Stopped), res))
     }
 
-    // NB: This function is copy-pasted from uptream's `execute`, adjusted so that we call the
+    // NB: This function is copy-pasted from upstream's `execute`, adjusted so that we call the
     // Runtime with our own handler
     pub fn execute(&mut self, runtime: &mut Runtime) -> ExitReason {
         match runtime.run(self) {
@@ -834,7 +834,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 Opcode::STATICCALL => {
                     // this would create an interrupt, have `debug_run` construct a new vec
                     // to commit the current vector of steps into the debugarena
-                    // this maintains the call heirarchy correctly
+                    // this maintains the call hierarchy correctly
                     true
                 }
                 _ => false,
@@ -998,7 +998,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         }
     }
 
-    // NB: This function is copy-pasted from uptream's call_inner
+    // NB: This function is copy-pasted from upstream's call_inner
     #[allow(clippy::too_many_arguments)]
     fn call_inner(
         &mut self,
@@ -1162,7 +1162,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         }
     }
 
-    // NB: This function is copy-pasted from uptream's create_inner
+    // NB: This function is copy-pasted from upstream's create_inner
     fn create_inner(
         &mut self,
         caller: H160,
