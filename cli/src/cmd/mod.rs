@@ -70,7 +70,7 @@ pub fn manual_compile(
             // return the diagnostics error back to the user.
             eyre::bail!(output.to_string())
         }
-        return Ok(output);
+        return Ok(output)
     }
 
     let mut solc = project.solc.clone();
