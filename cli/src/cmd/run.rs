@@ -1,7 +1,4 @@
-use crate::{
-    cmd::{build::BuildArgs, compile, manual_compile, Cmd},
-    opts::forge::EvmOpts,
-};
+use crate::cmd::{build::BuildArgs, compile, manual_compile, Cmd};
 use ethers::abi::Abi;
 use forge::ContractRunner;
 use foundry_utils::IntoFunction;
@@ -21,6 +18,8 @@ use ethers::{
     prelude::{artifacts::ContractBytecode, Artifact},
     solc::artifacts::{CompactContractSome, ContractBytecodeSome},
 };
+use evm_adapters::sputnik::helpers::vm;
+use forge::EvmOpts;
 
 #[derive(Debug, Clone, StructOpt)]
 pub struct RunArgs {
@@ -83,14 +82,15 @@ impl Cmd for RunArgs {
         // 2. instantiate the EVM w forked backend if needed / pre-funded account(s)
         let mut cfg = crate::utils::sputnik_cfg(self.opts.compiler.evm_version);
         let vicinity = self.evm_opts.vicinity()?;
-        let mut evm = crate::utils::sputnik_helpers::evm(&evm_opts, &mut cfg, &vicinity)?;
+        let evm = crate::utils::sputnik_helpers::evm(&evm_opts, &mut cfg, &vicinity)?;
 
         // 3. deploy the contract
-        let (addr, _, _, logs) = evm.deploy(self.evm_opts.sender, bytecode, 0u32.into())?;
+        // let (addr, _, _, logs) = evm.deploy(self.evm_opts.sender, bytecode.clone(),
+        // 0u32.into())?;
 
         // 4. set up the runner
-        let mut runner =
-            ContractRunner::new(&mut evm, &abi, addr, Some(self.evm_opts.sender), &logs);
+        let runner =
+            ContractRunner::new(self.evm_opts.clone(), &abi, bytecode, Some(self.evm_opts.sender));
 
         // 5. run the test function & potentially the setup
         let needs_setup = abi.functions().any(|func| func.name == "setUp");
@@ -149,14 +149,14 @@ impl Cmd for RunArgs {
                     if evm_opts.verbosity > 4 || !result.success {
                         // print setup calls as well
                         traces.iter().for_each(|trace| {
-                            trace.pretty_print(0, &known_contracts, &mut ident, runner.evm, "");
+                            trace.pretty_print(0, &known_contracts, &mut ident, &vm(), "");
                         });
                     } else if !traces.is_empty() {
                         traces.last().expect("no last but not empty").pretty_print(
                             0,
                             &known_contracts,
                             &mut ident,
-                            runner.evm,
+                            &vm(),
                             "",
                         );
                     }

@@ -1,12 +1,9 @@
 //! build command
 
-use ethers::{
-    solc::{
-        artifacts::{Optimizer, Settings},
-        remappings::Remapping,
-        MinimalCombinedArtifacts, Project, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
-    },
-    types::Address,
+use ethers::solc::{
+    artifacts::{Optimizer, Settings},
+    remappings::Remapping,
+    MinimalCombinedArtifacts, Project, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
 };
 use std::{
     collections::BTreeMap,
@@ -18,8 +15,7 @@ use crate::{cmd::Cmd, opts::forge::CompilerArgs, utils};
 
 #[cfg(feature = "evmodin-evm")]
 use evmodin::util::mocked_host::MockedHost;
-#[cfg(feature = "sputnik-evm")]
-use sputnik::backend::MemoryVicinity;
+
 use structopt::StructOpt;
 
 #[derive(Debug, Clone, StructOpt)]
@@ -237,117 +233,5 @@ impl BuildArgs {
         }
 
         Ok(project)
-    }
-}
-
-#[derive(Clone, Debug)]
-pub enum EvmType {
-    #[cfg(feature = "sputnik-evm")]
-    Sputnik,
-    #[cfg(feature = "evmodin-evm")]
-    EvmOdin,
-}
-
-impl FromStr for EvmType {
-    type Err = eyre::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(match s.to_lowercase().as_str() {
-            #[cfg(feature = "sputnik-evm")]
-            "sputnik" => EvmType::Sputnik,
-            #[cfg(feature = "evmodin-evm")]
-            "evmodin" => EvmType::EvmOdin,
-            other => eyre::bail!("unknown EVM type {}", other),
-        })
-    }
-}
-
-#[derive(Debug, Clone, StructOpt)]
-pub struct Env {
-    // structopt does not let use `u64::MAX`:
-    // https://doc.rust-lang.org/std/primitive.u64.html#associatedconstant.MAX
-    #[structopt(help = "the block gas limit", long, default_value = "18446744073709551615")]
-    pub gas_limit: u64,
-
-    #[structopt(help = "the chainid opcode value", long, default_value = "1")]
-    pub chain_id: u64,
-
-    #[structopt(help = "the tx.gasprice value during EVM execution", long, default_value = "0")]
-    pub gas_price: u64,
-
-    #[structopt(help = "the base fee in a block", long, default_value = "0")]
-    pub block_base_fee_per_gas: u64,
-
-    #[structopt(
-        help = "the tx.origin value during EVM execution",
-        long,
-        default_value = "0x0000000000000000000000000000000000000000"
-    )]
-    pub tx_origin: Address,
-
-    #[structopt(
-    help = "the block.coinbase value during EVM execution",
-    long,
-    // TODO: It'd be nice if we could use Address::zero() here.
-    default_value = "0x0000000000000000000000000000000000000000"
-    )]
-    pub block_coinbase: Address,
-    #[structopt(
-        help = "the block.timestamp value during EVM execution",
-        long,
-        default_value = "0",
-        env = "DAPP_TEST_TIMESTAMP"
-    )]
-    pub block_timestamp: u64,
-
-    #[structopt(help = "the block.number value during EVM execution", long, default_value = "0")]
-    #[structopt(env = "DAPP_TEST_NUMBER")]
-    pub block_number: u64,
-
-    #[structopt(
-        help = "the block.difficulty value during EVM execution",
-        long,
-        default_value = "0"
-    )]
-    pub block_difficulty: u64,
-
-    #[structopt(help = "the block.gaslimit value during EVM execution", long)]
-    pub block_gas_limit: Option<u64>,
-    // TODO: Add configuration option for base fee.
-}
-
-impl Env {
-    #[cfg(feature = "sputnik-evm")]
-    pub fn sputnik_state(&self) -> MemoryVicinity {
-        MemoryVicinity {
-            chain_id: self.chain_id.into(),
-
-            gas_price: self.gas_price.into(),
-            origin: self.tx_origin,
-
-            block_coinbase: self.block_coinbase,
-            block_number: self.block_number.into(),
-            block_timestamp: self.block_timestamp.into(),
-            block_difficulty: self.block_difficulty.into(),
-            block_base_fee_per_gas: self.block_base_fee_per_gas.into(),
-            block_gas_limit: self.block_gas_limit.unwrap_or(self.gas_limit).into(),
-            block_hashes: Vec::new(),
-        }
-    }
-
-    #[cfg(feature = "evmodin-evm")]
-    pub fn evmodin_state(&self) -> MockedHost {
-        let mut host = MockedHost::default();
-
-        host.tx_context.chain_id = self.chain_id.into();
-        host.tx_context.tx_gas_price = self.gas_price.into();
-        host.tx_context.tx_origin = self.tx_origin;
-        host.tx_context.block_coinbase = self.block_coinbase;
-        host.tx_context.block_number = self.block_number;
-        host.tx_context.block_timestamp = self.block_timestamp;
-        host.tx_context.block_difficulty = self.block_difficulty.into();
-        host.tx_context.block_gas_limit = self.block_gas_limit.unwrap_or(self.gas_limit);
-
-        host
     }
 }

@@ -1,16 +1,10 @@
 //! Test command
 
-use crate::{
-    cmd::{
-        build::{BuildArgs, EvmType},
-        Cmd,
-    },
-    opts::forge::EvmOpts,
-    utils,
-};
+use crate::cmd::{build::BuildArgs, Cmd};
 use ansi_term::Colour;
 use ethers::solc::{ArtifactOutput, Project};
-use forge::{MultiContractRunnerBuilder, TestFilter};
+use evm_adapters::sputnik::helpers::vm;
+use forge::{EvmOpts, MultiContractRunnerBuilder, TestFilter};
 use std::collections::BTreeMap;
 use structopt::{clap::AppSettings, StructOpt};
 
@@ -123,30 +117,7 @@ impl Cmd for TestArgs {
             .initial_balance(evm_opts.initial_balance)
             .sender(evm_opts.sender);
 
-        // run the tests depending on the chosen EVM
-        match evm_opts.evm_type {
-            #[cfg(feature = "sputnik-evm")]
-            EvmType::Sputnik => {
-                let mut cfg = utils::sputnik_cfg(opts.compiler.evm_version);
-                let vicinity = evm_opts.vicinity()?;
-                let evm = utils::sputnik_helpers::evm(&evm_opts, &mut cfg, &vicinity)?;
-                test(builder, project, evm, filter, json, evm_opts.verbosity, allow_failure)
-            }
-            #[cfg(feature = "evmodin-evm")]
-            EvmType::EvmOdin => {
-                use evm_adapters::evmodin::EvmOdin;
-                use evmodin::tracing::NoopTracer;
-
-                let revision = utils::evmodin_cfg(opts.compiler.evm_version);
-
-                // TODO: Replace this with a proper host. We'll want this to also be
-                // provided generically when we add the Forking host(s).
-                let host = evm_opts.env.evmodin_state();
-
-                let evm = EvmOdin::new(host, evm_opts.env.gas_limit, revision, NoopTracer);
-                test(builder, project, evm, filter, json, evm_opts.verbosity, allow_failure)
-            }
-        }
+        test(builder, project, evm_opts, filter, json, allow_failure)
     }
 }
 
@@ -221,16 +192,16 @@ impl TestOutcome {
 }
 
 /// Runs all the tests
-fn test<A: ArtifactOutput + 'static, S: Clone, E: evm_adapters::Evm<S>>(
+fn test<A: ArtifactOutput + 'static>(
     builder: MultiContractRunnerBuilder,
     project: Project<A>,
-    evm: E,
+    evm_opts: EvmOpts,
     filter: Filter,
     json: bool,
-    verbosity: u8,
     allow_failure: bool,
 ) -> eyre::Result<TestOutcome> {
-    let mut runner = builder.build(project, evm)?;
+    let verbosity = evm_opts.verbosity;
+    let mut runner = builder.build(project, evm_opts)?;
 
     let results = runner.test(&filter)?;
 
@@ -301,7 +272,7 @@ fn test<A: ArtifactOutput + 'static, S: Clone, E: evm_adapters::Evm<S>>(
                                             0,
                                             &runner.known_contracts,
                                             &mut ident,
-                                            &runner.evm,
+                                            &vm(),
                                             "",
                                         );
                                     });
@@ -310,7 +281,7 @@ fn test<A: ArtifactOutput + 'static, S: Clone, E: evm_adapters::Evm<S>>(
                                         0,
                                         &runner.known_contracts,
                                         &mut ident,
-                                        &runner.evm,
+                                        &vm(),
                                         "",
                                     );
                                 }

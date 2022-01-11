@@ -12,7 +12,7 @@ use evmodin::Revision;
 #[cfg(feature = "sputnik-evm")]
 use sputnik::Config;
 
-use crate::opts::forge::EvmOpts;
+use forge::EvmOpts;
 
 /// Default local RPC endpoint
 const LOCAL_RPC_URL: &str = "http://127.0.0.1:8545";
