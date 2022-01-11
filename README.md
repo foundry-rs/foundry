@@ -100,7 +100,7 @@ Example (zsh / [oh-my-zsh](https://ohmyz.sh/))
 mkdir -p ~/.oh-my-zsh/completions
 forge completions zsh > ~/.oh-my-zsh/completions/_forge
 cast completions zsh > ~/.oh-my-zsh/completions/_cast
-source ~/.vimrc
+source ~/.zshrc
 ```
 
 ## Contributing
