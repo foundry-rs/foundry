@@ -299,7 +299,7 @@ pub enum Subcommands {
     },
     #[clap(about = "generate shell completions script")]
     Completions {
-        #[clap(help = "the shell you are using")]
+        #[clap(help = "supported shells: bash, elvish, fish, powershell, zsh")]
         shell: clap_complete::Shell,
     },
 }
