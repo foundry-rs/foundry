@@ -106,12 +106,19 @@ See also [./cli/README.md](./cli/README.md#Remappings).
 Alternatively you can use the extension's dir structure settings to configure your contracts and dependency directory.
 If your contracts are stored in `./src` and libraries in `./lib`, you can add
 
-```
-  "solidity.packageDefaultDependenciesContractsDirectory": "src",
-  "solidity.packageDefaultDependenciesDirectory": "lib"
+```json
+"solidity.packageDefaultDependenciesContractsDirectory": "src",
+"solidity.packageDefaultDependenciesDirectory": "lib"
 ```
 
 to your `.vscode` file
+
+It's also recommended to specify a solc compiler version for the
+extension, [read more](https://github.com/juanfranblanco/vscode-solidity#remote-download):
+
+```json
+"solidity.compileUsingRemoteVersion": "v0.8.10"
+```
 
 ## Autocompletion
 
