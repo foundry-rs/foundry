@@ -16,7 +16,7 @@ use std::{
 
 use crate::{cmd::Cmd, opts::forge::CompilerArgs, utils};
 
-use clap::Parser;
+use clap::{Parser, ValueHint};
 #[cfg(feature = "evmodin-evm")]
 use evmodin::util::mocked_host::MockedHost;
 #[cfg(feature = "sputnik-evm")]
@@ -26,16 +26,18 @@ use sputnik::backend::MemoryVicinity;
 pub struct BuildArgs {
     #[clap(
         help = "the project's root path. By default, this is the root directory of the current Git repository or the current working directory if it is not part of a Git repository",
-        long
+        long,
+        value_hint = ValueHint::DirPath
     )]
     pub root: Option<PathBuf>,
 
     #[clap(
+        env = "DAPP_SRC",
         help = "the directory relative to the root under which the smart contracts are",
         long,
-        short
+        short,
+        value_hint = ValueHint::DirPath
     )]
-    #[clap(env = "DAPP_SRC")]
     pub contracts: Option<PathBuf>,
 
     #[clap(help = "the remappings", long, short)]
@@ -43,10 +45,19 @@ pub struct BuildArgs {
     #[clap(long = "remappings-env", env = "DAPP_REMAPPINGS")]
     pub remappings_env: Option<String>,
 
-    #[clap(help = "the paths where your libraries are installed", long)]
+    #[clap(
+        help = "the paths where your libraries are installed",
+        long,
+        value_hint = ValueHint::DirPath
+    )]
     pub lib_paths: Vec<PathBuf>,
 
-    #[clap(help = "path to where the contract artifacts are stored", long = "out", short)]
+    #[clap(
+        help = "path to where the contract artifacts are stored",
+        long = "out",
+        short,
+        value_hint = ValueHint::DirPath
+    )]
     pub out_path: Option<PathBuf>,
 
     #[clap(flatten)]
@@ -279,15 +290,14 @@ pub struct Env {
     #[clap(
         help = "the tx.origin value during EVM execution",
         long,
-        default_value = "0x0000000000000000000000000000000000000000"
+        default_value_t = Address::zero()
     )]
     pub tx_origin: Address,
 
     #[clap(
-    help = "the block.coinbase value during EVM execution",
-    long,
-    // TODO: It'd be nice if we could use Address::zero() here.
-    default_value = "0x0000000000000000000000000000000000000000"
+        help = "the block.coinbase value during EVM execution",
+        long,
+        default_value_t = Address::zero()
     )]
     pub block_coinbase: Address,
     #[clap(

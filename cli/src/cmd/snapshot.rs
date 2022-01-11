@@ -6,7 +6,7 @@ use crate::cmd::{
     Cmd,
 };
 use ansi_term::Colour;
-use clap::Parser;
+use clap::{Parser, ValueHint};
 use eyre::Context;
 use forge::TestKindGas;
 use once_cell::sync::Lazy;
@@ -38,13 +38,15 @@ pub struct SnapshotArgs {
     #[clap(
         help = "Compare against a snapshot and display changes from the snapshot. Takes an optional snapshot file, [default: .gas-snapshot]",
         conflicts_with = "snap",
-        long
+        long,
+        value_hint = ValueHint::FilePath
     )]
     diff: Option<Option<PathBuf>>,
     #[clap(
         help = "Run snapshot in 'check' mode and compares against an existing snapshot file, [default: .gas-snapshot]. Exits with 0 if snapshots match. Exits with 1 and prints a diff otherwise",
         conflicts_with = "diff",
-        long
+        long,
+        value_hint = ValueHint::FilePath
     )]
     check: Option<Option<PathBuf>>,
     #[clap(help = "How to format the output.", long)]

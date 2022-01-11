@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueHint};
 
 use ethers::{solc::EvmVersion, types::Address};
 use std::{path::PathBuf, str::FromStr};
@@ -31,7 +31,8 @@ pub enum Subcommands {
     #[clap(alias = "u", about = "fetches all upstream lib changes")]
     Update {
         #[clap(
-            help = "the submodule name of the library you want to update (will update all if none is provided)"
+            help = "the submodule name of the library you want to update (will update all if none is provided)",
+            value_hint = ValueHint::DirPath
         )]
         lib: Option<PathBuf>,
     },
@@ -68,7 +69,10 @@ pub enum Subcommands {
 
     #[clap(alias = "i", about = "initializes a new forge sample repository")]
     Init {
-        #[clap(help = "the project's root path, default being the current working directory")]
+        #[clap(
+            help = "the project's root path, default being the current working directory",
+            value_hint = ValueHint::DirPath
+        )]
         root: Option<PathBuf>,
         #[clap(help = "optional solidity template to start from", long, short)]
         template: Option<String>,
@@ -76,7 +80,7 @@ pub enum Subcommands {
 
     #[clap(about = "generate shell completions script")]
     Completions {
-        #[clap(help = "bash, elvish, fish, powershell, zsh")]
+        #[clap(arg_enum)]
         shell: clap_complete::Shell,
     },
 
@@ -84,7 +88,8 @@ pub enum Subcommands {
     Clean {
         #[clap(
             help = "the project's root path, default being the current working directory",
-            long
+            long,
+            value_hint = ValueHint::DirPath
         )]
         root: Option<PathBuf>,
     },

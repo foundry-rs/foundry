@@ -2,7 +2,7 @@ use crate::{
     cmd::{build::BuildArgs, compile, manual_compile, Cmd},
     opts::forge::EvmOpts,
 };
-use clap::Parser;
+use clap::{Parser, ValueHint};
 use ethers::abi::Abi;
 use forge::ContractRunner;
 use foundry_utils::IntoFunction;
@@ -24,7 +24,7 @@ use ethers::{
 
 #[derive(Debug, Clone, Parser)]
 pub struct RunArgs {
-    #[clap(help = "the path to the contract to run")]
+    #[clap(help = "the path to the contract to run", value_hint = ValueHint::FilePath)]
     pub path: PathBuf,
 
     #[clap(flatten)]

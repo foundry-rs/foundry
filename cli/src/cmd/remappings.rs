@@ -1,16 +1,24 @@
 //! remappings command
 
 use crate::cmd::Cmd;
-use clap::Parser;
+use clap::{Parser, ValueHint};
 use ethers::solc::{remappings::Remapping, ProjectPathsConfig};
 use std::path::PathBuf;
 
 /// Command to list remappings
 #[derive(Debug, Clone, Parser)]
 pub struct RemappingArgs {
-    #[clap(help = "the project's root path, default being the current working directory", long)]
+    #[clap(
+        help = "the project's root path, default being the current working directory",
+        long,
+        value_hint = ValueHint::DirPath
+    )]
     root: Option<PathBuf>,
-    #[clap(help = "the paths where your libraries are installed", long)]
+    #[clap(
+        help = "the paths where your libraries are installed",
+        long,
+        value_hint = ValueHint::DirPath
+    )]
     lib_paths: Vec<PathBuf>,
 }
 
