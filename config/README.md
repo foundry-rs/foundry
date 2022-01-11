@@ -5,7 +5,7 @@ sensible set of defaults.
 
 ## Profiles
 
-Configurations can be arbitrarily namespaced by [`Profile`]s. Foundry's default [`Config`] is also named `default`, but
+Configurations can be arbitrarily namespaced by profiles. Foundry's default config is also named `default`, but
 can arbitrarily name and configure profiles as you like and set the `FOUNDRY_PROFILE` environment variable to the
 selected profile's name. This results in foundry's tools (forge) preferring the values in the profile with the named
 that's set in `FOUNDRY_PROFILE`.
@@ -52,6 +52,9 @@ and merge, at the per-key level:
 3. `FOUNDRY_` or `DAPP_` prefixed environment variables.
 
 The selected profile is the value of the `FOUNDRY_PROFILE` environment variable, or if it is not set, "default".
+
+
+#### All Options
 
 The following is a foundry.toml file with all configuration options set.
 
