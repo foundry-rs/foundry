@@ -75,7 +75,7 @@ pub struct BuildArgs {
     )]
     pub hardhat: bool,
 
-    #[clap(help = "add linked libraries", long)]
+    #[clap(help = "add linked libraries", long, env = "DAPP_LIBRARIES")]
     pub libraries: Vec<String>,
 }
 
