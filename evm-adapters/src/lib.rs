@@ -38,10 +38,10 @@ pub static FAUCET_ACCOUNT: Lazy<Address> =
 pub enum EvmError {
     #[error("Execution reverted: {reason}, (gas: {gas_used})")]
     // TODO: Add proper log printing.
-    /// Error which occured during execution of an EVM transaction
+    /// Error which occurred during execution of an EVM transaction
     Execution { reason: String, gas_used: u64, logs: Vec<String> },
     #[error(transparent)]
-    /// Error which occured during ABI encoding / decoding of data
+    /// Error which occurred during ABI encoding / decoding of data
     AbiError(#[from] ethers::contract::AbiError),
     #[error(transparent)]
     /// Any other generic error
@@ -168,7 +168,7 @@ pub trait Evm<State> {
 
     /// Runs the `failed()` function call to inspect the test contract's state and
     /// see whether the `failed` state var is set. This is to allow compatibility
-    /// with dapptools-style DSTest smart contracts to preserve emiting of logs
+    /// with dapptools-style DSTest smart contracts to preserve emitting of logs
     fn failed(&mut self, address: Address) -> Result<bool> {
         let (failed, _, _, _) =
             self.call::<bool, _, _>(Address::zero(), address, "failed()(bool)", (), 0.into())?;

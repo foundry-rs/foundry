@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// After instantiation, calling `fuzz` will proceed to hammer the deployed smart contract with
 /// inputs, until it finds a counterexample. The provided `TestRunner` contains all the
-/// configuration which can be overriden via [environment variables](https://docs.rs/proptest/1.0.0/proptest/test_runner/struct.Config.html)
+/// configuration which can be overridden via [environment variables](https://docs.rs/proptest/1.0.0/proptest/test_runner/struct.Config.html)
 #[derive(Debug)]
 pub struct FuzzedExecutor<'a, E, S> {
     evm: RefCell<&'a mut E>,

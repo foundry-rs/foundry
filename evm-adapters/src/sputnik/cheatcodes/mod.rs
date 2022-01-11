@@ -19,13 +19,13 @@ use sputnik::backend::{Backend, MemoryAccount, MemoryBackend};
 /// Cheatcodes can be used to control the EVM context during setup or runtime,
 /// which can be useful for simulations or specialized unit tests
 pub struct Cheatcodes {
-    /// The overriden block number
+    /// The overridden block number
     pub block_number: Option<U256>,
-    /// The overriden timestamp
+    /// The overridden timestamp
     pub block_timestamp: Option<U256>,
-    /// The overriden basefee
+    /// The overridden basefee
     pub block_base_fee_per_gas: Option<U256>,
-    /// The overriden storage slots
+    /// The overridden storage slots
     pub accounts: HashMap<Address, MemoryAccount>,
 }
 

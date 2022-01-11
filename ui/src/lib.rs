@@ -522,7 +522,7 @@ impl Tui {
         let abs_min_start = 0;
         // Adjust for weird scrolling for max top line
         let abs_max_start = (opcode_list.len() as i32 - 1) - height + scroll_offset;
-        // actual minumum start line
+        // actual minimum start line
         let mut min_start =
             max(current_step as i32 - height + extra_top_lines, abs_min_start) as usize;
 
