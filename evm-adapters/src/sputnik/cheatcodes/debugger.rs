@@ -175,6 +175,9 @@ pub enum CheatOp {
     RECORD,
     ACCESSES,
     EXPECTEMIT,
+    MOCKCALL,
+    CLEARMOCKEDCALLS,
+    EXPECTCALL,
 }
 
 impl From<CheatOp> for OpCode {
@@ -204,6 +207,9 @@ impl CheatOp {
             CheatOp::RECORD => "VM_RECORD",
             CheatOp::ACCESSES => "VM_ACCESSES",
             CheatOp::EXPECTEMIT => "VM_EXPECTEMIT",
+            CheatOp::MOCKCALL => "VM_MOCKCALL",
+            CheatOp::CLEARMOCKEDCALLS => "VM_CLEARMOCKEDCALLS",
+            CheatOp::EXPECTCALL => "VM_EXPECTCALL",
         }
     }
 }

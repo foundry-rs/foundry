@@ -737,6 +737,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 self.state_mut().expected_emits.push(expected_emit);
             }
             HEVMCalls::MockCall(inner) => {
+                self.add_debug(CheatOp::MOCKCALL);
                 self.state_mut()
                     .mocked_calls
                     .entry(inner.0)
@@ -744,9 +745,11 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                     .insert(inner.1.to_vec(), inner.2.to_vec());
             }
             HEVMCalls::ClearMockedCalls(_) => {
+                self.add_debug(CheatOp::CLEARMOCKEDCALLS);
                 self.state_mut().mocked_calls = Default::default();
             }
             HEVMCalls::ExpectCall(inner) => {
+                self.add_debug(CheatOp::EXPECTCALL);
                 self.state_mut().expected_calls.entry(inner.0).or_default().push(inner.1.to_vec());
             }
         };
