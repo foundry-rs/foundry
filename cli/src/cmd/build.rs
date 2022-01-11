@@ -13,57 +13,58 @@ use std::{
 
 use crate::{cmd::Cmd, opts::forge::CompilerArgs, utils};
 
+use clap::Parser;
 #[cfg(feature = "evmodin-evm")]
 use evmodin::util::mocked_host::MockedHost;
 
 use structopt::StructOpt;
 
-#[derive(Debug, Clone, StructOpt)]
+#[derive(Debug, Clone, Parser)]
 pub struct BuildArgs {
-    #[structopt(
+    #[clap(
         help = "the project's root path. By default, this is the root directory of the current Git repository or the current working directory if it is not part of a Git repository",
         long
     )]
     pub root: Option<PathBuf>,
 
-    #[structopt(
+    #[clap(
         help = "the directory relative to the root under which the smart contracts are",
         long,
         short
     )]
-    #[structopt(env = "DAPP_SRC")]
+    #[clap(env = "DAPP_SRC")]
     pub contracts: Option<PathBuf>,
 
-    #[structopt(help = "the remappings", long, short)]
+    #[clap(help = "the remappings", long, short)]
     pub remappings: Vec<ethers::solc::remappings::Remapping>,
-    #[structopt(long = "remappings-env", env = "DAPP_REMAPPINGS")]
+    #[clap(long = "remappings-env", env = "DAPP_REMAPPINGS")]
     pub remappings_env: Option<String>,
 
-    #[structopt(help = "the paths where your libraries are installed", long)]
+    #[clap(help = "the paths where your libraries are installed", long)]
     pub lib_paths: Vec<PathBuf>,
 
-    #[structopt(help = "path to where the contract artifacts are stored", long = "out", short)]
+    #[clap(help = "path to where the contract artifacts are stored", long = "out", short)]
     pub out_path: Option<PathBuf>,
 
-    #[structopt(flatten)]
+    #[clap(flatten)]
     pub compiler: CompilerArgs,
 
-    #[structopt(help = "ignore warnings with specific error codes", long)]
+    #[clap(help = "ignore warnings with specific error codes", long)]
     pub ignored_error_codes: Vec<u64>,
 
-    #[structopt(
+    #[clap(
         help = "if set to true, skips auto-detecting solc and uses what is in the user's $PATH ",
         long
     )]
     pub no_auto_detect: bool,
 
-    #[structopt(
+    #[clap(
         help = "force recompilation of the project, deletes the cache and artifacts folders",
         long
     )]
     pub force: bool,
 
-    #[structopt(
+    #[clap(
         help = "uses hardhat style project layout. This a convenience flag and is the same as `--contracts contracts --lib-paths node_modules`",
         long,
         conflicts_with = "contracts",
@@ -71,7 +72,7 @@ pub struct BuildArgs {
     )]
     pub hardhat: bool,
 
-    #[structopt(help = "add linked libraries", long)]
+    #[clap(help = "add linked libraries", long)]
     pub libraries: Vec<String>,
 }
 

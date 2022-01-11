@@ -1,6 +1,6 @@
 # Foundry CLIs
 
-The CLIs are written using [structopt](https://docs.rs/structopt).
+The CLIs are written using [clap's](https://docs.rs/clap) [derive feature](https://github.com/clap-rs/clap/blob/master/examples/derive_ref/README.md).
 
 Debug logs are printed with
 [`tracing`](https://docs.rs/tracing/0.1.29/tracing/). You can configure the
@@ -24,15 +24,19 @@ FLAGS:
 
 SUBCOMMANDS:
     build              build your smart contracts
-    clean              removes the build artifacts and cache directories completions
+    clean              removes the build artifacts and cache directories
+    completions        generate shell completions script
     create             deploy a compiled contract
-    help               Prints this message or the help of the given subcommand(s)
+    help               Print this message or the help of the given subcommand(s)
     init               initializes a new forge sample repository
     install            installs one or more dependencies as git submodules
     remappings         prints the automatically inferred remappings for this repository
+    remove             removes one or more dependencies from git submodules
+    run                run a single smart contract as a script
+    snapshot           creates a snapshot of each test's gas usage
     test               test your smart contracts
     update             fetches all upstream lib changes
-    verify-contract    build your smart contracts. Requires `ETHERSCAN_API_KEY` to be set.
+    verify-contract    verify your smart contracts source code on Etherscan. Requires `ETHERSCAN_API_KEY` to be set.
 ```
 
 The subcommands are also aliased to their first letter, e.g. you can do
@@ -43,27 +47,45 @@ The subcommands are also aliased to their first letter, e.g. you can do
 The `build` subcommand proceeds to compile your smart contracts.
 
 ```
-forge-build 0.1.0
+forge-build
 build your smart contracts
 
 USAGE:
-    forge build [FLAGS] [OPTIONS]
-
-FLAGS:
-        --force             force recompilation of the project, deletes the cache and artifacts folders
-    -h, --help              Prints help information
-        --no-auto-detect    if set to true, skips auto-detecting solc and uses what is in the user's $PATH
-    -V, --version           Prints version information
+    forge build [OPTIONS]
 
 OPTIONS:
-    -c, --contracts <contracts>              the directory relative to the root under which the smart contrats are [env:
-                                             DAPP_SRC=]
-        --evm-version <evm-version>          choose the evm version [default: london]
-        --lib-paths <lib-paths>...           the paths where your libraries are installed
-    -o, --out <out-path>                     path to where the contract artifacts are stored
-    -r, --remappings <remappings>...         the remappings
-        --remappings-env <remappings-env>     [env: DAPP_REMAPPINGS=]
-        --root <root>                        the project's root path, default being the current working directory
+    -c, --contracts <CONTRACTS>
+            the directory relative to the root under which the smart contracts are [env: DAPP_SRC=]
+        --evm-version <EVM_VERSION>
+            choose the evm version [default: london]
+        --force
+            force recompilation of the project, deletes the cache and artifacts folders
+    -h, --help
+            Print help information
+        --hardhat
+            uses hardhat style project layout. This a convenience flag and is the same as `--contracts contracts --lib-
+            paths node_modules`
+        --ignored-error-codes <IGNORED_ERROR_CODES>
+            ignore warnings with specific error codes
+        --lib-paths <LIB_PATHS>
+            the paths where your libraries are installed
+        --libraries <LIBRARIES>
+            add linked libraries
+        --no-auto-detect
+            if set to true, skips auto-detecting solc and uses what is in the user's $PATH
+    -o, --out <OUT_PATH>
+            path to where the contract artifacts are stored
+        --optimize
+            activate the solidity optimizer
+        --optimize-runs <OPTIMIZE_RUNS>
+            optimizer parameter runs [default: 200]
+    -r, --remappings <REMAPPINGS>
+            the remappings
+        --remappings-env <REMAPPINGS_ENV>
+            [env: DAPP_REMAPPINGS=]
+        --root <ROOT>
+            the project's root path. By default, this is the root directory of the current Git repository or the current
+            working directory if it is not part of a Git repository
 ```
 
 By default, it will auto-detect the solc pragma version requirement per-file and
@@ -123,72 +145,100 @@ configure any blockchain context related variables such as the block coinbase,
 difficulty etc.
 
 ```
-forge-test 0.1.0
+forge-test
 test your smart contracts
 
 USAGE:
-    forge test [FLAGS] [OPTIONS]
-
-FLAGS:
-        --ffi               enables the FFI cheatcode
-        --force             force recompilation of the project, deletes the cache and artifacts folders
-    -h, --help              Prints help information
-    -j, --json              print the test results in json format
-        --no-auto-detect    if set to true, skips auto-detecting solc and uses what is in the user's $PATH
-    -V, --version           Prints version information
+    forge test [OPTIONS]
 
 OPTIONS:
-        --allow-failure <allow-failure>
+    -j, --json
+            print the test results in json format
+        --gas-limit <GAS_LIMIT>
+            the block gas limit [default: 18446744073709551615]
+        --chain-id <CHAIN_ID>
+            the chainid opcode value [default: 1]
+        --gas-price <GAS_PRICE>
+            the tx.gasprice value during EVM execution [default: 0]
+        --block-base-fee-per-gas <BLOCK_BASE_FEE_PER_GAS>
+            the base fee in a block [default: 0]
+        --tx-origin <TX_ORIGIN>
+            the tx.origin value during EVM execution [default: 0x0000000000000000000000000000000000000000]
+        --block-coinbase <BLOCK_COINBASE>
+            the block.coinbase value during EVM execution [default: 0x0000000000000000000000000000000000000000]
+        --block-timestamp <BLOCK_TIMESTAMP>
+            the block.timestamp value during EVM execution [env: DAPP_TEST_TIMESTAMP=] [default: 0]
+        --block-number <BLOCK_NUMBER>
+            the block.number value during EVM execution [env: DAPP_TEST_NUMBER=] [default: 0]
+        --block-difficulty <BLOCK_DIFFICULTY>
+            the block.difficulty value during EVM execution [default: 0]
+        --block-gas-limit <BLOCK_GAS_LIMIT>
+            the block.gaslimit value during EVM execution
+    -e, --evm-type <EVM_TYPE>
+            the EVM type you want to use (e.g. sputnik, evmodin) [default: sputnik]
+    -f, --fork-url <FORK_URL>
+            fetch state over a remote instead of starting from empty state
+        --fork-block-number <FORK_BLOCK_NUMBER>
+            pins the block number for the state fork [env: DAPP_FORK_BLOCK=]
+        --initial-balance <INITIAL_BALANCE>
+            the initial balance of each deployed test contract [default: 0xffffffffffffffffffffffff]
+        --sender <SENDER>
+            the address which will be executing all tests [env: DAPP_TEST_ADDRESS=] [default:
+            0x0000000000000000000000000000000000000000]
+        --ffi
+            enables the FFI cheatcode
+    -v, --verbosity
+            Verbosity mode of EVM output as number of occurences of the `v` flag (-v, -vv, -vvv, etc.)
+                3: print test trace for failing tests
+                4: always print test trace, print setup for failing tests
+                5: always print test trace and setup
+        --debug
+            enable debugger
+    -m, --match <PATTERN>
+            only run test methods matching regex (deprecated, see --match-test, --match-contract)
+        --match-test <TEST_PATTERN>
+            only run test methods matching regex
+        --no-match-test <TEST_PATTERN_INVERSE>
+            only run test methods not matching regex
+        --match-contract <CONTRACT_PATTERN>
+            only run test methods in contracts matching regex
+        --no-match-contract <CONTRACT_PATTERN_INVERSE>
+            only run test methods in contracts not matching regex
+        --root <ROOT>
+            the project's root path. By default, this is the root directory of the current Git repository or the current
+            working directory if it is not part of a Git repository
+    -c, --contracts <CONTRACTS>
+            the directory relative to the root under which the smart contracts are [env: DAPP_SRC=]
+    -r, --remappings <REMAPPINGS>
+            the remappings
+        --remappings-env <REMAPPINGS_ENV>
+            [env: DAPP_REMAPPINGS=]
+        --lib-paths <LIB_PATHS>
+            the paths where your libraries are installed
+    -o, --out <OUT_PATH>
+            path to where the contract artifacts are stored
+        --evm-version <EVM_VERSION>
+            choose the evm version [default: london]
+        --optimize
+            activate the solidity optimizer
+        --optimize-runs <OPTIMIZE_RUNS>
+            optimizer parameter runs [default: 200]
+        --ignored-error-codes <IGNORED_ERROR_CODES>
+            ignore warnings with specific error codes
+        --no-auto-detect
+            if set to true, skips auto-detecting solc and uses what is in the user's $PATH
+        --force
+            force recompilation of the project, deletes the cache and artifacts folders
+        --hardhat
+            uses hardhat style project layout. This a convenience flag and is the same as `--contracts contracts --lib-
+            paths node_modules`
+        --libraries <LIBRARIES>
+            add linked libraries
+        --allow-failure
             if set to true, the process will exit with an exit code = 0, even if the tests fail [env:
             FORGE_ALLOW_FAILURE=]
-        --block-base-fee-per-gas <block-base-fee-per-gas>    the base fee in a block [default: 0]
-        --block-coinbase <block-coinbase>
-            the block.coinbase value during EVM execution [default: 0x0000000000000000000000000000000000000000]
-
-        --block-difficulty <block-difficulty>
-            the block.difficulty value during EVM execution [default: 0]
-
-        --block-gas-limit <block-gas-limit>                  the block.gaslimit value during EVM execution
-        --block-number <block-number>
-            the block.number value during EVM execution [env: DAPP_TEST_NUMBER=]  [default: 0]
-
-        --block-timestamp <block-timestamp>
-            the block.timestamp value during EVM execution [env: DAPP_TEST_TIMESTAMP=]  [default: 0]
-
-        --chain-id <chain-id>                                the chainid opcode value [default: 1]
-    -c, --contracts <contracts>
-            the directory relative to the root under which the smart contrats are [env: DAPP_SRC=]
-
-    -e, --evm-type <evm-type>
-            the EVM type you want to use (e.g. sputnik, evmodin) [default: sputnik]
-
-        --evm-version <evm-version>                          choose the evm version [default: london]
-        --fork-block-number <fork-block-number>
-            pins the block number for the state fork [env: DAPP_FORK_BLOCK=]
-
-    -f, --fork-url <fork-url>
-            fetch state over a remote instead of starting from empty state [env: ETH_RPC_URL=]
-
-        --gas-limit <gas-limit>                              the block gas limit [default: 18446744073709551615]
-        --gas-price <gas-price>                              the tx.gasprice value during EVM execution [default: 0]
-        --initial-balance <initial-balance>
-            the initial balance of each deployed test contract [default: 0xffffffffffffffffffffffff]
-
-        --lib-paths <lib-paths>...                           the paths where your libraries are installed
-    -o, --out <out-path>                                     path to where the contract artifacts are stored
-    -m, --match <pattern>                                    only run test methods matching regex [default: .*]
-    -r, --remappings <remappings>...                         the remappings
-        --remappings-env <remappings-env>                     [env: DAPP_REMAPPINGS=]
-        --root <root>
-            the project's root path, default being the current working directory
-
-        --sender <sender>
-            the address which will be executing all tests [env: DAPP_TEST_ADDRESS=]  [default:
-            0x0000000000000000000000000000000000000000]
-        --tx-origin <tx-origin>
-            the tx.origin value during EVM execution [default: 0x0000000000000000000000000000000000000000]
-
-        --verbosity <verbosity>                              verbosity of 'forge test' output (0-3) [default: 0]
+    -h, --help
+            Print help information
 ```
 
 Here's how the CLI output looks like when used with
@@ -231,6 +281,67 @@ no files changed, compilation skippped.
 {"\"Gm.json\":Gm":{"testNonOwnerCannotGm":{"success":true,"reason":null,"gas_used":3782,"counterexample":null,"logs":[]},"testOwnerCannotGmOnBadBlocks":{"success":true,"reason":null,"gas_used":7771,"counterexample":null,"logs":[]},"testOwnerCanGmOnGoodBlocks":{"success":true,"reason":null,"gas_used":31696,"counterexample":null,"logs":[]}},"\"Greet.json\":Greet":{"testWorksForAllGreetings":{"success":true,"reason":null,"gas_used":null,"counterexample":null,"logs":[]},"testCannotGm":{"success":true,"reason":null,"gas_used":6819,"counterexample":null,"logs":[]},"testCanSetGreeting":{"success":true,"reason":null,"gas_used":31070,"counterexample":null,"logs":[]}}}
 ```
 
-```
+## cast
 
+```
+foundry-cli
+Perform Ethereum RPC calls from the comfort of your command line.
+
+USAGE:
+    cast <SUBCOMMAND>
+
+OPTIONS:
+    -h, --help    Print help information
+
+SUBCOMMANDS:
+    --abi-decode             Decode ABI-encoded hex output data. Pass --input to decode as input, or use
+                             `--calldata-decode`
+    --calldata-decode        Decode ABI-encoded hex input data. Use `--abi-decode` to decode output data
+    --from-utf8              convert text data into hexdata
+    --from-wei               convert wei into an ETH amount
+    --max-int                maximum i256 value
+    --max-uint               maximum u256 value
+    --min-int                minimum i256 value
+    --to-ascii               convert hex data to text data
+    --to-bytes32             left-pads a hex bytes string to 32 bytes)
+    --to-checksum-address    convert an address to a checksummed format (EIP-55)
+    --to-dec                 convert hex value into decimal number
+    --to-fix                 convert integers into fixed point with specified decimals
+    --to-hex                 convert a decimal number into hex
+    --to-hexdata             [<hex>|</path>|<@tag>]
+                                 Output lowercase, 0x-prefixed hex, converting from the
+                                 input, which can be:
+                                   - mixed case hex with or without 0x prefix
+                                   - 0x prefixed hex, concatenated with a ':'
+                                   - absolute path to file
+                                   - @tag, where $TAG is defined in environment variables
+    --to-uint256             convert a number into uint256 hex string with 0x prefix
+    --to-wei                 convert an ETH amount into wei
+    4byte                    Fetches function signatures given the selector from 4byte.directory
+    4byte-decode             Decodes transaction calldata by fetching the signature using 4byte.directory
+    abi-encode
+    age                      Prints the timestamp of a block
+    balance                  Print the balance of <account> in wei
+    basefee                  Print the basefee of a block
+    block                    Prints information about <block>. If <field> is given, print only the value of that
+                             field
+    block-number             Prints latest block number
+    call                     Perform a local call to <to> without publishing a transaction.
+    calldata                 Pack a signature and an argument list into hexadecimal calldata.
+    chain                    Prints symbolic name of current blockchain by checking genesis hash
+    chain-id                 returns ethereum chain id
+    code                     Prints the bytecode at <address>
+    completions              generate shell completions script
+    estimate                 Estimate the gas cost of a transaction from <from> to <to> with <data>
+    gas-price                Prints current gas price of target chain
+    help                     Print this message or the help of the given subcommand(s)
+    keccak                   Keccak-256 hashes arbitrary data
+    lookup-address           Returns the name the provided address resolves to
+    namehash                 returns ENS namehash of provided name
+    nonce                    Prints the number of transactions sent from <address>
+    resolve-name             Returns the address the provided ENS name resolves to
+    send                     Publish a transaction signed by <from> to call <to> with <data>
+    storage                  Show the raw value of a contract's storage slot
+    tx                       Show information about the transaction <tx-hash>
+    wallet                   Set of wallet management utilities
 ```

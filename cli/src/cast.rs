@@ -28,7 +28,9 @@ use std::{
     str::FromStr,
     time::Instant,
 };
-use structopt::StructOpt;
+
+use clap::{IntoApp, Parser};
+use clap_complete::generate;
 
 use crate::utils::read_secret;
 
@@ -36,7 +38,7 @@ use crate::utils::read_secret;
 async fn main() -> eyre::Result<()> {
     color_eyre::install()?;
 
-    let opts = Opts::from_args();
+    let opts = Opts::parse();
     match opts.sub {
         Subcommands::MaxInt => {
             println!("{}", SimpleCast::max_int()?);
@@ -335,6 +337,9 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).nonce(who, block).await?);
         }
+        Subcommands::EtherscanSource { chain, address, etherscan_api_key } => {
+            println!("{}", SimpleCast::etherscan_source(chain, address, etherscan_api_key).await?);
+        }
         Subcommands::Wallet { command } => match command {
             WalletSubcommands::New { path, password, unsafe_password } => {
                 let mut rng = thread_rng();
@@ -462,6 +467,9 @@ async fn main() -> eyre::Result<()> {
                 }
             }
         },
+        Subcommands::Completions { shell } => {
+            generate(shell, &mut Opts::into_app(), "cast", &mut std::io::stdout())
+        }
     };
 
     Ok(())

@@ -3,6 +3,7 @@ pub mod forge;
 
 use std::{convert::TryFrom, str::FromStr};
 
+use clap::Parser;
 use ethers::{
     middleware::SignerMiddleware,
     providers::{Http, Provider},
@@ -13,27 +14,26 @@ use ethers::{
     types::{Address, Chain, U256},
 };
 use eyre::Result;
-use structopt::StructOpt;
 
 const FLASHBOTS_URL: &str = "https://rpc.flashbots.net";
 
-#[derive(StructOpt, Debug, Clone)]
+#[derive(Parser, Debug, Clone)]
 pub struct EthereumOpts {
-    #[structopt(env = "ETH_RPC_URL", long = "rpc-url", help = "The tracing / archival node's URL")]
+    #[clap(env = "ETH_RPC_URL", long = "rpc-url", help = "The tracing / archival node's URL")]
     pub rpc_url: Option<String>,
 
-    #[structopt(env = "ETH_FROM", short, long = "from", help = "The sender account")]
+    #[clap(env = "ETH_FROM", short, long = "from", help = "The sender account")]
     pub from: Option<Address>,
 
-    #[structopt(flatten)]
+    #[clap(flatten)]
     pub wallet: Wallet,
 
-    #[structopt(long, help = "Use the flashbots RPC URL (https://rpc.flashbots.net)")]
+    #[clap(long, help = "Use the flashbots RPC URL (https://rpc.flashbots.net)")]
     pub flashbots: bool,
 
-    #[structopt(long, env = "ETHERSCAN_API_KEY")]
+    #[clap(long, env = "ETHERSCAN_API_KEY")]
     pub etherscan_api_key: Option<String>,
-    #[structopt(long, env = "CHAIN", default_value = "mainnet")]
+    #[clap(long, env = "CHAIN", default_value = "mainnet")]
     pub chain: Chain,
 }
 
@@ -115,7 +115,7 @@ pub enum WalletType {
     Trezor(SignerMiddleware<Provider<Http>, Trezor>),
 }
 
-#[derive(StructOpt, Debug, Clone)]
+#[derive(Parser, Debug, Clone)]
 #[cfg_attr(not(doc), allow(missing_docs))]
 #[cfg_attr(
     doc,
@@ -130,34 +130,31 @@ The wallet options can either be:
 "#
 )]
 pub struct Wallet {
-    #[structopt(long, short, help = "Interactive prompt to insert your private key")]
+    #[clap(long, short, help = "Interactive prompt to insert your private key")]
     pub interactive: bool,
 
-    #[structopt(long = "private-key", help = "Your private key string")]
+    #[clap(long = "private-key", help = "Your private key string")]
     pub private_key: Option<String>,
 
-    #[structopt(long = "keystore", help = "Path to your keystore folder / file")]
+    #[clap(long = "keystore", help = "Path to your keystore folder / file")]
     pub keystore_path: Option<String>,
 
-    #[structopt(long = "password", help = "Your keystore password", requires = "keystore-path")]
+    #[clap(long = "password", help = "Your keystore password", requires = "keystore-path")]
     pub keystore_password: Option<String>,
 
-    #[structopt(long = "mnemonic-path", help = "Path to your mnemonic file")]
+    #[clap(long = "mnemonic-path", help = "Path to your mnemonic file")]
     pub mnemonic_path: Option<String>,
 
-    #[structopt(short, long = "ledger", help = "Use your Ledger hardware wallet")]
+    #[clap(short, long = "ledger", help = "Use your Ledger hardware wallet")]
     pub ledger: bool,
 
-    #[structopt(short, long = "trezor", help = "Use your Trezor hardware wallet")]
+    #[clap(short, long = "trezor", help = "Use your Trezor hardware wallet")]
     pub trezor: bool,
 
-    #[structopt(
-        long = "hd-path",
-        help = "Derivation path for your hardware wallet (trezor or ledger)"
-    )]
+    #[clap(long = "hd-path", help = "Derivation path for your hardware wallet (trezor or ledger)")]
     pub hd_path: Option<String>,
 
-    #[structopt(
+    #[clap(
         long = "mnemonic_index",
         help = "your index in the standard hd path",
         default_value = "0"
