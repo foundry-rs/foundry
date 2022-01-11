@@ -226,8 +226,10 @@ mod tests {
         let only_gm = runner.test(&Filter::new("testGm.*", ".*")).unwrap();
         assert_eq!(only_gm.len(), 1);
 
-        assert_eq!(only_gm["GmTest"].len(), 1);
-        assert!(only_gm["GmTest"]["testGm()"].success);
+        dbg!(only_gm.keys().collect::<Vec<_>>());
+
+        assert_eq!(only_gm["GmTest.json:GmTest"].len(), 1);
+        assert!(only_gm["GmTest.json:GmTest"]["testGm()"].success);
     }
 
     mod sputnik {
@@ -242,7 +244,7 @@ mod tests {
             let mut runner = runner(evm);
             let results = runner.test(&Filter::new(".*", ".*")).unwrap();
 
-            let reasons = results["DebugLogsTest"]
+            let reasons = results["DebugLogsTest.json:DebugLogsTest"]
                 .iter()
                 .map(|(name, res)| (name, res.logs.clone()))
                 .collect::<HashMap<_, _>>();
