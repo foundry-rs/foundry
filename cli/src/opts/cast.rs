@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 use clap::{Parser, Subcommand};
-use ethers::types::{Address, BlockId, BlockNumber, NameOrAddress, H256};
+use ethers::types::{Address, BlockId, BlockNumber, Chain, NameOrAddress, H256};
 
 use super::{EthereumOpts, Wallet};
 
