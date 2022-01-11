@@ -6,6 +6,7 @@ use ethers::types::{Address, BlockId, BlockNumber, NameOrAddress, H256};
 use super::{EthereumOpts, Wallet};
 
 #[derive(Debug, Subcommand)]
+#[clap(name = "cast")]
 #[clap(about = "Perform Ethereum RPC calls from the comfort of your command line.")]
 pub enum Subcommands {
     #[clap(name = "--max-int")]
@@ -295,6 +296,11 @@ pub enum Subcommands {
     Wallet {
         #[clap(subcommand)]
         command: WalletSubcommands,
+    },
+    #[clap(about = "generate shell completions script")]
+    Completions {
+        #[clap(help = "the shell you are using")]
+        shell: clap_complete::Shell,
     },
 }
 

@@ -29,7 +29,8 @@ use std::{
     time::Instant,
 };
 
-use clap::Parser;
+use clap::{IntoApp, Parser};
+use clap_complete::generate;
 
 use crate::utils::read_secret;
 
@@ -463,6 +464,9 @@ async fn main() -> eyre::Result<()> {
                 }
             }
         },
+        Subcommands::Completions { shell } => {
+            generate(shell, &mut Opts::into_app(), "cast", &mut std::io::stdout())
+        }
     };
 
     Ok(())
