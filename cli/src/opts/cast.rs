@@ -1,31 +1,32 @@
 use std::str::FromStr;
 
+use clap::{Parser, Subcommand};
 use ethers::types::{Address, BlockId, BlockNumber, NameOrAddress, H256};
-use structopt::StructOpt;
 
 use super::{EthereumOpts, Wallet};
 
-#[derive(Debug, StructOpt)]
-#[structopt(about = "Perform Ethereum RPC calls from the comfort of your command line.")]
+#[derive(Debug, Subcommand)]
+#[clap(name = "cast")]
+#[clap(about = "Perform Ethereum RPC calls from the comfort of your command line.")]
 pub enum Subcommands {
-    #[structopt(name = "--max-int")]
-    #[structopt(about = "maximum i256 value")]
+    #[clap(name = "--max-int")]
+    #[clap(about = "maximum i256 value")]
     MaxInt,
-    #[structopt(name = "--min-int")]
-    #[structopt(about = "minimum i256 value")]
+    #[clap(name = "--min-int")]
+    #[clap(about = "minimum i256 value")]
     MinInt,
-    #[structopt(name = "--max-uint")]
-    #[structopt(about = "maximum u256 value")]
+    #[clap(name = "--max-uint")]
+    #[clap(about = "maximum u256 value")]
     MaxUint,
-    #[structopt(aliases = &["--from-ascii"])]
-    #[structopt(name = "--from-utf8")]
-    #[structopt(about = "convert text data into hexdata")]
+    #[clap(aliases = &["--from-ascii"])]
+    #[clap(name = "--from-utf8")]
+    #[clap(about = "convert text data into hexdata")]
     FromUtf8 { text: Option<String> },
-    #[structopt(name = "--to-hex")]
-    #[structopt(about = "convert a decimal number into hex")]
+    #[clap(name = "--to-hex")]
+    #[clap(about = "convert a decimal number into hex")]
     ToHex { decimal: Option<String> },
-    #[structopt(name = "--to-hexdata")]
-    #[structopt(about = r#"[<hex>|</path>|<@tag>]
+    #[clap(name = "--to-hexdata")]
+    #[clap(about = r#"[<hex>|</path>|<@tag>]
     Output lowercase, 0x-prefixed hex, converting from the
     input, which can be:
       - mixed case hex with or without 0x prefix
@@ -34,65 +35,65 @@ pub enum Subcommands {
       - @tag, where $TAG is defined in environment variables
     "#)]
     ToHexdata { input: Option<String> },
-    #[structopt(aliases = &["--to-checksum"])] // Compatibility with dapptools' cast
-    #[structopt(name = "--to-checksum-address")]
-    #[structopt(about = "convert an address to a checksummed format (EIP-55)")]
+    #[clap(aliases = &["--to-checksum"])] // Compatibility with dapptools' cast
+    #[clap(name = "--to-checksum-address")]
+    #[clap(about = "convert an address to a checksummed format (EIP-55)")]
     ToCheckSumAddress { address: Option<Address> },
-    #[structopt(name = "--to-ascii")]
-    #[structopt(about = "convert hex data to text data")]
+    #[clap(name = "--to-ascii")]
+    #[clap(about = "convert hex data to text data")]
     ToAscii { hexdata: Option<String> },
-    #[structopt(name = "--to-bytes32")]
-    #[structopt(about = "left-pads a hex bytes string to 32 bytes)")]
+    #[clap(name = "--to-bytes32")]
+    #[clap(about = "left-pads a hex bytes string to 32 bytes)")]
     ToBytes32 { bytes: Option<String> },
-    #[structopt(name = "--to-dec")]
-    #[structopt(about = "convert hex value into decimal number")]
+    #[clap(name = "--to-dec")]
+    #[clap(about = "convert hex value into decimal number")]
     ToDec { hexvalue: Option<String> },
-    #[structopt(name = "--to-fix")]
-    #[structopt(about = "convert integers into fixed point with specified decimals")]
+    #[clap(name = "--to-fix")]
+    #[clap(about = "convert integers into fixed point with specified decimals")]
     ToFix { decimals: Option<u128>, value: Option<String> },
-    #[structopt(name = "--to-uint256")]
-    #[structopt(about = "convert a number into uint256 hex string with 0x prefix")]
+    #[clap(name = "--to-uint256")]
+    #[clap(about = "convert a number into uint256 hex string with 0x prefix")]
     ToUint256 { value: Option<String> },
-    #[structopt(name = "--to-wei")]
-    #[structopt(about = "convert an ETH amount into wei")]
+    #[clap(name = "--to-wei")]
+    #[clap(about = "convert an ETH amount into wei")]
     ToWei { value: Option<String>, unit: Option<String> },
-    #[structopt(name = "--from-wei")]
-    #[structopt(about = "convert wei into an ETH amount")]
+    #[clap(name = "--from-wei")]
+    #[clap(about = "convert wei into an ETH amount")]
     FromWei { value: Option<String>, unit: Option<String> },
-    #[structopt(name = "block")]
-    #[structopt(
+    #[clap(name = "block")]
+    #[clap(
         about = "Prints information about <block>. If <field> is given, print only the value of that field"
     )]
     Block {
-        #[structopt(help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
+        #[clap(help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
         block: BlockId,
-        #[structopt(long, env = "CAST_FULL_BLOCK")]
+        #[clap(long, env = "CAST_FULL_BLOCK")]
         full: bool,
         field: Option<String>,
-        #[structopt(long = "--json", short = "-j")]
+        #[clap(long = "json", short = 'j')]
         to_json: bool,
-        #[structopt(long, env = "ETH_RPC_URL")]
+        #[clap(long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
-    #[structopt(name = "block-number")]
-    #[structopt(about = "Prints latest block number")]
+    #[clap(name = "block-number")]
+    #[clap(about = "Prints latest block number")]
     BlockNumber {
-        #[structopt(long, env = "ETH_RPC_URL")]
+        #[clap(long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
-    #[structopt(name = "call")]
-    #[structopt(about = "Perform a local call to <to> without publishing a transaction.")]
+    #[clap(name = "call")]
+    #[clap(about = "Perform a local call to <to> without publishing a transaction.")]
     Call {
-        #[structopt(help = "the address you want to query", parse(try_from_str = parse_name_or_address))]
+        #[clap(help = "the address you want to query", parse(try_from_str = parse_name_or_address))]
         address: NameOrAddress,
         sig: String,
         args: Vec<String>,
-        #[structopt(flatten)]
+        #[clap(flatten)]
         eth: EthereumOpts,
     },
-    #[structopt(about = "Pack a signature and an argument list into hexadecimal calldata.")]
+    #[clap(about = "Pack a signature and an argument list into hexadecimal calldata.")]
     Calldata {
-        #[structopt(
+        #[clap(
             help = r#"When called with <sig> of the form <name>(<types>...), then perform ABI encoding to produce the hexadecimal calldata.
         If the value given—containing at least one slash character—then treat it as a file name to read, and proceed as if the contents were passed as hexadecimal data.
         Given data, ensure it is hexadecimal calldata starting with 0x and normalize it to lowercase.
@@ -101,191 +102,179 @@ pub enum Subcommands {
         sig: String,
         args: Vec<String>,
     },
-    #[structopt(name = "chain")]
-    #[structopt(about = "Prints symbolic name of current blockchain by checking genesis hash")]
+    #[clap(name = "chain")]
+    #[clap(about = "Prints symbolic name of current blockchain by checking genesis hash")]
     Chain {
-        #[structopt(long, env = "ETH_RPC_URL")]
+        #[clap(long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
-    #[structopt(name = "chain-id")]
-    #[structopt(about = "returns ethereum chain id")]
+    #[clap(name = "chain-id")]
+    #[clap(about = "returns ethereum chain id")]
     ChainId {
-        #[structopt(long, env = "ETH_RPC_URL")]
+        #[clap(long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
-    #[structopt(name = "namehash")]
-    #[structopt(about = "returns ENS namehash of provided name")]
+    #[clap(name = "namehash")]
+    #[clap(about = "returns ENS namehash of provided name")]
     Namehash { name: String },
-    #[structopt(name = "tx")]
-    #[structopt(about = "Show information about the transaction <tx-hash>")]
+    #[clap(name = "tx")]
+    #[clap(about = "Show information about the transaction <tx-hash>")]
     Tx {
         hash: String,
         field: Option<String>,
-        #[structopt(long = "--json", short = "-j")]
+        #[clap(long = "json", short = 'j')]
         to_json: bool,
-        #[structopt(long, env = "ETH_RPC_URL")]
+        #[clap(long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
-    #[structopt(name = "send")]
-    #[structopt(about = "Publish a transaction signed by <from> to call <to> with <data>")]
+    #[clap(name = "send")]
+    #[clap(about = "Publish a transaction signed by <from> to call <to> with <data>")]
     SendTx {
-        #[structopt(help = "the address you want to transact with", parse(try_from_str = parse_name_or_address))]
+        #[clap(help = "the address you want to transact with", parse(try_from_str = parse_name_or_address))]
         to: NameOrAddress,
-        #[structopt(help = "the function signature or name you want to call")]
+        #[clap(help = "the function signature or name you want to call")]
         sig: String,
-        #[structopt(help = "the list of arguments you want to call the function with")]
+        #[clap(help = "the list of arguments you want to call the function with")]
         args: Vec<String>,
-        #[structopt(long, env = "CAST_ASYNC")]
+        #[clap(long, env = "CAST_ASYNC")]
         cast_async: bool,
-        #[structopt(flatten)]
+        #[clap(flatten)]
         eth: EthereumOpts,
     },
-    #[structopt(name = "estimate")]
-    #[structopt(about = "Estimate the gas cost of a transaction from <from> to <to> with <data>")]
+    #[clap(name = "estimate")]
+    #[clap(about = "Estimate the gas cost of a transaction from <from> to <to> with <data>")]
     Estimate {
-        #[structopt(help = "the address you want to transact with", parse(try_from_str = parse_name_or_address))]
+        #[clap(help = "the address you want to transact with", parse(try_from_str = parse_name_or_address))]
         to: NameOrAddress,
-        #[structopt(help = "the function signature or name you want to call")]
+        #[clap(help = "the function signature or name you want to call")]
         sig: String,
-        #[structopt(help = "the list of arguments you want to call the function with")]
+        #[clap(help = "the list of arguments you want to call the function with")]
         args: Vec<String>,
-        #[structopt(flatten)]
+        #[clap(flatten)]
         eth: EthereumOpts,
     },
-    #[structopt(name = "--calldata-decode")]
-    #[structopt(
-        about = "Decode ABI-encoded hex input data. Use `--abi-decode` to decode output data"
-    )]
+    #[clap(name = "--calldata-decode")]
+    #[clap(about = "Decode ABI-encoded hex input data. Use `--abi-decode` to decode output data")]
     CalldataDecode {
-        #[structopt(
+        #[clap(
             help = "the function signature you want to decode, in the format `<name>(<in-types>)(<out-types>)`"
         )]
         sig: String,
-        #[structopt(help = "the encoded calladata, in hex format")]
+        #[clap(help = "the encoded calladata, in hex format")]
         calldata: String,
     },
-    #[structopt(name = "--abi-decode")]
-    #[structopt(
+    #[clap(name = "--abi-decode")]
+    #[clap(
         about = "Decode ABI-encoded hex output data. Pass --input to decode as input, or use `--calldata-decode`"
     )]
     AbiDecode {
-        #[structopt(
+        #[clap(
             help = "the function signature you want to decode, in the format `<name>(<in-types>)(<out-types>)`"
         )]
         sig: String,
-        #[structopt(help = "the encoded calladata, in hex format")]
+        #[clap(help = "the encoded calladata, in hex format")]
         calldata: String,
-        #[structopt(long, short, help = "the encoded output, in hex format")]
+        #[clap(long, short, help = "the encoded output, in hex format")]
         input: bool,
     },
-    #[structopt(name = "abi-encode")]
-    #[structopt(
-        help = "ABI encodes the given arguments with the function signature, excluidng the selector"
+    #[clap(name = "abi-encode")]
+    #[clap(
+        override_help = "ABI encodes the given arguments with the function signature, excluidng the selector"
     )]
     AbiEncode {
-        #[structopt(help = "the function signature")]
+        #[clap(help = "the function signature")]
         sig: String,
-        #[structopt(help = "the list of function arguments")]
+        #[clap(help = "the list of function arguments")]
         args: Vec<String>,
     },
-    #[structopt(name = "4byte")]
-    #[structopt(about = "Fetches function signatures given the selector from 4byte.directory")]
+    #[clap(name = "4byte")]
+    #[clap(about = "Fetches function signatures given the selector from 4byte.directory")]
     FourByte {
-        #[structopt(help = "the function selector")]
+        #[clap(help = "the function selector")]
         selector: String,
     },
-    #[structopt(name = "4byte-decode")]
-    #[structopt(
-        about = "Decodes transaction calldata by fetching the signature using 4byte.directory"
-    )]
+    #[clap(name = "4byte-decode")]
+    #[clap(about = "Decodes transaction calldata by fetching the signature using 4byte.directory")]
     FourByteDecode {
-        #[structopt(help = "the ABI-encoded calldata")]
+        #[clap(help = "the ABI-encoded calldata")]
         calldata: String,
-        #[structopt(long, help = "the 4byte selector id to use, can also be earliest/latest")]
+        #[clap(long, help = "the 4byte selector id to use, can also be earliest/latest")]
         id: Option<String>,
     },
-    #[structopt(name = "age")]
-    #[structopt(about = "Prints the timestamp of a block")]
+    #[clap(name = "age")]
+    #[clap(about = "Prints the timestamp of a block")]
     Age {
-        #[structopt(global = true, help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
+        #[clap(global = true, help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
         block: Option<BlockId>,
-        #[structopt(short, long, env = "ETH_RPC_URL")]
+        #[clap(short, long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
-    #[structopt(name = "balance")]
-    #[structopt(about = "Print the balance of <account> in wei")]
+    #[clap(name = "balance")]
+    #[clap(about = "Print the balance of <account> in wei")]
     Balance {
-        #[structopt(long, short, help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
+        #[clap(long, short, help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
         block: Option<BlockId>,
-        #[structopt(help = "the account you want to query", parse(try_from_str = parse_name_or_address))]
+        #[clap(help = "the account you want to query", parse(try_from_str = parse_name_or_address))]
         who: NameOrAddress,
-        #[structopt(short, long, env = "ETH_RPC_URL")]
+        #[clap(short, long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
-    #[structopt(name = "basefee")]
-    #[structopt(about = "Print the basefee of a block")]
+    #[clap(name = "basefee")]
+    #[clap(about = "Print the basefee of a block")]
     BaseFee {
-        #[structopt(global = true, help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
+        #[clap(global = true, help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
         block: Option<BlockId>,
-        #[structopt(short, long, env = "ETH_RPC_URL")]
+        #[clap(short, long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
-    #[structopt(name = "code")]
-    #[structopt(about = "Prints the bytecode at <address>")]
+    #[clap(name = "code")]
+    #[clap(about = "Prints the bytecode at <address>")]
     Code {
-        #[structopt(long, short, help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
+        #[clap(long, short, help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
         block: Option<BlockId>,
-        #[structopt(help = "the address you want to query", parse(try_from_str = parse_name_or_address))]
+        #[clap(help = "the address you want to query", parse(try_from_str = parse_name_or_address))]
         who: NameOrAddress,
-        #[structopt(short, long, env = "ETH_RPC_URL")]
+        #[clap(short, long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
-    #[structopt(name = "gas-price")]
-    #[structopt(about = "Prints current gas price of target chain")]
+    #[clap(name = "gas-price")]
+    #[clap(about = "Prints current gas price of target chain")]
     GasPrice {
-        #[structopt(short, long, env = "ETH_RPC_URL")]
+        #[clap(short, long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
-    #[structopt(name = "keccak")]
-    #[structopt(about = "Keccak-256 hashes arbitrary data")]
+    #[clap(name = "keccak")]
+    #[clap(about = "Keccak-256 hashes arbitrary data")]
     Keccak { data: String },
-    #[structopt(name = "resolve-name")]
-    #[structopt(about = "Returns the address the provided ENS name resolves to")]
+    #[clap(name = "resolve-name")]
+    #[clap(about = "Returns the address the provided ENS name resolves to")]
     ResolveName {
-        #[structopt(help = "the account you want to resolve")]
+        #[clap(help = "the account you want to resolve")]
         who: Option<String>,
-        #[structopt(short, long, env = "ETH_RPC_URL")]
+        #[clap(short, long, env = "ETH_RPC_URL")]
         rpc_url: String,
-        #[structopt(
-            long,
-            short,
-            help = "do a forward resolution to ensure the ENS name is correct"
-        )]
+        #[clap(long, short, help = "do a forward resolution to ensure the ENS name is correct")]
         verify: bool,
     },
-    #[structopt(name = "lookup-address")]
-    #[structopt(about = "Returns the name the provided address resolves to")]
+    #[clap(name = "lookup-address")]
+    #[clap(about = "Returns the name the provided address resolves to")]
     LookupAddress {
-        #[structopt(help = "the account you want to resolve")]
+        #[clap(help = "the account you want to resolve")]
         who: Option<Address>,
-        #[structopt(short, long, env = "ETH_RPC_URL")]
+        #[clap(short, long, env = "ETH_RPC_URL")]
         rpc_url: String,
-        #[structopt(
-            long,
-            short,
-            help = "do a forward resolution to ensure the address is correct"
-        )]
+        #[clap(long, short, help = "do a forward resolution to ensure the address is correct")]
         verify: bool,
     },
-    #[structopt(name = "storage", about = "Show the raw value of a contract's storage slot")]
+    #[clap(name = "storage", about = "Show the raw value of a contract's storage slot")]
     Storage {
-        #[structopt(help = "the contract address", parse(try_from_str = parse_name_or_address))]
+        #[clap(help = "the contract address", parse(try_from_str = parse_name_or_address))]
         address: NameOrAddress,
-        #[structopt(help = "the storage slot number (hex or number)", parse(try_from_str = parse_slot))]
+        #[clap(help = "the storage slot number (hex or number)", parse(try_from_str = parse_slot))]
         slot: H256,
-        #[structopt(short, long, env = "ETH_RPC_URL")]
+        #[clap(short, long, env = "ETH_RPC_URL")]
         rpc_url: String,
-        #[structopt(
+        #[clap(
             long,
             short,
             help = "the block you want to query, can also be earliest/latest/pending",
@@ -293,30 +282,35 @@ pub enum Subcommands {
         )]
         block: Option<BlockId>,
     },
-    #[structopt(name = "nonce")]
-    #[structopt(about = "Prints the number of transactions sent from <address>")]
+    #[clap(name = "nonce")]
+    #[clap(about = "Prints the number of transactions sent from <address>")]
     Nonce {
-        #[structopt(long, short = "-B", help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
+        #[clap(long, short = 'B', help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
         block: Option<BlockId>,
-        #[structopt(help = "the address you want to query", parse(try_from_str = parse_name_or_address))]
+        #[clap(help = "the address you want to query", parse(try_from_str = parse_name_or_address))]
         who: NameOrAddress,
-        #[structopt(short, long, env = "ETH_RPC_URL")]
+        #[clap(short, long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
-    #[structopt(name = "wallet", about = "Set of wallet management utilities")]
+    #[clap(name = "wallet", about = "Set of wallet management utilities")]
     Wallet {
-        #[structopt(subcommand)]
+        #[clap(subcommand)]
         command: WalletSubcommands,
+    },
+    #[clap(about = "generate shell completions script")]
+    Completions {
+        #[clap(help = "supported shells: bash, elvish, fish, powershell, zsh")]
+        shell: clap_complete::Shell,
     },
 }
 
-#[derive(Debug, StructOpt)]
+#[derive(Debug, Parser)]
 pub enum WalletSubcommands {
-    #[structopt(name = "new", about = "Create and output a new random keypair")]
+    #[clap(name = "new", about = "Create and output a new random keypair")]
     New {
-        #[structopt(help = "If provided, then keypair will be written to encrypted json keystore")]
+        #[clap(help = "If provided, then keypair will be written to encrypted json keystore")]
         path: Option<String>,
-        #[structopt(
+        #[clap(
             long,
             short,
             help = "Triggers a hidden password prompt for the json keystore",
@@ -324,7 +318,7 @@ pub enum WalletSubcommands {
             requires = "path"
         )]
         password: bool,
-        #[structopt(
+        #[clap(
             long,
             help = "Password for json keystore in cleartext. This is UNSAFE to use and we recommend using the --password parameter",
             requires = "path",
@@ -332,32 +326,32 @@ pub enum WalletSubcommands {
         )]
         unsafe_password: Option<String>,
     },
-    #[structopt(name = "vanity", about = "Generate a vanity address")]
+    #[clap(name = "vanity", about = "Generate a vanity address")]
     Vanity {
-        #[structopt(long, help = "Prefix for vanity address", required_unless = "ends-with")]
+        #[clap(long, help = "Prefix for vanity address", required_unless_present = "ends-with")]
         starts_with: Option<String>,
-        #[structopt(long, help = "Suffix for vanity address")]
+        #[clap(long, help = "Suffix for vanity address")]
         ends_with: Option<String>,
     },
-    #[structopt(name = "address", about = "Convert a private key to an address")]
+    #[clap(name = "address", about = "Convert a private key to an address")]
     Address {
-        #[structopt(flatten)]
+        #[clap(flatten)]
         wallet: Wallet,
     },
-    #[structopt(name = "sign", about = "Sign the message with provided private key")]
+    #[clap(name = "sign", about = "Sign the message with provided private key")]
     Sign {
-        #[structopt(help = "message to sign")]
+        #[clap(help = "message to sign")]
         message: String,
-        #[structopt(flatten)]
+        #[clap(flatten)]
         wallet: Wallet,
     },
-    #[structopt(name = "verify", about = "Verify the signature on the message")]
+    #[clap(name = "verify", about = "Verify the signature on the message")]
     Verify {
-        #[structopt(help = "original message")]
+        #[clap(help = "original message")]
         message: String,
-        #[structopt(help = "signature to verify")]
+        #[clap(help = "signature to verify")]
         signature: String,
-        #[structopt(long, short, help = "pubkey of message signer")]
+        #[clap(long, short, help = "pubkey of message signer")]
         address: String,
     },
 }
@@ -388,8 +382,8 @@ fn parse_slot(s: &str) -> eyre::Result<H256> {
     })
 }
 
-#[derive(Debug, StructOpt)]
+#[derive(Debug, Parser)]
 pub struct Opts {
-    #[structopt(subcommand)]
+    #[clap(subcommand)]
     pub sub: Subcommands,
 }

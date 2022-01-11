@@ -7,13 +7,15 @@ use crate::cmd::Cmd;
 use ethers::solc::{remappings::Remapping, Project, ProjectPathsConfig};
 use opts::forge::{Dependency, FullContractInfo, Opts, Subcommands};
 use std::{process::Command, str::FromStr};
-use structopt::StructOpt;
+
+use clap::{IntoApp, Parser};
+use clap_complete::generate;
 
 fn main() -> eyre::Result<()> {
     color_eyre::install()?;
     utils::subscriber();
 
-    let opts = Opts::from_args();
+    let opts = Opts::parse();
     match opts.sub {
         Subcommands::Test(cmd) => {
             let outcome = cmd.run()?;
@@ -121,7 +123,7 @@ fn main() -> eyre::Result<()> {
             println!("Done.");
         }
         Subcommands::Completions { shell } => {
-            Subcommands::clap().gen_completions_to("forge", shell, &mut std::io::stdout())
+            generate(shell, &mut Opts::into_app(), "forge", &mut std::io::stdout())
         }
         Subcommands::Clean { root } => {
             let root = root.unwrap_or_else(|| std::env::current_dir().unwrap());

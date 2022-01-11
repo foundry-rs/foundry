@@ -9,43 +9,43 @@ use crate::{
     utils,
 };
 use ansi_term::Colour;
+use clap::{AppSettings, Parser};
 use ethers::solc::{ArtifactOutput, Project};
 use forge::{MultiContractRunnerBuilder, TestFilter};
 use std::collections::BTreeMap;
-use structopt::{clap::AppSettings, StructOpt};
 
-#[derive(Debug, Clone, StructOpt)]
+#[derive(Debug, Clone, Parser)]
 pub struct Filter {
-    #[structopt(
-        long = "--match",
-        short = "-m",
+    #[clap(
+        long = "match",
+        short = 'm',
         help = "only run test methods matching regex (deprecated, see --match-test, --match-contract)"
     )]
     pattern: Option<regex::Regex>,
 
-    #[structopt(
-        long = "--match-test",
+    #[clap(
+        long = "match-test",
         help = "only run test methods matching regex",
         conflicts_with = "pattern"
     )]
     test_pattern: Option<regex::Regex>,
 
-    #[structopt(
-        long = "--no-match-test",
+    #[clap(
+        long = "no-match-test",
         help = "only run test methods not matching regex",
         conflicts_with = "pattern"
     )]
     test_pattern_inverse: Option<regex::Regex>,
 
-    #[structopt(
-        long = "--match-contract",
+    #[clap(
+        long = "match-contract",
         help = "only run test methods in contracts matching regex",
         conflicts_with = "pattern"
     )]
     contract_pattern: Option<regex::Regex>,
 
-    #[structopt(
-        long = "--no-match-contract",
+    #[clap(
+        long = "no-match-contract",
         help = "only run test methods in contracts not matching regex",
         conflicts_with = "pattern"
     )]
@@ -80,23 +80,23 @@ impl TestFilter for Filter {
     }
 }
 
-#[derive(Debug, Clone, StructOpt)]
+#[derive(Debug, Clone, Parser)]
 // This is required to group Filter options in help output
-#[structopt(global_settings = &[AppSettings::DeriveDisplayOrder])]
+#[clap(global_setting = AppSettings::DeriveDisplayOrder)]
 pub struct TestArgs {
-    #[structopt(help = "print the test results in json format", long, short)]
+    #[clap(help = "print the test results in json format", long, short)]
     json: bool,
 
-    #[structopt(flatten)]
+    #[clap(flatten)]
     evm_opts: EvmOpts,
 
-    #[structopt(flatten)]
+    #[clap(flatten)]
     filter: Filter,
 
-    #[structopt(flatten)]
+    #[clap(flatten)]
     opts: BuildArgs,
 
-    #[structopt(
+    #[clap(
         help = "if set to true, the process will exit with an exit code = 0, even if the tests fail",
         long,
         env = "FORGE_ALLOW_FAILURE"
