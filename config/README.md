@@ -55,14 +55,39 @@ The selected profile is the value of the `FOUNDRY_PROFILE` environment variable,
 
 The following is a foundry.toml file with all configuration options set.
 
-TODO fill out
 ```toml
 ## defaults for _all_ profiles
 [default]
-
-## set only when the `hardhat` profile is selected
-[hardhat]
-
+src = 'src'
+test = 'test'
+out = 'out'
+libs = ['lib']
+remappings = []
+libraries = []
+cache = true
+evm_version = 'london'
+## Sets the concrete solc version to use, this overrides the `auto_detect_solc` value
+# solc_version = '0.8.10'
+auto_detect_solc = true
+optimizer = false
+optimizer_runs = 200
+verbosity = 0
+ignored_error_codes = []
+solc_settings = '''
+{
+  "*": {
+    "": [
+      "ast"
+    ],
+    "*": [
+      "abi",
+      "evm.bytecode",
+      "evm.deployedBytecode",
+      "evm.methodIdentifiers"
+    ]
+  }
+}
+'''
 ```
 
 ## Environment Variables

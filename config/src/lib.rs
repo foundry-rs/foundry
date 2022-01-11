@@ -1,6 +1,6 @@
 //! foundry configuration.
 use ethers_core::types::Address;
-use ethers_solc::{remappings::Remapping, ProjectPathsConfig};
+use ethers_solc::{remappings::Remapping, EvmVersion, ProjectPathsConfig};
 use figment::{
     providers::{Env, Format, Serialized, Toml},
     value::{Dict, Map},
@@ -8,7 +8,7 @@ use figment::{
 };
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, path::PathBuf};
+use std::path::PathBuf;
 
 /// Foundry configuration
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -29,25 +29,35 @@ pub struct Config {
     pub out: PathBuf,
     /// all library folders to include, `lib`, `node_modules`
     pub libs: Vec<PathBuf>,
-    /// whether to enable cache
-    pub cache: bool,
-    /// concrete solc version to use if any,
-    pub solc_version: Option<Version>,
-    /// Whether to activate optimizer
-    pub optimizer: bool,
-    /// Sets the optimizer runs
-    pub optimizer_runs: usize,
-    /// Settings to pass to the `solc` compiler input
-    // TODO make this more flexible https://stackoverflow.com/questions/48998034/does-toml-support-nested-arrays-of-objects-tables
-    pub solc_settings: serde_json::Value,
-    /// url of the rpc server that should be used for any rpc calls
-    pub eth_rpc_url: Option<String>,
-    /// verbosity to use
-    pub verbosity: u8,
     /// `Remappings` to use for this repo
     pub remappings: Vec<Remapping>,
     /// library addresses to link
     pub libraries: Vec<Address>,
+    /// whether to enable cache
+    pub cache: bool,
+    /// evm version to use
+    #[serde(with = "from_str_lowercase")]
+    pub evm_version: EvmVersion,
+    /// Concrete solc version to use if any.
+    ///
+    /// This takes precedence over `auto_detect_solc`, if a version is set then this overrides
+    /// auto-detection.
+    pub solc_version: Option<Version>,
+    /// whether to autodetect the solc compiler version to use
+    pub auto_detect_solc: bool,
+    /// Whether to activate optimizer
+    pub optimizer: bool,
+    /// Sets the optimizer runs
+    pub optimizer_runs: usize,
+    /// verbosity to use
+    pub verbosity: u8,
+    /// url of the rpc server that should be used for any rpc calls
+    pub eth_rpc_url: Option<String>,
+    /// list of solidity error codes to always silence
+    pub ignored_error_codes: Vec<u64>,
+    /// Settings to pass to the `solc` compiler input
+    // TODO consider making this more structured https://stackoverflow.com/questions/48998034/does-toml-support-nested-arrays-of-objects-tables
+    pub solc_settings: String,
 
     /// PRIVATE: This structure may grow, As such, constructing this structure should
     /// _always_ be done using a public constructor or update syntax:
@@ -220,7 +230,12 @@ impl Config {
     ///
     /// This serializes to a table with the name of the profile
     pub fn to_string_pretty(&self) -> Result<String, toml::ser::Error> {
-        toml::to_string_pretty(&HashMap::from([(self.profile.to_string(), self)]))
+        let s = toml::to_string_pretty(self)?;
+        Ok(format!(
+            r#"[{}]
+{}"#,
+            self.profile, s
+        ))
     }
 }
 
@@ -228,6 +243,7 @@ impl From<Config> for Figment {
     fn from(c: Config) -> Figment {
         Figment::from(c)
             .merge(Toml::file(Env::var_or("FOUNDRY_CONFIG", Config::FILE_NAME)).nested())
+            .merge(Env::prefixed("DAPP_").global())
             .merge(Env::prefixed("FOUNDRY_").ignore(&["PROFILE"]).global())
             .select(Profile::from_env_or("FOUNDRY_PROFILE", Config::DEFAULT_PROFILE))
     }
@@ -257,26 +273,31 @@ impl Default for Config {
             out: "out".into(),
             libs: vec!["lib".into()],
             cache: true,
+            evm_version: Default::default(),
             solc_version: None,
+            auto_detect_solc: true,
             optimizer: false,
             optimizer_runs: 200,
-            solc_settings: serde_json::json!({
-               "*":{
-                  "*":[
-                     "abi",
-                     "evm.bytecode",
-                     "evm.deployedBytecode",
-                     "evm.methodIdentifiers"
-                  ],
-                  "":[
-                     "ast"
-                  ]
-               }
-            }),
+            solc_settings: r#"{
+  "*": {
+    "": [
+      "ast"
+    ],
+    "*": [
+      "abi",
+      "evm.bytecode",
+      "evm.deployedBytecode",
+      "evm.methodIdentifiers"
+    ]
+  }
+}
+"#
+            .to_string(),
             eth_rpc_url: None,
             verbosity: 0,
             remappings: vec![],
             libraries: vec![],
+            ignored_error_codes: vec![],
             __non_exhaustive: (),
         }
     }
@@ -312,7 +333,35 @@ impl BasicConfig {
     ///
     /// This serializes to a table with the name of the profile
     pub fn to_string_pretty(&self) -> Result<String, toml::ser::Error> {
-        toml::to_string_pretty(&HashMap::from([(self.profile.to_string(), self)]))
+        let s = toml::to_string_pretty(self)?;
+        Ok(format!(
+            r#"[{}]
+{}
+# See more config options https://github.com/gakonst/foundry/tree/master/config"#,
+            self.profile, s
+        ))
+    }
+}
+
+mod from_str_lowercase {
+    use serde::{Deserialize, Deserializer, Serializer};
+    use std::str::FromStr;
+
+    pub fn serialize<T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        T: std::fmt::Display,
+        S: Serializer,
+    {
+        serializer.collect_str(&value.to_string().to_lowercase())
+    }
+
+    pub fn deserialize<'de, T, D>(deserializer: D) -> Result<T, D::Error>
+    where
+        D: Deserializer<'de>,
+        T: FromStr,
+        T::Err: std::fmt::Display,
+    {
+        String::deserialize(deserializer)?.to_lowercase().parse().map_err(serde::de::Error::custom)
     }
 }
 
@@ -445,13 +494,15 @@ mod tests {
                 src = "mysrc"
                 out = "myout"
                 verbosity = 3
+                evm_version = 'berlin'
 
                 [other]
                 src = "other-src"
             "#,
             )?;
-
-            let base = Config::figment().extract::<BasicConfig>().unwrap();
+            let loaded = Config::load().unwrap();
+            assert_eq!(loaded.evm_version, EvmVersion::Berlin);
+            let base = loaded.into_basic();
             let default = Config::default();
             assert_eq!(
                 base,
@@ -475,7 +526,28 @@ mod tests {
                     remappings: default.remappings
                 }
             );
+            Ok(())
+        });
+    }
 
+    #[test]
+    fn config_roundtrip() {
+        figment::Jail::expect_with(|jail| {
+            let default = Config::default();
+            let basic = default.clone().into_basic();
+            jail.create_file("foundry.toml", &basic.to_string_pretty().unwrap())?;
+
+            let other = Config::load().unwrap();
+            assert_eq!(default, other);
+
+            let other = other.into_basic();
+            assert_eq!(basic, other);
+
+            jail.create_file("foundry.toml", &default.to_string_pretty().unwrap())?;
+            let other = Config::load().unwrap();
+            assert_eq!(default, other);
+
+            // println!("{}", default.to_string_pretty().unwrap());
             Ok(())
         });
     }
