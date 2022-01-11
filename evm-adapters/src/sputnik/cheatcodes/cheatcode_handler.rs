@@ -200,7 +200,6 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
         }
 
         // Initialize initial addresses for EIP-2929
-        // Initialize initial addresses for EIP-2929
         if self.config().increase_state_access_gas {
             let addresses = core::iter::once(caller).chain(core::iter::once(address));
             self.state_mut().metadata_mut().access_addresses(addresses);
@@ -224,6 +223,20 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
         ) {
             Capture::Exit((s, v)) => {
                 self.state_mut().increment_call_index();
+
+                // check if all expected calls were made
+                if let Some((address, expecteds)) =
+                    self.state().expected_calls.iter().find(|(_, expecteds)| !expecteds.is_empty())
+                {
+                    return (
+                        ExitReason::Revert(ExitRevert::Reverted),
+                        ethers::abi::encode(&[Token::String(format!(
+                            "Expected a call to 0x{} with data {}, but got none",
+                            address,
+                            ethers::types::Bytes::from(expecteds[0].clone())
+                        ))]),
+                    )
+                }
                 (s, v)
             }
             Capture::Trap(_) => {
@@ -722,6 +735,22 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                     found: false,
                 };
                 self.state_mut().expected_emits.push(expected_emit);
+            }
+            HEVMCalls::MockCall(inner) => {
+                self.add_debug(CheatOp::MOCKCALL);
+                self.state_mut()
+                    .mocked_calls
+                    .entry(inner.0)
+                    .or_default()
+                    .insert(inner.1.to_vec(), inner.2.to_vec());
+            }
+            HEVMCalls::ClearMockedCalls(_) => {
+                self.add_debug(CheatOp::CLEARMOCKEDCALLS);
+                self.state_mut().mocked_calls = Default::default();
+            }
+            HEVMCalls::ExpectCall(inner) => {
+                self.add_debug(CheatOp::EXPECTCALL);
+                self.state_mut().expected_calls.entry(inner.0).or_default().push(inner.1.to_vec());
             }
         };
 
@@ -1370,6 +1399,32 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
                 if let Some(t) = &new_transfer {
                     new_transfer =
                         Some(Transfer { source: caller, target: t.target, value: t.value });
+                }
+            }
+
+            // handle expected calls
+            if let Some(expecteds) = self.state_mut().expected_calls.get_mut(&code_address) {
+                if let Some(found_match) =
+                    expecteds.iter().position(|expected| expected == &input[..expected.len()])
+                {
+                    expecteds.remove(found_match);
+                }
+            }
+
+            // handle mocked calls
+            if let Some(mocks) = self.state().mocked_calls.get(&code_address) {
+                if let Some(mock_retdata) = mocks.get(&input) {
+                    return Capture::Exit((
+                        ExitReason::Succeed(ExitSucceed::Returned),
+                        mock_retdata.clone(),
+                    ))
+                } else if let Some((_, mock_retdata)) =
+                    mocks.iter().find(|(mock, _)| *mock == &input[..mock.len()])
+                {
+                    return Capture::Exit((
+                        ExitReason::Succeed(ExitSucceed::Returned),
+                        mock_retdata.clone(),
+                    ))
                 }
             }
 
