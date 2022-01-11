@@ -1,15 +1,19 @@
 //! foundry configuration.
+use std::{
+    fmt,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
+
 use ethers_core::types::Address;
 use ethers_solc::{remappings::Remapping, EvmVersion, ProjectPathsConfig};
 use figment::{
     providers::{Env, Format, Serialized, Toml},
     value::{Dict, Map},
     Error, Figment, Metadata, Profile, Provider,
-    value::magic::RelativePathBuf
 };
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 
 /// Foundry configuration
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -31,7 +35,7 @@ pub struct Config {
     /// all library folders to include, `lib`, `node_modules`
     pub libs: Vec<PathBuf>,
     /// `Remappings` to use for this repo
-    pub remappings: Vec<Remapping>,
+    pub remappings: Vec<RelativeRemapping>,
     /// library addresses to link
     pub libraries: Vec<Address>,
     /// whether to enable cache
@@ -188,12 +192,17 @@ impl Config {
     /// ```
     pub fn with_root(root: impl Into<PathBuf>) -> Self {
         // autodetect paths
-        let paths = ProjectPathsConfig::builder().build_with_root(root);
+        let root = root.into();
+        let paths = ProjectPathsConfig::builder().build_with_root(&root);
         Config {
             src: paths.sources.file_name().unwrap().into(),
             out: paths.artifacts.file_name().unwrap().into(),
             libs: paths.libraries.into_iter().map(|lib| lib.file_name().unwrap().into()).collect(),
-            remappings: paths.remappings,
+            remappings: paths
+                .remappings
+                .into_iter()
+                .map(|r| RelativeRemapping::new(r, &root))
+                .collect(),
             ..Config::default()
         }
     }
@@ -237,15 +246,58 @@ impl Config {
             self.profile, s
         ))
     }
+
+    /// Returns the selected profile
+    ///
+    /// If the `FOUNDRY_PROFILE` env variable is not set, this returns the `DEFAULT_PROFILE`
+    pub fn selected_profile() -> Profile {
+        Profile::from_env_or("FOUNDRY_PROFILE", Config::DEFAULT_PROFILE)
+    }
+
+    /// Returns the path to the `foundry.toml` file, the file is searched for in
+    /// the current working directory and all parent directories until the root,
+    /// and the first hit is used.
+    pub fn find_config_file() -> Option<PathBuf> {
+        fn find(path: &Path) -> Option<PathBuf> {
+            if path.is_absolute() {
+                return match path.is_file() {
+                    true => Some(path.to_path_buf()),
+                    false => None,
+                }
+            }
+            let cwd = std::env::current_dir().ok()?;
+            let mut cwd = cwd.as_path();
+            loop {
+                let file_path = cwd.join(path);
+                if file_path.is_file() {
+                    return Some(file_path)
+                }
+                cwd = cwd.parent()?;
+            }
+        }
+        find(Env::var_or("FOUNDRY_CONFIG", Config::FILE_NAME).as_ref())
+    }
 }
 
 impl From<Config> for Figment {
     fn from(c: Config) -> Figment {
-        Figment::from(c)
+        let profile = Config::selected_profile();
+        let figment = Figment::default()
             .merge(Toml::file(Env::var_or("FOUNDRY_CONFIG", Config::FILE_NAME)).nested())
             .merge(Env::prefixed("DAPP_").global())
             .merge(Env::prefixed("FOUNDRY_").ignore(&["PROFILE"]).global())
-            .select(Profile::from_env_or("FOUNDRY_PROFILE", Config::DEFAULT_PROFILE))
+            .select(profile.clone());
+
+        let remappings = figment.extract_inner::<Vec<Remapping>>("remappings");
+        let lib_paths =
+            figment.extract_inner::<Vec<PathBuf>>("libs").unwrap_or_else(|_| c.libs.clone());
+        let root = Config::find_config_file()
+            .and_then(|f| f.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| std::env::current_dir().unwrap());
+
+        let remapping_provider = RemappingsProvider { lib_paths, root, remappings };
+
+        Figment::from(c).merge(figment.merge(remapping_provider)).select(profile)
     }
 }
 
@@ -303,6 +355,154 @@ impl Default for Config {
     }
 }
 
+struct RemappingsProvider {
+    lib_paths: Vec<PathBuf>,
+    root: PathBuf,
+    remappings: Result<Vec<Remapping>, figment::Error>,
+}
+
+impl Provider for RemappingsProvider {
+    fn metadata(&self) -> Metadata {
+        Metadata::named("Remapping Provider")
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+        let remappings = match &self.remappings {
+            Ok(remappings) => remappings.clone(),
+            Err(err) => {
+                if let figment::error::Kind::MissingField(_) = err.kind {
+                    // only search for the remappings if weren't set before
+                    self.lib_paths.iter().flat_map(Remapping::find_many).collect()
+                } else {
+                    return Err(err.clone())
+                }
+            }
+        };
+        let remappings = remappings
+            .into_iter()
+            .map(|r| RelativeRemapping::new(r, &self.root).to_string())
+            .collect::<Vec<_>>();
+
+        Ok(Map::from([(
+            Config::selected_profile(),
+            Dict::from([("remappings".to_string(), figment::value::Value::from(remappings))]),
+        )]))
+    }
+
+    fn profile(&self) -> Option<Profile> {
+        Some(Config::selected_profile())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RelativeRemappingPathBuf {
+    parent: Option<PathBuf>,
+    path: PathBuf,
+}
+
+impl RelativeRemappingPathBuf {
+    pub fn with_root(parent: &Path, path: impl AsRef<Path>) -> Self {
+        let path = path.as_ref();
+        if let Ok(path) = path.strip_prefix(parent) {
+            Self { parent: Some(parent.to_path_buf()), path: path.to_path_buf() }
+        } else if path.has_root() {
+            Self { parent: None, path: path.to_path_buf() }
+        } else {
+            Self { parent: Some(parent.to_path_buf()), path: path.to_path_buf() }
+        }
+    }
+
+    /// Returns the path as it was declared, without modification.
+    pub fn original(&self) -> &Path {
+        &self.path
+    }
+
+    /// Returns this path relative to the file it was delcared in, if any.
+    /// Returns the original if this path was not declared in a file or if the
+    /// path has a root.
+    pub fn relative(&self) -> PathBuf {
+        if self.original().has_root() {
+            return self.original().into()
+        }
+        self.parent
+            .as_ref()
+            .map(|p| p.join(self.original()))
+            .unwrap_or_else(|| self.original().into())
+    }
+}
+
+impl<P: AsRef<Path>> From<P> for RelativeRemappingPathBuf {
+    fn from(path: P) -> RelativeRemappingPathBuf {
+        Self { parent: None, path: path.as_ref().to_path_buf() }
+    }
+}
+
+impl Serialize for RelativeRemapping {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::ser::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for RelativeRemapping {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::de::Deserializer<'de>,
+    {
+        let remapping = String::deserialize(deserializer)?;
+        let remapping = Remapping::from_str(&remapping).map_err(serde::de::Error::custom)?;
+        Ok(RelativeRemapping { name: remapping.name, path: remapping.path.into() })
+    }
+}
+
+/// A relative `Remapping` that's aware of the current location
+///
+/// See [`figment::RelativePathBuf`]
+#[derive(Clone, Debug, PartialEq)]
+pub struct RelativeRemapping {
+    pub name: String,
+    pub path: RelativeRemappingPathBuf,
+}
+
+impl RelativeRemapping {
+    /// Creates a new `RelativeRemapping` starting prefixed with `root`
+    pub fn new(remapping: Remapping, root: &Path) -> Self {
+        Self {
+            name: remapping.name,
+            path: RelativeRemappingPathBuf::with_root(root, remapping.path),
+        }
+    }
+
+    /// Converts this relative remapping into an absolute remapping
+    ///
+    /// This sets to root of the remapping to the given `root` path
+    pub fn to_remapping(mut self, root: PathBuf) -> Remapping {
+        self.path.parent = Some(root);
+        self.into()
+    }
+}
+
+// Remappings are printed as `prefix=target`
+impl fmt::Display for RelativeRemapping {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}={}", self.name, self.path.original().display())
+    }
+}
+
+impl From<RelativeRemapping> for Remapping {
+    fn from(r: RelativeRemapping) -> Self {
+        Remapping { name: r.name, path: r.path.relative().to_string_lossy().to_string() }
+    }
+}
+
+impl From<Remapping> for RelativeRemapping {
+    fn from(r: Remapping) -> Self {
+        Self { name: r.name, path: r.path.into() }
+    }
+}
+
 /// A subset of the foundry `Config`
 /// used to initialize a `foundry.toml` file
 ///
@@ -325,7 +525,7 @@ pub struct BasicConfig {
     /// all library folders to include, `lib`, `node_modules`
     pub libs: Vec<PathBuf>,
     /// `Remappings` to use for this repo
-    pub remappings: Vec<Remapping>,
+    pub remappings: Vec<RelativeRemapping>,
 }
 
 impl BasicConfig {
@@ -344,8 +544,9 @@ impl BasicConfig {
 }
 
 mod from_str_lowercase {
-    use serde::{Deserialize, Deserializer, Serializer};
     use std::str::FromStr;
+
+    use serde::{Deserialize, Deserializer, Serializer};
 
     pub fn serialize<T, S>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -367,9 +568,10 @@ mod from_str_lowercase {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use figment::Figment;
     use pretty_assertions::assert_eq;
+
+    use super::*;
 
     #[test]
     fn test_figment_is_default() {
@@ -432,6 +634,7 @@ mod tests {
                     out: "some-out".into(),
                     cache: true,
                     eth_rpc_url: Some("https://example.com/".to_string()),
+                    remappings: vec![Remapping::from_str("ds-test=lib/ds-test/").unwrap().into()],
                     verbosity: 3,
                     ..Config::default()
                 }
