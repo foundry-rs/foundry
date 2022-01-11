@@ -24,7 +24,7 @@
 - [x] `4byte`
 - [x] `4byte-decode`
 - [ ] `4byte-event`
-- [ ] `abi-encode`
+- [x] `abi-encode`
 - [x] `age`
 - [x] `balance`
 - [x] `basefee`
@@ -37,8 +37,8 @@
 - [x] `chain-id`
 - [x] `code`
 - [ ] `debug`
-- [ ] `estimate`
-- [ ] `etherscan-source`
+- [x] `estimate`
+- [x] `etherscan-source`
 - [ ] `events`
 - [x] `gas-price`
 - [ ] `index`
