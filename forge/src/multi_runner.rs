@@ -65,6 +65,11 @@ impl MultiContractRunnerBuilder {
         for (fname, contract) in contracts {
             let (maybe_abi, maybe_deploy_bytes, maybe_runtime_bytes) = contract.into_parts();
             if let (Some(abi), Some(bytecode)) = (maybe_abi, maybe_deploy_bytes) {
+                // skip deployment of abstract contracts
+                if bytecode.as_ref().is_empty() {
+                    continue
+                }
+
                 if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) &&
                     abi.functions().any(|func| func.name.starts_with("test"))
                 {
