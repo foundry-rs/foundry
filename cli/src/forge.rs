@@ -9,7 +9,7 @@ use opts::forge::{Dependency, FullContractInfo, Opts, Subcommands};
 use std::{process::Command, str::FromStr};
 
 use clap::{IntoApp, Parser};
-use clap_complete::{generate, Generator, Shell};
+use clap_complete::generate;
 
 fn main() -> eyre::Result<()> {
     color_eyre::install()?;

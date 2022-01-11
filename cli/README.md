@@ -1,6 +1,6 @@
 # Foundry CLIs
 
-The CLIs are written using [structopt](https://docs.rs/structopt).
+The CLIs are written using [clap's](https://docs.rs/clap) [derive feature](https://github.com/clap-rs/clap/blob/master/examples/derive_ref/README.md).
 
 Debug logs are printed with
 [`tracing`](https://docs.rs/tracing/0.1.29/tracing/). You can configure the
