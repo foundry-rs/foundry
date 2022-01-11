@@ -4,7 +4,8 @@ use ethers_solc::{remappings::Remapping, EvmVersion, ProjectPathsConfig};
 use figment::{
     providers::{Env, Format, Serialized, Toml},
     value::{Dict, Map},
-    Figment, Metadata, Profile, Provider,
+    Error, Figment, Metadata, Profile, Provider,
+    value::magic::RelativePathBuf
 };
 use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -188,7 +189,6 @@ impl Config {
     pub fn with_root(root: impl Into<PathBuf>) -> Self {
         // autodetect paths
         let paths = ProjectPathsConfig::builder().build_with_root(root);
-
         Config {
             src: paths.sources.file_name().unwrap().into(),
             out: paths.artifacts.file_name().unwrap().into(),
@@ -420,6 +420,7 @@ mod tests {
                 cache = true
                 eth_rpc_url = "https://example.com/"
                 verbosity = 3
+                remappings = ["ds-test=lib/ds-test/"]
             "#,
             )?;
 
