@@ -231,10 +231,16 @@ mod tests {
         let only_gm = runner.test(&Filter::new("testGm.*", ".*")).unwrap();
         assert_eq!(only_gm.len(), 1);
 
-        dbg!(only_gm.keys().collect::<Vec<_>>());
-
         assert_eq!(only_gm["GmTest.json:GmTest"].len(), 1);
         assert!(only_gm["GmTest.json:GmTest"]["testGm()"].success);
+    }
+
+    fn test_abstract_contract<S: Clone, E: Evm<S>>(evm: E) {
+        let mut runner = runner(evm);
+        let results = runner.test(&Filter::new(".*", ".*")).unwrap();
+        assert!(results.get("Tests.json:Tests").is_none());
+        assert!(results.get("ATests.json:ATests").is_some());
+        assert!(results.get("BTests.json:BTests").is_some());
     }
 
     mod sputnik {
@@ -279,6 +285,11 @@ mod tests {
         #[test]
         fn test_sputnik_multi_runner() {
             test_multi_runner(vm());
+        }
+
+        #[test]
+        fn test_sputnik_abstract_contract() {
+            test_abstract_contract(vm());
         }
     }
 
