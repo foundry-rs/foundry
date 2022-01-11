@@ -33,7 +33,7 @@ pub struct CreateArgs {
 
     #[clap(
         long,
-        help = "use legacy transactions instead of EIP1559 ones. ehis is auto-enabled for common networks without EIP1559"
+        help = "use legacy transactions instead of EIP1559 ones. this is auto-enabled for common networks without EIP1559"
     )]
     legacy: bool,
 }
@@ -128,8 +128,5 @@ fn is_legacy<T: TryInto<Chain>>(chain: T) -> bool {
 
     use Chain::*;
     // TODO: Add other chains which do not support EIP1559.
-    match chain {
-        Optimism | OptimismKovan => true,
-        _ => false,
-    }
+    matches!(chain, Optimism | OptimismKovan)
 }
