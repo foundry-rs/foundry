@@ -24,28 +24,28 @@ pub struct Filter {
     pattern: Option<regex::Regex>,
 
     #[clap(
-        long = "--match-test",
+        long = "match-test",
         help = "only run test methods matching regex",
         conflicts_with = "pattern"
     )]
     test_pattern: Option<regex::Regex>,
 
     #[clap(
-        long = "--no-match-test",
+        long = "no-match-test",
         help = "only run test methods not matching regex",
         conflicts_with = "pattern"
     )]
     test_pattern_inverse: Option<regex::Regex>,
 
     #[clap(
-        long = "--match-contract",
+        long = "match-contract",
         help = "only run test methods in contracts matching regex",
         conflicts_with = "pattern"
     )]
     contract_pattern: Option<regex::Regex>,
 
     #[clap(
-        long = "--no-match-contract",
+        long = "no-match-contract",
         help = "only run test methods in contracts not matching regex",
         conflicts_with = "pattern"
     )]

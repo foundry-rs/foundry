@@ -69,7 +69,7 @@ pub enum Subcommands {
         #[clap(long, env = "CAST_FULL_BLOCK")]
         full: bool,
         field: Option<String>,
-        #[clap(long = "--json", short = 'j')]
+        #[clap(long = "json", short = 'j')]
         to_json: bool,
         #[clap(long, env = "ETH_RPC_URL")]
         rpc_url: String,
@@ -121,7 +121,7 @@ pub enum Subcommands {
     Tx {
         hash: String,
         field: Option<String>,
-        #[clap(long = "--json", short = 'j')]
+        #[clap(long = "json", short = 'j')]
         to_json: bool,
         #[clap(long, env = "ETH_RPC_URL")]
         rpc_url: String,
