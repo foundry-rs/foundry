@@ -866,7 +866,7 @@ impl SimpleCast {
     /// ```
     /// # use cast::SimpleCast as Cast;
     /// # use ethers_core::types::Chain;
-    /// 
+    ///
     /// # async fn foo() -> eyre::Result<()> {
     ///     assert_eq!(
     ///             "/*
