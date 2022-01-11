@@ -2,11 +2,11 @@ use crate::{
     cmd::{build::BuildArgs, compile, manual_compile, Cmd},
     opts::forge::EvmOpts,
 };
+use clap::Parser;
 use ethers::abi::Abi;
 use forge::ContractRunner;
 use foundry_utils::IntoFunction;
 use std::{collections::BTreeMap, path::PathBuf};
-use structopt::StructOpt;
 use ui::{TUIExitReason, Tui, Ui};
 
 use ethers::solc::{
@@ -22,25 +22,25 @@ use ethers::{
     solc::artifacts::{CompactContractSome, ContractBytecodeSome},
 };
 
-#[derive(Debug, Clone, StructOpt)]
+#[derive(Debug, Clone, Parser)]
 pub struct RunArgs {
-    #[structopt(help = "the path to the contract to run")]
+    #[clap(help = "the path to the contract to run")]
     pub path: PathBuf,
 
-    #[structopt(flatten)]
+    #[clap(flatten)]
     pub evm_opts: EvmOpts,
 
-    #[structopt(flatten)]
+    #[clap(flatten)]
     opts: BuildArgs,
 
-    #[structopt(
+    #[clap(
         long,
         short,
         help = "the contract you want to call and deploy, only necessary if there are more than 1 contract (Interfaces do not count) definitions on the script"
     )]
     pub target_contract: Option<String>,
 
-    #[structopt(
+    #[clap(
         long,
         short,
         help = "the function you want to call on the script contract, defaults to run()"

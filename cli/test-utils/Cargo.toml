@@ -1,0 +1,12 @@
+[package]
+name = "foundry-cli-test-utils"
+version = "0.1.0"
+description = """
+foundry cli test utilities
+"""
+edition = "2021"
+
+[dependencies]
+tempfile = "3.2.0"
+ethers-solc = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["project-util"] }
+walkdir = "2.3.2"
