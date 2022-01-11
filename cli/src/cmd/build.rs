@@ -17,8 +17,6 @@ use clap::Parser;
 #[cfg(feature = "evmodin-evm")]
 use evmodin::util::mocked_host::MockedHost;
 
-use structopt::StructOpt;
-
 #[derive(Debug, Clone, Parser)]
 pub struct BuildArgs {
     #[clap(

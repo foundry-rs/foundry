@@ -12,7 +12,6 @@ evm-adapters = { path = "./../evm-adapters", features = ["sputnik", "sputnik-hel
 
 # ethers = { version = "0.5.2" }
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["solc-full"] }
-structopt = "0.3.23"
 eyre = "0.6.5"
 semver = "1.0.4"
 serde_json = "1.0.67"
@@ -28,6 +27,13 @@ proptest = "1.0.0"
 sputnik = { package = "evm", git = "https://github.com/rust-blockchain/evm", features = ["tracing"] }
 evmodin = { git = "https://github.com/vorot93/evmodin" }
 rayon = "1.5"
+clap = { version = "3.0.6", features = [
+    "derive",
+    "env",
+    "unicode",
+    "wrap_help",
+] }
+clap_complete = "3.0.2"
 
 [dev-dependencies]
 evmodin = { git = "https://github.com/vorot93/evmodin", features = ["util"] }

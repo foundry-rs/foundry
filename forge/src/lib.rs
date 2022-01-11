@@ -1,10 +1,10 @@
 mod runner;
+use clap::Parser;
 use ethers::types::{Address, U256};
 use evmodin::util::mocked_host::MockedHost;
 pub use runner::{ContractRunner, TestKind, TestKindGas, TestResult};
 use sputnik::backend::MemoryVicinity;
 use std::str::FromStr;
-use structopt::StructOpt;
 
 mod multi_runner;
 pub use multi_runner::{MultiContractRunner, MultiContractRunnerBuilder};
@@ -32,12 +32,12 @@ impl FromStr for EvmType {
     }
 }
 
-#[derive(Debug, Clone, StructOpt)]
+#[derive(Debug, Clone, Parser)]
 pub struct EvmOpts {
-    #[structopt(flatten)]
+    #[clap(flatten)]
     pub env: Env,
 
-    #[structopt(
+    #[clap(
         long,
         short,
         help = "the EVM type you want to use (e.g. sputnik, evmodin)",
@@ -45,26 +45,22 @@ pub struct EvmOpts {
     )]
     pub evm_type: EvmType,
 
-    #[structopt(
-        help = "fetch state over a remote instead of starting from empty state",
-        long,
-        short
-    )]
-    #[structopt(alias = "rpc-url")]
+    #[clap(help = "fetch state over a remote instead of starting from empty state", long, short)]
+    #[clap(alias = "rpc-url")]
     pub fork_url: Option<String>,
 
-    #[structopt(help = "pins the block number for the state fork", long)]
-    #[structopt(env = "DAPP_FORK_BLOCK")]
+    #[clap(help = "pins the block number for the state fork", long)]
+    #[clap(env = "DAPP_FORK_BLOCK")]
     pub fork_block_number: Option<u64>,
 
-    #[structopt(
+    #[clap(
         help = "the initial balance of each deployed test contract",
         long,
         default_value = "0xffffffffffffffffffffffff"
     )]
     pub initial_balance: U256,
 
-    #[structopt(
+    #[clap(
         help = "the address which will be executing all tests",
         long,
         default_value = "0x0000000000000000000000000000000000000000",
@@ -72,10 +68,10 @@ pub struct EvmOpts {
     )]
     pub sender: Address,
 
-    #[structopt(help = "enables the FFI cheatcode", long)]
+    #[clap(help = "enables the FFI cheatcode", long)]
     pub ffi: bool,
 
-    #[structopt(
+    #[clap(
         help = r#"Verbosity mode of EVM output as number of occurences of the `v` flag (-v, -vv, -vvv, etc.)
     3: print test trace for failing tests
     4: always print test trace, print setup for failing tests
@@ -87,7 +83,7 @@ pub struct EvmOpts {
     )]
     pub verbosity: u8,
 
-    #[structopt(help = "enable debugger", long)]
+    #[clap(help = "enable debugger", long)]
     pub debug: bool,
 }
 
@@ -107,37 +103,37 @@ impl EvmOpts {
     }
 }
 
-#[derive(Debug, Clone, StructOpt)]
+#[derive(Debug, Clone, Parser)]
 pub struct Env {
     // structopt does not let use `u64::MAX`:
     // https://doc.rust-lang.org/std/primitive.u64.html#associatedconstant.MAX
-    #[structopt(help = "the block gas limit", long, default_value = "18446744073709551615")]
+    #[clap(help = "the block gas limit", long, default_value = "18446744073709551615")]
     pub gas_limit: u64,
 
-    #[structopt(help = "the chainid opcode value", long, default_value = "1")]
+    #[clap(help = "the chainid opcode value", long, default_value = "1")]
     pub chain_id: u64,
 
-    #[structopt(help = "the tx.gasprice value during EVM execution", long, default_value = "0")]
+    #[clap(help = "the tx.gasprice value during EVM execution", long, default_value = "0")]
     pub gas_price: u64,
 
-    #[structopt(help = "the base fee in a block", long, default_value = "0")]
+    #[clap(help = "the base fee in a block", long, default_value = "0")]
     pub block_base_fee_per_gas: u64,
 
-    #[structopt(
+    #[clap(
         help = "the tx.origin value during EVM execution",
         long,
         default_value = "0x0000000000000000000000000000000000000000"
     )]
     pub tx_origin: Address,
 
-    #[structopt(
+    #[clap(
     help = "the block.coinbase value during EVM execution",
     long,
     // TODO: It'd be nice if we could use Address::zero() here.
     default_value = "0x0000000000000000000000000000000000000000"
     )]
     pub block_coinbase: Address,
-    #[structopt(
+    #[clap(
         help = "the block.timestamp value during EVM execution",
         long,
         default_value = "0",
@@ -145,18 +141,14 @@ pub struct Env {
     )]
     pub block_timestamp: u64,
 
-    #[structopt(help = "the block.number value during EVM execution", long, default_value = "0")]
-    #[structopt(env = "DAPP_TEST_NUMBER")]
+    #[clap(help = "the block.number value during EVM execution", long, default_value = "0")]
+    #[clap(env = "DAPP_TEST_NUMBER")]
     pub block_number: u64,
 
-    #[structopt(
-        help = "the block.difficulty value during EVM execution",
-        long,
-        default_value = "0"
-    )]
+    #[clap(help = "the block.difficulty value during EVM execution", long, default_value = "0")]
     pub block_difficulty: u64,
 
-    #[structopt(help = "the block.gaslimit value during EVM execution", long)]
+    #[clap(help = "the block.gaslimit value during EVM execution", long)]
     pub block_gas_limit: Option<u64>,
     // TODO: Add configuration option for base fee.
 }

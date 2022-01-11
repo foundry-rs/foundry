@@ -13,6 +13,7 @@ use ethers::solc::{
 use evm_adapters::Evm;
 
 use ansi_term::Colour;
+use clap::Parser;
 use ethers::{
     prelude::{artifacts::ContractBytecode, Artifact},
     solc::artifacts::{CompactContractSome, ContractBytecodeSome},
