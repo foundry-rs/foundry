@@ -77,6 +77,7 @@ pub struct BuildArgs {
 
     #[clap(help = "add linked libraries", long)]
     pub libraries: Vec<String>,
+    #[clap(env = "DAPP_LIBRARIES")]
 }
 
 impl Cmd for BuildArgs {
