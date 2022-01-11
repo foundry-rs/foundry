@@ -12,21 +12,21 @@ use eyre::Result;
 use foundry_utils::parse_tokens;
 
 use crate::opts::forge::ContractInfo;
+use clap::Parser;
 use std::sync::Arc;
-use structopt::StructOpt;
 
-#[derive(Debug, Clone, StructOpt)]
+#[derive(Debug, Clone, Parser)]
 pub struct CreateArgs {
-    #[structopt(long, help = "constructor args calldata arguments.")]
+    #[clap(long, help = "constructor args calldata arguments.")]
     constructor_args: Vec<String>,
 
-    #[structopt(flatten)]
+    #[clap(flatten)]
     opts: BuildArgs,
 
-    #[structopt(flatten)]
+    #[clap(flatten)]
     eth: EthereumOpts,
 
-    #[structopt(help = "contract source info `<path>:<contractname>` or `<contractname>`")]
+    #[clap(help = "contract source info `<path>:<contractname>` or `<contractname>`")]
     contract: ContractInfo,
 }
 

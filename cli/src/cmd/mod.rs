@@ -19,7 +19,7 @@ use ethers::{
 use std::path::PathBuf;
 
 /// Common trait for all cli commands
-pub trait Cmd: structopt::StructOpt + Sized {
+pub trait Cmd: clap::Parser + Sized {
     type Output;
     fn run(self) -> eyre::Result<Self::Output>;
 }
@@ -70,7 +70,7 @@ pub fn manual_compile(
             // return the diagnostics error back to the user.
             eyre::bail!(output.to_string())
         }
-        return Ok(output)
+        return Ok(output);
     }
 
     let mut solc = project.solc.clone();

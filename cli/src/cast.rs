@@ -28,7 +28,8 @@ use std::{
     str::FromStr,
     time::Instant,
 };
-use structopt::StructOpt;
+
+use clap::Parser;
 
 use crate::utils::read_secret;
 
@@ -36,7 +37,7 @@ use crate::utils::read_secret;
 async fn main() -> eyre::Result<()> {
     color_eyre::install()?;
 
-    let opts = Opts::from_args();
+    let opts = Opts::parse();
     match opts.sub {
         Subcommands::MaxInt => {
             println!("{}", SimpleCast::max_int()?);
