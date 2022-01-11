@@ -19,7 +19,7 @@ use ethers::{
 use std::path::PathBuf;
 
 /// Common trait for all cli commands
-pub trait Cmd: structopt::StructOpt + Sized {
+pub trait Cmd: clap::Parser + Sized {
     type Output;
     fn run(self) -> eyre::Result<Self::Output>;
 }

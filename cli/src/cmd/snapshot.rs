@@ -6,6 +6,7 @@ use crate::cmd::{
     Cmd,
 };
 use ansi_term::Colour;
+use clap::Parser;
 use eyre::Context;
 use forge::TestKindGas;
 use once_cell::sync::Lazy;
@@ -19,7 +20,6 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
 };
-use structopt::StructOpt;
 
 /// A regex that matches a basic snapshot entry like
 /// `testDeposit() (gas: 58804)`
@@ -27,29 +27,29 @@ pub static RE_BASIC_SNAPSHOT_ENTRY: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?P<sig>(\w+)\s*\((.*?)\))\s*\(((gas:)?\s*(?P<gas>\d+)|(runs:\s*(?P<runs>\d+),\s*μ:\s*(?P<avg>\d+),\s*~:\s*(?P<med>\d+)))\)").unwrap()
 });
 
-#[derive(Debug, Clone, StructOpt)]
+#[derive(Debug, Clone, Parser)]
 pub struct SnapshotArgs {
     /// All test arguments are supported
-    #[structopt(flatten)]
+    #[clap(flatten)]
     test: test::TestArgs,
     /// Additional configs for test results
-    #[structopt(flatten)]
+    #[clap(flatten)]
     config: SnapshotConfig,
-    #[structopt(
+    #[clap(
         help = "Compare against a snapshot and display changes from the snapshot. Takes an optional snapshot file, [default: .gas-snapshot]",
         conflicts_with = "snap",
         long
     )]
     diff: Option<Option<PathBuf>>,
-    #[structopt(
+    #[clap(
         help = "Run snapshot in 'check' mode and compares against an existing snapshot file, [default: .gas-snapshot]. Exits with 0 if snapshots match. Exits with 1 and prints a diff otherwise",
         conflicts_with = "diff",
         long
     )]
     check: Option<Option<PathBuf>>,
-    #[structopt(help = "How to format the output.", long)]
+    #[clap(help = "How to format the output.", long)]
     format: Option<Format>,
-    #[structopt(help = "Output file for the snapshot.", default_value = ".gas-snapshot", long)]
+    #[clap(help = "Output file for the snapshot.", default_value = ".gas-snapshot", long)]
     snap: PathBuf,
 }
 
@@ -98,15 +98,15 @@ impl FromStr for Format {
 }
 
 /// Additional filters that can be applied on the test results
-#[derive(Debug, Clone, StructOpt, Default)]
+#[derive(Debug, Clone, Parser, Default)]
 struct SnapshotConfig {
-    #[structopt(help = "sort results by ascending gas used.", long)]
+    #[clap(help = "sort results by ascending gas used.", long)]
     asc: bool,
-    #[structopt(help = "sort results by descending gas used.", conflicts_with = "asc", long)]
+    #[clap(help = "sort results by descending gas used.", conflicts_with = "asc", long)]
     desc: bool,
-    #[structopt(help = "Only include tests that used more gas that the given amount.", long)]
+    #[clap(help = "Only include tests that used more gas that the given amount.", long)]
     min: Option<u64>,
-    #[structopt(help = "Only include tests that used less gas that the given amount.", long)]
+    #[clap(help = "Only include tests that used less gas that the given amount.", long)]
     max: Option<u64>,
 }
 

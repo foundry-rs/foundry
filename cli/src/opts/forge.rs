@@ -1,127 +1,127 @@
-use structopt::StructOpt;
+use clap::{Parser, Subcommand};
 
 use ethers::{solc::EvmVersion, types::Address};
 use std::{path::PathBuf, str::FromStr};
 
 use crate::cmd::{build::BuildArgs, create::CreateArgs, run::RunArgs, snapshot, test};
 
-#[derive(Debug, StructOpt)]
+#[derive(Debug, Parser)]
 pub struct Opts {
-    #[structopt(subcommand)]
+    #[clap(subcommand)]
     pub sub: Subcommands,
 }
 
-#[derive(Debug, StructOpt)]
-#[structopt(name = "forge")]
-#[structopt(about = "Build, test, fuzz, formally verify, debug & deploy solidity contracts.")]
+#[derive(Debug, Subcommand)]
+#[clap(name = "forge")]
+#[clap(about = "Build, test, fuzz, formally verify, debug & deploy solidity contracts.")]
 #[allow(clippy::large_enum_variant)]
 pub enum Subcommands {
-    #[structopt(about = "test your smart contracts")]
-    #[structopt(alias = "t")]
+    #[clap(about = "test your smart contracts")]
+    #[clap(alias = "t")]
     Test(test::TestArgs),
 
-    #[structopt(about = "build your smart contracts")]
-    #[structopt(alias = "b")]
+    #[clap(about = "build your smart contracts")]
+    #[clap(alias = "b")]
     Build(BuildArgs),
 
-    #[structopt(about = "run a single smart contract as a script")]
-    #[structopt(alias = "r")]
+    #[clap(about = "run a single smart contract as a script")]
+    #[clap(alias = "r")]
     Run(RunArgs),
 
-    #[structopt(alias = "u", about = "fetches all upstream lib changes")]
+    #[clap(alias = "u", about = "fetches all upstream lib changes")]
     Update {
-        #[structopt(
+        #[clap(
             help = "the submodule name of the library you want to update (will update all if none is provided)"
         )]
         lib: Option<PathBuf>,
     },
 
-    #[structopt(alias = "i", about = "installs one or more dependencies as git submodules")]
+    #[clap(alias = "i", about = "installs one or more dependencies as git submodules")]
     Install {
-        #[structopt(help = "the submodule name of the library you want to install")]
+        #[clap(help = "the submodule name of the library you want to install")]
         dependencies: Vec<Dependency>,
     },
 
-    #[structopt(alias = "r", about = "removes one or more dependencies from git submodules")]
+    #[clap(alias = "r", about = "removes one or more dependencies from git submodules")]
     Remove {
-        #[structopt(help = "the submodule name of the library you want to remove")]
+        #[clap(help = "the submodule name of the library you want to remove")]
         dependencies: Vec<Dependency>,
     },
 
-    #[structopt(about = "prints the automatically inferred remappings for this repository")]
+    #[clap(about = "prints the automatically inferred remappings for this repository")]
     Remappings {
-        #[structopt(
+        #[clap(
             help = "the project's root path, default being the current working directory",
             long
         )]
         root: Option<PathBuf>,
-        #[structopt(help = "the paths where your libraries are installed", long)]
+        #[clap(help = "the paths where your libraries are installed", long)]
         lib_paths: Vec<PathBuf>,
     },
 
-    #[structopt(
+    #[clap(
         about = "verify your smart contracts source code on Etherscan. Requires `ETHERSCAN_API_KEY` to be set."
     )]
     VerifyContract {
-        #[structopt(help = "contract source info `<path>:<contractname>`")]
+        #[clap(help = "contract source info `<path>:<contractname>`")]
         contract: FullContractInfo,
-        #[structopt(help = "the address of the contract to verify.")]
+        #[clap(help = "the address of the contract to verify.")]
         address: Address,
-        #[structopt(help = "constructor args calldata arguments.")]
+        #[clap(help = "constructor args calldata arguments.")]
         constructor_args: Vec<String>,
     },
 
-    #[structopt(alias = "c", about = "deploy a compiled contract")]
+    #[clap(alias = "c", about = "deploy a compiled contract")]
     Create(CreateArgs),
 
-    #[structopt(alias = "i", about = "initializes a new forge sample repository")]
+    #[clap(alias = "i", about = "initializes a new forge sample repository")]
     Init {
-        #[structopt(help = "the project's root path, default being the current working directory")]
+        #[clap(help = "the project's root path, default being the current working directory")]
         root: Option<PathBuf>,
-        #[structopt(help = "optional solidity template to start from", long, short)]
+        #[clap(help = "optional solidity template to start from", long, short)]
         template: Option<String>,
     },
 
-    #[structopt(about = "generate shell completions script")]
+    #[clap(about = "generate shell completions script")]
     Completions {
-        #[structopt(help = "the shell you are using")]
-        shell: structopt::clap::Shell,
+        #[clap(help = "bash, elvish, fish, powershell, zsh")]
+        shell: clap_complete::Shell,
     },
 
-    #[structopt(about = "removes the build artifacts and cache directories")]
+    #[clap(about = "removes the build artifacts and cache directories")]
     Clean {
-        #[structopt(
+        #[clap(
             help = "the project's root path, default being the current working directory",
             long
         )]
         root: Option<PathBuf>,
     },
 
-    #[structopt(about = "creates a snapshot of each test's gas usage")]
+    #[clap(about = "creates a snapshot of each test's gas usage")]
     Snapshot(snapshot::SnapshotArgs),
 }
 
-#[derive(Debug, Clone, StructOpt)]
+#[derive(Debug, Clone, Parser)]
 pub struct CompilerArgs {
-    #[structopt(help = "choose the evm version", long, default_value = "london")]
+    #[clap(help = "choose the evm version", long, default_value = "london")]
     pub evm_version: EvmVersion,
 
-    #[structopt(help = "activate the solidity optimizer", long)]
+    #[clap(help = "activate the solidity optimizer", long)]
     pub optimize: bool,
 
-    #[structopt(help = "optimizer parameter runs", long, default_value = "200")]
+    #[clap(help = "optimizer parameter runs", long, default_value = "200")]
     pub optimize_runs: u32,
 }
 
 use crate::cmd::build::{Env, EvmType};
 use ethers::types::U256;
 
-#[derive(Debug, Clone, StructOpt)]
+#[derive(Debug, Clone, Parser)]
 pub struct EvmOpts {
-    #[structopt(flatten)]
+    #[clap(flatten)]
     pub env: Env,
 
-    #[structopt(
+    #[clap(
         long,
         short,
         help = "the EVM type you want to use (e.g. sputnik, evmodin)",
@@ -129,26 +129,22 @@ pub struct EvmOpts {
     )]
     pub evm_type: EvmType,
 
-    #[structopt(
-        help = "fetch state over a remote instead of starting from empty state",
-        long,
-        short
-    )]
-    #[structopt(alias = "rpc-url")]
+    #[clap(help = "fetch state over a remote instead of starting from empty state", long, short)]
+    #[clap(alias = "rpc-url")]
     pub fork_url: Option<String>,
 
-    #[structopt(help = "pins the block number for the state fork", long)]
-    #[structopt(env = "DAPP_FORK_BLOCK")]
+    #[clap(help = "pins the block number for the state fork", long)]
+    #[clap(env = "DAPP_FORK_BLOCK")]
     pub fork_block_number: Option<u64>,
 
-    #[structopt(
+    #[clap(
         help = "the initial balance of each deployed test contract",
         long,
         default_value = "0xffffffffffffffffffffffff"
     )]
     pub initial_balance: U256,
 
-    #[structopt(
+    #[clap(
         help = "the address which will be executing all tests",
         long,
         default_value = "0x0000000000000000000000000000000000000000",
@@ -156,10 +152,10 @@ pub struct EvmOpts {
     )]
     pub sender: Address,
 
-    #[structopt(help = "enables the FFI cheatcode", long)]
+    #[clap(help = "enables the FFI cheatcode", long)]
     pub ffi: bool,
 
-    #[structopt(
+    #[clap(
         help = r#"Verbosity mode of EVM output as number of occurences of the `v` flag (-v, -vv, -vvv, etc.)
     3: print test trace for failing tests
     4: always print test trace, print setup for failing tests
@@ -171,7 +167,7 @@ pub struct EvmOpts {
     )]
     pub verbosity: u8,
 
-    #[structopt(help = "enable debugger", long)]
+    #[clap(help = "enable debugger", long)]
     pub debug: bool,
 }
 

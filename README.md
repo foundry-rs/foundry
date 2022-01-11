@@ -90,6 +90,19 @@ cast call 0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48 "totalSupply()(uint256)" --
 
 More documentation can be found in the [cast package](./cast/README.md).
 
+## Autocompletion
+
+You can generate autocompletion shell scripts for bash, elvish, fish, powershell, and zsh.
+
+Example (zsh / [oh-my-zsh](https://ohmyz.sh/))
+
+```
+mkdir -p ~/.oh-my-zsh/completions
+forge completions zsh > ~/.oh-my-zsh/completions/_forge
+cast completions zsh > ~/.oh-my-zsh/completions/_cast
+source ~/.zshrc
+```
+
 ## Contributing
 
 ### Directory structure
