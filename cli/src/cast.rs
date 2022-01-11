@@ -337,6 +337,9 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).nonce(who, block).await?);
         }
+        Subcommands::EtherscanSource { chain, address, etherscan_api_key } => {
+            println!("{}", SimpleCast::etherscan_source(chain, address, etherscan_api_key).await?);
+        }
         Subcommands::Wallet { command } => match command {
             WalletSubcommands::New { path, password, unsafe_password } => {
                 let mut rng = thread_rng();

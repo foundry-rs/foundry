@@ -511,6 +511,7 @@ version = "0.1.0"
 dependencies = [
  "chrono 0.2.25",
  "ethers-core",
+ "ethers-etherscan",
  "ethers-providers",
  "ethers-signers",
  "eyre",

@@ -8,6 +8,7 @@ use ethers_core::{
     utils::{self, keccak256},
 };
 
+use ethers_etherscan::Client;
 use ethers_providers::{Middleware, PendingTransaction};
 use eyre::{Context, Result};
 use rustc_hex::{FromHexIter, ToHex};
@@ -858,6 +859,38 @@ impl SimpleCast {
         let func = AbiParser::default().parse_function(sig.as_ref())?;
         let calldata = encode_args(&func, args)?;
         Ok(format!("0x{}", calldata.to_hex::<String>()))
+    }
+
+    /// Fetches source code of verified contracts from etherscan.
+    ///
+    /// ```
+    /// # use cast::SimpleCast as Cast;
+    /// # use ethers_core::types::Chain;
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    ///     assert_eq!(
+    ///             "/*
+    ///             - Bytecode Verification performed was compared on second iteration -
+    ///             This file is part of the DAO.....",
+    ///         Cast::etherscan_source(Chain::Mainnet, "0xBB9bc244D798123fDe783fCc1C72d3Bb8C189413".to_string(), "<etherscan_api_key>".to_string()).await.unwrap().as_str()
+    ///     );
+    /// #    Ok(())
+    /// # }
+    /// ```
+    pub async fn etherscan_source(
+        chain: Chain,
+        contract_address: String,
+        etherscan_api_key: String,
+    ) -> Result<String> {
+        let client = Client::new(chain, etherscan_api_key)?;
+        let meta = client.contract_source_code(contract_address.parse()?).await?;
+        let code = meta.source_code();
+
+        if code.is_empty() {
+            return Err(eyre::eyre!("unverified contract"))
+        }
+
+        Ok(code)
     }
 }
 
