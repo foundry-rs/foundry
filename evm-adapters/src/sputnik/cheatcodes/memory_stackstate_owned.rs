@@ -57,6 +57,8 @@ pub struct MemoryStackStateOwned<'config, B> {
     pub all_logs: Vec<String>,
     /// Expected events by end of the next call
     pub expected_emits: Vec<ExpectedEmit>,
+    pub mocked_calls: BTreeMap<H160, BTreeMap<Vec<u8>, Vec<u8>>>,
+    pub expected_calls: BTreeMap<H160, Vec<Vec<u8>>>,
     /// Debug enabled
     pub debug_enabled: bool,
     /// An arena allocator of DebugNodes for debugging purposes
@@ -124,6 +126,8 @@ impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
             accesses: None,
             all_logs: Default::default(),
             expected_emits: Default::default(),
+            mocked_calls: Default::default(),
+            expected_calls: Default::default(),
             debug_enabled,
             debug_steps: vec![Default::default()],
             debug_instruction_pointers: (BTreeMap::new(), BTreeMap::new()),

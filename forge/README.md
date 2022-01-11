@@ -240,6 +240,16 @@ interface Vm {
     function expectRevert(bytes calldata) external;
     // Expects the next emitted event. Params check topic 1, topic 2, topic 3 and data are the same.
     function expectEmit(bool, bool, bool, bool) external;
+    // Mocks a call to an address, returning specified data.
+    // Calldata can either be strict or a partial match, e.g. if you only
+    // pass a Solidity selector to the expected calldata, then the entire Solidity
+    // function will be mocked.
+    function mockCall(address,bytes calldata,bytes calldata) external;
+    // Clears all mocked calls
+    function clearMockedCalls() external;
+    // Expect a call to an address with the specified calldata.
+    // Calldata can either be strict or a partial match
+    function expectCall(address,bytes calldata) external;
 }
 ```
 ### `console.log`
