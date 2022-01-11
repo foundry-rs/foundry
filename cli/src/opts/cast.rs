@@ -295,7 +295,29 @@ pub enum Subcommands {
     #[clap(name = "etherscan-source")]
     #[clap(about = "Prints the source code of a contract from Etherscan")]
     EtherscanSource {
-        #[clap(long, env = "CHAIN", default_value = "mainnet")]
+        #[clap(
+            long,
+            env = "CHAIN",
+            default_value = "mainnet",
+            // if Chain implemented ArgEnum, we'd get this for free
+            possible_values = [
+                "mainnet",
+                "ropsten",
+                "rinkeby",
+                "goerli",
+                "kovan",
+                "x_dai",
+                "polygon",
+                "polygon_mumbai",
+                "avalanche",
+                "avalanche_fuji",
+                "sepolia",
+                "moonbeam",
+                "moonbeam_dev",
+                "moonriver",
+                "optimism",
+                "optimism_kovan"
+            ])]
         chain: Chain,
         #[clap(help = "the contract address")]
         address: String,
@@ -309,7 +331,7 @@ pub enum Subcommands {
     },
     #[clap(about = "generate shell completions script")]
     Completions {
-        #[clap(help = "supported shells: bash, elvish, fish, powershell, zsh")]
+        #[clap(arg_enum)]
         shell: clap_complete::Shell,
     },
 }
