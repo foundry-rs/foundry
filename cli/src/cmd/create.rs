@@ -7,7 +7,9 @@ use crate::{
 use ethers::{
     abi::{Abi, Constructor, Token},
     prelude::{artifacts::BytecodeObject, ContractFactory, Http, Middleware, Provider},
+    types::Chain,
 };
+
 use eyre::Result;
 use foundry_utils::parse_tokens;
 
@@ -28,6 +30,12 @@ pub struct CreateArgs {
 
     #[clap(help = "contract source info `<path>:<contractname>` or `<contractname>`")]
     contract: ContractInfo,
+
+    #[clap(
+        long,
+        help = "use legacy transactions instead of EIP1559 ones. this is auto-enabled for common networks without EIP1559"
+    )]
+    legacy: bool,
 }
 
 impl Cmd for CreateArgs {
@@ -79,6 +87,7 @@ impl CreateArgs {
         args: Vec<Token>,
         provider: M,
     ) -> Result<()> {
+        let chain = provider.get_chainid().await?.as_u64();
         let deployer_address =
             provider.default_sender().expect("no sender address set for provider");
         let bin = bin.into_bytes().unwrap_or_else(|| {
@@ -87,6 +96,8 @@ impl CreateArgs {
         let factory = ContractFactory::new(abi, bin, Arc::new(provider));
 
         let deployer = factory.deploy_tokens(args)?;
+        let deployer = if self.legacy || is_legacy(chain) { deployer.legacy() } else { deployer };
+
         let deployed_contract = deployer.send().await?;
 
         println!("Deployer: {:?}", deployer_address);
@@ -105,4 +116,17 @@ impl CreateArgs {
 
         parse_tokens(params, true)
     }
+}
+
+/// Helper function for checking if a chainid corresponds to a legacy chainid
+/// without eip1559
+fn is_legacy<T: TryInto<Chain>>(chain: T) -> bool {
+    let chain = match chain.try_into() {
+        Ok(inner) => inner,
+        _ => return false,
+    };
+
+    use Chain::*;
+    // TODO: Add other chains which do not support EIP1559.
+    matches!(chain, Optimism | OptimismKovan)
 }
