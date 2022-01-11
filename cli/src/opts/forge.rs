@@ -49,15 +49,7 @@ pub enum Subcommands {
     },
 
     #[clap(about = "prints the automatically inferred remappings for this repository")]
-    Remappings {
-        #[clap(
-            help = "the project's root path, default being the current working directory",
-            long
-        )]
-        root: Option<PathBuf>,
-        #[clap(help = "the paths where your libraries are installed", long)]
-        lib_paths: Vec<PathBuf>,
-    },
+    Remappings(RemappingArgs),
 
     #[clap(
         about = "verify your smart contracts source code on Etherscan. Requires `ETHERSCAN_API_KEY` to be set."
@@ -113,7 +105,10 @@ pub struct CompilerArgs {
     pub optimize_runs: u32,
 }
 
-use crate::cmd::build::{Env, EvmType};
+use crate::cmd::{
+    build::{Env, EvmType},
+    remappings::RemappingArgs,
+};
 use ethers::types::U256;
 
 #[derive(Debug, Clone, Parser)]

@@ -4,7 +4,7 @@ mod utils;
 
 use crate::cmd::Cmd;
 
-use ethers::solc::{remappings::Remapping, Project, ProjectPathsConfig};
+use ethers::solc::{Project, ProjectPathsConfig};
 use opts::forge::{Dependency, FullContractInfo, Opts, Subcommands};
 use std::{process::Command, str::FromStr};
 
@@ -54,14 +54,8 @@ fn main() -> eyre::Result<()> {
         Subcommands::Remove { dependencies } => {
             remove(std::env::current_dir()?, dependencies)?;
         }
-        Subcommands::Remappings { lib_paths, root } => {
-            let root = root.unwrap_or_else(|| std::env::current_dir().unwrap());
-            let root = dunce::canonicalize(root)?;
-
-            let lib_paths =
-                if lib_paths.is_empty() { ProjectPathsConfig::find_libs(&root) } else { lib_paths };
-            let remappings: Vec<_> = lib_paths.iter().flat_map(Remapping::find_many).collect();
-            remappings.iter().for_each(|x| println!("{}", x));
+        Subcommands::Remappings(cmd) => {
+            cmd.run()?;
         }
         Subcommands::Init { root, template } => {
             let root = root.unwrap_or_else(|| std::env::current_dir().unwrap());

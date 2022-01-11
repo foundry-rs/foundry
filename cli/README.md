@@ -104,6 +104,8 @@ the contracts under `../my-project/my-contracts-dir`. You can also configure the
 output directory where the contract artifacts will be written to with the
 `--out` variable.
 
+#### Remappings
+
 Compiler remappings are automatically detected, but if you want to override them
 you can do it with the `--remappings` flag like below:
 
