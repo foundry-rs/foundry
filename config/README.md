@@ -5,10 +5,10 @@ sensible set of defaults.
 
 ## Profiles
 
-Configurations can be arbitrarily namespaced by profiles. Foundry's default config is also named `default`, but
-can arbitrarily name and configure profiles as you like and set the `FOUNDRY_PROFILE` environment variable to the
-selected profile's name. This results in foundry's tools (forge) preferring the values in the profile with the named
-that's set in `FOUNDRY_PROFILE`.
+Configurations can be arbitrarily namespaced by profiles. Foundry's default config is also named `default`, but can
+arbitrarily name and configure profiles as you like and set the `FOUNDRY_PROFILE` environment variable to the selected
+profile's name. This results in foundry's tools (forge) preferring the values in the profile with the named that's set
+in `FOUNDRY_PROFILE`.
 
 ## foundry.toml
 
@@ -18,8 +18,9 @@ the file is found or the root is reached. The typical location for the global `f
 If the path set in `FOUNDRY_CONFIG` is absolute, no such search takes place and the absolute path is used directly.
 
 In `foundry.toml` you can define multiple profiles, therefore the file is assumed to be _nested_, so each top-level key
-declares a profile and its values the value for the profile. The following is an example of what such a file might look
-like:
+declares a profile and its values configure the profile.
+
+The following is an example of what such a file might look like:
 
 ```toml
 ## defaults for _all_ profiles
@@ -52,7 +53,6 @@ and merge, at the per-key level:
 3. `FOUNDRY_` or `DAPP_` prefixed environment variables.
 
 The selected profile is the value of the `FOUNDRY_PROFILE` environment variable, or if it is not set, "default".
-
 
 #### All Options
 

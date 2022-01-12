@@ -217,6 +217,11 @@ impl Config {
         }
     }
 
+    /// Returns the default config that uses dapptools style paths
+    pub fn dapptools() -> Self {
+        Self::default()
+    }
+
     /// Extracts a basic subset of the config, used for initialisations.
     ///
     /// # Example
