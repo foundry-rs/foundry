@@ -171,7 +171,7 @@ impl<'a> ContractRunner<'a> {
         &self,
         cfg: &'a mut Config,
         vicinity: &'a MemoryVicinity,
-    ) -> eyre::Result<(Address, TestSputnikVM<'a, MemoryBackend<'a>>)> {
+    ) -> eyre::Result<(Address, TestSputnikVM<'a, MemoryBackend<'a>>, Vec<String>)> {
         // We disable the contract size limit by default, because Solidity
         // test smart contracts are likely to be >24kb
         cfg.create_contract_limit = None;
@@ -191,11 +191,10 @@ impl<'a> ContractRunner<'a> {
             self.evm_opts.debug,
         );
 
-        // TODO: return the logs
-        let (addr, _, _, _logs) =
+        let (addr, _, _, logs) =
             executor.deploy(self.sender, self.code.clone(), 0u32.into()).expect("couldn't deploy");
         executor.set_balance(addr, self.evm_opts.initial_balance);
-        Ok((addr, executor))
+        Ok((addr, executor, logs))
     }
 
     pub fn new_odin_evm(&self) {
@@ -271,10 +270,11 @@ impl<'a> ContractRunner<'a> {
         let should_fail = func.name.starts_with("testFail");
         tracing::debug!(func = ?func.signature(), should_fail, "unit-testing");
 
-        let mut logs = vec![];
         let mut cfg = Config::london();
         let vicinity = self.evm_opts.vicinity().unwrap();
-        let (address, mut evm) = self.new_sputnik_evm(&mut cfg, &vicinity)?;
+        let (address, mut evm, init_logs) = self.new_sputnik_evm(&mut cfg, &vicinity)?;
+
+        let mut logs = init_logs;
 
         // call the setup function in each test to reset the test's state.
         if setup {
@@ -348,14 +348,14 @@ impl<'a> ContractRunner<'a> {
 
         let mut cfg = Config::london();
         let vicinity = self.evm_opts.vicinity().unwrap();
-        let (address, mut evm) = self.new_sputnik_evm(&mut cfg, &vicinity)?;
+        let (address, mut evm, init_logs) = self.new_sputnik_evm(&mut cfg, &vicinity)?;
 
         // call the setup function in each test to reset the test's state.
         if setup {
             evm.setup(address)?;
         }
 
-        let mut logs = vec![];
+        let mut logs = init_logs;
 
         let prev = evm.set_tracing_enabled(false);
 
