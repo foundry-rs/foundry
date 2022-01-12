@@ -55,6 +55,11 @@ impl MultiContractRunnerBuilder {
         for (fname, contract) in contracts {
             let (maybe_abi, maybe_deploy_bytes, maybe_runtime_bytes) = contract.into_parts();
             if let (Some(abi), Some(bytecode)) = (maybe_abi, maybe_deploy_bytes) {
+                // skip deployment of abstract contracts
+                if bytecode.as_ref().is_empty() {
+                    continue
+                }
+
                 deployed_contracts.insert(fname.clone(), (abi.clone(), bytecode.clone()));
 
                 let split = fname.split(':').collect::<Vec<&str>>();
