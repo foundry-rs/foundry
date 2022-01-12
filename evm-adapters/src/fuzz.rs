@@ -30,6 +30,10 @@ pub struct FuzzedExecutor<'a, E, S> {
 }
 
 impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
+    pub fn into_inner(self) -> &'a mut E {
+        self.evm.into_inner()
+    }
+
     /// Returns a mutable reference to the fuzzer's internal EVM instance
     pub fn as_mut(&self) -> RefMut<'_, &'a mut E> {
         self.evm.borrow_mut()
