@@ -1,6 +1,7 @@
 //! Subcommands for forge
 
 pub mod build;
+pub mod config;
 pub mod create;
 pub mod remappings;
 pub mod run;

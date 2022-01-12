@@ -1773,6 +1773,7 @@ dependencies = [
  "eyre",
  "forge",
  "foundry-cli-test-utils",
+ "foundry-config",
  "foundry-utils",
  "glob",
  "hex",

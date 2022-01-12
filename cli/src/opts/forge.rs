@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand, ValueHint};
 use ethers::{solc::EvmVersion, types::Address};
 use std::{path::PathBuf, str::FromStr};
 
-use crate::cmd::{build::BuildArgs, create::CreateArgs, run::RunArgs, snapshot, test};
+use crate::cmd::{build::BuildArgs, config, create::CreateArgs, run::RunArgs, snapshot, test};
 
 #[derive(Debug, Parser)]
 pub struct Opts {
@@ -96,6 +96,9 @@ pub enum Subcommands {
 
     #[clap(about = "creates a snapshot of each test's gas usage")]
     Snapshot(snapshot::SnapshotArgs),
+
+    #[clap(about = "shows the currently set config values")]
+    Config(config::ConfigArgs),
 }
 
 #[derive(Debug, Clone, Parser)]

@@ -16,6 +16,7 @@ clap = { version = "3.0.6", features = [
 clap_complete = "3.0.2"
 foundry-utils = { path = "../utils" }
 forge = { path = "../forge" }
+foundry-config = { path = "../config" }
 cast = { path = "../cast" }
 evm-adapters = { path = "../evm-adapters" }
 ui = { path = "../ui" }

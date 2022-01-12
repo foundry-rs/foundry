@@ -288,16 +288,11 @@ impl From<Config> for Figment {
             .merge(Env::prefixed("FOUNDRY_").ignore(&["PROFILE"]).global())
             .select(profile.clone());
 
-        let remappings = figment.extract_inner::<Vec<Remapping>>("remappings");
-        let lib_paths =
-            figment.extract_inner::<Vec<PathBuf>>("libs").unwrap_or_else(|_| c.libs.clone());
-        let root = Config::find_config_file()
-            .and_then(|f| f.parent().map(|p| p.to_path_buf()))
-            .unwrap_or_else(|| std::env::current_dir().unwrap());
-
-        let remapping_provider = RemappingsProvider { lib_paths, root, remappings };
-
-        Figment::from(c).merge(figment.merge(remapping_provider)).select(profile)
+        // we try to merge remappings after we've merged all other providers, this prevents
+        // redundant fs lookups to determine the default remappings that are eventually updated by
+        // other providers, like the toml file
+        let remappings = RemappingsProvider::new(&figment);
+        Figment::from(c).merge(figment.merge(remappings)).select(profile)
     }
 }
 
@@ -355,10 +350,30 @@ impl Default for Config {
     }
 }
 
+/// A figment provider that checks if the remappings were previously set and if they're unset looks
+/// up the fs via `Remapping::find_many`.
 struct RemappingsProvider {
     lib_paths: Vec<PathBuf>,
+    /// the root path used to turn an absolute `Remapping`, as we're getting it from
+    /// `Remapping::find_many` into a relative one.
     root: PathBuf,
+    /// This contains either:
+    ///   - previously set remappings
+    ///   - a `MissingField` error, which means previous provider didn't set the "remappings" field
+    ///   - other error, like formatting
     remappings: Result<Vec<Remapping>, figment::Error>,
+}
+
+impl RemappingsProvider {
+    fn new(figment: &Figment) -> Self {
+        let remappings = figment.extract_inner::<Vec<Remapping>>("remappings");
+        let lib_paths =
+            figment.extract_inner::<Vec<PathBuf>>("libs").unwrap_or_else(|_| c.libs.clone());
+        let root = Config::find_config_file()
+            .and_then(|f| f.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| std::env::current_dir().unwrap());
+        RemappingsProvider { lib_paths, root, remappings }
+    }
 }
 
 impl Provider for RemappingsProvider {
@@ -378,6 +393,8 @@ impl Provider for RemappingsProvider {
                 }
             }
         };
+
+        // turn the absolute remapping into a relative one by stripping the `root`
         let remappings = remappings
             .into_iter()
             .map(|r| RelativeRemapping::new(r, &self.root).to_string())
@@ -394,6 +411,12 @@ impl Provider for RemappingsProvider {
     }
 }
 
+/// The path part of the [`Remapping`] that knows the path of the file it was configured in, if any.
+///
+/// A [`Remapping`] is intended to be absolute, but paths in configuration files are often desired
+/// to be relative to the configuration file itself. For example, a path of
+/// `weird-erc20/=lib/weird-erc20/src/` configured in a file `/var/foundry.toml` might be desired to
+/// resolve as a `weird-erc20/=/var/lib/weird-erc20/src/` remapping.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RelativeRemappingPathBuf {
     parent: Option<PathBuf>,
@@ -401,6 +424,8 @@ pub struct RelativeRemappingPathBuf {
 }
 
 impl RelativeRemappingPathBuf {
+    /// Creates a new `RelativeRemappingPathBuf` that checks if the `path` is a child path of
+    /// `parent`.
     pub fn with_root(parent: &Path, path: impl AsRef<Path>) -> Self {
         let path = path.as_ref();
         if let Ok(path) = path.strip_prefix(parent) {
@@ -457,9 +482,9 @@ impl<'de> Deserialize<'de> for RelativeRemapping {
     }
 }
 
-/// A relative `Remapping` that's aware of the current location
+/// A relative [`Remapping`] that's aware of the current location
 ///
-/// See [`figment::RelativePathBuf`]
+/// See [`RelativeRemappingPathBuf`]
 #[derive(Clone, Debug, PartialEq)]
 pub struct RelativeRemapping {
     pub name: String,
