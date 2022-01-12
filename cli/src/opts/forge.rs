@@ -68,15 +68,7 @@ pub enum Subcommands {
     Create(CreateArgs),
 
     #[clap(alias = "i", about = "initializes a new forge sample repository")]
-    Init {
-        #[clap(
-            help = "the project's root path, default being the current working directory",
-            value_hint = ValueHint::DirPath
-        )]
-        root: Option<PathBuf>,
-        #[clap(help = "optional solidity template to start from", long, short)]
-        template: Option<String>,
-    },
+    Init(InitArgs),
 
     #[clap(about = "generate shell completions script")]
     Completions {
@@ -115,6 +107,7 @@ pub struct CompilerArgs {
 
 use crate::cmd::{
     build::{Env, EvmType},
+    init::InitArgs,
     remappings::RemappingArgs,
 };
 use ethers::types::U256;
