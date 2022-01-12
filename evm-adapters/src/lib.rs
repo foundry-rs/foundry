@@ -18,6 +18,9 @@ pub mod fuzz;
 
 pub mod call_tracing;
 
+/// Helpers for easily constructing EVM objects.
+pub mod evm_opts;
+
 use ethers::{
     abi::{Detokenize, Tokenize},
     contract::{decode_function_data, encode_function_data},
