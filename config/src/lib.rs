@@ -5,7 +5,7 @@ use std::{
     str::FromStr,
 };
 
-use ethers_core::types::Address;
+use ethers_core::types::{Address, U256};
 use ethers_solc::{remappings::Remapping, EvmVersion, ProjectPathsConfig};
 use figment::{
     providers::{Env, Format, Serialized, Toml},
@@ -14,6 +14,9 @@ use figment::{
 };
 use semver::Version;
 use serde::{Deserialize, Serialize};
+
+// reexport so cli types can implement `figment::Provider` to easily merge compiler arguments
+pub use figment;
 
 /// Foundry configuration
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -63,6 +66,32 @@ pub struct Config {
     /// Settings to pass to the `solc` compiler input
     // TODO consider making this more structured https://stackoverflow.com/questions/48998034/does-toml-support-nested-arrays-of-objects-tables
     pub solc_settings: String,
+    /// The number of test cases that must execute for each property test
+    pub fuzz_runs: u32,
+    /// Whether to allow ffi cheatcodes in test
+    pub ffi: bool,
+    /// The address which will be executing all tests
+    pub sender: Address,
+    /// The tx.origin value during EVM execution
+    pub tx_origin: Address,
+    /// the initial balance of each deployed test contract
+    pub initial_balance: U256,
+    /// the block.number value during EVM execution
+    pub block_number: u64,
+    /// pins the block number for the state fork
+    pub fork_block_number: Option<u64>,
+    /// the chainid opcode value
+    pub chain_id: Chain,
+    /// Block gas limit
+    pub gas_limit: u64,
+    /// `tx.gasprice` value during EVM execution"
+    pub gas_price: u64,
+    /// the base fee in a block
+    pub block_base_fee_per_gas: u64,
+    /// the block.coinbase value during EVM execution
+    pub block_coinbase: Address,
+    /// the block.timestamp value during EVM execution
+    pub block_timestamp: u32,
 
     /// PRIVATE: This structure may grow, As such, constructing this structure should
     /// _always_ be done using a public constructor or update syntax:
@@ -290,6 +319,8 @@ impl From<Config> for Figment {
         let figment = Figment::default()
             .merge(Toml::file(Env::var_or("FOUNDRY_CONFIG", Config::FILE_NAME)).nested())
             .merge(Env::prefixed("DAPP_").global())
+            .merge(Env::prefixed("DAPP_TEST_").global())
+            .merge(DappEnvCompatProvider)
             .merge(Env::prefixed("FOUNDRY_").ignore(&["PROFILE"]).global())
             .select(profile.clone());
 
@@ -362,6 +393,19 @@ impl Default for Config {
 }
 "#
             .to_string(),
+            fuzz_runs: 256,
+            ffi: false,
+            sender: Address::zero(),
+            tx_origin: Address::zero(),
+            initial_balance: U256::from(0xffffffffffffffffffffffffu128),
+            block_number: 0,
+            fork_block_number: None,
+            chain_id: Chain::Id(1),
+            gas_limit: u64::MAX,
+            gas_price: 0,
+            block_base_fee_per_gas: 0,
+            block_coinbase: Address::zero(),
+            block_timestamp: 0,
             eth_rpc_url: None,
             verbosity: 0,
             remappings: vec![],
@@ -369,6 +413,33 @@ impl Default for Config {
             ignored_error_codes: vec![],
             __non_exhaustive: (),
         }
+    }
+}
+
+/// A provider that checks for DAPP_ env vars that are named differently than FOUNDRY_
+struct DappEnvCompatProvider;
+
+impl Provider for DappEnvCompatProvider {
+    fn metadata(&self) -> Metadata {
+        Metadata::named("Dapp env compat")
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+        use std::env;
+        let mut dict = Dict::new();
+        if let Ok(val) = env::var("DAPP_TEST_NUMBER") {
+            dict.insert("block_number".to_string(), val.into());
+        }
+        if let Ok(val) = env::var("DAPP_TEST_ADDRESS") {
+            dict.insert("sender".to_string(), val.into());
+        }
+        if let Ok(val) = env::var("DAPP_FORK_BLOCK") {
+            dict.insert("fork_block_number".to_string(), val.into());
+        }
+        if let Ok(val) = env::var("DAPP_TEST_TIMESTAMP") {
+            dict.insert("block_timestamp".to_string(), val.into());
+        }
+        Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }
 
@@ -593,6 +664,15 @@ impl BasicConfig {
     }
 }
 
+/// Either a named or chain id or the actual id value
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Chain {
+    #[serde(with = "from_str_lowercase")]
+    Named(ethers_core::types::Chain),
+    Id(u64),
+}
+
 mod from_str_lowercase {
     use std::str::FromStr;
 
@@ -613,6 +693,15 @@ mod from_str_lowercase {
         T::Err: std::fmt::Display,
     {
         String::deserialize(deserializer)?.to_lowercase().parse().map_err(serde::de::Error::custom)
+    }
+}
+
+impl From<Chain> for u64 {
+    fn from(c: Chain) -> Self {
+        match c {
+            Chain::Named(c) => c as u64,
+            Chain::Id(id) => id,
+        }
     }
 }
 

@@ -2,10 +2,10 @@
 use foundry_cli_test_utils::{
     ethers_solc::PathStyle,
     forgetest, pretty_eq,
-    util::{read_string, TestCommand, TestProject},
+    util::{pretty_err, read_string, TestCommand, TestProject},
 };
 use foundry_config::{parse_with_profile, BasicConfig, Config};
-use std::env::set_current_dir;
+use std::{env::set_current_dir, fs};
 
 // tests `--help` is printed to std out
 forgetest!(print_help, |_: TestProject, mut cmd: TestCommand| {
@@ -48,11 +48,12 @@ forgetest!(can_init_repeatedly, |prj: TestProject, mut cmd: TestCommand| {
     cmd.arg("init").arg(prj.root());
     cmd.assert_non_empty_stdout();
     let foundry_toml = prj.root().join(Config::FILE_NAME);
-    assert!(foundry_toml.exists());
 
-    cmd.assert_non_empty_stdout();
-    cmd.assert_non_empty_stdout();
-    cmd.assert_non_empty_stdout();
+    for _ in 0..3 {
+        assert!(foundry_toml.exists());
+        pretty_err(&foundry_toml, fs::remove_file(&foundry_toml));
+        cmd.assert_non_empty_stdout();
+    }
 });
 
 // checks that `clean` removes dapptools style paths
