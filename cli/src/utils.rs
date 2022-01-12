@@ -153,6 +153,7 @@ pub mod sputnik_helpers {
 }
 
 #[cfg(feature = "evmodin-evm")]
+#[allow(dead_code)]
 pub fn evmodin_cfg(evm: EvmVersion) -> Revision {
     match evm {
         EvmVersion::Istanbul => Revision::Istanbul,

@@ -171,7 +171,7 @@ impl<'a> ContractRunner<'a> {
         &self,
         cfg: &'a mut Config,
         vicinity: &'a MemoryVicinity,
-    ) -> eyre::Result<(Address, TestSputnikVM<'a, MemoryBackend<'a>>)> {
+    ) -> eyre::Result<(Address, TestSputnikVM<'a, MemoryBackend<'a>>, Vec<String>)> {
         // We disable the contract size limit by default, because Solidity
         // test smart contracts are likely to be >24kb
         cfg.create_contract_limit = None;
@@ -191,11 +191,10 @@ impl<'a> ContractRunner<'a> {
             self.evm_opts.debug,
         );
 
-        // TODO: return the logs
-        let (addr, _, _, _logs) =
+        let (addr, _, _, logs) =
             executor.deploy(self.sender, self.code.clone(), 0u32.into()).expect("couldn't deploy");
         executor.set_balance(addr, self.evm_opts.initial_balance);
-        Ok((addr, executor))
+        Ok((addr, executor, logs))
     }
 
     pub fn new_odin_evm(&self) {
@@ -271,10 +270,11 @@ impl<'a> ContractRunner<'a> {
         let should_fail = func.name.starts_with("testFail");
         tracing::debug!(func = ?func.signature(), should_fail, "unit-testing");
 
-        let mut logs = vec![];
         let mut cfg = Config::london();
         let vicinity = self.evm_opts.vicinity().unwrap();
-        let (address, mut evm) = self.new_sputnik_evm(&mut cfg, &vicinity)?;
+        let (address, mut evm, init_logs) = self.new_sputnik_evm(&mut cfg, &vicinity)?;
+
+        let mut logs = init_logs;
 
         // call the setup function in each test to reset the test's state.
         if setup {
@@ -348,14 +348,14 @@ impl<'a> ContractRunner<'a> {
 
         let mut cfg = Config::london();
         let vicinity = self.evm_opts.vicinity().unwrap();
-        let (address, mut evm) = self.new_sputnik_evm(&mut cfg, &vicinity)?;
+        let (address, mut evm, init_logs) = self.new_sputnik_evm(&mut cfg, &vicinity)?;
 
         // call the setup function in each test to reset the test's state.
         if setup {
             evm.setup(address)?;
         }
 
-        let mut logs = vec![];
+        let mut logs = init_logs;
 
         let prev = evm.set_tracing_enabled(false);
 
@@ -485,9 +485,19 @@ impl<'a> ContractRunner<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::{Filter, COMPILED};
+    use crate::test_helpers::{Filter, COMPILED, EVM_OPTS};
     use ethers::solc::artifacts::CompactContractRef;
-    use evm_adapters::sputnik::helpers::vm;
+
+    pub fn test_runner(compiled: CompactContractRef) {
+        let (_, code, _) = compiled.into_parts_or_default();
+
+        let mut runner =
+            ContractRunner::new(EVM_OPTS.clone(), compiled.abi.as_ref().unwrap(), code, None);
+
+        let res = runner.run_tests(&Filter::new(".*", ".*"), None, None).unwrap();
+        assert!(!res.is_empty());
+        assert!(res.iter().all(|(_, result)| result.success));
+    }
 
     mod sputnik {
         use foundry_utils::get_func;
@@ -498,28 +508,22 @@ mod tests {
         #[test]
         fn test_runner() {
             let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
-            let evm = vm();
-            super::test_runner(evm, compiled);
+            super::test_runner(compiled);
         }
 
         #[test]
         fn test_function_overriding() {
             let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
-            let mut evm = vm();
-            let (addr, _, _, _) = evm
-                .deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into())
-                .unwrap();
 
-            let init_state = evm.state().clone();
-
+            let (_, code, _) = compiled.into_parts_or_default();
             let mut runner =
-                ContractRunner::new(&mut evm, compiled.abi.as_ref().unwrap(), addr, None, &[]);
+                ContractRunner::new(EVM_OPTS.clone(), compiled.abi.as_ref().unwrap(), code, None);
 
             let mut cfg = FuzzConfig::default();
             cfg.failure_persistence = None;
             let mut fuzzer = TestRunner::new(cfg);
             let results = runner
-                .run_tests(&Filter::new("testGreeting", ".*"), Some(&mut fuzzer), &init_state, None)
+                .run_tests(&Filter::new("testGreeting", ".*"), Some(&mut fuzzer), None)
                 .unwrap();
             assert!(results["testGreeting()"].success);
             assert!(results["testGreeting(string)"].success);
@@ -529,21 +533,16 @@ mod tests {
         #[test]
         fn test_fuzzing_counterexamples() {
             let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
-            let mut evm = vm();
-            let (addr, _, _, _) = evm
-                .deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into())
-                .unwrap();
 
-            let init_state = evm.state().clone();
-
+            let (_, code, _) = compiled.into_parts_or_default();
             let mut runner =
-                ContractRunner::new(&mut evm, compiled.abi.as_ref().unwrap(), addr, None, &[]);
+                ContractRunner::new(EVM_OPTS.clone(), compiled.abi.as_ref().unwrap(), code, None);
 
             let mut cfg = FuzzConfig::default();
             cfg.failure_persistence = None;
             let mut fuzzer = TestRunner::new(cfg);
             let results = runner
-                .run_tests(&Filter::new("testFuzz.*", ".*"), Some(&mut fuzzer), &init_state, None)
+                .run_tests(&Filter::new("testFuzz.*", ".*"), Some(&mut fuzzer), None)
                 .unwrap();
             for (_, res) in results {
                 assert!(!res.success);
@@ -554,13 +553,10 @@ mod tests {
         #[test]
         fn test_fuzzing_ok() {
             let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
-            let mut evm = vm();
-            let (addr, _, _, _) = evm
-                .deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into())
-                .unwrap();
 
-            let mut runner =
-                ContractRunner::new(&mut evm, compiled.abi.as_ref().unwrap(), addr, None, &[]);
+            let (_, code, _) = compiled.into_parts_or_default();
+            let runner =
+                ContractRunner::new(EVM_OPTS.clone(), compiled.abi.as_ref().unwrap(), code, None);
 
             let mut cfg = FuzzConfig::default();
             cfg.failure_persistence = None;
@@ -574,13 +570,10 @@ mod tests {
         #[test]
         fn test_fuzz_shrinking() {
             let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
-            let mut evm = vm();
-            let (addr, _, _, _) = evm
-                .deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into())
-                .unwrap();
 
-            let mut runner =
-                ContractRunner::new(&mut evm, compiled.abi.as_ref().unwrap(), addr, None, &[]);
+            let (_, code, _) = compiled.into_parts_or_default();
+            let runner =
+                ContractRunner::new(EVM_OPTS.clone(), compiled.abi.as_ref().unwrap(), code, None);
 
             let mut cfg = FuzzConfig::default();
             cfg.failure_persistence = None;
@@ -628,22 +621,8 @@ mod tests {
             let host = MockedHost::default();
 
             let gas_limit = 12_000_000;
-            let evm = EvmOdin::new(host, gas_limit, revision, NoopTracer);
-            super::test_runner(evm, compiled);
+            let _evm = EvmOdin::new(host, gas_limit, revision, NoopTracer);
+            super::test_runner(compiled);
         }
-    }
-
-    pub fn test_runner<S: Clone, E: Evm<S>>(mut evm: E, compiled: CompactContractRef) {
-        let (addr, _, _, _) =
-            evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
-
-        let init_state = evm.state().clone();
-
-        let mut runner =
-            ContractRunner::new(&mut evm, compiled.abi.as_ref().unwrap(), addr, None, &[]);
-
-        let res = runner.run_tests(&Filter::new(".*", ".*"), None, &init_state, None).unwrap();
-        assert!(!res.is_empty());
-        assert!(res.iter().all(|(_, result)| result.success));
     }
 }
