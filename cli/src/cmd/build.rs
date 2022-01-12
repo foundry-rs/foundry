@@ -14,8 +14,6 @@ use std::{
 use crate::{cmd::Cmd, opts::forge::CompilerArgs, utils};
 
 use clap::Parser;
-#[cfg(feature = "evmodin-evm")]
-use evmodin::util::mocked_host::MockedHost;
 
 #[derive(Debug, Clone, Parser)]
 pub struct BuildArgs {
