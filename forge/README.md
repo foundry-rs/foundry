@@ -286,6 +286,10 @@ For example, if you have `@openzeppelin` imports, you would
 @openzeppelin/=lib/openzeppelin-contracts/
 ```
 
+## Github Actions CI
+
+We recommend using the [Github Actions CI setup](https://github.com/FrankieIsLost/forge-template/blob/2ff5ae4ea40d77d4aa4e8353e0a878478ec9df24/.github/workflows/CI.yml) from @FrankieIsLost's [forge-template](https://github.com/FrankieIsLost/forge-template).
+
 ## Future Features
 
 ### Dapptools feature parity
