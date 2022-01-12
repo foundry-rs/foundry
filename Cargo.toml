@@ -18,7 +18,7 @@ panic = "abort"
 debug = true
 
 ## Patch ethers-rs with a local checkout
-#[patch."https://github.com/gakonst/ethers-rs"]
+# [patch."https://github.com/gakonst/ethers-rs"]
 #ethers = { path = "../ethers-rs" }
 #ethers-core = { path = "../ethers-rs/ethers-core" }
 #ethers-providers = { path = "../ethers-rs/ethers-providers" }

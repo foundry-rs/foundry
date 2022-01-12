@@ -1,12 +1,11 @@
 //! foundry configuration.
-use std::{
-    fmt,
-    path::{Path, PathBuf},
-    str::FromStr,
-};
+use std::path::{Path, PathBuf};
 
 use ethers_core::types::{Address, U256};
-use ethers_solc::{remappings::Remapping, EvmVersion, ProjectPathsConfig};
+use ethers_solc::{
+    remappings::{RelativeRemapping, Remapping},
+    EvmVersion, ProjectPathsConfig,
+};
 use figment::{
     providers::{Env, Format, Serialized, Toml},
     value::{Dict, Map},
@@ -507,123 +506,6 @@ impl Provider for RemappingsProvider {
     }
 }
 
-/// The path part of the [`Remapping`] that knows the path of the file it was configured in, if any.
-///
-/// A [`Remapping`] is intended to be absolute, but paths in configuration files are often desired
-/// to be relative to the configuration file itself. For example, a path of
-/// `weird-erc20/=lib/weird-erc20/src/` configured in a file `/var/foundry.toml` might be desired to
-/// resolve as a `weird-erc20/=/var/lib/weird-erc20/src/` remapping.
-#[derive(Debug, Clone, PartialEq)]
-pub struct RelativeRemappingPathBuf {
-    parent: Option<PathBuf>,
-    path: PathBuf,
-}
-
-impl RelativeRemappingPathBuf {
-    /// Creates a new `RelativeRemappingPathBuf` that checks if the `path` is a child path of
-    /// `parent`.
-    pub fn with_root(parent: &Path, path: impl AsRef<Path>) -> Self {
-        let path = path.as_ref();
-        if let Ok(path) = path.strip_prefix(parent) {
-            Self { parent: Some(parent.to_path_buf()), path: path.to_path_buf() }
-        } else if path.has_root() {
-            Self { parent: None, path: path.to_path_buf() }
-        } else {
-            Self { parent: Some(parent.to_path_buf()), path: path.to_path_buf() }
-        }
-    }
-
-    /// Returns the path as it was declared, without modification.
-    pub fn original(&self) -> &Path {
-        &self.path
-    }
-
-    /// Returns this path relative to the file it was delcared in, if any.
-    /// Returns the original if this path was not declared in a file or if the
-    /// path has a root.
-    pub fn relative(&self) -> PathBuf {
-        if self.original().has_root() {
-            return self.original().into()
-        }
-        self.parent
-            .as_ref()
-            .map(|p| p.join(self.original()))
-            .unwrap_or_else(|| self.original().into())
-    }
-}
-
-impl<P: AsRef<Path>> From<P> for RelativeRemappingPathBuf {
-    fn from(path: P) -> RelativeRemappingPathBuf {
-        Self { parent: None, path: path.as_ref().to_path_buf() }
-    }
-}
-
-impl Serialize for RelativeRemapping {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: serde::ser::Serializer,
-    {
-        serializer.serialize_str(&self.to_string())
-    }
-}
-
-impl<'de> Deserialize<'de> for RelativeRemapping {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where
-        D: serde::de::Deserializer<'de>,
-    {
-        let remapping = String::deserialize(deserializer)?;
-        let remapping = Remapping::from_str(&remapping).map_err(serde::de::Error::custom)?;
-        Ok(RelativeRemapping { name: remapping.name, path: remapping.path.into() })
-    }
-}
-
-/// A relative [`Remapping`] that's aware of the current location
-///
-/// See [`RelativeRemappingPathBuf`]
-#[derive(Clone, Debug, PartialEq)]
-pub struct RelativeRemapping {
-    pub name: String,
-    pub path: RelativeRemappingPathBuf,
-}
-
-impl RelativeRemapping {
-    /// Creates a new `RelativeRemapping` starting prefixed with `root`
-    pub fn new(remapping: Remapping, root: &Path) -> Self {
-        Self {
-            name: remapping.name,
-            path: RelativeRemappingPathBuf::with_root(root, remapping.path),
-        }
-    }
-
-    /// Converts this relative remapping into an absolute remapping
-    ///
-    /// This sets to root of the remapping to the given `root` path
-    pub fn to_remapping(mut self, root: PathBuf) -> Remapping {
-        self.path.parent = Some(root);
-        self.into()
-    }
-}
-
-// Remappings are printed as `prefix=target`
-impl fmt::Display for RelativeRemapping {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}={}", self.name, self.path.original().display())
-    }
-}
-
-impl From<RelativeRemapping> for Remapping {
-    fn from(r: RelativeRemapping) -> Self {
-        Remapping { name: r.name, path: r.path.relative().to_string_lossy().to_string() }
-    }
-}
-
-impl From<Remapping> for RelativeRemapping {
-    fn from(r: Remapping) -> Self {
-        Self { name: r.name, path: r.path.into() }
-    }
-}
-
 /// A subset of the foundry `Config`
 /// used to initialize a `foundry.toml` file
 ///
@@ -646,6 +528,7 @@ pub struct BasicConfig {
     /// all library folders to include, `lib`, `node_modules`
     pub libs: Vec<PathBuf>,
     /// `Remappings` to use for this repo
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub remappings: Vec<RelativeRemapping>,
 }
 
