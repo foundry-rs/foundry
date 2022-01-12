@@ -159,7 +159,7 @@ impl MultiContractRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::Filter;
+    use crate::test_helpers::{Filter, EVM_OPTS};
     use ethers::solc::ProjectPathsConfig;
     use std::path::PathBuf;
 
@@ -180,11 +180,11 @@ mod tests {
     }
 
     fn runner() -> MultiContractRunner {
-        MultiContractRunnerBuilder::default().build(project(), evm).unwrap()
+        MultiContractRunnerBuilder::default().build(project(), EVM_OPTS.clone()).unwrap()
     }
 
-    fn test_multi_runner<S: Clone, E: Evm<S>>(evm: E) {
-        let mut runner = runner(evm);
+    fn test_multi_runner() {
+        let mut runner = runner();
         let results = runner.test(&Filter::new(".*", ".*")).unwrap();
 
         // 6 contracts being built
@@ -202,8 +202,8 @@ mod tests {
         assert!(only_gm["GmTest.json:GmTest"]["testGm()"].success);
     }
 
-    fn test_abstract_contract<S: Clone, E: Evm<S>>(evm: E) {
-        let mut runner = runner(evm);
+    fn test_abstract_contract() {
+        let mut runner = runner();
         let results = runner.test(&Filter::new(".*", ".*")).unwrap();
         assert!(results.get("Tests.json:Tests").is_none());
         assert!(results.get("ATests.json:ATests").is_some());
@@ -212,14 +212,11 @@ mod tests {
 
     mod sputnik {
         use super::*;
-        use evm_adapters::sputnik::helpers::vm;
         use std::collections::HashMap;
 
         #[test]
         fn test_sputnik_debug_logs() {
-            let evm = vm();
-
-            let mut runner = runner(evm);
+            let mut runner = runner();
             let results = runner.test(&Filter::new(".*", ".*")).unwrap();
 
             let reasons = results["DebugLogsTest.json:DebugLogsTest"]
@@ -251,12 +248,12 @@ mod tests {
 
         #[test]
         fn test_sputnik_multi_runner() {
-            test_multi_runner(vm());
+            test_multi_runner();
         }
 
         #[test]
         fn test_sputnik_abstract_contract() {
-            test_abstract_contract(vm());
+            test_abstract_contract();
         }
     }
 

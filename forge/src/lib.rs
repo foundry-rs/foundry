@@ -127,10 +127,10 @@ pub struct Env {
     pub tx_origin: Address,
 
     #[clap(
-    help = "the block.coinbase value during EVM execution",
-    long,
-    // TODO: It'd be nice if we could use Address::zero() here.
-    default_value = "0x0000000000000000000000000000000000000000"
+        help = "the block.coinbase value during EVM execution",
+        long,
+        // TODO: It'd be nice if we could use Address::zero() here.
+        default_value = "0x0000000000000000000000000000000000000000"
     )]
     pub block_coinbase: Address,
     #[clap(
@@ -203,6 +203,32 @@ pub mod test_helpers {
             ProjectPathsConfig::builder().root("testdata").sources("testdata").build().unwrap();
         let project = Project::builder().paths(paths).ephemeral().no_artifacts().build().unwrap();
         project.compile().unwrap().output()
+    });
+
+    pub static EVM_OPTS: Lazy<EvmOpts> = Lazy::new(|| {
+        let env = Env {
+            gas_limit: 18446744073709551615,
+            chain_id: 1,
+            gas_price: 0,
+            block_base_fee_per_gas: 0,
+            tx_origin: Default::default(),
+            block_coinbase: Default::default(),
+            block_timestamp: 0,
+            block_number: 0,
+            block_difficulty: 0,
+            block_gas_limit: None,
+        };
+        EvmOpts {
+            env,
+            evm_type: EvmType::Sputnik,
+            fork_url: None,
+            fork_block_number: None,
+            initial_balance: U256::MAX,
+            sender: Default::default(),
+            ffi: false,
+            verbosity: 0,
+            debug: false,
+        }
     });
 
     pub struct Filter {
