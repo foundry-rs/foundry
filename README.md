@@ -99,7 +99,9 @@ Profile_](./config/README.md#default-profile)
 
 `forge init` creates a basic, extendable `foundry.toml` file.
 
-To see all currently set options run `forge config`
+To see all currently set options run `forge config`, to only see the basic options (as set with `forge init`)
+run `forge config --basic`, this can be used to create a new `foundry.toml` file
+with `forge config --basic > foundry.toml`
 
 ### VSCode
 

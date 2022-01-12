@@ -9,6 +9,8 @@ use foundry_config::Config;
 pub struct ConfigArgs {
     #[clap(help = "prints currently set config values as json", long)]
     json: bool,
+    #[clap(help = "prints basic set of currently set config values", long)]
+    basic: bool,
 }
 
 impl Cmd for ConfigArgs {
@@ -17,12 +19,19 @@ impl Cmd for ConfigArgs {
     fn run(self) -> eyre::Result<Self::Output> {
         let cwd = dunce::canonicalize(std::env::current_dir()?)?;
         let config = Config::from(Config::figment_with_root(cwd));
-
-        let s = if self.json {
+        let s = if self.basic {
+            let config = config.into_basic();
+            if self.json {
+                serde_json::to_string_pretty(&config)?
+            } else {
+                config.to_string_pretty()?
+            }
+        } else if self.json {
             serde_json::to_string_pretty(&config)?
         } else {
             config.to_string_pretty()?
         };
+
         println!("{}", s);
         Ok(())
     }
