@@ -195,7 +195,7 @@ contract T is DSTest {
     function testExpectEmit() public {
         ExpectEmit emitter = new ExpectEmit();
         // check topic 1, topic 2, and data are the same as the following emitted event
-        hevm.expectEmit(true,true,false,true);
+        vm.expectEmit(true,true,false,true);
         emit Transfer(address(this), address(1337), 1337);
         emitter.t();
     }
