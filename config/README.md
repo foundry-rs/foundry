@@ -33,7 +33,6 @@ eth-rpc-url = "https://mainnet.infura.io"
 
 ## set only when the `hardhat` profile is selected
 [hardhat]
-## override the default settings, but inherit everything else
 src = "contracts"
 out = "artifacts"
 libs = ["node_modules"]
@@ -76,6 +75,18 @@ optimizer = true
 optimizer_runs = 200
 verbosity = 0
 ignored_error_codes = []
+fuzz_runs = 256
+ffi = false
+sender = '0x0000000000000000000000000000000000000000'
+tx_origin = '0x0000000000000000000000000000000000000000'
+initial_balance = '0xffffffffffffffffffffffff'
+block_number = 0
+chain_id = 1
+gas_limit = 9223372036854775807
+gas_price = 0
+block_base_fee_per_gas = 0
+block_coinbase = '0x0000000000000000000000000000000000000000'
+block_timestamp = 0
 solc_settings = '''
 {
   "*": {

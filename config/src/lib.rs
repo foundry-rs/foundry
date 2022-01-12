@@ -62,9 +62,6 @@ pub struct Config {
     pub eth_rpc_url: Option<String>,
     /// list of solidity error codes to always silence
     pub ignored_error_codes: Vec<u64>,
-    /// Settings to pass to the `solc` compiler input
-    // TODO consider making this more structured https://stackoverflow.com/questions/48998034/does-toml-support-nested-arrays-of-objects-tables
-    pub solc_settings: String,
     /// The number of test cases that must execute for each property test
     pub fuzz_runs: u32,
     /// Whether to allow ffi cheatcodes in test
@@ -90,8 +87,10 @@ pub struct Config {
     /// the block.coinbase value during EVM execution
     pub block_coinbase: Address,
     /// the block.timestamp value during EVM execution
-    pub block_timestamp: u32,
-
+    pub block_timestamp: u64,
+    /// Settings to pass to the `solc` compiler input
+    // TODO consider making this more structured https://stackoverflow.com/questions/48998034/does-toml-support-nested-arrays-of-objects-tables
+    pub solc_settings: String,
     /// PRIVATE: This structure may grow, As such, constructing this structure should
     /// _always_ be done using a public constructor or update syntax:
     ///
@@ -134,7 +133,7 @@ impl Config {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```no_run
     /// use foundry_config::Config;
     /// use figment::providers::{Toml, Format, Env};
     ///
@@ -375,7 +374,7 @@ impl Default for Config {
             evm_version: Default::default(),
             solc_version: None,
             auto_detect_solc: true,
-            optimizer: false,
+            optimizer: true,
             optimizer_runs: 200,
             solc_settings: r#"{
   "*": {
@@ -400,7 +399,9 @@ impl Default for Config {
             block_number: 0,
             fork_block_number: None,
             chain_id: Chain::Id(1),
-            gas_limit: u64::MAX,
+            // toml-rs can't handle larger number because integers are stored signed
+            // https://github.com/alexcrichton/toml-rs/issues/256
+            gas_limit: i64::MAX as u64,
             gas_price: 0,
             block_base_fee_per_gas: 0,
             block_coinbase: Address::zero(),
@@ -424,19 +425,30 @@ impl Provider for DappEnvCompatProvider {
     }
 
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+        use serde::de::Error as _;
         use std::env;
+
         let mut dict = Dict::new();
         if let Ok(val) = env::var("DAPP_TEST_NUMBER") {
-            dict.insert("block_number".to_string(), val.into());
+            dict.insert(
+                "block_number".to_string(),
+                val.parse::<u64>().map_err(figment::Error::custom)?.into(),
+            );
         }
         if let Ok(val) = env::var("DAPP_TEST_ADDRESS") {
             dict.insert("sender".to_string(), val.into());
         }
         if let Ok(val) = env::var("DAPP_FORK_BLOCK") {
-            dict.insert("fork_block_number".to_string(), val.into());
+            dict.insert(
+                "fork_block_number".to_string(),
+                val.parse::<u64>().map_err(figment::Error::custom)?.into(),
+            );
         }
         if let Ok(val) = env::var("DAPP_TEST_TIMESTAMP") {
-            dict.insert("block_timestamp".to_string(), val.into());
+            dict.insert(
+                "block_timestamp".to_string(),
+                val.parse::<u64>().map_err(figment::Error::custom)?.into(),
+            );
         }
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
@@ -592,6 +604,7 @@ impl From<Chain> for u64 {
 mod tests {
     use figment::Figment;
     use pretty_assertions::assert_eq;
+    use std::str::FromStr;
 
     use super::*;
 
@@ -752,6 +765,26 @@ mod tests {
                     remappings: default.remappings
                 }
             );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn can_handle_deviating_dapp_aliases() {
+        figment::Jail::expect_with(|jail| {
+            let addr = Address::random();
+            jail.set_env("DAPP_TEST_NUMBER", 1337);
+            jail.set_env("DAPP_TEST_ADDRESS", format!("{:?}", addr));
+            jail.set_env("DAPP_TEST_FUZZ_RUNS", 420);
+            jail.set_env("DAPP_FORK_BLOCK", 100);
+
+            let config = Config::load();
+
+            assert_eq!(config.block_number, 1337);
+            assert_eq!(config.sender, addr);
+            assert_eq!(config.fuzz_runs, 420);
+            assert_eq!(config.fork_block_number, Some(100));
+
             Ok(())
         });
     }
