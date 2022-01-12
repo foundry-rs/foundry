@@ -79,25 +79,21 @@ impl Cmd for RunArgs {
         // this should never fail if compilation was successful
         let bytecode = bin.into_bytes().unwrap();
 
-        // 2. instantiate the EVM w forked backend if needed / pre-funded account(s)
+        // 1. instantiate the EVM w forked backend if needed / pre-funded account(s)
         let mut cfg = crate::utils::sputnik_cfg(self.opts.compiler.evm_version);
         let vicinity = self.evm_opts.vicinity()?;
         let evm = crate::utils::sputnik_helpers::evm(&evm_opts, &mut cfg, &vicinity)?;
 
-        // 3. deploy the contract
-        // let (addr, _, _, logs) = evm.deploy(self.evm_opts.sender, bytecode.clone(),
-        // 0u32.into())?;
-
-        // 4. set up the runner
+        // 2. set up the runner
         let runner =
             ContractRunner::new(self.evm_opts.clone(), &abi, bytecode, Some(self.evm_opts.sender));
 
-        // 5. run the test function & potentially the setup
+        // 3. run the test function & potentially the setup
         let needs_setup = abi.functions().any(|func| func.name == "setUp");
         let result = runner.run_test(&func, needs_setup, Some(&known_contracts))?;
 
         if self.evm_opts.debug {
-            // 6. Boot up debugger
+            // 4. Boot up debugger
             let source_code: BTreeMap<u32, String> = sources
                 .iter()
                 .map(|(id, path)| {
@@ -165,7 +161,7 @@ impl Cmd for RunArgs {
                 println!();
             }
         } else {
-            // 6. print the result nicely
+            // 5. print the result nicely
             if result.success {
                 println!("{}", Colour::Green.paint("Script ran successfully."));
             } else {
