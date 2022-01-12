@@ -1,14 +1,22 @@
 //! Contains various tests for checking forge's commands
 use foundry_cli_test_utils::{
     ethers_solc::PathStyle,
-    forgetest,
+    forgetest, pretty_eq,
     util::{TestCommand, TestProject},
 };
+use foundry_config::Config;
 
 // tests `--help` is printed to std out
 forgetest!(print_help, |_: TestProject, mut cmd: TestCommand| {
     cmd.arg("--help");
     cmd.assert_non_empty_stdout();
+});
+
+// tests config gets printed to std out
+forgetest!(can_show_config, |_: TestProject, mut cmd: TestCommand| {
+    cmd.arg("config");
+    let expected = Config::from(Config::figment()).to_string_pretty().unwrap().trim().to_string();
+    pretty_eq!(expected, cmd.stdout().trim().to_string());
 });
 
 // checks that `clean` can be invoked even if out and cache don't exist

@@ -291,7 +291,7 @@ impl From<Config> for Figment {
         // we try to merge remappings after we've merged all other providers, this prevents
         // redundant fs lookups to determine the default remappings that are eventually updated by
         // other providers, like the toml file
-        let remappings = RemappingsProvider::new(&figment);
+        let remappings = RemappingsProvider::new(&figment, c.libs.clone());
         Figment::from(c).merge(figment.merge(remappings)).select(profile)
     }
 }
@@ -365,10 +365,10 @@ struct RemappingsProvider {
 }
 
 impl RemappingsProvider {
-    fn new(figment: &Figment) -> Self {
+    fn new(figment: &Figment, libs: Vec<PathBuf>) -> Self {
         let remappings = figment.extract_inner::<Vec<Remapping>>("remappings");
         let lib_paths =
-            figment.extract_inner::<Vec<PathBuf>>("libs").unwrap_or_else(|_| c.libs.clone());
+            figment.extract_inner::<Vec<PathBuf>>("libs").unwrap_or(libs);
         let root = Config::find_config_file()
             .and_then(|f| f.parent().map(|p| p.to_path_buf()))
             .unwrap_or_else(|| std::env::current_dir().unwrap());
@@ -387,7 +387,7 @@ impl Provider for RemappingsProvider {
             Err(err) => {
                 if let figment::error::Kind::MissingField(_) = err.kind {
                     // only search for the remappings if weren't set before
-                    self.lib_paths.iter().flat_map(Remapping::find_many).collect()
+                    self.lib_paths.iter().map(|lib|self.root.join(lib)).flat_map(Remapping::find_many).collect()
                 } else {
                     return Err(err.clone())
                 }

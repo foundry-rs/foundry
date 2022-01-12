@@ -19,9 +19,9 @@ impl Cmd for ConfigArgs {
         let config = Config::from(Config::figment_with_root(cwd));
 
         let s = if self.json {
-            config.to_string_pretty()?
-        } else {
             serde_json::to_string_pretty(&config)?
+        } else {
+            config.to_string_pretty()?
         };
         println!("{}", s);
         Ok(())
