@@ -290,14 +290,14 @@ pub struct Env {
     #[clap(
         help = "the tx.origin value during EVM execution",
         long,
-        default_value_t = Address::zero()
+        default_value = "0x0000000000000000000000000000000000000000"
     )]
     pub tx_origin: Address,
 
     #[clap(
         help = "the block.coinbase value during EVM execution",
         long,
-        default_value_t = Address::zero()
+        default_value = "0x0000000000000000000000000000000000000000"
     )]
     pub block_coinbase: Address,
     #[clap(
