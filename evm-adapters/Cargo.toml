@@ -11,7 +11,7 @@ foundry-utils = { path = "./../utils" }
 
 sputnik = { package = "evm", git = "https://github.com/rust-blockchain/evm",  optional = true, features = ["tracing"] }
 
-evmodin = { git = "https://github.com/vorot93/evmodin",  optional = true }
+evmodin = { git = "https://github.com/vorot93/evmodin",  optional = true, features = ["util"] }
 
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["solc-full"] }
 eyre = "0.6.5"
