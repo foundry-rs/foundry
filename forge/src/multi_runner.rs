@@ -49,7 +49,7 @@ impl MultiContractRunnerBuilder {
         // artifacts
         let contracts = output.into_artifacts();
         let mut known_contracts: BTreeMap<String, (Abi, Vec<u8>)> = Default::default();
-        let mut deployed_contracts: BTreeMap<String, (Abi, ethers::prelude::Bytes)> =
+        let mut deployable_contracts: BTreeMap<String, (Abi, ethers::prelude::Bytes)> =
             Default::default();
 
         for (fname, contract) in contracts {
@@ -60,7 +60,7 @@ impl MultiContractRunnerBuilder {
                     continue
                 }
 
-                deployed_contracts.insert(fname.clone(), (abi.clone(), bytecode.clone()));
+                deployable_contracts.insert(fname.clone(), (abi.clone(), bytecode.clone()));
 
                 let split = fname.split(':').collect::<Vec<&str>>();
                 let contract_name = if split.len() > 1 { split[1] } else { split[0] };
@@ -71,7 +71,7 @@ impl MultiContractRunnerBuilder {
         }
 
         Ok(MultiContractRunner {
-            contracts: deployed_contracts,
+            contracts: deployable_contracts,
             known_contracts,
             identified_contracts: Default::default(),
             evm_opts,
@@ -102,8 +102,7 @@ impl MultiContractRunnerBuilder {
 /// A multi contract runner receives a set of contracts deployed in an EVM instance and proceeds
 /// to run all test functions in these contracts.
 pub struct MultiContractRunner {
-    /// Mapping of contract name to compiled bytecode, deployed address and logs emitted during
-    /// deployment
+    /// Mapping of contract name to Abi and creation bytecode
     pub contracts: BTreeMap<String, (Abi, ethers::prelude::Bytes)>,
     /// Compiled contracts by name that have an Abi and runtime bytecode
     pub known_contracts: BTreeMap<String, (Abi, Vec<u8>)>,
