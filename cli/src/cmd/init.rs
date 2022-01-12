@@ -73,10 +73,10 @@ impl Cmd for InitArgs {
             Dependency::from_str("https://github.com/dapphub/ds-test")
                 .and_then(|dependency| install(&root, vec![dependency]))?;
 
+            let dest = root.join(Config::FILE_NAME);
             if !dest.exists() {
                 // write foundry.toml
                 let config = Config::from(Config::with_root(&root)).into_basic();
-                let dest = root.join(Config::FILE_NAME);
                 std::fs::write(dest, config.to_string_pretty()?)?;
             }
         }

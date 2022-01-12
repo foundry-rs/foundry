@@ -43,6 +43,18 @@ forgetest!(can_init_repo_with_config, |prj: TestProject, mut cmd: TestCommand| {
     assert_eq!(basic, Config::load().into_basic());
 });
 
+// checks that init works repeatedly
+forgetest!(can_init_repeatedly, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.arg("init").arg(prj.root());
+    cmd.assert_non_empty_stdout();
+    let foundry_toml = prj.root().join(Config::FILE_NAME);
+    assert!(foundry_toml.exists());
+
+    cmd.assert_non_empty_stdout();
+    cmd.assert_non_empty_stdout();
+    cmd.assert_non_empty_stdout();
+});
+
 // checks that `clean` removes dapptools style paths
 forgetest!(can_clean, |prj: TestProject, mut cmd: TestCommand| {
     prj.assert_create_dirs_exists();
