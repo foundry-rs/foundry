@@ -35,6 +35,7 @@ pub fn setup_project(test: TestProject) -> (TestProject, TestCommand) {
 /// Test projects are created from a global atomic counter to avoid duplicates.
 #[derive(Clone, Debug)]
 pub struct TestProject<T: ArtifactOutput = MinimalCombinedArtifacts> {
+    saved_cwd: PathBuf,
     /// The directory in which this test executable is running.
     root: PathBuf,
     /// The project in which the test should run.
@@ -54,7 +55,7 @@ impl TestProject {
     pub fn with_project(project: TempProject) -> Self {
         let root =
             env::current_exe().unwrap().parent().expect("executable's directory").to_path_buf();
-        Self { root, inner: Arc::new(project) }
+        Self { root, inner: Arc::new(project), saved_cwd: pretty_err(".", std::env::current_dir()) }
     }
 
     /// Returns the root path of the project's workspace.
@@ -114,6 +115,12 @@ impl TestProject {
     }
 }
 
+impl<T: ArtifactOutput> Drop for TestProject<T> {
+    fn drop(&mut self) {
+        let _ = std::env::set_current_dir(&self.saved_cwd);
+    }
+}
+
 fn config_paths_exist(paths: &ProjectPathsConfig, cached: bool) {
     if cached {
         assert!(paths.cache.exists());
@@ -123,11 +130,16 @@ fn config_paths_exist(paths: &ProjectPathsConfig, cached: bool) {
     paths.libraries.iter().for_each(|lib| assert!(lib.exists()));
 }
 
-fn pretty_err<T, E: std::error::Error>(path: impl AsRef<Path>, res: Result<T, E>) -> T {
+pub fn pretty_err<T, E: std::error::Error>(path: impl AsRef<Path>, res: Result<T, E>) -> T {
     match res {
         Ok(t) => t,
         Err(err) => panic!("{}: {:?}", path.as_ref().display(), err),
     }
+}
+
+pub fn read_string(path: impl AsRef<Path>) -> String {
+    let path = path.as_ref();
+    pretty_err(path, std::fs::read_to_string(path))
 }
 
 /// A simple wrapper around a process::Command with some conveniences.

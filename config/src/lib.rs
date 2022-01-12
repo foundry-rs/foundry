@@ -93,8 +93,8 @@ impl Config {
     /// Returns the current `Config`
     ///
     /// See `Config::figment`
-    pub fn load() -> Result<Self, figment::Error> {
-        Config::figment().extract()
+    pub fn load() -> Self {
+        Config::from(Config::figment())
     }
 
     /// Extract a `Config` from `provider`, panicking if extraction fails.
@@ -296,6 +296,23 @@ impl From<Config> for Figment {
     }
 }
 
+/// Parses a config profile
+///
+/// All `Profile` date is ignored by serde, however the `Config::to_string_pretty` includes it and
+/// returns a toml table like
+///
+/// ```toml
+/// #[default]
+/// src = "..."
+/// ```
+/// This ignores the `#[default]` part in the toml
+pub fn parse_with_profile<T: serde::de::DeserializeOwned>(
+    s: &str,
+) -> Result<Option<(Profile, T)>, toml::de::Error> {
+    let val: Map<Profile, T> = toml::from_str(s)?;
+    Ok(val.into_iter().next())
+}
+
 impl Provider for Config {
     fn metadata(&self) -> Metadata {
         Metadata::named("Foundry Config")
@@ -367,8 +384,7 @@ struct RemappingsProvider {
 impl RemappingsProvider {
     fn new(figment: &Figment, libs: Vec<PathBuf>) -> Self {
         let remappings = figment.extract_inner::<Vec<Remapping>>("remappings");
-        let lib_paths =
-            figment.extract_inner::<Vec<PathBuf>>("libs").unwrap_or(libs);
+        let lib_paths = figment.extract_inner::<Vec<PathBuf>>("libs").unwrap_or(libs);
         let root = Config::find_config_file()
             .and_then(|f| f.parent().map(|p| p.to_path_buf()))
             .unwrap_or_else(|| std::env::current_dir().unwrap());
@@ -387,7 +403,11 @@ impl Provider for RemappingsProvider {
             Err(err) => {
                 if let figment::error::Kind::MissingField(_) = err.kind {
                     // only search for the remappings if weren't set before
-                    self.lib_paths.iter().map(|lib|self.root.join(lib)).flat_map(Remapping::find_many).collect()
+                    self.lib_paths
+                        .iter()
+                        .map(|lib| self.root.join(lib))
+                        .flat_map(Remapping::find_many)
+                        .collect()
                 } else {
                     return Err(err.clone())
                 }
@@ -651,7 +671,7 @@ mod tests {
             "#,
             )?;
 
-            let config = Config::from(Config::figment());
+            let config = Config::load();
             assert_eq!(
                 config,
                 Config {
@@ -682,7 +702,7 @@ mod tests {
             "#,
             )?;
 
-            let config = Config::from(Config::figment());
+            let config = Config::load();
             assert_eq!(
                 config,
                 Config {
@@ -694,7 +714,7 @@ mod tests {
             );
 
             jail.set_env("FOUNDRY_SRC", r#"other-src"#);
-            let config = Config::from(Config::figment());
+            let config = Config::load();
             assert_eq!(
                 config,
                 Config {
@@ -729,7 +749,7 @@ mod tests {
                 src = "other-src"
             "#,
             )?;
-            let loaded = Config::load().unwrap();
+            let loaded = Config::load();
             assert_eq!(loaded.evm_version, EvmVersion::Berlin);
             let base = loaded.into_basic();
             let default = Config::default();
@@ -766,14 +786,14 @@ mod tests {
             let basic = default.clone().into_basic();
             jail.create_file("foundry.toml", &basic.to_string_pretty().unwrap())?;
 
-            let other = Config::load().unwrap();
+            let other = Config::load();
             assert_eq!(default, other);
 
             let other = other.into_basic();
             assert_eq!(basic, other);
 
             jail.create_file("foundry.toml", &default.to_string_pretty().unwrap())?;
-            let other = Config::load().unwrap();
+            let other = Config::load();
             assert_eq!(default, other);
 
             // println!("{}", default.to_string_pretty().unwrap());

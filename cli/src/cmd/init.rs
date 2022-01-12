@@ -44,7 +44,7 @@ impl Cmd for InitArgs {
             let test = src.join("test");
             std::fs::create_dir_all(&test)?;
             let lib = root.join("lib");
-            std::fs::create_dir(&lib)?;
+            std::fs::create_dir_all(&lib)?;
 
             // write the contract file
             let contract_path = src.join("Contract.sol");
@@ -75,7 +75,10 @@ impl Cmd for InitArgs {
 
             // write foundry.toml
             let config = Config::from(Config::with_root(&root)).into_basic();
-            std::fs::write(root.join(Config::FILE_NAME), config.to_string_pretty()?)?;
+            let dest = root.join(Config::FILE_NAME);
+            if !dest.exists() {
+                std::fs::write(dest, config.to_string_pretty()?)?;
+            }
         }
 
         println!("Done.");
