@@ -15,6 +15,19 @@ pub enum EvmType {
     EvmOdin,
 }
 
+#[cfg(any(feature = "sputnik", feature = "evmodin"))]
+impl Default for EvmType {
+    fn default() -> Self {
+        // if sputnik is enabled, default to it
+        #[cfg(feature = "sputnik")]
+        #[rustfmt::skip]
+        return EvmType::Sputnik;
+        // if not, fall back to evmodin
+        #[cfg(feature = "evmodin")]
+        EvmType::EvmOdin
+    }
+}
+
 impl FromStr for EvmType {
     type Err = eyre::Error;
 
@@ -33,6 +46,7 @@ impl FromStr for EvmType {
 }
 
 #[derive(Debug, Clone, Parser)]
+#[cfg_attr(any(feature = "sputnik", feature = "evmodin"), derive(Default))]
 pub struct EvmOpts {
     #[clap(flatten)]
     pub env: Env,
@@ -88,13 +102,16 @@ pub struct EvmOpts {
 }
 
 #[cfg(feature = "sputnik")]
-use sputnik::backend::{MemoryBackend, Backend};
-#[cfg(feature = "sputnik")]
 use crate::FAUCET_ACCOUNT;
+#[cfg(feature = "sputnik")]
+use sputnik::backend::{Backend, MemoryBackend};
 
 impl EvmOpts {
     #[cfg(feature = "sputnik")]
-    pub fn backend<'a>(&'a self, vicinity: &'a MemoryVicinity) -> eyre::Result<Box<dyn Backend + 'a>> {
+    pub fn backend<'a>(
+        &'a self,
+        vicinity: &'a MemoryVicinity,
+    ) -> eyre::Result<Box<dyn Backend + 'a>> {
         use crate::sputnik::cache::SharedBackend;
         use ethers::providers::Provider;
 
@@ -107,8 +124,12 @@ impl EvmOpts {
             let provider = Provider::try_from(url.as_str())?;
             let init_state = backend.state().clone();
             let cache = crate::sputnik::new_shared_cache(init_state);
-            let backend =
-                SharedBackend::new(provider, cache, vicinity.clone(), self.fork_block_number.map(Into::into));
+            let backend = SharedBackend::new(
+                provider,
+                cache,
+                vicinity.clone(),
+                self.fork_block_number.map(Into::into),
+            );
             Box::new(backend)
         } else {
             Box::new(backend)
@@ -133,7 +154,7 @@ impl EvmOpts {
     }
 }
 
-#[derive(Debug, Clone, Parser)]
+#[derive(Debug, Clone, Default, Parser)]
 pub struct Env {
     // structopt does not let use `u64::MAX`:
     // https://doc.rust-lang.org/std/primitive.u64.html#associatedconstant.MAX
