@@ -112,7 +112,9 @@ impl Cmd for TestArgs {
         let project = opts.project()?;
 
         // prepare the test builder
-        let evm_cfg = crate::utils::sputnik_cfg(&opts.compiler.evm_version);
+        let mut evm_cfg = crate::utils::sputnik_cfg(&opts.compiler.evm_version);
+        evm_cfg.create_contract_limit = None;
+
         let builder = MultiContractRunnerBuilder::default()
             .fuzzer(fuzzer)
             .initial_balance(evm_opts.initial_balance)
