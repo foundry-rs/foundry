@@ -269,13 +269,38 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
 
         let mut logs = init_logs;
 
+        let mut traces: Option<Vec<CallTraceArena>> = None;
+        let mut identified_contracts: Option<BTreeMap<Address, (String, Abi)>> = None;
+
         // call the setup function in each test to reset the test's state.
         if setup {
             tracing::trace!("setting up");
-            let setup_logs = evm
-                .setup(address)
-                .wrap_err(format!("could not setup during {} test", func.signature()))?
-                .1;
+            let setup_logs = match self.evm.setup(self.address) {
+                Ok((_reason, setup_logs)) => setup_logs,
+                Err(e) => {
+                    // if tracing is enabled, just return it as a failed test
+                    // otherwise abort
+                    if self.evm.tracing_enabled() {
+                        self.update_traces(
+                            &mut traces,
+                            &mut identified_contracts,
+                            known_contracts,
+                            setup,
+                        );
+                    }
+
+                    return Ok(TestResult {
+                        success: false,
+                        reason: Some("Setup failed: ".to_string() + &e.to_string()),
+                        gas_used: 0,
+                        counterexample: None,
+                        logs,
+                        kind: TestKind::Standard(0),
+                        traces,
+                        identified_contracts,
+                    })
+                }
+            };
             logs.extend_from_slice(&setup_logs);
         }
 
@@ -298,9 +323,6 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
                     }
                 },
             };
-
-        let mut traces: Option<Vec<CallTraceArena>> = None;
-        let mut identified_contracts: Option<BTreeMap<Address, (String, Abi)>> = None;
 
         self.update_traces(
             &mut traces,
@@ -342,9 +364,37 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
 
         let (address, mut evm, init_logs) = self.new_sputnik_evm()?;
 
+        let mut traces: Option<Vec<CallTraceArena>> = None;
+        let mut identified_contracts: Option<BTreeMap<Address, (String, Abi)>> = None;
+
         // call the setup function in each test to reset the test's state.
         if setup {
-            evm.setup(address)?;
+            tracing::trace!("setting up");
+            match self.evm.setup(self.address) {
+                Ok((_reason, _setup_logs)) => {}
+                Err(e) => {
+                    // if tracing is enabled, just return it as a failed test
+                    // otherwise abort
+                    if self.evm.tracing_enabled() {
+                        self.update_traces(
+                            &mut traces,
+                            &mut identified_contracts,
+                            known_contracts,
+                            setup,
+                        );
+                    }
+                    return Ok(TestResult {
+                        success: false,
+                        reason: Some("Setup failed: ".to_string() + &e.to_string()),
+                        gas_used: 0,
+                        counterexample: None,
+                        logs: vec![],
+                        kind: TestKind::Fuzz(FuzzedCases::new(vec![])),
+                        traces,
+                        identified_contracts,
+                    })
+                }
+            }
         }
 
         let mut logs = init_logs;
@@ -356,9 +406,6 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
         let FuzzTestResult { cases, test_error } = evm.fuzz(func, address, should_fail);
 
         let evm = evm.into_inner();
-        let mut traces: Option<Vec<CallTraceArena>> = None;
-        let mut identified_contracts: Option<BTreeMap<Address, (String, Abi)>> = None;
-
         if let Some(ref error) = test_error {
             // we want traces for a failed fuzz
             if let TestError::Fail(_reason, bytes) = &error.test_error {
@@ -446,14 +493,15 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
                 temp_traces.push(setup);
             }
             // grab the test trace
-            let test_trace = trace_iter.next().expect("no test trace");
-            test_trace.update_identified(
-                0,
-                known_contracts.expect("traces enabled but no identified_contracts"),
-                &mut ident,
-                evm,
-            );
-            temp_traces.push(test_trace);
+            if let Some(test_trace) = trace_iter.next() {
+                test_trace.update_identified(
+                    0,
+                    known_contracts.expect("traces enabled but no identified_contracts"),
+                    &mut ident,
+                    self.evm,
+                );
+                temp_traces.push(test_trace);
+            }
 
             // pass back the identified contracts and traces
             *identified_contracts = Some(ident);
