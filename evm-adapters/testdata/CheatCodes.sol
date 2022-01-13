@@ -4,7 +4,6 @@ pragma solidity ^0.8.4;
 pragma experimental ABIEncoderV2;
 
 import "./DsTest.sol";
-import { LargeContract } from "./LargeContract.sol";
 
 interface Hevm {
     // Set block.timestamp (newTimestamp)
@@ -53,8 +52,6 @@ interface Hevm {
     // Expect a call to an address with the specified calldata.
     // Calldata can either be strict or a partial match
     function expectCall(address,bytes calldata) external;
-
-    function getCode(bytes calldata) external returns (bytes memory);
 }
 
 contract HasStorage {
@@ -518,15 +515,6 @@ contract CheatCodes is DSTest {
             address(target),
             abi.encodeWithSelector(target.add.selector)
         );
-    }
-
-    function testGetCode() public {
-        bytes memory actualResult = hevm.getCode("LargeContract.sol");
-
-        LargeContract c = new LargeContract();
-        bytes memory expectedResut = getCode(address(c));
-
-        assertEq(string(actualResult), string(expectedResut));
     }
 
     function getCode(address who) internal returns (bytes memory o_code) {

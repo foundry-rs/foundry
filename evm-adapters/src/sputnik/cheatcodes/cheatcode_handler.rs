@@ -580,6 +580,8 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                     bin: String,
                 }
 
+                println!("******* HERE ********");
+
                 self.add_debug(CheatOp::GETCODE);
                 let name = inner.0.replace(".sol", "");
                 let path = format!("./out/{}.sol/{}.json", name, name);
@@ -589,8 +591,9 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 file.read_to_string(&mut data).unwrap();
 
                 let contract_file: ContractFile = serde_json::from_str(&data).unwrap();
+                let code = hex::decode(contract_file.bin).unwrap();
 
-                res = ethers::abi::encode(&[Token::String(contract_file.bin)]);
+                res = ethers::abi::encode(&[Token::Bytes(code)]);
             }
             HEVMCalls::Addr(inner) => {
                 self.add_debug(CheatOp::ADDR);
