@@ -707,7 +707,8 @@ impl SimpleCast {
             "gwei" => ethers_core::utils::parse_units(value, 9),
             "eth" | "ether" => ethers_core::utils::parse_units(value, 18),
             _ => ethers_core::utils::parse_units(value, 18),
-        }?.to_string())
+        }?
+        .to_string())
     }
 
     /// Converts wei into an eth amount
