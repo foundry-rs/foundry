@@ -30,7 +30,7 @@ forgetest!(can_clean_non_existing, |prj: TestProject, mut cmd: TestCommand| {
 // checks that init works
 forgetest!(can_init_repo_with_config, |prj: TestProject, mut cmd: TestCommand| {
     cmd.arg("init").arg(prj.root());
-    cmd.assert_non_empty_stdout();
+    println!("{}", String::from_utf8_lossy(&cmd.output().stdout) );
     let foundry_toml = prj.root().join(Config::FILE_NAME);
     assert!(foundry_toml.exists());
 
@@ -39,6 +39,7 @@ forgetest!(can_init_repo_with_config, |prj: TestProject, mut cmd: TestCommand| {
     assert_eq!(foundry_toml, file);
 
     let s = read_string(&file);
+    println!("{}", s.clone());
     let basic: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
     assert_eq!(basic, Config::load().into_basic());
 });

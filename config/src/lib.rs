@@ -487,6 +487,12 @@ impl Provider for DappEnvCompatProvider {
                 val.parse::<u64>().map_err(figment::Error::custom)?.into(),
             );
         }
+        if let Ok(val) = env::var("DAPP_BUILD_OPTIMIZE_RUNS") {
+            dict.insert(
+                "optimizer_runs".to_string(),
+                val.parse::<u64>().map_err(figment::Error::custom)?.into(),
+            );
+        }
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }
@@ -804,6 +810,7 @@ mod tests {
             jail.set_env("DAPP_TEST_ADDRESS", format!("{:?}", addr));
             jail.set_env("DAPP_TEST_FUZZ_RUNS", 420);
             jail.set_env("DAPP_FORK_BLOCK", 100);
+            jail.set_env("DAPP_BUILD_OPTIMIZE_RUNS", 999);
 
             let config = Config::load();
 
@@ -811,6 +818,7 @@ mod tests {
             assert_eq!(config.sender, addr);
             assert_eq!(config.fuzz_runs, 420);
             assert_eq!(config.fork_block_number, Some(100));
+            assert_eq!(config.optimizer_runs, 999);
 
             Ok(())
         });
