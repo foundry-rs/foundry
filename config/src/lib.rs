@@ -1,21 +1,24 @@
 //! foundry configuration.
-use std::path::{Path, PathBuf};
+use std::{
+    borrow::Cow,
+    path::{Path, PathBuf},
+};
+
+use figment::{
+    providers::{Env, Format, Serialized, Toml},
+    value::{Dict, Map},
+    Error, Figment, Metadata, Profile, Provider,
+};
+// reexport so cli types can implement `figment::Provider` to easily merge compiler arguments
+pub use figment;
+use semver::Version;
+use serde::{Deserialize, Serialize};
 
 use ethers_core::types::{Address, U256};
 use ethers_solc::{
     remappings::{RelativeRemapping, Remapping},
     EvmVersion, ProjectPathsConfig,
 };
-use figment::{
-    providers::{Env, Format, Serialized, Toml},
-    value::{Dict, Map},
-    Error, Figment, Metadata, Profile, Provider,
-};
-use semver::Version;
-use serde::{Deserialize, Serialize};
-
-// reexport so cli types can implement `figment::Provider` to easily merge compiler arguments
-pub use figment;
 
 /// Foundry configuration
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -91,6 +94,13 @@ pub struct Config {
     /// Settings to pass to the `solc` compiler input
     // TODO consider making this more structured https://stackoverflow.com/questions/48998034/does-toml-support-nested-arrays-of-objects-tables
     pub solc_settings: String,
+    /// The root path where the config detection started from, `Config::with_root`
+    ///
+    /// **Note:** This field is never serialized nor deserialized. This is merely used to provided
+    /// additional context.
+    #[doc(hidden)]
+    #[serde(skip)]
+    pub __root: RootPath,
     /// PRIVATE: This structure may grow, As such, constructing this structure should
     /// _always_ be done using a public constructor or update syntax:
     ///
@@ -222,6 +232,7 @@ impl Config {
         let root = root.into();
         let paths = ProjectPathsConfig::builder().build_with_root(&root);
         Config {
+            __root: paths.root.into(),
             src: paths.sources.file_name().unwrap().into(),
             out: paths.artifacts.file_name().unwrap().into(),
             libs: paths.libraries.into_iter().map(|lib| lib.file_name().unwrap().into()).collect(),
@@ -325,8 +336,33 @@ impl From<Config> for Figment {
         // we try to merge remappings after we've merged all other providers, this prevents
         // redundant fs lookups to determine the default remappings that are eventually updated by
         // other providers, like the toml file
-        let remappings = RemappingsProvider::new(&figment, c.libs.clone());
-        Figment::from(c).merge(figment.merge(remappings)).select(profile)
+        let remappings = RemappingsProvider {
+            lib_paths: figment
+                .extract_inner::<Vec<PathBuf>>("libs")
+                .map(Cow::Owned)
+                .unwrap_or_else(|_| Cow::Borrowed(&c.libs)),
+            root: &c.__root.0,
+            remappings: figment.extract_inner::<Vec<Remapping>>("remappings"),
+        };
+        let merge = figment.merge(remappings);
+
+        Figment::from(c).merge(merge).select(profile)
+    }
+}
+
+/// A helper wrapper around the root path used during Config detection
+#[derive(Debug, PartialEq, Eq, Hash, Clone, PartialOrd, Ord)]
+pub struct RootPath(pub PathBuf);
+
+impl Default for RootPath {
+    fn default() -> Self {
+        ".".into()
+    }
+}
+
+impl<P: Into<PathBuf>> From<P> for RootPath {
+    fn from(p: P) -> Self {
+        RootPath(p.into())
     }
 }
 
@@ -366,6 +402,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             profile: Self::DEFAULT_PROFILE,
+            __root: Default::default(),
             src: "src".into(),
             test: "test".into(),
             out: "out".into(),
@@ -456,11 +493,11 @@ impl Provider for DappEnvCompatProvider {
 
 /// A figment provider that checks if the remappings were previously set and if they're unset looks
 /// up the fs via `Remapping::find_many`.
-struct RemappingsProvider {
-    lib_paths: Vec<PathBuf>,
+struct RemappingsProvider<'a> {
+    lib_paths: Cow<'a, Vec<PathBuf>>,
     /// the root path used to turn an absolute `Remapping`, as we're getting it from
     /// `Remapping::find_many` into a relative one.
-    root: PathBuf,
+    root: &'a PathBuf,
     /// This contains either:
     ///   - previously set remappings
     ///   - a `MissingField` error, which means previous provider didn't set the "remappings" field
@@ -468,18 +505,7 @@ struct RemappingsProvider {
     remappings: Result<Vec<Remapping>, figment::Error>,
 }
 
-impl RemappingsProvider {
-    fn new(figment: &Figment, libs: Vec<PathBuf>) -> Self {
-        let remappings = figment.extract_inner::<Vec<Remapping>>("remappings");
-        let lib_paths = figment.extract_inner::<Vec<PathBuf>>("libs").unwrap_or(libs);
-        let root = Config::find_config_file()
-            .and_then(|f| f.parent().map(|p| p.to_path_buf()))
-            .unwrap_or_else(|| std::env::current_dir().unwrap());
-        RemappingsProvider { lib_paths, root, remappings }
-    }
-}
-
-impl Provider for RemappingsProvider {
+impl<'a> Provider for RemappingsProvider<'a> {
     fn metadata(&self) -> Metadata {
         Metadata::named("Remapping Provider")
     }
@@ -602,9 +628,10 @@ impl From<Chain> for u64 {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use figment::Figment;
     use pretty_assertions::assert_eq;
-    use std::str::FromStr;
 
     use super::*;
 
@@ -750,7 +777,7 @@ mod tests {
                     src: "mysrc".into(),
                     out: "myout".into(),
                     libs: default.libs.clone(),
-                    remappings: default.remappings.clone()
+                    remappings: default.remappings.clone(),
                 }
             );
             jail.set_env("FOUNDRY_PROFILE", r#"other"#);
@@ -762,7 +789,7 @@ mod tests {
                     src: "other-src".into(),
                     out: "myout".into(),
                     libs: default.libs.clone(),
-                    remappings: default.remappings
+                    remappings: default.remappings,
                 }
             );
             Ok(())
