@@ -1,13 +1,12 @@
 //! Contains various tests for checking forge's commands
-use ethers::solc::remappings::{Remapping};
+use ethers::solc::remappings::Remapping;
 use foundry_cli_test_utils::{
     ethers_solc::PathStyle,
     forgetest, pretty_eq,
     util::{pretty_err, read_string, TestCommand, TestProject},
 };
 use foundry_config::{parse_with_profile, BasicConfig, Config};
-use std::{env::set_current_dir, fs};
-use std::str::FromStr;
+use std::{env::set_current_dir, fs, str::FromStr};
 
 // tests `--help` is printed to std out
 forgetest!(print_help, |_: TestProject, mut cmd: TestCommand| {
@@ -44,7 +43,10 @@ forgetest!(can_init_repo_with_config, |prj: TestProject, mut cmd: TestCommand| {
     let s = read_string(&file);
     let basic: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
     // check ds-test is detected
-    assert_eq!(basic.remappings, vec![Remapping::from_str("ds-test/=lib/ds-test/src").unwrap().into()]);
+    assert_eq!(
+        basic.remappings,
+        vec![Remapping::from_str("ds-test/=lib/ds-test/src").unwrap().into()]
+    );
     assert_eq!(basic, Config::load().into_basic());
 });
 

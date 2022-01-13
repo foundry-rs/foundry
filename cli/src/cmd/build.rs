@@ -15,10 +15,19 @@ use std::{
 };
 
 use crate::{cmd::Cmd, opts::forge::CompilerArgs, utils};
+use foundry_config::{
+    figment::{Error, Metadata, Profile, Provider},
+    Config,
+};
 
 use clap::{Parser, ValueHint};
 #[cfg(feature = "evmodin-evm")]
 use evmodin::util::mocked_host::MockedHost;
+use foundry_config::figment::{
+    providers::Serialized,
+    value::{Dict, Map, Value},
+};
+use serde::Serialize;
 #[cfg(feature = "sputnik-evm")]
 use sputnik::backend::MemoryVicinity;
 
@@ -251,6 +260,25 @@ impl BuildArgs {
     }
 }
 
+// Make this args a `Figment` so that it can be merged into the `Config`
+impl Provider for BuildArgs {
+    fn metadata(&self) -> Metadata {
+        Metadata::named("Build Args Provider")
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+        let mut dict = Dict::new();
+
+        if let Some(ref src) = self.contracts {
+            dict.insert("src".to_string(), Value::from(format!("{}", src.display())));
+        }
+
+        // TODO remaining configs
+
+        Ok(Map::from([(Config::selected_profile(), dict)]))
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum EvmType {
     #[cfg(feature = "sputnik-evm")]
@@ -273,7 +301,7 @@ impl FromStr for EvmType {
     }
 }
 
-#[derive(Debug, Clone, Parser)]
+#[derive(Debug, Clone, Parser, Serialize)]
 pub struct Env {
     #[clap(help = "the block gas limit", long, default_value_t = u64::MAX)]
     pub gas_limit: u64,
@@ -353,5 +381,16 @@ impl Env {
         host.tx_context.block_gas_limit = self.block_gas_limit.unwrap_or(self.gas_limit);
 
         host
+    }
+}
+
+// Make this args a `Figment` so that it can be merged into the `Config`
+impl Provider for Env {
+    fn metadata(&self) -> Metadata {
+        Metadata::named("Env Args Provider")
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+        Serialized::defaults(self).data()
     }
 }

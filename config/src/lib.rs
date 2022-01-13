@@ -87,10 +87,14 @@ pub struct Config {
     pub gas_price: u64,
     /// the base fee in a block
     pub block_base_fee_per_gas: u64,
-    /// the block.coinbase value during EVM execution
+    /// the `block.coinbase` value during EVM execution
     pub block_coinbase: Address,
-    /// the block.timestamp value during EVM execution
+    /// the `block.timestamp` value during EVM execution
     pub block_timestamp: u64,
+    /// the `block.difficulty` value during EVM execution
+    pub block_difficulty: u64,
+    /// the `block.gaslimit` value during EVM execution
+    pub block_gas_limit: Option<u64>,
     /// Settings to pass to the `solc` compiler input
     // TODO consider making this more structured https://stackoverflow.com/questions/48998034/does-toml-support-nested-arrays-of-objects-tables
     pub solc_settings: String,
@@ -334,7 +338,7 @@ impl From<Config> for Figment {
         let profile = Config::selected_profile();
         let figment = Figment::default()
             .merge(Toml::file(Env::var_or("FOUNDRY_CONFIG", Config::FILE_NAME)).nested())
-            .merge(Env::prefixed("DAPP_").global())
+            .merge(Env::prefixed("DAPP_").ignore(&["DAPP_REMAPPINGS"]).global())
             .merge(Env::prefixed("DAPP_TEST_").global())
             .merge(DappEnvCompatProvider)
             .merge(Env::prefixed("FOUNDRY_").ignore(&["PROFILE"]).global())
@@ -450,6 +454,8 @@ impl Default for Config {
             block_base_fee_per_gas: 0,
             block_coinbase: Address::zero(),
             block_timestamp: 0,
+            block_difficulty: 0,
+            block_gas_limit: None,
             eth_rpc_url: None,
             verbosity: 0,
             remappings: vec![],
@@ -500,6 +506,9 @@ impl Provider for DappEnvCompatProvider {
                 val.parse::<u64>().map_err(figment::Error::custom)?.into(),
             );
         }
+
+        // TODO handle DAPP_REMAPPINGS
+
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }
