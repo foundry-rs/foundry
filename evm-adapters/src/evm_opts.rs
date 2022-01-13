@@ -87,7 +87,36 @@ pub struct EvmOpts {
     pub debug: bool,
 }
 
+#[cfg(feature = "sputnik")]
+use sputnik::backend::{MemoryBackend, Backend};
+#[cfg(feature = "sputnik")]
+use crate::FAUCET_ACCOUNT;
+
 impl EvmOpts {
+    #[cfg(feature = "sputnik")]
+    pub fn backend<'a>(&'a self, vicinity: &'a MemoryVicinity) -> eyre::Result<Box<dyn Backend + 'a>> {
+        use crate::sputnik::cache::SharedBackend;
+        use ethers::providers::Provider;
+
+        let mut backend = MemoryBackend::new(vicinity, Default::default());
+        // max out the balance of the faucet
+        let faucet = backend.state_mut().entry(*FAUCET_ACCOUNT).or_insert_with(Default::default);
+        faucet.balance = U256::MAX;
+
+        let backend: Box<dyn Backend> = if let Some(ref url) = self.fork_url {
+            let provider = Provider::try_from(url.as_str())?;
+            let init_state = backend.state().clone();
+            let cache = crate::sputnik::new_shared_cache(init_state);
+            let backend =
+                SharedBackend::new(provider, cache, vicinity.clone(), self.fork_block_number.map(Into::into));
+            Box::new(backend)
+        } else {
+            Box::new(backend)
+        };
+
+        Ok(backend)
+    }
+
     #[cfg(feature = "sputnik")]
     pub fn vicinity(&self) -> eyre::Result<MemoryVicinity> {
         Ok(if let Some(ref url) = self.fork_url {

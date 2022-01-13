@@ -29,6 +29,7 @@ serde_json = "1.0.72"
 serde = "1.0.130"
 ansi_term = "0.12.1"
 
+# for evm config to be usable in clis
 clap = { version = "3.0.6", features = [
     "derive",
     "env",
