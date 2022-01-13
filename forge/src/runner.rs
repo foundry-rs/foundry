@@ -1,4 +1,10 @@
 use crate::TestFilter;
+use evm_adapters::{
+    evm_opts::EvmOpts,
+    sputnik::{helpers::TestSputnikVM, Executor, PRECOMPILES_MAP},
+};
+use rayon::iter::ParallelIterator;
+use sputnik::{backend::Backend, Config};
 
 use ethers::{
     abi::{Abi, Function, Token},
@@ -11,9 +17,10 @@ use evm_adapters::{
     Evm, EvmError,
 };
 use eyre::{Context, Result};
-use std::{collections::BTreeMap, fmt, marker::PhantomData, time::Instant};
+use std::{collections::BTreeMap, fmt, time::Instant};
 
 use proptest::test_runner::{TestError, TestRunner};
+use rayon::iter::IntoParallelRefIterator;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -129,46 +136,62 @@ impl TestKind {
     }
 }
 
-pub struct ContractRunner<'a, S, E> {
-    /// Mutable reference to the EVM type.
-    /// This is a temporary hack to work around the mutability restrictions of
-    /// [`proptest::TestRunner::run`] which takes a `Fn` preventing interior mutability. [See also](https://github.com/gakonst/dapptools-rs/pull/44).
-    /// Wrapping it like that allows the `test` function to gain mutable access regardless and
-    /// since we don't use any parallelized fuzzing yet the `test` function has exclusive access of
-    /// the mutable reference over time of its existence.
-    pub evm: &'a mut E,
+pub struct ContractRunner<'a, B> {
+    // EVM Config Options
+    /// The options used to instantiate a new EVM.
+    pub evm_opts: &'a EvmOpts,
+    /// The backend used by the VM.
+    pub backend: &'a B,
+    /// The VM Configuration to use for the runner (London, Berlin , ...)
+    pub evm_cfg: &'a Config,
+
+    // Contract deployment options
     /// The deployed contract's ABI
     pub contract: &'a Abi,
     /// The deployed contract's address
-    pub address: Address,
+    // This is cheap to clone due to [`bytes::Bytes`], so OK to own
+    pub code: ethers::prelude::Bytes,
     /// The address which will be used as the `from` field in all EVM calls
     pub sender: Address,
-    /// Any logs emitted in the constructor of the specific contract
-    pub init_logs: &'a [String],
-    // need to constrain the trait generic
-    state: PhantomData<S>,
 }
 
-impl<'a, S, E> ContractRunner<'a, S, E> {
+impl<'a, B: Backend> ContractRunner<'a, B> {
     pub fn new(
-        evm: &'a mut E,
+        evm_opts: &'a EvmOpts,
+        evm_cfg: &'a Config,
+        backend: &'a B,
         contract: &'a Abi,
-        address: Address,
+        code: ethers::prelude::Bytes,
         sender: Option<Address>,
-        init_logs: &'a [String],
     ) -> Self {
-        Self {
-            evm,
-            contract,
-            address,
-            init_logs,
-            state: PhantomData,
-            sender: sender.unwrap_or_default(),
-        }
+        Self { evm_opts, evm_cfg, backend, contract, code, sender: sender.unwrap_or_default() }
     }
 }
 
-impl<'a, S: Clone, E: Evm<S>> ContractRunner<'a, S, E> {
+// Require that the backend is Cloneable. This allows us to use the `SharedBackend` from
+// evm-adapters which is clone-able.
+impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
+    /// Creates a new EVM and deploys the test contract inside the runner
+    /// from the sending account.
+    pub fn new_sputnik_evm(&'a self) -> eyre::Result<(Address, TestSputnikVM<'a, B>, Vec<String>)> {
+        // create the EVM, clone the backend.
+        let mut executor = Executor::new_with_cheatcodes(
+            self.backend.clone(),
+            self.evm_opts.env.gas_limit,
+            self.evm_cfg,
+            &*PRECOMPILES_MAP,
+            self.evm_opts.ffi,
+            self.evm_opts.verbosity > 2,
+            self.evm_opts.debug,
+        );
+
+        // deploy an instance of the contract inside the runner in the EVM
+        let (addr, _, _, logs) =
+            executor.deploy(self.sender, self.code.clone(), 0u32.into()).expect("couldn't deploy");
+        executor.set_balance(addr, self.evm_opts.initial_balance);
+        Ok((addr, executor, logs))
+    }
+
     /// Runs all tests for a contract whose names match the provided regular expression
     pub fn run_tests(
         &mut self,
