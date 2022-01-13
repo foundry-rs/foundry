@@ -23,6 +23,7 @@ impl Default for EvmType {
         #[rustfmt::skip]
         return EvmType::Sputnik;
         // if not, fall back to evmodin
+        #[allow(unreachable_code)]
         #[cfg(feature = "evmodin")]
         EvmType::EvmOdin
     }
