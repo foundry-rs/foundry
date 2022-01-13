@@ -113,11 +113,17 @@ pub(crate) fn convert_log(log: Log) -> Option<String> {
         LogNamedBytes32Filter(inner) => {
             format!("{}: 0x{}", inner.key, hex::encode(inner.val))
         }
-        LogNamedDecimalIntFilter(inner) => format!(
-            "{}: {:?}",
-            inner.key,
-            ethers::utils::parse_units(inner.val, inner.decimals.as_u32()).unwrap()
-        ),
+        LogNamedDecimalIntFilter(inner) => {
+            let val: String = inner.val.to_string();
+            let neg = val.trim().starts_with('-');
+            let val = val.trim().trim_start_matches('-');
+            format!(
+                "{}: {}{:?}",
+                inner.key,
+                if neg { "-" } else { "" },
+                ethers::utils::parse_units(val, inner.decimals.as_u32()).unwrap()
+            )
+        }
         LogNamedDecimalUintFilter(inner) => {
             format!(
                 "{}: {}",
