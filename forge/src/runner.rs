@@ -194,9 +194,9 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
 
     /// Runs all tests for a contract whose names match the provided regular expression
     pub fn run_tests(
-        &mut self,
+        &self,
         filter: &impl TestFilter,
-        fuzzer: Option<&mut TestRunner>,
+        fuzzer: Option<TestRunner>,
         known_contracts: Option<&BTreeMap<String, (Abi, Vec<u8>)>>,
     ) -> Result<BTreeMap<String, TestResult>> {
         tracing::info!("starting tests");
@@ -502,14 +502,13 @@ mod tests {
             let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
 
             let (_, code, _) = compiled.into_parts_or_default();
-            let mut runner = runner(compiled.abi.as_ref().unwrap(), code);
+            let runner = runner(compiled.abi.as_ref().unwrap(), code);
 
             let mut cfg = FuzzConfig::default();
             cfg.failure_persistence = None;
-            let mut fuzzer = TestRunner::new(cfg);
-            let results = runner
-                .run_tests(&Filter::new("testGreeting", ".*"), Some(&mut fuzzer), None)
-                .unwrap();
+            let fuzzer = TestRunner::new(cfg);
+            let results =
+                runner.run_tests(&Filter::new("testGreeting", ".*"), Some(fuzzer), None).unwrap();
             assert!(results["testGreeting()"].success);
             assert!(results["testGreeting(string)"].success);
             assert!(results["testGreeting(string,string)"].success);
@@ -519,14 +518,13 @@ mod tests {
         fn test_fuzzing_counterexamples() {
             let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
             let (_, code, _) = compiled.into_parts_or_default();
-            let mut runner = runner(compiled.abi.as_ref().unwrap(), code);
+            let runner = runner(compiled.abi.as_ref().unwrap(), code);
 
             let mut cfg = FuzzConfig::default();
             cfg.failure_persistence = None;
-            let mut fuzzer = TestRunner::new(cfg);
-            let results = runner
-                .run_tests(&Filter::new("testFuzz.*", ".*"), Some(&mut fuzzer), None)
-                .unwrap();
+            let fuzzer = TestRunner::new(cfg);
+            let results =
+                runner.run_tests(&Filter::new("testFuzz.*", ".*"), Some(fuzzer), None).unwrap();
             for (_, res) in results {
                 assert!(!res.success);
                 assert!(res.counterexample.is_some());
@@ -588,7 +586,7 @@ mod tests {
 
     pub fn test_runner(compiled: CompactContractRef) {
         let (_, code, _) = compiled.into_parts_or_default();
-        let mut runner = sputnik::runner(compiled.abi.as_ref().unwrap(), code);
+        let runner = sputnik::runner(compiled.abi.as_ref().unwrap(), code);
 
         let res = runner.run_tests(&Filter::new(".*", ".*"), None, None).unwrap();
         assert!(!res.is_empty());
