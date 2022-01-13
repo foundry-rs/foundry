@@ -111,8 +111,8 @@ mod sputnik_helpers {
     use super::*;
 
     use crate::{sputnik::cache::SharedBackend, FAUCET_ACCOUNT};
-    use ::sputnik::backend::MemoryBackend;
     use ethers::providers::Provider;
+    use sputnik::backend::MemoryBackend;
 
     pub enum BackendKind<'a> {
         Simple(MemoryBackend<'a>),
@@ -130,6 +130,11 @@ mod sputnik_helpers {
             let faucet =
                 backend.state_mut().entry(*FAUCET_ACCOUNT).or_insert_with(Default::default);
             faucet.balance = U256::MAX;
+            // set deployer nonce to 1 to get the same contract addresses
+            // as dapptools, provided the sender is also
+            // `0x00a329c0648769A73afAc7F9381E08FB43dBEA72`
+            let deployer = backend.state_mut().entry(self.sender).or_insert_with(Default::default);
+            deployer.nonce = U256::from(1);
 
             let backend = if let Some(ref url) = self.fork_url {
                 let provider = Provider::try_from(url.as_str())?;
