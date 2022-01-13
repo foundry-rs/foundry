@@ -1,9 +1,5 @@
-use ethers::{
-    providers::Provider,
-    solc::{artifacts::Contract, EvmVersion},
-};
+use ethers::solc::{artifacts::Contract, EvmVersion};
 
-use evm_adapters::sputnik::Executor;
 use eyre::{ContextCompat, WrapErr};
 use std::{env::VarError, path::PathBuf, process::Command};
 
@@ -11,8 +7,6 @@ use std::{env::VarError, path::PathBuf, process::Command};
 use evmodin::Revision;
 #[cfg(feature = "sputnik-evm")]
 use sputnik::Config;
-
-use crate::opts::forge::EvmOpts;
 
 /// Default local RPC endpoint
 const LOCAL_RPC_URL: &str = "http://127.0.0.1:8545";
@@ -89,7 +83,7 @@ pub fn find_git_root_path() -> eyre::Result<PathBuf> {
 }
 
 #[cfg(feature = "sputnik-evm")]
-pub fn sputnik_cfg(evm: EvmVersion) -> Config {
+pub fn sputnik_cfg(evm: &EvmVersion) -> Config {
     match evm {
         EvmVersion::Istanbul => Config::istanbul(),
         EvmVersion::Berlin => Config::berlin(),
@@ -98,61 +92,8 @@ pub fn sputnik_cfg(evm: EvmVersion) -> Config {
     }
 }
 
-#[cfg(feature = "sputnik-evm")]
-pub mod sputnik_helpers {
-    use super::*;
-    use ethers::types::U256;
-    use sputnik::{
-        backend::{Backend, MemoryBackend, MemoryVicinity},
-        Config,
-    };
-    use std::sync::Arc;
-
-    use evm_adapters::{
-        sputnik::{helpers::TestSputnikVM, ForkMemoryBackend, PRECOMPILES_MAP},
-        FAUCET_ACCOUNT,
-    };
-
-    /// Creates a new Sputnik EVM given the [`EvmOpts`] (specifying whether to fork or not), a VM
-    /// Hard Fork config, and the initial state from the memory vicinity.
-    pub fn evm<'a>(
-        opts: &EvmOpts,
-        cfg: &'a mut Config,
-        vicinity: &'a MemoryVicinity,
-    ) -> eyre::Result<TestSputnikVM<'a, Arc<Box<dyn Backend + 'a>>>> {
-        // We disable the contract size limit by default, because Solidity
-        // test smart contracts are likely to be >24kb
-        cfg.create_contract_limit = None;
-
-        let mut backend = MemoryBackend::new(vicinity, Default::default());
-        // max out the balance of the faucet
-        let faucet = backend.state_mut().entry(*FAUCET_ACCOUNT).or_insert_with(Default::default);
-        faucet.balance = U256::MAX;
-
-        let backend: Box<dyn Backend> = if let Some(ref url) = opts.fork_url {
-            let provider = Provider::try_from(url.as_str())?;
-            let init_state = backend.state().clone();
-            let backend =
-                ForkMemoryBackend::new(provider, backend, opts.fork_block_number, init_state);
-            Box::new(backend)
-        } else {
-            Box::new(backend)
-        };
-        let backend = Arc::new(backend);
-
-        Ok(Executor::new_with_cheatcodes(
-            backend,
-            opts.env.gas_limit,
-            cfg,
-            &*PRECOMPILES_MAP,
-            opts.ffi,
-            opts.verbosity > 2,
-            opts.debug,
-        ))
-    }
-}
-
 #[cfg(feature = "evmodin-evm")]
+#[allow(dead_code)]
 pub fn evmodin_cfg(evm: EvmVersion) -> Revision {
     match evm {
         EvmVersion::Istanbul => Revision::Istanbul,

@@ -1,7 +1,4 @@
-use crate::{
-    cmd::{build::BuildArgs, compile, manual_compile, Cmd},
-    opts::forge::EvmOpts,
-};
+use crate::cmd::{build::BuildArgs, compile, manual_compile, Cmd};
 use clap::{Parser, ValueHint};
 use ethers::abi::Abi;
 use forge::ContractRunner;
@@ -14,12 +11,14 @@ use ethers::solc::{
     MinimalCombinedArtifacts, Project, ProjectPathsConfig, SolcConfig,
 };
 
-use evm_adapters::Evm;
-
 use ansi_term::Colour;
 use ethers::{
     prelude::{artifacts::ContractBytecode, Artifact},
     solc::artifacts::{CompactContractSome, ContractBytecodeSome},
+};
+use evm_adapters::{
+    evm_opts::{BackendKind, EvmOpts},
+    sputnik::{cheatcodes::debugger::DebugArena, helpers::vm},
 };
 
 #[derive(Debug, Clone, Parser)]
@@ -79,25 +78,40 @@ impl Cmd for RunArgs {
         let CompactContractSome { abi, bin, .. } = contract;
         // this should never fail if compilation was successful
         let bytecode = bin.into_bytes().unwrap();
-
-        // 2. instantiate the EVM w forked backend if needed / pre-funded account(s)
-        let mut cfg = crate::utils::sputnik_cfg(self.opts.compiler.evm_version);
-        let vicinity = self.evm_opts.vicinity()?;
-        let mut evm = crate::utils::sputnik_helpers::evm(&evm_opts, &mut cfg, &vicinity)?;
-
-        // 3. deploy the contract
-        let (addr, _, _, logs) = evm.deploy(self.evm_opts.sender, bytecode, 0u32.into())?;
-
-        // 4. set up the runner
-        let mut runner =
-            ContractRunner::new(&mut evm, &abi, addr, Some(self.evm_opts.sender), &logs);
-
-        // 5. run the test function & potentially the setup
         let needs_setup = abi.functions().any(|func| func.name == "setUp");
-        let result = runner.run_test(&func, needs_setup, Some(&known_contracts))?;
 
-        if self.evm_opts.debug {
-            // 6. Boot up debugger
+        let cfg = crate::utils::sputnik_cfg(&self.opts.compiler.evm_version);
+        let vicinity = evm_opts.vicinity()?;
+        let backend = evm_opts.backend(&vicinity)?;
+
+        // need to match on the backend type
+        let result = match backend {
+            BackendKind::Simple(ref backend) => {
+                let runner = ContractRunner::new(
+                    &evm_opts,
+                    &cfg,
+                    backend,
+                    &abi,
+                    bytecode,
+                    Some(evm_opts.sender),
+                );
+                runner.run_test(&func, needs_setup, Some(&known_contracts))?
+            }
+            BackendKind::Shared(ref backend) => {
+                let runner = ContractRunner::new(
+                    &evm_opts,
+                    &cfg,
+                    backend,
+                    &abi,
+                    bytecode,
+                    Some(evm_opts.sender),
+                );
+                runner.run_test(&func, needs_setup, Some(&known_contracts))?
+            }
+        };
+
+        if evm_opts.debug {
+            // 4. Boot up debugger
             let source_code: BTreeMap<u32, String> = sources
                 .iter()
                 .map(|(id, path)| {
@@ -123,7 +137,7 @@ impl Cmd for RunArgs {
                 })
                 .collect();
 
-            let calls = evm.debug_calls();
+            let calls: Vec<DebugArena> = result.debug_calls.expect("Debug must be enabled by now");
             println!("debugging");
             let index = if needs_setup && calls.len() > 1 { 1 } else { 0 };
             let mut flattened = Vec::new();
@@ -149,14 +163,14 @@ impl Cmd for RunArgs {
                     if evm_opts.verbosity > 4 || !result.success {
                         // print setup calls as well
                         traces.iter().for_each(|trace| {
-                            trace.pretty_print(0, &known_contracts, &mut ident, runner.evm, "");
+                            trace.pretty_print(0, &known_contracts, &mut ident, &vm(), "");
                         });
                     } else if !traces.is_empty() {
                         traces.last().expect("no last but not empty").pretty_print(
                             0,
                             &known_contracts,
                             &mut ident,
-                            runner.evm,
+                            &vm(),
                             "",
                         );
                     }
@@ -165,7 +179,7 @@ impl Cmd for RunArgs {
                 println!();
             }
         } else {
-            // 6. print the result nicely
+            // 5. print the result nicely
             if result.success {
                 println!("{}", Colour::Green.paint("Script ran successfully."));
             } else {

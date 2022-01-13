@@ -218,18 +218,18 @@ pub mod helpers {
         CheatcodeStackExecutor<'a, 'a, B, BTreeMap<Address, PrecompileFn>>,
     >;
 
-    static CFG: Lazy<Config> = Lazy::new(Config::london);
+    pub static CFG: Lazy<Config> = Lazy::new(Config::london);
 
     /// London config without a contract size limit. Useful for testing but is a depature from
     /// mainnet rules.
-    static CFG_NO_LMT: Lazy<Config> = Lazy::new(|| {
+    pub static CFG_NO_LMT: Lazy<Config> = Lazy::new(|| {
         let mut cfg = Config::london();
         cfg.create_contract_limit = None;
         cfg
     });
 
-    static VICINITY: Lazy<MemoryVicinity> = Lazy::new(new_vicinity);
-    const GAS_LIMIT: u64 = 30_000_000;
+    pub static VICINITY: Lazy<MemoryVicinity> = Lazy::new(new_vicinity);
+    pub const GAS_LIMIT: u64 = 30_000_000;
 
     /// Instantiates a Sputnik EVM with enabled cheatcodes + FFI and a simple non-forking in memory
     /// backend and tracing disabled

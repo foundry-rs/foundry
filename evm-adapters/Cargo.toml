@@ -11,7 +11,7 @@ foundry-utils = { path = "./../utils" }
 
 sputnik = { package = "evm", git = "https://github.com/rust-blockchain/evm",  optional = true, features = ["tracing"] }
 
-evmodin = { git = "https://github.com/vorot93/evmodin",  optional = true }
+evmodin = { git = "https://github.com/vorot93/evmodin",  optional = true, features = ["util"] }
 
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["solc-full"] }
 eyre = "0.6.5"
@@ -28,6 +28,15 @@ revm_precompiles = "0.1.0"
 serde_json = "1.0.72"
 serde = "1.0.130"
 ansi_term = "0.12.1"
+
+# for evm config to be usable in clis
+clap = { version = "3.0.6", features = [
+    "derive",
+    "env",
+    "unicode",
+    "wrap_help",
+] }
+clap_complete = "3.0.2"
 
 [dev-dependencies]
 evmodin = { git = "https://github.com/vorot93/evmodin", features = ["util"] }

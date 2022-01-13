@@ -3,7 +3,9 @@ use clap::{Parser, Subcommand, ValueHint};
 use ethers::{solc::EvmVersion, types::Address};
 use std::{path::PathBuf, str::FromStr};
 
-use crate::cmd::{build::BuildArgs, create::CreateArgs, run::RunArgs, snapshot, test};
+use crate::cmd::{
+    build::BuildArgs, create::CreateArgs, remappings::RemappingArgs, run::RunArgs, snapshot, test,
+};
 
 #[derive(Debug, Parser)]
 pub struct Opts {
@@ -108,84 +110,6 @@ pub struct CompilerArgs {
 
     #[clap(help = "optimizer parameter runs", long, default_value = "200")]
     pub optimize_runs: u32,
-}
-
-use crate::cmd::{
-    build::{Env, EvmType},
-    remappings::RemappingArgs,
-};
-use ethers::types::U256;
-
-#[derive(Debug, Clone, Parser)]
-pub struct EvmOpts {
-    #[clap(flatten)]
-    pub env: Env,
-
-    #[clap(
-        long,
-        short,
-        help = "the EVM type you want to use (e.g. sputnik, evmodin)",
-        default_value = "sputnik"
-    )]
-    pub evm_type: EvmType,
-
-    #[clap(help = "fetch state over a remote instead of starting from empty state", long, short)]
-    #[clap(alias = "rpc-url")]
-    pub fork_url: Option<String>,
-
-    #[clap(help = "pins the block number for the state fork", long)]
-    #[clap(env = "DAPP_FORK_BLOCK")]
-    pub fork_block_number: Option<u64>,
-
-    #[clap(
-        help = "the initial balance of each deployed test contract",
-        long,
-        default_value = "0xffffffffffffffffffffffff"
-    )]
-    pub initial_balance: U256,
-
-    #[clap(
-        help = "the address which will be executing all tests",
-        long,
-        default_value = "0x0000000000000000000000000000000000000000",
-        env = "DAPP_TEST_ADDRESS"
-    )]
-    pub sender: Address,
-
-    #[clap(help = "enables the FFI cheatcode", long)]
-    pub ffi: bool,
-
-    #[clap(
-        help = r#"Verbosity mode of EVM output as number of occurrences of the `v` flag (-v, -vv, -vvv, etc.)
-    3: print test trace for failing tests
-    4: always print test trace, print setup for failing tests
-    5: always print test trace and setup
-"#,
-        long,
-        short,
-        parse(from_occurrences)
-    )]
-    pub verbosity: u8,
-
-    #[clap(help = "enable debugger", long)]
-    pub debug: bool,
-}
-
-impl EvmOpts {
-    #[cfg(feature = "sputnik-evm")]
-    pub fn vicinity(&self) -> eyre::Result<sputnik::backend::MemoryVicinity> {
-        Ok(if let Some(ref url) = self.fork_url {
-            let provider = ethers::providers::Provider::try_from(url.as_str())?;
-            let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
-            rt.block_on(evm_adapters::sputnik::vicinity(
-                &provider,
-                self.fork_block_number,
-                Some(self.env.tx_origin),
-            ))?
-        } else {
-            self.env.sputnik_state()
-        })
-    }
 }
 
 /// Represents the common dapp argument pattern for `<path>:<contractname>` where `<path>:` is
