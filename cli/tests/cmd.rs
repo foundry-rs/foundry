@@ -1,4 +1,5 @@
 //! Contains various tests for checking forge's commands
+use ethers::solc::remappings::{Remapping};
 use foundry_cli_test_utils::{
     ethers_solc::PathStyle,
     forgetest, pretty_eq,
@@ -6,6 +7,7 @@ use foundry_cli_test_utils::{
 };
 use foundry_config::{parse_with_profile, BasicConfig, Config};
 use std::{env::set_current_dir, fs};
+use std::str::FromStr;
 
 // tests `--help` is printed to std out
 forgetest!(print_help, |_: TestProject, mut cmd: TestCommand| {
@@ -29,26 +31,30 @@ forgetest!(can_clean_non_existing, |prj: TestProject, mut cmd: TestCommand| {
 
 // checks that init works
 forgetest!(can_init_repo_with_config, |prj: TestProject, mut cmd: TestCommand| {
-    cmd.arg("init").arg(prj.root());
-    println!("{}", String::from_utf8_lossy(&cmd.output().stdout) );
     let foundry_toml = prj.root().join(Config::FILE_NAME);
-    assert!(foundry_toml.exists());
+    assert!(!foundry_toml.exists());
+
+    cmd.arg("init").arg(prj.root());
+    cmd.assert_non_empty_stdout();
 
     set_current_dir(prj.root()).unwrap();
     let file = Config::find_config_file().unwrap();
     assert_eq!(foundry_toml, file);
 
     let s = read_string(&file);
-    println!("{}", s.clone());
     let basic: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
+    // check ds-test is detected
+    assert_eq!(basic.remappings, vec![Remapping::from_str("ds-test/=lib/ds-test/src").unwrap().into()]);
     assert_eq!(basic, Config::load().into_basic());
 });
 
 // checks that init works repeatedly
-forgetest!(can_init_repeatedly, |prj: TestProject, mut cmd: TestCommand| {
+forgetest!(can_init_repo_repeatedly, |prj: TestProject, mut cmd: TestCommand| {
+    let foundry_toml = prj.root().join(Config::FILE_NAME);
+    assert!(!foundry_toml.exists());
+
     cmd.arg("init").arg(prj.root());
     cmd.assert_non_empty_stdout();
-    let foundry_toml = prj.root().join(Config::FILE_NAME);
 
     for _ in 0..3 {
         assert!(foundry_toml.exists());

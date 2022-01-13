@@ -134,6 +134,13 @@ impl Config {
         Config::from(Config::figment())
     }
 
+    /// Returns the current `Config`
+    ///
+    /// See `Config::figment_with_root`
+    pub fn load_with_root(root: impl Into<PathBuf>) -> Self {
+        Config::from(Config::figment_with_root(root))
+    }
+
     /// Extract a `Config` from `provider`, panicking if extraction fails.
     ///
     /// # Panics

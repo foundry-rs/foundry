@@ -76,7 +76,7 @@ impl Cmd for InitArgs {
             let dest = root.join(Config::FILE_NAME);
             if !dest.exists() {
                 // write foundry.toml
-                let config = Config::from(Config::with_root(&root)).into_basic();
+                let config = Config::load_with_root(&root).into_basic();
                 std::fs::write(dest, config.to_string_pretty()?)?;
             }
         }
