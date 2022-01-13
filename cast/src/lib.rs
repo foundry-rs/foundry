@@ -349,6 +349,10 @@ where
             "0x6341fd3daf94b748c72ced5a5b26028f2474f5f00d824504e4fa37a75767e177" => "rinkeby",
             "0xbf7e331f7f7c1dd2e05159666b3bf8bc7a8a3a9eb1d518969eab529dd9b88c1a" => "goerli",
             "0x14c2283285a88fe5fce9bf5c573ab03d6616695d717b12a127188bcacfc743c4" => "kotti",
+            "0xa9c28ce2141b56c474f1dc504bee9b01eb1bd7d1a507580d5519d4437a97de1b" => "polygon",
+            "0x7b66506a9ebdbf30d32b43c5f15a3b1216269a1ec3a75aa3182b86176a2b1ca7" => {
+                "polygon-mumbai"
+            }
             "0x6d3c66c5357ec91d5c43af47e234a939b22557cbb552dc45bebbceeed90fbe34" => "bsctest",
             "0x0d21840abff46b96c84b2ac9e10e4f5cdaeb5693cb665db62a2f3b02d2d57b5b" => "bsc",
             "0x31ced5b9beb7f8782b014660da0cb18cc409f121f408186886e1ca3e8eeca96b" => {
@@ -689,7 +693,7 @@ impl SimpleCast {
     /// use cast::SimpleCast as Cast;
     ///
     /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(Cast::to_wei(1.into(), "".to_string())?, "1");
+    ///     assert_eq!(Cast::to_wei(1.into(), "".to_string())?, "1000000000000000000");
     ///     assert_eq!(Cast::to_wei(100.into(), "gwei".to_string())?, "100000000000");
     ///     assert_eq!(Cast::to_wei(100.into(), "eth".to_string())?, "100000000000000000000");
     ///     assert_eq!(Cast::to_wei(1000.into(), "ether".to_string())?, "1000000000000000000000");
@@ -697,13 +701,14 @@ impl SimpleCast {
     ///     Ok(())
     /// }
     /// ```
-    pub fn to_wei(value: U256, unit: String) -> Result<String> {
+    pub fn to_wei(value: f64, unit: String) -> Result<String> {
         let value = value.to_string();
         Ok(match &unit[..] {
-            "gwei" => format!("{:0<1$}", value, 9 + value.len()),
-            "eth" | "ether" => format!("{:0<1$}", value, 18 + value.len()),
-            _ => value,
-        })
+            "gwei" => ethers_core::utils::parse_units(value, 9),
+            "eth" | "ether" => ethers_core::utils::parse_units(value, 18),
+            _ => ethers_core::utils::parse_units(value, 18),
+        }?
+        .to_string())
     }
 
     /// Converts wei into an eth amount
@@ -714,31 +719,19 @@ impl SimpleCast {
     /// fn main() -> eyre::Result<()> {
     ///     assert_eq!(Cast::from_wei(1.into(), "gwei".to_string())?, "0.000000001");
     ///     assert_eq!(Cast::from_wei(12340000005u64.into(), "gwei".to_string())?, "12.340000005");
-    ///     assert_eq!(Cast::from_wei(10.into(), "ether".to_string())?, "0.00000000000000001");
-    ///     assert_eq!(Cast::from_wei(100.into(), "eth".to_string())?, "0.0000000000000001");
-    ///     assert_eq!(Cast::from_wei(17.into(), "".to_string())?, "17");
+    ///     assert_eq!(Cast::from_wei(10.into(), "ether".to_string())?, "0.000000000000000010");
+    ///     assert_eq!(Cast::from_wei(100.into(), "eth".to_string())?, "0.000000000000000100");
+    ///     assert_eq!(Cast::from_wei(17.into(), "".to_string())?, "0.000000000000000017");
     ///
     ///     Ok(())
     /// }
     /// ```
     pub fn from_wei(value: U256, unit: String) -> Result<String> {
         Ok(match &unit[..] {
-            "gwei" => {
-                let gwei = U256::pow(10.into(), 9.into());
-                let left = value / gwei;
-                let right = value - left * gwei;
-                let res = format!("{}.{:0>9}", left, right.to_string());
-                res.trim_end_matches('0').to_string()
-            }
-            "eth" | "ether" => {
-                let wei = U256::pow(10.into(), 18.into());
-                let left = value / wei;
-                let right = value - left * wei;
-                let res = format!("{}.{:0>18}", left, right.to_string());
-                res.trim_end_matches('0').to_string()
-            }
-            _ => value.to_string(),
-        })
+            "gwei" => ethers_core::utils::format_units(value, 9),
+            "eth" | "ether" => ethers_core::utils::format_units(value, 18),
+            _ => ethers_core::utils::format_units(value, 18),
+        }?)
     }
 
     /// Converts an Ethereum address to its checksum format
