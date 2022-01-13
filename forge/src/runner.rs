@@ -16,7 +16,7 @@ use evm_adapters::{
     sputnik::cheatcodes::debugger::DebugArena,
     Evm, EvmError,
 };
-use eyre::{Context, Result};
+use eyre::Result;
 use std::{collections::BTreeMap, fmt, time::Instant};
 
 use proptest::test_runner::{TestError, TestRunner};
@@ -275,17 +275,18 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
         // call the setup function in each test to reset the test's state.
         if setup {
             tracing::trace!("setting up");
-            let setup_logs = match self.evm.setup(self.address) {
+            let setup_logs = match evm.setup(address) {
                 Ok((_reason, setup_logs)) => setup_logs,
                 Err(e) => {
                     // if tracing is enabled, just return it as a failed test
                     // otherwise abort
-                    if self.evm.tracing_enabled() {
+                    if evm.tracing_enabled() {
                         self.update_traces(
                             &mut traces,
                             &mut identified_contracts,
                             known_contracts,
                             setup,
+                            &mut evm,
                         );
                     }
 
@@ -298,6 +299,11 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
                         kind: TestKind::Standard(0),
                         traces,
                         identified_contracts,
+                        debug_calls: if evm.state().debug_enabled {
+                            Some(evm.debug_calls())
+                        } else {
+                            None
+                        },
                     })
                 }
             };
@@ -370,17 +376,18 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
         // call the setup function in each test to reset the test's state.
         if setup {
             tracing::trace!("setting up");
-            match self.evm.setup(self.address) {
+            match evm.setup(address) {
                 Ok((_reason, _setup_logs)) => {}
                 Err(e) => {
                     // if tracing is enabled, just return it as a failed test
                     // otherwise abort
-                    if self.evm.tracing_enabled() {
+                    if evm.tracing_enabled() {
                         self.update_traces(
                             &mut traces,
                             &mut identified_contracts,
                             known_contracts,
                             setup,
+                            &mut evm,
                         );
                     }
                     return Ok(TestResult {
@@ -392,6 +399,11 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
                         kind: TestKind::Fuzz(FuzzedCases::new(vec![])),
                         traces,
                         identified_contracts,
+                        debug_calls: if evm.state().debug_enabled {
+                            Some(evm.debug_calls())
+                        } else {
+                            None
+                        },
                     })
                 }
             }
@@ -498,7 +510,7 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
                     0,
                     known_contracts.expect("traces enabled but no identified_contracts"),
                     &mut ident,
-                    self.evm,
+                    evm,
                 );
                 temp_traces.push(test_trace);
             }
