@@ -161,7 +161,7 @@ pub struct FuzzedCases {
 }
 
 impl FuzzedCases {
-    fn new(mut cases: Vec<FuzzCase>) -> Self {
+    pub fn new(mut cases: Vec<FuzzCase>) -> Self {
         cases.sort_by_key(|c| c.gas);
         Self { cases }
     }
