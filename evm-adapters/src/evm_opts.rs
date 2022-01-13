@@ -102,55 +102,66 @@ pub struct EvmOpts {
 }
 
 #[cfg(feature = "sputnik")]
-use crate::FAUCET_ACCOUNT;
+pub use sputnik_helpers::BackendKind;
+
+// Helper functions for sputnik
 #[cfg(feature = "sputnik")]
-use sputnik::backend::{Backend, MemoryBackend};
+mod sputnik_helpers {
+    use super::*;
 
-impl EvmOpts {
-    #[cfg(feature = "sputnik")]
-    pub fn backend<'a>(
-        &'a self,
-        vicinity: &'a MemoryVicinity,
-    ) -> eyre::Result<Box<dyn Backend + 'a>> {
-        use crate::sputnik::cache::SharedBackend;
-        use ethers::providers::Provider;
+    use crate::{sputnik::cache::SharedBackend, FAUCET_ACCOUNT};
+    use ::sputnik::backend::MemoryBackend;
+    use ethers::providers::Provider;
 
-        let mut backend = MemoryBackend::new(vicinity, Default::default());
-        // max out the balance of the faucet
-        let faucet = backend.state_mut().entry(*FAUCET_ACCOUNT).or_insert_with(Default::default);
-        faucet.balance = U256::MAX;
-
-        let backend: Box<dyn Backend> = if let Some(ref url) = self.fork_url {
-            let provider = Provider::try_from(url.as_str())?;
-            let init_state = backend.state().clone();
-            let cache = crate::sputnik::new_shared_cache(init_state);
-            let backend = SharedBackend::new(
-                provider,
-                cache,
-                vicinity.clone(),
-                self.fork_block_number.map(Into::into),
-            );
-            Box::new(backend)
-        } else {
-            Box::new(backend)
-        };
-
-        Ok(backend)
+    pub enum BackendKind<'a> {
+        Simple(MemoryBackend<'a>),
+        Shared(SharedBackend),
     }
 
-    #[cfg(feature = "sputnik")]
-    pub fn vicinity(&self) -> eyre::Result<MemoryVicinity> {
-        Ok(if let Some(ref url) = self.fork_url {
-            let provider = ethers::providers::Provider::try_from(url.as_str())?;
-            let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
-            rt.block_on(crate::sputnik::vicinity(
-                &provider,
-                self.fork_block_number,
-                Some(self.env.tx_origin),
-            ))?
-        } else {
-            self.env.sputnik_state()
-        })
+    impl EvmOpts {
+        #[cfg(feature = "sputnik")]
+        pub fn backend<'a>(
+            &'a self,
+            vicinity: &'a MemoryVicinity,
+        ) -> eyre::Result<BackendKind<'a>> {
+            let mut backend = MemoryBackend::new(vicinity, Default::default());
+            // max out the balance of the faucet
+            let faucet =
+                backend.state_mut().entry(*FAUCET_ACCOUNT).or_insert_with(Default::default);
+            faucet.balance = U256::MAX;
+
+            let backend = if let Some(ref url) = self.fork_url {
+                let provider = Provider::try_from(url.as_str())?;
+                let init_state = backend.state().clone();
+                let cache = crate::sputnik::new_shared_cache(init_state);
+                let backend = SharedBackend::new(
+                    provider,
+                    cache,
+                    vicinity.clone(),
+                    self.fork_block_number.map(Into::into),
+                );
+                BackendKind::Shared(backend)
+            } else {
+                BackendKind::Simple(backend)
+            };
+
+            Ok(backend)
+        }
+
+        #[cfg(feature = "sputnik")]
+        pub fn vicinity(&self) -> eyre::Result<MemoryVicinity> {
+            Ok(if let Some(ref url) = self.fork_url {
+                let provider = ethers::providers::Provider::try_from(url.as_str())?;
+                let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
+                rt.block_on(crate::sputnik::vicinity(
+                    &provider,
+                    self.fork_block_number,
+                    Some(self.env.tx_origin),
+                ))?
+            } else {
+                self.env.sputnik_state()
+            })
+        }
     }
 }
 
