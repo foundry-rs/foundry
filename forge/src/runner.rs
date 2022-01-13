@@ -324,7 +324,7 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
 
     #[tracing::instrument(name = "fuzz-test", skip_all, fields(name = %func.signature()))]
     pub fn run_fuzz_test(
-        &mut self,
+        &self,
         func: &Function,
         setup: bool,
         runner: TestRunner,
@@ -335,21 +335,22 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
         let should_fail = func.name.starts_with("testFail");
         tracing::debug!(func = ?func.signature(), should_fail, "fuzzing");
 
-        self.evm.reset_traces();
+        let (address, mut evm, init_logs) = self.new_sputnik_evm()?;
 
         // call the setup function in each test to reset the test's state.
         if setup {
-            self.evm.setup(self.address)?;
+            evm.setup(address)?;
         }
 
-        let mut logs = self.init_logs.to_vec();
+        let mut logs = init_logs;
 
-        let prev = self.evm.set_tracing_enabled(false);
+        let prev = evm.set_tracing_enabled(false);
 
         // instantiate the fuzzed evm in line
-        let evm = FuzzedExecutor::new(self.evm, runner, self.sender);
-        let FuzzTestResult { cases, test_error } = evm.fuzz(func, self.address, should_fail);
+        let evm = FuzzedExecutor::new(&mut evm, runner, self.sender);
+        let FuzzTestResult { cases, test_error } = evm.fuzz(func, address, should_fail);
 
+        let evm = evm.into_inner();
         let mut traces: Option<Vec<CallTraceArena>> = None;
         let mut identified_contracts: Option<BTreeMap<Address, (String, Abi)>> = None;
 
@@ -357,18 +358,24 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
             // we want traces for a failed fuzz
             if let TestError::Fail(_reason, bytes) = &error.test_error {
                 if prev {
-                    let _ = self.evm.set_tracing_enabled(true);
+                    let _ = evm.set_tracing_enabled(true);
                 }
                 let (_retdata, status, _gas, execution_logs) =
-                    self.evm.call_raw(self.sender, self.address, bytes.clone(), 0.into(), false)?;
-                if <E as evm_adapters::Evm<S>>::is_fail(&status) {
+                    evm.call_raw(self.sender, address, bytes.clone(), 0.into(), false)?;
+                if is_fail(evm, status) {
                     logs.extend(execution_logs);
                     // add reverted logs
-                    logs.extend(self.evm.all_logs());
+                    logs.extend(evm.all_logs());
                 } else {
                     logs.extend(execution_logs);
                 }
-                self.update_traces(&mut traces, &mut identified_contracts, known_contracts, setup);
+                self.update_traces(
+                    &mut traces,
+                    &mut identified_contracts,
+                    known_contracts,
+                    setup,
+                    evm,
+                );
             }
         }
 
@@ -394,8 +401,6 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
         let duration = Instant::now().duration_since(start);
         tracing::debug!(?duration, %success);
 
-        // reset tracing to previous value in case next test *isn't* a fuzz test
-        self.evm.set_tracing_enabled(prev);
         // from that call?
         Ok(TestResult {
             success,
@@ -448,8 +453,21 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
             *identified_contracts = Some(ident);
             *traces = Some(temp_traces);
         }
-        self.evm.reset_traces();
+        evm.reset_traces();
     }
+}
+
+// Helper functions for getting the revert status for a `ReturnReason` without having
+// to specify the full EVM signature
+fn is_fail<S: Clone, E: Evm<S> + evm_adapters::Evm<S, ReturnReason = T>, T>(
+    _evm: &mut E,
+    status: T,
+) -> bool {
+    <E as evm_adapters::Evm<S>>::is_fail(&status)
+}
+
+fn revert<S: Clone, E: Evm<S> + evm_adapters::Evm<S, ReturnReason = T>, T>(_evm: &E) -> T {
+    <E as evm_adapters::Evm<S>>::revert()
 }
 
 #[cfg(test)]
