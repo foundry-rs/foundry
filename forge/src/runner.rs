@@ -10,10 +10,10 @@ use ethers::{
     abi::{Abi, Function, Token},
     types::{Address, Bytes},
 };
-use evm_adapters::call_tracing::CallTraceArena;
-
 use evm_adapters::{
+    call_tracing::CallTraceArena,
     fuzz::{FuzzTestResult, FuzzedCases, FuzzedExecutor},
+    sputnik::cheatcodes::debugger::DebugArena,
     Evm, EvmError,
 };
 use eyre::{Context, Result};
@@ -71,6 +71,10 @@ pub struct TestResult {
 
     /// Identified contracts
     pub identified_contracts: Option<BTreeMap<Address, (String, Abi)>>,
+
+    /// Debug Steps
+    #[serde(skip)]
+    pub debug_calls: Option<Vec<DebugArena>>,
 }
 
 impl TestResult {
@@ -319,6 +323,7 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
             kind: TestKind::Standard(gas_used),
             traces,
             identified_contracts,
+            debug_calls: if evm.state().debug_enabled { Some(evm.debug_calls()) } else { None },
         })
     }
 
@@ -411,6 +416,7 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
             kind: TestKind::Fuzz(cases),
             traces,
             identified_contracts,
+            debug_calls: if evm.state().debug_enabled { Some(evm.debug_calls()) } else { None },
         })
     }
 

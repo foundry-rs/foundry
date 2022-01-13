@@ -81,36 +81,36 @@ impl Cmd for RunArgs {
         let needs_setup = abi.functions().any(|func| func.name == "setUp");
 
         let cfg = crate::utils::sputnik_cfg(&self.opts.compiler.evm_version);
-        let vicinity = self.evm_opts.vicinity()?;
-        let backend = self.evm_opts.backend(&vicinity)?;
+        let vicinity = evm_opts.vicinity()?;
+        let backend = evm_opts.backend(&vicinity)?;
 
         // need to match on the backend type
         let result = match backend {
             BackendKind::Simple(ref backend) => {
                 let runner = ContractRunner::new(
-                    &self.evm_opts,
+                    &evm_opts,
                     &cfg,
                     backend,
                     &abi,
                     bytecode,
-                    Some(self.evm_opts.sender),
+                    Some(evm_opts.sender),
                 );
                 runner.run_test(&func, needs_setup, Some(&known_contracts))?
             }
             BackendKind::Shared(ref backend) => {
                 let runner = ContractRunner::new(
-                    &self.evm_opts,
+                    &evm_opts,
                     &cfg,
                     backend,
                     &abi,
                     bytecode,
-                    Some(self.evm_opts.sender),
+                    Some(evm_opts.sender),
                 );
                 runner.run_test(&func, needs_setup, Some(&known_contracts))?
             }
         };
 
-        if self.evm_opts.debug {
+        if evm_opts.debug {
             // 4. Boot up debugger
             let source_code: BTreeMap<u32, String> = sources
                 .iter()
@@ -137,9 +137,7 @@ impl Cmd for RunArgs {
                 })
                 .collect();
 
-            // let calls = evm.debug_calls();
-            // TODO: How should we instantiate this now that we don't have an EVM?
-            let calls: Vec<DebugArena> = vec![];
+            let calls: Vec<DebugArena> = result.debug_calls.expect("Debug must be enabled by now");
             println!("debugging");
             let index = if needs_setup && calls.len() > 1 { 1 } else { 0 };
             let mut flattened = Vec::new();
