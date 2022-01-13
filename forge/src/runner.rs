@@ -197,7 +197,6 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
         &mut self,
         filter: &impl TestFilter,
         fuzzer: Option<&mut TestRunner>,
-        init_state: &S,
         known_contracts: Option<&BTreeMap<String, (Abi, Vec<u8>)>>,
     ) -> Result<BTreeMap<String, TestResult>> {
         tracing::info!("starting tests");
@@ -216,8 +215,6 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
             .iter()
             .filter(|func| func.inputs.is_empty())
             .map(|func| {
-                // Before each test run executes, ensure we're at our initial state.
-                self.evm.reset(init_state.clone());
                 let result = self.run_test(func, needs_setup, known_contracts)?;
                 Ok((func.signature(), result))
             })
@@ -228,7 +225,6 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
                 .iter()
                 .filter(|func| !func.inputs.is_empty())
                 .map(|func| {
-                    self.evm.reset(init_state.clone());
                     let result =
                         self.run_fuzz_test(func, needs_setup, fuzzer.clone(), known_contracts)?;
                     Ok((func.signature(), result))
@@ -252,7 +248,7 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
 
     #[tracing::instrument(name = "test", skip_all, fields(name = %func.signature()))]
     pub fn run_test(
-        &mut self,
+        &self,
         func: &Function,
         setup: bool,
         known_contracts: Option<&BTreeMap<String, (Abi, Vec<u8>)>>,
@@ -265,52 +261,52 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
         let should_fail = func.name.starts_with("testFail");
         tracing::debug!(func = ?func.signature(), should_fail, "unit-testing");
 
-        let mut logs = self.init_logs.to_vec();
+        let (address, mut evm, init_logs) = self.new_sputnik_evm()?;
 
-        self.evm.reset_traces();
+        let mut logs = init_logs;
 
         // call the setup function in each test to reset the test's state.
         if setup {
             tracing::trace!("setting up");
-            let setup_logs = self
-                .evm
-                .setup(self.address)
+            let setup_logs = evm
+                .setup(address)
                 .wrap_err(format!("could not setup during {} test", func.signature()))?
                 .1;
             logs.extend_from_slice(&setup_logs);
         }
 
-        let (status, reason, gas_used, logs) = match self.evm.call::<(), _, _>(
-            self.sender,
-            self.address,
-            func.clone(),
-            (),
-            0.into(),
-        ) {
-            Ok((_, status, gas_used, execution_logs)) => {
-                logs.extend(execution_logs);
-                (status, None, gas_used, logs)
-            }
-            Err(err) => match err {
-                EvmError::Execution { reason, gas_used, logs: execution_logs } => {
+        let (status, reason, gas_used, logs) =
+            match evm.call::<(), _, _>(self.sender, address, func.clone(), (), 0.into()) {
+                Ok((_, status, gas_used, execution_logs)) => {
                     logs.extend(execution_logs);
-                    // add reverted logs
-                    logs.extend(self.evm.all_logs());
-                    (E::revert(), Some(reason), gas_used, logs)
+                    (status, None, gas_used, logs)
                 }
-                err => {
-                    tracing::error!(?err);
-                    return Err(err.into())
-                }
-            },
-        };
+                Err(err) => match err {
+                    EvmError::Execution { reason, gas_used, logs: execution_logs } => {
+                        logs.extend(execution_logs);
+                        // add reverted logs
+                        logs.extend(evm.all_logs());
+                        (revert(&evm), Some(reason), gas_used, logs)
+                    }
+                    err => {
+                        tracing::error!(?err);
+                        return Err(err.into())
+                    }
+                },
+            };
 
         let mut traces: Option<Vec<CallTraceArena>> = None;
         let mut identified_contracts: Option<BTreeMap<Address, (String, Abi)>> = None;
 
-        self.update_traces(&mut traces, &mut identified_contracts, known_contracts, setup);
+        self.update_traces(
+            &mut traces,
+            &mut identified_contracts,
+            known_contracts,
+            setup,
+            &mut evm,
+        );
 
-        let success = self.evm.check_success(self.address, &status, should_fail);
+        let success = evm.check_success(address, &status, should_fail);
         let duration = Instant::now().duration_since(start);
         tracing::debug!(?duration, %success, %gas_used);
 
