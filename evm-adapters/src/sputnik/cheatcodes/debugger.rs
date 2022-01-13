@@ -178,7 +178,7 @@ pub enum CheatOp {
     MOCKCALL,
     CLEARMOCKEDCALLS,
     EXPECTCALL,
-    GETCODE
+    GETCODE,
 }
 
 impl From<CheatOp> for OpCode {
