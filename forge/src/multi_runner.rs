@@ -222,9 +222,14 @@ mod tests {
 
         // 8 contracts being built
         assert_eq!(results.keys().len(), 8);
-        for (_, contract_tests) in results {
-            assert_ne!(contract_tests.keys().len(), 0);
-            assert!(contract_tests.iter().all(|(_, result)| result.success));
+        for (key, contract_tests) in results {
+            // for a bad setup, we dont want a successful test
+            if key == "SetupTest.json:SetupTest" {
+                assert!(contract_tests.iter().all(|(_, result)| !result.success));
+            } else {
+                assert_ne!(contract_tests.keys().len(), 0);
+                assert!(contract_tests.iter().all(|(_, result)| result.success));
+            }
         }
 
         // can also filter
