@@ -693,7 +693,7 @@ impl SimpleCast {
     /// use cast::SimpleCast as Cast;
     ///
     /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(Cast::to_wei(1.into(), "".to_string())?, "1");
+    ///     assert_eq!(Cast::to_wei(1.into(), "".to_string())?, "1000000000000000000");
     ///     assert_eq!(Cast::to_wei(100.into(), "gwei".to_string())?, "100000000000");
     ///     assert_eq!(Cast::to_wei(100.into(), "eth".to_string())?, "100000000000000000000");
     ///     assert_eq!(Cast::to_wei(1000.into(), "ether".to_string())?, "1000000000000000000000");
@@ -719,9 +719,9 @@ impl SimpleCast {
     /// fn main() -> eyre::Result<()> {
     ///     assert_eq!(Cast::from_wei(1.into(), "gwei".to_string())?, "0.000000001");
     ///     assert_eq!(Cast::from_wei(12340000005u64.into(), "gwei".to_string())?, "12.340000005");
-    ///     assert_eq!(Cast::from_wei(10.into(), "ether".to_string())?, "0.00000000000000001");
-    ///     assert_eq!(Cast::from_wei(100.into(), "eth".to_string())?, "0.0000000000000001");
-    ///     assert_eq!(Cast::from_wei(17.into(), "".to_string())?, "17");
+    ///     assert_eq!(Cast::from_wei(10.into(), "ether".to_string())?, "0.000000000000000010");
+    ///     assert_eq!(Cast::from_wei(100.into(), "eth".to_string())?, "0.000000000000000100");
+    ///     assert_eq!(Cast::from_wei(17.into(), "".to_string())?, "0.000000000000000017");
     ///
     ///     Ok(())
     /// }
@@ -730,7 +730,7 @@ impl SimpleCast {
         Ok(match &unit[..] {
             "gwei" => ethers_core::utils::format_units(value, 9),
             "eth" | "ether" => ethers_core::utils::format_units(value, 18),
-            _ => ethers_core::utils::format_units(value, 9),
+            _ => ethers_core::utils::format_units(value, 18),
         }?)
     }
 
