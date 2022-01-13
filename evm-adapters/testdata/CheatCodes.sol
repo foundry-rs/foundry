@@ -4,6 +4,7 @@ pragma solidity ^0.8.4;
 pragma experimental ABIEncoderV2;
 
 import "./DsTest.sol";
+import { LargeContract } from "./LargeContract.sol";
 
 interface Hevm {
     // Set block.timestamp (newTimestamp)
@@ -520,8 +521,12 @@ contract CheatCodes is DSTest {
     }
 
     function testGetCode() public {
-        bytes memory res = hevm.getCode("LargeContract.sol");
-        assertEq(string(res), "LargeContract.sols");
+        bytes memory actualResult = hevm.getCode("LargeContract.sol");
+
+        LargeContract c = new LargeContract();
+        bytes memory expectedResut = getCode(address(c));
+
+        assertEq(string(actualResult), string(expectedResut));
     }
 
     function getCode(address who) internal returns (bytes memory o_code) {

@@ -581,8 +581,9 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 }
 
                 self.add_debug(CheatOp::GETCODE);
-                let name = inner.0.to_string().replace(".sol", "");
+                let name = inner.0.replace(".sol", "");
                 let path = format!("./out/{}.sol/{}.json", name, name);
+                println!("******FILE PATH: {}", path);
                 let mut file = File::open(path).unwrap();
                 let mut data = String::new();
                 file.read_to_string(&mut data).unwrap();
