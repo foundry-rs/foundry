@@ -10,6 +10,10 @@ use crate::{
 };
 use std::collections::BTreeMap;
 
+use std::fs::File;
+use std::io::Read;
+use serde::Deserialize;
+
 use sputnik::{
     backend::Backend,
     executor::stack::{
@@ -568,6 +572,24 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
 
                 // encode the data as Bytes
                 res = ethers::abi::encode(&[Token::Bytes(decoded.to_vec())]);
+            }
+            HEVMCalls::GetCode(inner) => {
+
+                #[derive(Deserialize)]
+                struct ContractFile {
+                    bin: String,
+                }
+
+                self.add_debug(CheatOp::GETCODE);
+                let name = inner.0.to_string().replace(".sol", "");
+                let path = format!("./out/{}.sol/{}.json", name, name);
+                let mut file = File::open(path).unwrap();
+                let mut data = String::new();
+                file.read_to_string(&mut data).unwrap();
+
+                let contract_file: ContractFile = serde_json::from_str(&data).unwrap();
+
+                res = ethers::abi::encode(&[Token::String(contract_file.bin)]);
             }
             HEVMCalls::Addr(inner) => {
                 self.add_debug(CheatOp::ADDR);

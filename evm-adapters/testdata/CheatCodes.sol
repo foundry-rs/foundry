@@ -52,6 +52,8 @@ interface Hevm {
     // Expect a call to an address with the specified calldata.
     // Calldata can either be strict or a partial match
     function expectCall(address,bytes calldata) external;
+
+    function getCode(bytes calldata) external returns (bytes memory);
 }
 
 contract HasStorage {
@@ -515,6 +517,11 @@ contract CheatCodes is DSTest {
             address(target),
             abi.encodeWithSelector(target.add.selector)
         );
+    }
+
+    function testGetCode() public {
+        bytes memory res = hevm.getCode("LargeContract.sol");
+        assertEq(string(res), "LargeContract.sols");
     }
 
     function getCode(address who) internal returns (bytes memory o_code) {
