@@ -212,7 +212,7 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
 
         // run all unit tests
         let unit_tests = test_fns
-            .iter()
+            .par_iter()
             .filter(|func| func.inputs.is_empty())
             .map(|func| {
                 let result = self.run_test(func, needs_setup, known_contracts)?;
@@ -222,7 +222,7 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
 
         let map = if let Some(fuzzer) = fuzzer {
             let fuzz_tests = test_fns
-                .iter()
+                .par_iter()
                 .filter(|func| !func.inputs.is_empty())
                 .map(|func| {
                     let result =
