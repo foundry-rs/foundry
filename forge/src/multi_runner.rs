@@ -14,9 +14,8 @@ use ethers::{
 use proptest::test_runner::TestRunner;
 
 use eyre::Result;
-use std::collections::BTreeMap;
 use rayon::prelude::*;
-
+use std::collections::BTreeMap;
 
 /// Builder used for instantiating the multi-contract runner
 #[derive(Debug, Default)]

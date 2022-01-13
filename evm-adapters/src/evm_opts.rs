@@ -77,8 +77,8 @@ pub struct EvmOpts {
     #[clap(
         help = "the address which will be executing all tests",
         long,
-        default_value = "0x0000000000000000000000000000000000000000",
-        env = "DAPP_TEST_ADDRESS"
+        default_value = "0x00a329c0648769A73afAc7F9381E08FB43dBEA72",
+        env = "DAPP_TEST_CALLER"
     )]
     pub sender: Address,
 
@@ -184,7 +184,8 @@ pub struct Env {
     #[clap(
         help = "the tx.origin value during EVM execution",
         long,
-        default_value = "0x0000000000000000000000000000000000000000"
+        default_value = "0x00a329c0648769A73afAc7F9381E08FB43dBEA72",
+        env = "DAPP_TEST_ORIGIN"
     )]
     pub tx_origin: Address,
 
