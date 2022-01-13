@@ -15,6 +15,8 @@ use proptest::test_runner::TestRunner;
 
 use eyre::Result;
 use std::collections::BTreeMap;
+use rayon::prelude::*;
+
 
 /// Builder used for instantiating the multi-contract runner
 #[derive(Debug, Default)]
@@ -132,7 +134,7 @@ pub struct MultiContractRunner {
 impl MultiContractRunner {
     pub fn test(
         &mut self,
-        filter: &impl TestFilter,
+        filter: &(impl TestFilter + Send + Sync),
     ) -> Result<BTreeMap<String, BTreeMap<String, TestResult>>> {
         // TODO: Convert to iterator, ideally parallel one?
         let contracts = std::mem::take(&mut self.contracts);
@@ -141,7 +143,7 @@ impl MultiContractRunner {
         let backend = self.evm_opts.backend(&vicinity)?;
 
         let results = contracts
-            .iter()
+            .par_iter()
             .filter(|(name, _)| filter.matches_contract(name))
             .map(|(name, (abi, deploy_code))| {
                 // unavoidable duplication here?
