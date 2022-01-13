@@ -1,12 +1,9 @@
 //! build command
 
-use ethers::{
-    solc::{
-        artifacts::{Optimizer, Settings},
-        remappings::Remapping,
-        MinimalCombinedArtifacts, Project, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
-    },
-    types::Address,
+use ethers::solc::{
+    artifacts::{Optimizer, Settings},
+    remappings::Remapping,
+    MinimalCombinedArtifacts, Project, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
 };
 use std::{
     collections::BTreeMap,
@@ -17,10 +14,6 @@ use std::{
 use crate::{cmd::Cmd, opts::forge::CompilerArgs, utils};
 
 use clap::{Parser, ValueHint};
-#[cfg(feature = "evmodin-evm")]
-use evmodin::util::mocked_host::MockedHost;
-#[cfg(feature = "sputnik-evm")]
-use sputnik::backend::MemoryVicinity;
 
 #[derive(Debug, Clone, Parser)]
 pub struct BuildArgs {
