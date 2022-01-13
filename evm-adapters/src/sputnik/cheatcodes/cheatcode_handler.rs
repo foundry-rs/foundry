@@ -591,7 +591,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 file.read_to_string(&mut data).unwrap();
 
                 let contract_file: ContractFile = serde_json::from_str(&data).unwrap();
-                let code = hex::decode(contract_file.bin).unwrap();
+                let code = hex::decode(contract_file.bin.replace("0x", "")).unwrap();
 
                 res = ethers::abi::encode(&[Token::Bytes(code)]);
             }
