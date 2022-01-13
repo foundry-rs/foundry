@@ -15,7 +15,9 @@ pub mod test_helpers {
     use ethers::{
         prelude::Lazy,
         solc::{CompilerOutput, Project, ProjectPathsConfig},
+        types::U256,
     };
+    use evm_adapters::evm_opts::{Env, EvmOpts, EvmType};
     use regex::Regex;
 
     pub static COMPILED: Lazy<CompilerOutput> = Lazy::new(|| {
@@ -26,6 +28,13 @@ pub mod test_helpers {
         let project = Project::builder().paths(paths).ephemeral().no_artifacts().build().unwrap();
         project.compile().unwrap().output()
     });
+
+    pub const EVM_OPTS: EvmOpts = EvmOpts {
+        env: Env { gas_limit: 18446744073709551615, chain_id: 1, ..Default::default() },
+        initial_balance: U256::MAX,
+        evm_type: EvmType::Sputnik,
+        ..Default::default()
+    };
 
     pub struct Filter {
         test_regex: Regex,
