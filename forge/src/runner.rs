@@ -413,15 +413,16 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
         })
     }
 
-    fn update_traces(
-        &mut self,
+    fn update_traces<S: Clone, E: Evm<S>>(
+        &self,
         traces: &mut Option<Vec<CallTraceArena>>,
         identified_contracts: &mut Option<BTreeMap<Address, (String, Abi)>>,
         known_contracts: Option<&BTreeMap<String, (Abi, Vec<u8>)>>,
         setup: bool,
+        evm: &mut E,
     ) {
-        let evm_traces = self.evm.traces();
-        if !evm_traces.is_empty() && self.evm.tracing_enabled() {
+        let evm_traces = evm.traces();
+        if !evm_traces.is_empty() && evm.tracing_enabled() {
             let mut ident = BTreeMap::new();
             // create an iter over the traces
             let mut trace_iter = evm_traces.into_iter();
@@ -433,7 +434,7 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
                     0,
                     known_contracts.expect("traces enabled but no identified_contracts"),
                     &mut ident,
-                    self.evm,
+                    evm,
                 );
                 temp_traces.push(setup);
             }
@@ -443,7 +444,7 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
                 0,
                 known_contracts.expect("traces enabled but no identified_contracts"),
                 &mut ident,
-                self.evm,
+                evm,
             );
             temp_traces.push(test_trace);
 
