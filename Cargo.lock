@@ -1535,6 +1535,8 @@ version = "0.1.0"
 dependencies = [
  "ansi_term",
  "bytes",
+ "clap",
+ "clap_complete",
  "ethers",
  "evm",
  "evmodin",
@@ -1702,6 +1704,7 @@ dependencies = [
  "glob",
  "hex",
  "proptest",
+ "rayon",
  "regex",
  "semver",
  "serde",
