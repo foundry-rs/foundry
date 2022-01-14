@@ -46,7 +46,7 @@ where
     /// Makes a read-only call to the specified address
     ///
     /// ```no_run
-    /// 
+    ///
     /// use cast::Cast;
     /// use ethers_core::types::{Address, Chain};
     /// use ethers_providers::{Provider, Http};
@@ -491,14 +491,17 @@ impl SimpleCast {
         format!("0x{}", s)
     }
     /// Generates an interface in solidity from either a local file ABI or a verified contract on
-    /// Etherscan.
-    /// ```
+    /// Etherscan. It returns a vector of InterfaceSource structs that contain the source of the
+    /// interface and their name.
+    /// ```no_run
     /// use cast::SimpleCast as Cast;
-    ///
-    /// let path = InterfaceSource::Local('utils/testdata/interfaceTestABI.json');
-    /// let interfaces= Cast::generate_interface(path)?;
-    /// assert_eq!(interfaces[0]::name, "Interface");
-    /// println!("{}", interfaces[0]::source);
+    /// use cast::InterfacePath;
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let path = InterfacePath::Local("utils/testdata/interfaceTestABI.json".to_owned());
+    /// let interfaces= Cast::generate_interface(path).await?;
+    /// println!("interface {} {{\n {}\n}}", interfaces[0].name, interfaces[0].source);
+    /// # Ok(())
+    /// # }
     /// ```
     pub async fn generate_interface(
         address_or_path: InterfacePath,
@@ -930,7 +933,7 @@ impl SimpleCast {
         let code = meta.source_code();
 
         if code.is_empty() {
-            return Err(eyre::eyre!("unverified contract"))
+            return Err(eyre::eyre!("unverified contract"));
         }
 
         Ok(code)
