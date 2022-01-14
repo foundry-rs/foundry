@@ -1,10 +1,7 @@
 use ethers::solc::{artifacts::Contract, EvmVersion};
 
 use eyre::{ContextCompat, WrapErr};
-use std::{
-    path::{Path, PathBuf},
-    process::Command,
-};
+use std::{path::PathBuf, process::Command};
 
 #[cfg(feature = "evmodin-evm")]
 use evmodin::Revision;

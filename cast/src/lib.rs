@@ -11,7 +11,6 @@ use ethers_core::{
 use ethers_etherscan::Client;
 use ethers_providers::{Middleware, PendingTransaction};
 use eyre::{Context, Result};
-use foundry_utils::{encode_args, get_func, to_table};
 use rustc_hex::{FromHexIter, ToHex};
 use std::str::FromStr;
 
@@ -47,7 +46,7 @@ where
     /// Makes a read-only call to the specified address
     ///
     /// ```no_run
-    ///
+    /// 
     /// use cast::Cast;
     /// use ethers_core::types::{Address, Chain};
     /// use ethers_providers::{Provider, Http};
@@ -528,8 +527,7 @@ impl SimpleCast {
             .iter()
             .zip(&contract_names)
             .map(|(contract_abi, contract_name)| {
-                let interface_source =
-                    foundry_utils::abi_to_solidity(&contract_abi, contract_name)?;
+                let interface_source = foundry_utils::abi_to_solidity(contract_abi, contract_name)?;
                 Ok(InterfaceSource { name: contract_name.to_owned(), source: interface_source })
             })
             .collect::<Result<Vec<InterfaceSource>>>()

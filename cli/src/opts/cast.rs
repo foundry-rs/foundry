@@ -329,16 +329,16 @@ pub enum Subcommands {
         #[clap(subcommand)]
         command: WalletSubcommands,
     },
-    #[structopt(
+    #[clap(
         name = "interface",
         about = "Generate contract's interface from ABI. Currently it doesn't support ABI encoder V2"
     )]
     Interface {
-        #[structopt(short = "s", help = "The contract's address or path to ABI file")]
+        #[clap(short = 's', help = "The contract's address or path to ABI file")]
         path_or_address: String,
-        #[structopt(short, default_value = "^0.8.10", help = "pragma version")]
+        #[clap(short, default_value = "^0.8.10", help = "pragma version")]
         pragma: String,
-        #[structopt(
+        #[clap(
             short,
             help = "The blockchain where the smart contract is deployed. Supported values:  \
             mainnet, ropsten, rinkeby, goerli, kovan, xdai, polygon, polygon-mumbai, avalanche, \
@@ -346,16 +346,16 @@ pub enum Subcommands {
             default_value = "mainnet"
         )]
         chain: ethers::core::types::Chain,
-        #[structopt(short, help = "Path to output file. Defaults to stdout")]
+        #[clap(short, help = "Path to output file. Defaults to stdout")]
         output_location: Option<PathBuf>,
-        #[structopt(short, env = "ETHERSCAN_API_KEY", help = "etherscan API key")]
+        #[clap(short, env = "ETHERSCAN_API_KEY", help = "etherscan API key")]
         etherscan_api_key: Option<String>,
     },
     #[clap(about = "generate shell completions script")]
     Completions {
         #[clap(arg_enum)]
         shell: clap_complete::Shell,
-  }
+    },
 }
 
 #[derive(Debug, Parser)]
