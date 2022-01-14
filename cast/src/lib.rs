@@ -491,7 +491,7 @@ impl SimpleCast {
         format!("0x{}", s)
     }
     /// Generates an interface in solidity from either a local file ABI or a verified contract on
-    /// Etherscan. It returns a vector of InterfaceSource structs that contain the source of the
+    /// Etherscan. It returns a vector of [`InterfaceSource`] structs that contain the source of the
     /// interface and their name.
     /// ```no_run
     /// use cast::SimpleCast as Cast;

@@ -404,14 +404,16 @@ pub fn etherscan_api_key() -> eyre::Result<String> {
     })
 }
 
-/// The function accepts an &Abi reference, that can be a serde_json serialized string, as the
-/// Abi type implements the Deserialize traiit. We can also pass a contract name that defaults to
-/// Interface if it's an empty string.
-/// Parses an ABI  and produces it's interface in solidity. It doesn't support ABI Encoder V2.
-/// By iterating over the functions and their inputs/outputs, we format the inputs, the outputs
-/// and finally the whole function signature. Every function signature is a line in the final
-/// inteerface solidity file.
-/// Kudos to https://github.com/maxme/abi2solidity for the algorithm
+/// This function takes a contract [`Abi`] and a name and proceeds to generate a Solidity
+/// `interface` from that ABI. If the provided name is empty, then it defaults to `interface
+/// Interface`.
+///
+/// This is done by iterating over the functions and their ABI inputs/outputs, and generating
+/// function signatures/inputs/outputs according to the ABI.
+///
+/// Notes:
+/// * ABI Encoder V2 is not supported yet
+/// * Kudos to https://github.com/maxme/abi2solidity for the algorithm
 pub fn abi_to_solidity(contract_abi: &Abi, mut contract_name: &str) -> Result<String> {
     let functions_iterator = contract_abi.functions();
     if contract_name.trim().is_empty() {

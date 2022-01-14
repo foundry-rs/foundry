@@ -319,6 +319,7 @@ async fn main() -> eyre::Result<()> {
                 })
                 .await?
             };
+
             let mut output_string = format!("pragma solidity {}", pragma);
             match output_location {
                 Some(loc) => {
