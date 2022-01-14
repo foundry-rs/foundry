@@ -128,7 +128,7 @@ pub(crate) fn convert_log(log: Log) -> Option<String> {
             format!(
                 "{}: {}",
                 inner.key,
-                ethers::utils::format_units(inner.val, inner.decimals.as_u32()).unwrap()
+                ethers::utils::parse_units(inner.val, inner.decimals.as_u32()).unwrap()
             )
         }
         LogNamedIntFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
@@ -1708,7 +1708,7 @@ mod tests {
             "key: 0x41b1a0649752af1b28b3dc29a1556eee781e4a4c3a1f7f53f90fa834de098c4d",
             "key: 123000000000000000000",
             "key: -123000000000000000000",
-            "key: 0.000000000000001234",
+            "key: 1234000000000000000000",
             "key: 123",
             "key: 1234",
             "key: 0x4567",
