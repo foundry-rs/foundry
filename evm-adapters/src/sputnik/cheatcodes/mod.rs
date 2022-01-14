@@ -27,6 +27,8 @@ pub struct Cheatcodes {
     pub block_base_fee_per_gas: Option<U256>,
     /// The overridden storage slots
     pub accounts: HashMap<Address, MemoryAccount>,
+    /// The overriden tx.origin
+    pub origin: Option<Address>,
 }
 
 /// Extension trait over [`Backend`] which provides additional methods for interacting with the
@@ -56,6 +58,8 @@ ethers::contract::abigen!(
             sign(uint256,bytes32)(uint8,bytes32,bytes32)
             prank(address)
             startPrank(address)
+            prank(address,address)
+            startPrank(address,address)
             stopPrank()
             deal(address,uint256)
             etch(address,bytes)

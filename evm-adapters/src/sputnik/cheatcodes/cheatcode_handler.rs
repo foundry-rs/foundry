@@ -32,6 +32,7 @@ use std::{convert::Infallible, str::FromStr};
 
 use crate::sputnik::cheatcodes::{
     debugger::{CheatOp, DebugArena, DebugNode, DebugStep, OpCode},
+    memory_stackstate_owned::Prank,
     patch_hardhat_console_log_selector,
 };
 use once_cell::sync::Lazy;
@@ -508,6 +509,46 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         }
     }
 
+    fn prank(
+        &mut self,
+        single_call: bool,
+        msg_sender: Address,
+        caller: Address,
+        origin: Option<Address>,
+    ) -> Result<(), Capture<(ExitReason, Vec<u8>), Infallible>> {
+        let curr_depth =
+            if let Some(depth) = self.state().metadata().depth() { depth + 1 } else { 0 };
+
+        let prank = Prank {
+            prank_caller: msg_sender,
+            new_caller: caller,
+            new_origin: origin,
+            depth: curr_depth,
+        };
+        if single_call {
+            if self.state().next_prank.is_some() {
+                return Err(evm_error("You have an active `prank` call already. Use either `prank` or `startPrank`, not both"));
+            }
+            self.state_mut().next_prank = Some(prank);
+        } else {
+            // startPrank works by using frame depth to determine whether to overwrite
+            // msg.sender if we set a prank caller at a particular depth, it
+            // will continue to use the prank caller for any subsequent calls
+            // until stopPrank is called.
+            //
+            // We additionally have to store the original message sender of the cheatcode caller
+            // so that we dont apply it to any other addresses when depth ==
+            // prank_depth
+            if let Some(Prank { depth, prank_caller, .. }) = self.state().prank {
+                if curr_depth == depth && caller == prank_caller {
+                    return Err(evm_error("You have an active `startPrank` at this frame depth already. Use either `prank` or `startPrank`, not both"));
+                }
+            }
+            self.state_mut().prank = Some(prank);
+        }
+        Ok(())
+    }
+
     /// Given a transaction's calldata, it tries to parse it as an [`HEVM cheatcode`](super::HEVM)
     /// call and modify the state accordingly.
     fn apply_cheatcode(
@@ -622,52 +663,39 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                     Token::FixedBytes(s_bytes.to_vec()),
                 ])]);
             }
-            HEVMCalls::Prank(inner) => {
+            HEVMCalls::Prank0(inner) => {
                 self.add_debug(CheatOp::PRANK);
                 let caller = inner.0;
-                if let Some((original_pranker, caller, depth)) = self.state().msg_sender {
-                    let start_prank_depth = if let Some(depth) = self.state().metadata().depth() {
-                        depth + 1
-                    } else {
-                        0
-                    };
-                    // we allow someone to do a 1 time prank even when startPrank is set if
-                    // and only if we ensure that the startPrank *cannot* be applied to the
-                    // following call
-                    if start_prank_depth == depth && caller == original_pranker {
-                        return evm_error("You have an active `startPrank` at this frame depth already. Use either `prank` or `startPrank`, not both");
-                    }
+                if let Err(err) = self.prank(true, msg_sender, caller, None) {
+                    return err
                 }
-                self.state_mut().next_msg_sender = Some(caller);
             }
-            HEVMCalls::StartPrank(inner) => {
+            HEVMCalls::StartPrank0(inner) => {
                 self.add_debug(CheatOp::STARTPRANK);
-                // startPrank works by using frame depth to determine whether to overwrite
-                // msg.sender if we set a prank caller at a particular depth, it
-                // will continue to use the prank caller for any subsequent calls
-                // until stopPrank is called.
-                //
-                // We additionally have to store the original message sender of the cheatcode caller
-                // so that we dont apply it to any other addresses when depth ==
-                // prank_depth
                 let caller = inner.0;
-                if self.state().next_msg_sender.is_some() {
-                    return evm_error("You have an active `prank` call already. Use either `prank` or `startPrank`, not both");
-                } else {
-                    self.state_mut().msg_sender = Some((
-                        msg_sender,
-                        caller,
-                        if let Some(depth) = self.state().metadata().depth() {
-                            depth + 1
-                        } else {
-                            0
-                        },
-                    ));
+                if let Err(err) = self.prank(false, msg_sender, caller, None) {
+                    return err
+                }
+            }
+            HEVMCalls::Prank1(inner) => {
+                self.add_debug(CheatOp::PRANK);
+                let caller = inner.0;
+                let origin = inner.1;
+                if let Err(err) = self.prank(true, msg_sender, caller, Some(origin)) {
+                    return err
+                }
+            }
+            HEVMCalls::StartPrank1(inner) => {
+                self.add_debug(CheatOp::STARTPRANK);
+                let caller = inner.0;
+                let origin = inner.1;
+                if let Err(err) = self.prank(false, msg_sender, caller, Some(origin)) {
+                    return err
                 }
             }
             HEVMCalls::StopPrank(_) => {
                 self.add_debug(CheatOp::STOPPRANK);
-                self.state_mut().msg_sender = None;
+                self.state_mut().prank = None;
             }
             HEVMCalls::ExpectRevert(inner) => {
                 self.add_debug(CheatOp::EXPECTREVERT);
@@ -1374,6 +1402,9 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
         } else if code_address == *CONSOLE_ADDRESS {
             self.console_log(input)
         } else {
+            // record prior origin
+            let prev_origin = self.state().backend.cheats.origin;
+
             // modify execution context depending on the cheatcode
             let expected_revert = self.state_mut().expected_revert.take();
             let mut new_context = context;
@@ -1382,28 +1413,32 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
                 if let Some(depth) = self.state().metadata().depth() { depth + 1 } else { 0 };
 
             // handle `startPrank` - see apply_cheatcodes for more info
-            if let Some((original_msg_sender, permanent_caller, depth)) = self.state().msg_sender {
-                if curr_depth == depth && new_context.caller == original_msg_sender {
-                    new_context.caller = permanent_caller;
+            if let Some(Prank { prank_caller, new_caller, new_origin, depth }) = self.state().prank
+            {
+                // if depth and msg.sender match, perform the prank
+                if curr_depth == depth && new_context.caller == prank_caller {
+                    new_context.caller = new_caller;
 
                     if let Some(t) = &new_transfer {
-                        new_transfer = Some(Transfer {
-                            source: permanent_caller,
-                            target: t.target,
-                            value: t.value,
-                        });
+                        new_transfer =
+                            Some(Transfer { source: new_caller, target: t.target, value: t.value });
                     }
+
+                    // set the origin if the user used the overloaded func
+                    self.state_mut().backend.cheats.origin = new_origin;
                 }
             }
 
             // handle normal `prank`
-            if let Some(caller) = self.state_mut().next_msg_sender.take() {
-                new_context.caller = caller;
+            if let Some(Prank { new_caller, new_origin, .. }) = self.state_mut().next_prank.take() {
+                new_context.caller = new_caller;
 
                 if let Some(t) = &new_transfer {
                     new_transfer =
-                        Some(Transfer { source: caller, target: t.target, value: t.value });
+                        Some(Transfer { source: new_caller, target: t.target, value: t.value });
                 }
+
+                self.state_mut().backend.cheats.origin = new_origin;
             }
 
             // handle expected calls
@@ -1443,6 +1478,9 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
                 true,
                 new_context,
             );
+
+            // if we set the origin, now we should reset to previous
+            self.state_mut().backend.cheats.origin = prev_origin;
 
             // handle expected emits
             if !self.state_mut().expected_emits.is_empty() &&
@@ -1619,35 +1657,45 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
         target_gas: Option<u64>,
     ) -> Capture<(ExitReason, Option<H160>, Vec<u8>), Self::CreateInterrupt> {
         // modify execution context depending on the cheatcode
+
+        let prev_origin = self.state().backend.cheats.origin;
         let expected_revert = self.state_mut().expected_revert.take();
-        let mut new_caller = caller;
+        let mut new_tx_caller = caller;
         let mut new_scheme = scheme;
         let curr_depth =
             if let Some(depth) = self.state().metadata().depth() { depth + 1 } else { 0 };
 
         // handle `startPrank` - see apply_cheatcodes for more info
-        if let Some((original_msg_sender, permanent_caller, depth)) = self.state().msg_sender {
-            if curr_depth == depth && new_caller == original_msg_sender {
-                new_caller = permanent_caller;
+        if let Some(Prank { prank_caller, new_caller, new_origin, depth }) = self.state().prank {
+            if curr_depth == depth && new_tx_caller == prank_caller {
+                new_tx_caller = new_caller;
+
+                self.state_mut().backend.cheats.origin = new_origin
             }
         }
 
         // handle normal `prank`
-        if let Some(caller) = self.state_mut().next_msg_sender.take() {
-            new_caller = caller;
+        if let Some(Prank { new_caller, new_origin, .. }) = self.state_mut().next_prank.take() {
+            new_tx_caller = new_caller;
+
+            self.state_mut().backend.cheats.origin = new_origin
         }
 
-        if caller != new_caller {
+        if caller != new_tx_caller {
             new_scheme = match scheme {
-                CreateScheme::Legacy { .. } => CreateScheme::Legacy { caller: new_caller },
+                CreateScheme::Legacy { .. } => CreateScheme::Legacy { caller: new_tx_caller },
                 CreateScheme::Create2 { code_hash, salt, .. } => {
-                    CreateScheme::Create2 { caller: new_caller, code_hash, salt }
+                    CreateScheme::Create2 { caller: new_tx_caller, code_hash, salt }
                 }
                 _ => scheme,
             };
         }
 
-        let res = self.create_inner(new_caller, new_scheme, value, init_code, target_gas, true);
+        let res = self.create_inner(new_tx_caller, new_scheme, value, init_code, target_gas, true);
+
+        // if we set the origin, now we should reset to prior origin
+        self.state_mut().backend.cheats.origin = prev_origin;
+
         if !self.state_mut().expected_emits.is_empty() &&
             !self
                 .state()
