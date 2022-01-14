@@ -21,7 +21,8 @@ const FLASHBOTS_URL: &str = "https://rpc.flashbots.net";
 #[derive(Debug, Clone, Parser)]
 pub struct ClapChain {
     #[clap(
-        long,
+        short = 'c',
+        long = "chain",
         env = "CHAIN",
         default_value = "mainnet",
         // if Chain implemented ArgEnum, we'd get this for free
