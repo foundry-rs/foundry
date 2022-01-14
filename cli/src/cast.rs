@@ -5,11 +5,7 @@ mod utils;
 use cast::{Cast, SimpleCast};
 
 mod opts;
-use opts::{
-    cast::{Opts, Subcommands, WalletSubcommands},
-    EthereumOpts, WalletType,
-};
-
+use cast::InterfacePath;
 use ethers::{
     core::{
         rand::thread_rng,
@@ -19,12 +15,17 @@ use ethers::{
     signers::{LocalWallet, Signer},
     types::{Address, NameOrAddress, Signature, U256},
 };
+use opts::{
+    cast::{Opts, Subcommands, WalletSubcommands},
+    EthereumOpts, WalletType,
+};
 use rayon::prelude::*;
 use regex::RegexSet;
 use rustc_hex::ToHex;
 use std::{
     convert::TryFrom,
     io::{self, Write},
+    path::Path,
     str::FromStr,
     time::Instant,
 };
@@ -257,30 +258,34 @@ async fn main() -> eyre::Result<()> {
         }
 
         Subcommands::Interface {
-            contract_address,
+            path_or_address,
             pragma,
             chain,
             output_location,
             etherscan_api_key,
         } => {
-            let interfaces = SimpleCast::generate_interface(
-                unwrap_or_stdin(contract_address).unwrap(),
-                chain,
-                etherscan_api_key,
-            )
-            .await?;
+            let interfaces = if Path::new(&path_or_address).exists() {
+                SimpleCast::generate_interface(InterfacePath::Local(path_or_address)).await?
+            } else {
+                SimpleCast::generate_interface(InterfacePath::Etherscan {
+                    chain,
+                    api_key: etherscan_api_key.unwrap(),
+                    address: path_or_address.parse::<Address>()?,
+                })
+                .await?
+            };
             let mut output_string = format!("pragma solidity {}", pragma);
             match output_location {
                 Some(loc) => {
                     for interface in interfaces {
-                        output_string = format!("{}\n{}\n", &output_string, interface.source);
+                        output_string = format!("{}\n{}", &output_string, interface.source);
                     }
                     std::fs::create_dir_all(&loc.parent().unwrap())?;
                     std::fs::write(&loc, output_string)?;
                     println!("Saved interface at {}", loc.to_str().unwrap());
                 }
                 None => {
-                    println!("\n{}", output_string);
+                    println!("{}", output_string);
                     for interface in interfaces {
                         println!("{}", interface.source);
                     }

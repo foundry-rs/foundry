@@ -126,10 +126,10 @@ pub fn decode_revert(error: &[u8]) -> Result<String> {
                         let actual_err = &err_data[64..64 + len];
                         if let Ok(decoded) = decode_revert(actual_err) {
                             // check if its a builtin
-                            return Ok(decoded);
+                            return Ok(decoded)
                         } else if let Ok(as_str) = String::from_utf8(actual_err.to_vec()) {
                             // check if its a true string
-                            return Ok(as_str);
+                            return Ok(as_str)
                         }
                     }
                 }
@@ -227,7 +227,7 @@ pub async fn fourbyte(selector: &str) -> Result<Vec<(String, i32)>> {
 
     let selector = &selector.strip_prefix("0x").unwrap_or(selector);
     if selector.len() < 8 {
-        return Err(eyre::eyre!("Invalid selector"));
+        return Err(eyre::eyre!("Invalid selector"))
     }
     let selector = &selector[..8];
 
@@ -357,7 +357,14 @@ pub fn etherscan_api_key() -> eyre::Result<String> {
     })
 }
 
-// Kudos to https://github.com/maxme/abi2solidity for the algorithm
+/// The function accepts an &Abi reference, that can be a serde_json serialized string, as the
+/// Abi type implements the Deserialize traiit. We can also pass a contract name that defaults to
+/// Interface if it's an empty string.
+/// Parses an ABI  and produces it's interface in solidity. It doesn't support ABI Encoder V2.
+/// By iterating over the functions and their inputs/outputs, we format the inputs, the outputs
+/// and finally the whole function signature. Every function signature is a line in the final
+/// inteerface solidity file.
+/// Kudos to https://github.com/maxme/abi2solidity for the algorithm
 pub fn abi_to_solidity(contract_abi: &Abi, mut contract_name: &str) -> Result<String> {
     let functions_iterator = contract_abi.functions();
     if contract_name.trim().is_empty() {
@@ -368,13 +375,25 @@ pub fn abi_to_solidity(contract_abi: &Abi, mut contract_name: &str) -> Result<St
             let inputs = function
                 .inputs
                 .iter()
-                .map(|input| format!("{} {}", input.kind, input.name))
+                .map(|input| {
+                    if input.name.is_empty() {
+                        format!("{}", input.kind)
+                    } else {
+                        format!("{} {}", input.kind, input.name)
+                    }
+                })
                 .collect::<Vec<String>>()
                 .join(", ");
             let outputs = function
                 .outputs
                 .iter()
-                .map(|output| format!("{} {}", output.kind, output.name))
+                .map(|output| {
+                    if output.name.is_empty() {
+                        format!("{}", output.kind)
+                    } else {
+                        format!("{} {}", output.kind, output.name)
+                    }
+                })
                 .collect::<Vec<String>>()
                 .join(", ");
             let mutability = match function.state_mutability {

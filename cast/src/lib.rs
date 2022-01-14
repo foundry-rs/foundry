@@ -13,7 +13,6 @@ use ethers_providers::{Middleware, PendingTransaction};
 use eyre::{Context, Result};
 use foundry_utils::{encode_args, get_func, to_table};
 use rustc_hex::{FromHexIter, ToHex};
-use std::path::Path;
 use std::str::FromStr;
 
 // TODO: CastContract with common contract initializers? Same for CastProviders?
@@ -438,6 +437,11 @@ pub struct InterfaceSource {
     pub source: String,
 }
 
+pub enum InterfacePath {
+    Local(String),
+    Etherscan { address: Address, chain: Chain, api_key: String },
+}
+
 pub struct SimpleCast;
 impl SimpleCast {
     /// Converts UTF-8 text input to hex
@@ -452,39 +456,48 @@ impl SimpleCast {
         let s: String = s.as_bytes().to_hex();
         format!("0x{}", s)
     }
-
+    /// Generates an interface in solidity from either a local file ABI or a verified contract on
+    /// Etherscan.
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// let path = InterfaceSource::Local('utils/testdata/interfaceTestABI.json');
+    /// let interfaces= Cast::generate_interface(path)?;
+    /// assert_eq!(interfaces[0]::name, "Interface");
+    /// println!("{}", interfaces[0]::source);
+    /// ```
     pub async fn generate_interface(
-        address_or_path: String,
-        chain: Chain,
-        etherscan_api_key: Option<String>,
+        address_or_path: InterfacePath,
     ) -> Result<Vec<InterfaceSource>> {
-        let mut contract_names: Vec<String> = Vec::new();
-        let contract_abis: Vec<Abi> = if Path::new(&address_or_path).exists() {
-            println!("Reading ABI from local file at {}", &address_or_path);
-            contract_names.push("Interface".to_owned());
-            let file = std::fs::read_to_string(&address_or_path).expect("unable to read abi file");
-            vec![serde_json::from_str(&file).expect("unable to parse json ABI")]
-        } else {
-            println!("Requesting ABI from etherscan for contract at: {}", &address_or_path);
-            let client = Client::new(chain, etherscan_api_key.unwrap())?;
-            let contract_source =
-                client.contract_source_code(address_or_path.parse().unwrap()).await?;
-            contract_names = contract_source
-                .items
-                .iter()
-                .map(|item| item.contract_name.clone())
-                .collect::<Vec<String>>();
-            contract_source.abis()?
+        let (contract_abis, contract_names): (Vec<Abi>, Vec<String>) = match address_or_path {
+            InterfacePath::Local(path) => {
+                let file = std::fs::read_to_string(&path).wrap_err("unable to read abi file")?;
+                (
+                    vec![serde_json::from_str(&file)
+                        .wrap_err("unable to parse json ABI from file")?],
+                    vec!["Interface".to_owned()],
+                )
+            }
+            InterfacePath::Etherscan { address, chain, api_key } => {
+                let client = Client::new(chain, api_key)?;
+                let contract_source = client.contract_source_code(address).await?;
+                let contract_source_names = contract_source
+                    .items
+                    .iter()
+                    .map(|item| item.contract_name.clone())
+                    .collect::<Vec<String>>();
+                (contract_source.abis()?, contract_source_names)
+            }
         };
-        let mut interfaces: Vec<InterfaceSource> = vec![];
-        for (i, contract_abi) in contract_abis.iter().enumerate() {
-            let contract_name = &contract_names[i];
-            let interface_source = foundry_utils::abi_to_solidity(&contract_abi, contract_name)?;
-            let interface =
-                InterfaceSource { name: contract_name.to_owned(), source: interface_source };
-            interfaces.push(interface);
-        }
-        Ok(interfaces)
+        contract_abis
+            .iter()
+            .zip(&contract_names)
+            .map(|(contract_abi, contract_name)| {
+                let interface_source =
+                    foundry_utils::abi_to_solidity(&contract_abi, contract_name)?;
+                Ok(InterfaceSource { name: contract_name.to_owned(), source: interface_source })
+            })
+            .collect::<Result<Vec<InterfaceSource>>>()
     }
     /// Converts hex data into text data
     /// ```
