@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// After instantiation, calling `fuzz` will proceed to hammer the deployed smart contract with
 /// inputs, until it finds a counterexample. The provided `TestRunner` contains all the
-/// configuration which can be overriden via [environment variables](https://docs.rs/proptest/1.0.0/proptest/test_runner/struct.Config.html)
+/// configuration which can be overridden via [environment variables](https://docs.rs/proptest/1.0.0/proptest/test_runner/struct.Config.html)
 #[derive(Debug)]
 pub struct FuzzedExecutor<'a, E, S> {
     evm: RefCell<&'a mut E>,
@@ -30,6 +30,10 @@ pub struct FuzzedExecutor<'a, E, S> {
 }
 
 impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
+    pub fn into_inner(self) -> &'a mut E {
+        self.evm.into_inner()
+    }
+
     /// Returns a mutable reference to the fuzzer's internal EVM instance
     pub fn as_mut(&self) -> RefMut<'_, &'a mut E> {
         self.evm.borrow_mut()
@@ -161,7 +165,7 @@ pub struct FuzzedCases {
 }
 
 impl FuzzedCases {
-    fn new(mut cases: Vec<FuzzCase>) -> Self {
+    pub fn new(mut cases: Vec<FuzzCase>) -> Self {
         cases.sort_by_key(|c| c.gas);
         Self { cases }
     }

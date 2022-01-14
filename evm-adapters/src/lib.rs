@@ -2,6 +2,8 @@
 #[cfg(feature = "sputnik")]
 /// Abstraction over [Sputnik EVM](https://github.com/rust-blockchain/evm)
 pub mod sputnik;
+#[cfg(feature = "sputnik")]
+use crate::sputnik::cheatcodes::debugger::DebugArena;
 
 /// Abstraction over [evmodin](https://github.com/rust-blockchain/evm)
 #[cfg(feature = "evmodin")]
@@ -9,11 +11,15 @@ pub mod evmodin;
 
 mod blocking_provider;
 use crate::call_tracing::CallTraceArena;
+
 pub use blocking_provider::BlockingProvider;
 
 pub mod fuzz;
 
 pub mod call_tracing;
+
+/// Helpers for easily constructing EVM objects.
+pub mod evm_opts;
 
 use ethers::{
     abi::{Detokenize, Tokenize},
@@ -35,10 +41,10 @@ pub static FAUCET_ACCOUNT: Lazy<Address> =
 pub enum EvmError {
     #[error("Execution reverted: {reason}, (gas: {gas_used})")]
     // TODO: Add proper log printing.
-    /// Error which occured during execution of an EVM transaction
+    /// Error which occurred during execution of an EVM transaction
     Execution { reason: String, gas_used: u64, logs: Vec<String> },
     #[error(transparent)]
-    /// Error which occured during ABI encoding / decoding of data
+    /// Error which occurred during ABI encoding / decoding of data
     AbiError(#[from] ethers::contract::AbiError),
     #[error(transparent)]
     /// Any other generic error
@@ -81,6 +87,10 @@ pub trait Evm<State> {
 
     /// Returns whether tracing is enabled
     fn tracing_enabled(&self) -> bool;
+
+    /// Grabs debug steps
+    #[cfg(feature = "sputnik")]
+    fn debug_calls(&self) -> Vec<DebugArena>;
 
     /// Gets all logs from the execution, regardless of reverts
     fn all_logs(&self) -> Vec<String>;
@@ -125,7 +135,7 @@ pub trait Evm<State> {
     ) -> Result<(Bytes, Self::ReturnReason, u64, Vec<String>)> {
         let calldata = encode_function_data(func, args)?;
         #[allow(deprecated)]
-        let is_static = func.constant ||
+        let is_static = func.constant.unwrap_or_default() ||
             matches!(
                 func.state_mutability,
                 ethers::abi::StateMutability::View | ethers::abi::StateMutability::Pure
@@ -161,7 +171,7 @@ pub trait Evm<State> {
 
     /// Runs the `failed()` function call to inspect the test contract's state and
     /// see whether the `failed` state var is set. This is to allow compatibility
-    /// with dapptools-style DSTest smart contracts to preserve emiting of logs
+    /// with dapptools-style DSTest smart contracts to preserve emitting of logs
     fn failed(&mut self, address: Address) -> Result<bool> {
         let (failed, _, _, _) =
             self.call::<bool, _, _>(Address::zero(), address, "failed()(bool)", (), 0.into())?;

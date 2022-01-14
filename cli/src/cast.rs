@@ -13,7 +13,7 @@ use ethers::{
     },
     providers::{Middleware, Provider},
     signers::{LocalWallet, Signer},
-    types::{Address, NameOrAddress, Signature, U256},
+    types::{Address, Chain, NameOrAddress, Signature, U256},
 };
 use opts::{
     cast::{Opts, Subcommands, WalletSubcommands},
@@ -29,7 +29,9 @@ use std::{
     str::FromStr,
     time::Instant,
 };
-use structopt::StructOpt;
+
+use clap::{IntoApp, Parser};
+use clap_complete::generate;
 
 use crate::utils::read_secret;
 
@@ -37,7 +39,7 @@ use crate::utils::read_secret;
 async fn main() -> eyre::Result<()> {
     color_eyre::install()?;
 
-    let opts = Opts::from_args();
+    let opts = Opts::parse();
     match opts.sub {
         Subcommands::MaxInt => {
             println!("{}", SimpleCast::max_int()?);
@@ -109,7 +111,7 @@ async fn main() -> eyre::Result<()> {
             println!(
                 "{}",
                 SimpleCast::to_wei(
-                    U256::from_dec_str(&val)?,
+                    val.parse::<f64>()?,
                     unit.unwrap_or_else(|| String::from("eth"))
                 )?
             );
@@ -132,9 +134,20 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).block_number().await?);
         }
-        Subcommands::Call { rpc_url, address, sig, args } => {
-            let provider = Provider::try_from(rpc_url)?;
-            println!("{}", Cast::new(provider).call(address, &sig, args).await?);
+        Subcommands::Call { eth, address, sig, args } => {
+            let provider = Provider::try_from(eth.rpc_url()?)?;
+            println!(
+                "{}",
+                Cast::new(provider)
+                    .call(
+                        eth.sender().await,
+                        address,
+                        (&sig, args),
+                        eth.chain,
+                        eth.etherscan_api_key
+                    )
+                    .await?
+            );
         }
         Subcommands::Calldata { sig, args } => {
             println!("{}", SimpleCast::calldata(sig, &args)?);
@@ -159,40 +172,69 @@ async fn main() -> eyre::Result<()> {
             println!("{}", Cast::new(&provider).transaction(hash, field, to_json).await?)
         }
         Subcommands::SendTx { eth, to, sig, cast_async, args } => {
-            let provider = Provider::try_from(eth.rpc_url.as_str())?;
+            let provider = Provider::try_from(eth.rpc_url()?)?;
             let chain_id = Cast::new(&provider).chain_id().await?;
 
             if let Some(signer) = eth.signer_with(chain_id, provider.clone()).await? {
                 match signer {
                     WalletType::Ledger(signer) => {
-                        cast_send(&signer, signer.address(), to, sig, args, cast_async).await?;
+                        cast_send(
+                            &signer,
+                            signer.address(),
+                            to,
+                            (sig, args),
+                            eth.chain,
+                            eth.etherscan_api_key,
+                            cast_async,
+                        )
+                        .await?;
                     }
                     WalletType::Local(signer) => {
-                        cast_send(&signer, signer.address(), to, sig, args, cast_async).await?;
+                        cast_send(
+                            &signer,
+                            signer.address(),
+                            to,
+                            (sig, args),
+                            eth.chain,
+                            eth.etherscan_api_key,
+                            cast_async,
+                        )
+                        .await?;
                     }
                     WalletType::Trezor(signer) => {
-                        cast_send(&signer, signer.address(), to, sig, args, cast_async).await?;
+                        cast_send(
+                            &signer,
+                            signer.address(),
+                            to,
+                            (sig, args),
+                            eth.chain,
+                            eth.etherscan_api_key,
+                            cast_async,
+                        )
+                        .await?;
                     }
                 }
             } else {
                 let from = eth.from.expect("No ETH_FROM or signer specified");
-                cast_send(provider, from, to, sig, args, cast_async).await?;
+                cast_send(
+                    provider,
+                    from,
+                    to,
+                    (sig, args),
+                    eth.chain,
+                    eth.etherscan_api_key,
+                    cast_async,
+                )
+                .await?;
             }
         }
         Subcommands::Estimate { eth, to, sig, args } => {
-            let provider = Provider::try_from(eth.rpc_url.as_str())?;
+            let provider = Provider::try_from(eth.rpc_url()?)?;
             let cast = Cast::new(&provider);
-            // chain id does not matter here, we're just trying to get the address
-            let from = if let Some(signer) = eth.signer(0.into()).await? {
-                match signer {
-                    WalletType::Ledger(signer) => signer.address(),
-                    WalletType::Local(signer) => signer.address(),
-                    WalletType::Trezor(signer) => signer.address(),
-                }
-            } else {
-                eth.from.expect("No ETH_FROM or signer specified")
-            };
-            let gas = cast.estimate(from, to, Some((sig.as_str(), args))).await?;
+            let from = eth.sender().await;
+            let gas = cast
+                .estimate(from, to, Some((sig.as_str(), args)), eth.chain, eth.etherscan_api_key)
+                .await?;
             println!("{}", gas);
         }
         Subcommands::CalldataDecode { sig, calldata } => {
@@ -204,6 +246,9 @@ async fn main() -> eyre::Result<()> {
             let tokens = SimpleCast::abi_decode(&sig, &calldata, input)?;
             let tokens = foundry_utils::format_tokens(&tokens);
             tokens.for_each(|t| println!("{}", t));
+        }
+        Subcommands::AbiEncode { sig, args } => {
+            println!("{}", SimpleCast::abi_encode(&sig, &args)?);
         }
         Subcommands::FourByte { selector } => {
             let sigs = foundry_utils::fourbyte(&selector).await?;
@@ -329,6 +374,9 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).nonce(who, block).await?);
         }
+        Subcommands::EtherscanSource { chain, address, etherscan_api_key } => {
+            println!("{}", SimpleCast::etherscan_source(chain, address, etherscan_api_key).await?);
+        }
         Subcommands::Wallet { command } => match command {
             WalletSubcommands::New { path, password, unsafe_password } => {
                 let mut rng = thread_rng();
@@ -340,7 +388,7 @@ async fn main() -> eyre::Result<()> {
                         let address = SimpleCast::checksum_address(&key.address())?;
                         let filepath = format!(
                             "{}/{}",
-                            std::fs::canonicalize(path)?
+                            dunce::canonicalize(path)?
                                 .into_os_string()
                                 .into_string()
                                 .expect("failed to canonicalize file path"),
@@ -401,10 +449,14 @@ async fn main() -> eyre::Result<()> {
                 );
             }
             WalletSubcommands::Address { wallet } => {
+                // TODO: Figure out better way to get wallet only.
                 let wallet = EthereumOpts {
                     wallet,
                     from: None,
-                    rpc_url: "http://localhost:8545".to_string(),
+                    rpc_url: Some("http://localhost:8545".to_string()),
+                    flashbots: false,
+                    chain: Chain::Mainnet,
+                    etherscan_api_key: None,
                 }
                 .signer(0.into())
                 .await?
@@ -418,10 +470,14 @@ async fn main() -> eyre::Result<()> {
                 println!("Address: {}", SimpleCast::checksum_address(&addr)?);
             }
             WalletSubcommands::Sign { message, wallet } => {
+                // TODO: Figure out better way to get wallet only.
                 let wallet = EthereumOpts {
                     wallet,
                     from: None,
-                    rpc_url: "http://localhost:8545".to_string(),
+                    rpc_url: Some("http://localhost:8545".to_string()),
+                    flashbots: false,
+                    chain: Chain::Mainnet,
+                    etherscan_api_key: None,
                 }
                 .signer(0.into())
                 .await?
@@ -448,6 +504,9 @@ async fn main() -> eyre::Result<()> {
                 }
             }
         },
+        Subcommands::Completions { shell } => {
+            generate(shell, &mut Opts::into_app(), "cast", &mut std::io::stdout())
+        }
     };
     Ok(())
 }
@@ -472,16 +531,20 @@ async fn cast_send<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>
     provider: M,
     from: F,
     to: T,
-    sig: String,
-    args: Vec<String>,
+    args: (String, Vec<String>),
+    chain: Chain,
+    etherscan_api_key: Option<String>,
     cast_async: bool,
 ) -> eyre::Result<()>
 where
     M::Error: 'static,
 {
     let cast = Cast::new(provider);
-    let pending_tx =
-        cast.send(from, to, if !sig.is_empty() { Some((&sig, args)) } else { None }).await?;
+
+    let sig = args.0;
+    let params = args.1;
+    let params = if !sig.is_empty() { Some((&sig[..], params)) } else { None };
+    let pending_tx = cast.send(from, to, params, chain, etherscan_api_key).await?;
     let tx_hash = *pending_tx;
 
     if cast_async {

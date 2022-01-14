@@ -1,9 +1,5 @@
-use ethers::{
-    providers::Provider,
-    solc::{artifacts::Contract, EvmVersion},
-};
+use ethers::solc::{artifacts::Contract, EvmVersion};
 
-use evm_adapters::sputnik::Executor;
 use eyre::{ContextCompat, WrapErr};
 use std::{
     path::{Path, PathBuf},
@@ -14,8 +10,6 @@ use std::{
 use evmodin::Revision;
 #[cfg(feature = "sputnik-evm")]
 use sputnik::Config;
-
-use crate::opts::forge::EvmOpts;
 
 /// Default local RPC endpoint
 const LOCAL_RPC_URL: &str = "http://127.0.0.1:8545";
@@ -74,44 +68,8 @@ pub fn find_git_root_path() -> eyre::Result<PathBuf> {
     Ok(PathBuf::from(path))
 }
 
-/// Determines the source directory to use given the root path to a project's workspace.
-///
-/// By default the dapptools style `src` directory takes precedence unless it does not exist but
-/// hardhat style `contracts` exists, in which case `<root>/contracts` will be returned.
-pub fn find_contracts_dir(root: impl AsRef<Path>) -> PathBuf {
-    find_fave_or_alt_path(root, "src", "contracts")
-}
-
-/// Determines the artifacts directory to use given the root path to a project's workspace.
-///
-/// By default the dapptools style `out` directory takes precedence unless it does not exist but
-/// hardhat style `artifacts` exists, in which case `<root>/artifacts` will be returned.
-pub fn find_artifacts_dir(root: impl AsRef<Path>) -> PathBuf {
-    find_fave_or_alt_path(root, "out", "artifacts")
-}
-
-pub fn find_libs(root: impl AsRef<Path>) -> Vec<PathBuf> {
-    vec![find_fave_or_alt_path(root, "lib", "node_modules")]
-}
-
-/// Returns the right subpath in a dir
-///
-/// Returns `<root>/<fave>` if it exists or `<root>/<alt>` does not exist,
-/// Returns `<root>/<alt>` if it exists and `<root>/<fave>` does not exist.
-fn find_fave_or_alt_path(root: impl AsRef<Path>, fave: &str, alt: &str) -> PathBuf {
-    let root = root.as_ref();
-    let p = root.join(fave);
-    if !p.exists() {
-        let alt = root.join(alt);
-        if alt.exists() {
-            return alt
-        }
-    }
-    p
-}
-
 #[cfg(feature = "sputnik-evm")]
-pub fn sputnik_cfg(evm: EvmVersion) -> Config {
+pub fn sputnik_cfg(evm: &EvmVersion) -> Config {
     match evm {
         EvmVersion::Istanbul => Config::istanbul(),
         EvmVersion::Berlin => Config::berlin(),
@@ -120,60 +78,8 @@ pub fn sputnik_cfg(evm: EvmVersion) -> Config {
     }
 }
 
-#[cfg(feature = "sputnik-evm")]
-pub mod sputnik_helpers {
-    use super::*;
-    use ethers::types::U256;
-    use sputnik::{
-        backend::{Backend, MemoryBackend, MemoryVicinity},
-        Config,
-    };
-    use std::sync::Arc;
-
-    use evm_adapters::{
-        sputnik::{helpers::TestSputnikVM, ForkMemoryBackend, PRECOMPILES_MAP},
-        FAUCET_ACCOUNT,
-    };
-
-    /// Creates a new Sputnik EVM given the [`EvmOpts`] (specifying whether to fork or not), a VM
-    /// Hard Fork config, and the initial state from the memory vicinity.
-    pub fn evm<'a>(
-        opts: &EvmOpts,
-        cfg: &'a mut Config,
-        vicinity: &'a MemoryVicinity,
-    ) -> eyre::Result<TestSputnikVM<'a, Arc<Box<dyn Backend + 'a>>>> {
-        // We disable the contract size limit by default, because Solidity
-        // test smart contracts are likely to be >24kb
-        cfg.create_contract_limit = None;
-
-        let mut backend = MemoryBackend::new(vicinity, Default::default());
-        // max out the balance of the faucet
-        let faucet = backend.state_mut().entry(*FAUCET_ACCOUNT).or_insert_with(Default::default);
-        faucet.balance = U256::MAX;
-
-        let backend: Box<dyn Backend> = if let Some(ref url) = opts.fork_url {
-            let provider = Provider::try_from(url.as_str())?;
-            let init_state = backend.state().clone();
-            let backend =
-                ForkMemoryBackend::new(provider, backend, opts.fork_block_number, init_state);
-            Box::new(backend)
-        } else {
-            Box::new(backend)
-        };
-        let backend = Arc::new(backend);
-
-        Ok(Executor::new_with_cheatcodes(
-            backend,
-            opts.env.gas_limit,
-            cfg,
-            &*PRECOMPILES_MAP,
-            opts.ffi,
-            opts.verbosity > 2,
-        ))
-    }
-}
-
 #[cfg(feature = "evmodin-evm")]
+#[allow(dead_code)]
 pub fn evmodin_cfg(evm: EvmVersion) -> Revision {
     match evm {
         EvmVersion::Istanbul => Revision::Istanbul,

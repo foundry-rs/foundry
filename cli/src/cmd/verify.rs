@@ -51,7 +51,7 @@ pub async fn run(
             name: "constructor".to_string(),
             inputs: constructor.inputs,
             outputs: vec![],
-            constant: false,
+            constant: None,
             state_mutability: Default::default(),
         };
 

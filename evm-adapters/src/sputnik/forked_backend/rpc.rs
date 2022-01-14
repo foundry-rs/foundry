@@ -224,7 +224,7 @@ mod tests {
         .unwrap();
         let rt = Runtime::new().unwrap();
         let blk = Some(13292465);
-        let vicinity = rt.block_on(vicinity(&provider, blk)).unwrap();
+        let vicinity = rt.block_on(vicinity(&provider, blk, None)).unwrap();
         let backend = new_backend(&vicinity, Default::default());
         let backend = ForkMemoryBackend::new(provider, backend, blk, Default::default());
 

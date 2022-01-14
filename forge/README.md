@@ -195,7 +195,7 @@ contract T is DSTest {
     function testExpectEmit() public {
         ExpectEmit emitter = new ExpectEmit();
         // check topic 1, topic 2, and data are the same as the following emitted event
-        hevm.expectEmit(true,true,false,true);
+        vm.expectEmit(true,true,false,true);
         emit Transfer(address(this), address(1337), 1337);
         emitter.t();
     }
@@ -240,6 +240,16 @@ interface Vm {
     function expectRevert(bytes calldata) external;
     // Expects the next emitted event. Params check topic 1, topic 2, topic 3 and data are the same.
     function expectEmit(bool, bool, bool, bool) external;
+    // Mocks a call to an address, returning specified data.
+    // Calldata can either be strict or a partial match, e.g. if you only
+    // pass a Solidity selector to the expected calldata, then the entire Solidity
+    // function will be mocked.
+    function mockCall(address,bytes calldata,bytes calldata) external;
+    // Clears all mocked calls
+    function clearMockedCalls() external;
+    // Expect a call to an address with the specified calldata.
+    // Calldata can either be strict or a partial match
+    function expectCall(address,bytes calldata) external;
 }
 ```
 ### `console.log`
@@ -275,6 +285,10 @@ For example, if you have `@openzeppelin` imports, you would
 ```
 @openzeppelin/=lib/openzeppelin-contracts/
 ```
+
+## Github Actions CI
+
+We recommend using the [Github Actions CI setup](https://github.com/FrankieIsLost/forge-template/blob/2ff5ae4ea40d77d4aa4e8353e0a878478ec9df24/.github/workflows/CI.yml) from @FrankieIsLost's [forge-template](https://github.com/FrankieIsLost/forge-template).
 
 ## Future Features
 

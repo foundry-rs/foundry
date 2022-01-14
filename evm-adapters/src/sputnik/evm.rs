@@ -1,6 +1,8 @@
 use crate::{call_tracing::CallTraceArena, Evm, FAUCET_ACCOUNT};
 use ethers::types::{Address, Bytes, U256};
 
+use crate::sputnik::cheatcodes::debugger::DebugArena;
+
 use sputnik::{
     backend::{Backend, MemoryAccount},
     executor::stack::{
@@ -37,7 +39,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet>
     Executor<MemoryStackState<'a, 'a, B>, StackExecutor<'a, 'b, MemoryStackState<'a, 'a, B>, P>>
 {
     /// Given a gas limit, vm version, initial chain configuration and initial state
-    // TOOD: See if we can make lifetimes better here
+    // TODO: See if we can make lifetimes better here
     pub fn new(gas_limit: u64, config: &'a Config, backend: &'a B, precompiles: &'b P) -> Self {
         // setup gasometer
         let metadata = StackSubstateMetadata::new(gas_limit, config);
@@ -89,6 +91,12 @@ where
 
     fn tracing_enabled(&self) -> bool {
         self.executor.tracing_enabled()
+    }
+
+    /// Grabs debug steps
+    #[cfg(feature = "sputnik")]
+    fn debug_calls(&self) -> Vec<DebugArena> {
+        self.executor.debug_calls()
     }
 
     /// given an iterator of contract address to contract bytecode, initializes
@@ -210,24 +218,32 @@ pub mod helpers {
         CheatcodeStackExecutor<'a, 'a, B, BTreeMap<Address, PrecompileFn>>,
     >;
 
-    static CFG: Lazy<Config> = Lazy::new(Config::london);
+    pub static CFG: Lazy<Config> = Lazy::new(Config::london);
 
     /// London config without a contract size limit. Useful for testing but is a depature from
     /// mainnet rules.
-    static CFG_NO_LMT: Lazy<Config> = Lazy::new(|| {
+    pub static CFG_NO_LMT: Lazy<Config> = Lazy::new(|| {
         let mut cfg = Config::london();
         cfg.create_contract_limit = None;
         cfg
     });
 
-    static VICINITY: Lazy<MemoryVicinity> = Lazy::new(new_vicinity);
-    const GAS_LIMIT: u64 = 30_000_000;
+    pub static VICINITY: Lazy<MemoryVicinity> = Lazy::new(new_vicinity);
+    pub const GAS_LIMIT: u64 = 30_000_000;
 
     /// Instantiates a Sputnik EVM with enabled cheatcodes + FFI and a simple non-forking in memory
     /// backend and tracing disabled
     pub fn vm<'a>() -> TestSputnikVM<'a, MemoryBackend<'a>> {
         let backend = new_backend(&*VICINITY, Default::default());
-        Executor::new_with_cheatcodes(backend, GAS_LIMIT, &*CFG, &*PRECOMPILES_MAP, true, false)
+        Executor::new_with_cheatcodes(
+            backend,
+            GAS_LIMIT,
+            &*CFG,
+            &*PRECOMPILES_MAP,
+            true,
+            false,
+            false,
+        )
     }
 
     /// Instantiates a Sputnik EVM with enabled cheatcodes + FFI and a simple non-forking in memory
@@ -241,6 +257,7 @@ pub mod helpers {
             &*PRECOMPILES_MAP,
             true,
             false,
+            false,
         )
     }
 
@@ -249,7 +266,15 @@ pub mod helpers {
     pub fn vm_tracing<'a>(with_contract_limit: bool) -> TestSputnikVM<'a, MemoryBackend<'a>> {
         let backend = new_backend(&*VICINITY, Default::default());
         if with_contract_limit {
-            Executor::new_with_cheatcodes(backend, GAS_LIMIT, &*CFG, &*PRECOMPILES_MAP, true, true)
+            Executor::new_with_cheatcodes(
+                backend,
+                GAS_LIMIT,
+                &*CFG,
+                &*PRECOMPILES_MAP,
+                true,
+                true,
+                false,
+            )
         } else {
             Executor::new_with_cheatcodes(
                 backend,
@@ -257,6 +282,34 @@ pub mod helpers {
                 &*CFG_NO_LMT,
                 &*PRECOMPILES_MAP,
                 true,
+                true,
+                false,
+            )
+        }
+    }
+
+    /// Instantiates a Sputnik EVM with enabled cheatcodes + FFI and a simple non-forking in memory
+    /// backend and debug enabled, and tracing disabled
+    pub fn vm_debug<'a>(with_contract_limit: bool) -> TestSputnikVM<'a, MemoryBackend<'a>> {
+        let backend = new_backend(&*VICINITY, Default::default());
+        if with_contract_limit {
+            Executor::new_with_cheatcodes(
+                backend,
+                GAS_LIMIT,
+                &*CFG,
+                &*PRECOMPILES_MAP,
+                true,
+                false,
+                true,
+            )
+        } else {
+            Executor::new_with_cheatcodes(
+                backend,
+                GAS_LIMIT,
+                &*CFG_NO_LMT,
+                &*PRECOMPILES_MAP,
+                true,
+                false,
                 true,
             )
         }
