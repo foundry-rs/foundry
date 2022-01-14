@@ -11,7 +11,7 @@ use crate::{
 use std::collections::BTreeMap;
 
 use serde::Deserialize;
-use std::{fs::File, io::Read};
+use std::{fs::File, io::Read, path::Path};
 
 use sputnik::{
     backend::Backend,
@@ -29,6 +29,7 @@ use ethers::{
     contract::EthLogDecode,
     core::{abi::AbiDecode, k256::ecdsa::SigningKey, utils},
     signers::{LocalWallet, Signer},
+    solc::ProjectPathsConfig,
     types::{Address, H160, H256, U256},
 };
 use std::{convert::Infallible, str::FromStr};
@@ -573,14 +574,24 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 res = ethers::abi::encode(&[Token::Bytes(decoded.to_vec())]);
             }
             HEVMCalls::GetCode(inner) => {
+                self.add_debug(CheatOp::GETCODE);
+
                 #[derive(Deserialize)]
                 struct ContractFile {
                     bin: String,
                 }
 
-                self.add_debug(CheatOp::GETCODE);
-                let name = inner.0.replace(".sol", "");
-                let path = format!("./out/{}.sol/{}.json", name, name);
+                let parts = inner.0.split(":").collect::<Vec<&str>>();
+                let contract_file = parts[0];
+                let contract_name = if parts.len() == 1 {
+                    parts[0].replace(".sol", "")
+                } else {
+                    parts[1].to_string()
+                };
+
+                let outdir = ProjectPathsConfig::find_artifacts_dir(Path::new("./"));
+                let path = outdir.join(format!("{}/{}.json", contract_file, contract_name));
+
                 let mut file = File::open(path).unwrap();
                 let mut data = String::new();
                 file.read_to_string(&mut data).unwrap();
