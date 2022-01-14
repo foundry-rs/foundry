@@ -517,7 +517,28 @@ impl SimpleCast {
             }
             InterfacePath::Etherscan { address, chain, api_key } => {
                 let client = Client::new(chain, api_key)?;
-                let contract_source = client.contract_source_code(address).await?;
+
+                // get the source
+                let contract_source = match client.contract_source_code(address).await {
+                    Ok(src) => src,
+                    Err(err) => {
+                        let msg = err.to_string();
+                        if msg.contains("Invalid API Key") {
+                            eyre::bail!("Invalid Etherscan API key. Did you set it correctly? You may be using an API key for another Etherscan API chain (e.g. Ethereum API key for Polygonscan).")
+                        } else {
+                            eyre::bail!(err)
+                        }
+                    }
+                };
+
+                if contract_source
+                    .items
+                    .iter()
+                    .any(|item| item.abi == "Contract source code not verified")
+                {
+                    eyre::bail!("Contract source code at {:?} on {} not verified. Maybe you have selected the wrong chain?", address, chain)
+                }
+
                 let contract_source_names = contract_source
                     .items
                     .iter()
