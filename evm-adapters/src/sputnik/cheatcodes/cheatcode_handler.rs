@@ -114,14 +114,12 @@ pub(crate) fn convert_log(log: Log) -> Option<String> {
             format!("{}: 0x{}", inner.key, hex::encode(inner.val))
         }
         LogNamedDecimalIntFilter(inner) => {
-            let val: String = inner.val.to_string();
-            let neg = val.trim().starts_with('-');
-            let val = val.trim().trim_start_matches('-');
+            let (sign, val) = inner.val.into_sign_and_abs();
             format!(
-                "{}: {}{:?}",
+                "{}: {}{}",
                 inner.key,
-                if neg { "-" } else { "" },
-                ethers::utils::parse_units(val, inner.decimals.as_u32()).unwrap()
+                sign,
+                ethers::utils::format_units(val, inner.decimals.as_u32()).unwrap()
             )
         }
         LogNamedDecimalUintFilter(inner) => {
@@ -1706,9 +1704,16 @@ mod tests {
             "lol",
             "addr: 0x2222222222222222222222222222222222222222",
             "key: 0x41b1a0649752af1b28b3dc29a1556eee781e4a4c3a1f7f53f90fa834de098c4d",
-            "key: 123000000000000000000",
-            "key: -123000000000000000000",
+            "key: 0.000000000000000123",
+            "key: -0.000000000000000123",
+            "key: 1.000000000000000000",
+            "key: -1.000000000000000000",
+            "key: -0.000000000123",
+            "key: -1000000.000000000000",
             "key: 0.000000000000001234",
+            "key: 1.000000000000000000",
+            "key: 0.000000001234",
+            "key: 1000000.000000000000",
             "key: 123",
             "key: 1234",
             "key: 0x4567",
