@@ -1,0 +1,44 @@
+[
+  {
+    "constant": false,
+    "inputs": [
+      {
+        "name": "n",
+        "type": "uint8"
+      },
+      {
+        "name": "x",
+        "type": "address"
+      }
+    ],
+    "name": "guess",
+    "outputs": [],
+    "payable": true,
+    "stateMutability": "payable",
+    "type": "function"
+  },
+  {
+    "constant": true,
+    "inputs": [],
+    "name": "isComplete",
+    "outputs": [
+      {
+        "name": "example",
+        "type": "bool"
+      },
+      {
+        "name": "",
+        "type": "string"
+      }
+    ],
+    "payable": false,
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "payable": true,
+    "stateMutability": "payable",
+    "type": "constructor"
+  }
+]

@@ -5,11 +5,7 @@ mod utils;
 use cast::{Cast, SimpleCast};
 
 mod opts;
-use opts::{
-    cast::{Opts, Subcommands, WalletSubcommands},
-    EthereumOpts, WalletType,
-};
-
+use cast::InterfacePath;
 use ethers::{
     core::{
         rand::thread_rng,
@@ -19,12 +15,17 @@ use ethers::{
     signers::{LocalWallet, Signer},
     types::{Address, Chain, NameOrAddress, Signature, U256},
 };
+use opts::{
+    cast::{Opts, Subcommands, WalletSubcommands},
+    EthereumOpts, WalletType,
+};
 use rayon::prelude::*;
 use regex::RegexSet;
 use rustc_hex::ToHex;
 use std::{
     convert::TryFrom,
     io::{self, Write},
+    path::Path,
     str::FromStr,
     time::Instant,
 };
@@ -33,6 +34,7 @@ use clap::{IntoApp, Parser};
 use clap_complete::generate;
 
 use crate::utils::read_secret;
+use eyre::WrapErr;
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
@@ -300,6 +302,52 @@ async fn main() -> eyre::Result<()> {
         Subcommands::Keccak { data } => {
             println!("{}", SimpleCast::keccak(&data)?);
         }
+
+        Subcommands::Interface {
+            path_or_address,
+            pragma,
+            chain,
+            output_location,
+            etherscan_api_key,
+        } => {
+            let interfaces = if Path::new(&path_or_address).exists() {
+                SimpleCast::generate_interface(InterfacePath::Local(path_or_address)).await?
+            } else {
+                let api_key = match etherscan_api_key {
+                    Some(inner) => inner,
+                    _ => eyre::bail!("No Etherscan API Key is set. Consider using the ETHERSCAN_API_KEY env var, or the -e CLI argument.")
+                };
+                SimpleCast::generate_interface(InterfacePath::Etherscan {
+                    chain: chain.inner,
+                    api_key,
+                    address: path_or_address
+                        .parse::<Address>()
+                        .wrap_err("Invalid address provided. Did you make a typo?")?,
+                })
+                .await?
+            };
+
+            // put it all together
+            let pragma = format!("pragma solidity {};", pragma);
+            let interfaces = interfaces
+                .iter()
+                .map(|iface| iface.source.to_string())
+                .collect::<Vec<_>>()
+                .join("\n");
+            let res = format!("{}\n\n{}", pragma, interfaces);
+
+            // print or write to file
+            match output_location {
+                Some(loc) => {
+                    std::fs::create_dir_all(&loc.parent().unwrap())?;
+                    std::fs::write(&loc, res)?;
+                    println!("Saved interface at {}", loc.display());
+                }
+                None => {
+                    println!("{}", res);
+                }
+            }
+        }
         Subcommands::ResolveName { who, rpc_url, verify } => {
             let provider = Provider::try_from(rpc_url)?;
             let who = unwrap_or_stdin(who)?;
@@ -338,7 +386,10 @@ async fn main() -> eyre::Result<()> {
             println!("{}", Cast::new(provider).nonce(who, block).await?);
         }
         Subcommands::EtherscanSource { chain, address, etherscan_api_key } => {
-            println!("{}", SimpleCast::etherscan_source(chain, address, etherscan_api_key).await?);
+            println!(
+                "{}",
+                SimpleCast::etherscan_source(chain.inner, address, etherscan_api_key).await?
+            );
         }
         Subcommands::Wallet { command } => match command {
             WalletSubcommands::New { path, password, unsafe_password } => {
@@ -471,7 +522,6 @@ async fn main() -> eyre::Result<()> {
             generate(shell, &mut Opts::into_app(), "cast", &mut std::io::stdout())
         }
     };
-
     Ok(())
 }
 
