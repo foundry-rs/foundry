@@ -435,10 +435,10 @@ fn format_param(param: &Param, structs: &mut HashSet<String>) -> String {
         // We need to do some extra work to parse ABI Encoder V2 types.
         ParamType::Tuple(ref args) => {
             let name = param.internal_type.clone().unwrap_or_else(|| capitalize(&param.name));
-            let name = if name.contains(".") {
-                name.split(".").nth(1).expect("could not get struct name").to_owned()
+            let name = if name.contains('.') {
+                name.split('.').nth(1).expect("could not get struct name").to_owned()
             } else {
-                name.to_owned()
+                name
             };
 
             // NB: This does not take into account recursive ABI Encoder v2 structs. Left
