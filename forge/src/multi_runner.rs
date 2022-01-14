@@ -65,7 +65,11 @@ impl MultiContractRunnerBuilder {
                     continue
                 }
 
-                deployable_contracts.insert(fname.clone(), (abi.clone(), bytecode.clone()));
+                if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) &&
+                    abi.functions().any(|func| func.name.starts_with("test"))
+                {
+                    deployable_contracts.insert(fname.clone(), (abi.clone(), bytecode.clone()));
+                }
 
                 let split = fname.split(':').collect::<Vec<&str>>();
                 let contract_name = if split.len() > 1 { split[1] } else { split[0] };
