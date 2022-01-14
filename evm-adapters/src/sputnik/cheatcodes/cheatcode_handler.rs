@@ -114,12 +114,11 @@ pub(crate) fn convert_log(log: Log) -> Option<String> {
             format!("{}: 0x{}", inner.key, hex::encode(inner.val))
         }
         LogNamedDecimalIntFilter(inner) => {
-            use ethers::core::types::Sign;
             let (sign, val) = inner.val.into_sign_and_abs();
             format!(
                 "{}: {}{}",
                 inner.key,
-                if sign == Sign::Negative { "-" } else { "" },
+                sign,
                 ethers::utils::format_units(val, inner.decimals.as_u32()).unwrap()
             )
         }
