@@ -581,7 +581,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                     bin: String,
                 }
 
-                let parts = inner.0.split(":").collect::<Vec<&str>>();
+                let parts = inner.0.split(':').collect::<Vec<&str>>();
                 let contract_file = parts[0];
                 let contract_name = if parts.len() == 1 {
                     parts[0].replace(".sol", "")
