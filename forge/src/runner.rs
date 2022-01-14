@@ -272,6 +272,9 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
         let mut traces: Option<Vec<CallTraceArena>> = None;
         let mut identified_contracts: Option<BTreeMap<Address, (String, Abi)>> = None;
 
+        // clear out the deployment trace
+        evm.reset_traces();
+
         // call the setup function in each test to reset the test's state.
         if setup {
             tracing::trace!("setting up");
@@ -372,6 +375,9 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
 
         let mut traces: Option<Vec<CallTraceArena>> = None;
         let mut identified_contracts: Option<BTreeMap<Address, (String, Abi)>> = None;
+
+        // clear out the deployment trace
+        evm.reset_traces();
 
         // call the setup function in each test to reset the test's state.
         if setup {

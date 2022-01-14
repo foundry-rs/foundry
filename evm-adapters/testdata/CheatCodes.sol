@@ -26,6 +26,10 @@ interface Hevm {
     function prank(address) external;
     // Sets all subsequent calls' msg.sender to be the input address until `stopPrank` is called
     function startPrank(address) external;
+    // Sets the *next* call's msg.sender to be the input address, and the tx.origin to be the second input
+    function prank(address,address) external;
+    // Sets all subsequent calls' msg.sender to be the input address until `stopPrank` is called, and the tx.origin to be the second input
+    function startPrank(address,address) external;
     // Resets subsequent calls' msg.sender to be `address(this)`
     function stopPrank() external;
     // Sets an address' balance, (who, newBalance)
@@ -238,6 +242,43 @@ contract CheatCodes is DSTest {
         complexPrank.uncompletedPrank();
         prank.bar(address(this));
         complexPrank.completePrank(prank);
+    }
+
+    function testPrankDual() public {
+        Prank prank = new Prank();
+        address new_sender = address(1337);
+        address sender = msg.sender;
+        hevm.prank(new_sender, new_sender);
+        prank.baz(new_sender, new_sender);
+        prank.baz(address(this), tx.origin);
+    }
+
+    function testPrankConstructorDual() public {
+        address new_sender = address(1337);
+        hevm.prank(new_sender, new_sender);
+        PrankConstructorDual prank2 = new PrankConstructorDual(address(1337), address(1337));
+        PrankConstructorDual prank3 = new PrankConstructorDual(address(this), tx.origin);
+    }
+
+    function testPrankStartDual() public {
+        Prank prank = new Prank();
+        address new_sender = address(1337);
+        address sender = msg.sender;
+        hevm.startPrank(new_sender, new_sender);
+        prank.baz(new_sender, new_sender);
+        prank.baz(new_sender, new_sender);
+        hevm.stopPrank();
+        prank.baz(address(this), tx.origin);
+    }
+
+    function testPrankStartComplexDual() public {
+        // A -> B, B starts pranking, doesnt call stopPrank, A calls C calls D
+        // C -> D would be pranked
+        ComplexPrank complexPrank = new ComplexPrank();
+        Prank prank = new Prank();
+        complexPrank.uncompletedPrankDual();
+        prank.baz(address(this), tx.origin);
+        complexPrank.completePrankDual(prank);
     }
 
     function testEtch() public {
@@ -613,6 +654,13 @@ contract Prank {
         inner.bar(address(this));
     }
 
+    function baz(address expectedMsgSender, address expectedOrigin) public {
+        require(msg.sender == expectedMsgSender, "bad prank");
+        require(tx.origin == expectedOrigin, "bad prank origin");
+        InnerPrank inner = new InnerPrank();
+        inner.baz(address(this), expectedOrigin);
+    }
+
     function payableBar(address expectedMsgSender) payable public {
         bar(expectedMsgSender);
     }
@@ -630,9 +678,28 @@ contract PrankConstructor {
     }
 }
 
+contract PrankConstructorDual {
+    constructor(address expectedMsgSender, address expectedOrigin) {
+        require(msg.sender == expectedMsgSender, "bad prank");
+        require(tx.origin == expectedOrigin, "bad prank origin");
+    }
+
+    function baz(address expectedMsgSender, address expectedOrigin) public {
+        require(msg.sender == expectedMsgSender, "bad prank");
+        require(tx.origin == expectedOrigin, "bad prank origin");
+        InnerPrank inner = new InnerPrank();
+        inner.baz(address(this), expectedOrigin);
+    }
+}
+
 contract InnerPrank {
     function bar(address expectedMsgSender) public {
         require(msg.sender == expectedMsgSender, "bad prank");
+    }
+
+    function baz(address expectedMsgSender, address expectedOrigin) public {
+        require(msg.sender == expectedMsgSender, "bad prank");
+        require(tx.origin == expectedOrigin, "bad prank origin");
     }
 }
 
@@ -643,10 +710,20 @@ contract ComplexPrank {
         hevm.startPrank(address(1337));
     }
 
+    function uncompletedPrankDual() public {
+        hevm.startPrank(address(1337), address(1337));
+    }
+
     function completePrank(Prank prank) public {
         prank.bar(address(1337));
         hevm.stopPrank();
         prank.bar(address(this));
+    }
+
+    function completePrankDual(Prank prank) public {
+        prank.baz(address(1337), address(1337));
+        hevm.stopPrank();
+        prank.baz(address(this), tx.origin);
     }
 }
 
