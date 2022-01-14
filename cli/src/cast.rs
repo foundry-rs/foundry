@@ -110,7 +110,7 @@ async fn main() -> eyre::Result<()> {
             println!(
                 "{}",
                 SimpleCast::to_wei(
-                    U256::from_dec_str(&val)?,
+                    val.parse::<f64>()?,
                     unit.unwrap_or_else(|| String::from("eth"))
                 )?
             );

@@ -18,6 +18,9 @@ pub mod fuzz;
 
 pub mod call_tracing;
 
+/// Helpers for easily constructing EVM objects.
+pub mod evm_opts;
+
 use ethers::{
     abi::{Detokenize, Tokenize},
     contract::{decode_function_data, encode_function_data},
@@ -132,7 +135,7 @@ pub trait Evm<State> {
     ) -> Result<(Bytes, Self::ReturnReason, u64, Vec<String>)> {
         let calldata = encode_function_data(func, args)?;
         #[allow(deprecated)]
-        let is_static = func.constant ||
+        let is_static = func.constant.unwrap_or_default() ||
             matches!(
                 func.state_mutability,
                 ethers::abi::StateMutability::View | ethers::abi::StateMutability::Pure
