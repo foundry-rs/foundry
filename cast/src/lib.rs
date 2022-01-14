@@ -46,7 +46,7 @@ where
     /// Makes a read-only call to the specified address
     ///
     /// ```no_run
-    ///
+    /// 
     /// use cast::Cast;
     /// use ethers_core::types::{Address, Chain};
     /// use ethers_providers::{Provider, Http};
@@ -933,7 +933,7 @@ impl SimpleCast {
         let code = meta.source_code();
 
         if code.is_empty() {
-            return Err(eyre::eyre!("unverified contract"));
+            return Err(eyre::eyre!("unverified contract"))
         }
 
         Ok(code)
