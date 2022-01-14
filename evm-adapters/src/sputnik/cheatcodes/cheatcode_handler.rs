@@ -115,9 +115,7 @@ pub(crate) fn convert_log(log: Log) -> Option<String> {
         }
         LogNamedDecimalIntFilter(inner) => {
             use ethers::core::types::Sign;
-            let (sign, abs) = inner.val.into_sign_and_abs();
-            // I256::MAX < U256::MAX, should never panic
-            let val: U256 = abs.try_into().unwrap();
+            let (sign, val) = inner.val.into_sign_and_abs();
             format!(
                 "{}: {}{}",
                 inner.key,
