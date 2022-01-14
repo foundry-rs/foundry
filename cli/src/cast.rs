@@ -312,9 +312,13 @@ async fn main() -> eyre::Result<()> {
             let interfaces = if Path::new(&path_or_address).exists() {
                 SimpleCast::generate_interface(InterfacePath::Local(path_or_address)).await?
             } else {
+                let api_key = match etherscan_api_key {
+                    Some(inner) => inner,
+                    _ => eyre::bail!("No Etherscan API Key is set. Consider using the ETHERSCAN_API_KEY env var, or the -e CLI argument.")
+                };
                 SimpleCast::generate_interface(InterfacePath::Etherscan {
-                    chain,
-                    api_key: etherscan_api_key.unwrap(),
+                    chain: chain.inner,
+                    api_key,
                     address: path_or_address.parse::<Address>()?,
                 })
                 .await?
@@ -376,7 +380,10 @@ async fn main() -> eyre::Result<()> {
             println!("{}", Cast::new(provider).nonce(who, block).await?);
         }
         Subcommands::EtherscanSource { chain, address, etherscan_api_key } => {
-            println!("{}", SimpleCast::etherscan_source(chain, address, etherscan_api_key).await?);
+            println!(
+                "{}",
+                SimpleCast::etherscan_source(chain.inner, address, etherscan_api_key).await?
+            );
         }
         Subcommands::Wallet { command } => match command {
             WalletSubcommands::New { path, password, unsafe_password } => {

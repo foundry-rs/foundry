@@ -1,9 +1,9 @@
 use std::{path::PathBuf, str::FromStr};
 
 use clap::{Parser, Subcommand};
-use ethers::types::{Address, BlockId, BlockNumber, Chain, NameOrAddress, H256};
+use ethers::types::{Address, BlockId, BlockNumber, NameOrAddress, H256};
 
-use super::{EthereumOpts, Wallet};
+use super::{ClapChain, EthereumOpts, Wallet};
 
 #[derive(Debug, Subcommand)]
 #[clap(name = "cast")]
@@ -295,30 +295,8 @@ pub enum Subcommands {
     #[clap(name = "etherscan-source")]
     #[clap(about = "Prints the source code of a contract from Etherscan")]
     EtherscanSource {
-        #[clap(
-            long,
-            env = "CHAIN",
-            default_value = "mainnet",
-            // if Chain implemented ArgEnum, we'd get this for free
-            possible_values = [
-                "mainnet",
-                "ropsten",
-                "rinkeby",
-                "goerli",
-                "kovan",
-                "x_dai",
-                "polygon",
-                "polygon_mumbai",
-                "avalanche",
-                "avalanche_fuji",
-                "sepolia",
-                "moonbeam",
-                "moonbeam_dev",
-                "moonriver",
-                "optimism",
-                "optimism_kovan"
-            ])]
-        chain: Chain,
+        #[clap(flatten)]
+        chain: ClapChain,
         #[clap(help = "the contract address")]
         address: String,
         #[clap(long, env = "ETHERSCAN_API_KEY")]
@@ -334,22 +312,16 @@ pub enum Subcommands {
         about = "Generate contract's interface from ABI. Currently it doesn't support ABI encoder V2"
     )]
     Interface {
-        #[clap(short = 's', help = "The contract's address or path to ABI file")]
+        #[clap(help = "The contract's address or path to ABI file")]
         path_or_address: String,
-        #[clap(short, default_value = "^0.8.10", help = "pragma version")]
+        #[clap(long, short, default_value = "^0.8.10", help = "pragma version")]
         pragma: String,
-        #[clap(
-            short,
-            help = "The blockchain where the smart contract is deployed. Supported values:  \
-            mainnet, ropsten, rinkeby, goerli, kovan, xdai, polygon, polygon-mumbai, avalanche, \
-            avalanche-fuji, sepolia, moonbeam, moonbeam-dev, moonriver, optimism, optimism-kovan",
-            default_value = "mainnet"
-        )]
-        chain: ethers::core::types::Chain,
         #[clap(short, help = "Path to output file. Defaults to stdout")]
         output_location: Option<PathBuf>,
         #[clap(short, env = "ETHERSCAN_API_KEY", help = "etherscan API key")]
         etherscan_api_key: Option<String>,
+        #[clap(flatten)]
+        chain: ClapChain,
     },
     #[clap(about = "generate shell completions script")]
     Completions {
