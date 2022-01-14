@@ -4,14 +4,14 @@ use ethers_core::{
     abi::{
         self, parse_abi,
         token::{LenientTokenizer, StrictTokenizer, Tokenizer},
-        Abi, AbiParser, Function, ParamType, Token,
+        Abi, AbiParser, Function, Param, ParamType, Token,
     },
     types::*,
 };
 use ethers_etherscan::Client;
 use eyre::{Result, WrapErr};
 use serde::Deserialize;
-use std::env::VarError;
+use std::{collections::HashSet, env::VarError};
 
 const BASE_TX_COST: u64 = 21000;
 
@@ -404,6 +404,76 @@ pub fn etherscan_api_key() -> eyre::Result<String> {
     })
 }
 
+// Helper for generating solidity abi encoder v2 field names.
+const ASCII_LOWER: [char; 26] = [
+    'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's',
+    't', 'u', 'v', 'w', 'x', 'y', 'z',
+];
+
+fn capitalize(s: &str) -> String {
+    let mut c = s.chars();
+    match c.next() {
+        None => String::new(),
+        Some(f) => f.to_uppercase().chain(c).collect(),
+    }
+}
+
+// Returns the function parameter formatted as a string, as well as inserts into the provided
+// `structs` set in order to create type definitions for any Abi Encoder v2 structs.
+fn format_param(param: &Param, structs: &mut HashSet<String>) -> String {
+    // check if it requires a memory tag
+    let is_memory = matches!(
+        param.kind,
+        ParamType::Array(_) |
+            ParamType::Bytes |
+            ParamType::String |
+            ParamType::FixedArray(_, _) |
+            ParamType::Tuple(_),
+    );
+
+    let (kind, v2_struct) = match param.kind {
+        // We need to do some extra work to parse ABI Encoder V2 types.
+        ParamType::Tuple(ref args) => {
+            let name = param.internal_type.clone().unwrap_or_else(|| capitalize(&param.name));
+            let name = if name.contains(".") {
+                name.split(".").nth(1).expect("could not get struct name").to_owned()
+            } else {
+                name.to_owned()
+            };
+
+            // NB: This does not take into account recursive ABI Encoder v2 structs. Left
+            // as future work.
+            let args = args
+                .iter()
+                .enumerate()
+                // Unfortunately Solidity does not support unnamed struct fields, so we
+                // just codegen ones alphabetically.
+                .map(|(i, x)| format!("{} {};", x, ASCII_LOWER[i]))
+                .collect::<Vec<_>>()
+                .join(" ");
+
+            let v2_struct = format!("struct {} {{ {} }}", name, args);
+            (name, Some(v2_struct))
+        }
+        // If not, just get the string of the param kind.
+        _ => (param.kind.to_string(), None),
+    };
+
+    // add `memory` if required
+    let kind = if is_memory { format!("{} memory", kind) } else { kind };
+
+    // if there was a v2 struct, push it for later usage
+    if let Some(v2_struct) = v2_struct {
+        structs.insert(v2_struct);
+    }
+
+    if param.name.is_empty() {
+        kind
+    } else {
+        format!("{} {}", kind, param.name)
+    }
+}
+
 /// This function takes a contract [`Abi`] and a name and proceeds to generate a Solidity
 /// `interface` from that ABI. If the provided name is empty, then it defaults to `interface
 /// Interface`.
@@ -419,50 +489,64 @@ pub fn abi_to_solidity(contract_abi: &Abi, mut contract_name: &str) -> Result<St
     if contract_name.trim().is_empty() {
         contract_name = "Interface";
     };
+
+    // instantiate an array of all ABI Encoder v2 structs
+    let mut structs = HashSet::new();
+
     let functions = functions_iterator
         .map(|function| {
             let inputs = function
                 .inputs
                 .iter()
-                .map(|input| {
-                    if input.name.is_empty() {
-                        format!("{}", input.kind)
-                    } else {
-                        format!("{} {}", input.kind, input.name)
-                    }
-                })
+                .map(|param| format_param(param, &mut structs))
                 .collect::<Vec<String>>()
                 .join(", ");
             let outputs = function
                 .outputs
                 .iter()
-                .map(|output| {
-                    if output.name.is_empty() {
-                        format!("{}", output.kind)
-                    } else {
-                        format!("{} {}", output.kind, output.name)
-                    }
-                })
+                .map(|param| format_param(param, &mut structs))
                 .collect::<Vec<String>>()
                 .join(", ");
+
             let mutability = match function.state_mutability {
                 abi::StateMutability::Pure => "pure",
                 abi::StateMutability::View => "view",
                 abi::StateMutability::Payable => "payable",
                 _ => "",
             };
+
             if outputs.is_empty() {
-                format!("\n     function {}({}) {} external;", function.name, inputs, mutability)
+                format!("function {}({}) {} external;", function.name, inputs, mutability)
             } else {
                 format!(
-                    "\n     function {}({}) {} external returns ({});",
+                    "function {}({}) {} external returns ({});",
                     function.name, inputs, mutability, outputs
                 )
             }
         })
-        .collect::<Vec<String>>()
-        .join("");
-    Ok(format!("interface {} {{{}\n}}\n", contract_name, functions))
+        .collect::<Vec<_>>()
+        .join("\n    ");
+
+    Ok(if structs.is_empty() {
+        format!(
+            r#"interface {} {{
+    {}
+}}
+"#,
+            contract_name, functions
+        )
+    } else {
+        let structs = structs.into_iter().collect::<Vec<_>>().join("\n    ");
+        format!(
+            r#"interface {} {{
+    {}
+
+    {}
+}}
+"#,
+            contract_name, structs, functions
+        )
+    })
 }
 
 #[cfg(test)]
