@@ -34,6 +34,7 @@ use clap::{IntoApp, Parser};
 use clap_complete::generate;
 
 use crate::utils::read_secret;
+use eyre::WrapErr;
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
@@ -319,26 +320,31 @@ async fn main() -> eyre::Result<()> {
                 SimpleCast::generate_interface(InterfacePath::Etherscan {
                     chain: chain.inner,
                     api_key,
-                    address: path_or_address.parse::<Address>()?,
+                    address: path_or_address
+                        .parse::<Address>()
+                        .wrap_err("Invalid address provided. Did you make a typo?")?,
                 })
                 .await?
             };
 
-            let mut output_string = format!("pragma solidity {}", pragma);
+            // put it all together
+            let pragma = format!("pragma solidity {};", pragma);
+            let interfaces = interfaces
+                .iter()
+                .map(|iface| iface.source.to_string())
+                .collect::<Vec<_>>()
+                .join("\n");
+            let res = format!("{}\n\n{}", pragma, interfaces);
+
+            // print or write to file
             match output_location {
                 Some(loc) => {
-                    for interface in interfaces {
-                        output_string = format!("{}\n{}", &output_string, interface.source);
-                    }
                     std::fs::create_dir_all(&loc.parent().unwrap())?;
-                    std::fs::write(&loc, output_string)?;
-                    println!("Saved interface at {}", loc.to_str().unwrap());
+                    std::fs::write(&loc, res)?;
+                    println!("Saved interface at {}", loc.display());
                 }
                 None => {
-                    println!("{}", output_string);
-                    for interface in interfaces {
-                        println!("{}", interface.source);
-                    }
+                    println!("{}", res);
                 }
             }
         }
