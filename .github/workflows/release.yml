@@ -122,6 +122,6 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ env.TAG_NAME }}
-          draft: ${{ env.IS_NIGHTLY }}
+          prerelease: ${{ env.IS_NIGHTLY }}
           body: ${{ steps.build_changelog.outputs.changelog }}
           files: ${{ steps.artifacts.outputs.file_name }}
