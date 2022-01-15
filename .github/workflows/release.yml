@@ -14,8 +14,7 @@ on:
         default: nightly
 
 env:
-  TAG_NAME: ${{ (github.event_name == 'schedule' && 'nightly') || github.inputs.tag || github.ref_name }}
-  IS_NIGHTLY: ${{ github.event_name != 'push' }}
+  TAG_NAME: ${{ (github.event_name == 'schedule' && 'nightly') || (github.event_name == 'workflow_dispatch' && github.event.inputs.tag) || github.ref_name }}
 
 jobs:
   release:
@@ -75,30 +74,50 @@ jobs:
         id: artifacts
         env:
           PLATFORM_NAME: ${{ matrix.job.platform }}
+          TARGET: ${{ matrix.job.target }}
           ARCH: ${{ matrix.job.arch }}
         run: |
           if [ "$PLATFORM_NAME" != "win32" ]; then
-            tar -czvf "foundry_${TAG_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C ./target/release forge cast
+            tar -czvf "foundry_${TAG_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C ./target/${TARGET}/release forge cast
             echo "::set-output name=file_name::foundry_${TAG_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz"
           else
-            cd ./target/release
+            cd ./target/${TARGET}/release
             7z a -tzip "foundry_${TAG_NAME}_${PLATFORM_NAME}_${ARCH}.zip" forge.exe cast.exe
-            mv "foundry_${TAG_NAME}_${PLATFORM_NAME}_${ARCH}.zip" ../../
+            mv "foundry_${TAG_NAME}_${PLATFORM_NAME}_${ARCH}.zip" ../../../
             echo "::set-output name=file_name::foundry_${TAG_NAME}_${PLATFORM_NAME}_${ARCH}.zip"
           fi
         shell: bash
- 
+
       - name: Build changelog
         id: build_changelog
-        if: ${{ env.IS_NIGHTLY == false }}
+        if: ${{ env.TAG_NAME != 'nightly' }}
         uses: mikepenz/release-changelog-builder-action@v2.4.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Move nightly tag
+        if: ${{ env.TAG_NAME == 'nightly' }}
+        uses: actions/github-script@v5
+        with:
+          script: |
+            try {
+              await github.rest.git.updateRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: 'tags/nightly',
+                sha: context.sha,
+                force: true
+              })
+            } catch (err) {
+              console.error(`Failed to move nightly tag.`)
+              console.error(`This should only happen the first time.`)
+              console.error(err)
+            }
 
       - name: Create release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ env.TAG_NAME }}
-          draft: ${{ env.IS_NIGHTLY }}
+          prerelease: ${{ env.TAG_NAME == 'nightly' }}
           body: ${{ steps.build_changelog.outputs.changelog }}
           files: ${{ steps.artifacts.outputs.file_name }}
