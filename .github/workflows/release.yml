@@ -6,10 +6,16 @@ on:
       - 'v*.*.*'
   schedule:
     - cron: '0 0 * * *'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag name to release or nightly for nightly releases'
+        required: true
+        default: nightly
 
 env:
-  TAG_NAME: ${{ github.event_name == 'schedule' && 'nightly' || github.ref_name }}
-  IS_NIGHTLY: ${{ github.event_name == 'schedule' }}
+  TAG_NAME: ${{ (github.event_name == 'schedule' && 'nightly') || github.inputs.tag || github.ref_name }}
+  IS_NIGHTLY: ${{ env.TAG_NAME == 'nightly' }}
 
 jobs:
   release:
