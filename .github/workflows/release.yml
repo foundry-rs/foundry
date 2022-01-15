@@ -87,13 +87,36 @@ jobs:
             echo "::set-output name=file_name::foundry_${TAG_NAME}_${PLATFORM_NAME}_${ARCH}.zip"
           fi
         shell: bash
- 
+
       - name: Build changelog
         id: build_changelog
         if: ${{ env.IS_NIGHTLY == false }}
         uses: mikepenz/release-changelog-builder-action@v2.4.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Move nightly tag
+        if: ${{ env.IS_NIGTHLY == true }}
+        uses: actions/github-script@v5
+        with:
+          script: |
+            try {
+              await github.rest.git.deleteRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: 'refs/tags/nightly'
+              })
+            } catch (err) {
+              console.error(`Failed to delete nightly tag.`)
+              console.error(`This should only happen the first time.`)
+              console.error(err)
+            }
+            await github.rest.git.createRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: 'refs/tags/nightly',
+              sha: context.sha
+            })
 
       - name: Create release
         uses: softprops/action-gh-release@v1
