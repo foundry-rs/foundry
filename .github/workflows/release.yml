@@ -104,7 +104,7 @@ jobs:
               await github.rest.git.deleteRef({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                ref: 'refs/tags/nightly'
+                ref: 'tags/nightly'
               })
             } catch (err) {
               console.error(`Failed to delete nightly tag.`)
