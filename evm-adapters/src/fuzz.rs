@@ -2,7 +2,7 @@
 use crate::Evm;
 use ethers::{
     abi::{Function, ParamType, Token, Tokenizable},
-    types::{Address, Bytes, Sign, I256, U256},
+    types::{Address, Bytes, I256, U256},
 };
 use std::{
     cell::{RefCell, RefMut},
@@ -254,16 +254,14 @@ fn fuzz_param(param: &ParamType) -> impl Strategy<Value = Token> {
             32 => any::<[u8; 32]>()
                 .prop_map(move |x| I256::from_raw(U256::from(&x)).into_token())
                 .boxed(),
-            y @ 1..=31 => (any::<bool>(), any::<[u8; 32]>())
-                .prop_map(move |(sign, x)| {
-                    let sign = if sign { Sign::Positive } else { Sign::Negative };
+            y @ 1..=31 => any::<[u8; 32]>()
+                .prop_map(move |x| {
                     // Generate a uintN in the correct range, then shift it to the range of intN
-                    // with subtraction
+                    // by subtracting 2^(N-1)
                     let uint = U256::from(&x) % U256::from(2).pow(U256::from(y * 8));
-                    let max_int = U256::from(2).pow(U256::from(y * 8 - 1));
-                    I256::overflowing_from_sign_and_abs(sign, uint.overflowing_sub(max_int).0)
-                        .0
-                        .into_token()
+                    let max_int_plus1 = U256::from(2).pow(U256::from(y * 8 - 1));
+                    let num = I256::from_raw(uint.overflowing_sub(max_int_plus1).0);
+                    num.into_token()
                 })
                 .boxed(),
             _ => panic!("unsupported solidity type int{}", n),
