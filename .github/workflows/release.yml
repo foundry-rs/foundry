@@ -63,11 +63,9 @@ jobs:
 
       - name: Build binaries
         uses: actions-rs/cargo@v1
-        env:
-          TARGET: ${{ matrix.job.target }}
         with:
           command: build
-          args: --release --bins --target $TARGET
+          args: --release --bins --target ${{ matrix.job.target }}
 
       - name: Strip binaries (non-Windows)
         if: matrix.job.platform != 'win32'
