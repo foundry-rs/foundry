@@ -312,7 +312,7 @@ pub enum Subcommands {
         about = "Generate contract's interface from ABI. Currently it doesn't support ABI encoder V2"
     )]
     Interface {
-        #[clap(help = "The contract's address or path to ABI file")]
+        #[clap(help = "The contract address or path to ABI file")]
         path_or_address: String,
         #[clap(long, short, default_value = "^0.8.10", help = "pragma version")]
         pragma: String,

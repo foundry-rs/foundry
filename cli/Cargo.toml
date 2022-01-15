@@ -7,13 +7,13 @@ license = "MIT OR Apache-2.0"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-clap = { version = "3.0.6", features = [
+clap = { version = "3.0.7", features = [
     "derive",
     "env",
     "unicode",
     "wrap_help",
 ] }
-clap_complete = "3.0.2"
+clap_complete = "3.0.3"
 foundry-utils = { path = "../utils" }
 forge = { path = "../forge" }
 cast = { path = "../cast" }
