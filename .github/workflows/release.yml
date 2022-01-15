@@ -101,22 +101,18 @@ jobs:
         with:
           script: |
             try {
-              await github.rest.git.deleteRef({
+              await github.rest.git.updateRef({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                ref: 'tags/nightly'
+                ref: 'tags/nightly',
+                sha: context.sha,
+                force: true
               })
             } catch (err) {
-              console.error(`Failed to delete nightly tag.`)
+              console.error(`Failed to move nightly tag.`)
               console.error(`This should only happen the first time.`)
               console.error(err)
             }
-            await github.rest.git.createRef({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: 'refs/tags/nightly',
-              sha: context.sha
-            })
 
       - name: Create release
         uses: softprops/action-gh-release@v1
