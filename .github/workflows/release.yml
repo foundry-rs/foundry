@@ -75,15 +75,16 @@ jobs:
         id: artifacts
         env:
           PLATFORM_NAME: ${{ matrix.job.platform }}
+          TARGET: ${{ matrix.job.target }}
           ARCH: ${{ matrix.job.arch }}
         run: |
           if [ "$PLATFORM_NAME" != "win32" ]; then
-            tar -czvf "foundry_${TAG_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C ./target/release forge cast
+            tar -czvf "foundry_${TAG_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C ./target/${TARGET}/release forge cast
             echo "::set-output name=file_name::foundry_${TAG_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz"
           else
-            cd ./target/release
+            cd ./target/${TARGET}/release
             7z a -tzip "foundry_${TAG_NAME}_${PLATFORM_NAME}_${ARCH}.zip" forge.exe cast.exe
-            mv "foundry_${TAG_NAME}_${PLATFORM_NAME}_${ARCH}.zip" ../../
+            mv "foundry_${TAG_NAME}_${PLATFORM_NAME}_${ARCH}.zip" ../../../
             echo "::set-output name=file_name::foundry_${TAG_NAME}_${PLATFORM_NAME}_${ARCH}.zip"
           fi
         shell: bash
