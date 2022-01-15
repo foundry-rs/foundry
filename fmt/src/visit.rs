@@ -176,7 +176,7 @@ impl Visitable for SourceUnitPart {
     fn visit(&mut self, v: &mut impl Visitor) -> VResult {
         match self {
             SourceUnitPart::ContractDefinition(contract) => v.visit_contract(contract),
-            SourceUnitPart::PragmaDirective(_, ident, str) => v.visit_pragma(ident, str),
+            SourceUnitPart::PragmaDirective(_, _, ident, str) => v.visit_pragma(ident, str),
             SourceUnitPart::ImportDirective(_, import) => import.visit(v),
             SourceUnitPart::EnumDefinition(enumeration) => v.visit_enum(enumeration),
             SourceUnitPart::StructDefinition(structure) => v.visit_struct(structure),

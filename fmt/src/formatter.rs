@@ -147,6 +147,11 @@ impl<'a, W: Write> Formatter<'a, W> {
 
         Ok(buf.w)
     }
+
+    /// Returns number of blank lines between two parts of source code
+    fn blank_lines<T: LineOfCode>(&self, a: &mut T, b: &&mut T) -> usize {
+        return self.source[a.loc().2..b.loc().1].matches('\n').count()
+    }
 }
 
 impl<'a, W: Write> Write for Formatter<'a, W> {
@@ -205,24 +210,27 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         //     _ => usize::MAX,
         // });
 
-        let source_unit_parts = source_unit.0.len();
-        let mut source_unit_parts_iter = source_unit.0.iter_mut().enumerate().peekable();
-        while let Some((i, unit)) = source_unit_parts_iter.next() {
+        let mut source_unit_parts_iter = source_unit.0.iter_mut().peekable();
+        while let Some(unit) = source_unit_parts_iter.next() {
             let is_pragma =
-                |u: &SourceUnitPart| matches!(u, SourceUnitPart::PragmaDirective(_, _, _));
+                |u: &SourceUnitPart| matches!(u, SourceUnitPart::PragmaDirective(_, _, _, _));
             let is_import = |u: &SourceUnitPart| matches!(u, SourceUnitPart::ImportDirective(_, _));
             let is_declaration = |u: &SourceUnitPart| !(is_pragma(u) || is_import(u));
 
             unit.visit(self)?;
             writeln!(self)?;
 
-            let next = source_unit_parts_iter.peek();
-
-            if i != source_unit_parts - 1 && is_declaration(unit) ||
-                is_pragma(unit) ||
-                next.map(|(_, unit)| is_declaration(unit)).unwrap_or(false)
-            {
-                writeln!(self)?;
+            if let Some(next_unit) = source_unit_parts_iter.peek() {
+                if (is_declaration(unit) || is_declaration(next_unit)) ||
+                    (is_pragma(unit) || is_pragma(next_unit)) ||
+                    (is_import(unit) &&
+                        is_import(next_unit) &&
+                        // If source has zero blank lines between imports, leave it as is. If one
+                        //  or more, separate imports with one blank line.
+                        self.blank_lines(unit, next_unit) > 1)
+                {
+                    writeln!(self)?;
+                }
             }
         }
 
@@ -300,23 +308,15 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             writeln!(self, "{{")?;
 
             self.indent(1);
-            let contract_parts_len = contract.parts.len();
-            let mut contract_parts_iter = contract.parts.iter_mut().enumerate().peekable();
-            while let Some((i, part)) = contract_parts_iter.next() {
+            let mut contract_parts_iter = contract.parts.iter_mut().peekable();
+            while let Some(part) = contract_parts_iter.next() {
                 part.visit(self)?;
                 writeln!(self)?;
 
                 // If source has zero blank lines between declarations, leave it as is. If one
                 //  or more, separate declarations with one blank line.
-                if i != contract_parts_len - 1 {
-                    if let Some((_, next_part)) = contract_parts_iter.peek() {
-                        let empty_lines =
-                            self.source[part.loc().2..next_part.loc().1].matches('\n').count();
-
-                        if empty_lines > 1 {
-                            writeln!(self)?;
-                        }
-                    } else {
+                if let Some(next_part) = contract_parts_iter.peek() {
+                    if self.blank_lines(part, next_part) > 1 {
                         writeln!(self)?;
                     }
                 }

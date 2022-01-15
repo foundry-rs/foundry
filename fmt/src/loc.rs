@@ -1,9 +1,31 @@
 use solang_parser::pt::{
-    AssemblyExpression, AssemblyStatement, ContractPart, FunctionDefinition, Loc, Statement,
+    AssemblyExpression, AssemblyStatement, ContractPart, FunctionDefinition, Import, Loc,
+    SourceUnitPart, Statement,
 };
 
 pub trait LineOfCode {
     fn loc(&self) -> Loc;
+}
+
+impl LineOfCode for SourceUnitPart {
+    fn loc(&self) -> Loc {
+        match self {
+            SourceUnitPart::ContractDefinition(contract) => contract.loc,
+            SourceUnitPart::PragmaDirective(loc, _, _, _) | SourceUnitPart::StraySemicolon(loc) => {
+                *loc
+            }
+            SourceUnitPart::ImportDirective(_, import) => *match import {
+                Import::Plain(_, loc) => loc,
+                Import::GlobalSymbol(_, _, loc) => loc,
+                Import::Rename(_, _, loc) => loc,
+            },
+            SourceUnitPart::EnumDefinition(enumeration) => enumeration.loc,
+            SourceUnitPart::StructDefinition(structure) => structure.loc,
+            SourceUnitPart::EventDefinition(event) => event.loc,
+            SourceUnitPart::FunctionDefinition(function) => function.loc,
+            SourceUnitPart::VariableDefinition(variable) => variable.loc,
+        }
+    }
 }
 
 impl LineOfCode for ContractPart {
@@ -29,7 +51,14 @@ impl LineOfCode for Statement {
 impl LineOfCode for AssemblyStatement {
     fn loc(&self) -> Loc {
         match self {
-            AssemblyStatement::Assign(loc, _, _) | AssemblyStatement::LetAssign(loc, _, _) => *loc,
+            AssemblyStatement::Assign(loc, _, _) |
+            AssemblyStatement::LetAssign(loc, _, _) |
+            AssemblyStatement::If(loc, _, _) |
+            AssemblyStatement::For(loc, _, _, _, _) |
+            AssemblyStatement::Switch(loc, _, _, _) |
+            AssemblyStatement::Leave(loc) |
+            AssemblyStatement::Break(loc) |
+            AssemblyStatement::Continue(loc) => *loc,
             AssemblyStatement::Expression(expr) => expr.loc(),
         }
     }
