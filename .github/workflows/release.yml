@@ -96,11 +96,8 @@ jobs:
 
       - name: Create release
         uses: softprops/action-gh-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
         with:
           tag_name: ${{ env.TAG_NAME }}
-          name: ${{ env.TAG_NAME }}
           draft: ${{ env.IS_NIGHTLY }}
           body: ${{ steps.build_changelog.outputs.changelog }}
           files: ${{ steps.artifacts.outputs.file_name }}
