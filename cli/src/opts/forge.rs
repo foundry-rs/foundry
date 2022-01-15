@@ -100,14 +100,19 @@ pub enum Subcommands {
     #[structopt(about = "creates a snapshot of each test's gas usage")]
     Snapshot(snapshot::SnapshotArgs),
 
-    #[structopt(about = "formats all src files")]
+    #[structopt(about = "formats all Solidity source files")]
     Fmt {
+        #[structopt(help = "path to the file or directory")]
+        path: Option<PathBuf>,
         #[structopt(
-            help = "the project's root or file path, default being the current working directory",
+            help = "project's root path, default being the current working directory",
             long
         )]
         root: Option<PathBuf>,
-        #[structopt(help = "run formatter in check mode", long)]
+        #[structopt(
+            help = "run in 'check' mode. Exits with 0 if input is formatted correctly. Exits with 1 if formatting is required.",
+            long
+        )]
         check: bool,
     },
 }

@@ -135,8 +135,22 @@ fn main() -> eyre::Result<()> {
         Subcommands::Snapshot(cmd) => {
             cmd.run()?;
         }
-        Subcommands::Fmt { root, check } => {
-            let root = root.unwrap_or_else(|| std::env::current_dir().unwrap());
+        Subcommands::Fmt { path, root, check } => {
+            if path.is_some() && root.is_some() {
+                return Err(eyre::eyre!("Only --root or path argument should be specified"))
+            }
+
+            let root = if let Some(path) = path {
+                path
+            } else {
+                let root = root
+                    .unwrap_or(std::env::current_dir().expect("failed to get current directory"));
+                if !root.is_dir() {
+                    return Err(eyre::eyre!("Root path should be a directory"))
+                }
+
+                utils::find_contracts_dir(root)
+            };
 
             let paths: Box<dyn Iterator<Item = PathBuf>> = if root.is_dir() {
                 Box::new(
