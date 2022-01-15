@@ -32,11 +32,14 @@ jobs:
             platform: linux
             target: x86_64-unknown-linux-gnu
             arch: amd64
-          # The macOS binaries do not support M1 yet: https://github.com/actions/runner/issues/805
           - os: macos-latest
             platform: darwin
             target: x86_64-apple-darwin
             arch: amd64
+          - os: macos-latest
+            platform: darwin
+            target: aarch64-apple-darwin
+            arch: arm64
           - os: windows-latest
             platform: win32
             target: x86_64-pc-windows-msvc
@@ -51,6 +54,7 @@ jobs:
         with:
           profile: minimal
           toolchain: stable
+          target: ${{ matrix.job.target }}
           override: true
 
       - uses: Swatinem/rust-cache@v1
@@ -59,9 +63,11 @@ jobs:
 
       - name: Build binaries
         uses: actions-rs/cargo@v1
+        env:
+          TARGET: ${{ matrix.job.target }}
         with:
           command: build
-          args: --release --bins
+          args: --release --bins --target $TARGET
 
       - name: Strip binaries (non-Windows)
         if: matrix.job.platform != 'win32'
