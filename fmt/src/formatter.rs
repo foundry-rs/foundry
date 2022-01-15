@@ -333,13 +333,11 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         write!(self, "pragma {} ", &ident.name)?;
 
         if ident.name == "solidity" {
-            // Ranges like `>=0.4.21<0.6.0` or `>=0.4.21 <0.6.0` are not parseable by `semver`
+            // There are some issues with parsing Solidity's versions with crates like `semver`:
+            // 1. Ranges like `>=0.4.21<0.6.0` or `>=0.4.21 <0.6.0` are not parseable at all.
+            // 2. Versions like `0.8.10` got transformed into `^0.8.10` which is not the same.
             // TODO: semver-solidity crate :D
-            if let Ok(semver) = semver::VersionReq::parse(&str.string) {
-                write!(self, "{};", semver)?;
-            } else {
-                write!(self, "{};", str.string)?;
-            }
+            write!(self, "{};", str.string)?;
         } else {
             write!(self, "{};", str.string)?;
         }
