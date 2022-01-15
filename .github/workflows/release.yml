@@ -64,17 +64,12 @@ jobs:
           cache-on-failure: true
 
       - name: Build binaries
+        env:
+          RUSTFLAGS: -C link-args=-s
         uses: actions-rs/cargo@v1
         with:
           command: build
           args: --release --bins --target ${{ matrix.job.target }}
-
-      - name: Strip binaries (non-Windows)
-        if: matrix.job.platform != 'win32'
-        run: |
-          cd target/release
-          strip cast
-          strip forge
 
       - name: Archive binaries
         id: artifacts
