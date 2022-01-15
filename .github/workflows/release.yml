@@ -14,7 +14,7 @@ on:
         default: nightly
 
 env:
-  TAG_NAME: ${{ (github.event_name == 'schedule' && 'nightly') || github.inputs.tag || github.ref_name }}
+  TAG_NAME: ${{ (github.event_name == 'schedule' && 'nightly') || (github.event_name == 'workflow_dispatch' && github.event.inputs.tag) || github.ref_name }}
   IS_NIGHTLY: ${{ github.event_name != 'push' }}
 
 jobs:
