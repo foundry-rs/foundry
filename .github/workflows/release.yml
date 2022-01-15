@@ -15,7 +15,7 @@ on:
 
 env:
   TAG_NAME: ${{ (github.event_name == 'schedule' && 'nightly') || github.inputs.tag || github.ref_name }}
-  IS_NIGHTLY: ${{ env.TAG_NAME == 'nightly' }}
+  IS_NIGHTLY: ${{ github.event_name != 'push' }}
 
 jobs:
   release:
