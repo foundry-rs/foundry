@@ -77,3 +77,8 @@ doc = false
 name = "forge"
 path = "src/forge.rs"
 doc = false
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
