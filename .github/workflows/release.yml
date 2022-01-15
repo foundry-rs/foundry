@@ -92,7 +92,7 @@ jobs:
         if: ${{ env.IS_NIGHTLY == false }}
         uses: mikepenz/release-changelog-builder-action@v2.4.2
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create release
         uses: softprops/action-gh-release@v1
