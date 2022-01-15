@@ -2,7 +2,7 @@
 use crate::Evm;
 use ethers::{
     abi::{Function, ParamType, Token, Tokenizable},
-    types::{Address, Bytes, Sign, I256, U256},
+    types::{Address, Bytes, I256, U256},
 };
 use std::{
     cell::{RefCell, RefMut},
@@ -260,9 +260,8 @@ fn fuzz_param(param: &ParamType) -> impl Strategy<Value = Token> {
                     // by subtracting 2^(N-1)
                     let uint = U256::from(&x) % U256::from(2).pow(U256::from(y * 8));
                     let max_int_plus1 = U256::from(2).pow(U256::from(y * 8 - 1));
-                    let (num, is_negative) = uint.overflowing_sub(max_int_plus1);
-                    let sign = if is_negative { Sign::Negative } else { Sign::Positive };
-                    I256::overflowing_from_sign_and_abs(sign, num).0.into_token()
+                    let num = I256::from_raw(uint.overflowing_sub(max_int_plus1).0);
+                    num.into_token()
                 })
                 .boxed(),
             _ => panic!("unsupported solidity type int{}", n),
