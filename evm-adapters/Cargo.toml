@@ -25,7 +25,7 @@ thiserror = "1.0.29"
 proptest = "1.0.0"
 parking_lot = "0.11.2"
 futures = "0.3.17"
-revm_precompiles = "0.1.0"
+revm_precompiles = { git = "https://github.com/bluealloy/revm", default-features = false, features = ["k256_ecrecover"] }
 serde_json = "1.0.72"
 serde = "1.0.130"
 ansi_term = "0.12.1"
