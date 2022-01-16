@@ -10,6 +10,9 @@ use crate::{
 };
 use std::collections::BTreeMap;
 
+use serde::Deserialize;
+use std::{fs::File, io::Read, path::Path};
+
 use sputnik::{
     backend::Backend,
     executor::stack::{
@@ -25,9 +28,12 @@ use ethers::{
     abi::{RawLog, Token},
     contract::EthLogDecode,
     core::{abi::AbiDecode, k256::ecdsa::SigningKey, utils},
+    prelude::artifacts::deserialize_bytes,
     signers::{LocalWallet, Signer},
+    solc::ProjectPathsConfig,
     types::{Address, H160, H256, U256},
 };
+use ethers_core::types::Bytes;
 use std::{convert::Infallible, str::FromStr};
 
 use crate::sputnik::cheatcodes::{
@@ -613,6 +619,37 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
 
                 // encode the data as Bytes
                 res = ethers::abi::encode(&[Token::Bytes(decoded.to_vec())]);
+            }
+            HEVMCalls::GetCode(inner) => {
+                self.add_debug(CheatOp::GETCODE);
+
+                #[derive(Deserialize)]
+                struct ContractFile {
+                    #[serde(deserialize_with = "deserialize_bytes")]
+                    bin: Bytes,
+                }
+
+                let path = if inner.0.ends_with(".json") {
+                    Path::new(&inner.0).to_path_buf()
+                } else {
+                    let parts = inner.0.split(':').collect::<Vec<&str>>();
+                    let contract_file = parts[0];
+                    let contract_name = if parts.len() == 1 {
+                        parts[0].replace(".sol", "")
+                    } else {
+                        parts[1].to_string()
+                    };
+
+                    let outdir = ProjectPathsConfig::find_artifacts_dir(Path::new("./"));
+                    outdir.join(format!("{}/{}.json", contract_file, contract_name))
+                };
+
+                let mut file = File::open(path).unwrap();
+                let mut data = String::new();
+                file.read_to_string(&mut data).unwrap();
+
+                let contract_file: ContractFile = serde_json::from_str(&data).unwrap();
+                res = ethers::abi::encode(&[Token::Bytes(contract_file.bin.to_vec())]);
             }
             HEVMCalls::Addr(inner) => {
                 self.add_debug(CheatOp::ADDR);

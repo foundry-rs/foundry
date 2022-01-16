@@ -1538,6 +1538,7 @@ dependencies = [
  "clap",
  "clap_complete",
  "ethers",
+ "ethers-core",
  "evm",
  "evmodin",
  "eyre",
