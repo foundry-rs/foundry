@@ -581,16 +581,20 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                     bin: String,
                 }
 
-                let parts = inner.0.split(':').collect::<Vec<&str>>();
-                let contract_file = parts[0];
-                let contract_name = if parts.len() == 1 {
-                    parts[0].replace(".sol", "")
+                let path = if inner.0.ends_with(".json") {
+                    Path::new(&inner.0).to_path_buf()
                 } else {
-                    parts[1].to_string()
+                    let parts = inner.0.split(':').collect::<Vec<&str>>();
+                    let contract_file = parts[0];
+                    let contract_name = if parts.len() == 1 {
+                        parts[0].replace(".sol", "")
+                    } else {
+                        parts[1].to_string()
+                    };
+    
+                    let outdir = ProjectPathsConfig::find_artifacts_dir(Path::new("./"));
+                    outdir.join(format!("{}/{}.json", contract_file, contract_name))
                 };
-
-                let outdir = ProjectPathsConfig::find_artifacts_dir(Path::new("./"));
-                let path = outdir.join(format!("{}/{}.json", contract_file, contract_name));
 
                 let mut file = File::open(path).unwrap();
                 let mut data = String::new();
@@ -600,6 +604,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 let code = hex::decode(contract_file.bin.replace("0x", "")).unwrap();
 
                 res = ethers::abi::encode(&[Token::Bytes(code)]);
+                println!("{:?}", res);
             }
             HEVMCalls::Addr(inner) => {
                 self.add_debug(CheatOp::ADDR);
