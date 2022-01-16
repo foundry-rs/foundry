@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -e
 
+echo Installing forgeup...
+
+FORGEUP='#!/usr/bin/env bash
+set -e
+
 while [[ $1 ]]; do
   case $1 in
     --)               shift; break;;
@@ -77,7 +82,7 @@ else
     git checkout ${BRANCH}
     cargo install --path ./cli --bins --locked --force
   fi
-fi
+fi'
 
 # Directory config
 FORGE_DIR="$HOME/.forgeup"
@@ -99,14 +104,14 @@ case $SHELL in
     PREF_SHELL=bash
     ;;
 *)
-    echo -e ${RED}Error: ${GREEN}could not detect shell, please manually add ${RED}$FORGE_DIR${GREEN} to your ${RED}PATH${GREEN} variable!${NC}
+    echo "forgeup: could not detect shell, manually add ${FORGE_DIR} to your PATH."
     exit 1
 esac
 
-# Only add the forgeup directory to profile if it isn't in path
+# Only add the forgeup directory to profile if it isn't in PATH.
 if [[ ":$PATH:" != *":$HOME/.forgeup:"* ]]; then
-    # Add the forgeup directory to the path and ensure the old PATH variables remain
-    echo "export PATH=\$PATH:$FORGE_DIR" >> $PROFILE
+    # Add the forgeup directory to the path and ensure the old PATH variables remain.
+    echo >> $PROFILE && echo "export PATH=\"\$PATH:$FORGE_DIR\"" >> $PROFILE
 fi
 
-echo -e ${GREEN}Detected your preferred shell is ${RED}${PREF_SHELL}${GREEN}, added ${RED}forgeup${GREEN} to PATH. Please run ${RED}source ${PROFILE}${GREEN} after this script runs, or start a new terminal session to use ${RED}forgeup${GREEN}.${NC}
+echo && echo "Detected your preferred shell is ${PREF_SHELL} and added forgeup to PATH. Run run source after this script runs, or start a new terminal session to use forgeup."
