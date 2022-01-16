@@ -3,21 +3,21 @@ set -e
 
 while [[ $1 ]]; do
   case $1 in
-    --)                shift; break;;
+    --)               shift; break;;
 
-    -r|--repo)        shift; export FORGEUP_REPO=$1;;
-    -b|--branch)             export FORGEUP_BRANCH=$1;;
-    -v|--version)            export FORGEUP_VERSION=$1;;
+    -r|--repo)        FORGEUP_REPO=$1;;
+    -b|--branch)      FORGEUP_BRANCH=$1;;
+    -v|--version)     FORGEUP_VERSION=$1;;
 
     *) printf "forgeup: internal error: %q\\n" "$1"; exit 1
   esac; shift
 done
 
-export FOUNDRY_PATH=${FOUNDRY_PATH-"$HOME/.foundry"}
-export FORGEUP_REPO=${FORGEUP_REPO-gakonst/foundry}
+FOUNDRY_PATH=${FOUNDRY_PATH-"$HOME/.foundry"}
+FORGEUP_REPO=${FORGEUP_REPO-gakonst/foundry}
 
 if [[ "$FORGEUP_REPO" == "gakonst/foundry" && -z "$FORGEUP_BRANCH" ]]; then 
-  export FORGEUP_VERSION=${FORGEUP_VERSION-nightly}
+  FORGEUP_VERSION=${FORGEUP_VERSION-nightly}
 
   PLATFORM="$(uname -s)"
   case $PLATFORM in
@@ -36,20 +36,77 @@ if [[ "$FORGEUP_REPO" == "gakonst/foundry" && -z "$FORGEUP_BRANCH" ]]; then
   ARCHITECTURE="$(uname -m)"
 
   if [ "${ARCHITECTURE}" = "x86_64" ]; then
-      if [ "$(sysctl -in sysctl.proc_translated)" = "1" ]; then
-          ARCHITECTURE="arm64" # Rosetta.
-      else
-          ARCHITECTURE="amd64" # Intel.
-      fi 
+    if [ "$(sysctl -in sysctl.proc_translated)" = "1" ]; then
+      ARCHITECTURE="arm64" # Rosetta.
+    else
+      ARCHITECTURE="amd64" # Intel.
+    fi 
   elif [ "${ARCHITECTURE}" = "arm64" ]; then
-      ARCHITECTURE="arm64" # Arm.
+    ARCHITECTURE="arm64" # Arm.
   else
-      ARCHITECTURE="amd64" # Amd.
+    ARCHITECTURE="amd64" # Amd.
   fi
 
   # Curl and unzip the downloaded Foundry tarball.
   curl -L https://github.com/gakonst/foundry/releases/download/${FORGEUP_VERSION}/foundry_${FORGEUP_VERSION}_${PLATFORM}_${ARCHITECTURE}.tar.gz | tar xvz
 else 
-  export FORGEUP_BRANCH=${FORGEUP_BRANCH-master}
+  FORGEUP_BRANCH=${FORGEUP_BRANCH-master}
   
+  if ! command -v cargo &> /dev/null
+  then
+    echo "forgeup: cargo is not installed. Please install it first."
+    exit 1
+  fi
+
+  REPO_PATH="$FOUNDRY_PATH/${REPO}"
+
+  # If the repo path exists move to it, git pull, and checkout the branch & cargo install local.
+  if [ -d $REPO_PATH ]; then
+    cd $REPO_PATH
+    git pull
+    git checkout ${BRANCH}
+     git pull
+    cargo install --path ./cli --bins --locked --force
+  else
+    # Repo path didnt exist, grab the author from the repo, make a directory in .foundry, cd to it, clone and install.
+    IFS="/" read -ra AUTHOR <<< "$REPO"
+    mkdir -p "$FOUNDRY_PATH/$AUTHOR"
+    cd "$FOUNDRY_PATH/$AUTHOR"
+    git clone https://github.com/${REPO}
+    cd $REPO_PATH
+    git checkout ${BRANCH}
+    cargo install --path ./cli --bins --locked --force
+  fi
 fi
+
+# Directory config
+FORGE_DIR="$HOME/.forgeup"
+BINARY="$FORGE_DIR/forgeup"
+
+# Create the .forgeup directory and binary file if it doesn't exist
+mkdir -p $FORGE_DIR
+echo "$FORGEUP" > $BINARY
+chmod +x $BINARY
+
+# Store the correct profile file (i.e. .profile for bash or .zshrc for ZSH)
+case $SHELL in
+*/zsh)
+    PROFILE=$HOME/.zshrc
+    PREF_SHELL=zsh
+    ;;
+*/bash)
+    PROFILE=$HOME/.profile
+    PREF_SHELL=bash
+    ;;
+*)
+    echo -e ${RED}Error: ${GREEN}could not detect shell, please manually add ${RED}$FORGE_DIR${GREEN} to your ${RED}PATH${GREEN} variable!${NC}
+    exit 1
+esac
+
+# Only add the forgeup directory to profile if it isn't in path
+if [[ ":$PATH:" != *":$HOME/.forgeup:"* ]]; then
+    # Add the forgeup directory to the path and ensure the old PATH variables remain
+    echo "export PATH=\$PATH:$FORGE_DIR" >> $PROFILE
+fi
+
+echo -e ${GREEN}Detected your preferred shell is ${RED}${PREF_SHELL}${GREEN}, added ${RED}forgeup${GREEN} to PATH. Please run ${RED}source ${PROFILE}${GREEN} after this script runs, or start a new terminal session to use ${RED}forgeup${GREEN}.${NC}
