@@ -3,6 +3,8 @@ set -e
 
 echo Installing forgeup...
 
+FORGEUP_DIR="$HOME/.forgeup"
+
 FORGEUP='#!/usr/bin/env bash
 set -e
 
@@ -18,7 +20,6 @@ while [[ $1 ]]; do
   esac; shift
 done
 
-FOUNDRY_PATH=${FOUNDRY_PATH-"$HOME/.foundry"}
 FORGEUP_REPO=${FORGEUP_REPO-gakonst/foundry}
 
 if [[ "$FORGEUP_REPO" == "gakonst/foundry" && -z "$FORGEUP_BRANCH" ]]; then 
@@ -53,7 +54,7 @@ if [[ "$FORGEUP_REPO" == "gakonst/foundry" && -z "$FORGEUP_BRANCH" ]]; then
   fi
 
   # Curl and unzip the downloaded Foundry tarball.
-  curl -L https://github.com/gakonst/foundry/releases/download/${FORGEUP_VERSION}/foundry_${FORGEUP_VERSION}_${PLATFORM}_${ARCHITECTURE}.tar.gz | tar xvz
+  curl -L https://github.com/${FORGEUP_REPO}/releases/download/${FORGEUP_VERSION}/foundry_${FORGEUP_VERSION}_${PLATFORM}_${ARCHITECTURE}.tar.gz | tar xvz
 
   # Move forge and cast into the cargo bin, so they can be used as commands.
   mv forge $HOME/.cargo/bin/forge
@@ -67,33 +68,31 @@ else
     exit 1
   fi
 
-  REPO_PATH="$FOUNDRY_PATH/${REPO}"
+  REPO_PATH="${FORGEUP_DIR}/${FORGEUP_REPO}"
 
   # If the repo path exists move to it, git pull, and checkout the branch & cargo install local.
   if [ -d $REPO_PATH ]; then
     cd $REPO_PATH
     git pull
-    git checkout ${BRANCH}
+    git checkout ${FORGEUP_BRANCH}
     git pull
     cargo install --path ./cli --bins --locked --force
   else
     # Repo path didnt exist, grab the author from the repo, make a directory in .foundry, cd to it, clone and install.
-    IFS="/" read -ra AUTHOR <<< "$REPO"
-    mkdir -p "$FOUNDRY_PATH/$AUTHOR"
-    cd "$FOUNDRY_PATH/$AUTHOR"
-    git clone https://github.com/${REPO}
+    IFS="/" read -ra AUTHOR <<< "$FORGEUP_REPO"
+    mkdir -p "$FORGEUP_DIR/$AUTHOR"
+    cd "$FORGEUP_DIR/$AUTHOR"
+    git clone https://github.com/${FORGEUP_REPO}
     cd $REPO_PATH
-    git checkout ${BRANCH}
+    git checkout ${FORGEUP_BRANCH}
     cargo install --path ./cli --bins --locked --force
   fi
 fi'
 
-# Directory config
-FORGE_DIR="$HOME/.forgeup"
-BINARY="$FORGE_DIR/forgeup"
+BINARY="$FORGEUP_DIR/forgeup"
 
-# Create the .forgeup directory and binary file if it doesn't exist
-mkdir -p $FORGE_DIR
+# Create the forgeup directory and binary file if it doesn't exist.
+mkdir -p $FORGEUP_DIR
 echo "$FORGEUP" > $BINARY
 chmod +x $BINARY
 
@@ -108,14 +107,14 @@ case $SHELL in
     PREF_SHELL=bash
     ;;
 *)
-    echo "forgeup: could not detect shell, manually add ${FORGE_DIR} to your PATH."
+    echo "forgeup: could not detect shell, manually add ${FORGEUP_DIR} to your PATH."
     exit 1
 esac
 
 # Only add the forgeup directory to profile if it isn't in PATH.
-if [[ ":$PATH:" != *":$HOME/.forgeup:"* ]]; then
+if [[ ":$PATH:" != *":${FORGEUP_DIR}:"* ]]; then
     # Add the forgeup directory to the path and ensure the old PATH variables remain.
-    echo >> $PROFILE && echo "export PATH=\"\$PATH:$FORGE_DIR\"" >> $PROFILE
+    echo >> $PROFILE && echo "export PATH=\"\$PATH:$FORGEUP_DIR\"" >> $PROFILE
 fi
 
 echo && echo "Detected your preferred shell is ${PREF_SHELL} and added forgeup to PATH. Run run source after this script runs, or start a new terminal session to use forgeup."
