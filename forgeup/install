@@ -3,18 +3,20 @@ set -e
 
 echo Installing forgeup...
 
-FORGEUP_DIR="$HOME/.forgeup"
+export FORGEUP_DIR=${FORGEUP_DIR-"$HOME/.forgeup"}
 
 FORGEUP='#!/usr/bin/env bash
 set -e
+
+export FORGEUP_DIR=${FORGEUP_DIR-"$HOME/.forgeup"}
 
 while [[ $1 ]]; do
   case $1 in
     --)               shift; break;;
 
-    -r|--repo)        FORGEUP_REPO=$1;;
-    -b|--branch)      FORGEUP_BRANCH=$1;;
-    -v|--version)     FORGEUP_VERSION=$1;;
+    -r|--repo)        shift; FORGEUP_REPO=$1;;
+    -b|--branch)      shift; FORGEUP_BRANCH=$1;;
+    -v|--version)     shift; FORGEUP_VERSION=$1;;
 
     *) printf "forgeup: internal error: %q\\n" "$1"; exit 1
   esac; shift
