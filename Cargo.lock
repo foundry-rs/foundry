@@ -1536,6 +1536,7 @@ dependencies = [
  "ansi_term",
  "bytes",
  "ethers",
+ "ethers-core",
  "evm",
  "evmodin",
  "eyre",

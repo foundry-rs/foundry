@@ -28,10 +28,12 @@ use ethers::{
     abi::{RawLog, Token},
     contract::EthLogDecode,
     core::{abi::AbiDecode, k256::ecdsa::SigningKey, utils},
+    prelude::artifacts::deserialize_bytes,
     signers::{LocalWallet, Signer},
     solc::ProjectPathsConfig,
     types::{Address, H160, H256, U256},
 };
+use ethers_core::types::Bytes;
 use std::{convert::Infallible, str::FromStr};
 
 use crate::sputnik::cheatcodes::{
@@ -578,7 +580,8 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
 
                 #[derive(Deserialize)]
                 struct ContractFile {
-                    bin: String,
+                    #[serde(deserialize_with = "deserialize_bytes")]
+                    bin: Bytes,
                 }
 
                 let path = if inner.0.ends_with(".json") {
@@ -591,7 +594,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                     } else {
                         parts[1].to_string()
                     };
-    
+
                     let outdir = ProjectPathsConfig::find_artifacts_dir(Path::new("./"));
                     outdir.join(format!("{}/{}.json", contract_file, contract_name))
                 };
@@ -601,10 +604,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 file.read_to_string(&mut data).unwrap();
 
                 let contract_file: ContractFile = serde_json::from_str(&data).unwrap();
-                let code = hex::decode(contract_file.bin.replace("0x", "")).unwrap();
-
-                res = ethers::abi::encode(&[Token::Bytes(code)]);
-                println!("{:?}", res);
+                res = ethers::abi::encode(&[Token::Bytes(contract_file.bin.to_vec())]);
             }
             HEVMCalls::Addr(inner) => {
                 self.add_debug(CheatOp::ADDR);
