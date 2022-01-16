@@ -13,38 +13,43 @@ while [[ $1 ]]; do
   esac; shift
 done
 
-
 export FOUNDRY_PATH=${FOUNDRY_PATH-"$HOME/.foundry"}
 export FORGEUP_REPO=${FORGEUP_REPO-gakonst/foundry}
-export FORGEUP_VERSION=${FORGEUP_VERSION-nightly}
 
-PLATFORM="$(uname -s)"
-case $PLATFORM in
-  Linux)
-    PLATFORM="linux"
-    ;;
-  Darwin)
-    PLATFORM="darwin"
-    ;;
-  *)
-    echo "forgeup: unsupported platform: $PLATFORM"
-    exit 1
-    ;;
-esac
+if [[ "$FORGEUP_REPO" == "gakonst/foundry" && -z "$FORGEUP_BRANCH" ]]; then 
+  export FORGEUP_VERSION=${FORGEUP_VERSION-nightly}
 
-ARCHITECTURE="$(uname -m)"
+  PLATFORM="$(uname -s)"
+  case $PLATFORM in
+    Linux)
+      PLATFORM="linux"
+      ;;
+    Darwin)
+      PLATFORM="darwin"
+      ;;
+    *)
+      echo "forgeup: unsupported platform: $PLATFORM"
+      exit 1  
+      ;;
+  esac
 
-if [ "${ARCHITECTURE}" = "x86_64" ]; then
-    if [ "$(sysctl -in sysctl.proc_translated)" = "1" ]; then
-        ARCHITECTURE="arm64" # Rosetta.
-    else
-        ARCHITECTURE="amd64" # Intel.
-    fi 
-elif [ "${ARCHITECTURE}" = "arm64" ]; then
-    ARCHITECTURE="arm64" # Arm.
-else
-    ARCHITECTURE="amd64" # Amd.
+  ARCHITECTURE="$(uname -m)"
+
+  if [ "${ARCHITECTURE}" = "x86_64" ]; then
+      if [ "$(sysctl -in sysctl.proc_translated)" = "1" ]; then
+          ARCHITECTURE="arm64" # Rosetta.
+      else
+          ARCHITECTURE="amd64" # Intel.
+      fi 
+  elif [ "${ARCHITECTURE}" = "arm64" ]; then
+      ARCHITECTURE="arm64" # Arm.
+  else
+      ARCHITECTURE="amd64" # Amd.
+  fi
+
+  # Curl and unzip the downloaded Foundry tarball.
+  curl -L https://github.com/gakonst/foundry/releases/download/${FORGEUP_VERSION}/foundry_${FORGEUP_VERSION}_${PLATFORM}_${ARCHITECTURE}.tar.gz | tar xvz
+else 
+  export FORGEUP_BRANCH=${FORGEUP_BRANCH-master}
+  
 fi
-
-# Curl and unzip the downloaded Foundry tarball.
-curl -L https://github.com/gakonst/foundry/releases/download/${FORGEUP_VERSION}/foundry_${FORGEUP_VERSION}_${PLATFORM}_${ARCHITECTURE}.tar.gz | tar xvz
