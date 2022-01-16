@@ -247,13 +247,12 @@ fn test<A: ArtifactOutput + 'static>(
                 };
 
                 println!("{} {} {}", status, name, result.kind.gas_used());
-                if verbosity > 1 {
+                if verbosity > 1 && !result.logs.is_empty() {
+                    println!("Logs:");
                     for log in &result.logs {
                         println!("  {}", log);
                     }
-                    if !result.logs.is_empty() {
-                        println!();
-                    }
+                    println!();
                 }
 
                 if verbosity > 2 {
@@ -263,6 +262,8 @@ fn test<A: ArtifactOutput + 'static>(
                         if !result.success && verbosity == 3 || verbosity > 3 {
                             let mut ident = identified_contracts.clone();
                             if verbosity > 4 || !result.success {
+                                println!("Traces:");
+
                                 // print setup calls as well
                                 traces.iter().for_each(|trace| {
                                     trace.pretty_print(
@@ -270,16 +271,17 @@ fn test<A: ArtifactOutput + 'static>(
                                         &runner.known_contracts,
                                         &mut ident,
                                         &vm(),
-                                        "",
+                                        "  ",
                                     );
                                 });
                             } else if !traces.is_empty() {
+                                println!("Traces:");
                                 traces.last().expect("no last but not empty").pretty_print(
                                     0,
                                     &runner.known_contracts,
                                     &mut ident,
                                     &vm(),
-                                    "",
+                                    "  ",
                                 );
                             }
                         }
