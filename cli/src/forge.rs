@@ -1,6 +1,7 @@
-use std::{path::PathBuf, process::Command, str::FromStr};
+use std::{process::Command, str::FromStr};
 
 use ethers::solc::{remappings::Remapping, Project, ProjectPathsConfig};
+use rayon::prelude::*;
 use structopt::StructOpt;
 use walkdir::WalkDir;
 
@@ -152,24 +153,28 @@ fn main() -> eyre::Result<()> {
                 utils::find_contracts_dir(root)
             };
 
-            let paths: Box<dyn Iterator<Item = PathBuf>> = if root.is_dir() {
-                Box::new(
-                    WalkDir::new(root)
-                        .follow_links(true)
-                        .into_iter()
-                        .filter_map(|e| e.ok())
-                        .filter(|e| e.file_name().to_string_lossy().ends_with(".sol"))
-                        .map(|e| e.into_path()),
-                )
+            let paths = if root.is_dir() {
+                WalkDir::new(root)
+                    .follow_links(true)
+                    .into_iter()
+                    .filter_map(|e| e.ok())
+                    .filter(|e| e.file_name().to_string_lossy().ends_with(".sol"))
+                    .map(|e| e.into_path())
+                    .collect()
             } else if root.file_name().unwrap().to_string_lossy().ends_with(".sol") {
-                Box::new(std::iter::once(root))
+                vec![root]
             } else {
-                Box::new(std::iter::empty())
+                vec![]
             };
 
-            for path in paths {
+            paths.par_iter().map(|path| {
                 let source = std::fs::read_to_string(&path)?;
-                let mut source_unit = solang_parser::parse(&source, 0).unwrap();
+                let mut source_unit = solang_parser::parse(&source, 0)
+                    .map_err(|diags| eyre::eyre!(
+                        "Failed to parse Solidity code for {}. Leave source unchanged.\nDebug info: {:?}",
+                        path.to_string_lossy(),
+                        diags
+                    ))?;
 
                 let mut output = String::new();
                 let mut formatter =
@@ -192,7 +197,9 @@ fn main() -> eyre::Result<()> {
                 } else {
                     std::fs::write(path, output)?;
                 }
-            }
+
+                Ok(())
+            }).collect::<eyre::Result<_>>()?;
         }
     }
 
