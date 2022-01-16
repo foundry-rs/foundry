@@ -525,7 +525,7 @@ mod tests {
         let address: Address = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();
 
         let rt = Runtime::new().unwrap();
-        let vicinity = rt.block_on(vicinity(&provider, None)).unwrap();
+        let vicinity = rt.block_on(vicinity(&provider, None, None)).unwrap();
         let cache = new_shared_cache(MemCache::default());
 
         let backend = SharedBackend::new(Arc::new(provider), cache.clone(), vicinity, None);

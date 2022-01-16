@@ -4,14 +4,14 @@ use sputnik::{
     ExitError, Transfer,
 };
 
-use crate::call_tracing::CallTraceArena;
+use crate::{call_tracing::CallTraceArena, sputnik::cheatcodes::debugger::DebugArena};
 
 use ethers::{
     abi::RawLog,
     types::{H160, H256, U256},
 };
 
-use std::{cell::RefCell, collections::BTreeMap};
+use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
 #[derive(Clone, Default)]
 pub struct RecordAccess {
@@ -28,6 +28,18 @@ pub struct ExpectedEmit {
     pub found: bool,
 }
 
+#[derive(Clone, Default, Debug)]
+pub struct Prank {
+    /// Address of the contract that called prank
+    pub prank_caller: H160,
+    /// Address to set msg.sender to
+    pub new_caller: H160,
+    /// New origin to use
+    pub new_origin: Option<H160>,
+    /// Call depth at which the prank was called
+    pub depth: usize,
+}
+
 /// This struct implementation is copied from [upstream](https://github.com/rust-blockchain/evm/blob/5ecf36ce393380a89c6f1b09ef79f686fe043624/src/executor/stack/state.rs#L412) and modified to own the Backend type.
 ///
 /// We had to copy it so that we can modify the Stack's internal backend, because
@@ -37,16 +49,34 @@ pub struct ExpectedEmit {
 pub struct MemoryStackStateOwned<'config, B> {
     pub backend: B,
     pub substate: MemoryStackSubstate<'config>,
+    /// Tracing enabled
     pub trace_enabled: bool,
+    /// Current call index used for incrementing traces index vec below
     pub call_index: usize,
+    /// Temporary value used for putting logs in the correct trace
     pub trace_index: usize,
+    /// Arena allocator that holds a tree of traces
     pub traces: Vec<CallTraceArena>,
+    /// Expected revert storage of bytes
     pub expected_revert: Option<Vec<u8>>,
-    pub next_msg_sender: Option<H160>,
-    pub msg_sender: Option<(H160, H160, usize)>,
+    /// Next call's prank
+    pub next_prank: Option<Prank>,
+    /// StartPrank information
+    pub prank: Option<Prank>,
+    /// List of accesses done during a call
     pub accesses: Option<RecordAccess>,
+    /// All logs accumulated (regardless of revert status)
     pub all_logs: Vec<String>,
+    /// Expected events by end of the next call
     pub expected_emits: Vec<ExpectedEmit>,
+    pub mocked_calls: BTreeMap<H160, BTreeMap<Vec<u8>, Vec<u8>>>,
+    pub expected_calls: BTreeMap<H160, Vec<Vec<u8>>>,
+    /// Debug enabled
+    pub debug_enabled: bool,
+    /// An arena allocator of DebugNodes for debugging purposes
+    pub debug_steps: Vec<DebugArena>,
+    /// Instruction pointers that maps an address to a mapping of pc to ic
+    pub debug_instruction_pointers: Dip,
 }
 
 impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
@@ -56,10 +86,15 @@ impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
 
     pub fn increment_call_index(&mut self) {
         self.traces.push(Default::default());
+        self.debug_steps.push(Default::default());
         self.call_index += 1;
     }
     pub fn trace_mut(&mut self) -> &mut CallTraceArena {
         &mut self.traces[self.call_index]
+    }
+
+    pub fn debug_mut(&mut self) -> &mut DebugArena {
+        &mut self.debug_steps[self.call_index]
     }
 
     pub fn trace(&self) -> &CallTraceArena {
@@ -72,8 +107,24 @@ impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
     }
 }
 
+/// Debug Instruction pointers: a tuple with 2 maps, the first being for creation
+/// sourcemaps, the second for runtime sourcemaps.
+///
+/// Each has a structure of (Address => (program_counter => instruction_counter))
+/// For sourcemap usage, we need to convert a program counter to an instruction counter and use the
+/// instruction counter as the index into the sourcemap vector. An instruction counter (pointer) is
+/// just the program counter minus the sum of push bytes (i.e. PUSH1(0x01), would apply a -1 effect
+/// to all subsequent instruction counters)
+pub type Dip =
+    (BTreeMap<H160, Rc<BTreeMap<usize, usize>>>, BTreeMap<H160, Rc<BTreeMap<usize, usize>>>);
+
 impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
-    pub fn new(metadata: StackSubstateMetadata<'config>, backend: B, trace_enabled: bool) -> Self {
+    pub fn new(
+        metadata: StackSubstateMetadata<'config>,
+        backend: B,
+        trace_enabled: bool,
+        debug_enabled: bool,
+    ) -> Self {
         Self {
             backend,
             substate: MemoryStackSubstate::new(metadata),
@@ -82,11 +133,16 @@ impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
             trace_index: 1,
             traces: vec![Default::default()],
             expected_revert: None,
-            next_msg_sender: None,
-            msg_sender: None,
+            next_prank: None,
+            prank: None,
             accesses: None,
             all_logs: Default::default(),
             expected_emits: Default::default(),
+            mocked_calls: Default::default(),
+            expected_calls: Default::default(),
+            debug_enabled,
+            debug_steps: vec![Default::default()],
+            debug_instruction_pointers: (BTreeMap::new(), BTreeMap::new()),
         }
     }
 }

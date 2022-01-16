@@ -15,7 +15,15 @@ contract DebugLogs is DSTest {
         emit log_named_address("addr", 0x2222222222222222222222222222222222222222);
         emit log_named_bytes32("key", keccak256(abi.encodePacked("foo")));
         emit log_named_decimal_int("key", 123, 18);
+        emit log_named_decimal_int("key", -123, 18);
+        emit log_named_decimal_int("key", 1.0e18, 18);
+        emit log_named_decimal_int("key", -1.0e18, 18);
+        emit log_named_decimal_int("key", -123, 12);
+        emit log_named_decimal_int("key", -1.0e18, 12);
         emit log_named_decimal_uint("key", 1234, 18);
+        emit log_named_decimal_uint("key", 1.0e18, 18);
+        emit log_named_decimal_uint("key", 1234, 12);
+        emit log_named_decimal_uint("key", 1.0e18, 12);
         emit log_named_int("key", 123);
         emit log_named_uint("key", 1234);
         emit log_named_bytes("key", hex"4567");

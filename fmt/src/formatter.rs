@@ -332,6 +332,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     fn visit_pragma(&mut self, ident: &mut Identifier, str: &mut StringLiteral) -> VResult {
         write!(self, "pragma {} ", &ident.name)?;
 
+        #[allow(clippy::if_same_then_else)]
         if ident.name == "solidity" {
             // There are some issues with parsing Solidity's versions with crates like `semver`:
             // 1. Ranges like `>=0.4.21<0.6.0` or `>=0.4.21 <0.6.0` are not parseable at all.

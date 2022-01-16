@@ -25,7 +25,7 @@ impl<B: Backend> Backend for CheatcodeBackend<B> {
     }
 
     fn origin(&self) -> H160 {
-        self.backend.origin()
+        self.cheats.origin.unwrap_or_else(|| self.backend.origin())
     }
 
     fn block_hash(&self, number: U256) -> H256 {

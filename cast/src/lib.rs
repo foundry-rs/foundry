@@ -3,17 +3,18 @@
 //! TODO
 use chrono::NaiveDateTime;
 use ethers_core::{
-    abi::{AbiParser, Token},
-    types::*,
+    abi::{Abi, AbiParser, Token},
+    types::{Chain, *},
     utils::{self, keccak256},
 };
 
+use ethers_etherscan::Client;
 use ethers_providers::{Middleware, PendingTransaction};
 use eyre::{Context, Result};
 use rustc_hex::{FromHexIter, ToHex};
 use std::str::FromStr;
 
-use foundry_utils::{encode_args, get_func, to_table};
+use foundry_utils::{encode_args, get_func, get_func_etherscan, to_table};
 
 // TODO: CastContract with common contract initializers? Same for CastProviders?
 
@@ -47,7 +48,7 @@ where
     /// ```no_run
     /// 
     /// use cast::Cast;
-    /// use ethers_core::types::Address;
+    /// use ethers_core::types::{Address, Chain};
     /// use ethers_providers::{Provider, Http};
     /// use std::{str::FromStr, convert::TryFrom};
     ///
@@ -57,25 +58,25 @@ where
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let sig = "function greeting(uint256 i) public returns (string)";
     /// let args = vec!["5".to_owned()];
-    /// let data = cast.call(to, sig, args).await?;
+    /// let data = cast.call(Address::zero(), to, (sig, args), Chain::Mainnet, None).await?;
     /// println!("{}", data);
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn call<T: Into<NameOrAddress>>(
+    pub async fn call<F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
         &self,
+        from: F,
         to: T,
-        sig: &str,
-        args: Vec<String>,
+        args: (&str, Vec<String>),
+        chain: Chain,
+        etherscan_api_key: Option<String>,
     ) -> Result<String> {
-        let func = get_func(sig)?;
-        let data = encode_args(&func, &args)?;
-
-        // make the call
-        let tx = Eip1559TransactionRequest::new().to(to).data(data).into();
+        let (tx, func) = self.build_tx(from, to, Some(args), chain, etherscan_api_key).await?;
+        let tx = tx.into();
         let res = self.provider.call(&tx, None).await?;
 
         // decode args into tokens
+        let func = func.expect("no valid function signature was provided.");
         let decoded = func.decode_output(res.as_ref()).wrap_err(
             "could not decode output. did you specify the wrong function return data type perhaps?",
         )?;
@@ -115,7 +116,7 @@ where
     ///
     /// ```no_run
     /// use cast::Cast;
-    /// use ethers_core::types::Address;
+    /// use ethers_core::types::{Address, Chain};
     /// use ethers_providers::{Provider, Http};
     /// use std::{str::FromStr, convert::TryFrom};
     ///
@@ -126,7 +127,7 @@ where
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let sig = "greet(string)()";
     /// let args = vec!["hello".to_owned()];
-    /// let data = cast.send(from, to, Some((sig, args))).await?;
+    /// let data = cast.send(from, to, Some((sig, args)), Chain::Mainnet, None).await?;
     /// println!("{}", *data);
     /// # Ok(())
     /// # }
@@ -136,8 +137,10 @@ where
         from: F,
         to: T,
         args: Option<(&str, Vec<String>)>,
+        chain: Chain,
+        etherscan_api_key: Option<String>,
     ) -> Result<PendingTransaction<'_, M::Provider>> {
-        let tx = self.build_tx(from, to, args).await?;
+        let (tx, _) = self.build_tx(from, to, args, chain, etherscan_api_key).await?;
         let res = self.provider.send_transaction(tx, None).await?;
 
         Ok::<_, eyre::Error>(res)
@@ -147,7 +150,7 @@ where
     ///
     /// ```no_run
     /// use cast::Cast;
-    /// use ethers_core::types::Address;
+    /// use ethers_core::types::{Address, Chain};
     /// use ethers_providers::{Provider, Http};
     /// use std::{str::FromStr, convert::TryFrom};
     ///
@@ -158,7 +161,7 @@ where
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let sig = "greet(string)()";
     /// let args = vec!["5".to_owned()];
-    /// let data = cast.estimate(from, to, Some((sig, args))).await?;
+    /// let data = cast.estimate(from, to, Some((sig, args)), Chain::Mainnet, None).await?;
     /// println!("{}", data);
     /// # Ok(())
     /// # }
@@ -168,8 +171,11 @@ where
         from: F,
         to: T,
         args: Option<(&str, Vec<String>)>,
+        chain: Chain,
+        etherscan_api_key: Option<String>,
     ) -> Result<U256> {
-        let tx = self.build_tx(from, to, args).await?.into();
+        let (tx, _) = self.build_tx(from, to, args, chain, etherscan_api_key).await?;
+        let tx = tx.into();
         let res = self.provider.estimate_gas(&tx).await?;
 
         Ok::<_, eyre::Error>(res)
@@ -180,8 +186,18 @@ where
         from: F,
         to: T,
         args: Option<(&str, Vec<String>)>,
-    ) -> Result<Eip1559TransactionRequest> {
+        chain: Chain,
+        etherscan_api_key: Option<String>,
+    ) -> Result<(Eip1559TransactionRequest, Option<ethers_core::abi::Function>)> {
         let from = match from.into() {
+            NameOrAddress::Name(ref ens_name) => self.provider.resolve_name(ens_name).await?,
+            NameOrAddress::Address(addr) => addr,
+        };
+
+        // Queries the addressbook for the address if present.
+        let to = foundry_utils::resolve_addr(to, chain)?;
+
+        let to = match to {
             NameOrAddress::Name(ref ens_name) => self.provider.resolve_name(ens_name).await?,
             NameOrAddress::Address(addr) => addr,
         };
@@ -189,13 +205,27 @@ where
         // make the call
         let mut tx = Eip1559TransactionRequest::new().from(from).to(to);
 
-        if let Some((sig, args)) = args {
-            let func = get_func(sig)?;
+        let func = if let Some((sig, args)) = args {
+            let func = if sig.contains('(') {
+                get_func(sig)?
+            } else {
+                get_func_etherscan(
+                    sig,
+                    to,
+                    args.clone(),
+                    chain,
+                    etherscan_api_key.expect("Must set ETHERSCAN_API_KEY"),
+                )
+                .await?
+            };
             let data = encode_args(&func, &args)?;
             tx = tx.data(data);
-        }
+            Some(func)
+        } else {
+            None
+        };
 
-        Ok(tx)
+        Ok((tx, func))
     }
 
     /// ```no_run
@@ -319,6 +349,10 @@ where
             "0x6341fd3daf94b748c72ced5a5b26028f2474f5f00d824504e4fa37a75767e177" => "rinkeby",
             "0xbf7e331f7f7c1dd2e05159666b3bf8bc7a8a3a9eb1d518969eab529dd9b88c1a" => "goerli",
             "0x14c2283285a88fe5fce9bf5c573ab03d6616695d717b12a127188bcacfc743c4" => "kotti",
+            "0xa9c28ce2141b56c474f1dc504bee9b01eb1bd7d1a507580d5519d4437a97de1b" => "polygon",
+            "0x7b66506a9ebdbf30d32b43c5f15a3b1216269a1ec3a75aa3182b86176a2b1ca7" => {
+                "polygon-mumbai"
+            }
             "0x6d3c66c5357ec91d5c43af47e234a939b22557cbb552dc45bebbceeed90fbe34" => "bsctest",
             "0x0d21840abff46b96c84b2ac9e10e4f5cdaeb5693cb665db62a2f3b02d2d57b5b" => "bsc",
             "0x31ced5b9beb7f8782b014660da0cb18cc409f121f408186886e1ca3e8eeca96b" => {
@@ -432,6 +466,16 @@ where
     }
 }
 
+pub struct InterfaceSource {
+    pub name: String,
+    pub source: String,
+}
+
+pub enum InterfacePath {
+    Local(String),
+    Etherscan { address: Address, chain: Chain, api_key: String },
+}
+
 pub struct SimpleCast;
 impl SimpleCast {
     /// Converts UTF-8 text input to hex
@@ -446,9 +490,73 @@ impl SimpleCast {
         let s: String = s.as_bytes().to_hex();
         format!("0x{}", s)
     }
+    /// Generates an interface in solidity from either a local file ABI or a verified contract on
+    /// Etherscan. It returns a vector of [`InterfaceSource`] structs that contain the source of the
+    /// interface and their name.
+    /// ```no_run
+    /// use cast::SimpleCast as Cast;
+    /// use cast::InterfacePath;
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let path = InterfacePath::Local("utils/testdata/interfaceTestABI.json".to_owned());
+    /// let interfaces= Cast::generate_interface(path).await?;
+    /// println!("interface {} {{\n {}\n}}", interfaces[0].name, interfaces[0].source);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn generate_interface(
+        address_or_path: InterfacePath,
+    ) -> Result<Vec<InterfaceSource>> {
+        let (contract_abis, contract_names): (Vec<Abi>, Vec<String>) = match address_or_path {
+            InterfacePath::Local(path) => {
+                let file = std::fs::read_to_string(&path).wrap_err("unable to read abi file")?;
+                (
+                    vec![serde_json::from_str(&file)
+                        .wrap_err("unable to parse json ABI from file")?],
+                    vec!["Interface".to_owned()],
+                )
+            }
+            InterfacePath::Etherscan { address, chain, api_key } => {
+                let client = Client::new(chain, api_key)?;
 
+                // get the source
+                let contract_source = match client.contract_source_code(address).await {
+                    Ok(src) => src,
+                    Err(err) => {
+                        let msg = err.to_string();
+                        if msg.contains("Invalid API Key") {
+                            eyre::bail!("Invalid Etherscan API key. Did you set it correctly? You may be using an API key for another Etherscan API chain (e.g. Ethereum API key for Polygonscan).")
+                        } else {
+                            eyre::bail!(err)
+                        }
+                    }
+                };
+
+                if contract_source
+                    .items
+                    .iter()
+                    .any(|item| item.abi == "Contract source code not verified")
+                {
+                    eyre::bail!("Contract source code at {:?} on {} not verified. Maybe you have selected the wrong chain?", address, chain)
+                }
+
+                let contract_source_names = contract_source
+                    .items
+                    .iter()
+                    .map(|item| item.contract_name.clone())
+                    .collect::<Vec<String>>();
+                (contract_source.abis()?, contract_source_names)
+            }
+        };
+        contract_abis
+            .iter()
+            .zip(&contract_names)
+            .map(|(contract_abi, contract_name)| {
+                let interface_source = foundry_utils::abi_to_solidity(contract_abi, contract_name)?;
+                Ok(InterfaceSource { name: contract_name.to_owned(), source: interface_source })
+            })
+            .collect::<Result<Vec<InterfaceSource>>>()
+    }
     /// Converts hex data into text data
-    ///
     /// ```
     /// use cast::SimpleCast as Cast;
     ///
@@ -659,7 +767,7 @@ impl SimpleCast {
     /// use cast::SimpleCast as Cast;
     ///
     /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(Cast::to_wei(1.into(), "".to_string())?, "1");
+    ///     assert_eq!(Cast::to_wei(1.into(), "".to_string())?, "1000000000000000000");
     ///     assert_eq!(Cast::to_wei(100.into(), "gwei".to_string())?, "100000000000");
     ///     assert_eq!(Cast::to_wei(100.into(), "eth".to_string())?, "100000000000000000000");
     ///     assert_eq!(Cast::to_wei(1000.into(), "ether".to_string())?, "1000000000000000000000");
@@ -667,13 +775,14 @@ impl SimpleCast {
     ///     Ok(())
     /// }
     /// ```
-    pub fn to_wei(value: U256, unit: String) -> Result<String> {
+    pub fn to_wei(value: f64, unit: String) -> Result<String> {
         let value = value.to_string();
         Ok(match &unit[..] {
-            "gwei" => format!("{:0<1$}", value, 9 + value.len()),
-            "eth" | "ether" => format!("{:0<1$}", value, 18 + value.len()),
-            _ => value,
-        })
+            "gwei" => ethers_core::utils::parse_units(value, 9),
+            "eth" | "ether" => ethers_core::utils::parse_units(value, 18),
+            _ => ethers_core::utils::parse_units(value, 18),
+        }?
+        .to_string())
     }
 
     /// Converts wei into an eth amount
@@ -684,31 +793,19 @@ impl SimpleCast {
     /// fn main() -> eyre::Result<()> {
     ///     assert_eq!(Cast::from_wei(1.into(), "gwei".to_string())?, "0.000000001");
     ///     assert_eq!(Cast::from_wei(12340000005u64.into(), "gwei".to_string())?, "12.340000005");
-    ///     assert_eq!(Cast::from_wei(10.into(), "ether".to_string())?, "0.00000000000000001");
-    ///     assert_eq!(Cast::from_wei(100.into(), "eth".to_string())?, "0.0000000000000001");
-    ///     assert_eq!(Cast::from_wei(17.into(), "".to_string())?, "17");
+    ///     assert_eq!(Cast::from_wei(10.into(), "ether".to_string())?, "0.000000000000000010");
+    ///     assert_eq!(Cast::from_wei(100.into(), "eth".to_string())?, "0.000000000000000100");
+    ///     assert_eq!(Cast::from_wei(17.into(), "".to_string())?, "0.000000000000000017");
     ///
     ///     Ok(())
     /// }
     /// ```
     pub fn from_wei(value: U256, unit: String) -> Result<String> {
         Ok(match &unit[..] {
-            "gwei" => {
-                let gwei = U256::pow(10.into(), 9.into());
-                let left = value / gwei;
-                let right = value - left * gwei;
-                let res = format!("{}.{:0>9}", left, right.to_string());
-                res.trim_end_matches('0').to_string()
-            }
-            "eth" | "ether" => {
-                let wei = U256::pow(10.into(), 18.into());
-                let left = value / wei;
-                let right = value - left * wei;
-                let res = format!("{}.{:0>18}", left, right.to_string());
-                res.trim_end_matches('0').to_string()
-            }
-            _ => value.to_string(),
-        })
+            "gwei" => ethers_core::utils::format_units(value, 9),
+            "eth" | "ether" => ethers_core::utils::format_units(value, 18),
+            _ => ethers_core::utils::format_units(value, 18),
+        }?)
     }
 
     /// Converts an Ethereum address to its checksum format
@@ -829,6 +926,38 @@ impl SimpleCast {
         let func = AbiParser::default().parse_function(sig.as_ref())?;
         let calldata = encode_args(&func, args)?;
         Ok(format!("0x{}", calldata.to_hex::<String>()))
+    }
+
+    /// Fetches source code of verified contracts from etherscan.
+    ///
+    /// ```
+    /// # use cast::SimpleCast as Cast;
+    /// # use ethers_core::types::Chain;
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    ///     assert_eq!(
+    ///             "/*
+    ///             - Bytecode Verification performed was compared on second iteration -
+    ///             This file is part of the DAO.....",
+    ///         Cast::etherscan_source(Chain::Mainnet, "0xBB9bc244D798123fDe783fCc1C72d3Bb8C189413".to_string(), "<etherscan_api_key>".to_string()).await.unwrap().as_str()
+    ///     );
+    /// #    Ok(())
+    /// # }
+    /// ```
+    pub async fn etherscan_source(
+        chain: Chain,
+        contract_address: String,
+        etherscan_api_key: String,
+    ) -> Result<String> {
+        let client = Client::new(chain, etherscan_api_key)?;
+        let meta = client.contract_source_code(contract_address.parse()?).await?;
+        let code = meta.source_code();
+
+        if code.is_empty() {
+            return Err(eyre::eyre!("unverified contract"))
+        }
+
+        Ok(code)
     }
 }
 

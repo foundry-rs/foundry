@@ -1,5 +1,8 @@
 use crate::Evm;
 
+#[cfg(feature = "sputnik")]
+use crate::sputnik::cheatcodes::debugger::DebugArena;
+
 use ethers::types::{Address, Bytes, U256};
 
 use evmodin::{tracing::Tracer, AnalyzedCode, CallKind, Host, Message, Revision, StatusCode};
@@ -69,6 +72,12 @@ impl<S: HostExt, Tr: Tracer> Evm<S> for EvmOdin<S, Tr> {
 
     fn tracing_enabled(&self) -> bool {
         false
+    }
+
+    /// Grabs debug steps
+    #[cfg(feature = "sputnik")]
+    fn debug_calls(&self) -> Vec<DebugArena> {
+        vec![]
     }
 
     fn initialize_contracts<I: IntoIterator<Item = (Address, Bytes)>>(&mut self, contracts: I) {

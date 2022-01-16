@@ -1,7 +1,6 @@
 //! Verify contract source on etherscan
 
 use crate::utils;
-
 use cast::SimpleCast;
 use ethers::{
     abi::{Address, Function, FunctionExt},
@@ -20,7 +19,7 @@ pub async fn run(
     address: Address,
     args: Vec<String>,
 ) -> eyre::Result<()> {
-    let etherscan_api_key = utils::etherscan_api_key()?;
+    let etherscan_api_key = foundry_utils::etherscan_api_key()?;
     let rpc_url = utils::rpc_url();
     let provider = Provider::try_from(rpc_url)?;
     let chain = provider
@@ -52,7 +51,7 @@ pub async fn run(
             name: "constructor".to_string(),
             inputs: constructor.inputs,
             outputs: vec![],
-            constant: false,
+            constant: None,
             state_mutability: Default::default(),
         };
 

@@ -26,6 +26,10 @@ interface Hevm {
     function prank(address) external;
     // Sets all subsequent calls' msg.sender to be the input address until `stopPrank` is called
     function startPrank(address) external;
+    // Sets the *next* call's msg.sender to be the input address, and the tx.origin to be the second input
+    function prank(address,address) external;
+    // Sets all subsequent calls' msg.sender to be the input address until `stopPrank` is called, and the tx.origin to be the second input
+    function startPrank(address,address) external;
     // Resets subsequent calls' msg.sender to be `address(this)`
     function stopPrank() external;
     // Sets an address' balance, (who, newBalance)
@@ -40,8 +44,20 @@ interface Hevm {
     function accesses(address) external returns (bytes32[] memory reads, bytes32[] memory writes);
     // Prepare an expected log with (bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData).
     // Call this function, then emit an event, then call a function. Internally after the call, we check if
-    // logs were emited in the expected order with the expected topics and data (as specified by the booleans)
+    // logs were emitted in the expected order with the expected topics and data (as specified by the booleans)
     function expectEmit(bool,bool,bool,bool) external;
+    // Mocks a call to an address, returning specified data.
+    // Calldata can either be strict or a partial match, e.g. if you only
+    // pass a Solidity selector to the expected calldata, then the entire Solidity
+    // function will be mocked.
+    function mockCall(address,bytes calldata,bytes calldata) external;
+    // Clears all mocked calls
+    function clearMockedCalls() external;
+    // Expect a call to an address with the specified calldata.
+    // Calldata can either be strict or a partial match
+    function expectCall(address,bytes calldata) external;
+
+    function getCode(string calldata) external returns (bytes memory);
 }
 
 contract HasStorage {
@@ -183,6 +199,13 @@ contract CheatCodes is DSTest {
         prank.bar(address(this));
     }
 
+    function testPrankConstructor() public {
+        address new_sender = address(1337);
+        hevm.prank(new_sender);
+        PrankConstructor prank2 = new PrankConstructor(address(1337));
+        PrankConstructor prank3 = new PrankConstructor(address(this));
+    }
+
     function testPrankStart() public {
         Prank prank = new Prank();
         address new_sender = address(1337);
@@ -223,6 +246,43 @@ contract CheatCodes is DSTest {
         complexPrank.completePrank(prank);
     }
 
+    function testPrankDual() public {
+        Prank prank = new Prank();
+        address new_sender = address(1337);
+        address sender = msg.sender;
+        hevm.prank(new_sender, new_sender);
+        prank.baz(new_sender, new_sender);
+        prank.baz(address(this), tx.origin);
+    }
+
+    function testPrankConstructorDual() public {
+        address new_sender = address(1337);
+        hevm.prank(new_sender, new_sender);
+        PrankConstructorDual prank2 = new PrankConstructorDual(address(1337), address(1337));
+        PrankConstructorDual prank3 = new PrankConstructorDual(address(this), tx.origin);
+    }
+
+    function testPrankStartDual() public {
+        Prank prank = new Prank();
+        address new_sender = address(1337);
+        address sender = msg.sender;
+        hevm.startPrank(new_sender, new_sender);
+        prank.baz(new_sender, new_sender);
+        prank.baz(new_sender, new_sender);
+        hevm.stopPrank();
+        prank.baz(address(this), tx.origin);
+    }
+
+    function testPrankStartComplexDual() public {
+        // A -> B, B starts pranking, doesnt call stopPrank, A calls C calls D
+        // C -> D would be pranked
+        ComplexPrank complexPrank = new ComplexPrank();
+        Prank prank = new Prank();
+        complexPrank.uncompletedPrankDual();
+        prank.baz(address(this), tx.origin);
+        complexPrank.completePrankDual(prank);
+    }
+
     function testEtch() public {
         address rewriteCode = address(1337);
 
@@ -237,6 +297,12 @@ contract CheatCodes is DSTest {
         hevm.expectRevert("Value too large");
         target.stringErr(101);
         target.stringErr(99);
+    }
+
+    function testExpectRevertConstructor() public {
+        hevm.expectRevert("Value too large Constructor");
+        ExpectRevertConstructor target = new ExpectRevertConstructor(101);
+        ExpectRevertConstructor target2 = new ExpectRevertConstructor(99);
     }
 
     function testExpectRevertBuiltin() public {
@@ -345,7 +411,162 @@ contract CheatCodes is DSTest {
     // after expectRevert
     function testFailExpectRevert3() public {
         hevm.expectRevert("revert");
-    }  
+    }
+
+    function testMockArbitraryCall() public {
+        hevm.mockCall(address(0xbeef), abi.encode("wowee"), abi.encode("epic"));
+        (bool ok, bytes memory ret) = address(0xbeef).call(abi.encode("wowee"));
+        assertTrue(ok);
+        assertEq(abi.decode(ret, (string)), "epic");
+    }
+
+    function testMockContract() public {
+        MockMe target = new MockMe();
+
+        // pre-mock
+        assertEq(target.numberA(), 1);
+        assertEq(target.numberB(), 2);
+
+        hevm.mockCall(
+            address(target),
+            abi.encodeWithSelector(target.numberB.selector),
+            abi.encode(10)
+        );
+
+        // post-mock
+        assertEq(target.numberA(), 1);
+        assertEq(target.numberB(), 10);
+    }
+
+    function testMockInner() public {
+        MockMe inner = new MockMe();
+        MockInner target = new MockInner(address(inner));
+
+        // pre-mock
+        assertEq(target.sum(), 3);
+
+        hevm.mockCall(
+            address(inner),
+            abi.encodeWithSelector(inner.numberB.selector),
+            abi.encode(9)
+        );
+
+        // post-mock
+        assertEq(target.sum(), 10);
+    }
+
+    function testMockSelector() public {
+        MockMe target = new MockMe();
+        assertEq(target.add(5, 5), 10);
+
+        hevm.mockCall(
+            address(target),
+            abi.encodeWithSelector(target.add.selector),
+            abi.encode(11)
+        );
+
+        assertEq(target.add(5, 5), 11);
+    }
+
+    function testMockCalldata() public {
+        MockMe target = new MockMe();
+        assertEq(target.add(5, 5), 10);
+        assertEq(target.add(6, 4), 10);
+
+        hevm.mockCall(
+            address(target),
+            abi.encodeWithSelector(target.add.selector, 5, 5),
+            abi.encode(11)
+        );
+
+        assertEq(target.add(5, 5), 11); 
+        assertEq(target.add(6, 4), 10);
+    }
+
+    function testClearMockedCalls() public {
+        MockMe target = new MockMe();
+
+        hevm.mockCall(
+            address(target),
+            abi.encodeWithSelector(target.numberB.selector),
+            abi.encode(10)
+        );
+
+        assertEq(target.numberA(), 1);
+        assertEq(target.numberB(), 10); 
+
+        hevm.clearMockedCalls();
+
+        assertEq(target.numberA(), 1);
+        assertEq(target.numberB(), 2);
+    }
+
+    function testExpectCallWithData() public {
+        MockMe target = new MockMe();
+        hevm.expectCall(
+            address(target),
+            abi.encodeWithSelector(target.add.selector, 1, 2)
+        );
+        target.add(1, 2);
+    }
+
+    function testFailExpectCallWithData() public {
+        MockMe target = new MockMe();
+        hevm.expectCall(
+            address(target),
+            abi.encodeWithSelector(target.add.selector, 1, 2)
+        );
+        target.add(3, 3);
+    }
+
+    function testExpectInnerCall() public {
+        MockMe inner = new MockMe();
+        MockInner target = new MockInner(address(inner));
+
+        hevm.expectCall(
+            address(inner),
+            abi.encodeWithSelector(inner.numberB.selector)
+        );
+        target.sum();
+    }
+
+    function testFailExpectInnerCall() public {
+        MockMe inner = new MockMe();
+        MockInner target = new MockInner(address(inner));
+
+        hevm.expectCall(
+            address(inner),
+            abi.encodeWithSelector(inner.numberB.selector)
+        );
+
+        // this function does not call inner
+        target.hello();
+    }
+
+    function testExpectSelectorCall() public {
+        MockMe target = new MockMe();
+        hevm.expectCall(
+            address(target),
+            abi.encodeWithSelector(target.add.selector)
+        );
+        target.add(5, 5);
+    }
+
+    function testFailExpectSelectorCall() public {
+        MockMe target = new MockMe();
+        hevm.expectCall(
+            address(target),
+            abi.encodeWithSelector(target.add.selector)
+        );
+    }
+
+    function testGetCode() public {
+        bytes memory contractCode = hevm.getCode("./testdata/Contract.json");
+        assertEq(
+            string(contractCode),
+            string(bytes(hex"608060405234801561001057600080fd5b5060b68061001f6000396000f3fe6080604052348015600f57600080fd5b506004361060285760003560e01c80637ddeef2414602d575b600080fd5b60336047565b604051603e91906067565b60405180910390f35b60006007905090565b6000819050919050565b6061816050565b82525050565b6000602082019050607a6000830184605a565b9291505056fea2646970667358221220521a806ba8927fda1a9b7bf0458b0a0abf456e4611953e01489bee91783418b064736f6c634300080a0033"))
+        );
+    }
 
     function getCode(address who) internal returns (bytes memory o_code) {
         assembly {
@@ -414,6 +635,16 @@ contract ExpectRevert {
     }
 }
 
+contract ExpectRevertConstructor {
+    constructor(uint256 a) {
+        require(a < 100, "Value too large Constructor");
+    }
+
+    function a() public returns(uint256) {
+        return 1;
+    }
+}
+
 contract ExpectRevertCallee {
     function stringErr(uint256 a) public returns (uint256) {
         require(a < 100, "Value too largeCallee");
@@ -433,14 +664,52 @@ contract Prank {
         inner.bar(address(this));
     }
 
+    function baz(address expectedMsgSender, address expectedOrigin) public {
+        require(msg.sender == expectedMsgSender, "bad prank");
+        require(tx.origin == expectedOrigin, "bad prank origin");
+        InnerPrank inner = new InnerPrank();
+        inner.baz(address(this), expectedOrigin);
+    }
+
     function payableBar(address expectedMsgSender) payable public {
         bar(expectedMsgSender);
+    }
+}
+
+contract PrankConstructor {
+    constructor(address expectedMsgSender) {
+        require(msg.sender == expectedMsgSender, "bad prank");
+    }
+
+    function bar(address expectedMsgSender) public {
+        require(msg.sender == expectedMsgSender, "bad prank");
+        InnerPrank inner = new InnerPrank();
+        inner.bar(address(this));
+    }
+}
+
+contract PrankConstructorDual {
+    constructor(address expectedMsgSender, address expectedOrigin) {
+        require(msg.sender == expectedMsgSender, "bad prank");
+        require(tx.origin == expectedOrigin, "bad prank origin");
+    }
+
+    function baz(address expectedMsgSender, address expectedOrigin) public {
+        require(msg.sender == expectedMsgSender, "bad prank");
+        require(tx.origin == expectedOrigin, "bad prank origin");
+        InnerPrank inner = new InnerPrank();
+        inner.baz(address(this), expectedOrigin);
     }
 }
 
 contract InnerPrank {
     function bar(address expectedMsgSender) public {
         require(msg.sender == expectedMsgSender, "bad prank");
+    }
+
+    function baz(address expectedMsgSender, address expectedOrigin) public {
+        require(msg.sender == expectedMsgSender, "bad prank");
+        require(tx.origin == expectedOrigin, "bad prank origin");
     }
 }
 
@@ -451,10 +720,20 @@ contract ComplexPrank {
         hevm.startPrank(address(1337));
     }
 
+    function uncompletedPrankDual() public {
+        hevm.startPrank(address(1337), address(1337));
+    }
+
     function completePrank(Prank prank) public {
         prank.bar(address(1337));
         hevm.stopPrank();
         prank.bar(address(this));
+    }
+
+    function completePrankDual(Prank prank) public {
+        prank.baz(address(1337), address(1337));
+        hevm.stopPrank();
+        prank.baz(address(this), tx.origin);
     }
 }
 
@@ -476,3 +755,32 @@ contract ExpectEmit {
     }
 }
 
+contract MockMe {
+    function numberA() public returns (uint256) {
+        return 1;
+    }
+
+    function numberB() public returns (uint256) {
+        return 2;
+    }
+
+    function add(uint256 a, uint256 b) public returns (uint256) {
+        return a + b;
+    }
+}
+
+contract MockInner {
+    MockMe private inner;
+
+    constructor(address _inner) {
+        inner = MockMe(_inner);
+    }
+
+    function sum() public returns (uint256) {
+        return inner.numberA() + inner.numberB();
+    }
+
+    function hello() public returns (string memory) {
+        return "hi";
+    }
+}

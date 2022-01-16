@@ -134,9 +134,13 @@ which implements the following methods:
 - `function etch(address where, bytes memory what)`: Sets the contract code at
   some address contract code
 
-- `function prank(address from)`: Performs the next smart contract call as another address (prank just changes msg.sender. Tx still occurs as normal)
+- `function prank(address sender)`: Performs the next smart contract call as another address (prank just changes msg.sender. Tx still occurs as normal)
 
-- `function startPrank(address from)`: Performs smart contract calls as another address. The account impersonation lasts until the end of the transaction, or until `stopPrank` is called.
+- `function prank(address sender, address origin)`: Performs the next smart contract call setting both `msg.sender` and `tx.origin`.
+
+- `function startPrank(address sender)`: Performs smart contract calls as another address. The account impersonation lasts until the end of the transaction, or until `stopPrank` is called.
+
+- `function startPrank(address sender, address origin)`: Performs smart contract calls as another address, while also setting `tx.origin`. The account impersonation lasts until the end of the transaction, or until `stopPrank` is called.
 
 - `function stopPrank()`: Stop calling smart contracts with the address set at `startPrank`
 
@@ -195,7 +199,7 @@ contract T is DSTest {
     function testExpectEmit() public {
         ExpectEmit emitter = new ExpectEmit();
         // check topic 1, topic 2, and data are the same as the following emitted event
-        hevm.expectEmit(true,true,false,true);
+        vm.expectEmit(true,true,false,true);
         emit Transfer(address(this), address(1337), 1337);
         emitter.t();
     }
@@ -240,6 +244,16 @@ interface Vm {
     function expectRevert(bytes calldata) external;
     // Expects the next emitted event. Params check topic 1, topic 2, topic 3 and data are the same.
     function expectEmit(bool, bool, bool, bool) external;
+    // Mocks a call to an address, returning specified data.
+    // Calldata can either be strict or a partial match, e.g. if you only
+    // pass a Solidity selector to the expected calldata, then the entire Solidity
+    // function will be mocked.
+    function mockCall(address,bytes calldata,bytes calldata) external;
+    // Clears all mocked calls
+    function clearMockedCalls() external;
+    // Expect a call to an address with the specified calldata.
+    // Calldata can either be strict or a partial match
+    function expectCall(address,bytes calldata) external;
 }
 ```
 ### `console.log`
@@ -275,6 +289,10 @@ For example, if you have `@openzeppelin` imports, you would
 ```
 @openzeppelin/=lib/openzeppelin-contracts/
 ```
+
+## Github Actions CI
+
+We recommend using the [Github Actions CI setup](https://github.com/FrankieIsLost/forge-template/blob/2ff5ae4ea40d77d4aa4e8353e0a878478ec9df24/.github/workflows/CI.yml) from @FrankieIsLost's [forge-template](https://github.com/FrankieIsLost/forge-template).
 
 ## Future Features
 

@@ -8,6 +8,10 @@ use crate::{
     sputnik::{cheatcodes::memory_stackstate_owned::ExpectedEmit, Executor, SputnikExecutor},
     Evm,
 };
+use std::collections::BTreeMap;
+
+use serde::Deserialize;
+use std::{fs::File, io::Read, path::Path};
 
 use sputnik::{
     backend::Backend,
@@ -16,7 +20,7 @@ use sputnik::{
         StackState, StackSubstateMetadata,
     },
     gasometer, Capture, Config, Context, CreateScheme, ExitError, ExitReason, ExitRevert,
-    ExitSucceed, Handler, Runtime, Transfer,
+    ExitSucceed, Handler, Memory, Opcode, Runtime, Transfer,
 };
 use std::{process::Command, rc::Rc};
 
@@ -24,12 +28,19 @@ use ethers::{
     abi::{RawLog, Token},
     contract::EthLogDecode,
     core::{abi::AbiDecode, k256::ecdsa::SigningKey, utils},
+    prelude::artifacts::deserialize_bytes,
     signers::{LocalWallet, Signer},
+    solc::ProjectPathsConfig,
     types::{Address, H160, H256, U256},
 };
-use std::convert::Infallible;
+use ethers_core::types::Bytes;
+use std::{convert::Infallible, str::FromStr};
 
-use crate::sputnik::cheatcodes::patch_hardhat_console_log_selector;
+use crate::sputnik::cheatcodes::{
+    debugger::{CheatOp, DebugArena, DebugNode, DebugStep, OpCode},
+    memory_stackstate_owned::Prank,
+    patch_hardhat_console_log_selector,
+};
 use once_cell::sync::Lazy;
 
 use ethers::abi::Tokenize;
@@ -46,6 +57,31 @@ pub static CHEATCODE_ADDRESS: Lazy<Address> = Lazy::new(|| {
 pub static CONSOLE_ADDRESS: Lazy<Address> = Lazy::new(|| {
     Address::from_slice(&hex::decode("000000000000000000636F6e736F6c652e6c6f67").unwrap())
 });
+
+/// Wrapper around both return types for expectRevert in call or create
+enum ExpectRevertReturn {
+    Call(Capture<(ExitReason, Vec<u8>), Infallible>),
+    Create(Capture<(ExitReason, Option<H160>, Vec<u8>), Infallible>),
+}
+
+impl ExpectRevertReturn {
+    pub fn into_call_inner(self) -> Capture<(ExitReason, Vec<u8>), Infallible> {
+        match self {
+            ExpectRevertReturn::Call(inner) => inner,
+            _ => panic!("tried to get call response inner from a create"),
+        }
+    }
+    pub fn into_create_inner(self) -> Capture<(ExitReason, Option<H160>, Vec<u8>), Infallible> {
+        match self {
+            ExpectRevertReturn::Create(inner) => inner,
+            _ => panic!("tried to get create response inner from a call"),
+        }
+    }
+
+    pub fn is_call(&self) -> bool {
+        matches!(self, ExpectRevertReturn::Call(..))
+    }
+}
 
 /// For certain cheatcodes, we may internally change the status of the call, i.e. in
 /// `expectRevert`. Solidity will see a successful call and attempt to abi.decode for the called
@@ -84,16 +120,20 @@ pub(crate) fn convert_log(log: Log) -> Option<String> {
         LogNamedBytes32Filter(inner) => {
             format!("{}: 0x{}", inner.key, hex::encode(inner.val))
         }
-        LogNamedDecimalIntFilter(inner) => format!(
-            "{}: {:?}",
-            inner.key,
-            ethers::utils::parse_units(inner.val, inner.decimals.as_u32()).unwrap()
-        ),
+        LogNamedDecimalIntFilter(inner) => {
+            let (sign, val) = inner.val.into_sign_and_abs();
+            format!(
+                "{}: {}{}",
+                inner.key,
+                sign,
+                ethers::utils::format_units(val, inner.decimals.as_u32()).unwrap()
+            )
+        }
         LogNamedDecimalUintFilter(inner) => {
             format!(
-                "{}: {:?}",
+                "{}: {}",
                 inner.key,
-                ethers::utils::parse_units(inner.val, inner.decimals.as_u32()).unwrap()
+                ethers::utils::format_units(inner.val, inner.decimals.as_u32()).unwrap()
             )
         }
         LogNamedIntFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
@@ -139,6 +179,10 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
         self.state().trace_enabled
     }
 
+    fn debug_calls(&self) -> Vec<DebugArena> {
+        self.state().debug_steps.clone()
+    }
+
     fn gas_left(&self) -> U256 {
         // NB: We do this to avoid `function cannot return without recursing`
         U256::from(self.state().metadata().gasometer().gas())
@@ -167,7 +211,6 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
         }
 
         // Initialize initial addresses for EIP-2929
-        // Initialize initial addresses for EIP-2929
         if self.config().increase_state_access_gas {
             let addresses = core::iter::once(caller).chain(core::iter::once(address));
             self.state_mut().metadata_mut().access_addresses(addresses);
@@ -191,6 +234,20 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
         ) {
             Capture::Exit((s, v)) => {
                 self.state_mut().increment_call_index();
+
+                // check if all expected calls were made
+                if let Some((address, expecteds)) =
+                    self.state().expected_calls.iter().find(|(_, expecteds)| !expecteds.is_empty())
+                {
+                    return (
+                        ExitReason::Revert(ExitRevert::Reverted),
+                        ethers::abi::encode(&[Token::String(format!(
+                            "Expected a call to 0x{} with data {}, but got none",
+                            address,
+                            ethers::types::Bytes::from(expecteds[0].clone())
+                        ))]),
+                    )
+                }
                 (s, v)
             }
             Capture::Trap(_) => {
@@ -242,6 +299,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
     }
 
     fn clear_logs(&mut self) {
+        self.console_logs.clear();
         self.state_mut().substate.logs_mut().clear()
     }
 
@@ -283,6 +341,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet>
         precompiles: &'b P,
         enable_ffi: bool,
         enable_trace: bool,
+        debug: bool,
     ) -> Self {
         // make this a cheatcode-enabled backend
         let backend = CheatcodeBackend { backend, cheats: Default::default() };
@@ -290,7 +349,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet>
         // create the memory stack state (owned, so that we can modify the backend via
         // self.state_mut on the transact_call fn)
         let metadata = StackSubstateMetadata::new(gas_limit, config);
-        let state = MemoryStackStateOwned::new(metadata, backend, enable_trace);
+        let state = MemoryStackStateOwned::new(metadata, backend, enable_trace, debug);
 
         // create the executor and wrap it with the cheatcode handler
         let executor = StackExecutor::new_with_precompiles(state, config, precompiles);
@@ -322,7 +381,107 @@ fn evm_error(retdata: &str) -> Capture<(ExitReason, Vec<u8>), Infallible> {
     ))
 }
 
+// helper for creating the Expected Revert return type, based on if there was a call or a create,
+// and if there was any decoded retdata that matched the expected revert value.
+fn revert_return_evm<T: ToString>(
+    call: bool,
+    result: Option<(&[u8], &[u8])>,
+    err: impl FnOnce() -> T,
+) -> ExpectRevertReturn {
+    let success =
+        result.map(|(retdata, expected_revert)| retdata == expected_revert).unwrap_or(false);
+
+    match (success, call) {
+        // Success case for CALLs needs to return a dummy output value which
+        // can be decoded
+        (true, true) => ExpectRevertReturn::Call(Capture::Exit((
+            ExitReason::Succeed(ExitSucceed::Returned),
+            DUMMY_OUTPUT.to_vec(),
+        ))),
+        // Success case for CREATE doesn't need to return any value but must return a
+        // dummy address
+        (true, false) => ExpectRevertReturn::Create(Capture::Exit((
+            ExitReason::Succeed(ExitSucceed::Returned),
+            Some(Address::from_str("0000000000000000000000000000000000000001").unwrap()),
+            Vec::new(),
+        ))),
+        // Failure cases just return the abi encoded error
+        (false, true) => ExpectRevertReturn::Call(Capture::Exit((
+            ExitReason::Revert(ExitRevert::Reverted),
+            ethers::abi::encode(&[Token::String(err().to_string())]),
+        ))),
+        (false, false) => ExpectRevertReturn::Create(Capture::Exit((
+            ExitReason::Revert(ExitRevert::Reverted),
+            None,
+            ethers::abi::encode(&[Token::String(err().to_string())]),
+        ))),
+    }
+}
+
 impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> {
+    /// Checks whether the provided call reverted with an expected revert reason.
+    fn expected_revert(
+        &mut self,
+        res: ExpectRevertReturn,
+        expected_revert: Option<Vec<u8>>,
+    ) -> ExpectRevertReturn {
+        // return early if there was no revert expected
+        let expected_revert = match expected_revert {
+            Some(inner) => inner,
+            None => return res,
+        };
+
+        let call = res.is_call();
+
+        // If the call was successful (i.e. did not revert) return
+        // an error. Otherwise, get the return data
+        let data = match res {
+            ExpectRevertReturn::Create(Capture::Exit((ExitReason::Revert(_e), None, revdata))) => {
+                Some(revdata)
+            }
+            ExpectRevertReturn::Call(Capture::Exit((ExitReason::Revert(_e), revdata))) => {
+                Some(revdata)
+            }
+            _ => return revert_return_evm(call, None, || "Expected revert did not revert"),
+        };
+
+        // if there was no revert data return an error
+        let data = match data {
+            Some(inner) => inner,
+            None => {
+                return revert_return_evm(call, None, || "Expected revert did not revert with data")
+            }
+        };
+
+        // do the actual check
+        if data.len() >= 4 && data[0..4] == [8, 195, 121, 160] {
+            // its a revert string
+            let decoded_data = ethers::abi::decode(&[ethers::abi::ParamType::Bytes], &data[4..])
+                .expect("String error code, but not actual string");
+
+            let decoded_data =
+                decoded_data[0].clone().into_bytes().expect("Can never fail because it is bytes");
+
+            let err = || {
+                format!(
+                    "Error != expected error: '{}' != '{}'",
+                    String::from_utf8_lossy(&decoded_data[..]),
+                    String::from_utf8_lossy(&expected_revert)
+                )
+            };
+            revert_return_evm(call, Some((&decoded_data, &expected_revert)), err)
+        } else {
+            let err = || {
+                format!(
+                    "Error data != expected error data: 0x{} != 0x{}",
+                    hex::encode(&data),
+                    hex::encode(&expected_revert)
+                )
+            };
+            revert_return_evm(call, Some((&data, &expected_revert)), err)
+        }
+    }
+
     /// Given a transaction's calldata, it tries to parse it a console call and print the call
     fn console_log(&mut self, input: Vec<u8>) -> Capture<(ExitReason, Vec<u8>), Infallible> {
         // replacing hardhat style selectors (`uint`) with abigen style (`uint256`)
@@ -333,6 +492,67 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         };
         self.console_logs.push(decoded.to_string());
         Capture::Exit((ExitReason::Succeed(ExitSucceed::Stopped), vec![]))
+    }
+
+    /// Adds CheatOp to the latest DebugArena
+    fn add_debug(&mut self, cheatop: CheatOp) {
+        if self.state().debug_enabled {
+            let depth =
+                if let Some(depth) = self.state().metadata().depth() { depth + 1 } else { 0 };
+            self.state_mut().debug_mut().push_node(
+                0,
+                DebugNode {
+                    address: *CHEATCODE_ADDRESS,
+                    depth,
+                    steps: vec![DebugStep {
+                        op: OpCode::from(cheatop),
+                        memory: Memory::new(0),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            );
+        }
+    }
+
+    fn prank(
+        &mut self,
+        single_call: bool,
+        msg_sender: Address,
+        caller: Address,
+        origin: Option<Address>,
+    ) -> Result<(), Capture<(ExitReason, Vec<u8>), Infallible>> {
+        let curr_depth =
+            if let Some(depth) = self.state().metadata().depth() { depth + 1 } else { 0 };
+
+        let prank = Prank {
+            prank_caller: msg_sender,
+            new_caller: caller,
+            new_origin: origin,
+            depth: curr_depth,
+        };
+        if single_call {
+            if self.state().next_prank.is_some() {
+                return Err(evm_error("You have an active `prank` call already. Use either `prank` or `startPrank`, not both"));
+            }
+            self.state_mut().next_prank = Some(prank);
+        } else {
+            // startPrank works by using frame depth to determine whether to overwrite
+            // msg.sender if we set a prank caller at a particular depth, it
+            // will continue to use the prank caller for any subsequent calls
+            // until stopPrank is called.
+            //
+            // We additionally have to store the original message sender of the cheatcode caller
+            // so that we dont apply it to any other addresses when depth ==
+            // prank_depth
+            if let Some(Prank { depth, prank_caller, .. }) = self.state().prank {
+                if curr_depth == depth && caller == prank_caller {
+                    return Err(evm_error("You have an active `startPrank` at this frame depth already. Use either `prank` or `startPrank`, not both"));
+                }
+            }
+            self.state_mut().prank = Some(prank);
+        }
+        Ok(())
     }
 
     /// Given a transaction's calldata, it tries to parse it as an [`HEVM cheatcode`](super::HEVM)
@@ -346,7 +566,6 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         let pre_index = self.state().trace_index;
         let trace = self.start_trace(*CHEATCODE_ADDRESS, input.clone(), 0.into(), false);
         // Get a mutable ref to the state so we can apply the cheats
-        let state = self.state_mut();
         let decoded = match HEVMCalls::decode(&input) {
             Ok(inner) => inner,
             Err(err) => return evm_error(&err.to_string()),
@@ -354,21 +573,27 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
 
         match decoded {
             HEVMCalls::Warp(inner) => {
-                state.backend.cheats.block_timestamp = Some(inner.0);
+                self.add_debug(CheatOp::WARP);
+                self.state_mut().backend.cheats.block_timestamp = Some(inner.0);
             }
             HEVMCalls::Roll(inner) => {
-                state.backend.cheats.block_number = Some(inner.0);
+                self.add_debug(CheatOp::ROLL);
+                self.state_mut().backend.cheats.block_number = Some(inner.0);
             }
             HEVMCalls::Fee(inner) => {
-                state.backend.cheats.block_base_fee_per_gas = Some(inner.0);
+                self.add_debug(CheatOp::FEE);
+                self.state_mut().backend.cheats.block_base_fee_per_gas = Some(inner.0);
             }
             HEVMCalls::Store(inner) => {
-                state.set_storage(inner.0, inner.1.into(), inner.2.into());
+                self.add_debug(CheatOp::STORE);
+                self.state_mut().set_storage(inner.0, inner.1.into(), inner.2.into());
             }
             HEVMCalls::Load(inner) => {
-                res = state.storage(inner.0, inner.1.into()).0.to_vec();
+                self.add_debug(CheatOp::LOAD);
+                res = self.state_mut().storage(inner.0, inner.1.into()).0.to_vec();
             }
             HEVMCalls::Ffi(inner) => {
+                self.add_debug(CheatOp::FFI);
                 let args = inner.0;
                 // if FFI is not explicitly enabled at runtime, do not let this be called
                 // (we could have an FFI cheatcode executor instead but feels like
@@ -395,7 +620,39 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 // encode the data as Bytes
                 res = ethers::abi::encode(&[Token::Bytes(decoded.to_vec())]);
             }
+            HEVMCalls::GetCode(inner) => {
+                self.add_debug(CheatOp::GETCODE);
+
+                #[derive(Deserialize)]
+                struct ContractFile {
+                    #[serde(deserialize_with = "deserialize_bytes")]
+                    bin: Bytes,
+                }
+
+                let path = if inner.0.ends_with(".json") {
+                    Path::new(&inner.0).to_path_buf()
+                } else {
+                    let parts = inner.0.split(':').collect::<Vec<&str>>();
+                    let contract_file = parts[0];
+                    let contract_name = if parts.len() == 1 {
+                        parts[0].replace(".sol", "")
+                    } else {
+                        parts[1].to_string()
+                    };
+
+                    let outdir = ProjectPathsConfig::find_artifacts_dir(Path::new("./"));
+                    outdir.join(format!("{}/{}.json", contract_file, contract_name))
+                };
+
+                let mut file = File::open(path).unwrap();
+                let mut data = String::new();
+                file.read_to_string(&mut data).unwrap();
+
+                let contract_file: ContractFile = serde_json::from_str(&data).unwrap();
+                res = ethers::abi::encode(&[Token::Bytes(contract_file.bin.to_vec())]);
+            }
             HEVMCalls::Addr(inner) => {
+                self.add_debug(CheatOp::ADDR);
                 let sk = inner.0;
                 if sk.is_zero() {
                     return evm_error("Bad Cheat Code. Private Key cannot be 0.")
@@ -411,6 +668,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 res = ethers::abi::encode(&[Token::Address(addr)]);
             }
             HEVMCalls::Sign(inner) => {
+                self.add_debug(CheatOp::SIGN);
                 let sk = inner.0;
                 let digest = inner.1;
                 if sk.is_zero() {
@@ -442,51 +700,42 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                     Token::FixedBytes(s_bytes.to_vec()),
                 ])]);
             }
-            HEVMCalls::Prank(inner) => {
+            HEVMCalls::Prank0(inner) => {
+                self.add_debug(CheatOp::PRANK);
                 let caller = inner.0;
-                if let Some((orginal_pranker, caller, depth)) = self.state().msg_sender {
-                    let start_prank_depth = if let Some(depth) = self.state().metadata().depth() {
-                        depth + 1
-                    } else {
-                        0
-                    };
-                    // we allow someone to do a 1 time prank even when startPrank is set if
-                    // and only if we ensure that the startPrank *cannot* be applied to the
-                    // following call
-                    if start_prank_depth == depth && caller == orginal_pranker {
-                        return evm_error("You have an active `startPrank` at this frame depth already. Use either `prank` or `startPrank`, not both");
-                    }
+                if let Err(err) = self.prank(true, msg_sender, caller, None) {
+                    return err
                 }
-                self.state_mut().next_msg_sender = Some(caller);
             }
-            HEVMCalls::StartPrank(inner) => {
-                // startPrank works by using frame depth to determine whether to overwrite
-                // msg.sender if we set a prank caller at a particular depth, it
-                // will continue to use the prank caller for any subsequent calls
-                // until stopPrank is called.
-                //
-                // We additionally have to store the original message sender of the cheatcode caller
-                // so that we dont apply it to any other addresses when depth ==
-                // prank_depth
+            HEVMCalls::StartPrank0(inner) => {
+                self.add_debug(CheatOp::STARTPRANK);
                 let caller = inner.0;
-                if self.state().next_msg_sender.is_some() {
-                    return evm_error("You have an active `prank` call already. Use either `prank` or `startPrank`, not both");
-                } else {
-                    self.state_mut().msg_sender = Some((
-                        msg_sender,
-                        caller,
-                        if let Some(depth) = self.state().metadata().depth() {
-                            depth + 1
-                        } else {
-                            0
-                        },
-                    ));
+                if let Err(err) = self.prank(false, msg_sender, caller, None) {
+                    return err
+                }
+            }
+            HEVMCalls::Prank1(inner) => {
+                self.add_debug(CheatOp::PRANK);
+                let caller = inner.0;
+                let origin = inner.1;
+                if let Err(err) = self.prank(true, msg_sender, caller, Some(origin)) {
+                    return err
+                }
+            }
+            HEVMCalls::StartPrank1(inner) => {
+                self.add_debug(CheatOp::STARTPRANK);
+                let caller = inner.0;
+                let origin = inner.1;
+                if let Err(err) = self.prank(false, msg_sender, caller, Some(origin)) {
+                    return err
                 }
             }
             HEVMCalls::StopPrank(_) => {
-                self.state_mut().msg_sender = None;
+                self.add_debug(CheatOp::STOPPRANK);
+                self.state_mut().prank = None;
             }
             HEVMCalls::ExpectRevert(inner) => {
+                self.add_debug(CheatOp::EXPECTREVERT);
                 if self.state().expected_revert.is_some() {
                     return evm_error(
                         "You must call another function prior to expecting a second revert.",
@@ -496,20 +745,24 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 }
             }
             HEVMCalls::Deal(inner) => {
+                self.add_debug(CheatOp::DEAL);
                 let who = inner.0;
                 let value = inner.1;
-                state.reset_balance(who);
-                state.deposit(who, value);
+                self.state_mut().reset_balance(who);
+                self.state_mut().deposit(who, value);
             }
             HEVMCalls::Etch(inner) => {
+                self.add_debug(CheatOp::ETCH);
                 let who = inner.0;
                 let code = inner.1;
-                state.set_code(who, code.to_vec());
+                self.state_mut().set_code(who, code.to_vec());
             }
             HEVMCalls::Record(_) => {
+                self.add_debug(CheatOp::RECORD);
                 self.state_mut().accesses = Some(Default::default());
             }
             HEVMCalls::Accesses(inner) => {
+                self.add_debug(CheatOp::ACCESSES);
                 let address = inner.0;
                 // we dont reset all records in case user wants to query multiple address
                 if let Some(record_accesses) = &self.state().accesses {
@@ -539,6 +792,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 }
             }
             HEVMCalls::ExpectEmit(inner) => {
+                self.add_debug(CheatOp::EXPECTEMIT);
                 let expected_emit = ExpectedEmit {
                     depth: if let Some(depth) = self.state().metadata().depth() {
                         depth + 1
@@ -551,6 +805,22 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 };
                 self.state_mut().expected_emits.push(expected_emit);
             }
+            HEVMCalls::MockCall(inner) => {
+                self.add_debug(CheatOp::MOCKCALL);
+                self.state_mut()
+                    .mocked_calls
+                    .entry(inner.0)
+                    .or_default()
+                    .insert(inner.1.to_vec(), inner.2.to_vec());
+            }
+            HEVMCalls::ClearMockedCalls(_) => {
+                self.add_debug(CheatOp::CLEARMOCKEDCALLS);
+                self.state_mut().mocked_calls = Default::default();
+            }
+            HEVMCalls::ExpectCall(inner) => {
+                self.add_debug(CheatOp::EXPECTCALL);
+                self.state_mut().expected_calls.entry(inner.0).or_default().push(inner.1.to_vec());
+            }
         };
 
         self.fill_trace(&trace, true, Some(res.clone()), pre_index);
@@ -559,13 +829,194 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         Capture::Exit((ExitReason::Succeed(ExitSucceed::Stopped), res))
     }
 
-    // NB: This function is copy-pasted from uptream's `execute`, adjusted so that we call the
+    // NB: This function is copy-pasted from upstream's `execute`, adjusted so that we call the
     // Runtime with our own handler
     pub fn execute(&mut self, runtime: &mut Runtime) -> ExitReason {
         match runtime.run(self) {
             Capture::Exit(s) => s,
             Capture::Trap(_) => unreachable!("Trap is Infallible"),
         }
+    }
+
+    /// Executes the call/create while also tracking the state of the machine (including opcodes)  
+    fn debug_execute(
+        &mut self,
+        runtime: &mut Runtime,
+        address: Address,
+        code: Rc<Vec<u8>>,
+        creation: bool,
+    ) -> ExitReason {
+        let depth = if let Some(depth) = self.state().metadata().depth() { depth + 1 } else { 0 };
+
+        match self.debug_run(runtime, address, depth, code, creation) {
+            Capture::Exit(s) => s,
+            Capture::Trap(_) => unreachable!("Trap is Infallible"),
+        }
+    }
+
+    /// Does *not* actually perform a step, just records the debug information for the step
+    fn debug_step(
+        &mut self,
+        runtime: &mut Runtime,
+        code: Rc<Vec<u8>>,
+        steps: &mut Vec<DebugStep>,
+        pc_ic: Rc<BTreeMap<usize, usize>>,
+    ) -> bool {
+        // grab the pc, opcode and stack
+        let pc = runtime.machine().position().as_ref().map(|p| *p).unwrap_or_default();
+        let mut push_bytes = None;
+
+        if let Some((op, stack)) = runtime.machine().inspect() {
+            // wrap the op to make it compatible with opcode extensions for cheatops
+            let wrapped_op = OpCode::from(op);
+
+            // check how big the push size is, and grab the pushed bytes if possible
+            if let Some(push_size) = wrapped_op.push_size() {
+                let push_start = pc + 1;
+                let push_end = pc + 1 + push_size as usize;
+                if push_end < code.len() {
+                    push_bytes = Some(code[push_start..push_end].to_vec());
+                } else {
+                    panic!("PUSH{} exceeds limit of codesize", push_size)
+                }
+            }
+
+            // grab the stack data and reverse it (last element is "top" of stack)
+            let mut stack = stack.data().clone();
+            stack.reverse();
+            // push the step into the vector
+            steps.push(DebugStep {
+                pc,
+                stack,
+                memory: runtime.machine().memory().clone(),
+                op: wrapped_op,
+                push_bytes,
+                ic: *pc_ic.get(&pc).as_ref().copied().unwrap_or(&0usize),
+                total_gas_used: self.handler.used_gas(),
+            });
+            match op {
+                Opcode::CREATE |
+                Opcode::CREATE2 |
+                Opcode::CALL |
+                Opcode::CALLCODE |
+                Opcode::DELEGATECALL |
+                Opcode::STATICCALL => {
+                    // this would create an interrupt, have `debug_run` construct a new vec
+                    // to commit the current vector of steps into the debugarena
+                    // this maintains the call hierarchy correctly
+                    true
+                }
+                _ => false,
+            }
+        } else {
+            // failure case.
+            let mut stack = runtime.machine().stack().data().clone();
+            stack.reverse();
+            steps.push(DebugStep {
+                pc,
+                stack,
+                memory: runtime.machine().memory().clone(),
+                op: OpCode::from(Opcode::INVALID),
+                push_bytes,
+                ic: *pc_ic.get(&pc).as_ref().copied().unwrap_or(&0usize),
+                total_gas_used: self.handler.used_gas(),
+            });
+            true
+        }
+    }
+
+    fn debug_run(
+        &mut self,
+        runtime: &mut Runtime,
+        address: Address,
+        depth: usize,
+        code: Rc<Vec<u8>>,
+        creation: bool,
+    ) -> Capture<ExitReason, ()> {
+        let mut done = false;
+        let mut res = Capture::Exit(ExitReason::Succeed(ExitSucceed::Returned));
+        let mut steps = Vec::new();
+        // grab the debug instruction pointers for either construct or runtime bytecode
+        let dip = if creation {
+            &mut self.state_mut().debug_instruction_pointers.0
+        } else {
+            &mut self.state_mut().debug_instruction_pointers.1
+        };
+        // get the program counter => instruction counter mapping from memory or construct it
+        let ics = if let Some(pc_ic) = dip.get(&address) {
+            // grabs an Rc<BTreemap> of an already created pc -> ic mapping
+            pc_ic.clone()
+        } else {
+            // builds a program counter to instruction counter map
+            // basically this strips away bytecodes to make it work
+            // with the sourcemap output from the solc compiler
+            let mut pc_ic: BTreeMap<usize, usize> = BTreeMap::new();
+
+            let mut i = 0;
+            let mut push_ctr = 0usize;
+            while i < code.len() {
+                let wrapped_op = OpCode::from(Opcode(code[i]));
+                pc_ic.insert(i, i - push_ctr);
+
+                if let Some(push_size) = wrapped_op.push_size() {
+                    i += push_size as usize;
+                    i += 1;
+                    push_ctr += push_size as usize;
+                } else {
+                    i += 1;
+                }
+            }
+            let pc_ic = Rc::new(pc_ic);
+
+            dip.insert(address, pc_ic.clone());
+            pc_ic
+        };
+        while !done {
+            // debug step doesnt actually execute the step, it just peeks into the machine
+            // will return true or false, which signifies whether to push the steps
+            // as a node and reset the steps vector or not
+            if self.debug_step(runtime, code.clone(), &mut steps, ics.clone()) && !steps.is_empty()
+            {
+                self.state_mut().debug_mut().push_node(
+                    0,
+                    DebugNode {
+                        address,
+                        depth,
+                        steps: steps.clone(),
+                        creation,
+                        ..Default::default()
+                    },
+                );
+                steps = Vec::new();
+            }
+            // actually executes the opcode step
+            let r = runtime.step(self);
+            match r {
+                Ok(()) => {}
+                Err(e) => {
+                    done = true;
+                    // we wont hit an interrupt when we finish stepping
+                    // so we have add the accumulated steps as if debug_step returned true
+                    if !steps.is_empty() {
+                        self.state_mut().debug_mut().push_node(
+                            0,
+                            DebugNode {
+                                address,
+                                depth,
+                                steps: steps.clone(),
+                                creation,
+                                ..Default::default()
+                            },
+                        );
+                    }
+                    match e {
+                        Capture::Exit(s) => res = Capture::Exit(s),
+                        Capture::Trap(_) => unreachable!("Trap is Infallible"),
+                    }
+                }
+            }
+        }
+        res
     }
 
     fn start_trace(
@@ -616,7 +1067,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         }
     }
 
-    // NB: This function is copy-pasted from uptream's call_inner
+    // NB: This function is copy-pasted from upstream's call_inner
     #[allow(clippy::too_many_arguments)]
     fn call_inner(
         &mut self,
@@ -742,8 +1193,15 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         // each cfg is about 200 bytes, is this a lot to clone? why does this error
         // not manifest upstream?
         let config = self.config().clone();
-        let mut runtime = Runtime::new(Rc::new(code), Rc::new(input), context, &config);
-        let reason = self.execute(&mut runtime);
+        let mut runtime;
+        let reason = if self.state().debug_enabled {
+            let code = Rc::new(code);
+            runtime = Runtime::new(code.clone(), Rc::new(input), context, &config);
+            self.debug_execute(&mut runtime, code_address, code, false)
+        } else {
+            runtime = Runtime::new(Rc::new(code), Rc::new(input), context, &config);
+            self.execute(&mut runtime)
+        };
 
         // // log::debug!(target: "evm", "Call execution using address {}: {:?}", code_address,
         // reason);
@@ -773,7 +1231,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         }
     }
 
-    // NB: This function is copy-pasted from uptream's create_inner
+    // NB: This function is copy-pasted from upstream's create_inner
     fn create_inner(
         &mut self,
         caller: H160,
@@ -786,7 +1244,6 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         let pre_index = self.state().trace_index;
 
         let address = self.create_address(scheme);
-
         let trace = self.start_trace(address, init_code.clone(), value, true);
 
         macro_rules! try_or_fail {
@@ -883,9 +1340,15 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         }
 
         let config = self.config().clone();
-        let mut runtime = Runtime::new(Rc::new(init_code), Rc::new(Vec::new()), context, &config);
-
-        let reason = self.execute(&mut runtime);
+        let mut runtime;
+        let reason = if self.state().debug_enabled {
+            let code = Rc::new(init_code);
+            runtime = Runtime::new(code.clone(), Rc::new(Vec::new()), context, &config);
+            self.debug_execute(&mut runtime, address, code, true)
+        } else {
+            runtime = Runtime::new(Rc::new(init_code), Rc::new(Vec::new()), context, &config);
+            self.execute(&mut runtime)
+        };
         // log::debug!(target: "evm", "Create execution using address {}: {:?}", address, reason);
 
         match reason {
@@ -976,6 +1439,9 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
         } else if code_address == *CONSOLE_ADDRESS {
             self.console_log(input)
         } else {
+            // record prior origin
+            let prev_origin = self.state().backend.cheats.origin;
+
             // modify execution context depending on the cheatcode
             let expected_revert = self.state_mut().expected_revert.take();
             let mut new_context = context;
@@ -984,27 +1450,57 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
                 if let Some(depth) = self.state().metadata().depth() { depth + 1 } else { 0 };
 
             // handle `startPrank` - see apply_cheatcodes for more info
-            if let Some((original_msg_sender, permanent_caller, depth)) = self.state().msg_sender {
-                if curr_depth == depth && new_context.caller == original_msg_sender {
-                    new_context.caller = permanent_caller;
+            if let Some(Prank { prank_caller, new_caller, new_origin, depth }) = self.state().prank
+            {
+                // if depth and msg.sender match, perform the prank
+                if curr_depth == depth && new_context.caller == prank_caller {
+                    new_context.caller = new_caller;
 
                     if let Some(t) = &new_transfer {
-                        new_transfer = Some(Transfer {
-                            source: permanent_caller,
-                            target: t.target,
-                            value: t.value,
-                        });
+                        new_transfer =
+                            Some(Transfer { source: new_caller, target: t.target, value: t.value });
                     }
+
+                    // set the origin if the user used the overloaded func
+                    self.state_mut().backend.cheats.origin = new_origin;
                 }
             }
 
             // handle normal `prank`
-            if let Some(caller) = self.state_mut().next_msg_sender.take() {
-                new_context.caller = caller;
+            if let Some(Prank { new_caller, new_origin, .. }) = self.state_mut().next_prank.take() {
+                new_context.caller = new_caller;
 
                 if let Some(t) = &new_transfer {
                     new_transfer =
-                        Some(Transfer { source: caller, target: t.target, value: t.value });
+                        Some(Transfer { source: new_caller, target: t.target, value: t.value });
+                }
+
+                self.state_mut().backend.cheats.origin = new_origin;
+            }
+
+            // handle expected calls
+            if let Some(expecteds) = self.state_mut().expected_calls.get_mut(&code_address) {
+                if let Some(found_match) =
+                    expecteds.iter().position(|expected| expected == &input[..expected.len()])
+                {
+                    expecteds.remove(found_match);
+                }
+            }
+
+            // handle mocked calls
+            if let Some(mocks) = self.state().mocked_calls.get(&code_address) {
+                if let Some(mock_retdata) = mocks.get(&input) {
+                    return Capture::Exit((
+                        ExitReason::Succeed(ExitSucceed::Returned),
+                        mock_retdata.clone(),
+                    ))
+                } else if let Some((_, mock_retdata)) =
+                    mocks.iter().find(|(mock, _)| *mock == &input[..mock.len()])
+                {
+                    return Capture::Exit((
+                        ExitReason::Succeed(ExitSucceed::Returned),
+                        mock_retdata.clone(),
+                    ))
                 }
             }
 
@@ -1020,6 +1516,10 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
                 new_context,
             );
 
+            // if we set the origin, now we should reset to previous
+            self.state_mut().backend.cheats.origin = prev_origin;
+
+            // handle expected emits
             if !self.state_mut().expected_emits.is_empty() &&
                 !self
                     .state()
@@ -1031,51 +1531,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
                 return evm_error("Log != expected log")
             }
 
-            if let Some(expected_revert) = expected_revert {
-                let final_res = match res {
-                    Capture::Exit((ExitReason::Revert(_e), data)) => {
-                        if data.len() >= 4 && data[0..4] == [8, 195, 121, 160] {
-                            // its a revert string
-                            let decoded_data =
-                                ethers::abi::decode(&[ethers::abi::ParamType::Bytes], &data[4..])
-                                    .expect("String error code, but not actual string");
-                            let decoded_data = decoded_data[0]
-                                .clone()
-                                .into_bytes()
-                                .expect("Can never fail because it is bytes");
-                            if decoded_data == *expected_revert {
-                                return Capture::Exit((
-                                    ExitReason::Succeed(ExitSucceed::Returned),
-                                    DUMMY_OUTPUT.to_vec(),
-                                ))
-                            } else {
-                                return evm_error(&*format!(
-                                    "Error != expected error: '{}' != '{}'",
-                                    String::from_utf8_lossy(&decoded_data[..]),
-                                    String::from_utf8_lossy(&expected_revert)
-                                ))
-                            }
-                        }
-
-                        if data == *expected_revert {
-                            Capture::Exit((
-                                ExitReason::Succeed(ExitSucceed::Returned),
-                                DUMMY_OUTPUT.to_vec(),
-                            ))
-                        } else {
-                            evm_error(&*format!(
-                                "Error data != expected error data: 0x{} != 0x{}",
-                                hex::encode(data),
-                                hex::encode(expected_revert)
-                            ))
-                        }
-                    }
-                    _ => evm_error("Expected revert call did not revert"),
-                };
-                final_res
-            } else {
-                res
-            }
+            self.expected_revert(ExpectRevertReturn::Call(res), expected_revert).into_call_inner()
         }
     }
 
@@ -1237,7 +1693,58 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
         init_code: Vec<u8>,
         target_gas: Option<u64>,
     ) -> Capture<(ExitReason, Option<H160>, Vec<u8>), Self::CreateInterrupt> {
-        self.create_inner(caller, scheme, value, init_code, target_gas, true)
+        // modify execution context depending on the cheatcode
+
+        let prev_origin = self.state().backend.cheats.origin;
+        let expected_revert = self.state_mut().expected_revert.take();
+        let mut new_tx_caller = caller;
+        let mut new_scheme = scheme;
+        let curr_depth =
+            if let Some(depth) = self.state().metadata().depth() { depth + 1 } else { 0 };
+
+        // handle `startPrank` - see apply_cheatcodes for more info
+        if let Some(Prank { prank_caller, new_caller, new_origin, depth }) = self.state().prank {
+            if curr_depth == depth && new_tx_caller == prank_caller {
+                new_tx_caller = new_caller;
+
+                self.state_mut().backend.cheats.origin = new_origin
+            }
+        }
+
+        // handle normal `prank`
+        if let Some(Prank { new_caller, new_origin, .. }) = self.state_mut().next_prank.take() {
+            new_tx_caller = new_caller;
+
+            self.state_mut().backend.cheats.origin = new_origin
+        }
+
+        if caller != new_tx_caller {
+            new_scheme = match scheme {
+                CreateScheme::Legacy { .. } => CreateScheme::Legacy { caller: new_tx_caller },
+                CreateScheme::Create2 { code_hash, salt, .. } => {
+                    CreateScheme::Create2 { caller: new_tx_caller, code_hash, salt }
+                }
+                _ => scheme,
+            };
+        }
+
+        let res = self.create_inner(new_tx_caller, new_scheme, value, init_code, target_gas, true);
+
+        // if we set the origin, now we should reset to prior origin
+        self.state_mut().backend.cheats.origin = prev_origin;
+
+        if !self.state_mut().expected_emits.is_empty() &&
+            !self
+                .state()
+                .expected_emits
+                .iter()
+                .filter(|expected| expected.depth == curr_depth)
+                .all(|expected| expected.found)
+        {
+            return revert_return_evm(false, None, || "Log != expected log").into_create_inner()
+        }
+
+        self.expected_revert(ExpectRevertReturn::Create(res), expected_revert).into_create_inner()
     }
 
     fn pre_validate(
@@ -1282,8 +1789,16 @@ mod tests {
             "lol",
             "addr: 0x2222222222222222222222222222222222222222",
             "key: 0x41b1a0649752af1b28b3dc29a1556eee781e4a4c3a1f7f53f90fa834de098c4d",
-            "key: 123000000000000000000",
-            "key: 1234000000000000000000",
+            "key: 0.000000000000000123",
+            "key: -0.000000000000000123",
+            "key: 1.000000000000000000",
+            "key: -1.000000000000000000",
+            "key: -0.000000000123",
+            "key: -1000000.000000000000",
+            "key: 0.000000000000001234",
+            "key: 1.000000000000000000",
+            "key: 0.000000001234",
+            "key: 1000000.000000000000",
             "key: 123",
             "key: 1234",
             "key: 0x4567",
@@ -1317,6 +1832,28 @@ mod tests {
         .iter()
         .map(ToString::to_string)
         .collect::<Vec<_>>();
+        assert_eq!(logs, expected);
+
+        let (_, _, _, logs) =
+            evm.call::<(), _, _>(Address::zero(), addr, "test_log()", (), 0.into()).unwrap();
+        assert_eq!(logs, expected);
+    }
+
+    #[test]
+    fn console_logs_types() {
+        let mut evm = vm();
+
+        let compiled = COMPILED.find("ConsoleLogs").expect("could not find contract");
+        let (addr, _, _, _) =
+            evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
+
+        // after the evm call is done, we call `logs` and print it all to the user
+        let (_, _, _, logs) =
+            evm.call::<(), _, _>(Address::zero(), addr, "test_log_types()", (), 0.into()).unwrap();
+        let expected = ["String", "1337", "-20", "1245", "true"]
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
         assert_eq!(logs, expected);
     }
 

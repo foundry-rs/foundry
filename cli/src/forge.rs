@@ -1,8 +1,9 @@
+use clap::{IntoApp, Parser};
+use clap_complete::generate;
 use std::{process::Command, str::FromStr};
 
-use ethers::solc::{remappings::Remapping, Project, ProjectPathsConfig};
+use ethers::solc::{Project, ProjectPathsConfig};
 use rayon::prelude::*;
-use structopt::StructOpt;
 use walkdir::WalkDir;
 
 use forge_fmt::{Formatter, FormatterConfig, Visitable};
@@ -18,7 +19,7 @@ fn main() -> eyre::Result<()> {
     color_eyre::install()?;
     utils::subscriber();
 
-    let opts = Opts::from_args();
+    let opts = Opts::parse();
     match opts.sub {
         Subcommands::Test(cmd) => {
             let outcome = cmd.run()?;
@@ -41,7 +42,7 @@ fn main() -> eyre::Result<()> {
         Subcommands::Update { lib } => {
             let mut cmd = Command::new("git");
 
-            cmd.args(&["submodule", "update", "--init", "--recursive"]);
+            cmd.args(&["submodule", "update", "--remote", "--init", "--recursive"]);
 
             // if a lib is specified, open it
             if let Some(lib) = lib {
@@ -57,13 +58,8 @@ fn main() -> eyre::Result<()> {
         Subcommands::Remove { dependencies } => {
             remove(std::env::current_dir()?, dependencies)?;
         }
-        Subcommands::Remappings { lib_paths, root } => {
-            let root = root.unwrap_or_else(|| std::env::current_dir().unwrap());
-            let root = std::fs::canonicalize(root)?;
-
-            let lib_paths = if lib_paths.is_empty() { vec![root.join("lib")] } else { lib_paths };
-            let remappings: Vec<_> = lib_paths.iter().flat_map(Remapping::find_many).collect();
-            remappings.iter().for_each(|x| println!("{}", x));
+        Subcommands::Remappings(cmd) => {
+            cmd.run()?;
         }
         Subcommands::Init { root, template } => {
             let root = root.unwrap_or_else(|| std::env::current_dir().unwrap());
@@ -71,7 +67,7 @@ fn main() -> eyre::Result<()> {
             if !root.exists() {
                 std::fs::create_dir_all(&root)?;
             }
-            let root = std::fs::canonicalize(root)?;
+            let root = dunce::canonicalize(root)?;
 
             // if a template is provided, then this command is just an alias to `git clone <url>
             // <path>`
@@ -125,7 +121,7 @@ fn main() -> eyre::Result<()> {
             println!("Done.");
         }
         Subcommands::Completions { shell } => {
-            Subcommands::clap().gen_completions_to("forge", shell, &mut std::io::stdout())
+            generate(shell, &mut Opts::into_app(), "forge", &mut std::io::stdout())
         }
         Subcommands::Clean { root } => {
             let root = root.unwrap_or_else(|| std::env::current_dir().unwrap());
@@ -144,13 +140,14 @@ fn main() -> eyre::Result<()> {
             let root = if let Some(path) = path {
                 path
             } else {
-                let root = root
-                    .unwrap_or(std::env::current_dir().expect("failed to get current directory"));
+                let root = root.unwrap_or_else(|| {
+                    std::env::current_dir().expect("failed to get current directory")
+                });
                 if !root.is_dir() {
                     return Err(eyre::eyre!("Root path should be a directory"))
                 }
 
-                utils::find_contracts_dir(root)
+                ProjectPathsConfig::find_source_dir(&root)
             };
 
             let paths = if root.is_dir() {
