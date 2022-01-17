@@ -38,6 +38,25 @@ pub enum Output {
     Raw(Vec<u8>),
 }
 
+/// A struct with all information about execution
+pub struct ExecutionInfo<'a> {
+    pub contracts: &'a BTreeMap<String, (Abi, Vec<u8>)>,
+    pub identified_contracts: &'a mut BTreeMap<H160, (String, Abi)>,
+    pub funcs: BTreeMap<[u8; 4], Function>,
+    pub events: BTreeMap<H256, Event>,
+    pub errors: Abi,
+}
+
+impl<'a> ExecutionInfo<'a> {
+    pub fn new(
+        contracts: &'a BTreeMap<String, (Abi, Vec<u8>)>,
+        identified_contracts: &'a mut BTreeMap<H160, (String, Abi)>,
+    ) -> Self {
+        let (funcs, events, errors) = foundry_utils::flatten_funcs_and_events(contracts);
+        Self { contracts, identified_contracts, funcs, events, errors }
+    }
+}
+
 impl Output {
     /// Prints the output of a function call
     pub fn print(self, color: Colour, left: &str) {
@@ -180,19 +199,19 @@ impl CallTraceArena {
     pub fn pretty_print<'a, S: Clone, E: crate::Evm<S>>(
         &self,
         idx: usize,
-        contracts: &BTreeMap<String, (Abi, Vec<u8>)>,
-        identified_contracts: &mut BTreeMap<H160, (String, Abi)>,
+        exec_info: &mut ExecutionInfo<'a>,
         evm: &'a E,
         left: &str,
     ) {
         let trace = &self.arena[idx].trace;
 
-        let (funcs, events, errors) = foundry_utils::flatten_funcs_and_events(contracts);
-
         #[cfg(feature = "sputnik")]
         {
-            identified_contracts.insert(*CHEATCODE_ADDRESS, ("VM".to_string(), HEVM_ABI.clone()));
-            identified_contracts
+            exec_info
+                .identified_contracts
+                .insert(*CHEATCODE_ADDRESS, ("VM".to_string(), HEVM_ABI.clone()));
+            exec_info
+                .identified_contracts
                 .insert(*CONSOLE_ADDRESS, ("console".to_string(), CONSOLE_ABI.clone()));
         }
 
@@ -211,7 +230,7 @@ impl CallTraceArena {
 
         // we have to clone the name and abi because identified_contracts is later borrowed
         // immutably
-        let res = if let Some((name, abi)) = identified_contracts.get(&trace.addr) {
+        let res = if let Some((name, abi)) = exec_info.identified_contracts.get(&trace.addr) {
             Some((name.clone(), abi.clone()))
         } else {
             None
@@ -219,22 +238,16 @@ impl CallTraceArena {
         if res.is_none() {
             // get the code to compare
             let code = if trace.created { trace.output.clone() } else { evm.code(trace.addr) };
-            if let Some((name, (abi, _code))) = contracts
+            if let Some((name, (abi, _code))) = exec_info
+                .contracts
                 .iter()
                 .find(|(_key, (_abi, known_code))| diff_score(known_code, &code) < 0.10)
             {
                 // found matching contract, insert and print
-                identified_contracts.insert(trace.addr, (name.to_string(), abi.clone()));
+                exec_info.identified_contracts.insert(trace.addr, (name.to_string(), abi.clone()));
                 if trace.created {
                     println!("{}{} {}@{}", left, Colour::Yellow.paint("→ new"), name, trace.addr);
-                    self.print_children_and_logs(
-                        idx,
-                        events,
-                        contracts,
-                        identified_contracts,
-                        evm,
-                        left,
-                    );
+                    self.print_children_and_logs(idx, exec_info, evm, left);
                     println!(
                         "{}  └─ {} {} bytes of code",
                         left.replace("├─", "│").replace("└─", "  "),
@@ -243,19 +256,12 @@ impl CallTraceArena {
                     );
                 } else {
                     // re-enter this function at the current node
-                    self.pretty_print(idx, contracts, identified_contracts, evm, left);
+                    self.pretty_print(idx, exec_info, evm, left);
                 }
             } else if trace.created {
                 // we couldn't identify, print the children and logs without the abi
                 println!("{}{} <Unknown>@{}", left, Colour::Yellow.paint("→ new"), trace.addr);
-                self.print_children_and_logs(
-                    idx,
-                    events,
-                    contracts,
-                    identified_contracts,
-                    evm,
-                    left,
-                );
+                self.print_children_and_logs(idx, exec_info, evm, left);
                 println!(
                     "{}  └─ {} {} bytes of code",
                     left.replace("├─", "│").replace("└─", "  "),
@@ -263,28 +269,14 @@ impl CallTraceArena {
                     trace.output.len()
                 );
             } else {
-                let output = trace.print_func_call(&funcs, Some(&errors), None, color, left);
-                self.print_children_and_logs(
-                    idx,
-                    events,
-                    contracts,
-                    identified_contracts,
-                    evm,
-                    left,
-                );
+                let output = trace.print_func_call(exec_info, None, color, left);
+                self.print_children_and_logs(idx, exec_info, evm, left);
                 output.print(color, left);
             }
         } else if let Some((name, _abi)) = res {
             if trace.created {
                 println!("{}{} {}@{}", left, Colour::Yellow.paint("→ new"), name, trace.addr);
-                self.print_children_and_logs(
-                    idx,
-                    events,
-                    contracts,
-                    identified_contracts,
-                    evm,
-                    left,
-                );
+                self.print_children_and_logs(idx, exec_info, evm, left);
                 println!(
                     "{}  └─ {} {} bytes of code",
                     left.replace("├─", "│").replace("└─", "  "),
@@ -292,15 +284,8 @@ impl CallTraceArena {
                     trace.output.len()
                 );
             } else {
-                let output = trace.print_func_call(&funcs, Some(&errors), Some(&name), color, left);
-                self.print_children_and_logs(
-                    idx,
-                    events,
-                    contracts,
-                    identified_contracts,
-                    evm,
-                    left,
-                );
+                let output = trace.print_func_call(exec_info, Some(&name), color, left);
+                self.print_children_and_logs(idx, exec_info, evm, left);
                 output.print(color, left);
             }
         }
@@ -310,9 +295,7 @@ impl CallTraceArena {
     pub fn print_children_and_logs<'a, S: Clone, E: crate::Evm<S>>(
         &self,
         node_idx: usize,
-        events: BTreeMap<H256, Event>,
-        contracts: &BTreeMap<String, (Abi, Vec<u8>)>,
-        identified_contracts: &mut BTreeMap<H160, (String, Abi)>,
+        exec_info: &mut ExecutionInfo<'a>,
         evm: &'a E,
         left: &str,
     ) {
@@ -321,13 +304,12 @@ impl CallTraceArena {
         // logs and calls in the correct order
         self.arena[node_idx].ordering.iter().for_each(|ordering| match ordering {
             LogCallOrder::Log(index) => {
-                self.arena[node_idx].print_log(*index, &events, left);
+                self.arena[node_idx].print_log(*index, &exec_info.events, left);
             }
             LogCallOrder::Call(index) => {
                 self.pretty_print(
                     self.arena[node_idx].children[*index],
-                    contracts,
-                    identified_contracts,
+                    exec_info,
                     evm,
                     &(left.replace("├─", "│").replace("└─", "  ") + "  ├─ "),
                 );
@@ -361,19 +343,21 @@ impl CallTraceNode {
         let right = "  ├─ ";
 
         if let Some(event) = events.get(&log.topics[0]) {
-            let params = event.parse_log(log.clone()).expect("Bad event").params;
-            let strings = params
-                .into_iter()
-                .map(|param| format!("{}: {}", param.name, format_token(&param.value)))
-                .collect::<Vec<String>>()
-                .join(", ");
-            println!(
-                "{}emit {}({})",
-                left.replace("├─", "│") + right,
-                Colour::Cyan.paint(event.name.clone()),
-                strings
-            );
-            return
+            if let Ok(parsed) = event.parse_log(log.clone()) {
+                let params = parsed.params;
+                let strings = params
+                    .into_iter()
+                    .map(|param| format!("{}: {}", param.name, format_token(&param.value)))
+                    .collect::<Vec<String>>()
+                    .join(", ");
+                println!(
+                    "{}emit {}({})",
+                    left.replace("├─", "│") + right,
+                    Colour::Cyan.paint(event.name.clone()),
+                    strings
+                );
+                return
+            }
         }
 
         // we didnt decode the log, print it as an unknown log
@@ -447,17 +431,16 @@ impl CallTrace {
     }
 
     /// Prints function call, returning the decoded or raw output
-    pub fn print_func_call(
+    pub fn print_func_call<'a>(
         &self,
-        funcs: &BTreeMap<[u8; 4], Function>,
-        abi_for_errors: Option<&Abi>,
+        exec_info: &mut ExecutionInfo<'a>,
         name: Option<&String>,
         color: Colour,
         left: &str,
     ) -> Output {
         // Is data longer than 4, meaning we can attempt to decode it
         if self.data.len() >= 4 {
-            if let Some(func) = funcs.get(&self.data[0..4]) {
+            if let Some(func) = exec_info.funcs.get(&self.data[0..4]) {
                 let mut strings = "".to_string();
                 if !self.data[4..].is_empty() {
                     let params = func.decode_input(&self.data[4..]).expect("Bad func data decode");
@@ -467,7 +450,7 @@ impl CallTrace {
                     if self.addr == *CHEATCODE_ADDRESS && func.name == "expectRevert" {
                         // try to decode better than just `bytes` for `expectRevert`
                         if let Ok(decoded) =
-                            foundry_utils::decode_revert(&self.data, abi_for_errors)
+                            foundry_utils::decode_revert(&self.data, Some(&exec_info.errors))
                         {
                             strings = decoded;
                         }
@@ -494,7 +477,7 @@ impl CallTrace {
                     )
                 } else if !self.output.is_empty() && !self.success {
                     if let Ok(decoded_error) =
-                        foundry_utils::decode_revert(&self.output[..], abi_for_errors)
+                        foundry_utils::decode_revert(&self.output[..], Some(&exec_info.errors))
                     {
                         return Output::Token(vec![ethers::abi::Token::String(decoded_error)])
                     } else {
@@ -520,7 +503,7 @@ impl CallTrace {
 
             if !self.success {
                 if let Ok(decoded_error) =
-                    foundry_utils::decode_revert(&self.output[..], abi_for_errors)
+                    foundry_utils::decode_revert(&self.output[..], Some(&exec_info.errors))
                 {
                     return Output::Token(vec![ethers::abi::Token::String(decoded_error)])
                 }
@@ -553,7 +536,7 @@ impl CallTrace {
 
         if !self.success {
             if let Ok(decoded_error) =
-                foundry_utils::decode_revert(&self.output[..], abi_for_errors)
+                foundry_utils::decode_revert(&self.output[..], Some(&exec_info.errors))
             {
                 return Output::Token(vec![ethers::abi::Token::String(decoded_error)])
             }

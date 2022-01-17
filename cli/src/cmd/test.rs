@@ -4,7 +4,7 @@ use crate::cmd::{build::BuildArgs, Cmd};
 use ansi_term::Colour;
 use clap::{AppSettings, Parser};
 use ethers::solc::{ArtifactOutput, Project};
-use evm_adapters::{evm_opts::EvmOpts, sputnik::helpers::vm};
+use evm_adapters::{call_tracing::ExecutionInfo, evm_opts::EvmOpts, sputnik::helpers::vm};
 use forge::{MultiContractRunnerBuilder, TestFilter};
 use std::collections::BTreeMap;
 
@@ -270,28 +270,24 @@ fn test<A: ArtifactOutput + 'static>(
                             }
 
                             let mut ident = identified_contracts.clone();
+                            let mut exec_info =
+                                ExecutionInfo::new(&runner.known_contracts, &mut ident);
+                            let vm = vm();
                             if verbosity > 4 || !result.success {
                                 add_newline = true;
                                 println!("Traces:");
 
                                 // print setup calls as well
                                 traces.iter().for_each(|trace| {
-                                    trace.pretty_print(
-                                        0,
-                                        &runner.known_contracts,
-                                        &mut ident,
-                                        &vm(),
-                                        "  ",
-                                    );
+                                    trace.pretty_print(0, &mut exec_info, &vm, "  ");
                                 });
                             } else if !traces.is_empty() {
                                 add_newline = true;
                                 println!("Traces:");
                                 traces.last().expect("no last but not empty").pretty_print(
                                     0,
-                                    &runner.known_contracts,
-                                    &mut ident,
-                                    &vm(),
+                                    &mut exec_info,
+                                    &vm,
                                     "  ",
                                 );
                             }
