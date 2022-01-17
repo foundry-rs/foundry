@@ -1,5 +1,8 @@
 use crate::{runner::TestResult, ContractRunner, TestFilter};
-use evm_adapters::evm_opts::{BackendKind, EvmOpts};
+use evm_adapters::{
+    evm_opts::{BackendKind, EvmOpts},
+    sputnik::cheatcodes::{CONSOLE_ABI, HEVMCONSOLE_ABI, HEVM_ABI},
+};
 use sputnik::{backend::Backend, Config};
 
 use ethers::solc::Artifact;
@@ -78,6 +81,11 @@ impl MultiContractRunnerBuilder {
                 }
             }
         }
+
+        // add forge+sputnik specific contracts
+        known_contracts.insert("VM".to_string(), (HEVM_ABI.clone(), Vec::new()));
+        known_contracts.insert("VM_CONSOLE".to_string(), (HEVMCONSOLE_ABI.clone(), Vec::new()));
+        known_contracts.insert("CONSOLE".to_string(), (CONSOLE_ABI.clone(), Vec::new()));
 
         Ok(MultiContractRunner {
             contracts: deployable_contracts,

@@ -69,7 +69,7 @@ pub fn remove_extra_costs(gas: U256, calldata: &[u8]) -> U256 {
 pub fn flatten_funcs_and_events(
     contracts: &BTreeMap<String, (Abi, Vec<u8>)>,
 ) -> (BTreeMap<[u8; 4], Function>, BTreeMap<H256, Event>, Abi) {
-    let mut flattened_funcs: BTreeMap<[u8; 4], Function> = contracts
+    let flattened_funcs: BTreeMap<[u8; 4], Function> = contracts
         .iter()
         .flat_map(|(_name, (abi, _code))| abi.functions().cloned().collect::<Vec<Function>>())
         .collect::<Vec<Function>>()
@@ -77,7 +77,7 @@ pub fn flatten_funcs_and_events(
         .map(|func| (func.short_signature(), func))
         .collect();
 
-    let mut flattened_events: BTreeMap<H256, Event> = contracts
+    let flattened_events: BTreeMap<H256, Event> = contracts
         .iter()
         .flat_map(|(_name, (abi, _code))| abi.events().cloned().collect::<Vec<Event>>())
         .collect::<Vec<Event>>()
@@ -94,39 +94,6 @@ pub fn flatten_funcs_and_events(
             entry.push(error.clone());
         });
     });
-
-    // add forge specific functions
-    #[cfg(feature = "sputnik")]
-    {
-        flattened_funcs.extend(
-            HEVM_ABI
-                .functions()
-                .cloned()
-                .map(|func| (func.short_signature(), func))
-                .collect::<BTreeMap<[u8; 4], Function>>(),
-        );
-        flattened_events.extend(
-            HEVM_ABI
-                .events()
-                .cloned()
-                .map(|event| (event.signature(), event))
-                .collect::<BTreeMap<H256, Event>>(),
-        );
-        flattened_events.extend(
-            HEVMCONSOLE_ABI
-                .events()
-                .cloned()
-                .map(|event| (event.signature(), event))
-                .collect::<BTreeMap<H256, Event>>(),
-        );
-        flattened_events.extend(
-            CONSOLE_ABI
-                .events()
-                .cloned()
-                .map(|event| (event.signature(), event))
-                .collect::<BTreeMap<H256, Event>>(),
-        );
-    }
     (flattened_funcs, flattened_events, errors_abi)
 }
 
