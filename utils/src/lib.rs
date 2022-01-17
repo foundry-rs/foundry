@@ -187,7 +187,6 @@ pub async fn get_func_etherscan(
     chain: Chain,
     etherscan_api_key: String,
 ) -> Result<Function> {
-
     let client = Client::new(chain, etherscan_api_key)?;
 
     let metadata = &client.contract_source_code(contract).await?.items[0];
@@ -196,7 +195,7 @@ pub async fn get_func_etherscan(
     } else {
         metadata.implementation.parse::<Address>()?
     };
-    
+
     let abi = client.contract_abi(contract).await?;
     let funcs = abi.functions.get(function_name).unwrap();
 
