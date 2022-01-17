@@ -58,9 +58,11 @@ if [[ "$FORGEUP_REPO" == "gakonst/foundry" && -z "$FORGEUP_BRANCH" ]]; then
 
   # Download the release tarball from the repository, unpack it
   curl -L https://github.com/${FORGEUP_REPO}/releases/download/${FORGEUP_VERSION}/foundry_${FORGEUP_VERSION}_${PLATFORM}_${ARCHITECTURE}.tar.gz | tar xvz
-
+  
+  # Delete any previous installations, if they exist
   rm -f /usr/local/bin/forge
   rm -f /usr/local/bin/cast
+  
   if ! command -v cargo &> /dev/null ; then
     # Cargo not installed so move to /usr/local/bin
     mv forge /usr/local/bin/forge
@@ -83,6 +85,7 @@ else
 
   REPO_PATH="${FORGEUP_DIR}/${FORGEUP_REPO}"
 
+  # Delete any previous installations, if they exist
   rm -f /usr/local/bin/forge
   rm -f /usr/local/bin/cast
 
