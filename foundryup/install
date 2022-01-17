@@ -86,14 +86,15 @@ else
     git pull
     cargo install --path ./cli --bins --locked --force
   else
-    # Repo path did not exist, grab the author from the repo, make a directory in .foundryup, cd to it, clone and install.
+    # Repo path did not exist, grab the author from the repo, make a directory in .foundry, cd to it, clone and install.
     IFS="/" read -ra AUTHOR <<< "$FOUNDRYUP_REPO"
     mkdir -p "$FOUNDRY_DIR/$AUTHOR"
     cd "$FOUNDRY_DIR/$AUTHOR"
     git clone https://github.com/${FOUNDRYUP_REPO}
     cd $REPO_PATH
     git checkout ${FOUNDRYUP_BRANCH}
-    cargo install --path ./cli --bins --locked --force
+
+    cargo install --path ./cli --bins --locked --force --root $FOUNDRY_BIN_DIR
   fi
 fi'
 

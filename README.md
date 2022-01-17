@@ -20,15 +20,17 @@ Foundry consists of:
 
 ## Installation 
 
+First run the command below to get `foundryup`, the Foundry toolchain installer:
+
 ```
 curl https://raw.githubusercontent.com/gakonst/foundry/master/foundryup/install | bash
 ```
-in a new terminal session or after reloading your PATH:
+
+Then in a new terminal session or after reloading your PATH, run it to get the latest `forge` and `cast` binaries:
+
 ```
 foundryup
 ```
-
-Just get foundryup, the Foundry toolchain installer, and use it to install the latest `forge` and `cast` binaries.
 
 Advanced ways to use `foundryup` and other documentation can be found in the [foundryup package](./foundryup/README.md). Happy forging!
 
