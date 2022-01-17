@@ -42,6 +42,6 @@ forgeup --repo transmissions11/foundry --branch patch-10
 
 ---
 
-**Tip**: All flags have a one char shorthand equivalent! You can use `-v` instead of `--version`, etc.
+**Tip**: All flags have a single character shorthand equivalent! You can use `-v` instead of `--version`, etc.
 
 ---
