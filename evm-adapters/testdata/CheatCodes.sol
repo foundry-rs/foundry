@@ -39,7 +39,6 @@ interface Hevm {
     // Expects an error on next call
     function expectRevert(bytes calldata) external;
     function expectRevert(bytes4) external;
-    function expectRevert(string calldata) external;
     // Record all storage reads and writes
     function record() external;
     // Gets all accessed reads and write slot from a recording session, for a given address
@@ -296,13 +295,13 @@ contract CheatCodes is DSTest {
 
     function testExpectRevert() public {
         ExpectRevert target = new ExpectRevert();
-        hevm.expectRevert(string("Value too large"));
+        hevm.expectRevert("Value too large");
         target.stringErr(101);
         target.stringErr(99);
     }
 
     function testExpectRevertConstructor() public {
-        hevm.expectRevert(string("Value too large Constructor"));
+        hevm.expectRevert("Value too large Constructor");
         ExpectRevertConstructor target = new ExpectRevertConstructor(101);
         ExpectRevertConstructor target2 = new ExpectRevertConstructor(99);
     }
@@ -323,20 +322,20 @@ contract CheatCodes is DSTest {
 
     function testCalleeExpectRevert() public {
         ExpectRevert target = new ExpectRevert();
-        hevm.expectRevert(string("Value too largeCallee"));
+        hevm.expectRevert("Value too largeCallee");
         target.stringErrCall(101);
         target.stringErrCall(99);
     }
 
     function testFailExpectRevert() public {
         ExpectRevert target = new ExpectRevert();
-        hevm.expectRevert(string("Value too large"));
+        hevm.expectRevert("Value too large");
         target.stringErr2(101);
     }
 
     function testFailExpectRevert2() public {
         ExpectRevert target = new ExpectRevert();
-        hevm.expectRevert(string("Value too large"));
+        hevm.expectRevert("Value too large");
         target.stringErr(99);
     }
 
@@ -412,7 +411,7 @@ contract CheatCodes is DSTest {
     // Test should fail if nothing is called
     // after expectRevert
     function testFailExpectRevert3() public {
-        hevm.expectRevert(string("revert"));
+        hevm.expectRevert("revert");
     }
 
     function testMockArbitraryCall() public {

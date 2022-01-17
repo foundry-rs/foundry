@@ -65,7 +65,6 @@ ethers::contract::abigen!(
             etch(address,bytes)
             expectRevert(bytes)
             expectRevert(bytes4)
-            expectRevert(string)
             record()
             accesses(address)(bytes32[],bytes32[])
             expectEmit(bool,bool,bool,bool)

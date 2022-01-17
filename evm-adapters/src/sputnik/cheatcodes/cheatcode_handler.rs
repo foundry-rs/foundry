@@ -759,11 +759,6 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                     return e
                 }
             }
-            HEVMCalls::ExpectRevert2(inner) => {
-                if let Err(e) = self.expect_revert(inner.0.as_bytes().to_vec()) {
-                    return e
-                }
-            }
             HEVMCalls::Deal(inner) => {
                 self.add_debug(CheatOp::DEAL);
                 let who = inner.0;
