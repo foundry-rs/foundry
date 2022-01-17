@@ -115,6 +115,10 @@ case $SHELL in
     PROFILE=$HOME/.profile
     PREF_SHELL=bash
     ;;
+*/fish)
+    PROFILE=$HOME/.config/fish/config.fish
+    PREF_SHELL=fish
+    ;;
 *)
     echo "foundryup: could not detect shell, manually add ${FOUNDRY_BIN_DIR} to your PATH."
     exit 1
