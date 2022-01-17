@@ -120,7 +120,7 @@ case $SHELL in
 esac
 
 # Only add foundryup if it isn't already in PATH.
-if [[ ":$PATH:" != *":${FOUNDRY_DIR}:"* ]]; then
+if [[ ":$PATH:" != *":${FOUNDRY_BIN_DIR}:"* ]]; then
     # Add the foundryup directory to the path and ensure the old PATH variables remain.
     echo >> $PROFILE && echo "export PATH=\"\$PATH:$FOUNDRY_BIN_DIR\"" >> $PROFILE
 fi
