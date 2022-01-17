@@ -56,11 +56,22 @@ if [[ "$FORGEUP_REPO" == "gakonst/foundry" && -z "$FORGEUP_BRANCH" ]]; then
     ARCHITECTURE="amd64" # Amd.
   fi
 
-  # Download the release tarball from the repository, unpack it and move the forge and cast binaries into the cargo bin directory.
-  # Will replace the existing binaries if they were installed via cargo, can be undone at any time by running cargo install again, if desired.
+  # Download the release tarball from the repository, unpack it
   curl -L https://github.com/${FORGEUP_REPO}/releases/download/${FORGEUP_VERSION}/foundry_${FORGEUP_VERSION}_${PLATFORM}_${ARCHITECTURE}.tar.gz | tar xvz
-  mv forge $HOME/.cargo/bin/forge
-  mv cast $HOME/.cargo/bin/cast
+
+  rm -f /usr/local/bin/forge
+  rm -f /usr/local/bin/cast
+  if ! command -v cargo &> /dev/null ; then
+    # Cargo not installed so move to /usr/local/bin
+    mv forge /usr/local/bin/forge
+    mv cast /usr/local/bin/cast
+  else
+    # Cargo is installed
+    # Will replace the existing binaries if they were installed via cargo, can be undone at any time by running cargo install again, if desired.
+    mv forge $HOME/.cargo/bin/forge
+    mv cast $HOME/.cargo/bin/cast
+  fi
+  
 else 
   FORGEUP_BRANCH=${FORGEUP_BRANCH-master}
   
@@ -71,6 +82,9 @@ else
   fi
 
   REPO_PATH="${FORGEUP_DIR}/${FORGEUP_REPO}"
+
+  rm -f /usr/local/bin/forge
+  rm -f /usr/local/bin/cast
 
   if [ -d $REPO_PATH ]; then
     # If the repo path exists move to it, git pull, and checkout the branch and cargo install local.
@@ -119,4 +133,4 @@ if [[ ":$PATH:" != *":${FORGEUP_DIR}:"* ]]; then
     echo >> $PROFILE && echo "export PATH=\"\$PATH:$FORGEUP_DIR\"" >> $PROFILE
 fi
 
-echo && echo "Detected your preferred shell is ${PREF_SHELL} and added forgeup to PATH. Run run source after this script runs, or start a new terminal session to use forgeup."
+echo && echo "Detected your preferred shell is ${PREF_SHELL} and added forgeup to PATH. Run 'source ${PROFILE}' or start a new terminal session to use forgeup."
