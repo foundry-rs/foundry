@@ -555,6 +555,21 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         Ok(())
     }
 
+    fn expect_revert(
+        &mut self,
+        inner: Vec<u8>,
+    ) -> Result<(), Capture<(ExitReason, Vec<u8>), Infallible>> {
+        self.add_debug(CheatOp::EXPECTREVERT);
+        if self.state().expected_revert.is_some() {
+            return Err(evm_error(
+                "You must call another function prior to expecting a second revert.",
+            ))
+        } else {
+            self.state_mut().expected_revert = Some(inner);
+        }
+        Ok(())
+    }
+
     /// Given a transaction's calldata, it tries to parse it as an [`HEVM cheatcode`](super::HEVM)
     /// call and modify the state accordingly.
     fn apply_cheatcode(
@@ -735,33 +750,18 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 self.state_mut().prank = None;
             }
             HEVMCalls::ExpectRevert0(inner) => {
-                self.add_debug(CheatOp::EXPECTREVERT);
-                if self.state().expected_revert.is_some() {
-                    return evm_error(
-                        "You must call another function prior to expecting a second revert.",
-                    )
-                } else {
-                    self.state_mut().expected_revert = Some(inner.0.to_vec());
+                if let Err(e) = self.expect_revert(inner.0.to_vec()) {
+                    return e
                 }
             }
             HEVMCalls::ExpectRevert1(inner) => {
-                self.add_debug(CheatOp::EXPECTREVERT);
-                if self.state().expected_revert.is_some() {
-                    return evm_error(
-                        "You must call another function prior to expecting a second revert.",
-                    )
-                } else {
-                    self.state_mut().expected_revert = Some(inner.0.to_vec());
+                if let Err(e) = self.expect_revert(inner.0.to_vec()) {
+                    return e
                 }
             }
             HEVMCalls::ExpectRevert2(inner) => {
-                self.add_debug(CheatOp::EXPECTREVERT);
-                if self.state().expected_revert.is_some() {
-                    return evm_error(
-                        "You must call another function prior to expecting a second revert.",
-                    )
-                } else {
-                    self.state_mut().expected_revert = Some(inner.0.as_bytes().to_vec());
+                if let Err(e) = self.expect_revert(inner.0.as_bytes().to_vec()) {
+                    return e
                 }
             }
             HEVMCalls::Deal(inner) => {

@@ -148,7 +148,7 @@ pub fn decode_revert(error: &[u8], maybe_abi: Option<&Abi>) -> Result<String> {
                                 if let Ok(decoded) = abi_error.decode(&error[4..]) {
                                     let inputs = decoded
                                         .iter()
-                                        .map(|token| format_token(token))
+                                        .map(format_token)
                                         .collect::<Vec<String>>()
                                         .join(", ");
                                     return Ok(format!("{}({})", abi_error.name, inputs))
