@@ -72,7 +72,7 @@ else
   REPO_PATH="${FORGEUP_DIR}/${FORGEUP_REPO}"
 
   if [ -d $REPO_PATH ]; then
-    # If the repo path exists move to it, git pull, and checkout the branch & cargo install local.
+    # If the repo path exists move to it, git pull, and checkout the branch and cargo install local.
     cd $REPO_PATH
     git pull
     git checkout ${FORGEUP_BRANCH}
