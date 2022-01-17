@@ -42,17 +42,19 @@ pub enum Output {
 pub struct ExecutionInfo<'a> {
     pub contracts: &'a BTreeMap<String, (Abi, Vec<u8>)>,
     pub identified_contracts: &'a mut BTreeMap<H160, (String, Abi)>,
-    pub funcs: BTreeMap<[u8; 4], Function>,
-    pub events: BTreeMap<H256, Event>,
-    pub errors: Abi,
+    pub funcs: &'a BTreeMap<[u8; 4], Function>,
+    pub events: &'a BTreeMap<H256, Event>,
+    pub errors: &'a Abi,
 }
 
 impl<'a> ExecutionInfo<'a> {
     pub fn new(
         contracts: &'a BTreeMap<String, (Abi, Vec<u8>)>,
         identified_contracts: &'a mut BTreeMap<H160, (String, Abi)>,
+        funcs: &'a BTreeMap<[u8; 4], Function>,
+        events: &'a BTreeMap<H256, Event>,
+        errors: &'a Abi,
     ) -> Self {
-        let (funcs, events, errors) = foundry_utils::flatten_funcs_and_events(contracts);
         Self { contracts, identified_contracts, funcs, events, errors }
     }
 }
@@ -304,7 +306,7 @@ impl CallTraceArena {
         // logs and calls in the correct order
         self.arena[node_idx].ordering.iter().for_each(|ordering| match ordering {
             LogCallOrder::Log(index) => {
-                self.arena[node_idx].print_log(*index, &exec_info.events, left);
+                self.arena[node_idx].print_log(*index, exec_info.events, left);
             }
             LogCallOrder::Call(index) => {
                 self.pretty_print(
@@ -450,7 +452,7 @@ impl CallTrace {
                     if self.addr == *CHEATCODE_ADDRESS && func.name == "expectRevert" {
                         // try to decode better than just `bytes` for `expectRevert`
                         if let Ok(decoded) =
-                            foundry_utils::decode_revert(&self.data, Some(&exec_info.errors))
+                            foundry_utils::decode_revert(&self.data, Some(exec_info.errors))
                         {
                             strings = decoded;
                         }
@@ -477,7 +479,7 @@ impl CallTrace {
                     )
                 } else if !self.output.is_empty() && !self.success {
                     if let Ok(decoded_error) =
-                        foundry_utils::decode_revert(&self.output[..], Some(&exec_info.errors))
+                        foundry_utils::decode_revert(&self.output[..], Some(exec_info.errors))
                     {
                         return Output::Token(vec![ethers::abi::Token::String(decoded_error)])
                     } else {
@@ -503,7 +505,7 @@ impl CallTrace {
 
             if !self.success {
                 if let Ok(decoded_error) =
-                    foundry_utils::decode_revert(&self.output[..], Some(&exec_info.errors))
+                    foundry_utils::decode_revert(&self.output[..], Some(exec_info.errors))
                 {
                     return Output::Token(vec![ethers::abi::Token::String(decoded_error)])
                 }
@@ -536,7 +538,7 @@ impl CallTrace {
 
         if !self.success {
             if let Ok(decoded_error) =
-                foundry_utils::decode_revert(&self.output[..], Some(&exec_info.errors))
+                foundry_utils::decode_revert(&self.output[..], Some(exec_info.errors))
             {
                 return Output::Token(vec![ethers::abi::Token::String(decoded_error)])
             }

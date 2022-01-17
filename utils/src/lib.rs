@@ -66,23 +66,24 @@ pub fn remove_extra_costs(gas: U256, calldata: &[u8]) -> U256 {
 }
 
 /// Flattens a group of contracts into maps of all events and functions
-pub fn flatten_funcs_and_events(
+pub fn flatten_known_contracts(
     contracts: &BTreeMap<String, (Abi, Vec<u8>)>,
 ) -> (BTreeMap<[u8; 4], Function>, BTreeMap<H256, Event>, Abi) {
     let flattened_funcs: BTreeMap<[u8; 4], Function> = contracts
         .iter()
-        .flat_map(|(_name, (abi, _code))| abi.functions().cloned().collect::<Vec<Function>>())
-        .collect::<Vec<Function>>()
-        .into_iter()
-        .map(|func| (func.short_signature(), func))
+        .flat_map(|(_name, (abi, _code))| {
+            abi.functions()
+                .map(|func| (func.short_signature(), func.clone()))
+                .collect::<BTreeMap<[u8; 4], Function>>()
+        })
         .collect();
 
     let flattened_events: BTreeMap<H256, Event> = contracts
         .iter()
-        .flat_map(|(_name, (abi, _code))| abi.events().cloned().collect::<Vec<Event>>())
-        .collect::<Vec<Event>>()
+        .flat_map(|(_name, (abi, _code))| abi.events().collect::<Vec<&Event>>())
+        .collect::<Vec<&Event>>()
         .into_iter()
-        .map(|event| (event.signature(), event))
+        .map(|event| (event.signature(), event.clone()))
         .collect();
 
     // We need this for better revert decoding, and want it in abi form

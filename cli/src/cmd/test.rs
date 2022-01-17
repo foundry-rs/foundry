@@ -209,6 +209,7 @@ fn test<A: ArtifactOutput + 'static>(
 
     let results = runner.test(&filter)?;
 
+    let (funcs, events, errors) = runner.execution_info;
     if json {
         let res = serde_json::to_string(&results)?;
         println!("{}", res);
@@ -270,8 +271,13 @@ fn test<A: ArtifactOutput + 'static>(
                             }
 
                             let mut ident = identified_contracts.clone();
-                            let mut exec_info =
-                                ExecutionInfo::new(&runner.known_contracts, &mut ident);
+                            let mut exec_info = ExecutionInfo::new(
+                                &runner.known_contracts,
+                                &mut ident,
+                                &funcs,
+                                &events,
+                                &errors,
+                            );
                             let vm = vm();
                             if verbosity > 4 || !result.success {
                                 add_newline = true;

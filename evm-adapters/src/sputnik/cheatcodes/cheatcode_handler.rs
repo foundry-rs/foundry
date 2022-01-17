@@ -1784,6 +1784,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
 #[cfg(test)]
 mod tests {
     use crate::{
+        call_tracing::ExecutionInfo,
         fuzz::FuzzedExecutor,
         sputnik::helpers::{vm, vm_no_limit, vm_tracing},
         test_helpers::COMPILED,
@@ -2042,7 +2043,9 @@ mod tests {
             ),
         );
         let mut identified = Default::default();
-        evm.traces()[1].pretty_print(0, &mapping, &mut identified, &evm, "");
+        let (funcs, events, errors) = foundry_utils::flatten_known_contracts(&mapping);
+        let mut exec_info = ExecutionInfo::new(&mapping, &mut identified, &funcs, &events, &errors);
+        evm.traces()[1].pretty_print(0, &mut exec_info, &evm, "");
     }
 
     #[test]
@@ -2101,6 +2104,8 @@ mod tests {
             ),
         );
         let mut identified = Default::default();
-        evm.traces()[1].pretty_print(0, &mapping, &mut identified, &evm, "");
+        let (funcs, events, errors) = foundry_utils::flatten_known_contracts(&mapping);
+        let mut exec_info = ExecutionInfo::new(&mapping, &mut identified, &funcs, &events, &errors);
+        evm.traces()[1].pretty_print(0, &mut exec_info, &evm, "");
     }
 }

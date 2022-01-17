@@ -8,10 +8,10 @@ use sputnik::{backend::Backend, Config};
 use ethers::solc::Artifact;
 
 use ethers::{
-    abi::Abi,
+    abi::{Abi, Event, Function},
     prelude::ArtifactOutput,
     solc::Project,
-    types::{Address, U256},
+    types::{Address, H256, U256},
 };
 
 use proptest::test_runner::TestRunner;
@@ -87,6 +87,7 @@ impl MultiContractRunnerBuilder {
         known_contracts.insert("VM_CONSOLE".to_string(), (HEVMCONSOLE_ABI.clone(), Vec::new()));
         known_contracts.insert("CONSOLE".to_string(), (CONSOLE_ABI.clone(), Vec::new()));
 
+        let execution_info = foundry_utils::flatten_known_contracts(&known_contracts);
         Ok(MultiContractRunner {
             contracts: deployable_contracts,
             known_contracts,
@@ -95,6 +96,7 @@ impl MultiContractRunnerBuilder {
             evm_cfg: self.evm_cfg.unwrap_or_else(Config::london),
             sender: self.sender,
             fuzzer: self.fuzzer,
+            execution_info,
         })
     }
 
@@ -136,6 +138,8 @@ pub struct MultiContractRunner {
     pub evm_opts: EvmOpts,
     /// The EVM revision config
     pub evm_cfg: Config,
+    /// All contract execution info, (functions, events, errors)
+    pub execution_info: (BTreeMap<[u8; 4], Function>, BTreeMap<H256, Event>, Abi),
     /// The fuzzer which will be used to run parametric tests (w/ non-0 solidity args)
     fuzzer: Option<TestRunner>,
     /// The address which will be used as the `from` field in all EVM calls
@@ -199,6 +203,7 @@ impl MultiContractRunner {
             contract,
             deploy_code,
             self.sender,
+            Some((&self.execution_info.0, &self.execution_info.1, &self.execution_info.2)),
         );
         runner.run_tests(filter, self.fuzzer.clone(), Some(&self.known_contracts))
     }
