@@ -246,13 +246,16 @@ fn test<A: ArtifactOutput + 'static>(
                     Colour::Red.paint(txt)
                 };
 
+                // adds a linebreak only if there were any traces or logs, so that the
+                // output does not look like 1 big block.
+                let mut add_newline = false;
                 println!("{} {} {}", status, name, result.kind.gas_used());
                 if verbosity > 1 && !result.logs.is_empty() {
+                    add_newline = true;
                     println!("Logs:");
                     for log in &result.logs {
                         println!("  {}", log);
                     }
-                    println!();
                 }
 
                 if verbosity > 2 {
@@ -260,8 +263,15 @@ fn test<A: ArtifactOutput + 'static>(
                         (&result.traces, &result.identified_contracts)
                     {
                         if !result.success && verbosity == 3 || verbosity > 3 {
+                            // add a new line if any logs were printed & to separate them from
+                            // the traces to be printed
+                            if !result.logs.is_empty() {
+                                println!();
+                            }
+
                             let mut ident = identified_contracts.clone();
                             if verbosity > 4 || !result.success {
+                                add_newline = true;
                                 println!("Traces:");
 
                                 // print setup calls as well
@@ -275,6 +285,7 @@ fn test<A: ArtifactOutput + 'static>(
                                     );
                                 });
                             } else if !traces.is_empty() {
+                                add_newline = true;
                                 println!("Traces:");
                                 traces.last().expect("no last but not empty").pretty_print(
                                     0,
@@ -286,6 +297,10 @@ fn test<A: ArtifactOutput + 'static>(
                             }
                         }
                     }
+                }
+
+                if add_newline {
+                    println!();
                 }
             }
         }
