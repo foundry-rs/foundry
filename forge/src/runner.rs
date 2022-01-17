@@ -267,6 +267,12 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
 
         let (address, mut evm, init_logs) = self.new_sputnik_evm()?;
 
+        let errors_abi = if let Some(contracts) = known_contracts {
+            foundry_utils::flatten_funcs_and_events(contracts).2
+        } else {
+            self.contract.clone()
+        };
+
         let mut logs = init_logs;
 
         let mut traces: Option<Vec<CallTraceArena>> = None;
@@ -319,7 +325,7 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
             func.clone(),
             (),
             0.into(),
-            Some(self.contract),
+            Some(&errors_abi),
         ) {
             Ok((_, status, gas_used, execution_logs)) => {
                 logs.extend(execution_logs);

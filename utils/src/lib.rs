@@ -4,14 +4,17 @@ use ethers_core::{
     abi::{
         self, parse_abi,
         token::{LenientTokenizer, StrictTokenizer, Tokenizer},
-        Abi, AbiParser, Function, Param, ParamType, Token,
+        Abi, AbiParser, Event, Function, Param, ParamType, Token,
     },
     types::*,
 };
 use ethers_etherscan::Client;
 use eyre::{Result, WrapErr};
 use serde::Deserialize;
-use std::{collections::HashSet, env::VarError};
+use std::{
+    collections::{BTreeMap, HashSet},
+    env::VarError,
+};
 
 const BASE_TX_COST: u64 = 21000;
 
@@ -60,6 +63,71 @@ pub fn remove_extra_costs(gas: U256, calldata: &[u8]) -> U256 {
         }
     }
     gas - calldata_cost - BASE_TX_COST
+}
+
+/// Flattens a group of contracts into maps of all events and functions
+pub fn flatten_funcs_and_events(
+    contracts: &BTreeMap<String, (Abi, Vec<u8>)>,
+) -> (BTreeMap<[u8; 4], Function>, BTreeMap<H256, Event>, Abi) {
+    let mut flattened_funcs: BTreeMap<[u8; 4], Function> = contracts
+        .iter()
+        .flat_map(|(_name, (abi, _code))| abi.functions().cloned().collect::<Vec<Function>>())
+        .collect::<Vec<Function>>()
+        .into_iter()
+        .map(|func| (func.short_signature(), func))
+        .collect();
+
+    let mut flattened_events: BTreeMap<H256, Event> = contracts
+        .iter()
+        .flat_map(|(_name, (abi, _code))| abi.events().cloned().collect::<Vec<Event>>())
+        .collect::<Vec<Event>>()
+        .into_iter()
+        .map(|event| (event.signature(), event))
+        .collect();
+
+    // We need this for better revert decoding, and want it in abi form
+    let mut errors_abi = Abi::default();
+    contracts.iter().for_each(|(_name, (abi, _code))| {
+        abi.errors().for_each(|error| {
+            let entry =
+                errors_abi.errors.entry(error.name.clone()).or_insert_with(Default::default);
+            entry.push(error.clone());
+        });
+    });
+
+    // add forge specific functions
+    #[cfg(feature = "sputnik")]
+    {
+        flattened_funcs.extend(
+            HEVM_ABI
+                .functions()
+                .cloned()
+                .map(|func| (func.short_signature(), func))
+                .collect::<BTreeMap<[u8; 4], Function>>(),
+        );
+        flattened_events.extend(
+            HEVM_ABI
+                .events()
+                .cloned()
+                .map(|event| (event.signature(), event))
+                .collect::<BTreeMap<H256, Event>>(),
+        );
+        flattened_events.extend(
+            HEVMCONSOLE_ABI
+                .events()
+                .cloned()
+                .map(|event| (event.signature(), event))
+                .collect::<BTreeMap<H256, Event>>(),
+        );
+        flattened_events.extend(
+            CONSOLE_ABI
+                .events()
+                .cloned()
+                .map(|event| (event.signature(), event))
+                .collect::<BTreeMap<H256, Event>>(),
+        );
+    }
+    (flattened_funcs, flattened_events, errors_abi)
 }
 
 /// Given an ABI encoded error string with the function signature `Error(string)`, it decodes

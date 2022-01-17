@@ -12,7 +12,7 @@ use foundry_utils::format_token;
 #[cfg(feature = "sputnik")]
 use crate::sputnik::cheatcodes::{
     cheatcode_handler::{CHEATCODE_ADDRESS, CONSOLE_ADDRESS},
-    CONSOLE_ABI, HEVMCONSOLE_ABI, HEVM_ABI,
+    CONSOLE_ABI, HEVM_ABI,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -160,72 +160,6 @@ impl CallTraceArena {
         });
     }
 
-    /// Flattens a group of contracts into maps of all events and functions
-    pub fn flatten_funcs_and_events(
-        contracts: &BTreeMap<String, (Abi, Vec<u8>)>,
-    ) -> (BTreeMap<[u8; 4], Function>, BTreeMap<H256, Event>, Abi) {
-        let mut flattened_funcs: BTreeMap<[u8; 4], Function> = contracts
-            .iter()
-            .flat_map(|(_name, (abi, _code))| abi.functions().cloned().collect::<Vec<Function>>())
-            .collect::<Vec<Function>>()
-            .into_iter()
-            .map(|func| (func.short_signature(), func))
-            .collect();
-
-        let mut flattened_events: BTreeMap<H256, Event> = contracts
-            .iter()
-            .flat_map(|(_name, (abi, _code))| abi.events().cloned().collect::<Vec<Event>>())
-            .collect::<Vec<Event>>()
-            .into_iter()
-            .map(|event| (event.signature(), event))
-            .collect();
-
-        // We need this for better revert decoding, and want it in abi form
-        let mut errors_abi = Abi::default();
-        contracts.iter().for_each(|(_name, (abi, _code))| {
-            abi.errors().for_each(|error| {
-                let entry =
-                    errors_abi.errors.entry(error.name.clone()).or_insert_with(Default::default);
-                entry.push(error.clone());
-            });
-        });
-
-        // add forge specific functions
-        #[cfg(feature = "sputnik")]
-        {
-            flattened_funcs.extend(
-                HEVM_ABI
-                    .functions()
-                    .cloned()
-                    .map(|func| (func.short_signature(), func))
-                    .collect::<BTreeMap<[u8; 4], Function>>(),
-            );
-            flattened_events.extend(
-                HEVM_ABI
-                    .events()
-                    .cloned()
-                    .map(|event| (event.signature(), event))
-                    .collect::<BTreeMap<H256, Event>>(),
-            );
-            flattened_events.extend(
-                HEVMCONSOLE_ABI
-                    .events()
-                    .cloned()
-                    .map(|event| (event.signature(), event))
-                    .collect::<BTreeMap<H256, Event>>(),
-            );
-            flattened_events.extend(
-                CONSOLE_ABI
-                    .events()
-                    .cloned()
-                    .map(|event| (event.signature(), event))
-                    .collect::<BTreeMap<H256, Event>>(),
-            );
-        }
-
-        (flattened_funcs, flattened_events, errors_abi)
-    }
-
     /// Pretty print a CallTraceArena
     ///
     /// `idx` is the call arena index to start at. Generally this will be 0, but if you want to
@@ -253,7 +187,7 @@ impl CallTraceArena {
     ) {
         let trace = &self.arena[idx].trace;
 
-        let (funcs, events, errors) = Self::flatten_funcs_and_events(contracts);
+        let (funcs, events, errors) = foundry_utils::flatten_funcs_and_events(contracts);
 
         #[cfg(feature = "sputnik")]
         {
