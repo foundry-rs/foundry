@@ -1800,8 +1800,9 @@ mod tests {
             evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
 
         // after the evm call is done, we call `logs` and print it all to the user
-        let (_, _, _, logs) =
-            evm.call::<(), _, _>(Address::zero(), addr, "test_log()", (), 0.into(), compiled.abi).unwrap();
+        let (_, _, _, logs) = evm
+            .call::<(), _, _>(Address::zero(), addr, "test_log()", (), 0.into(), compiled.abi)
+            .unwrap();
         let expected = [
             "Hi",
             "0x1234",
@@ -1843,8 +1844,9 @@ mod tests {
             evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
 
         // after the evm call is done, we call `logs` and print it all to the user
-        let (_, _, _, logs) =
-            evm.call::<(), _, _>(Address::zero(), addr, "test_log()", (), 0.into(), compiled.abi).unwrap();
+        let (_, _, _, logs) = evm
+            .call::<(), _, _>(Address::zero(), addr, "test_log()", (), 0.into(), compiled.abi)
+            .unwrap();
         let expected = [
             "0x1111111111111111111111111111111111111111",
             "Hi",
@@ -1858,8 +1860,9 @@ mod tests {
         .collect::<Vec<_>>();
         assert_eq!(logs, expected);
 
-        let (_, _, _, logs) =
-            evm.call::<(), _, _>(Address::zero(), addr, "test_log()", (), 0.into(), compiled.abi).unwrap();
+        let (_, _, _, logs) = evm
+            .call::<(), _, _>(Address::zero(), addr, "test_log()", (), 0.into(), compiled.abi)
+            .unwrap();
         assert_eq!(logs, expected);
     }
 
@@ -1872,8 +1875,9 @@ mod tests {
             evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
 
         // after the evm call is done, we call `logs` and print it all to the user
-        let (_, _, _, logs) =
-            evm.call::<(), _, _>(Address::zero(), addr, "test_log_types()", (), 0.into(), compiled.abi).unwrap();
+        let (_, _, _, logs) = evm
+            .call::<(), _, _>(Address::zero(), addr, "test_log_types()", (), 0.into(), compiled.abi)
+            .unwrap();
         let expected = ["String", "1337", "-20", "1245", "true"]
             .iter()
             .map(ToString::to_string)
@@ -1891,7 +1895,14 @@ mod tests {
 
         // after the evm call is done, we call `logs` and print it all to the user
         let (_, _, _, logs) = evm
-            .call::<(), _, _>(Address::zero(), addr, "test_log_elsewhere()", (), 0.into(), compiled.abi)
+            .call::<(), _, _>(
+                Address::zero(),
+                addr,
+                "test_log_elsewhere()",
+                (),
+                0.into(),
+                compiled.abi,
+            )
             .unwrap();
         let expected = ["0x1111111111111111111111111111111111111111", "Hi"]
             .iter()
@@ -1914,10 +1925,24 @@ mod tests {
 
         // ensure the storage slot is set at 10 anyway
         let (storage_contract, _, _, _) = evm
-            .call::<Address, _, _>(Address::zero(), addr, "store()(address)", (), 0.into(), compiled.abi)
+            .call::<Address, _, _>(
+                Address::zero(),
+                addr,
+                "store()(address)",
+                (),
+                0.into(),
+                compiled.abi,
+            )
             .unwrap();
         let (slot, _, _, _) = evm
-            .call::<U256, _, _>(Address::zero(), storage_contract, "slot0()(uint256)", (), 0.into(), compiled.abi)
+            .call::<U256, _, _>(
+                Address::zero(),
+                storage_contract,
+                "slot0()(uint256)",
+                (),
+                0.into(),
+                compiled.abi,
+            )
             .unwrap();
         assert_eq!(slot, 10.into());
 
@@ -1952,8 +1977,9 @@ mod tests {
         let (addr, _, _, _) =
             evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
 
-        let err =
-            evm.call::<(), _, _>(Address::zero(), addr, "testFFI()", (), 0.into(), compiled.abi).unwrap_err();
+        let err = evm
+            .call::<(), _, _>(Address::zero(), addr, "testFFI()", (), 0.into(), compiled.abi)
+            .unwrap_err();
         let reason = match err {
             crate::EvmError::Execution { reason, .. } => reason,
             _ => panic!("unexpected error"),
@@ -1983,7 +2009,7 @@ mod tests {
                 "recurseCall(uint256,uint256)",
                 (U256::from(2u32), U256::from(0u32)),
                 0u32.into(),
-                compiled.abi
+                compiled.abi,
             )
             .unwrap();
 
@@ -2042,7 +2068,7 @@ mod tests {
                 "recurseCreate(uint256,uint256)",
                 (U256::from(3u32), U256::from(0u32)),
                 0u32.into(),
-                compiled.abi
+                compiled.abi,
             )
             .unwrap();
 

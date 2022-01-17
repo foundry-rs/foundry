@@ -143,10 +143,15 @@ pub fn decode_revert(error: &[u8], maybe_abi: Option<&Abi>) -> Result<String> {
                     if let Some(abi) = maybe_abi {
                         for abi_error in abi.errors() {
                             if abi_error.signature()[0..4] == error[0..4] {
-                                // if we dont decode, dont return an error, try to decode as a string later
+                                // if we dont decode, dont return an error, try to decode as a
+                                // string later
                                 if let Ok(decoded) = abi_error.decode(&error[4..]) {
-                                    let inputs = decoded.iter().map(|token| { format_token(token) }).collect::<Vec<String>>().join(", ");
-                                    return Ok(format!("{}({})", abi_error.name, inputs));
+                                    let inputs = decoded
+                                        .iter()
+                                        .map(|token| format_token(token))
+                                        .collect::<Vec<String>>()
+                                        .join(", ");
+                                    return Ok(format!("{}({})", abi_error.name, inputs))
                                 }
                             }
                         }

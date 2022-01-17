@@ -313,25 +313,31 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
             logs.extend_from_slice(&setup_logs);
         }
 
-        let (status, reason, gas_used, logs) =
-            match evm.call::<(), _, _>(self.sender, address, func.clone(), (), 0.into(), Some(self.contract)) {
-                Ok((_, status, gas_used, execution_logs)) => {
+        let (status, reason, gas_used, logs) = match evm.call::<(), _, _>(
+            self.sender,
+            address,
+            func.clone(),
+            (),
+            0.into(),
+            Some(self.contract),
+        ) {
+            Ok((_, status, gas_used, execution_logs)) => {
+                logs.extend(execution_logs);
+                (status, None, gas_used, logs)
+            }
+            Err(err) => match err {
+                EvmError::Execution { reason, gas_used, logs: execution_logs } => {
                     logs.extend(execution_logs);
-                    (status, None, gas_used, logs)
+                    // add reverted logs
+                    logs.extend(evm.all_logs());
+                    (revert(&evm), Some(reason), gas_used, logs)
                 }
-                Err(err) => match err {
-                    EvmError::Execution { reason, gas_used, logs: execution_logs } => {
-                        logs.extend(execution_logs);
-                        // add reverted logs
-                        logs.extend(evm.all_logs());
-                        (revert(&evm), Some(reason), gas_used, logs)
-                    }
-                    err => {
-                        tracing::error!(?err);
-                        return Err(err.into())
-                    }
-                },
-            };
+                err => {
+                    tracing::error!(?err);
+                    return Err(err.into())
+                }
+            },
+        };
 
         self.update_traces(
             &mut traces,
@@ -421,7 +427,8 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
 
         // instantiate the fuzzed evm in line
         let evm = FuzzedExecutor::new(&mut evm, runner, self.sender);
-        let FuzzTestResult { cases, test_error } = evm.fuzz(func, address, should_fail, Some(self.contract));
+        let FuzzTestResult { cases, test_error } =
+            evm.fuzz(func, address, should_fail, Some(self.contract));
 
         let evm = evm.into_inner();
         if let Some(ref error) = test_error {

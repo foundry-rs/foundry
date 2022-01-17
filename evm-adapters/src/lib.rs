@@ -174,8 +174,14 @@ pub trait Evm<State> {
     /// see whether the `failed` state var is set. This is to allow compatibility
     /// with dapptools-style DSTest smart contracts to preserve emitting of logs
     fn failed(&mut self, address: Address) -> Result<bool> {
-        let (failed, _, _, _) =
-            self.call::<bool, _, _>(Address::zero(), address, "failed()(bool)", (), 0.into(), None)?;
+        let (failed, _, _, _) = self.call::<bool, _, _>(
+            Address::zero(),
+            address,
+            "failed()(bool)",
+            (),
+            0.into(),
+            None,
+        )?;
         Ok(failed)
     }
 
@@ -243,11 +249,25 @@ mod test_helpers {
             evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
 
         let (_, status1, _, _) = evm
-            .call::<(), _, _>(Address::zero(), addr, "greet(string)", "hi".to_owned(), 0.into(), compiled.abi)
+            .call::<(), _, _>(
+                Address::zero(),
+                addr,
+                "greet(string)",
+                "hi".to_owned(),
+                0.into(),
+                compiled.abi,
+            )
             .unwrap();
 
         let (retdata, status2, _, _) = evm
-            .call::<String, _, _>(Address::zero(), addr, "greeting()(string)", (), 0.into(), compiled.abi)
+            .call::<String, _, _>(
+                Address::zero(),
+                addr,
+                "greeting()(string)",
+                (),
+                0.into(),
+                compiled.abi,
+            )
             .unwrap();
         assert_eq!(retdata, "hi");
 
@@ -264,8 +284,9 @@ mod test_helpers {
         // call the setup function to deploy the contracts inside the test
         let status1 = evm.setup(addr).unwrap().0;
 
-        let (_, status2, _, _) =
-            evm.call::<(), _, _>(Address::zero(), addr, "testGreeting()", (), 0.into(), compiled.abi).unwrap();
+        let (_, status2, _, _) = evm
+            .call::<(), _, _>(Address::zero(), addr, "testGreeting()", (), 0.into(), compiled.abi)
+            .unwrap();
 
         vec![status1, status2].iter().for_each(|reason| {
             let res = evm.check_success(addr, reason, false);
