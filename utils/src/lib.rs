@@ -178,6 +178,8 @@ pub fn get_func(sig: &str) -> Result<Function> {
     Ok(func.clone())
 }
 
+// Given a function name, address, and args, tries to parse it as a `Function` by fetching the
+// abi from etherscan. If the address is a proxy, fetches the ABI of the implementation contract.
 pub async fn get_func_etherscan(
     function_name: &str,
     contract: Address,
@@ -186,6 +188,14 @@ pub async fn get_func_etherscan(
     etherscan_api_key: String,
 ) -> Result<Function> {
     let client = Client::new(chain, etherscan_api_key)?;
+
+    let metadata = &client.contract_source_code(contract).await?.items[0];
+    let contract = if metadata.implementation.is_empty() {
+        contract
+    } else {
+        metadata.implementation.parse::<Address>()?
+    };
+
     let abi = client.contract_abi(contract).await?;
     let funcs = abi.functions.get(function_name).unwrap();
 
