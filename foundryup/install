@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+set -e
+
+echo Installing foundryup...
+
+FOUNDRY_DIR=${FOUNDRY_DIR-"$HOME/.foundry"}
+FOUNDRY_BIN_DIR="$FOUNDRY_DIR/bin"
+
+FOUNDRYUP='#!/usr/bin/env bash
+set -e
+
+FOUNDRY_DIR=${FOUNDRY_DIR-"$HOME/.foundry"}
+FOUNDRY_BIN_DIR="$FOUNDRY_DIR/bin"
+
+while [[ $1 ]]; do
+  case $1 in
+    --)               shift; break;;
+
+    -r|--repo)        shift; FOUNDRYUP_REPO=$1;;
+    -b|--branch)      shift; FOUNDRYUP_BRANCH=$1;;
+    -v|--version)     shift; FOUNDRYUP_VERSION=$1;;
+
+    *) printf "foundryup: internal error: %q\\n" "$1"; exit 1
+  esac; shift
+done
+
+FOUNDRYUP_REPO=${FOUNDRYUP_REPO-gakonst/foundry}
+
+if [[ "$FOUNDRYUP_REPO" == "gakonst/foundry" && -z "$FOUNDRYUP_BRANCH" ]]; then 
+  FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION-nightly}
+
+  PLATFORM="$(uname -s)"
+  case $PLATFORM in
+    Linux)
+      PLATFORM="linux"
+      ;;
+    Darwin)
+      PLATFORM="darwin"
+      ;;
+    *)
+      echo "foundryup: unsupported platform: $PLATFORM"
+      exit 1  
+      ;;
+  esac
+
+  ARCHITECTURE="$(uname -m)"
+
+  if [ "${ARCHITECTURE}" = "x86_64" ]; then
+    # Redirect stderr to /dev/null to avoid printing errors if non Rosetta.
+    if [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = "1" ]; then
+      ARCHITECTURE="arm64" # Rosetta.
+    else
+      ARCHITECTURE="amd64" # Intel.
+    fi 
+  elif [ "${ARCHITECTURE}" = "arm64" ]; then
+    ARCHITECTURE="arm64" # Arm.
+  else
+    ARCHITECTURE="amd64" # Amd.
+  fi
+
+  # Download the release tarball from the repository, unpack it
+  curl -L https://github.com/${FOUNDRYUP_REPO}/releases/download/${FOUNDRYUP_VERSION}/foundry_${FOUNDRYUP_VERSION}_${PLATFORM}_${ARCHITECTURE}.tar.gz | tar xvz
+
+  mv forge $FOUNDRY_BIN_DIR/forge
+  mv cast $FOUNDRY_BIN_DIR/cast
+else 
+  FOUNDRYUP_BRANCH=${FOUNDRYUP_BRANCH-master}
+  
+  if ! command -v cargo &> /dev/null ; then
+    # Error if cargo is not already installed.
+    echo "foundryup: cargo is not installed. Please install it first."
+    exit 1
+  fi
+
+  REPO_PATH="${FOUNDRY_DIR}/${FOUNDRYUP_REPO}"
+
+  # Delete any previous installations if they exist as they will now be using one from cargo and we dont want conflicts
+  rm -f $FOUNDRY_BIN_DIR/forge
+  rm -f $FOUNDRY_BIN_DIR/cast
+
+  if [ -d $REPO_PATH ]; then
+    # If the repo path exists move to it, git pull, and checkout the branch and cargo install local.
+    cd $REPO_PATH
+    git pull
+    git checkout ${FOUNDRYUP_BRANCH}
+    git pull
+    cargo install --path ./cli --bins --locked --force
+  else
+    # Repo path did not exist, grab the author from the repo, make a directory in .foundryup, cd to it, clone and install.
+    IFS="/" read -ra AUTHOR <<< "$FOUNDRYUP_REPO"
+    mkdir -p "$FOUNDRY_DIR/$AUTHOR"
+    cd "$FOUNDRY_DIR/$AUTHOR"
+    git clone https://github.com/${FOUNDRYUP_REPO}
+    cd $REPO_PATH
+    git checkout ${FOUNDRYUP_BRANCH}
+    cargo install --path ./cli --bins --locked --force
+  fi
+fi'
+
+BINARY="$FOUNDRY_BIN_DIR/foundryup"
+
+# Create the foundry directory and foundryup binary file if it doesn't exist.
+mkdir -p $FOUNDRY_BIN_DIR
+echo "$FOUNDRYUP" > $BINARY
+chmod +x $BINARY
+
+# Store the correct profile file (i.e. .profile for bash or .zshrc for ZSH).
+case $SHELL in
+*/zsh)
+    PROFILE=$HOME/.zshrc
+    PREF_SHELL=zsh
+    ;;
+*/bash)
+    PROFILE=$HOME/.profile
+    PREF_SHELL=bash
+    ;;
+*)
+    echo "foundryup: could not detect shell, manually add ${FOUNDRY_BIN_DIR} to your PATH."
+    exit 1
+esac
+
+# Only add foundryup if it isn't already in PATH.
+if [[ ":$PATH:" != *":${FOUNDRY_BIN_DIR}:"* ]]; then
+    # Add the foundryup directory to the path and ensure the old PATH variables remain.
+    echo >> $PROFILE && echo "export PATH=\"\$PATH:$FOUNDRY_BIN_DIR\"" >> $PROFILE
+fi
+
+echo && echo "Detected your preferred shell is ${PREF_SHELL} and added foundryup to PATH. Run 'source ${PROFILE}' or start a new terminal session to use foundryup."
+echo "Then, simply run 'foundryup' to install foundry."
