@@ -18,18 +18,17 @@ Foundry consists of:
 
 ![demo](./assets/demo.svg)
 
+## Installation 
+
+```
+curl https://raw.githubusercontent.com/gakonst/foundry/master/forgeup/install | bash && forgeup
+```
+
+Just get forgeup, the Foundry toolchain installer, and use it to install the latest `forge` and `cast` binaries.
+
+Advanced ways to use `forgeup` and other documentation can be found in the [forgeup package](./forgeup/README.md). Happy forging!
+
 ## Forge
-
-```
-cargo install --git https://github.com/gakonst/foundry --bin forge --locked
-```
-
-If you are on a x86/x86_64 Unix machine, you can also use `--features=solc-asm`
-to enable Sha2 Assembly instructions, which further speedup the compilation pipeline cache.
-
-We also recommend using [forgeup](https://github.com/transmissions11/forgeup)
-for managing various versions of Forge, so that you can easily test out bleeding edge changes in open pull requests or
-forks from contributors.
 
 More documentation can be found in the [forge package](./forge/README.md) and in the [CLI README](./cli/README.md).
 
@@ -75,12 +74,6 @@ whereas Forge took 9.449 (~4s cached)
 ## Cast
 
 Cast is a swiss army knife for interacting with Ethereum applications from the command line.
-
-```shell
-cargo install --git https://github.com/gakonst/foundry --bin cast
-// Get USDC's total supply
-cast call 0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48 "totalSupply()(uint256)" --rpc-url <..your node url>
-```
 
 More documentation can be found in the [cast package](./cast/README.md).
 

@@ -134,9 +134,13 @@ which implements the following methods:
 - `function etch(address where, bytes memory what)`: Sets the contract code at
   some address contract code
 
-- `function prank(address from)`: Performs the next smart contract call as another address (prank just changes msg.sender. Tx still occurs as normal)
+- `function prank(address sender)`: Performs the next smart contract call as another address (prank just changes msg.sender. Tx still occurs as normal)
 
-- `function startPrank(address from)`: Performs smart contract calls as another address. The account impersonation lasts until the end of the transaction, or until `stopPrank` is called.
+- `function prank(address sender, address origin)`: Performs the next smart contract call setting both `msg.sender` and `tx.origin`.
+
+- `function startPrank(address sender)`: Performs smart contract calls as another address. The account impersonation lasts until the end of the transaction, or until `stopPrank` is called.
+
+- `function startPrank(address sender, address origin)`: Performs smart contract calls as another address, while also setting `tx.origin`. The account impersonation lasts until the end of the transaction, or until `stopPrank` is called.
 
 - `function stopPrank()`: Stop calling smart contracts with the address set at `startPrank`
 

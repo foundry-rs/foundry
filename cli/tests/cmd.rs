@@ -38,6 +38,7 @@ forgetest!(can_clean_hardhat, PathStyle::HardHat, |prj: TestProject, mut cmd: Te
 });
 
 // test against a local checkout, useful to debug with local ethers-rs patch
+#[ignore]
 forgetest!(can_compile_local_spells, |_: TestProject, mut cmd: TestCommand| {
     let current_dir = std::env::current_dir().unwrap();
     let root = current_dir
@@ -63,20 +64,22 @@ forgetest!(can_compile_local_spells, |_: TestProject, mut cmd: TestCommand| {
     cmd.print_output();
 });
 
-#[test]
-fn find_bin_diff() {
-    let a = "0x608060405260016000806101000a81548160ff02191690831515021790555034801561002a57600080fd5b5060cd806100396000396000f3fe6080604052348015600f57600080fd5b506004361060325760003560e01c8063ba414fa6146037578063fa7626d4146055575b600080fd5b603d6073565b60405180821515815260200191505060405180910390f35b605b6086565b60405180821515815260200191505060405180910390f35b600060019054906101000a900460ff1681565b60008054906101000a900460ff168156fea2646970667358221220\
-    f205d5ae7885750ab20a24d6e7556df112a28020037d3332b2bc32acdc5633a2\
-    \
-    64736f6c634300060c0033";
-    let b = "0x608060405260016000806101000a81548160ff02191690831515021790555034801561002a57600080fd5b5060cd806100396000396000f3fe6080604052348015600f57600080fd5b506004361060325760003560e01c8063ba414fa6146037578063fa7626d4146055575b600080fd5b603d6073565b60405180821515815260200191505060405180910390f35b605b6086565b60405180821515815260200191505060405180910390f35b600060019054906101000a900460ff1681565b60008054906101000a900460ff168156fea2646970667358221220\
-    6363f82f4f9257abaf49bd09c1fc0c655e002ae464a00255e63a14b9d6f906b1\
-    64736f6c634300060c0033";
 
-    for (idx, (l, r)) in a.chars().zip(b.chars()).enumerate() {
-        if l != r {
-            println!("{}", &a[..idx]);
-            break
-        }
-    }
-}
+#[ignore]
+forgetest!(can_compile_local_tribe, |_: TestProject, mut cmd: TestCommand| {
+    let current_dir = std::env::current_dir().unwrap();
+    let root = current_dir
+        .join("../../foundry-integration-tests/testdata/tribe-turbo")
+        .to_string_lossy()
+        .to_string();
+    println!("project root: \"{}\"", root);
+
+
+    cmd.args([
+        "build",
+        "--root",
+        root.as_str(),
+        "--force",
+    ]);
+    cmd.print_output();
+});

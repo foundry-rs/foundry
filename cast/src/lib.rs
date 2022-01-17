@@ -3,8 +3,8 @@
 //! TODO
 use chrono::NaiveDateTime;
 use ethers_core::{
-    abi::{AbiParser, Token},
-    types::*,
+    abi::{Abi, AbiParser, Token},
+    types::{Chain, *},
     utils::{self, keccak256},
 };
 
@@ -466,6 +466,16 @@ where
     }
 }
 
+pub struct InterfaceSource {
+    pub name: String,
+    pub source: String,
+}
+
+pub enum InterfacePath {
+    Local(String),
+    Etherscan { address: Address, chain: Chain, api_key: String },
+}
+
 pub struct SimpleCast;
 impl SimpleCast {
     /// Converts UTF-8 text input to hex
@@ -480,9 +490,73 @@ impl SimpleCast {
         let s: String = s.as_bytes().to_hex();
         format!("0x{}", s)
     }
+    /// Generates an interface in solidity from either a local file ABI or a verified contract on
+    /// Etherscan. It returns a vector of [`InterfaceSource`] structs that contain the source of the
+    /// interface and their name.
+    /// ```no_run
+    /// use cast::SimpleCast as Cast;
+    /// use cast::InterfacePath;
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let path = InterfacePath::Local("utils/testdata/interfaceTestABI.json".to_owned());
+    /// let interfaces= Cast::generate_interface(path).await?;
+    /// println!("interface {} {{\n {}\n}}", interfaces[0].name, interfaces[0].source);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn generate_interface(
+        address_or_path: InterfacePath,
+    ) -> Result<Vec<InterfaceSource>> {
+        let (contract_abis, contract_names): (Vec<Abi>, Vec<String>) = match address_or_path {
+            InterfacePath::Local(path) => {
+                let file = std::fs::read_to_string(&path).wrap_err("unable to read abi file")?;
+                (
+                    vec![serde_json::from_str(&file)
+                        .wrap_err("unable to parse json ABI from file")?],
+                    vec!["Interface".to_owned()],
+                )
+            }
+            InterfacePath::Etherscan { address, chain, api_key } => {
+                let client = Client::new(chain, api_key)?;
 
+                // get the source
+                let contract_source = match client.contract_source_code(address).await {
+                    Ok(src) => src,
+                    Err(err) => {
+                        let msg = err.to_string();
+                        if msg.contains("Invalid API Key") {
+                            eyre::bail!("Invalid Etherscan API key. Did you set it correctly? You may be using an API key for another Etherscan API chain (e.g. Ethereum API key for Polygonscan).")
+                        } else {
+                            eyre::bail!(err)
+                        }
+                    }
+                };
+
+                if contract_source
+                    .items
+                    .iter()
+                    .any(|item| item.abi == "Contract source code not verified")
+                {
+                    eyre::bail!("Contract source code at {:?} on {} not verified. Maybe you have selected the wrong chain?", address, chain)
+                }
+
+                let contract_source_names = contract_source
+                    .items
+                    .iter()
+                    .map(|item| item.contract_name.clone())
+                    .collect::<Vec<String>>();
+                (contract_source.abis()?, contract_source_names)
+            }
+        };
+        contract_abis
+            .iter()
+            .zip(&contract_names)
+            .map(|(contract_abi, contract_name)| {
+                let interface_source = foundry_utils::abi_to_solidity(contract_abi, contract_name)?;
+                Ok(InterfaceSource { name: contract_name.to_owned(), source: interface_source })
+            })
+            .collect::<Result<Vec<InterfaceSource>>>()
+    }
     /// Converts hex data into text data
-    ///
     /// ```
     /// use cast::SimpleCast as Cast;
     ///

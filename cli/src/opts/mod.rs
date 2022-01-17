@@ -17,6 +17,36 @@ use eyre::Result;
 
 const FLASHBOTS_URL: &str = "https://rpc.flashbots.net";
 
+// Helper for exposing enum values for `Chain`
+#[derive(Debug, Clone, Parser)]
+pub struct ClapChain {
+    #[clap(
+        short = 'c',
+        long = "chain",
+        env = "CHAIN",
+        default_value = "mainnet",
+        // if Chain implemented ArgEnum, we'd get this for free
+        possible_values = [
+            "mainnet",
+            "ropsten",
+            "rinkeby",
+            "goerli",
+            "kovan",
+            "xdai",
+            "polygon",
+            "polygon_mumbai",
+            "avalanche",
+            "avalanche_fuji",
+            "sepolia",
+            "moonbeam",
+            "moonbeam_dev",
+            "moonriver",
+            "optimism",
+            "optimism-kovan"
+        ])]
+    pub inner: Chain,
+}
+
 #[derive(Parser, Debug, Clone)]
 pub struct EthereumOpts {
     #[clap(env = "ETH_RPC_URL", long = "rpc-url", help = "The tracing / archival node's URL")]

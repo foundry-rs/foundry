@@ -16,7 +16,7 @@ integration-tests-testdata: $(INTEGRATION_TESTS_REPOS)
 $(INTEGRATION_TESTS_REPOS):
 	@FOLDER=$(shell dirname "$0")/integration-tests/testdata/$(lastword $(subst /, ,$@));\
 	if [ ! -d $$FOLDER ] ; then git clone --depth 1 --recursive https://github.com/$@ $$FOLDER;\
-	else cd $$FOLDER; git pull --recurse-submodules; fi
+	else cd $$FOLDER; git pull && git submodule update --recursive; fi
 
 testdata: integration-tests-testdata
 
