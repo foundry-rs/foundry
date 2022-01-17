@@ -15,8 +15,15 @@ pub mod test_helpers {
     use ethers::{
         prelude::Lazy,
         solc::{CompilerOutput, Project, ProjectPathsConfig},
+        types::U256,
+    };
+    use evm_adapters::{
+        evm_opts::{Env, EvmOpts, EvmType},
+        sputnik::helpers::VICINITY,
+        FAUCET_ACCOUNT,
     };
     use regex::Regex;
+    use sputnik::backend::MemoryBackend;
 
     pub static COMPILED: Lazy<CompilerOutput> = Lazy::new(|| {
         // NB: should we add a test-helper function that makes creating these
@@ -25,6 +32,21 @@ pub mod test_helpers {
             ProjectPathsConfig::builder().root("testdata").sources("testdata").build().unwrap();
         let project = Project::builder().paths(paths).ephemeral().no_artifacts().build().unwrap();
         project.compile().unwrap().output()
+    });
+
+    pub static EVM_OPTS: Lazy<EvmOpts> = Lazy::new(|| EvmOpts {
+        env: Env { gas_limit: 18446744073709551615, chain_id: 1, ..Default::default() },
+        initial_balance: U256::MAX,
+        evm_type: EvmType::Sputnik,
+        ..Default::default()
+    });
+
+    pub static BACKEND: Lazy<MemoryBackend<'static>> = Lazy::new(|| {
+        let mut backend = MemoryBackend::new(&*VICINITY, Default::default());
+        // max out the balance of the faucet
+        let faucet = backend.state_mut().entry(*FAUCET_ACCOUNT).or_insert_with(Default::default);
+        faucet.balance = U256::MAX;
+        backend
     });
 
     pub struct Filter {

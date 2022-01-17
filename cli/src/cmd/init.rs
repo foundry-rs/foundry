@@ -2,14 +2,18 @@
 
 use super::install;
 use crate::{cmd::Cmd, opts::forge::Dependency};
-use clap::Parser;
+use clap::{Parser, ValueHint};
 use foundry_config::Config;
+
 use std::{path::PathBuf, process::Command, str::FromStr};
 
 /// Command to initialize a new forge project
 #[derive(Debug, Clone, Parser)]
 pub struct InitArgs {
-    #[clap(help = "the project's root path, default being the current working directory")]
+    #[clap(
+    help = "the project's root path, default being the current working directory",
+    value_hint = ValueHint::DirPath
+    )]
     root: Option<PathBuf>,
     #[clap(help = "optional solidity template to start from", long, short)]
     template: Option<String>,

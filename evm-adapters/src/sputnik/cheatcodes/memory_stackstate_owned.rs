@@ -28,6 +28,18 @@ pub struct ExpectedEmit {
     pub found: bool,
 }
 
+#[derive(Clone, Default, Debug)]
+pub struct Prank {
+    /// Address of the contract that called prank
+    pub prank_caller: H160,
+    /// Address to set msg.sender to
+    pub new_caller: H160,
+    /// New origin to use
+    pub new_origin: Option<H160>,
+    /// Call depth at which the prank was called
+    pub depth: usize,
+}
+
 /// This struct implementation is copied from [upstream](https://github.com/rust-blockchain/evm/blob/5ecf36ce393380a89c6f1b09ef79f686fe043624/src/executor/stack/state.rs#L412) and modified to own the Backend type.
 ///
 /// We had to copy it so that we can modify the Stack's internal backend, because
@@ -47,10 +59,10 @@ pub struct MemoryStackStateOwned<'config, B> {
     pub traces: Vec<CallTraceArena>,
     /// Expected revert storage of bytes
     pub expected_revert: Option<Vec<u8>>,
-    /// Msg.sender of next call
-    pub next_msg_sender: Option<H160>,
-    /// Tuple of (address that called startPrank, new address to use, depth)
-    pub msg_sender: Option<(H160, H160, usize)>,
+    /// Next call's prank
+    pub next_prank: Option<Prank>,
+    /// StartPrank information
+    pub prank: Option<Prank>,
     /// List of accesses done during a call
     pub accesses: Option<RecordAccess>,
     /// All logs accumulated (regardless of revert status)
@@ -121,8 +133,8 @@ impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
             trace_index: 1,
             traces: vec![Default::default()],
             expected_revert: None,
-            next_msg_sender: None,
-            msg_sender: None,
+            next_prank: None,
+            prank: None,
             accesses: None,
             all_logs: Default::default(),
             expected_emits: Default::default(),
