@@ -515,14 +515,15 @@ pub fn abi_to_solidity(contract_abi: &Abi, mut contract_name: &str) -> Result<St
                 _ => "",
             };
 
-            if outputs.is_empty() {
-                format!("function {}({}) {} external;", function.name, inputs, mutability)
-            } else {
-                format!(
-                    "function {}({}) {} external returns ({});",
-                    function.name, inputs, mutability, outputs
-                )
+            let mut func = format!("function {}({})", function.name, inputs);
+            if !mutability.is_empty() {
+                func = format!("{} {}", func, mutability);
             }
+            func = format!("{} external", func);
+            if !outputs.is_empty() {
+                func = format!("{} returns ({})", func, outputs);
+            }
+            format!("{};", func)
         })
         .collect::<Vec<_>>()
         .join("\n    ");
