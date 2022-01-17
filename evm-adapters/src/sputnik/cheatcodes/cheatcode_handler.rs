@@ -734,7 +734,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 self.add_debug(CheatOp::STOPPRANK);
                 self.state_mut().prank = None;
             }
-            HEVMCalls::ExpectRevert(inner) => {
+            HEVMCalls::ExpectRevert0(inner) => {
                 self.add_debug(CheatOp::EXPECTREVERT);
                 if self.state().expected_revert.is_some() {
                     return evm_error(
@@ -742,6 +742,26 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                     )
                 } else {
                     self.state_mut().expected_revert = Some(inner.0.to_vec());
+                }
+            }
+            HEVMCalls::ExpectRevert1(inner) => {
+                self.add_debug(CheatOp::EXPECTREVERT);
+                if self.state().expected_revert.is_some() {
+                    return evm_error(
+                        "You must call another function prior to expecting a second revert.",
+                    )
+                } else {
+                    self.state_mut().expected_revert = Some(inner.0.to_vec());
+                }
+            }
+            HEVMCalls::ExpectRevert2(inner) => {
+                self.add_debug(CheatOp::EXPECTREVERT);
+                if self.state().expected_revert.is_some() {
+                    return evm_error(
+                        "You must call another function prior to expecting a second revert.",
+                    )
+                } else {
+                    self.state_mut().expected_revert = Some(inner.0.as_bytes().to_vec());
                 }
             }
             HEVMCalls::Deal(inner) => {
@@ -824,7 +844,11 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         };
 
         self.fill_trace(&trace, true, Some(res.clone()), pre_index);
-
+        // cheatcodes should cost 0 gas
+        if let Some(new_trace) = &trace {
+            let trace = &mut self.state_mut().trace_mut().arena[new_trace.idx].trace;
+            trace.cost = 0;
+        }
         // TODO: Add more cheat codes.
         Capture::Exit((ExitReason::Succeed(ExitSucceed::Stopped), res))
     }
@@ -1777,7 +1801,7 @@ mod tests {
 
         // after the evm call is done, we call `logs` and print it all to the user
         let (_, _, _, logs) =
-            evm.call::<(), _, _>(Address::zero(), addr, "test_log()", (), 0.into()).unwrap();
+            evm.call::<(), _, _>(Address::zero(), addr, "test_log()", (), 0.into(), compiled.abi).unwrap();
         let expected = [
             "Hi",
             "0x1234",
@@ -1820,7 +1844,7 @@ mod tests {
 
         // after the evm call is done, we call `logs` and print it all to the user
         let (_, _, _, logs) =
-            evm.call::<(), _, _>(Address::zero(), addr, "test_log()", (), 0.into()).unwrap();
+            evm.call::<(), _, _>(Address::zero(), addr, "test_log()", (), 0.into(), compiled.abi).unwrap();
         let expected = [
             "0x1111111111111111111111111111111111111111",
             "Hi",
@@ -1835,7 +1859,7 @@ mod tests {
         assert_eq!(logs, expected);
 
         let (_, _, _, logs) =
-            evm.call::<(), _, _>(Address::zero(), addr, "test_log()", (), 0.into()).unwrap();
+            evm.call::<(), _, _>(Address::zero(), addr, "test_log()", (), 0.into(), compiled.abi).unwrap();
         assert_eq!(logs, expected);
     }
 
@@ -1849,7 +1873,7 @@ mod tests {
 
         // after the evm call is done, we call `logs` and print it all to the user
         let (_, _, _, logs) =
-            evm.call::<(), _, _>(Address::zero(), addr, "test_log_types()", (), 0.into()).unwrap();
+            evm.call::<(), _, _>(Address::zero(), addr, "test_log_types()", (), 0.into(), compiled.abi).unwrap();
         let expected = ["String", "1337", "-20", "1245", "true"]
             .iter()
             .map(ToString::to_string)
@@ -1867,7 +1891,7 @@ mod tests {
 
         // after the evm call is done, we call `logs` and print it all to the user
         let (_, _, _, logs) = evm
-            .call::<(), _, _>(Address::zero(), addr, "test_log_elsewhere()", (), 0.into())
+            .call::<(), _, _>(Address::zero(), addr, "test_log_elsewhere()", (), 0.into(), compiled.abi)
             .unwrap();
         let expected = ["0x1111111111111111111111111111111111111111", "Hi"]
             .iter()
@@ -1890,10 +1914,10 @@ mod tests {
 
         // ensure the storage slot is set at 10 anyway
         let (storage_contract, _, _, _) = evm
-            .call::<Address, _, _>(Address::zero(), addr, "store()(address)", (), 0.into())
+            .call::<Address, _, _>(Address::zero(), addr, "store()(address)", (), 0.into(), compiled.abi)
             .unwrap();
         let (slot, _, _, _) = evm
-            .call::<U256, _, _>(Address::zero(), storage_contract, "slot0()(uint256)", (), 0.into())
+            .call::<U256, _, _>(Address::zero(), storage_contract, "slot0()(uint256)", (), 0.into(), compiled.abi)
             .unwrap();
         assert_eq!(slot, 10.into());
 
@@ -1912,7 +1936,7 @@ mod tests {
                     evm.as_mut().call_unchecked(Address::zero(), addr, func, (), 0.into()).unwrap();
                 assert!(evm.as_mut().check_success(addr, &reason, should_fail));
             } else {
-                assert!(evm.fuzz(func, addr, should_fail).is_ok());
+                assert!(evm.fuzz(func, addr, should_fail, Some(abi)).is_ok());
             }
 
             evm.as_mut().reset(state.clone());
@@ -1929,7 +1953,7 @@ mod tests {
             evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
 
         let err =
-            evm.call::<(), _, _>(Address::zero(), addr, "testFFI()", (), 0.into()).unwrap_err();
+            evm.call::<(), _, _>(Address::zero(), addr, "testFFI()", (), 0.into(), compiled.abi).unwrap_err();
         let reason = match err {
             crate::EvmError::Execution { reason, .. } => reason,
             _ => panic!("unexpected error"),
@@ -1959,6 +1983,7 @@ mod tests {
                 "recurseCall(uint256,uint256)",
                 (U256::from(2u32), U256::from(0u32)),
                 0u32.into(),
+                compiled.abi
             )
             .unwrap();
 
@@ -2017,6 +2042,7 @@ mod tests {
                 "recurseCreate(uint256,uint256)",
                 (U256::from(3u32), U256::from(0u32)),
                 0u32.into(),
+                compiled.abi
             )
             .unwrap();
 

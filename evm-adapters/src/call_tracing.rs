@@ -452,7 +452,7 @@ impl CallTrace {
                                 #[cfg(feature = "sputnik")]
                                 if self.addr == *CHEATCODE_ADDRESS && func.name == "expectRevert" {
                                     // try to decode better than just `bytes` for `expectRevert`
-                                    if let Ok(decoded) = foundry_utils::decode_revert(&self.data) {
+                                    if let Ok(decoded) = foundry_utils::decode_revert(&self.data, Some(abi)) {
                                         strings = decoded;
                                     }
                                 }
@@ -479,7 +479,7 @@ impl CallTrace {
                                 )
                             } else if !self.output.is_empty() && !self.success {
                                 if let Ok(decoded_error) =
-                                    foundry_utils::decode_revert(&self.output[..])
+                                    foundry_utils::decode_revert(&self.output[..], Some(abi))
                                 {
                                     return Output::Token(vec![ethers::abi::Token::String(
                                         decoded_error,
@@ -508,7 +508,7 @@ impl CallTrace {
                 );
 
                 if !self.success {
-                    if let Ok(decoded_error) = foundry_utils::decode_revert(&self.output[..]) {
+                    if let Ok(decoded_error) = foundry_utils::decode_revert(&self.output[..], Some(abi)) {
                         return Output::Token(vec![ethers::abi::Token::String(decoded_error)])
                     }
                 }
@@ -540,7 +540,7 @@ impl CallTrace {
         );
 
         if !self.success {
-            if let Ok(decoded_error) = foundry_utils::decode_revert(&self.output[..]) {
+            if let Ok(decoded_error) = foundry_utils::decode_revert(&self.output[..], abi) {
                 return Output::Token(vec![ethers::abi::Token::String(decoded_error)])
             }
         }

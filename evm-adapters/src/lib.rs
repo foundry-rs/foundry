@@ -22,7 +22,7 @@ pub mod call_tracing;
 pub mod evm_opts;
 
 use ethers::{
-    abi::{Detokenize, Tokenize},
+    abi::{Abi, Detokenize, Tokenize},
     contract::{decode_function_data, encode_function_data},
     core::types::{Address, Bytes, U256},
 };
@@ -104,11 +104,12 @@ pub trait Evm<State> {
         func: F,
         args: T, // derive arbitrary for Tokenize?
         value: U256,
+        abi: Option<&Abi>,
     ) -> std::result::Result<(D, Self::ReturnReason, u64, Vec<String>), EvmError> {
         let func = func.into();
         let (retdata, status, gas, logs) = self.call_unchecked(from, to, &func, args, value)?;
         if Self::is_fail(&status) {
-            let reason = foundry_utils::decode_revert(retdata.as_ref()).unwrap_or_default();
+            let reason = foundry_utils::decode_revert(retdata.as_ref(), abi).unwrap_or_default();
             Err(EvmError::Execution { reason, gas_used: gas, logs })
         } else {
             let retdata = decode_function_data(&func, retdata, false)?;
@@ -165,7 +166,7 @@ pub trait Evm<State> {
         let span = tracing::trace_span!("setup", ?address);
         let _enter = span.enter();
         let (_, status, _, logs) =
-            self.call::<(), _, _>(Address::zero(), address, "setUp()", (), 0.into())?;
+            self.call::<(), _, _>(Address::zero(), address, "setUp()", (), 0.into(), None)?;
         Ok((status, logs))
     }
 
@@ -174,7 +175,7 @@ pub trait Evm<State> {
     /// with dapptools-style DSTest smart contracts to preserve emitting of logs
     fn failed(&mut self, address: Address) -> Result<bool> {
         let (failed, _, _, _) =
-            self.call::<bool, _, _>(Address::zero(), address, "failed()(bool)", (), 0.into())?;
+            self.call::<bool, _, _>(Address::zero(), address, "failed()(bool)", (), 0.into(), None)?;
         Ok(failed)
     }
 
@@ -242,11 +243,11 @@ mod test_helpers {
             evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
 
         let (_, status1, _, _) = evm
-            .call::<(), _, _>(Address::zero(), addr, "greet(string)", "hi".to_owned(), 0.into())
+            .call::<(), _, _>(Address::zero(), addr, "greet(string)", "hi".to_owned(), 0.into(), compiled.abi)
             .unwrap();
 
         let (retdata, status2, _, _) = evm
-            .call::<String, _, _>(Address::zero(), addr, "greeting()(string)", (), 0.into())
+            .call::<String, _, _>(Address::zero(), addr, "greeting()(string)", (), 0.into(), compiled.abi)
             .unwrap();
         assert_eq!(retdata, "hi");
 
@@ -264,7 +265,7 @@ mod test_helpers {
         let status1 = evm.setup(addr).unwrap().0;
 
         let (_, status2, _, _) =
-            evm.call::<(), _, _>(Address::zero(), addr, "testGreeting()", (), 0.into()).unwrap();
+            evm.call::<(), _, _>(Address::zero(), addr, "testGreeting()", (), 0.into(), compiled.abi).unwrap();
 
         vec![status1, status2].iter().for_each(|reason| {
             let res = evm.check_success(addr, reason, false);
