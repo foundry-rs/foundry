@@ -25,12 +25,12 @@ curl https://raw.githubusercontent.com/gakonst/foundry/master/foundryup/install 
 ```
 in a new terminal session or after reloading your PATH:
 ```
-foudryup
+foundryup
 ```
 
-Just get foudryup, the Foundry toolchain installer, and use it to install the latest `forge` and `cast` binaries.
+Just get foundryup, the Foundry toolchain installer, and use it to install the latest `forge` and `cast` binaries.
 
-Advanced ways to use `foudryup` and other documentation can be found in the [foudryup package](./foudryup/README.md). Happy forging!
+Advanced ways to use `foundryup` and other documentation can be found in the [foundryup package](./foundryup/README.md). Happy forging!
 
 ## Forge
 
