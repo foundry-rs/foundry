@@ -44,7 +44,7 @@ if [[ "$FORGEUP_REPO" == "gakonst/foundry" && -z "$FORGEUP_BRANCH" ]]; then
   ARCHITECTURE="$(uname -m)"
 
   if [ "${ARCHITECTURE}" = "x86_64" ]; then
-    if [ "$(sysctl -n sysctl.proc_translated)" = "1" ]; then
+    if [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = "1" ]; then
       ARCHITECTURE="arm64" # Rosetta.
     else
       ARCHITECTURE="amd64" # Intel.
