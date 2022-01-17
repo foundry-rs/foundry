@@ -94,10 +94,7 @@ else
     cd $REPO_PATH
     git checkout ${FOUNDRYUP_BRANCH}
 
-    cargo install --path ./cli --bins --locked --force
-    
-    mv ~/.cargo/bin/forge $FOUNDRY_BIN_DIR/forge
-    mv ~/.cargo/bin/cast $FOUNDRY_BIN_DIR/cast
+    cargo install --path ./cli --bins --locked --force --root $FOUNDRY_BIN_DIR
   fi
 fi'
 
