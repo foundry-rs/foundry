@@ -80,10 +80,11 @@ pub fn flatten_known_contracts(
 
     let flattened_events: BTreeMap<H256, Event> = contracts
         .iter()
-        .flat_map(|(_name, (abi, _code))| abi.events().collect::<Vec<&Event>>())
-        .collect::<Vec<&Event>>()
-        .into_iter()
-        .map(|event| (event.signature(), event.clone()))
+        .flat_map(|(_name, (abi, _code))| {
+            abi.events()
+                .map(|event| (event.signature(), event.clone()))
+                .collect::<BTreeMap<H256, Event>>()
+        })
         .collect();
 
     // We need this for better revert decoding, and want it in abi form
