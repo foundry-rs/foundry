@@ -160,12 +160,12 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn publish(&self, raw_tx: String) -> Result<PendingTransaction<'_, M::Provider>> {
-        let edit_raw_tx: String = match raw_tx.starts_with("0x") {
-            true => raw_tx.split_at(2).1.to_string(),
-            false => raw_tx,
+    pub async fn publish(&self, mut raw_tx: String) -> Result<PendingTransaction<'_, M::Provider>> {
+        raw_tx = match raw_tx.strip_prefix("0x") {
+            Some(s) => s.to_string(),
+            None => raw_tx,
         };
-        let tx = Bytes::from(hex::decode(edit_raw_tx)?);
+        let tx = Bytes::from(hex::decode(raw_tx)?);
         let res = self.provider.send_raw_transaction(tx).await?;
 
         Ok::<_, eyre::Error>(res)
