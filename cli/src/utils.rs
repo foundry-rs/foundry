@@ -87,7 +87,7 @@ pub fn find_project_root_path() -> eyre::Result<PathBuf> {
     while cwd.starts_with(&boundary) {
         let file_path = cwd.join(foundry_config::Config::FILE_NAME);
         if file_path.is_file() {
-            return Ok(file_path)
+            return Ok(cwd.to_path_buf())
         }
         if let Some(parent) = cwd.parent() {
             cwd = parent;
