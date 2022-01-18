@@ -98,6 +98,7 @@ impl Provider for EvmArgs {
         let mut dict = value.into_dict().ok_or(error)?;
 
         if self.verbosity > 0 {
+            // need to merge that manually otherwise `from_occurrences` does not work
             dict.insert("verbosity".to_string(), self.verbosity.into());
         }
 

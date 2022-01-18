@@ -124,18 +124,17 @@ impl Cmd for BuildArgs {
         super::compile(&project)
     }
 }
-
-/// Loads project's config and merges the build cli arguments into it
-impl From<BuildArgs> for Config {
-    fn from(args: BuildArgs) -> Self {
-        let config = Figment::from(utils::load_config());
-        Config::from(config.merge(args))
+/// Loads project's figment and merges the build cli arguments into it
+impl<'a> From<&'a BuildArgs> for Figment {
+    fn from(args: &'a BuildArgs) -> Self {
+        utils::load_figment().merge(args)
     }
 }
+
 impl<'a> From<&'a BuildArgs> for Config {
     fn from(args: &'a BuildArgs) -> Self {
-        let config = Figment::from(utils::load_config());
-        Config::from(config.merge(args))
+        let figment: Figment = args.into();
+        Config::from(figment).sanitized()
     }
 }
 
@@ -147,7 +146,11 @@ impl BuildArgs {
     /// [`foundry_config::Config::project`]
     pub fn project(&self) -> eyre::Result<Project> {
         let config: Config = self.into();
-        Ok(config.project()?)
+        let project = config.project()?;
+        if config.force {
+            project.cleanup()?;
+        }
+        Ok(project)
     }
 
     /// Returns the `Project` for the current workspace using the given `Config` as base

@@ -100,8 +100,24 @@ pub fn find_project_root_path() -> eyre::Result<PathBuf> {
 }
 
 /// Loads the config for the current project workspace
+#[allow(unused)]
 pub fn load_config() -> foundry_config::Config {
-    foundry_config::Config::load_with_root(find_project_root_path().unwrap()).canonic()
+    foundry_config::Config::load_with_root(find_project_root_path().unwrap()).sanitized()
+}
+
+/// Loads the figment for the current project workspace
+///
+/// Compared to [`load_config()`] this returns the raw `Figment` as built by the
+/// [`foundry_config::Config`]. This is intended to be merged with additional [`figment::Provider`].
+/// See [`BuildArgs`]
+///
+/// # Example
+///
+/// ```no_run
+/// let config =  Config::from(utils::load_figment()).sanitized();
+/// ```
+pub fn load_figment() -> foundry_config::figment::Figment {
+    foundry_config::Config::figment_with_root(find_project_root_path().unwrap())
 }
 
 #[cfg(feature = "sputnik-evm")]

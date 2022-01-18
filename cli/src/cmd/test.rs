@@ -1,12 +1,16 @@
 //! Test command
 
-use crate::cmd::{build::BuildArgs, Cmd};
+use crate::{
+    cmd::{build::BuildArgs, Cmd},
+    opts::evm::EvmArgs,
+    utils,
+};
 use ansi_term::Colour;
 use clap::{AppSettings, Parser};
 use ethers::solc::{ArtifactOutput, Project};
 use evm_adapters::{evm_opts::EvmOpts, sputnik::helpers::vm};
 use forge::{MultiContractRunnerBuilder, TestFilter};
-use foundry_config::Config;
+use foundry_config::{figment::Figment, Config};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Parser)]
@@ -83,7 +87,7 @@ pub struct TestArgs {
     json: bool,
 
     #[clap(flatten)]
-    evm_opts: EvmOpts,
+    evm_opts: EvmArgs,
 
     #[clap(flatten)]
     filter: Filter,
@@ -99,13 +103,30 @@ pub struct TestArgs {
     allow_failure: bool,
 }
 
+/// Loads project's figment and merges the build cli arguments into it
+impl<'a> From<&'a TestArgs> for Figment {
+    fn from(args: &'a TestArgs) -> Self {
+        utils::load_figment().merge(&args.opts).merge(&args.evm_opts)
+    }
+}
+
+impl<'a> From<&'a TestArgs> for Config {
+    fn from(args: &'a TestArgs) -> Self {
+        let figment: Figment = args.into();
+        Config::from(figment).sanitized()
+    }
+}
+
 impl Cmd for TestArgs {
     type Output = TestOutcome;
 
     fn run(self) -> eyre::Result<Self::Output> {
-        let TestArgs { opts, evm_opts, json, filter, allow_failure } = self;
+        // merge all configs
+        let figment: Figment = From::from(&self);
+        let evm_opts = figment.extract::<EvmOpts>()?;
+        let config = Config::from(figment).sanitized();
 
-        let config: Config = opts.into();
+        let TestArgs { json, filter, allow_failure, .. } = self;
 
         // Setup the fuzzer
         // TODO: Add CLI Options to modify the persistence

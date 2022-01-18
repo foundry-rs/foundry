@@ -287,20 +287,26 @@ impl Config {
     /// let project = config.project();
     /// ```
     pub fn project(&self) -> Result<Project, SolcError> {
-        let project = Project::builder()
+        self.create_project(true, false)
+    }
+
+    /// Same as [`Self::project()`] but sets configures the project to not emit artifacts and ignore cache,
+    /// caching causes no output until https://github.com/gakonst/ethers-rs/issues/727
+    pub fn ephemeral_no_artifacts_project(&self)  -> Result<Project, SolcError> {
+        self.create_project(false, true)
+    }
+
+    fn create_project(&self, cached: bool, no_artifacts: bool) -> Result<Project, SolcError> {
+        Project::builder()
             .paths(self.project_paths())
             .allowed_path(&self.__root.0)
             .allowed_paths(self.libraries.clone())
             .solc_config(SolcConfig::builder().settings(self.solc_settings()?).build())
             .ignore_error_codes(self.ignored_error_codes.clone())
             .set_auto_detect(self.auto_detect_solc)
-            .build()?;
-
-        if self.force {
-            project.cleanup()?;
-        }
-
-        Ok(project)
+            .set_cached(cached)
+            .set_no_artifacts(no_artifacts)
+            .build()
     }
 
     /// Returns the `ProjectPathsConfig`  sub set of the config.
