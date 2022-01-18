@@ -98,7 +98,22 @@ pub struct Config {
     pub block_gas_limit: Option<u64>,
     /// Settings to pass to the `solc` compiler input
     // TODO consider making this more structured https://stackoverflow.com/questions/48998034/does-toml-support-nested-arrays-of-objects-tables
-    pub solc_settings: String,
+    // TODO this needs to work as extension to the defaults:
+    //{
+    //   "*": {
+    //     "": [
+    //       "ast"
+    //     ],
+    //     "*": [
+    //       "abi",
+    //       "evm.bytecode",
+    //       "evm.deployedBytecode",
+    //       "evm.methodIdentifiers"
+    //     ]
+    //   }
+    // }
+    // "#
+    pub solc_settings: Option<String>,
     /// The root path where the config detection started from, `Config::with_root`
     ///
     /// **Note:** This field is never serialized nor deserialized. This is merely used to provided
@@ -425,21 +440,7 @@ impl Default for Config {
             auto_detect_solc: true,
             optimizer: true,
             optimizer_runs: 200,
-            solc_settings: r#"{
-  "*": {
-    "": [
-      "ast"
-    ],
-    "*": [
-      "abi",
-      "evm.bytecode",
-      "evm.deployedBytecode",
-      "evm.methodIdentifiers"
-    ]
-  }
-}
-"#
-            .to_string(),
+            solc_settings: None,
             fuzz_runs: 256,
             ffi: false,
             sender: Address::zero(),

@@ -15,6 +15,7 @@ use foundry_utils::parse_tokens;
 
 use crate::opts::forge::ContractInfo;
 use clap::Parser;
+use foundry_config::Config;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Parser)]
@@ -43,7 +44,9 @@ impl Cmd for CreateArgs {
 
     fn run(self) -> Result<Self::Output> {
         // Find Project & Compile
-        let project = self.opts.project()?;
+        let config = Config::load();
+        // TODO merge
+        let project = self.opts.project(config.clone())?;
         let compiled = super::compile(&project)?;
 
         // Get ABI and BIN

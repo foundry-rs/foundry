@@ -20,6 +20,7 @@ use evm_adapters::{
     evm_opts::{BackendKind, EvmOpts},
     sputnik::{cheatcodes::debugger::DebugArena, helpers::vm},
 };
+use foundry_config::Config;
 
 #[derive(Debug, Clone, Parser)]
 pub struct RunArgs {
@@ -236,7 +237,7 @@ impl RunArgs {
     /// Compiles the file with auto-detection and compiler params.
     pub fn build(&self) -> eyre::Result<BuildOutput> {
         let root = dunce::canonicalize(&self.path)?;
-        let (project, output) = if let Ok(mut project) = self.opts.project() {
+        let (project, output) = if let Ok(mut project) = self.opts.project(Config::load()) {
             // TODO: caching causes no output until https://github.com/gakonst/ethers-rs/issues/727
             // is fixed
             project.cached = false;

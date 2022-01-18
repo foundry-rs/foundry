@@ -94,7 +94,7 @@ pub struct BuildArgs {
 impl Cmd for BuildArgs {
     type Output = ProjectCompileOutput<MinimalCombinedArtifacts>;
     fn run(self) -> eyre::Result<Self::Output> {
-        let project = self.project()?;
+        let project = self.project(Config::load())?;
         super::compile(&project)
     }
 }
@@ -149,7 +149,7 @@ impl BuildArgs {
     /// Converts all build arguments to the corresponding project config
     ///
     /// Defaults to DAppTools-style repo layout, but can be customized.
-    pub fn project(&self) -> eyre::Result<Project> {
+    pub fn project(&self, config: Config) -> eyre::Result<Project> {
         // 1. Set the root dir
         let root = self.root.clone().unwrap_or_else(|| {
             utils::find_git_root_path().unwrap_or_else(|_| std::env::current_dir().unwrap())
