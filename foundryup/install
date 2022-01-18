@@ -30,6 +30,22 @@ FOUNDRYUP_REPO=${FOUNDRYUP_REPO-gakonst/foundry}
 
 if [[ "$FOUNDRYUP_REPO" == "gakonst/foundry" && -z "$FOUNDRYUP_BRANCH" ]]; then 
   FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION-nightly}
+  FOUNDRYUP_TAG=$FOUNDRYUP_VERSION
+
+  # Normalize versions (handle channels, versions without v prefix
+  if [[ "$FOUNDRYUP_VERSION" == "nightly" ]]; then
+    # Locate real nightly tag
+    SHA=$(curl -sSf https://api.github.com/repos/${FOUNDRYUP_REPO}/git/refs/tags/nightly \
+      | grep -Eo '\''"sha"[^,]*'\'' \
+      | grep -Eo '\''[^:]*$'\'' \
+      | tr -d '\''"'\'' \
+      | tr -d '\'' '\'')
+    FOUNDRYUP_TAG="nightly-${SHA}"
+  elif [[ "$FOUNDRYUP_VERSION" == [[:digit:]]* ]]; then
+    # Add v prefix
+    FOUNDRYUP_VERSION="v${FOUNDRYUP_VERSION}"
+    FOUNDRYUP_TAG="${FOUNDRYUP_VERSION}"
+  fi
 
   PLATFORM="$(uname -s)"
   case $PLATFORM in
@@ -60,7 +76,7 @@ if [[ "$FOUNDRYUP_REPO" == "gakonst/foundry" && -z "$FOUNDRYUP_BRANCH" ]]; then
   fi
   
   # Compute the URL of the release tarball in the Foundry repository.
-  RELEASE_URL="https://github.com/${FOUNDRYUP_REPO}/releases/download/${FOUNDRYUP_VERSION}/"
+  RELEASE_URL="https://github.com/${FOUNDRYUP_REPO}/releases/download/${FOUNDRYUP_TAG}/"
   BIN_TARBALL_URL="${RELEASE_URL}foundry_${FOUNDRYUP_VERSION}_${PLATFORM}_${ARCHITECTURE}.tar.gz"
   MAN_TARBALL_URL="${RELEASE_URL}foundry_man_${FOUNDRYUP_VERSION}.tar.gz"
 
@@ -68,6 +84,7 @@ if [[ "$FOUNDRYUP_REPO" == "gakonst/foundry" && -z "$FOUNDRYUP_BRANCH" ]]; then
   curl -L $BIN_TARBALL_URL | tar -xvzC $FOUNDRY_BIN_DIR
   # Download the man tarball and unpack it into the .foundry man directory.
   curl -L $MAN_TARBALL_URL | tar -xvzC $FOUNDRY_MAN_DIR
+  echo foundryup: done!
 else 
   FOUNDRYUP_BRANCH=${FOUNDRYUP_BRANCH-master}
   
@@ -104,6 +121,7 @@ else
     help2man -N $FOUNDRY_BIN_DIR/forge > $FOUNDRY_MAN_DIR/forge.1
     help2man -N $FOUNDRY_BIN_DIR/cast > $FOUNDRY_MAN_DIR/cast.1
   fi
+  echo foundryup: done!
 fi'
 
 BINARY="$FOUNDRY_BIN_DIR/foundryup"
