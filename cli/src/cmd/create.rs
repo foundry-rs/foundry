@@ -128,5 +128,5 @@ fn is_legacy<T: TryInto<Chain>>(chain: T) -> bool {
 
     use Chain::*;
     // TODO: Add other chains which do not support EIP1559.
-    matches!(chain, Optimism | OptimismKovan)
+    matches!(chain, Optimism | OptimismKovan | Fantom | FantomTestnet)
 }
