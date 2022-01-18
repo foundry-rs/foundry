@@ -44,7 +44,6 @@ if [[ "$FOUNDRYUP_REPO" == "gakonst/foundry" && -z "$FOUNDRYUP_BRANCH" ]]; then
   esac
 
   ARCHITECTURE="$(uname -m)"
-
   if [ "${ARCHITECTURE}" = "x86_64" ]; then
     # Redirect stderr to /dev/null to avoid printing errors if non Rosetta.
     if [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = "1" ]; then
@@ -57,12 +56,12 @@ if [[ "$FOUNDRYUP_REPO" == "gakonst/foundry" && -z "$FOUNDRYUP_BRANCH" ]]; then
   else
     ARCHITECTURE="amd64" # Amd.
   fi
+  
+  # Compute the URL of the release tarball in the Foundry repository.
+  TARBALL_URL="https://github.com/${FOUNDRYUP_REPO}/releases/download/${FOUNDRYUP_VERSION}/foundry_${FOUNDRYUP_VERSION}_${PLATFORM}_${ARCHITECTURE}.tar.gz"
 
-  # Download the release tarball from the repository, unpack it
-  curl -L https://github.com/${FOUNDRYUP_REPO}/releases/download/${FOUNDRYUP_VERSION}/foundry_${FOUNDRYUP_VERSION}_${PLATFORM}_${ARCHITECTURE}.tar.gz | tar xvz
-
-  mv forge $FOUNDRY_BIN_DIR/forge
-  mv cast $FOUNDRY_BIN_DIR/cast
+  # Download the release tarball and unpack it into the .foundry bin directory.
+  curl -L $TARBALL_URL | tar -xvzC $FOUNDRY_BIN_DIR
 else 
   FOUNDRYUP_BRANCH=${FOUNDRYUP_BRANCH-master}
   
@@ -73,34 +72,31 @@ else
   fi
 
   REPO_PATH="${FOUNDRY_DIR}/${FOUNDRYUP_REPO}"
-
-  # Delete any previous installations if they exist as they will now be using one from cargo and we dont want conflicts
-  rm -f $FOUNDRY_BIN_DIR/forge
-  rm -f $FOUNDRY_BIN_DIR/cast
-
+  
   if [ -d $REPO_PATH ]; then
-    # If the repo path exists move to it, git pull, and checkout the branch and cargo install local.
+    # If the repo path exists move to it git pull and checkout the branch.
     cd $REPO_PATH
     git pull
     git checkout ${FOUNDRYUP_BRANCH}
     git pull
-    cargo install --path ./cli --bins --locked --force
   else
-    # Repo path did not exist, grab the author from the repo, make a directory in .foundry, cd to it, clone and install.
+    # Repo path did not exist, grab the author from the repo, make a directory in .foundry, cd to it and clone.
     IFS="/" read -ra AUTHOR <<< "$FOUNDRYUP_REPO"
     mkdir -p "$FOUNDRY_DIR/$AUTHOR"
     cd "$FOUNDRY_DIR/$AUTHOR"
     git clone https://github.com/${FOUNDRYUP_REPO}
     cd $REPO_PATH
     git checkout ${FOUNDRYUP_BRANCH}
-
-    cargo install --path ./cli --bins --locked --force --root $FOUNDRY_BIN_DIR
   fi
+  
+  # Build the repo and install it locally to the .foundry bin directory.
+  # --root appends /bin to the directory it is given, so we pass FOUNDRY_DIR.
+  cargo install --path ./cli --bins --locked --force --root $FOUNDRY_DIR
 fi'
 
 BINARY="$FOUNDRY_BIN_DIR/foundryup"
 
-# Create the foundry directory and foundryup binary file if it doesn't exist.
+# Create the .foundry bin directory and foundryup binary if it doesn't exist.
 mkdir -p $FOUNDRY_BIN_DIR
 echo "$FOUNDRYUP" > $BINARY
 chmod +x $BINARY
@@ -131,4 +127,4 @@ if [[ ":$PATH:" != *":${FOUNDRY_BIN_DIR}:"* ]]; then
 fi
 
 echo && echo "Detected your preferred shell is ${PREF_SHELL} and added foundryup to PATH. Run 'source ${PROFILE}' or start a new terminal session to use foundryup."
-echo "Then, simply run 'foundryup' to install foundry."
+echo "Then, simply run 'foundryup' to install Foundry."
