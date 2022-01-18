@@ -3,10 +3,7 @@ use clap_complete::generate;
 use std::{process::Command, str::FromStr};
 
 use ethers::solc::{Project, ProjectPathsConfig};
-use rayon::prelude::*;
-use walkdir::WalkDir;
 
-use forge_fmt::{Formatter, FormatterConfig, Visitable};
 use opts::forge::{Dependency, FullContractInfo, Opts, Subcommands};
 
 use crate::cmd::Cmd;
@@ -132,71 +129,8 @@ fn main() -> eyre::Result<()> {
         Subcommands::Snapshot(cmd) => {
             cmd.run()?;
         }
-        Subcommands::Fmt { path, root, check } => {
-            if path.is_some() && root.is_some() {
-                return Err(eyre::eyre!("Only --root or path argument should be specified"))
-            }
-
-            let root = if let Some(path) = path {
-                path
-            } else {
-                let root = root.unwrap_or_else(|| {
-                    std::env::current_dir().expect("failed to get current directory")
-                });
-                if !root.is_dir() {
-                    return Err(eyre::eyre!("Root path should be a directory"))
-                }
-
-                ProjectPathsConfig::find_source_dir(&root)
-            };
-
-            let paths = if root.is_dir() {
-                WalkDir::new(root)
-                    .follow_links(true)
-                    .into_iter()
-                    .filter_map(|e| e.ok())
-                    .filter(|e| e.file_name().to_string_lossy().ends_with(".sol"))
-                    .map(|e| e.into_path())
-                    .collect()
-            } else if root.file_name().unwrap().to_string_lossy().ends_with(".sol") {
-                vec![root]
-            } else {
-                vec![]
-            };
-
-            paths.par_iter().map(|path| {
-                let source = std::fs::read_to_string(&path)?;
-                let mut source_unit = solang_parser::parse(&source, 0)
-                    .map_err(|diags| eyre::eyre!(
-                        "Failed to parse Solidity code for {}. Leave source unchanged.\nDebug info: {:?}",
-                        path.to_string_lossy(),
-                        diags
-                    ))?;
-
-                let mut output = String::new();
-                let mut formatter =
-                    Formatter::new(&mut output, &source, FormatterConfig::default());
-
-                source_unit.visit(&mut formatter).unwrap();
-
-                solang_parser::parse(&output, 0).map_err(|diags| {
-                    eyre::eyre!(
-                        "Failed to construct valid Solidity code for {}. Leaving source unchanged.\nDebug info: {:?}",
-                        path.to_string_lossy(),
-                        diags
-                    )
-                })?;
-
-                if check {
-                    if source != output {
-                        std::process::exit(1);
-                    }
-                } else {
-                    std::fs::write(path, output)?;
-                }
-
-                Ok(())
-            }).collect::<eyre::Result<_>>()?;
+        Subcommands::Fmt(cmd) => {
+            cmd.run()?;
         }
     }
 

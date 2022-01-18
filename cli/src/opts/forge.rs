@@ -4,7 +4,8 @@ use ethers::{solc::EvmVersion, types::Address};
 use std::{path::PathBuf, str::FromStr};
 
 use crate::cmd::{
-    build::BuildArgs, create::CreateArgs, remappings::RemappingArgs, run::RunArgs, snapshot, test,
+    build::BuildArgs, create::CreateArgs, fmt::FmtArgs, remappings::RemappingArgs, run::RunArgs,
+    snapshot, test,
 };
 
 #[derive(Debug, Parser)]
@@ -99,18 +100,8 @@ pub enum Subcommands {
     #[clap(about = "creates a snapshot of each test's gas usage")]
     Snapshot(snapshot::SnapshotArgs),
 
-    #[clap(about = "formats all Solidity source files")]
-    Fmt {
-        #[clap(help = "path to the file or directory")]
-        path: Option<PathBuf>,
-        #[clap(help = "project's root path, default being the current working directory", long)]
-        root: Option<PathBuf>,
-        #[clap(
-            help = "run in 'check' mode. Exits with 0 if input is formatted correctly. Exits with 1 if formatting is required.",
-            long
-        )]
-        check: bool,
-    },
+    #[clap(about = "formats Solidity source files")]
+    Fmt(FmtArgs),
 }
 
 #[derive(Debug, Clone, Parser)]
