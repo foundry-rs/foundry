@@ -90,7 +90,8 @@ else
   fi
   
   # Build the repo and install it locally to the .foundry bin directory.
-  cargo install --path ./cli --bins --locked --force --root $FOUNDRY_BIN_DIR
+  # --root tells cargo to put the compiled binaries in $FOUNDRY_DIR/bin!
+  cargo install --path ./cli --bins --locked --force --root $FOUNDRY_DIR
 fi'
 
 BINARY="$FOUNDRY_BIN_DIR/foundryup"
