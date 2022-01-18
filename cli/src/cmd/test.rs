@@ -183,16 +183,47 @@ impl TestOutcome {
         if !self.allow_failure {
             let failures = self.failures().count();
             if failures > 0 {
+                println!();
+                println!("Failed tests:");
+                for (name, result) in self.failures() {
+                    short_test_result(name, result);
+                }
+                println!();
+
                 let successes = self.successes().count();
-                eyre::bail!(
+                println!(
                     "Encountered a total of {} failing tests, {} tests succeeded",
-                    failures,
-                    successes
+                    Colour::Red.paint(failures.to_string()),
+                    Colour::Green.paint(successes.to_string())
                 );
+                std::process::exit(1);
             }
         }
         Ok(())
     }
+}
+
+fn short_test_result(name: &str, result: &forge::TestResult) {
+    let status = if result.success {
+        Colour::Green.paint("[PASS]")
+    } else {
+        let txt = match (&result.reason, &result.counterexample) {
+            (Some(ref reason), Some(ref counterexample)) => {
+                format!("[FAIL. Reason: {}. Counterexample: {}]", reason, counterexample)
+            }
+            (None, Some(ref counterexample)) => {
+                format!("[FAIL. Counterexample: {}]", counterexample)
+            }
+            (Some(ref reason), None) => {
+                format!("[FAIL. Reason: {}]", reason)
+            }
+            (None, None) => "[FAIL]".to_string(),
+        };
+
+        Colour::Red.paint(txt)
+    };
+
+    println!("{} {} {}", status, name, result.kind.gas_used());
 }
 
 /// Runs all the tests
@@ -224,32 +255,11 @@ fn test<A: ArtifactOutput + 'static>(
             }
 
             for (name, result) in tests {
-                let status = if result.success {
-                    Colour::Green.paint("[PASS]")
-                } else {
-                    let txt = match (&result.reason, &result.counterexample) {
-                        (Some(ref reason), Some(ref counterexample)) => {
-                            format!(
-                                "[FAIL. Reason: {}. Counterexample: {}]",
-                                reason, counterexample
-                            )
-                        }
-                        (None, Some(ref counterexample)) => {
-                            format!("[FAIL. Counterexample: {}]", counterexample)
-                        }
-                        (Some(ref reason), None) => {
-                            format!("[FAIL. Reason: {}]", reason)
-                        }
-                        (None, None) => "[FAIL]".to_string(),
-                    };
-
-                    Colour::Red.paint(txt)
-                };
+                short_test_result(name, result);
 
                 // adds a linebreak only if there were any traces or logs, so that the
                 // output does not look like 1 big block.
                 let mut add_newline = false;
-                println!("{} {} {}", status, name, result.kind.gas_used());
                 if verbosity > 1 && !result.logs.is_empty() {
                     add_newline = true;
                     println!("Logs:");
