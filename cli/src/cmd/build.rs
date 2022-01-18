@@ -17,11 +17,12 @@ use clap::{Parser, ValueHint};
 use foundry_config::{
     figment,
     figment::{
-        value::{Dict, Map, Value},
+        value::{Dict, Map},
         Metadata, Profile, Provider,
     },
     remappings_from_env_var, Config,
 };
+use serde::Serialize;
 
 #[derive(Debug, Clone, Parser)]
 pub struct BuildArgs {
@@ -267,36 +268,36 @@ impl Provider for BuildArgs {
         let mut dict = Dict::new();
 
         if let Some(ref src) = self.contracts {
-            dict.insert("src".to_string(), Value::from(format!("{}", src.display())));
+            dict.insert("src".to_string(), format!("{}", src.display()).into());
         }
 
         let mut libs =
             self.lib_paths.iter().map(|p| format!("{}", p.display())).collect::<Vec<_>>();
         if self.hardhat {
-            dict.insert("src".to_string(), Value::from("contracts".to_string()));
+            dict.insert("src".to_string(), "contracts".to_string().into());
             libs.push("node_modules".to_string());
         }
 
         if !libs.is_empty() {
-            dict.insert("libs".to_string(), Value::from(libs));
+            dict.insert("libs".to_string(), libs));
         }
 
         if let Some(ref out) = self.out_path {
-            dict.insert("out".to_string(), Value::from(format!("{}", out.display())));
+            dict.insert("out".to_string(), format!("{}", out.display()).into());
         }
 
         if self.no_auto_detect {
-            dict.insert("auto_detect_solc".to_string(), Value::from(false));
+            dict.insert("auto_detect_solc".to_string(), false));
         }
 
         if !self.libraries.is_empty() {
-            dict.insert("libraries".to_string(), Value::from(self.libraries.clone()));
+            dict.insert("libraries".to_string(), self.libraries.clone().into());
         }
 
         if !self.remappings.is_empty() {
             dict.insert(
                 "remappings".to_string(),
-                Value::from(self.remappings.iter().map(|r| r.to_string()).collect::<Vec<_>>()),
+                self.remappings.iter().map(|r| r.to_string()).collect::<Vec<_>>() .into(),
             );
         }
 
@@ -306,14 +307,14 @@ impl Provider for BuildArgs {
             let remappings = env_remappings.map_err(|err| err.to_string())?;
             dict.insert(
                 "remappings".to_string(),
-                Value::from(remappings.iter().map(|r| r.to_string()).collect::<Vec<_>>()),
+                remappings.iter().map(|r| r.to_string()).collect::<Vec<_>>().into()
             );
         }
 
         if !self.ignored_error_codes.is_empty() {
             dict.insert(
                 "ignored_error_codes".to_string(),
-                Value::from(self.ignored_error_codes.clone()),
+                self.ignored_error_codes.clone().into()
             );
         }
 
