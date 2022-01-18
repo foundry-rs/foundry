@@ -46,7 +46,7 @@ impl Cmd for CreateArgs {
         // Find Project & Compile
         let config = utils::load_config();
         // TODO merge
-        let project = self.opts.project(config.clone())?;
+        let project = self.opts.project(config)?;
         let compiled = super::compile(&project)?;
 
         // Get ABI and BIN

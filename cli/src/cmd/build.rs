@@ -149,7 +149,7 @@ impl BuildArgs {
     /// Converts all build arguments to the corresponding project config
     ///
     /// Defaults to DAppTools-style repo layout, but can be customized.
-    pub fn project(&self, config: Config) -> eyre::Result<Project> {
+    pub fn project(&self, _config: Config) -> eyre::Result<Project> {
         // 0. merge the config
         // TODO this should probably be done separately, so that other commands can also access
 
@@ -253,7 +253,7 @@ impl BuildArgs {
     }
 }
 
-pub fn project(config: Config) -> eyre::Result<Project> {
+pub fn project(_config: Config) -> eyre::Result<Project> {
     todo!()
 }
 
