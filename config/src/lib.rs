@@ -207,6 +207,20 @@ impl Config {
         Ok(config)
     }
 
+    /// The config supports relative paths and tracks the root path separately see
+    /// `Config::with_root`
+    ///
+    /// This joins all relative paths with the current root and attempts to make them canonic
+    pub fn canonic(self) -> Self {
+        let root = self.__root.0.clone();
+        self.canonic_at(root)
+    }
+
+    /// Joins all relative paths with the given root
+    pub fn canonic_at(self, root: impl AsRef<Path>) -> Self {
+        todo!()
+    }
+
     /// Returns the default figment
     ///
     /// The default figment reads from the following sources, in ascending

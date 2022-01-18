@@ -1,12 +1,14 @@
 //! Test command
 
-use crate::cmd::{build::BuildArgs, Cmd};
+use crate::{
+    cmd::{build::BuildArgs, Cmd},
+    utils,
+};
 use ansi_term::Colour;
 use clap::{AppSettings, Parser};
 use ethers::solc::{ArtifactOutput, Project};
 use evm_adapters::{evm_opts::EvmOpts, sputnik::helpers::vm};
 use forge::{MultiContractRunnerBuilder, TestFilter};
-use foundry_config::Config;
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Parser)]
@@ -105,7 +107,7 @@ impl Cmd for TestArgs {
     fn run(self) -> eyre::Result<Self::Output> {
         let TestArgs { opts, evm_opts, json, filter, allow_failure } = self;
 
-        let config = Config::load();
+        let config = utils::load_config();
         // TODO better merge
 
         // Setup the fuzzer

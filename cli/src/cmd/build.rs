@@ -94,7 +94,7 @@ pub struct BuildArgs {
 impl Cmd for BuildArgs {
     type Output = ProjectCompileOutput<MinimalCombinedArtifacts>;
     fn run(self) -> eyre::Result<Self::Output> {
-        let project = self.project(Config::load())?;
+        let project = self.project(utils::load_config())?;
         super::compile(&project)
     }
 }
@@ -154,9 +154,7 @@ impl BuildArgs {
         // TODO this should probably be done separately, so that other commands can also access
 
         // 1. Set the root dir
-        let root = self.root.clone().unwrap_or_else(|| {
-            utils::find_git_root_path().unwrap_or_else(|_| std::env::current_dir().unwrap())
-        });
+        let root = self.root.clone().unwrap_or_else(|| utils::find_project_root_path().unwrap());
         let root = dunce::canonicalize(&root)?;
 
         // 2. Set the contracts dir
@@ -253,6 +251,10 @@ impl BuildArgs {
 
         Ok(project)
     }
+}
+
+pub fn project(config: Config) -> eyre::Result<Project> {
+    todo!()
 }
 
 // Make this args a `Figment` so that it can be merged into the `Config`

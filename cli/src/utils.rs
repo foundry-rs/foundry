@@ -65,6 +65,45 @@ pub fn find_git_root_path() -> eyre::Result<PathBuf> {
     Ok(PathBuf::from(path))
 }
 
+/// Returns the root path to set for the project root
+///
+/// traverse the dir tree up and look for a `foundry.toml` file starting at the cwd, but only until
+/// the root dir of the current repo so that
+///
+/// ```
+/// -- foundry.toml
+///
+/// -- repo
+///   |__ .git
+///   |__sub
+///      |__ cwd
+/// ```
+/// will still detect `repo` as root
+pub fn find_project_root_path() -> eyre::Result<PathBuf> {
+    let boundary = find_git_root_path().unwrap_or_else(|_| std::env::current_dir().unwrap());
+    let cwd = std::env::current_dir()?;
+    let mut cwd = cwd.as_path();
+    // traverse as long as we're in the current git repo cwd
+    while cwd.starts_with(&boundary) {
+        let file_path = cwd.join(foundry_config::Config::FILE_NAME);
+        if file_path.is_file() {
+            return Ok(file_path)
+        }
+        if let Some(parent) = cwd.parent() {
+            cwd = parent;
+        } else {
+            break
+        }
+    }
+    // no foundry.toml found
+    Ok(boundary)
+}
+
+/// Loads the config for the current project workspace
+pub fn load_config() -> foundry_config::Config {
+    foundry_config::Config::load_with_root(find_project_root_path().unwrap()).canonic()
+}
+
 #[cfg(feature = "sputnik-evm")]
 pub fn sputnik_cfg(evm: &EvmVersion) -> Config {
     match evm {

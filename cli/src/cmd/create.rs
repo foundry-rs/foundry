@@ -3,6 +3,7 @@
 use crate::{
     cmd::{build::BuildArgs, Cmd},
     opts::{EthereumOpts, WalletType},
+    utils,
 };
 use ethers::{
     abi::{Abi, Constructor, Token},
@@ -15,7 +16,6 @@ use foundry_utils::parse_tokens;
 
 use crate::opts::forge::ContractInfo;
 use clap::Parser;
-use foundry_config::Config;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Parser)]
@@ -44,7 +44,7 @@ impl Cmd for CreateArgs {
 
     fn run(self) -> Result<Self::Output> {
         // Find Project & Compile
-        let config = Config::load();
+        let config = utils::load_config();
         // TODO merge
         let project = self.opts.project(config.clone())?;
         let compiled = super::compile(&project)?;
