@@ -5,7 +5,7 @@ Update or revert to a specific Foundry branch with ease.
 ## Installing
 
 ```sh
-curl https://raw.githubusercontent.com/gakonst/foundry/master/foundryup/install | bash
+curl -L https://foundry.paradigm.xyz | bash
 ```
 
 ## Usage
