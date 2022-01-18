@@ -229,6 +229,20 @@ async fn main() -> eyre::Result<()> {
                 .await?;
             }
         }
+        Subcommands::PublishTx { eth, raw_tx, cast_async } => {
+            let provider = Provider::try_from(eth.rpc_url()?)?;
+            let cast = Cast::new(&provider);
+            let pending_tx = cast.publish(raw_tx).await?;
+            let tx_hash = *pending_tx;
+
+            if cast_async {
+                println!("{:?}", pending_tx);
+            } else {
+                let receipt =
+                    pending_tx.await?.ok_or_else(|| eyre::eyre!("tx {} not found", tx_hash))?;
+                println!("Receipt: {:?}", receipt);
+            }
+        }
         Subcommands::Estimate { eth, to, sig, args } => {
             let provider = Provider::try_from(eth.rpc_url()?)?;
             let cast = Cast::new(&provider);

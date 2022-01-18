@@ -49,7 +49,7 @@
 - [ ] `mktx`
 - [x] `namehash`
 - [x] `nonce`
-- [ ] `publish`
+- [x] `publish`
 - [ ] `receipt`
 - [x] `resolve-name`
 - [ ] `run-tx`
