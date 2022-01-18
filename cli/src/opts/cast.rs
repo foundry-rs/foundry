@@ -141,6 +141,16 @@ pub enum Subcommands {
         #[clap(flatten)]
         eth: EthereumOpts,
     },
+    #[clap(name = "publish")]
+    #[clap(about = "Publish a raw transaction to the network")]
+    PublishTx {
+        #[clap(help = "the raw transaction you want to publish")]
+        raw_tx: String,
+        #[clap(long, env = "CAST_ASYNC")]
+        cast_async: bool,
+        #[clap(flatten)]
+        eth: EthereumOpts,
+    },
     #[clap(name = "estimate")]
     #[clap(about = "Estimate the gas cost of a transaction from <from> to <to> with <data>")]
     Estimate {

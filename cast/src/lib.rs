@@ -146,6 +146,31 @@ where
         Ok::<_, eyre::Error>(res)
     }
 
+    /// Publishes a raw transaction to the network
+    ///
+    /// ```no_run
+    /// use cast::Cast;
+    /// use ethers_providers::{Provider, Http};
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
+    /// let cast = Cast::new(provider);
+    /// let res = cast.publish("0x1234".to_string()).await?;
+    /// println!("{:?}", res);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn publish(&self, mut raw_tx: String) -> Result<PendingTransaction<'_, M::Provider>> {
+        raw_tx = match raw_tx.strip_prefix("0x") {
+            Some(s) => s.to_string(),
+            None => raw_tx,
+        };
+        let tx = Bytes::from(hex::decode(raw_tx)?);
+        let res = self.provider.send_raw_transaction(tx).await?;
+
+        Ok::<_, eyre::Error>(res)
+    }
+
     /// Estimates the gas cost of a transaction
     ///
     /// ```no_run
