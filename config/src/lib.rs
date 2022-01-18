@@ -49,6 +49,8 @@ pub struct Config {
     pub libraries: Vec<String>,
     /// whether to enable cache
     pub cache: bool,
+    /// whether to force a `project.clean()`
+    pub force: bool,
     /// evm version to use
     #[serde(with = "from_str_lowercase")]
     pub evm_version: EvmVersion,
@@ -573,6 +575,7 @@ impl Default for Config {
             out: "out".into(),
             libs: vec!["lib".into()],
             cache: true,
+            force: false,
             evm_version: Default::default(),
             solc_version: None,
             auto_detect_solc: true,
