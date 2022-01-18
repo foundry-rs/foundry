@@ -1,6 +1,6 @@
 pub mod cmd;
 mod opts;
-pub mod utils;
+mod utils;
 
 use crate::cmd::Cmd;
 

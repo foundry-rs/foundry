@@ -8,6 +8,11 @@ use foundry_cli_test_utils::{
 use foundry_config::{parse_with_profile, BasicConfig, Config};
 use std::{env::set_current_dir, fs, str::FromStr};
 
+// import forge utils as mod
+#[allow(unused)]
+#[path = "../src/utils.rs"]
+mod forge_utils;
+
 // tests `--help` is printed to std out
 forgetest!(print_help, |_: TestProject, mut cmd: TestCommand| {
     cmd.arg("--help");
@@ -48,6 +53,15 @@ forgetest!(can_init_repo_with_config, |prj: TestProject, mut cmd: TestCommand| {
         vec![Remapping::from_str("ds-test/=lib/ds-test/src").unwrap().into()]
     );
     assert_eq!(basic, Config::load().into_basic());
+
+    // can detect root
+    assert_eq!(prj.root(), forge_utils::find_project_root_path().unwrap());
+    let nested = prj.root().join("nested/nested");
+    pretty_err(&nested, std::fs::create_dir_all(&nested));
+
+    // even if nested
+    set_current_dir(&nested).unwrap();
+    assert_eq!(prj.root(), forge_utils::find_project_root_path().unwrap());
 });
 
 // checks that init works repeatedly
