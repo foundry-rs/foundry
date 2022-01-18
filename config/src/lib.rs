@@ -1,6 +1,7 @@
 //! foundry configuration.
 use std::{
     borrow::Cow,
+    collections::BTreeMap,
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -17,8 +18,10 @@ use serde::{Deserialize, Serialize};
 
 use ethers_core::types::{Address, U256};
 use ethers_solc::{
+    artifacts::{Optimizer, Settings},
+    error::SolcError,
     remappings::{RelativeRemapping, Remapping, RemappingError},
-    EvmVersion, ProjectPathsConfig,
+    EvmVersion, Project, ProjectPathsConfig, SolcConfig,
 };
 
 /// Foundry configuration
@@ -43,7 +46,7 @@ pub struct Config {
     /// `Remappings` to use for this repo
     pub remappings: Vec<RelativeRemapping>,
     /// library addresses to link
-    pub libraries: Vec<Address>,
+    pub libraries: Vec<String>,
     /// whether to enable cache
     pub cache: bool,
     /// evm version to use
@@ -272,6 +275,26 @@ impl Config {
         config
     }
 
+    /// Returns the `Project` configured with all `solc` and path related values.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use foundry_config::Config;
+    /// let config = Config::load_with_root(".").sanitized();
+    /// let project = config.project();
+    /// ```
+    pub fn project(&self) -> Result<Project, SolcError> {
+        Project::builder()
+            .paths(self.project_paths())
+            .allowed_path(&self.__root.0)
+            .allowed_paths(self.libraries.clone())
+            .solc_config(SolcConfig::builder().settings(self.solc_settings()?).build())
+            .ignore_error_codes(self.ignored_error_codes.clone())
+            .set_auto_detect(self.auto_detect_solc)
+            .build()
+    }
+
     /// Returns the `ProjectPathsConfig`  sub set of the config.
     ///
     /// **NOTE**: this uses the paths as they are and does __not__ modify them, see
@@ -291,6 +314,26 @@ impl Config {
             .libs(self.libs.clone())
             .remappings(self.remappings.iter().map(|m| m.clone().into()))
             .build_with_root(&self.__root.0)
+    }
+
+    /// Returns the `Optimizer` based on the configured settings
+    pub fn optimizer(&self) -> Optimizer {
+        Optimizer { enabled: Some(self.optimizer), runs: Some(self.optimizer_runs) }
+    }
+
+    /// Returns the configured `solc` `Settings` that includes:
+    ///   - all libraries
+    ///   - the optimizer
+    ///   - evm version
+    pub fn solc_settings(&self) -> Result<Settings, SolcError> {
+        let libraries = parse_libraries(&self.libraries)?;
+        let optimizer = self.optimizer();
+        Ok(Settings {
+            optimizer,
+            evm_version: Some(self.evm_version),
+            libraries,
+            ..Default::default()
+        })
     }
 
     /// Returns the default figment
@@ -736,6 +779,34 @@ pub fn remappings_from_newline(
     remappings: &str,
 ) -> impl Iterator<Item = Result<Remapping, RemappingError>> + '_ {
     remappings.lines().map(|x| x.trim()).filter(|x| !x.is_empty()).map(Remapping::from_str)
+}
+
+/// Parses all libraries in the form of
+/// `<file>:<lib>:<addr>`
+pub fn parse_libraries(
+    libs: &[String],
+) -> Result<BTreeMap<String, BTreeMap<String, String>>, SolcError> {
+    let mut libraries = BTreeMap::default();
+    for lib in libs {
+        let mut items = lib.split(':');
+        let file = items
+            .next()
+            .ok_or_else(|| SolcError::msg(format!("failed to parse invalid library: {}", lib)))?;
+        let lib = items
+            .next()
+            .ok_or_else(|| SolcError::msg(format!("failed to parse invalid library: {}", lib)))?;
+        let addr = items
+            .next()
+            .ok_or_else(|| SolcError::msg(format!("failed to parse invalid library: {}", lib)))?;
+        if items.next().is_some() {
+            return Err(SolcError::msg(format!("failed to parse invalid library: {}", lib)))
+        }
+        libraries
+            .entry(file.to_string())
+            .or_insert_with(BTreeMap::default)
+            .insert(lib.to_string(), addr.to_string());
+    }
+    Ok(libraries)
 }
 
 /// A subset of the foundry `Config`
