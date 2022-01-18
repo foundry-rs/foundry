@@ -75,24 +75,23 @@ else
   REPO_PATH="${FOUNDRY_DIR}/${FOUNDRYUP_REPO}"
   
   if [ -d $REPO_PATH ]; then
-    # If the repo path exists move to it, git pull, and checkout the branch and cargo install local.
+    # If the repo path exists move to it git pull and checkout the branch.
     cd $REPO_PATH
     git pull
     git checkout ${FOUNDRYUP_BRANCH}
     git pull
-
-    cargo install --path ./cli --bins --locked --force --root $FOUNDRY_BIN_DIR
   else
-    # Repo path did not exist, grab the author from the repo, make a directory in .foundry, cd to it, clone and install.
+    # Repo path did not exist, grab the author from the repo, make a directory in .foundry, cd to it and clone.
     IFS="/" read -ra AUTHOR <<< "$FOUNDRYUP_REPO"
     mkdir -p "$FOUNDRY_DIR/$AUTHOR"
     cd "$FOUNDRY_DIR/$AUTHOR"
     git clone https://github.com/${FOUNDRYUP_REPO}
     cd $REPO_PATH
     git checkout ${FOUNDRYUP_BRANCH}
-
-    cargo install --path ./cli --bins --locked --force --root $FOUNDRY_BIN_DIR
   fi
+  
+  # Build the repo and install it locally to the .foundry bin directory.
+  cargo install --path ./cli --bins --locked --force --root $FOUNDRY_BIN_DIR
 fi'
 
 BINARY="$FOUNDRY_BIN_DIR/foundryup"
