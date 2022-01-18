@@ -96,7 +96,7 @@ fi'
 
 BINARY="$FOUNDRY_BIN_DIR/foundryup"
 
-# Create the foundry directory and foundryup binary file if it doesn't exist.
+# Create the .foundry bin directory and foundryup binary if it doesn't exist.
 mkdir -p $FOUNDRY_BIN_DIR
 echo "$FOUNDRYUP" > $BINARY
 chmod +x $BINARY
