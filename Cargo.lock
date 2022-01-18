@@ -1472,6 +1472,7 @@ dependencies = [
  "evm",
  "evmodin",
  "eyre",
+ "foundry-config",
  "foundry-utils",
  "futures",
  "hex",

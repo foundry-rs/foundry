@@ -35,7 +35,7 @@ use serde::Serialize;
 /// `BuildArgs` implements `figment::Provider` in which all config related fields are serialized and
 /// then merged into an existing `Config`, effectively overwriting them.
 ///
-/// Some arguments are marked as `#[serde(skipped)]` and require manual processing in
+/// Some arguments are marked as `#[serde(skip)]` and require manual processing in
 /// `figment::Provider` implementation
 #[derive(Debug, Clone, Parser, Serialize)]
 pub struct BuildArgs {
@@ -157,7 +157,7 @@ impl BuildArgs {
     }
 }
 
-// Make this args a `Figment` so that it can be merged into the `Config`
+// Make this args a `figment::Provider` so that it can be merged into the `Config`
 impl Provider for BuildArgs {
     fn metadata(&self) -> Metadata {
         Metadata::named("Build Args Provider")

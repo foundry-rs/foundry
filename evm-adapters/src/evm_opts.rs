@@ -1,7 +1,16 @@
 use clap::Parser;
 use ethers::types::{Address, U256};
-use std::str::FromStr;
+use foundry_config::{
+    figment::{
+        self,
+        error::Kind::InvalidType,
+        value::{Dict, Map, Value},
+        Figment, Metadata, Profile, Provider,
+    },
+    Config,
+};
 use serde::Serialize;
+use std::str::FromStr;
 
 #[cfg(feature = "evmodin")]
 use evmodin::util::mocked_host::MockedHost;
@@ -47,10 +56,11 @@ impl FromStr for EvmType {
     }
 }
 
-#[derive(Debug, Clone, Parser)]
+#[derive(Debug, Clone, Parser, Serialize)]
 #[cfg_attr(any(feature = "sputnik", feature = "evmodin"), derive(Default))]
 pub struct EvmOpts {
     #[clap(flatten)]
+    #[serde(flatten)]
     pub env: Env,
 
     #[clap(
@@ -59,14 +69,17 @@ pub struct EvmOpts {
         help = "the EVM type you want to use (e.g. sputnik, evmodin)",
         default_value = "sputnik"
     )]
+    #[serde(skip)]
     pub evm_type: EvmType,
 
     #[clap(help = "fetch state over a remote instead of starting from empty state", long, short)]
     #[clap(alias = "rpc-url")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_url: Option<String>,
 
     #[clap(help = "pins the block number for the state fork", long)]
     #[clap(env = "DAPP_FORK_BLOCK")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_block_number: Option<u64>,
 
     #[clap(
@@ -172,7 +185,21 @@ mod sputnik_helpers {
     }
 }
 
-#[derive(Debug, Clone, Default, Parser)]
+// Make this set of options a `figment::Provider` so that it can be merged into the `Config`
+impl Provider for EvmOpts {
+    fn metadata(&self) -> Metadata {
+        Metadata::named("Evm Opts Provider")
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
+        let value = Value::serialize(self)?;
+        let error = InvalidType(value.to_actual(), "map".into());
+        let dict = value.into_dict().ok_or(error)?;
+        Ok(Map::from([(Config::selected_profile(), dict)]))
+    }
+}
+
+#[derive(Debug, Clone, Default, Parser, Serialize)]
 pub struct Env {
     // structopt does not let use `u64::MAX`:
     // https://doc.rust-lang.org/std/primitive.u64.html#associatedconstant.MAX
