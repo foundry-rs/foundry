@@ -1,14 +1,12 @@
 //! Test command
 
-use crate::{
-    cmd::{build::BuildArgs, Cmd},
-    utils,
-};
+use crate::cmd::{build::BuildArgs, Cmd};
 use ansi_term::Colour;
 use clap::{AppSettings, Parser};
 use ethers::solc::{ArtifactOutput, Project};
 use evm_adapters::{evm_opts::EvmOpts, sputnik::helpers::vm};
 use forge::{MultiContractRunnerBuilder, TestFilter};
+use foundry_config::Config;
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Parser)]
@@ -107,8 +105,7 @@ impl Cmd for TestArgs {
     fn run(self) -> eyre::Result<Self::Output> {
         let TestArgs { opts, evm_opts, json, filter, allow_failure } = self;
 
-        let config = utils::load_config();
-        // TODO better merge
+        let config: Config = opts.into();
 
         // Setup the fuzzer
         // TODO: Add CLI Options to modify the persistence
@@ -116,10 +113,10 @@ impl Cmd for TestArgs {
         let fuzzer = proptest::test_runner::TestRunner::new(cfg);
 
         // Set up the project
-        let project = opts.project(config)?;
+        let project = config.project()?;
 
         // prepare the test builder
-        let mut evm_cfg = crate::utils::sputnik_cfg(&opts.compiler.evm_version);
+        let mut evm_cfg = crate::utils::sputnik_cfg(&config.evm_version);
         evm_cfg.create_contract_limit = None;
 
         let builder = MultiContractRunnerBuilder::default()

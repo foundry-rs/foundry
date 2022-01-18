@@ -6,12 +6,8 @@ use foundry_utils::IntoFunction;
 use std::{collections::BTreeMap, path::PathBuf};
 use ui::{TUIExitReason, Tui, Ui};
 
-use ethers::solc::{
-    artifacts::{Optimizer, Settings},
-    MinimalCombinedArtifacts, Project, ProjectPathsConfig, SolcConfig,
-};
+use ethers::solc::{MinimalCombinedArtifacts, Project};
 
-use crate::utils;
 use ansi_term::Colour;
 use ethers::{
     prelude::{artifacts::ContractBytecode, Artifact},
@@ -81,7 +77,8 @@ impl Cmd for RunArgs {
         let bytecode = bin.into_bytes().unwrap();
         let needs_setup = abi.functions().any(|func| func.name == "setUp");
 
-        let cfg = crate::utils::sputnik_cfg(&self.opts.compiler.evm_version);
+        // TODO merge config
+        let cfg = crate::utils::sputnik_cfg(&self.opts.compiler.evm_version.unwrap());
         let vicinity = evm_opts.vicinity()?;
         let backend = evm_opts.backend(&vicinity)?;
 
@@ -205,39 +202,42 @@ pub struct BuildOutput {
 
 impl RunArgs {
     fn target_project(&self) -> eyre::Result<Project<MinimalCombinedArtifacts>> {
-        let paths = ProjectPathsConfig::builder().root(&self.path).sources(&self.path).build()?;
+        // let paths = ProjectPathsConfig::builder().root(&self.path).sources(&self.path).build()?;
+        //
+        // let optimizer = Optimizer {
+        //     enabled: Some(self.opts.compiler.optimize),
+        //     runs: Some(self.opts.compiler.optimize_runs as usize),
+        // };
+        //
+        // let solc_settings = Settings {
+        //     optimizer,
+        //     evm_version: Some(self.opts.compiler.evm_version),
+        //     ..Default::default()
+        // };
+        // let solc_cfg = SolcConfig::builder().settings(solc_settings).build()?;
+        //
+        // // setup the compiler
+        // let mut builder = Project::builder()
+        //     .paths(paths)
+        //     .allowed_path(&self.path)
+        //     .solc_config(solc_cfg)
+        //     // we do not want to generate any compilation artifacts in the script run mode
+        //     .no_artifacts()
+        //     // no cache
+        //     .ephemeral();
+        // if self.opts.no_auto_detect {
+        //     builder = builder.no_auto_detect();
+        // }
+        // Ok(builder.build()?)
 
-        let optimizer = Optimizer {
-            enabled: Some(self.opts.compiler.optimize),
-            runs: Some(self.opts.compiler.optimize_runs as usize),
-        };
-
-        let solc_settings = Settings {
-            optimizer,
-            evm_version: Some(self.opts.compiler.evm_version),
-            ..Default::default()
-        };
-        let solc_cfg = SolcConfig::builder().settings(solc_settings).build()?;
-
-        // setup the compiler
-        let mut builder = Project::builder()
-            .paths(paths)
-            .allowed_path(&self.path)
-            .solc_config(solc_cfg)
-            // we do not want to generate any compilation artifacts in the script run mode
-            .no_artifacts()
-            // no cache
-            .ephemeral();
-        if self.opts.no_auto_detect {
-            builder = builder.no_auto_detect();
-        }
-        Ok(builder.build()?)
+        todo!()
     }
 
     /// Compiles the file with auto-detection and compiler params.
     pub fn build(&self) -> eyre::Result<BuildOutput> {
         let root = dunce::canonicalize(&self.path)?;
-        let (project, output) = if let Ok(mut project) = self.opts.project(utils::load_config()) {
+        let (project, output) = if let Ok(mut project) = self.opts.project() {
+            // TODO merge properly
             // TODO: caching causes no output until https://github.com/gakonst/ethers-rs/issues/727
             // is fixed
             project.cached = false;

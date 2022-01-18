@@ -1,6 +1,7 @@
 use clap::Parser;
 use ethers::types::{Address, U256};
 use std::str::FromStr;
+use serde::Serialize;
 
 #[cfg(feature = "evmodin")]
 use evmodin::util::mocked_host::MockedHost;

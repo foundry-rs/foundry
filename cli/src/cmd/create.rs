@@ -3,7 +3,6 @@
 use crate::{
     cmd::{build::BuildArgs, Cmd},
     opts::{EthereumOpts, WalletType},
-    utils,
 };
 use ethers::{
     abi::{Abi, Constructor, Token},
@@ -44,9 +43,8 @@ impl Cmd for CreateArgs {
 
     fn run(self) -> Result<Self::Output> {
         // Find Project & Compile
-        let config = utils::load_config();
         // TODO merge
-        let project = self.opts.project(config)?;
+        let project = self.opts.project()?;
         let compiled = super::compile(&project)?;
 
         // Get ABI and BIN

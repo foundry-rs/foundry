@@ -7,6 +7,7 @@ use crate::cmd::{
     build::BuildArgs, config, create::CreateArgs, init::InitArgs, remappings::RemappingArgs,
     run::RunArgs, snapshot, test,
 };
+use serde::Serialize;
 
 #[derive(Debug, Parser)]
 pub struct Opts {
@@ -96,16 +97,23 @@ pub enum Subcommands {
     Config(config::ConfigArgs),
 }
 
-#[derive(Debug, Clone, Parser)]
+/// A set of solc compiler settings that can be set via command line arguments, which are intended
+/// to be merged into an existing `foundry_config::Config`.
+///
+/// See also [`BuildArgs`]
+#[derive(Debug, Clone, Parser, Serialize)]
 pub struct CompilerArgs {
-    #[clap(help = "choose the evm version", long, default_value = "london")]
-    pub evm_version: EvmVersion,
+    #[clap(help = "choose the evm version", long)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evm_version: Option<EvmVersion>,
 
     #[clap(help = "activate the solidity optimizer", long)]
-    pub optimize: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub optimize: Option<bool>,
 
-    #[clap(help = "optimizer parameter runs", long, default_value = "200")]
-    pub optimize_runs: u32,
+    #[clap(help = "optimizer parameter runs", long)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub optimize_runs: Option<usize>,
 }
 
 /// Represents the common dapp argument pattern for `<path>:<contractname>` where `<path>:` is

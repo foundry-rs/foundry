@@ -287,14 +287,20 @@ impl Config {
     /// let project = config.project();
     /// ```
     pub fn project(&self) -> Result<Project, SolcError> {
-        Project::builder()
+        let project = Project::builder()
             .paths(self.project_paths())
             .allowed_path(&self.__root.0)
             .allowed_paths(self.libraries.clone())
             .solc_config(SolcConfig::builder().settings(self.solc_settings()?).build())
             .ignore_error_codes(self.ignored_error_codes.clone())
             .set_auto_detect(self.auto_detect_solc)
-            .build()
+            .build()?;
+
+        if self.force {
+            project.cleanup()?;
+        }
+
+        Ok(project)
     }
 
     /// Returns the `ProjectPathsConfig`  sub set of the config.
