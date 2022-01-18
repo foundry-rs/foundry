@@ -152,12 +152,6 @@ impl BuildArgs {
         }
         Ok(project)
     }
-
-    /// Returns the `Project` for the current workspace using the given `Config` as base
-    pub fn project_with_config(&self, config: Config) -> eyre::Result<Project> {
-        let config = Figment::from(config);
-        Ok(Config::from(config.merge(self)).project()?)
-    }
 }
 
 // Make this args a `figment::Provider` so that it can be merged into the `Config`
