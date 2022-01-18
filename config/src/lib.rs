@@ -2,6 +2,7 @@
 use std::{
     borrow::Cow,
     path::{Path, PathBuf},
+    str::FromStr,
 };
 
 use figment::{
@@ -16,7 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use ethers_core::types::{Address, U256};
 use ethers_solc::{
-    remappings::{RelativeRemapping, Remapping},
+    remappings::{RelativeRemapping, Remapping, RemappingError},
     EvmVersion, ProjectPathsConfig,
 };
 
@@ -338,10 +339,10 @@ impl From<Config> for Figment {
         let profile = Config::selected_profile();
         let figment = Figment::default()
             .merge(Toml::file(Env::var_or("FOUNDRY_CONFIG", Config::FILE_NAME)).nested())
-            .merge(Env::prefixed("DAPP_").ignore(&["DAPP_REMAPPINGS"]).global())
+            .merge(Env::prefixed("DAPP_").ignore(&["REMAPPINGS"]).global())
             .merge(Env::prefixed("DAPP_TEST_").global())
             .merge(DappEnvCompatProvider)
-            .merge(Env::prefixed("FOUNDRY_").ignore(&["PROFILE"]).global())
+            .merge(Env::prefixed("FOUNDRY_").ignore(&["PROFILE", "REMAPPINGS"]).global())
             .select(profile.clone());
 
         // we try to merge remappings after we've merged all other providers, this prevents
@@ -507,14 +508,15 @@ impl Provider for DappEnvCompatProvider {
             );
         }
 
-        // TODO handle DAPP_REMAPPINGS
-
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }
 
 /// A figment provider that checks if the remappings were previously set and if they're unset looks
-/// up the fs via `Remapping::find_many`.
+/// up the fs via
+///   - `DAPP_REMAPPINGS` || `FOUNDRY_REMAPPINGS` env var
+///   - `<root>/remappings.txt` file
+///   - `Remapping::find_many`.
 struct RemappingsProvider<'a> {
     lib_paths: Cow<'a, Vec<PathBuf>>,
     /// the root path used to turn an absolute `Remapping`, as we're getting it from
@@ -537,12 +539,29 @@ impl<'a> Provider for RemappingsProvider<'a> {
             Ok(remappings) => remappings.clone(),
             Err(err) => {
                 if let figment::error::Kind::MissingField(_) = err.kind {
-                    // only search for the remappings if weren't set before
-                    self.lib_paths
-                        .iter()
-                        .map(|lib| self.root.join(lib))
-                        .flat_map(Remapping::find_many)
-                        .collect()
+                    // check the remappings env vars
+                    if let Some(env_remappings) = remappings_from_env_var("DAPP_REMAPPINGS")
+                        .or_else(|| remappings_from_env_var("FOUNDRY_REMAPPINGS"))
+                    {
+                        env_remappings.map_err(|err| err.to_string())?
+                    } else {
+                        // otherwise, try the remappings.txt file
+                        let remappings_file = self.root.join("remappings.txt");
+                        if remappings_file.is_file() {
+                            let content = std::fs::read_to_string(remappings_file)
+                                .map_err(|err| err.to_string())?;
+                            let remappings: Result<Vec<_>, _> =
+                                remappings_from_newline(&content).collect();
+                            remappings.map_err(|err| err.to_string())?
+                        } else {
+                            // otherwise, detect them via lib path look ups
+                            self.lib_paths
+                                .iter()
+                                .map(|lib| self.root.join(lib))
+                                .flat_map(Remapping::find_many)
+                                .collect()
+                        }
+                    }
                 } else {
                     return Err(err.clone())
                 }
@@ -564,6 +583,22 @@ impl<'a> Provider for RemappingsProvider<'a> {
     fn profile(&self) -> Option<Profile> {
         Some(Config::selected_profile())
     }
+}
+
+/// Returns the remappings from the given var
+///
+/// Returns `None` if the env var is not set, otherwise all Remappings, see
+/// `remappings_from_newline`
+pub fn remappings_from_env_var(env_var: &str) -> Option<Result<Vec<Remapping>, RemappingError>> {
+    let val = std::env::var(env_var).ok()?;
+    Some(remappings_from_newline(&val).collect())
+}
+
+// helper function for parsing newline-separated remappings
+pub fn remappings_from_newline(
+    remappings: &str,
+) -> impl Iterator<Item = Result<Remapping, RemappingError>> + '_ {
+    remappings.lines().map(|x| x.trim()).filter(|x| !x.is_empty()).map(Remapping::from_str)
 }
 
 /// A subset of the foundry `Config`
@@ -690,6 +725,53 @@ mod tests {
             jail.set_env("FOUNDRY_PROFILE", "hardhat");
             let figment: Figment = Config::hardhat().into();
             assert_eq!(figment.profile(), "hardhat");
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_remappings() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                src = "some-source"
+                out = "some-out"
+                cache = true
+            "#,
+            )?;
+            let config = Config::load();
+            assert!(config.remappings.is_empty());
+
+            jail.create_file(
+                "remappings.txt",
+                r#"
+                file-ds-test/=lib/ds-test/
+                file-other/=lib/other/
+            "#,
+            )?;
+
+            let config = Config::load();
+            assert_eq!(
+                config.remappings,
+                vec![
+                    Remapping::from_str("file-ds-test/=lib/ds-test/").unwrap().into(),
+                    Remapping::from_str("file-other/=lib/other/").unwrap().into()
+                ],
+            );
+
+            jail.set_env("DAPP_REMAPPINGS", "ds-test=lib/ds-test/\nother/=lib/other/");
+            let config = Config::load();
+
+            assert_eq!(
+                config.remappings,
+                vec![
+                    Remapping::from_str("ds-test=lib/ds-test/").unwrap().into(),
+                    Remapping::from_str("other/=lib/other/").unwrap().into()
+                ],
+            );
+
             Ok(())
         });
     }
