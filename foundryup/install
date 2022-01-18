@@ -44,7 +44,6 @@ if [[ "$FOUNDRYUP_REPO" == "gakonst/foundry" && -z "$FOUNDRYUP_BRANCH" ]]; then
   esac
 
   ARCHITECTURE="$(uname -m)"
-
   if [ "${ARCHITECTURE}" = "x86_64" ]; then
     # Redirect stderr to /dev/null to avoid printing errors if non Rosetta.
     if [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = "1" ]; then
@@ -127,4 +126,4 @@ if [[ ":$PATH:" != *":${FOUNDRY_BIN_DIR}:"* ]]; then
 fi
 
 echo && echo "Detected your preferred shell is ${PREF_SHELL} and added foundryup to PATH. Run 'source ${PROFILE}' or start a new terminal session to use foundryup."
-echo "Then, simply run 'foundryup' to install foundry."
+echo "Then, simply run 'foundryup' to install Foundry."
