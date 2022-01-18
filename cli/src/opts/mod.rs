@@ -1,4 +1,5 @@
 pub mod cast;
+pub mod evm;
 pub mod forge;
 
 use std::{convert::TryFrom, str::FromStr};

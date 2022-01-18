@@ -1,5 +1,6 @@
 use clap::Parser;
 use ethers::types::{Address, U256};
+use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
 #[cfg(feature = "evmodin")]
@@ -7,7 +8,7 @@ use evmodin::util::mocked_host::MockedHost;
 #[cfg(feature = "sputnik")]
 use sputnik::backend::MemoryVicinity;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum EvmType {
     #[cfg(feature = "sputnik")]
     Sputnik,
@@ -46,7 +47,7 @@ impl FromStr for EvmType {
     }
 }
 
-#[derive(Debug, Clone, Parser)]
+#[derive(Debug, Clone, Parser, Serialize, Deserialize)]
 #[cfg_attr(any(feature = "sputnik", feature = "evmodin"), derive(Default))]
 pub struct EvmOpts {
     #[clap(flatten)]
@@ -171,7 +172,7 @@ mod sputnik_helpers {
     }
 }
 
-#[derive(Debug, Clone, Default, Parser)]
+#[derive(Debug, Clone, Default, Parser, Serialize, Deserialize)]
 pub struct Env {
     // structopt does not let use `u64::MAX`:
     // https://doc.rust-lang.org/std/primitive.u64.html#associatedconstant.MAX
