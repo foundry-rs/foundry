@@ -1147,10 +1147,12 @@ dependencies = [
 [[package]]
 name = "ethabi"
 version = "16.0.0"
-source = "git+https://github.com/rust-ethereum/ethabi?branch=master#5781964ae40a7e16fafe7d1bfcc39cb17989e3c5"
+source = "git+https://github.com/rust-ethereum/ethabi?branch=master#c622438f9fd2ac2f9b3c38ecb1ca760c069d9ec2"
 dependencies = [
  "ethereum-types",
  "hex",
+ "once_cell",
+ "regex",
  "serde",
  "serde_json",
  "sha3 0.9.1",
@@ -1711,6 +1713,7 @@ name = "foundry-cli-test-utils"
 version = "0.1.0"
 dependencies = [
  "ethers-solc",
+ "once_cell",
  "tempfile",
  "walkdir",
 ]

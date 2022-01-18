@@ -1,10 +1,13 @@
 use ethers_solc::{
-    cache::SolFilesCache, project_util::TempProject, ArtifactOutput, MinimalCombinedArtifacts,
-    PathStyle, ProjectPathsConfig,
+    cache::SolFilesCache,
+    project_util::{copy_dir, TempProject},
+    ArtifactOutput, MinimalCombinedArtifacts, PathStyle, ProjectPathsConfig,
 };
+use once_cell::sync::Lazy;
 use std::{
     env,
     ffi::OsStr,
+    fs,
     path::{Path, PathBuf},
     process::{self, Command},
     sync::{
@@ -13,8 +16,21 @@ use std::{
     },
 };
 
+/// Contains a `forge init` initialized project
+pub static FORGE_INITIALIZED: Lazy<TestProject> = Lazy::new(|| {
+    let (prj, mut cmd) = setup("init-template", PathStyle::Dapptools);
+    cmd.arg("init");
+    cmd.assert_non_empty_stdout();
+    prj
+});
+
 // identifier for tests
 static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
+
+/// Copies an initialized project to the given path
+pub fn initialize(target: impl AsRef<Path>) {
+    FORGE_INITIALIZED.copy_to(target)
+}
 
 /// Setup an empty test project and return a command pointing to the forge
 /// executable whose CWD is set to the project's root.
@@ -78,9 +94,17 @@ impl TestProject {
         self.assert_all_paths_exist();
     }
 
+    /// Ensures that the given layout exists
     pub fn assert_style_paths_exist(&self, style: PathStyle) {
         let paths = style.paths(&self.paths().root).unwrap();
         config_paths_exist(&paths, self.inner().project().cached);
+    }
+
+    /// Copies the project's root directory to the given target
+    pub fn copy_to(&self, target: impl AsRef<Path>) {
+        let target = target.as_ref();
+        pretty_err(target, fs::create_dir_all(target));
+        pretty_err(target, copy_dir(self.root(), target));
     }
 
     /// Asserts all project paths exist
@@ -199,6 +223,13 @@ impl TestCommand {
     pub fn output(&mut self) -> process::Output {
         let output = self.cmd.output().unwrap();
         self.expect_success(output)
+    }
+
+    /// Runs the command and prints its output
+    pub fn print_output(&mut self) {
+        let output = self.cmd.output().unwrap();
+        println!("{}", String::from_utf8_lossy(&output.stdout));
+        println!("{}", String::from_utf8_lossy(&output.stderr));
     }
 
     /// Runs the command and asserts that it resulted in an error exit code.

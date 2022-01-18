@@ -1,12 +1,15 @@
 //! Contains various tests for checking forge's commands
-use ethers::solc::remappings::Remapping;
 use foundry_cli_test_utils::{
-    ethers_solc::PathStyle,
-    forgetest, pretty_eq,
+    ethers_solc::{remappings::Remapping, PathStyle},
+    forgetest, forgetest_ignore, pretty_eq,
     util::{pretty_err, read_string, TestCommand, TestProject},
 };
 use foundry_config::{parse_with_profile, BasicConfig, Config};
-use std::{env::set_current_dir, fs, str::FromStr};
+use std::{
+    env::{self, set_current_dir},
+    fs,
+    str::FromStr,
+};
 
 // import forge utils as mod
 #[allow(unused)]
@@ -95,4 +98,30 @@ forgetest!(can_clean_hardhat, PathStyle::HardHat, |prj: TestProject, mut cmd: Te
     cmd.arg("clean");
     cmd.assert_empty_stdout();
     prj.assert_cleaned();
+});
+
+// test against a local checkout, useful to debug with local ethers-rs patch
+forgetest_ignore!(can_compile_local_spells, |_: TestProject, mut cmd: TestCommand| {
+    let current_dir = std::env::current_dir().unwrap();
+    let root = current_dir
+        .join("../../foundry-integration-tests/testdata/spells-mainnet")
+        .to_string_lossy()
+        .to_string();
+    println!("project root: \"{}\"", root);
+
+    let eth_rpc_url = env::var("ETH_RPC_URL").unwrap();
+    let dss_exec_lib = "src/DssSpell.sol:DssExecLib:0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4";
+
+    cmd.args([
+        "build",
+        "--root",
+        root.as_str(),
+        "--fork-url",
+        eth_rpc_url.as_str(),
+        "--libraries",
+        dss_exec_lib,
+        "-vvv",
+        "--force",
+    ]);
+    cmd.print_output();
 });
