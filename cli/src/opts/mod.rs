@@ -15,10 +15,13 @@ use ethers::{
     types::{Address, Chain, U256},
 };
 use eyre::Result;
-use foundry_config::figment::{
-    self,
-    value::{Dict, Map},
-    Metadata, Profile,
+use foundry_config::{
+    figment::{
+        self,
+        value::{Dict, Map, Value},
+        Metadata, Profile,
+    },
+    Config,
 };
 
 const FLASHBOTS_URL: &str = "https://rpc.flashbots.net";
@@ -147,11 +150,15 @@ impl EthereumOpts {
 // Make this args a `Figment` so that it can be merged into the `Config`
 impl figment::Provider for EthereumOpts {
     fn metadata(&self) -> Metadata {
-        Metadata::named("Env Args Provider")
+        Metadata::named("Ethereum Opts Provider")
     }
 
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
-        todo!()
+        let mut dict = Dict::new();
+        let rpc = self.rpc_url().map_err(|err| err.to_string())?;
+        dict.insert("eth_rpc_url".to_string(), Value::from(rpc.to_string()));
+        dict.insert("chain".to_string(), Value::from(self.chain.to_string()));
+        Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }
 

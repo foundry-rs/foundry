@@ -320,7 +320,7 @@ mod tests {
         let evm = fuzzvm(&mut evm);
 
         let func = compiled.abi.unwrap().function("testFuzzedRevert").unwrap();
-        let res = evm.fuzz(&func, addr, false);
+        let res = evm.fuzz(func, addr, false);
         let error = res.test_error.unwrap();
         let revert_reason = error.revert_reason;
         assert_eq!(revert_reason, "fuzztest-revert");

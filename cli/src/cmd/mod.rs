@@ -1,4 +1,7 @@
 //! Subcommands for forge
+//!
+//! See the `foundry_config` crate docs first before adding new sub commands that use nested [cli
+//! arguments](crate::opts) like `BuildArgs`.
 
 pub mod build;
 pub mod config;

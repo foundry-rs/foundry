@@ -43,7 +43,6 @@ impl Cmd for CreateArgs {
 
     fn run(self) -> Result<Self::Output> {
         // Find Project & Compile
-        // TODO merge
         let project = self.opts.project()?;
         let compiled = super::compile(&project)?;
 

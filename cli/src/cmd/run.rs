@@ -70,7 +70,7 @@ impl Cmd for RunArgs {
         let figment: Figment = From::from(&self);
         let mut evm_opts = figment.extract::<EvmOpts>()?;
         let config = Config::from(figment).sanitized();
-        let evm_version = config.evm_version.clone();
+        let evm_version = config.evm_version;
         if evm_opts.debug {
             evm_opts.verbosity = 3;
         }

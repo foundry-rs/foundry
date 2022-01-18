@@ -25,6 +25,36 @@ use ethers_solc::{
 };
 
 /// Foundry configuration
+///
+/// # Defaults
+///
+/// All configuration values have a default, documented in the [fields](#fields)
+/// section below. [`Config::default()`] returns the default values for
+/// the default profile while [`Config::with_root()`] returns the values based on the given
+/// directory. [`Config::load()`] starts with the default profile and merges various providers into
+/// the config, same for [`Config::load_with_root()`], but there the default values are determined
+/// by [`Config::with_root()`]
+///
+/// # Provider Details
+///
+/// `Config` is a Figment [`Provider`] with the following characteristics:
+///
+///   * **Profile**
+///
+///     The profile is set to the value of the `profile` field.
+///
+///   * **Metadata**
+///
+///     This provider is named `Foundry Config`. It does not specify a
+///     [`Source`](figment::Source) and uses default interpolation.
+///
+///   * **Data**
+///
+///     The data emitted by this provider are the keys and values corresponding
+///     to the fields and values of the structure. The dictionary is emitted to
+///     the "default" meta-profile.
+///
+/// Note that these behaviors differ from those of [`Config::figment()`].
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct Config {
     /// The selected profile. **(default: _default_ `default`)**
@@ -290,9 +320,9 @@ impl Config {
         self.create_project(true, false)
     }
 
-    /// Same as [`Self::project()`] but sets configures the project to not emit artifacts and ignore cache,
-    /// caching causes no output until https://github.com/gakonst/ethers-rs/issues/727
-    pub fn ephemeral_no_artifacts_project(&self)  -> Result<Project, SolcError> {
+    /// Same as [`Self::project()`] but sets configures the project to not emit artifacts and ignore
+    /// cache, caching causes no output until https://github.com/gakonst/ethers-rs/issues/727
+    pub fn ephemeral_no_artifacts_project(&self) -> Result<Project, SolcError> {
         self.create_project(false, true)
     }
 
