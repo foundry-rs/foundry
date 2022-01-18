@@ -34,6 +34,20 @@ foundryup
 
 Advanced ways to use `foundryup` and other documentation can be found in the [foundryup package](./foundryup/README.md). Happy forging!
 
+### Error when running forge/cast
+
+If you are using the binaries as released, you may see the following error on MacOS:
+
+```
+dyld: Library not loaded: /usr/local/opt/libusb/lib/libusb-1.0.0.dylib
+```
+
+In order to fix this, you must install `libusb` like so:
+
+```
+brew install libusb 
+```
+
 ## Forge
 
 More documentation can be found in the [forge package](./forge/README.md) and in the [CLI README](./cli/README.md).
