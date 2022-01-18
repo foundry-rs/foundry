@@ -150,6 +150,9 @@ impl BuildArgs {
     ///
     /// Defaults to DAppTools-style repo layout, but can be customized.
     pub fn project(&self, config: Config) -> eyre::Result<Project> {
+        // 0. merge the config
+        // TODO this should probably be done separately, so that other commands can also access
+
         // 1. Set the root dir
         let root = self.root.clone().unwrap_or_else(|| {
             utils::find_git_root_path().unwrap_or_else(|_| std::env::current_dir().unwrap())

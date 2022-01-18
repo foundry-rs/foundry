@@ -353,6 +353,7 @@ impl From<Config> for Figment {
     fn from(c: Config) -> Figment {
         let profile = Config::selected_profile();
         let figment = Figment::default()
+            .merge(DappHardhatDirProvider(&c.__root.0))
             .merge(Toml::file(Env::var_or("FOUNDRY_CONFIG", Config::FILE_NAME)).nested())
             .merge(Env::prefixed("DAPP_").ignore(&["REMAPPINGS"]).global())
             .merge(Env::prefixed("DAPP_TEST_").global())
@@ -465,6 +466,47 @@ impl Default for Config {
             ignored_error_codes: vec![],
             __non_exhaustive: (),
         }
+    }
+}
+
+/// A provider that sets the `src` and `output` path depending on their existence.
+struct DappHardhatDirProvider<'a>(&'a Path);
+
+impl<'a> Provider for DappHardhatDirProvider<'a> {
+    fn metadata(&self) -> Metadata {
+        Metadata::named("Dapp Hardhat dir compat")
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+        let mut dict = Dict::new();
+        dict.insert(
+            "src".to_string(),
+            ProjectPathsConfig::find_source_dir(self.0)
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .to_string()
+                .into(),
+        );
+        dict.insert(
+            "out".to_string(),
+            ProjectPathsConfig::find_artifacts_dir(self.0)
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .to_string()
+                .into(),
+        );
+        dict.insert(
+            "libs".to_string(),
+            ProjectPathsConfig::find_libs(self.0)
+                .into_iter()
+                .map(|lib| lib.file_name().unwrap().to_string_lossy().to_string())
+                .collect::<Vec<_>>()
+                .into(),
+        );
+
+        Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }
 
@@ -892,7 +934,7 @@ mod tests {
                 BasicConfig {
                     profile: Config::DEFAULT_PROFILE,
                     src: "other-src".into(),
-                    out: "myout".into(),
+                    out: "out".into(),
                     libs: default.libs.clone(),
                     remappings: default.remappings,
                 }
