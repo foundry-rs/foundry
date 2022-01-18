@@ -3,7 +3,10 @@ use clap::{Parser, Subcommand, ValueHint};
 use ethers::{solc::EvmVersion, types::Address};
 use std::{path::PathBuf, str::FromStr};
 
-use crate::cmd::{build::BuildArgs, config, create::CreateArgs, init::InitArgs, remappings::RemappingArgs, run::RunArgs, snapshot, test};
+use crate::cmd::{
+    build::BuildArgs, config, create::CreateArgs, init::InitArgs, remappings::RemappingArgs,
+    run::RunArgs, snapshot, test,
+};
 
 #[derive(Debug, Parser)]
 pub struct Opts {

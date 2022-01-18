@@ -14,6 +14,11 @@ use ethers::{
     types::{Address, Chain, U256},
 };
 use eyre::Result;
+use foundry_config::figment::{
+    self,
+    value::{Dict, Map},
+    Metadata, Profile,
+};
 
 const FLASHBOTS_URL: &str = "https://rpc.flashbots.net";
 
@@ -135,6 +140,17 @@ impl EthereumOpts {
         } else {
             self.rpc_url.as_deref().ok_or_else(|| eyre::Error::msg("no Ethereum RPC provided, maybe you forgot to set the --rpc-url or the ETH_RPC_URL parameter? Alternatively, consider using the --flashbots flag to get frontrunning protection"))
         }
+    }
+}
+
+// Make this args a `Figment` so that it can be merged into the `Config`
+impl figment::Provider for EthereumOpts {
+    fn metadata(&self) -> Metadata {
+        Metadata::named("Env Args Provider")
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
+        todo!()
     }
 }
 

@@ -14,8 +14,14 @@ use std::{
 use crate::{cmd::Cmd, opts::forge::CompilerArgs, utils};
 
 use clap::{Parser, ValueHint};
-use foundry_config::{figment::*, Config};
-use foundry_config::figment::value::{Dict, Map, Value};
+use foundry_config::{
+    figment,
+    figment::{
+        value::{Dict, Map, Value},
+        Metadata, Profile, Provider,
+    },
+    remappings_from_env_var, Config,
+};
 
 #[derive(Debug, Clone, Parser)]
 pub struct BuildArgs {
@@ -252,26 +258,60 @@ impl Provider for BuildArgs {
         Metadata::named("Build Args Provider")
     }
 
-    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+    fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
         let mut dict = Dict::new();
 
         if let Some(ref src) = self.contracts {
             dict.insert("src".to_string(), Value::from(format!("{}", src.display())));
         }
 
-        // TODO remaining configs
+        let mut libs =
+            self.lib_paths.iter().map(|p| format!("{}", p.display())).collect::<Vec<_>>();
+        if self.hardhat {
+            dict.insert("src".to_string(), Value::from("contracts".to_string()));
+            libs.push("node_modules".to_string());
+        }
+
+        if !libs.is_empty() {
+            dict.insert("libs".to_string(), Value::from(libs));
+        }
+
+        if let Some(ref out) = self.out_path {
+            dict.insert("out".to_string(), Value::from(format!("{}", out.display())));
+        }
+
+        if self.no_auto_detect {
+            dict.insert("auto_detect_solc".to_string(), Value::from(false));
+        }
+
+        if !self.libraries.is_empty() {
+            dict.insert("libraries".to_string(), Value::from(self.libraries.clone()));
+        }
+
+        if !self.remappings.is_empty() {
+            dict.insert(
+                "remappings".to_string(),
+                Value::from(self.remappings.iter().map(|r| r.to_string()).collect::<Vec<_>>()),
+            );
+        }
+
+        if let Some(env_remappings) =
+            self.remappings_env.as_ref().and_then(|env| remappings_from_env_var(env))
+        {
+            let remappings = env_remappings.map_err(|err| err.to_string())?;
+            dict.insert(
+                "remappings".to_string(),
+                Value::from(remappings.iter().map(|r| r.to_string()).collect::<Vec<_>>()),
+            );
+        }
+
+        if !self.ignored_error_codes.is_empty() {
+            dict.insert(
+                "ignored_error_codes".to_string(),
+                Value::from(self.ignored_error_codes.clone()),
+            );
+        }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }
-
-// // Make this args a `Figment` so that it can be merged into the `Config`
-// impl Provider for Env {
-//     fn metadata(&self) -> Metadata {
-//         Metadata::named("Env Args Provider")
-//     }
-//
-//     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
-//         Serialized::defaults(self).data()
-//     }
-// }
