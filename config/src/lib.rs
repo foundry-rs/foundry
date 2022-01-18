@@ -211,14 +211,86 @@ impl Config {
     /// `Config::with_root`
     ///
     /// This joins all relative paths with the current root and attempts to make them canonic
+    #[must_use]
     pub fn canonic(self) -> Self {
         let root = self.__root.0.clone();
         self.canonic_at(root)
     }
 
-    /// Joins all relative paths with the given root
-    pub fn canonic_at(self, root: impl AsRef<Path>) -> Self {
-        todo!()
+    /// Joins all relative paths with the given root so that paths that are defined as:
+    ///
+    /// ```toml
+    /// [default]
+    /// src = "src"
+    /// out = "./out"
+    /// libs = ["lib", "/var/lib"]
+    /// ```
+    ///
+    /// Will be made canonic with the given root:
+    ///
+    /// ```toml
+    /// [default]
+    /// src = "<root>/src"
+    /// out = "<root>/out"
+    /// libs = ["<root>/lib", "/var/lib"]
+    /// ```
+    #[must_use]
+    pub fn canonic_at(mut self, root: impl Into<PathBuf>) -> Self {
+        let root = canonic(root);
+
+        fn p(root: &Path, rem: &Path) -> PathBuf {
+            canonic(root.join(rem))
+        }
+
+        self.src = p(&root, &self.src);
+        self.test = p(&root, &self.test);
+        self.out = p(&root, &self.out);
+
+        self.libs = self.libs.into_iter().map(|lib| p(&root, &lib)).collect();
+
+        self.remappings =
+            self.remappings.into_iter().map(|r| RelativeRemapping::new(r.into(), &root)).collect();
+
+        self
+    }
+
+    /// Returns a sanitized version of the Config where are paths are set correctly and potential
+    /// duplicates are resolved
+    ///
+    /// See [`Self::canonic`]
+    #[must_use]
+    pub fn sanitized(self) -> Self {
+        let mut config = self.canonic();
+
+        // remove any potential duplicates
+        config.remappings.sort_unstable();
+        config.remappings.dedup();
+
+        config.libs.sort_unstable();
+        config.libs.dedup();
+
+        config
+    }
+
+    /// Returns the `ProjectPathsConfig`  sub set of the config.
+    ///
+    /// **NOTE**: this uses the paths as they are and does __not__ modify them, see
+    /// `[Self::sanitized]`
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use foundry_config::Config;
+    /// let config = Config::load_with_root(".").sanitized();
+    /// let paths = config.project_paths();
+    /// ```
+    pub fn project_paths(&self) -> ProjectPathsConfig {
+        ProjectPathsConfig::builder()
+            .sources(&self.src)
+            .artifacts(&self.out)
+            .libs(self.libs.clone())
+            .remappings(self.remappings.iter().map(|m| m.clone().into()))
+            .build_with_root(&self.__root.0)
     }
 
     /// Returns the default figment
@@ -322,6 +394,14 @@ impl Config {
     /// Serialize the config type as a String of TOML.
     ///
     /// This serializes to a table with the name of the profile
+    ///
+    /// ```toml
+    /// [default]
+    /// src = "src"
+    /// out = "out"
+    /// libs = ["lib"]
+    /// # ...
+    /// ```
     pub fn to_string_pretty(&self) -> Result<String, toml::ser::Error> {
         let s = toml::to_string_pretty(self)?;
         Ok(format!(
@@ -738,6 +818,11 @@ impl From<Chain> for u64 {
             Chain::Id(id) => id,
         }
     }
+}
+
+fn canonic(path: impl Into<PathBuf>) -> PathBuf {
+    let path = path.into();
+    ethers_solc::utils::canonicalize(&path).unwrap_or(path)
 }
 
 #[cfg(test)]

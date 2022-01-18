@@ -1051,9 +1051,9 @@ checksum = "e78d4f1cc4ae33bbfc157ed5d5a5ef3bc29227303d595861deb238fcec4e9457"
 
 [[package]]
 name = "elliptic-curve"
-version = "0.11.8"
+version = "0.11.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "79a4c0d14ef894e75cec382d55c2cad1d29974c4a89bf72184ab3646b76ae13a"
+checksum = "3a4641673db66b0492d99edd8fd1cf2e6eb4ab91de525d1d2d6cc99442ed15f5"
 dependencies = [
  "base16ct",
  "crypto-bigint",
@@ -1211,9 +1211,8 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#e0ee03328332776f5f18a52b968ea3f62df982cb"
 dependencies = [
- "ethers-addressbook",
+ "ethers-addressbook 0.1.0",
  "ethers-contract",
  "ethers-core",
  "ethers-etherscan",
@@ -1226,7 +1225,17 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "0.1.0"
-source = "git+https://github.com/gakonst/ethers-rs#e0ee03328332776f5f18a52b968ea3f62df982cb"
+dependencies = [
+ "ethers-core",
+ "once_cell",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "ethers-addressbook"
+version = "0.1.0"
+source = "git+https://github.com/gakonst/ethers-rs#91ff71ec62282a8d5b328cb3649768adcc0bcc0f"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -1237,7 +1246,6 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#e0ee03328332776f5f18a52b968ea3f62df982cb"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1255,7 +1263,6 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#e0ee03328332776f5f18a52b968ea3f62df982cb"
 dependencies = [
  "Inflector",
  "anyhow",
@@ -1278,7 +1285,6 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#e0ee03328332776f5f18a52b968ea3f62df982cb"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -1292,7 +1298,6 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#e0ee03328332776f5f18a52b968ea3f62df982cb"
 dependencies = [
  "arrayvec 0.7.2",
  "bytes",
@@ -1320,7 +1325,6 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "0.2.0"
-source = "git+https://github.com/gakonst/ethers-rs#e0ee03328332776f5f18a52b968ea3f62df982cb"
 dependencies = [
  "ethers-core",
  "reqwest",
@@ -1333,7 +1337,6 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#e0ee03328332776f5f18a52b968ea3f62df982cb"
 dependencies = [
  "async-trait",
  "ethers-contract",
@@ -1356,7 +1359,6 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#e0ee03328332776f5f18a52b968ea3f62df982cb"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -1386,7 +1388,6 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#e0ee03328332776f5f18a52b968ea3f62df982cb"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1409,7 +1410,6 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "0.1.0"
-source = "git+https://github.com/gakonst/ethers-rs#e0ee03328332776f5f18a52b968ea3f62df982cb"
 dependencies = [
  "colored",
  "dunce",
@@ -1722,7 +1722,6 @@ name = "foundry-config"
 version = "0.1.0"
 dependencies = [
  "dirs-next",
- "dunce",
  "ethers-core",
  "ethers-solc",
  "eyre",
@@ -1738,7 +1737,7 @@ dependencies = [
 name = "foundry-utils"
 version = "0.1.0"
 dependencies = [
- "ethers-addressbook",
+ "ethers-addressbook 0.1.0 (git+https://github.com/gakonst/ethers-rs)",
  "ethers-core",
  "ethers-etherscan",
  "eyre",
@@ -2290,9 +2289,9 @@ dependencies = [
 
 [[package]]
 name = "k256"
-version = "0.10.1"
+version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7511aa19fa182a8a4885760c4e5675b17173b02ae86ec5d376d34f5278c874b9"
+checksum = "1cc5937366afd3b38071f400d1ce5bd8b1d40b5083cc14e6f8dbcc4032a7f5bb"
 dependencies = [
  "cfg-if 1.0.0",
  "ecdsa",
