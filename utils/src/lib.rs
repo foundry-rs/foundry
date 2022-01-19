@@ -207,7 +207,7 @@ pub async fn get_func_etherscan(
         }
     }
 
-    Err(eyre::eyre!("Function not found"))
+    Err(eyre::eyre!("Function not found in abi"))
 }
 
 /// Parses string input as Token against the expected ParamType
