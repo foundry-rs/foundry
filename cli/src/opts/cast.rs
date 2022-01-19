@@ -57,9 +57,10 @@ pub enum Subcommands {
     #[clap(name = "--to-unit")]
     #[clap(
         about = r#"convert an ETH amount into a specified unit: ether, gwei or wei (default: wei). 
-    Usage Example: 
+    Usage: 
       - 1ether wei     | converts 1 ether to wei
       - "1 ether" wei  | converts 1 ether to wei
+      - 1ether         | converts 1 ether to wei
       - 1 gwei         | converts 1 wei to gwei
       - 1gwei ether    | converts 1 gwei to ether
     "#
