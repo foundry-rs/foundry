@@ -795,8 +795,8 @@ impl SimpleCast {
     /// use cast::SimpleCast as Cast;
     ///
     /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(Cast::to_unit("1 wei".to_string(), "".to_string())?, "1");
-    ///     assert_eq!(Cast::to_unit("1".to_string(), "".to_string())?, "1");
+    ///     assert_eq!(Cast::to_unit("1 wei".to_string(), "wei".to_string())?, "1");
+    ///     assert_eq!(Cast::to_unit("1".to_string(), "wei".to_string())?, "1");
     ///     assert_eq!(Cast::to_unit("1ether".to_string(), "wei".to_string())?, "1000000000000000000");
     ///     assert_eq!(Cast::to_unit("100 gwei".to_string(), "gwei".to_string())?, "100");
     ///
