@@ -138,6 +138,7 @@ fn main() -> eyre::Result<()> {
 
 fn install(root: impl AsRef<std::path::Path>, dependencies: Vec<Dependency>) -> eyre::Result<()> {
     let libs = std::path::Path::new("lib");
+    let gitmodules_path = utils::find_git_root_path()?.join(".gitmodules");
 
     dependencies.iter().try_for_each(|dep| -> eyre::Result<_> {
         let path = libs.join(&dep.name);
@@ -172,7 +173,18 @@ fn install(root: impl AsRef<std::path::Path>, dependencies: Vec<Dependency>) -> 
             format!("forge install: {}", dep.name)
         };
 
-        Command::new("git").args(&["commit", "-m", &message]).current_dir(&root).spawn()?.wait()?;
+        // commit only relevant files - ignoring staged changes
+        Command::new("git")
+            .args(&[
+                "commit",
+                "-m",
+                &message,
+                &path.display().to_string(),
+                &gitmodules_path.display().to_string(),
+            ])
+            .current_dir(&root)
+            .spawn()?
+            .wait()?;
 
         Ok(())
     })
