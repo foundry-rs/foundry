@@ -107,6 +107,10 @@ async fn main() -> eyre::Result<()> {
             let val = unwrap_or_stdin(value)?;
             println!("{}", SimpleCast::to_uint256(&val)?);
         }
+        Subcommands::ToUnit { value, unit } => {
+            let val = unwrap_or_stdin(value)?;
+            println!("{}", SimpleCast::to_unit(val, unit.unwrap_or_else(|| String::from("wei")))?);
+        }
         Subcommands::ToWei { value, unit } => {
             let val = unwrap_or_stdin(value)?;
             println!(
