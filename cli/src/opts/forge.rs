@@ -100,7 +100,7 @@ pub enum Subcommands {
     #[clap(about = "creates a snapshot of each test's gas usage")]
     Snapshot(snapshot::SnapshotArgs),
 
-    #[clap(about = "flatten a target file")]
+    #[clap(about = "concats a file with all of its imports")]
     Flatten(flatten::FlattenArgs),
 }
 

@@ -112,7 +112,7 @@ pub fn find_remappings(
 ) -> Vec<Remapping> {
     /// Helper function for parsing newline-separated remappings
     fn remappings_from_newline(remappings: &str) -> impl Iterator<Item = Remapping> + '_ {
-        remappings.split('\n').filter(|x| !x.is_empty()).map(|x| {
+        remappings.lines().filter(|x| !x.trim().is_empty()).map(|x| {
             Remapping::from_str(x).unwrap_or_else(|_| panic!("could not parse remapping: {}", x))
         })
     }
@@ -149,7 +149,7 @@ pub fn find_libs(root: &Path, lib_paths: &[PathBuf], hardhat: bool) -> Vec<PathB
         return ProjectPathsConfig::find_libs(&root)
     }
 
-    let mut libs = lib_paths.to_owned();
+    let mut libs = lib_paths.to_vec();
     if hardhat && !lib_paths.iter().any(|lib| lib.ends_with("node_modules")) {
         // if --hardhat was set, ensure it is present in the lib set
         libs.push(root.join("node_modules"));
