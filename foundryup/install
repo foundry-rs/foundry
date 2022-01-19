@@ -57,6 +57,11 @@ if [[ "$FOUNDRYUP_REPO" == "gakonst/foundry" && -z "$FOUNDRYUP_BRANCH" ]]; then
     ARCHITECTURE="amd64" # Amd.
   fi
   
+  # Warn MacOS users that they may need to manually install libusb via Homebrew:
+  if [[ "$PLATFORM" == "darwin" && ! -f /usr/local/opt/libusb/lib/libusb-1.0.0.dylib ]]; then
+    echo "warning: libusb not found. You may need to install it manually on MacOS via Homebrew (`brew install libusb`).
+  fi
+  
   # Compute the URL of the release tarball in the Foundry repository.
   TARBALL_URL="https://github.com/${FOUNDRYUP_REPO}/releases/download/${FOUNDRYUP_VERSION}/foundry_${FOUNDRYUP_VERSION}_${PLATFORM}_${ARCHITECTURE}.tar.gz"
 
