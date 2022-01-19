@@ -2,6 +2,7 @@
 
 pub mod build;
 pub mod create;
+pub mod flatten;
 pub mod remappings;
 pub mod run;
 pub mod snapshot;
