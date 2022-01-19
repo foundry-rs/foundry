@@ -407,6 +407,11 @@ contract CheatCodes is DSTest {
         emitter.t();
     }
 
+    function testFailDanglingExpectEmit() public {
+        hevm.expectEmit(true,true,false,true);
+        emit Transfer(address(this), address(1337), 1337);
+    }
+
     // Test should fail if nothing is called
     // after expectRevert
     function testFailExpectRevert3() public {
