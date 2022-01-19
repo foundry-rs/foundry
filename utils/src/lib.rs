@@ -4,14 +4,17 @@ use ethers_core::{
     abi::{
         self, parse_abi,
         token::{LenientTokenizer, StrictTokenizer, Tokenizer},
-        Abi, AbiParser, Function, Param, ParamType, Token,
+        Abi, AbiParser, Event, Function, Param, ParamType, Token,
     },
     types::*,
 };
 use ethers_etherscan::Client;
 use eyre::{Result, WrapErr};
 use serde::Deserialize;
-use std::{collections::HashSet, env::VarError};
+use std::{
+    collections::{BTreeMap, HashSet},
+    env::VarError,
+};
 
 const BASE_TX_COST: u64 = 21000;
 
@@ -62,9 +65,43 @@ pub fn remove_extra_costs(gas: U256, calldata: &[u8]) -> U256 {
     gas - calldata_cost - BASE_TX_COST
 }
 
+/// Flattens a group of contracts into maps of all events and functions
+pub fn flatten_known_contracts(
+    contracts: &BTreeMap<String, (Abi, Vec<u8>)>,
+) -> (BTreeMap<[u8; 4], Function>, BTreeMap<H256, Event>, Abi) {
+    let flattened_funcs: BTreeMap<[u8; 4], Function> = contracts
+        .iter()
+        .flat_map(|(_name, (abi, _code))| {
+            abi.functions()
+                .map(|func| (func.short_signature(), func.clone()))
+                .collect::<BTreeMap<[u8; 4], Function>>()
+        })
+        .collect();
+
+    let flattened_events: BTreeMap<H256, Event> = contracts
+        .iter()
+        .flat_map(|(_name, (abi, _code))| {
+            abi.events()
+                .map(|event| (event.signature(), event.clone()))
+                .collect::<BTreeMap<H256, Event>>()
+        })
+        .collect();
+
+    // We need this for better revert decoding, and want it in abi form
+    let mut errors_abi = Abi::default();
+    contracts.iter().for_each(|(_name, (abi, _code))| {
+        abi.errors().for_each(|error| {
+            let entry =
+                errors_abi.errors.entry(error.name.clone()).or_insert_with(Default::default);
+            entry.push(error.clone());
+        });
+    });
+    (flattened_funcs, flattened_events, errors_abi)
+}
+
 /// Given an ABI encoded error string with the function signature `Error(string)`, it decodes
 /// it and returns the revert error message.
-pub fn decode_revert(error: &[u8]) -> Result<String> {
+pub fn decode_revert(error: &[u8], maybe_abi: Option<&Abi>) -> Result<String> {
     if error.len() >= 4 {
         match error[0..4] {
             // keccak(Panic(uint256))
@@ -126,7 +163,7 @@ pub fn decode_revert(error: &[u8]) -> Result<String> {
                     let len = U256::from(&err_data[32..64]).as_usize();
                     if err_data.len() > 64 + len {
                         let actual_err = &err_data[64..64 + len];
-                        if let Ok(decoded) = decode_revert(actual_err) {
+                        if let Ok(decoded) = decode_revert(actual_err, maybe_abi) {
                             // check if its a builtin
                             return Ok(decoded)
                         } else if let Ok(as_str) = String::from_utf8(actual_err.to_vec()) {
@@ -138,6 +175,25 @@ pub fn decode_revert(error: &[u8]) -> Result<String> {
                 Err(eyre::Error::msg("Non-native error and not string"))
             }
             _ => {
+                // try to decode a custom error if provided an abi
+                if error.len() >= 4 {
+                    if let Some(abi) = maybe_abi {
+                        for abi_error in abi.errors() {
+                            if abi_error.signature()[0..4] == error[0..4] {
+                                // if we dont decode, dont return an error, try to decode as a
+                                // string later
+                                if let Ok(decoded) = abi_error.decode(&error[4..]) {
+                                    let inputs = decoded
+                                        .iter()
+                                        .map(format_token)
+                                        .collect::<Vec<String>>()
+                                        .join(", ");
+                                    return Ok(format!("{}({})", abi_error.name, inputs))
+                                }
+                            }
+                        }
+                    }
+                }
                 // evm_error will sometimes not include the function selector for the error,
                 // optimistically try to decode
                 if let Ok(decoded) = abi::decode(&[abi::ParamType::String], error) {

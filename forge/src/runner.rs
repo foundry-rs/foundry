@@ -7,8 +7,8 @@ use rayon::iter::ParallelIterator;
 use sputnik::{backend::Backend, Config};
 
 use ethers::{
-    abi::{Abi, Function, Token},
-    types::{Address, Bytes},
+    abi::{Abi, Event, Function, Token},
+    types::{Address, Bytes, H256},
 };
 use evm_adapters::{
     call_tracing::CallTraceArena,
@@ -140,6 +140,10 @@ impl TestKind {
     }
 }
 
+/// Type complexity wrapper around execution info
+type MaybeExecutionInfo<'a> =
+    Option<(&'a BTreeMap<[u8; 4], Function>, &'a BTreeMap<H256, Event>, &'a Abi)>;
+
 pub struct ContractRunner<'a, B> {
     // EVM Config Options
     /// The options used to instantiate a new EVM.
@@ -157,6 +161,9 @@ pub struct ContractRunner<'a, B> {
     pub code: ethers::prelude::Bytes,
     /// The address which will be used as the `from` field in all EVM calls
     pub sender: Address,
+
+    /// Contract execution info, (functions, events, errors)
+    pub execution_info: MaybeExecutionInfo<'a>,
 }
 
 impl<'a, B: Backend> ContractRunner<'a, B> {
@@ -167,8 +174,17 @@ impl<'a, B: Backend> ContractRunner<'a, B> {
         contract: &'a Abi,
         code: ethers::prelude::Bytes,
         sender: Option<Address>,
+        execution_info: MaybeExecutionInfo<'a>,
     ) -> Self {
-        Self { evm_opts, evm_cfg, backend, contract, code, sender: sender.unwrap_or_default() }
+        Self {
+            evm_opts,
+            evm_cfg,
+            backend,
+            contract,
+            code,
+            sender: sender.unwrap_or_default(),
+            execution_info,
+        }
     }
 }
 
@@ -267,6 +283,9 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
 
         let (address, mut evm, init_logs) = self.new_sputnik_evm()?;
 
+        let errors_abi = self.execution_info.as_ref().map(|(_, _, errors)| errors);
+        let errors_abi = if let Some(ref abi) = errors_abi { abi } else { self.contract };
+
         let mut logs = init_logs;
 
         let mut traces: Option<Vec<CallTraceArena>> = None;
@@ -313,25 +332,31 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
             logs.extend_from_slice(&setup_logs);
         }
 
-        let (status, reason, gas_used, logs) =
-            match evm.call::<(), _, _>(self.sender, address, func.clone(), (), 0.into()) {
-                Ok((_, status, gas_used, execution_logs)) => {
+        let (status, reason, gas_used, logs) = match evm.call::<(), _, _>(
+            self.sender,
+            address,
+            func.clone(),
+            (),
+            0.into(),
+            Some(errors_abi),
+        ) {
+            Ok((_, status, gas_used, execution_logs)) => {
+                logs.extend(execution_logs);
+                (status, None, gas_used, logs)
+            }
+            Err(err) => match err {
+                EvmError::Execution { reason, gas_used, logs: execution_logs } => {
                     logs.extend(execution_logs);
-                    (status, None, gas_used, logs)
+                    // add reverted logs
+                    logs.extend(evm.all_logs());
+                    (revert(&evm), Some(reason), gas_used, logs)
                 }
-                Err(err) => match err {
-                    EvmError::Execution { reason, gas_used, logs: execution_logs } => {
-                        logs.extend(execution_logs);
-                        // add reverted logs
-                        logs.extend(evm.all_logs());
-                        (revert(&evm), Some(reason), gas_used, logs)
-                    }
-                    err => {
-                        tracing::error!(?err);
-                        return Err(err.into())
-                    }
-                },
-            };
+                err => {
+                    tracing::error!(?err);
+                    return Err(err.into())
+                }
+            },
+        };
 
         self.update_traces(
             &mut traces,
@@ -421,7 +446,8 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
 
         // instantiate the fuzzed evm in line
         let evm = FuzzedExecutor::new(&mut evm, runner, self.sender);
-        let FuzzTestResult { cases, test_error } = evm.fuzz(func, address, should_fail);
+        let FuzzTestResult { cases, test_error } =
+            evm.fuzz(func, address, should_fail, Some(self.contract));
 
         let evm = evm.into_inner();
         if let Some(ref error) = test_error {
@@ -560,7 +586,7 @@ mod tests {
             abi: &'a Abi,
             code: ethers::prelude::Bytes,
         ) -> ContractRunner<'a, MemoryBackend<'a>> {
-            ContractRunner::new(&*EVM_OPTS, &*CFG_NO_LMT, &*BACKEND, abi, code, None)
+            ContractRunner::new(&*EVM_OPTS, &*CFG_NO_LMT, &*BACKEND, abi, code, None, None)
         }
 
         #[test]

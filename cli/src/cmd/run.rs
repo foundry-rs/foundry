@@ -17,6 +17,7 @@ use ethers::{
     solc::artifacts::{CompactContractSome, ContractBytecodeSome},
 };
 use evm_adapters::{
+    call_tracing::ExecutionInfo,
     evm_opts::{BackendKind, EvmOpts},
     sputnik::{cheatcodes::debugger::DebugArena, helpers::vm},
 };
@@ -94,6 +95,7 @@ impl Cmd for RunArgs {
                     &abi,
                     bytecode,
                     Some(evm_opts.sender),
+                    None,
                 );
                 runner.run_test(&func, needs_setup, Some(&known_contracts))?
             }
@@ -105,6 +107,7 @@ impl Cmd for RunArgs {
                     &abi,
                     bytecode,
                     Some(evm_opts.sender),
+                    None,
                 );
                 runner.run_test(&func, needs_setup, Some(&known_contracts))?
             }
@@ -160,22 +163,25 @@ impl Cmd for RunArgs {
             {
                 if !result.success && evm_opts.verbosity == 3 || evm_opts.verbosity > 3 {
                     let mut ident = identified_contracts.clone();
+                    let (funcs, events, errors) =
+                        foundry_utils::flatten_known_contracts(&known_contracts);
+                    let mut exec_info =
+                        ExecutionInfo::new(&known_contracts, &mut ident, &funcs, &events, &errors);
+                    let vm = vm();
                     if evm_opts.verbosity > 4 || !result.success {
                         // print setup calls as well
                         traces.iter().for_each(|trace| {
-                            trace.pretty_print(0, &known_contracts, &mut ident, &vm(), "");
+                            trace.pretty_print(0, &mut exec_info, &vm, "");
                         });
                     } else if !traces.is_empty() {
                         traces.last().expect("no last but not empty").pretty_print(
                             0,
-                            &known_contracts,
-                            &mut ident,
-                            &vm(),
+                            &mut exec_info,
+                            &vm,
                             "",
                         );
                     }
                 }
-
                 println!();
             }
         } else {

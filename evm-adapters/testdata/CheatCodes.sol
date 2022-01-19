@@ -38,6 +38,7 @@ interface Hevm {
     function etch(address, bytes calldata) external;
     // Expects an error on next call
     function expectRevert(bytes calldata) external;
+    function expectRevert(bytes4) external;
     // Record all storage reads and writes
     function record() external;
     // Gets all accessed reads and write slot from a recording session, for a given address

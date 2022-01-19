@@ -1,7 +1,7 @@
 //! Fuzzing support abstracted over the [`Evm`](crate::Evm) used
 use crate::Evm;
 use ethers::{
-    abi::{Function, ParamType, Token, Tokenizable},
+    abi::{Abi, Function, ParamType, Token, Tokenizable},
     types::{Address, Bytes, I256, U256},
 };
 use std::{
@@ -54,6 +54,7 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
         func: &Function,
         address: Address,
         should_fail: bool,
+        abi: Option<&Abi>,
     ) -> FuzzTestResult<E::ReturnReason>
     where
         // We need to be able to clone the state so as to snapshot it and reset
@@ -95,7 +96,7 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
 
                 if !success {
                     let revert =
-                        foundry_utils::decode_revert(returndata.as_ref()).unwrap_or_default();
+                        foundry_utils::decode_revert(returndata.as_ref(), abi).unwrap_or_default();
                     let _ = revert_reason.borrow_mut().insert(revert);
                 }
 
@@ -105,7 +106,7 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
                     "{}, expected failure: {}, reason: '{}'",
                     func.name,
                     should_fail,
-                    match foundry_utils::decode_revert(returndata.as_ref()) {
+                    match foundry_utils::decode_revert(returndata.as_ref(), abi) {
                         Ok(e) => e,
                         Err(e) => e.to_string(),
                     }
@@ -320,7 +321,7 @@ mod tests {
         let evm = fuzzvm(&mut evm);
 
         let func = compiled.abi.unwrap().function("testFuzzedRevert").unwrap();
-        let res = evm.fuzz(&func, addr, false);
+        let res = evm.fuzz(&func, addr, false, compiled.abi);
         let error = res.test_error.unwrap();
         let revert_reason = error.revert_reason;
         assert_eq!(revert_reason, "fuzztest-revert");
