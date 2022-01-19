@@ -59,7 +59,7 @@ if [[ "$FOUNDRYUP_REPO" == "gakonst/foundry" && -z "$FOUNDRYUP_BRANCH" ]]; then
   
   # Warn MacOS users that they may need to manually install libusb via Homebrew:
   if [[ "$PLATFORM" == "darwin" && ! -f /usr/local/opt/libusb/lib/libusb-1.0.0.dylib ]]; then
-    echo "warning: libusb not found. You may need to install it manually on MacOS via Homebrew (`brew install libusb`).
+    echo "warning: libusb not found. You may need to install it manually on MacOS via Homebrew (`brew install libusb`)."
   fi
   
   # Compute the URL of the release tarball in the Foundry repository.
