@@ -188,16 +188,17 @@ pub async fn get_func_etherscan(
     etherscan_api_key: String,
 ) -> Result<Function> {
     let client = Client::new(chain, etherscan_api_key)?;
-
     let metadata = &client.contract_source_code(contract).await?.items[0];
-    let contract = if metadata.implementation.is_empty() {
-        contract
+
+    let abi = if metadata.implementation.is_empty() {
+        serde_json::from_str(&metadata.abi)?
     } else {
-        metadata.implementation.parse::<Address>()?
+        let implementation = metadata.implementation.parse::<Address>()?;
+        client.contract_abi(implementation).await?
     };
 
-    let abi = client.contract_abi(contract).await?;
-    let funcs = abi.functions.get(function_name).unwrap();
+    let empty = vec![];
+    let funcs = abi.functions.get(function_name).unwrap_or(&empty);
 
     for func in funcs {
         let res = encode_args(func, &args);
@@ -206,7 +207,7 @@ pub async fn get_func_etherscan(
         }
     }
 
-    Err(eyre::eyre!("Function not found"))
+    Err(eyre::eyre!("Function not found in abi"))
 }
 
 /// Parses string input as Token against the expected ParamType
