@@ -807,10 +807,10 @@ impl SimpleCast {
         let value = U256::from(LenientTokenizer::tokenize_uint(&value)?);
 
         Ok(match &unit[..] {
-            "ether" => ethers_core::utils::format_units(value, 18)?,
-            "gwei" | "nano" | "nanoether" => ethers_core::utils::format_units(value, 9u32)?,
+            "ether" => ethers_core::utils::format_units(value, 18)?.trim_end_matches(".000000000000000000").to_string(),
+            "gwei" | "nano" | "nanoether" => ethers_core::utils::format_units(value, 9)?.trim_end_matches(".000000000").to_string(),
             "wei" => {
-                ethers_core::utils::format_units(value, 0u32)?.trim_end_matches(".0").to_string()
+                ethers_core::utils::format_units(value, 0)?.trim_end_matches(".0").to_string()
             }
             _ => return Err(eyre::eyre!("invalid unit")),
         })
