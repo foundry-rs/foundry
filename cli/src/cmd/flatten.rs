@@ -48,9 +48,6 @@ pub struct FlattenArgs {
         alias = "hh"
     )]
     pub hardhat: bool,
-
-    #[clap(help = "add linked libraries", long, env = "DAPP_LIBRARIES")]
-    pub libraries: Vec<String>,
 }
 
 impl Cmd for FlattenArgs {
