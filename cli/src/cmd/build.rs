@@ -2,13 +2,11 @@
 
 use ethers::solc::{
     artifacts::{Optimizer, Settings},
-    remappings::Remapping,
     MinimalCombinedArtifacts, Project, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
 };
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
-    str::FromStr,
 };
 
 use crate::{cmd::Cmd, opts::forge::CompilerArgs, utils};
@@ -118,26 +116,6 @@ impl BuildArgs {
         }
     }
 
-    /// Determines the libraries
-    fn libs(&self, root: impl AsRef<Path>) -> Vec<PathBuf> {
-        let root = root.as_ref();
-        if self.lib_paths.is_empty() {
-            if self.hardhat {
-                vec![root.join("node_modules")]
-            } else {
-                // no libs directories provided
-                ProjectPathsConfig::find_libs(&root)
-            }
-        } else {
-            let mut libs = self.lib_paths.clone();
-            if self.hardhat && !self.lib_paths.iter().any(|lib| lib.ends_with("node_modules")) {
-                // if --hardhat was set, ensure it is present in the lib set
-                libs.push(root.join("node_modules"));
-            }
-            libs
-        }
-    }
-
     /// Converts all build arguments to the corresponding project config
     ///
     /// Defaults to DAppTools-style repo layout, but can be customized.
@@ -156,35 +134,14 @@ impl BuildArgs {
 
         // 4. Set where the libraries are going to be read from
         // default to the lib path being the `lib/` dir
-        let lib_paths = self.libs(&root);
+        let lib_paths = utils::find_libs(&root, &self.lib_paths, self.hardhat);
 
-        // get all the remappings corresponding to the lib paths
-        let mut remappings: Vec<_> = lib_paths.iter().flat_map(Remapping::find_many).collect();
-
-        // extend them with the once manually provided in the opts
-        remappings.extend_from_slice(&self.remappings);
-
-        // extend them with the one via the env vars
-        if let Some(ref env) = self.remappings_env {
-            remappings.extend(remappings_from_newline(env))
-        }
-
-        // extend them with the one via the requirements.txt
-        if let Ok(ref remap) = std::fs::read_to_string(root.join("remappings.txt")) {
-            remappings.extend(remappings_from_newline(remap))
-        }
-
-        // helper function for parsing newline-separated remappings
-        fn remappings_from_newline(remappings: &str) -> impl Iterator<Item = Remapping> + '_ {
-            remappings.split('\n').filter(|x| !x.is_empty()).map(|x| {
-                Remapping::from_str(x)
-                    .unwrap_or_else(|_| panic!("could not parse remapping: {}", x))
-            })
-        }
-
-        // remove any potential duplicates
-        remappings.sort_unstable();
-        remappings.dedup();
+        let remappings = utils::find_remappings(
+            &lib_paths,
+            &self.remappings,
+            &root.join("remappings.txt"),
+            &self.remappings_env,
+        );
 
         // build the path
         let mut paths_builder =

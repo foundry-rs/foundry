@@ -4,7 +4,8 @@ use ethers::{solc::EvmVersion, types::Address};
 use std::{path::PathBuf, str::FromStr};
 
 use crate::cmd::{
-    build::BuildArgs, create::CreateArgs, remappings::RemappingArgs, run::RunArgs, snapshot, test,
+    build::BuildArgs, create::CreateArgs, flatten, remappings::RemappingArgs, run::RunArgs,
+    snapshot, test,
 };
 
 #[derive(Debug, Parser)]
@@ -98,6 +99,9 @@ pub enum Subcommands {
 
     #[clap(about = "creates a snapshot of each test's gas usage")]
     Snapshot(snapshot::SnapshotArgs),
+
+    #[clap(about = "concats a file with all of its imports")]
+    Flatten(flatten::FlattenArgs),
 }
 
 #[derive(Debug, Clone, Parser)]

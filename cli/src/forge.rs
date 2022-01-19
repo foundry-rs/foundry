@@ -128,6 +128,9 @@ fn main() -> eyre::Result<()> {
         Subcommands::Snapshot(cmd) => {
             cmd.run()?;
         }
+        Subcommands::Flatten(cmd) => {
+            cmd.run()?;
+        }
     }
 
     Ok(())

@@ -1,7 +1,11 @@
-use ethers::solc::{artifacts::Contract, EvmVersion};
+use ethers::solc::{artifacts::Contract, remappings::Remapping, EvmVersion, ProjectPathsConfig};
 
 use eyre::{ContextCompat, WrapErr};
-use std::{path::PathBuf, process::Command};
+use std::{
+    path::{Path, PathBuf},
+    process::Command,
+    str::FromStr,
+};
 
 #[cfg(feature = "evmodin-evm")]
 use evmodin::Revision;
@@ -97,4 +101,58 @@ pub fn read_secret(secret: bool, unsafe_secret: Option<String>) -> eyre::Result<
         // guaranteed to be Some(..)
         unsafe_secret.unwrap()
     })
+}
+
+/// Find and parse out all the remappings for the projects
+pub fn find_remappings(
+    libs: &[PathBuf],
+    remappings: &[Remapping],
+    remappings_txt: &Path,
+    remappings_env: &Option<String>,
+) -> Vec<Remapping> {
+    /// Helper function for parsing newline-separated remappings
+    fn remappings_from_newline(remappings: &str) -> impl Iterator<Item = Remapping> + '_ {
+        remappings.lines().filter(|x| !x.trim().is_empty()).map(|x| {
+            Remapping::from_str(x).unwrap_or_else(|_| panic!("could not parse remapping: {}", x))
+        })
+    }
+
+    let mut result: Vec<_> = libs.iter().flat_map(Remapping::find_many).collect();
+
+    result.extend_from_slice(remappings);
+
+    // extend them with the one via the env vars
+    if let Some(ref env) = remappings_env {
+        result.extend(remappings_from_newline(env))
+    }
+
+    // extend them with the one via the requirements.txt
+    if let Ok(ref remap) = std::fs::read_to_string(remappings_txt) {
+        result.extend(remappings_from_newline(remap))
+    }
+
+    // remove any potential duplicates
+    result.sort_unstable();
+    result.dedup();
+
+    result
+}
+
+/// Find libraries for the project
+pub fn find_libs(root: &Path, lib_paths: &[PathBuf], hardhat: bool) -> Vec<PathBuf> {
+    if lib_paths.is_empty() {
+        if hardhat {
+            return vec![root.join("node_modules")]
+        }
+
+        // no libs directories provided
+        return ProjectPathsConfig::find_libs(&root)
+    }
+
+    let mut libs = lib_paths.to_vec();
+    if hardhat && !lib_paths.iter().any(|lib| lib.ends_with("node_modules")) {
+        // if --hardhat was set, ensure it is present in the lib set
+        libs.push(root.join("node_modules"));
+    }
+    libs
 }
