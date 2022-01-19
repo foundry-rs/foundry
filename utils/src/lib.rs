@@ -197,7 +197,8 @@ pub async fn get_func_etherscan(
         client.contract_abi(implementation).await?
     };
 
-    let funcs = abi.functions.get(function_name).unwrap();
+    let empty = vec![];
+    let funcs = abi.functions.get(function_name).unwrap_or(&empty);
 
     for func in funcs {
         let res = encode_args(func, &args);
