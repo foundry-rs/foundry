@@ -23,7 +23,7 @@ Foundry consists of:
 First run the command below to get `foundryup`, the Foundry toolchain installer:
 
 ```
-curl https://foundry.paradigm.xyz | bash
+curl -L https://foundry.paradigm.xyz | bash
 ```
 
 Then in a new terminal session or after reloading your PATH, run it to get the latest `forge` and `cast` binaries:
