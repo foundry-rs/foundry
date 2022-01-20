@@ -21,6 +21,9 @@ use evm_adapters::{
 };
 use foundry_config::{figment::Figment, Config};
 
+// Loads project's figment and merges the build cli arguments into it
+foundry_config::impl_figment_convert!(RunArgs, opts, evm_opts);
+
 #[derive(Debug, Clone, Parser)]
 pub struct RunArgs {
     #[clap(help = "the path to the contract to run", value_hint = ValueHint::FilePath)]
@@ -45,21 +48,6 @@ pub struct RunArgs {
         help = "the function you want to call on the script contract, defaults to run()"
     )]
     pub sig: Option<String>,
-}
-
-/// Loads project's figment and merges the build cli arguments into it
-impl<'a> From<&'a RunArgs> for Figment {
-    fn from(args: &'a RunArgs) -> Self {
-        let figment: Figment = From::from(&args.opts);
-        figment.merge(&args.evm_opts)
-    }
-}
-
-impl<'a> From<&'a RunArgs> for Config {
-    fn from(args: &'a RunArgs) -> Self {
-        let figment: Figment = args.into();
-        Config::from_provider(figment).sanitized()
-    }
 }
 
 impl Cmd for RunArgs {

@@ -88,7 +88,7 @@ macro_rules! impl_figment_convert {
         impl<'a> From<&'a $name> for Config {
             fn from(args: &'a $name) -> Self {
                 let figment: $crate::figment::Figment = args.into();
-                 $crate::Config::from_provider(figment).sanitized()
+                $crate::Config::from_provider(figment).sanitized()
             }
         }
     };

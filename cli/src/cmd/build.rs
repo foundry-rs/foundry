@@ -3,7 +3,7 @@
 use ethers::solc::{MinimalCombinedArtifacts, Project, ProjectCompileOutput};
 use std::path::PathBuf;
 
-use crate::{cmd::Cmd, opts::forge::CompilerArgs, utils};
+use crate::{cmd::Cmd, opts::forge::CompilerArgs};
 
 use clap::{Parser, ValueHint};
 use foundry_config::{
@@ -11,11 +11,14 @@ use foundry_config::{
         self,
         error::Kind::InvalidType,
         value::{Dict, Map, Value},
-        Figment, Metadata, Profile, Provider,
+        Metadata, Profile, Provider,
     },
     remappings_from_env_var, Config,
 };
 use serde::Serialize;
+
+// Loads project's figment and merges the build cli arguments into it
+foundry_config::impl_figment_convert!(BuildArgs);
 
 /// All `forge build` related arguments
 ///
@@ -122,24 +125,6 @@ impl Cmd for BuildArgs {
     fn run(self) -> eyre::Result<Self::Output> {
         let project = self.project()?;
         super::compile(&project)
-    }
-}
-/// Loads project's figment and merges the build cli arguments into it
-impl<'a> From<&'a BuildArgs> for Figment {
-    fn from(args: &'a BuildArgs) -> Self {
-        if let Some(root) = args.root.clone() {
-            utils::load_figment_with_root(root)
-        } else {
-            utils::load_figment()
-        }
-        .merge(args)
-    }
-}
-
-impl<'a> From<&'a BuildArgs> for Config {
-    fn from(args: &'a BuildArgs) -> Self {
-        let figment: Figment = args.into();
-        Config::from_provider(figment).sanitized()
     }
 }
 

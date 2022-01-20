@@ -8,6 +8,11 @@ use ethers_solc::{
     remappings::{Remapping, RemappingError},
 };
 
+/// Loads the config for the current project workspace
+pub fn load_config() -> Config {
+    Config::load_with_root(find_project_root_path().unwrap()).sanitized()
+}
+
 /// Returns the path of the top-level directory of the working git tree. If there is no working
 /// tree, an error is returned.
 pub fn find_git_root_path() -> eyre::Result<PathBuf> {
