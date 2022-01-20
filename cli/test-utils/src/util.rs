@@ -244,7 +244,7 @@ impl TestCommand {
 
     /// Sets the current working directory
     pub fn set_current_dir(&mut self, p: impl AsRef<Path>) {
-        let _ = self.current_dir_lock.take();
+        drop(self.current_dir_lock.take());
         let lock = CURRENT_DIR_LOCK.lock().unwrap();
         self.current_dir_lock = Some(lock);
         let p = p.as_ref();
