@@ -16,7 +16,7 @@ evmodin = { git = "https://github.com/vorot93/evmodin",  optional = true, featur
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["solc-full"] }
 ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 eyre = "0.6.5"
-once_cell = "1.8.0"
+once_cell = "1.9.0"
 tracing = "0.1.28"
 bytes = "1.1.0"
 tokio = { version = "1.12.0", features = ["rt-multi-thread", "macros"] }
@@ -29,15 +29,6 @@ revm_precompiles = { git = "https://github.com/bluealloy/revm", default-features
 serde_json = "1.0.72"
 serde = "1.0.130"
 ansi_term = "0.12.1"
-
-# for evm config to be usable in clis
-clap = { version = "3.0.6", features = [
-    "derive",
-    "env",
-    "unicode",
-    "wrap_help",
-] }
-clap_complete = "3.0.2"
 
 [dev-dependencies]
 evmodin = { git = "https://github.com/vorot93/evmodin", features = ["util"] }

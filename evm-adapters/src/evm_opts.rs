@@ -1,5 +1,5 @@
-use clap::Parser;
 use ethers::types::{Address, U256};
+use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
 #[cfg(feature = "evmodin")]
@@ -7,7 +7,7 @@ use evmodin::util::mocked_host::MockedHost;
 #[cfg(feature = "sputnik")]
 use sputnik::backend::MemoryVicinity;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum EvmType {
     #[cfg(feature = "sputnik")]
     Sputnik,
@@ -46,59 +46,34 @@ impl FromStr for EvmType {
     }
 }
 
-#[derive(Debug, Clone, Parser)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(any(feature = "sputnik", feature = "evmodin"), derive(Default))]
 pub struct EvmOpts {
-    #[clap(flatten)]
+    #[serde(flatten)]
     pub env: Env,
 
-    #[clap(
-        long,
-        short,
-        help = "the EVM type you want to use (e.g. sputnik, evmodin)",
-        default_value = "sputnik"
-    )]
+    /// the EVM type you want to use (e.g. sputnik, evmodin)
     pub evm_type: EvmType,
 
-    #[clap(help = "fetch state over a remote instead of starting from empty state", long, short)]
-    #[clap(alias = "rpc-url")]
+    /// fetch state over a remote instead of starting from empty state
     pub fork_url: Option<String>,
 
-    #[clap(help = "pins the block number for the state fork", long)]
-    #[clap(env = "DAPP_FORK_BLOCK")]
+    /// pins the block number for the state fork
     pub fork_block_number: Option<u64>,
 
-    #[clap(
-        help = "the initial balance of each deployed test contract",
-        long,
-        default_value = "0xffffffffffffffffffffffff"
-    )]
+    /// the initial balance of each deployed test contract
     pub initial_balance: U256,
 
-    #[clap(
-        help = "the address which will be executing all tests",
-        long,
-        default_value = "0x00a329c0648769A73afAc7F9381E08FB43dBEA72",
-        env = "DAPP_TEST_CALLER"
-    )]
+    /// the address which will be executing all tests
     pub sender: Address,
 
-    #[clap(help = "enables the FFI cheatcode", long)]
+    /// enables the FFI cheatcode
     pub ffi: bool,
 
-    #[clap(
-        help = r#"Verbosity mode of EVM output as number of occurences of the `v` flag (-v, -vv, -vvv, etc.)
-    3: print test trace for failing tests
-    4: always print test trace, print setup for failing tests
-    5: always print test trace and setup
-"#,
-        long,
-        short,
-        parse(from_occurrences)
-    )]
+    /// Verbosity mode of EVM output as number of occurences
     pub verbosity: u8,
 
-    #[clap(help = "enable debugger", long)]
+    /// enable debugger
     pub debug: bool,
 }
 
@@ -171,53 +146,36 @@ mod sputnik_helpers {
     }
 }
 
-#[derive(Debug, Clone, Default, Parser)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Env {
-    // structopt does not let use `u64::MAX`:
-    // https://doc.rust-lang.org/std/primitive.u64.html#associatedconstant.MAX
-    #[clap(help = "the block gas limit", long, default_value = "18446744073709551615")]
+    /// the block gas limit
     pub gas_limit: u64,
 
-    #[clap(help = "the chainid opcode value", long, default_value = "1")]
+    /// the chainid opcode value
     pub chain_id: u64,
 
-    #[clap(help = "the tx.gasprice value during EVM execution", long, default_value = "0")]
+    /// the tx.gasprice value during EVM execution
     pub gas_price: u64,
 
-    #[clap(help = "the base fee in a block", long, default_value = "0")]
+    /// the base fee in a block
     pub block_base_fee_per_gas: u64,
 
-    #[clap(
-        help = "the tx.origin value during EVM execution",
-        long,
-        default_value = "0x00a329c0648769A73afAc7F9381E08FB43dBEA72",
-        env = "DAPP_TEST_ORIGIN"
-    )]
+    /// the tx.origin value during EVM execution
     pub tx_origin: Address,
 
-    #[clap(
-        help = "the block.coinbase value during EVM execution",
-        long,
-        // TODO: It'd be nice if we could use Address::zero() here.
-        default_value = "0x0000000000000000000000000000000000000000"
-    )]
+    /// the block.coinbase value during EVM execution
     pub block_coinbase: Address,
-    #[clap(
-        help = "the block.timestamp value during EVM execution",
-        long,
-        default_value = "0",
-        env = "DAPP_TEST_TIMESTAMP"
-    )]
+
+    /// the block.timestamp value during EVM execution
     pub block_timestamp: u64,
 
-    #[clap(help = "the block.number value during EVM execution", long, default_value = "0")]
-    #[clap(env = "DAPP_TEST_NUMBER")]
+    /// the block.number value during EVM execution"
     pub block_number: u64,
 
-    #[clap(help = "the block.difficulty value during EVM execution", long, default_value = "0")]
+    /// the block.difficulty value during EVM execution
     pub block_difficulty: u64,
 
-    #[clap(help = "the block.gaslimit value during EVM execution", long)]
+    /// the block.gaslimit value during EVM execution
     pub block_gas_limit: Option<u64>,
     // TODO: Add configuration option for base fee.
 }

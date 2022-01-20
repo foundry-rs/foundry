@@ -6,11 +6,9 @@ use foundry_utils::IntoFunction;
 use std::{collections::BTreeMap, path::PathBuf};
 use ui::{TUIExitReason, Tui, Ui};
 
-use ethers::solc::{
-    artifacts::{Optimizer, Settings},
-    MinimalCombinedArtifacts, Project, ProjectPathsConfig, SolcConfig,
-};
+use ethers::solc::{MinimalCombinedArtifacts, Project};
 
+use crate::opts::evm::EvmArgs;
 use ansi_term::Colour;
 use ethers::{
     prelude::{artifacts::ContractBytecode, Artifact},
@@ -21,6 +19,7 @@ use evm_adapters::{
     evm_opts::{BackendKind, EvmOpts},
     sputnik::{cheatcodes::debugger::DebugArena, helpers::vm},
 };
+use foundry_config::{figment::Figment, Config};
 
 #[derive(Debug, Clone, Parser)]
 pub struct RunArgs {
@@ -28,7 +27,7 @@ pub struct RunArgs {
     pub path: PathBuf,
 
     #[clap(flatten)]
-    pub evm_opts: EvmOpts,
+    pub evm_opts: EvmArgs,
 
     #[clap(flatten)]
     opts: BuildArgs,
@@ -48,6 +47,21 @@ pub struct RunArgs {
     pub sig: Option<String>,
 }
 
+/// Loads project's figment and merges the build cli arguments into it
+impl<'a> From<&'a RunArgs> for Figment {
+    fn from(args: &'a RunArgs) -> Self {
+        let figment: Figment = From::from(&args.opts);
+        figment.merge(&args.evm_opts)
+    }
+}
+
+impl<'a> From<&'a RunArgs> for Config {
+    fn from(args: &'a RunArgs) -> Self {
+        let figment: Figment = args.into();
+        Config::from_provider(figment).sanitized()
+    }
+}
+
 impl Cmd for RunArgs {
     type Output = ();
     fn run(self) -> eyre::Result<Self::Output> {
@@ -55,13 +69,17 @@ impl Cmd for RunArgs {
         #[cfg(not(feature = "sputnik-evm"))]
         unimplemented!("`run` does not work with EVMs other than Sputnik yet");
 
-        let mut evm_opts = self.evm_opts.clone();
+        let figment: Figment = From::from(&self);
+        let mut evm_opts = figment.extract::<EvmOpts>()?;
+        let config = Config::from_provider(figment).sanitized();
+        let evm_version = config.evm_version;
         if evm_opts.debug {
             evm_opts.verbosity = 3;
         }
 
         let func = IntoFunction::into(self.sig.as_deref().unwrap_or("run()"));
-        let BuildOutput { project, contract, highlevel_known_contracts, sources } = self.build()?;
+        let BuildOutput { project, contract, highlevel_known_contracts, sources } =
+            self.build(config)?;
 
         let known_contracts = highlevel_known_contracts
             .iter()
@@ -81,7 +99,7 @@ impl Cmd for RunArgs {
         let bytecode = bin.into_bytes().unwrap();
         let needs_setup = abi.functions().any(|func| func.name == "setUp");
 
-        let cfg = crate::utils::sputnik_cfg(&self.opts.compiler.evm_version);
+        let cfg = crate::utils::sputnik_cfg(&evm_version);
         let vicinity = evm_opts.vicinity()?;
         let backend = evm_opts.backend(&vicinity)?;
 
@@ -209,50 +227,21 @@ pub struct BuildOutput {
 }
 
 impl RunArgs {
-    fn target_project(&self) -> eyre::Result<Project<MinimalCombinedArtifacts>> {
-        let paths = ProjectPathsConfig::builder().root(&self.path).sources(&self.path).build()?;
-
-        let optimizer = Optimizer {
-            enabled: Some(self.opts.compiler.optimize),
-            runs: Some(self.opts.compiler.optimize_runs as usize),
-        };
-
-        let solc_settings = Settings {
-            optimizer,
-            evm_version: Some(self.opts.compiler.evm_version),
-            ..Default::default()
-        };
-        let solc_cfg = SolcConfig::builder().settings(solc_settings).build()?;
-
-        // setup the compiler
-        let mut builder = Project::builder()
-            .paths(paths)
-            .allowed_path(&self.path)
-            .solc_config(solc_cfg)
-            // we do not want to generate any compilation artifacts in the script run mode
-            .no_artifacts()
-            // no cache
-            .ephemeral();
-        if self.opts.no_auto_detect {
-            builder = builder.no_auto_detect();
-        }
-        Ok(builder.build()?)
-    }
-
     /// Compiles the file with auto-detection and compiler params.
-    pub fn build(&self) -> eyre::Result<BuildOutput> {
-        let root = dunce::canonicalize(&self.path)?;
-        let (project, output) = if let Ok(mut project) = self.opts.project() {
+    pub fn build(&self, config: Config) -> eyre::Result<BuildOutput> {
+        let mut root = dunce::canonicalize(&self.path)?;
+        let (project, output) = if let Ok(mut project) = config.project() {
             // TODO: caching causes no output until https://github.com/gakonst/ethers-rs/issues/727
             // is fixed
             project.cached = false;
             project.no_artifacts = true;
+            root = project.paths.root.clone();
             // target contract may not be in the compilation path, add it and manually compile
             match manual_compile(&project, vec![root.clone()]) {
                 Ok(output) => (project, output),
                 Err(e) => {
                     println!("No extra contracts compiled {:?}", e);
-                    let mut target_project = self.target_project()?;
+                    let mut target_project = config.ephemeral_no_artifacts_project()?;
                     target_project.cached = false;
                     target_project.no_artifacts = true;
                     let res = compile(&target_project)?;
@@ -260,7 +249,7 @@ impl RunArgs {
                 }
             }
         } else {
-            let mut target_project = self.target_project()?;
+            let mut target_project = config.ephemeral_no_artifacts_project()?;
             target_project.cached = false;
             target_project.no_artifacts = true;
             let res = compile(&target_project)?;

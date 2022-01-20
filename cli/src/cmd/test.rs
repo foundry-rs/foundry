@@ -1,11 +1,15 @@
 //! Test command
 
-use crate::cmd::{build::BuildArgs, Cmd};
+use crate::{
+    cmd::{build::BuildArgs, Cmd},
+    opts::evm::EvmArgs,
+};
 use ansi_term::Colour;
 use clap::{AppSettings, Parser};
 use ethers::solc::{ArtifactOutput, Project};
 use evm_adapters::{call_tracing::ExecutionInfo, evm_opts::EvmOpts, sputnik::helpers::vm};
 use forge::{MultiContractRunnerBuilder, TestFilter};
+use foundry_config::{figment::Figment, Config};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Parser)]
@@ -82,7 +86,7 @@ pub struct TestArgs {
     json: bool,
 
     #[clap(flatten)]
-    evm_opts: EvmOpts,
+    evm_opts: EvmArgs,
 
     #[clap(flatten)]
     filter: Filter,
@@ -98,21 +102,42 @@ pub struct TestArgs {
     allow_failure: bool,
 }
 
+/// Loads project's figment and merges the build cli arguments into it
+impl<'a> From<&'a TestArgs> for Figment {
+    fn from(args: &'a TestArgs) -> Self {
+        let figment: Figment = From::from(&args.opts);
+        figment.merge(&args.evm_opts)
+    }
+}
+
+impl<'a> From<&'a TestArgs> for Config {
+    fn from(args: &'a TestArgs) -> Self {
+        let figment: Figment = args.into();
+        Config::from_provider(figment).sanitized()
+    }
+}
+
 impl Cmd for TestArgs {
     type Output = TestOutcome;
 
     fn run(self) -> eyre::Result<Self::Output> {
-        let TestArgs { opts, evm_opts, json, filter, allow_failure } = self;
+        // merge all configs
+        let figment: Figment = From::from(&self);
+        let evm_opts = figment.extract::<EvmOpts>()?;
+        let config = Config::from_provider(figment).sanitized();
+
+        let TestArgs { json, filter, allow_failure, .. } = self;
+
         // Setup the fuzzer
         // TODO: Add CLI Options to modify the persistence
         let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
         let fuzzer = proptest::test_runner::TestRunner::new(cfg);
 
         // Set up the project
-        let project = opts.project()?;
+        let project = config.project()?;
 
         // prepare the test builder
-        let mut evm_cfg = crate::utils::sputnik_cfg(&opts.compiler.evm_version);
+        let mut evm_cfg = crate::utils::sputnik_cfg(&config.evm_version);
         evm_cfg.create_contract_limit = None;
 
         let builder = MultiContractRunnerBuilder::default()

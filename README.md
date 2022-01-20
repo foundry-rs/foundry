@@ -85,6 +85,25 @@ More documentation can be found in the [cast package](./cast/README.md).
 
 ## Setup
 
+### Configuring foundry/forge
+
+foundry is designed to be very configurable. You can create a TOML file called [`foundry.toml`](./config/README.md)
+place it in the project or any other parent directory, and it will apply the options in that file. See [_Config
+Readme_](./config/README.md#all-options) for all available options.
+
+Configurations can be arbitrarily namespaced by profiles. Foundry's default configuration is also named `default`. The
+selected profile is the value of the `FOUNDRY_PROFILE` environment variable, or if it is not set, "default".
+`FOUNDRY_` or `DAPP_` prefixed environment variables, like `FOUNDRY_SRC` take precedence, [see _Default
+Profile_](./config/README.md#default-profile)
+
+`forge init` creates a basic, extendable `foundry.toml` file.
+
+To see all currently set options run `forge config`, to only see the basic options (as set with `forge init`)
+run `forge config --basic`, this can be used to create a new `foundry.toml` file
+with `forge config --basic > foundry.toml`. 
+By default `forge config` shows the currently selected foundry profile and its values.
+It also accepts the same arguments as `forge build`.
+
 ### VSCode
 
 [juanfranblanco/vscode-solidity](https://github.com/juanfranblanco/vscode-solidity) describes in detail how to configure

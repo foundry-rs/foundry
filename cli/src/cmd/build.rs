@@ -1,25 +1,50 @@
 //! build command
 
-use ethers::solc::{
-    artifacts::{Optimizer, Settings},
-    MinimalCombinedArtifacts, Project, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
-};
-use std::{
-    collections::BTreeMap,
-    path::{Path, PathBuf},
-};
+use ethers::solc::{MinimalCombinedArtifacts, Project, ProjectCompileOutput};
+use std::path::PathBuf;
 
 use crate::{cmd::Cmd, opts::forge::CompilerArgs, utils};
 
 use clap::{Parser, ValueHint};
+use foundry_config::{
+    figment::{
+        self,
+        error::Kind::InvalidType,
+        value::{Dict, Map, Value},
+        Figment, Metadata, Profile, Provider,
+    },
+    remappings_from_env_var, Config,
+};
+use serde::Serialize;
 
-#[derive(Debug, Clone, Parser)]
+/// All `forge build` related arguments
+///
+/// CLI arguments take the highest precedence in the Config/Figment hierarchy.
+/// In order to override them in the foundry `Config` they need to be merged into an existing
+/// `figment::Provider`, like `foundry_config::Config` is.
+///
+/// # Example
+///
+/// ```ignore
+/// use foundry_config::Config;
+/// # fn t(args: BuildArgs) {
+/// let config = Config::from(&args);
+/// # }
+/// ```
+///
+/// `BuildArgs` implements `figment::Provider` in which all config related fields are serialized and
+/// then merged into an existing `Config`, effectively overwriting them.
+///
+/// Some arguments are marked as `#[serde(skip)]` and require manual processing in
+/// `figment::Provider` implementation
+#[derive(Debug, Clone, Parser, Serialize)]
 pub struct BuildArgs {
     #[clap(
         help = "the project's root path. By default, this is the root directory of the current Git repository or the current working directory if it is not part of a Git repository",
         long,
         value_hint = ValueHint::DirPath
     )]
+    #[serde(skip)]
     pub root: Option<PathBuf>,
 
     #[clap(
@@ -29,11 +54,15 @@ pub struct BuildArgs {
         short,
         value_hint = ValueHint::DirPath
     )]
+    #[serde(rename = "src", skip_serializing_if = "Option::is_none")]
     pub contracts: Option<PathBuf>,
 
     #[clap(help = "the remappings", long, short)]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub remappings: Vec<ethers::solc::remappings::Remapping>,
-    #[clap(long = "remappings-env", env = "DAPP_REMAPPINGS")]
+
+    #[clap(help = "the env var that holds remappings", long = "remappings-env")]
+    #[serde(skip)]
     pub remappings_env: Option<String>,
 
     #[clap(
@@ -41,6 +70,7 @@ pub struct BuildArgs {
         long,
         value_hint = ValueHint::DirPath
     )]
+    #[serde(rename = "libs", skip_serializing_if = "Vec::is_empty")]
     pub lib_paths: Vec<PathBuf>,
 
     #[clap(
@@ -49,24 +79,29 @@ pub struct BuildArgs {
         short,
         value_hint = ValueHint::DirPath
     )]
+    #[serde(rename = "out", skip_serializing_if = "Option::is_none")]
     pub out_path: Option<PathBuf>,
 
     #[clap(flatten)]
+    #[serde(flatten)]
     pub compiler: CompilerArgs,
 
     #[clap(help = "ignore warnings with specific error codes", long)]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub ignored_error_codes: Vec<u64>,
 
     #[clap(
         help = "if set to true, skips auto-detecting solc and uses what is in the user's $PATH ",
         long
     )]
+    #[serde(skip)]
     pub no_auto_detect: bool,
 
     #[clap(
         help = "force recompilation of the project, deletes the cache and artifacts folders",
         long
     )]
+    #[serde(skip)]
     pub force: bool,
 
     #[clap(
@@ -75,6 +110,7 @@ pub struct BuildArgs {
         conflicts_with = "contracts",
         alias = "hh"
     )]
+    #[serde(skip)]
     pub hardhat: bool,
 
     #[clap(help = "add linked libraries", long, env = "DAPP_LIBRARIES")]
@@ -88,115 +124,85 @@ impl Cmd for BuildArgs {
         super::compile(&project)
     }
 }
+/// Loads project's figment and merges the build cli arguments into it
+impl<'a> From<&'a BuildArgs> for Figment {
+    fn from(args: &'a BuildArgs) -> Self {
+        if let Some(root) = args.root.clone() {
+            utils::load_figment_with_root(root)
+        } else {
+            utils::load_figment()
+        }
+        .merge(args)
+    }
+}
+
+impl<'a> From<&'a BuildArgs> for Config {
+    fn from(args: &'a BuildArgs) -> Self {
+        let figment: Figment = args.into();
+        Config::from_provider(figment).sanitized()
+    }
+}
 
 impl BuildArgs {
-    /// Determines the source directory within the given root
-    fn contracts_path(&self, root: impl AsRef<Path>) -> PathBuf {
-        let root = root.as_ref();
-        if let Some(ref contracts) = self.contracts {
-            root.join(contracts)
-        } else if self.hardhat {
-            root.join("contracts")
-        } else {
-            // no contract source directory was provided, determine the source directory
-            ProjectPathsConfig::find_source_dir(&root)
-        }
-    }
-
-    /// Determines the artifacts directory within the given root
-    fn artifacts_path(&self, root: impl AsRef<Path>) -> PathBuf {
-        let root = root.as_ref();
-        if let Some(ref artifacts) = self.out_path {
-            root.join(artifacts)
-        } else if self.hardhat {
-            root.join("artifacts")
-        } else {
-            // no artifacts source directory was provided, determine the artifacts directory
-            ProjectPathsConfig::find_artifacts_dir(&root)
-        }
-    }
-
-    /// Converts all build arguments to the corresponding project config
+    /// Returns the `Project` for the current workspace
     ///
-    /// Defaults to DAppTools-style repo layout, but can be customized.
+    /// This loads the `foundry_config::Config` for the current workspace (see
+    /// [`utils::find_project_root_path`] and merges the cli `BuildArgs` into it before returning
+    /// [`foundry_config::Config::project`]
     pub fn project(&self) -> eyre::Result<Project> {
-        // 1. Set the root dir
-        let root = self.root.clone().unwrap_or_else(|| {
-            utils::find_git_root_path().unwrap_or_else(|_| std::env::current_dir().unwrap())
-        });
-        let root = dunce::canonicalize(&root)?;
-
-        // 2. Set the contracts dir
-        let contracts = self.contracts_path(&root);
-
-        // 3. Set the output dir
-        let artifacts = self.artifacts_path(&root);
-
-        // 4. Set where the libraries are going to be read from
-        // default to the lib path being the `lib/` dir
-        let lib_paths = utils::find_libs(&root, &self.lib_paths, self.hardhat);
-
-        let remappings = utils::find_remappings(
-            &lib_paths,
-            &self.remappings,
-            &root.join("remappings.txt"),
-            &self.remappings_env,
-        );
-
-        // build the path
-        let mut paths_builder =
-            ProjectPathsConfig::builder().root(&root).sources(contracts).artifacts(artifacts);
-
-        if !remappings.is_empty() {
-            paths_builder = paths_builder.remappings(remappings);
-        }
-
-        let paths = paths_builder.build()?;
-
-        let optimizer = Optimizer {
-            enabled: Some(self.compiler.optimize),
-            runs: Some(self.compiler.optimize_runs as usize),
-        };
-
-        // unflatten the libraries
-        let mut libraries = BTreeMap::default();
-        for l in self.libraries.iter() {
-            let mut items = l.split(':');
-            let file = String::from(items.next().expect("could not parse libraries"));
-            let lib = String::from(items.next().expect("could not parse libraries"));
-            let addr = String::from(items.next().expect("could not parse libraries"));
-            libraries.entry(file).or_insert_with(BTreeMap::default).insert(lib, addr);
-        }
-
-        // build the project w/ allowed paths = root and all the libs
-        let solc_settings = Settings {
-            optimizer,
-            evm_version: Some(self.compiler.evm_version),
-            libraries,
-            ..Default::default()
-        };
-        let mut builder = Project::builder()
-            .paths(paths)
-            .allowed_path(&root)
-            .allowed_paths(lib_paths)
-            .solc_config(SolcConfig::builder().settings(solc_settings).build()?);
-
-        if self.no_auto_detect {
-            builder = builder.no_auto_detect();
-        }
-
-        for error_code in &self.ignored_error_codes {
-            builder = builder.ignore_error_code(*error_code);
-        }
-
-        let project = builder.build()?;
-
-        // if `--force` is provided, it proceeds to remove the cache
-        // and recompile the contracts.
-        if self.force {
+        let config: Config = self.into();
+        let project = config.project()?;
+        if config.force {
             project.cleanup()?;
         }
-
         Ok(project)
+    }
+}
+
+// Make this args a `figment::Provider` so that it can be merged into the `Config`
+impl Provider for BuildArgs {
+    fn metadata(&self) -> Metadata {
+        Metadata::named("Build Args Provider")
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
+        let value = Value::serialize(self)?;
+        let error = InvalidType(value.to_actual(), "map".into());
+        let mut dict = value.into_dict().ok_or(error)?;
+
+        let mut libs =
+            self.lib_paths.iter().map(|p| format!("{}", p.display())).collect::<Vec<_>>();
+        if self.hardhat {
+            dict.insert("src".to_string(), "contracts".to_string().into());
+            libs.push("node_modules".to_string());
+        }
+
+        if !libs.is_empty() {
+            dict.insert("libs".to_string(), libs.into());
+        }
+
+        if self.no_auto_detect {
+            dict.insert("auto_detect_solc".to_string(), self.no_auto_detect.into());
+        }
+
+        if self.force {
+            dict.insert("force".to_string(), self.force.into());
+        }
+
+        if self.compiler.optimize {
+            dict.insert("optimize".to_string(), self.compiler.optimize.into());
+        }
+
+        if let Some(env_remappings) =
+            self.remappings_env.as_ref().and_then(|env| remappings_from_env_var(env))
+        {
+            let remappings = env_remappings.map_err(|err| err.to_string())?;
+            dict.insert(
+                "remappings".to_string(),
+                remappings.iter().map(|r| r.to_string()).collect::<Vec<_>>().into(),
+            );
+        }
+
+        Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }

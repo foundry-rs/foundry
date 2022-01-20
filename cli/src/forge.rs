@@ -6,7 +6,7 @@ use crate::cmd::Cmd;
 
 use ethers::solc::{Project, ProjectPathsConfig};
 use opts::forge::{Dependency, FullContractInfo, Opts, Subcommands};
-use std::{process::Command, str::FromStr};
+use std::process::Command;
 
 use clap::{IntoApp, Parser};
 use clap_complete::generate;
@@ -49,7 +49,7 @@ fn main() -> eyre::Result<()> {
         }
         // TODO: Make it work with updates?
         Subcommands::Install { dependencies } => {
-            install(std::env::current_dir()?, dependencies)?;
+            cmd::install(std::env::current_dir()?, dependencies)?;
         }
         Subcommands::Remove { dependencies } => {
             remove(std::env::current_dir()?, dependencies)?;
@@ -57,64 +57,8 @@ fn main() -> eyre::Result<()> {
         Subcommands::Remappings(cmd) => {
             cmd.run()?;
         }
-        Subcommands::Init { root, template } => {
-            let root = root.unwrap_or_else(|| std::env::current_dir().unwrap());
-            // create the root dir if it does not exist
-            if !root.exists() {
-                std::fs::create_dir_all(&root)?;
-            }
-            let root = dunce::canonicalize(root)?;
-
-            // if a template is provided, then this command is just an alias to `git clone <url>
-            // <path>`
-            if let Some(ref template) = template {
-                println!("Initializing {} from {}...", root.display(), template);
-                Command::new("git")
-                    .args(&["clone", template, &root.display().to_string()])
-                    .spawn()?
-                    .wait()?;
-            } else {
-                println!("Initializing {}...", root.display());
-
-                // make the dirs
-                let src = root.join("src");
-                let test = src.join("test");
-                std::fs::create_dir_all(&test)?;
-                let lib = root.join("lib");
-                std::fs::create_dir(&lib)?;
-
-                // write the contract file
-                let contract_path = src.join("Contract.sol");
-                std::fs::write(contract_path, include_str!("../../assets/ContractTemplate.sol"))?;
-                // write the tests
-                let contract_path = test.join("Contract.t.sol");
-                std::fs::write(contract_path, include_str!("../../assets/ContractTemplate.t.sol"))?;
-
-                // sets up git
-                let is_git = Command::new("git")
-                    .args(&["rev-parse", "--is-inside-work-tree"])
-                    .current_dir(&root)
-                    .spawn()?
-                    .wait()?;
-                if !is_git.success() {
-                    let gitignore_path = root.join(".gitignore");
-                    std::fs::write(
-                        gitignore_path,
-                        include_str!("../../assets/.gitignoreTemplate"),
-                    )?;
-                    Command::new("git").arg("init").current_dir(&root).spawn()?.wait()?;
-                    Command::new("git").args(&["add", "."]).current_dir(&root).spawn()?.wait()?;
-                    Command::new("git")
-                        .args(&["commit", "-m", "chore: forge init"])
-                        .current_dir(&root)
-                        .spawn()?
-                        .wait()?;
-                }
-                Dependency::from_str("https://github.com/dapphub/ds-test")
-                    .and_then(|dependency| install(root, vec![dependency]))?;
-            }
-
-            println!("Done.");
+        Subcommands::Init(cmd) => {
+            cmd.run()?;
         }
         Subcommands::Completions { shell } => {
             generate(shell, &mut Opts::into_app(), "forge", &mut std::io::stdout())
@@ -128,66 +72,15 @@ fn main() -> eyre::Result<()> {
         Subcommands::Snapshot(cmd) => {
             cmd.run()?;
         }
+        Subcommands::Config(cmd) => {
+            cmd.run()?;
+        }
         Subcommands::Flatten(cmd) => {
             cmd.run()?;
         }
     }
 
     Ok(())
-}
-
-fn install(root: impl AsRef<std::path::Path>, dependencies: Vec<Dependency>) -> eyre::Result<()> {
-    let libs = std::path::Path::new("lib");
-    let gitmodules_path = utils::find_git_root_path()?.join(".gitmodules");
-
-    dependencies.iter().try_for_each(|dep| -> eyre::Result<_> {
-        let path = libs.join(&dep.name);
-        println!("Installing {} in {:?}, (url: {}, tag: {:?})", dep.name, path, dep.url, dep.tag);
-
-        // install the dep
-        Command::new("git")
-            .args(&["submodule", "add", &dep.url, &path.display().to_string()])
-            .current_dir(&root)
-            .spawn()?
-            .wait()?;
-
-        // call update on it
-        Command::new("git")
-            .args(&["submodule", "update", "--init", "--recursive", &path.display().to_string()])
-            .current_dir(&root)
-            .spawn()?
-            .wait()?;
-
-        // checkout the tag if necessary
-        let message = if let Some(ref tag) = dep.tag {
-            Command::new("git")
-                .args(&["checkout", "--recurse-submodules", tag])
-                .current_dir(&path)
-                .spawn()?
-                .wait()?;
-
-            Command::new("git").args(&["add", &path.display().to_string()]).spawn()?.wait()?;
-
-            format!("forge install: {}\n\n{}", dep.name, tag)
-        } else {
-            format!("forge install: {}", dep.name)
-        };
-
-        // commit only relevant files - ignoring staged changes
-        Command::new("git")
-            .args(&[
-                "commit",
-                "-m",
-                &message,
-                &path.display().to_string(),
-                &gitmodules_path.display().to_string(),
-            ])
-            .current_dir(&root)
-            .spawn()?
-            .wait()?;
-
-        Ok(())
-    })
 }
 
 fn remove(root: impl AsRef<std::path::Path>, dependencies: Vec<Dependency>) -> eyre::Result<()> {

@@ -4,9 +4,10 @@ use ethers::{solc::EvmVersion, types::Address};
 use std::{path::PathBuf, str::FromStr};
 
 use crate::cmd::{
-    build::BuildArgs, create::CreateArgs, flatten, remappings::RemappingArgs, run::RunArgs,
-    snapshot, test,
+    build::BuildArgs, config, create::CreateArgs, flatten, init::InitArgs,
+    remappings::RemappingArgs, run::RunArgs, snapshot, test,
 };
+use serde::Serialize;
 
 #[derive(Debug, Parser)]
 #[clap(name = "forge")]
@@ -72,15 +73,7 @@ pub enum Subcommands {
     Create(CreateArgs),
 
     #[clap(alias = "i", about = "initializes a new forge sample repository")]
-    Init {
-        #[clap(
-            help = "the project's root path, default being the current working directory",
-            value_hint = ValueHint::DirPath
-        )]
-        root: Option<PathBuf>,
-        #[clap(help = "optional solidity template to start from", long, short)]
-        template: Option<String>,
-    },
+    Init(InitArgs),
 
     #[clap(about = "generate shell completions script")]
     Completions {
@@ -101,20 +94,31 @@ pub enum Subcommands {
     #[clap(about = "creates a snapshot of each test's gas usage")]
     Snapshot(snapshot::SnapshotArgs),
 
+    #[clap(about = "shows the currently set config values")]
+    Config(config::ConfigArgs),
+
     #[clap(about = "concats a file with all of its imports")]
     Flatten(flatten::FlattenArgs),
 }
 
-#[derive(Debug, Clone, Parser)]
+/// A set of solc compiler settings that can be set via command line arguments, which are intended
+/// to be merged into an existing `foundry_config::Config`.
+///
+/// See also [`BuildArgs`]
+#[derive(Default, Debug, Clone, Parser, Serialize)]
 pub struct CompilerArgs {
-    #[clap(help = "choose the evm version", long, default_value = "london")]
-    pub evm_version: EvmVersion,
+    #[clap(help = "choose the evm version", long)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evm_version: Option<EvmVersion>,
 
     #[clap(help = "activate the solidity optimizer", long)]
+    // skipped because, optimize is opt-in
+    #[serde(skip)]
     pub optimize: bool,
 
-    #[clap(help = "optimizer parameter runs", long, default_value = "200")]
-    pub optimize_runs: u32,
+    #[clap(help = "optimizer parameter runs", long)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub optimize_runs: Option<usize>,
 }
 
 /// Represents the common dapp argument pattern for `<path>:<contractname>` where `<path>:` is
