@@ -104,9 +104,7 @@ jobs:
           help2man -N ./target/${TARGET}/release/cast > cast.1
           gzip forge.1
           gzip cast.1
-          mv forge.1.gz forge.1
-          mv cast.1.gz cast.1
-          tar -czvf "foundry_man_${TAG_NAME}.tar.gz" forge.1 cast.1
+          tar -czvf "foundry_man_${TAG_NAME}.tar.gz" forge.1.gz cast.1.gz
           echo "::set-output name=foundry_man::foundry_man_${TAG_NAME}.tar.gz"
         shell: bash
 
