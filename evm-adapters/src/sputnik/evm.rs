@@ -402,7 +402,14 @@ mod tests {
         assert_eq!(status, ExitReason::Succeed(ExitSucceed::Stopped));
 
         let err = evm
-            .call::<(), _, _>(Address::zero(), addr, "testFailGreeting()", (), 0.into())
+            .call::<(), _, _>(
+                Address::zero(),
+                addr,
+                "testFailGreeting()",
+                (),
+                0.into(),
+                compiled.abi,
+            )
             .unwrap_err();
         let (reason, gas_used) = match err {
             crate::EvmError::Execution { reason, gas_used, .. } => (reason, gas_used),

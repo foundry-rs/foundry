@@ -54,11 +54,23 @@ pub enum Subcommands {
     #[clap(name = "--to-uint256")]
     #[clap(about = "convert a number into uint256 hex string with 0x prefix")]
     ToUint256 { value: Option<String> },
+    #[clap(name = "--to-unit")]
+    #[clap(
+        about = r#"convert an ETH amount into a specified unit: ether, gwei or wei (default: wei). 
+    Usage: 
+      - 1ether wei     | converts 1 ether to wei
+      - "1 ether" wei  | converts 1 ether to wei
+      - 1ether         | converts 1 ether to wei
+      - 1 gwei         | converts 1 wei to gwei
+      - 1gwei ether    | converts 1 gwei to ether
+    "#
+    )]
+    ToUnit { value: Option<String>, unit: Option<String> },
     #[clap(name = "--to-wei")]
-    #[clap(about = "convert an ETH amount into wei")]
+    #[clap(about = "convert an ETH amount into wei. Consider using --to-unit.")]
     ToWei { value: Option<String>, unit: Option<String> },
     #[clap(name = "--from-wei")]
-    #[clap(about = "convert wei into an ETH amount")]
+    #[clap(about = "convert wei into an ETH amount. Consider using --to-unit.")]
     FromWei { value: Option<String>, unit: Option<String> },
     #[clap(name = "block")]
     #[clap(

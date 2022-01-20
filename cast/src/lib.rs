@@ -3,7 +3,10 @@
 //! TODO
 use chrono::NaiveDateTime;
 use ethers_core::{
-    abi::{Abi, AbiParser, Token},
+    abi::{
+        token::{LenientTokenizer, Tokenizer},
+        Abi, AbiParser, Token,
+    },
     types::{Chain, *},
     utils::{self, keccak256},
 };
@@ -784,6 +787,35 @@ impl SimpleCast {
         let num_u256 = U256::from_str_radix(value, 10)?;
         let num_hex = format!("{:x}", num_u256);
         Ok(format!("0x{}{}", "0".repeat(64 - num_hex.len()), num_hex))
+    }
+
+    /// Converts an eth amount into a specified unit
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(Cast::to_unit("1 wei".to_string(), "wei".to_string())?, "1");
+    ///     assert_eq!(Cast::to_unit("1".to_string(), "wei".to_string())?, "1");
+    ///     assert_eq!(Cast::to_unit("1ether".to_string(), "wei".to_string())?, "1000000000000000000");
+    ///     assert_eq!(Cast::to_unit("100 gwei".to_string(), "gwei".to_string())?, "100");
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn to_unit(value: String, unit: String) -> Result<String> {
+        let value = U256::from(LenientTokenizer::tokenize_uint(&value)?);
+
+        Ok(match &unit[..] {
+            "ether" => ethers_core::utils::format_units(value, 18)?
+                .trim_end_matches(".000000000000000000")
+                .to_string(),
+            "gwei" | "nano" | "nanoether" => ethers_core::utils::format_units(value, 9)?
+                .trim_end_matches(".000000000")
+                .to_string(),
+            "wei" => ethers_core::utils::format_units(value, 0)?.trim_end_matches(".0").to_string(),
+            _ => return Err(eyre::eyre!("invalid unit")),
+        })
     }
 
     /// Converts an eth amount into wei

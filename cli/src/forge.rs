@@ -75,6 +75,9 @@ fn main() -> eyre::Result<()> {
         Subcommands::Config(cmd) => {
             cmd.run()?;
         }
+        Subcommands::Flatten(cmd) => {
+            cmd.run()?;
+        }
     }
 
     Ok(())

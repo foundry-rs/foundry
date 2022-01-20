@@ -4,8 +4,8 @@ use ethers::{solc::EvmVersion, types::Address};
 use std::{path::PathBuf, str::FromStr};
 
 use crate::cmd::{
-    build::BuildArgs, config, create::CreateArgs, init::InitArgs, remappings::RemappingArgs,
-    run::RunArgs, snapshot, test,
+    build::BuildArgs, config, create::CreateArgs, flatten, init::InitArgs,
+    remappings::RemappingArgs, run::RunArgs, snapshot, test,
 };
 use serde::Serialize;
 
@@ -95,6 +95,9 @@ pub enum Subcommands {
 
     #[clap(about = "shows the currently set config values")]
     Config(config::ConfigArgs),
+
+    #[clap(about = "concats a file with all of its imports")]
+    Flatten(flatten::FlattenArgs),
 }
 
 /// A set of solc compiler settings that can be set via command line arguments, which are intended
