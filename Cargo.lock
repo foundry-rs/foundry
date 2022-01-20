@@ -1693,6 +1693,7 @@ dependencies = [
  "glob",
  "hex",
  "once_cell",
+ "pretty_assertions",
  "proptest",
  "rayon",
  "regex",

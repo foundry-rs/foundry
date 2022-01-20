@@ -1,15 +1,12 @@
 //! Contains various tests for checking forge's commands
-use foundry_cli_test_utils::{
-    ethers_solc::{remappings::Remapping, PathStyle},
-    forgetest, forgetest_ignore, pretty_eq,
-    util::{pretty_err, read_string, TestCommand, TestProject},
-};
+use foundry_cli_test_utils::{ethers_solc::{remappings::Remapping, PathStyle}, forgetest, forgetest_ignore, forgetest_init, pretty_eq, util::{pretty_err, read_string, TestCommand, TestProject}};
 use foundry_config::{parse_with_profile, BasicConfig, Config};
 use std::{
     env::{self, set_current_dir},
     fs,
     str::FromStr,
 };
+use pretty_assertions::assert_eq;
 
 // import forge utils as mod
 #[allow(unused)]
@@ -75,11 +72,25 @@ forgetest!(can_init_repo_repeatedly, |prj: TestProject, mut cmd: TestCommand| {
     cmd.arg("init").arg(prj.root());
     cmd.assert_non_empty_stdout();
 
-    for _ in 0..3 {
+    for _ in 0..2 {
         assert!(foundry_toml.exists());
         pretty_err(&foundry_toml, fs::remove_file(&foundry_toml));
         cmd.assert_non_empty_stdout();
     }
+});
+
+// checks that `clean` removes hardhat style paths
+forgetest_init!(can_override_config, |prj: TestProject, mut cmd: TestCommand| {
+    set_current_dir(prj.root()).unwrap();
+
+    let foundry_toml = prj.root().join(Config::FILE_NAME);
+    assert!(foundry_toml.exists());
+    let file = Config::find_config_file().unwrap();
+    assert_eq!(foundry_toml, file);
+
+    let config = forge_utils::load_config();
+    assert_eq!(config, Config::load().sanitized());
+
 });
 
 // checks that `clean` removes dapptools style paths

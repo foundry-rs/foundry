@@ -70,7 +70,7 @@ macro_rules! forgetest_init {
     ($test:ident, $fun:expr) => {
         #[test]
         fn $test() {
-            let (prj, cmd) = $crate::util::setup(stringify!($test), $style);
+            let (prj, cmd) = $crate::util::setup(stringify!($test),  $crate::ethers_solc::PathStyle::Dapptools);
             $crate::util::initialize(prj.root());
             $fun(prj, cmd);
         }
