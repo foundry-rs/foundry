@@ -3,6 +3,7 @@ use ethers_solc::{
     project_util::{copy_dir, TempProject},
     ArtifactOutput, MinimalCombinedArtifacts, PathStyle, ProjectPathsConfig,
 };
+use foundry_config::Config;
 use once_cell::sync::Lazy;
 use std::{
     collections::HashMap,
@@ -16,14 +17,11 @@ use std::{
     process::{self, Command},
     sync::{
         atomic::{AtomicUsize, Ordering},
-        Arc,
+        Arc, Mutex,
     },
 };
-use std::sync::Mutex;
-use foundry_config::Config;
 
 static CURRENT_DIR_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
-
 
 /// Contains a `forge init` initialized project
 pub static FORGE_INITIALIZED: Lazy<TestProject> = Lazy::new(|| {
@@ -152,7 +150,12 @@ impl TestProject {
     pub fn command(&self) -> TestCommand {
         let mut cmd = self.bin();
         cmd.current_dir(&self.inner.root());
-        TestCommand { project: self.clone(), cmd, saved_env_vars: HashMap::new(), current_dir_lock: None }
+        TestCommand {
+            project: self.clone(),
+            cmd,
+            saved_env_vars: HashMap::new(),
+            current_dir_lock: None,
+        }
     }
 
     /// Returns the path to the forge executable.
@@ -163,9 +166,9 @@ impl TestProject {
 
     /// Returns the `Config` as spit out by `forge config`
     pub fn config_from_output<I, A>(&self, args: I) -> Config
-        where
-            I: IntoIterator<Item = A>,
-            A: AsRef<OsStr>,
+    where
+        I: IntoIterator<Item = A>,
+        A: AsRef<OsStr>,
     {
         let mut cmd = self.bin();
         cmd.arg("config");
@@ -176,7 +179,6 @@ impl TestProject {
         let config: Config = serde_json::from_str(c.as_ref()).unwrap();
         config.sanitized()
     }
-
 }
 
 impl Drop for TestCommand {
@@ -225,7 +227,7 @@ pub struct TestCommand {
     /// The actual command we use to control the process.
     cmd: Command,
     saved_env_vars: HashMap<OsString, Option<OsString>>,
-    current_dir_lock : Option<std::sync::MutexGuard<'static, ()>>
+    current_dir_lock: Option<std::sync::MutexGuard<'static, ()>>,
 }
 
 impl TestCommand {
@@ -243,10 +245,10 @@ impl TestCommand {
     /// Sets the current working directory
     pub fn set_current_dir(&mut self, p: impl AsRef<Path>) {
         let _ = self.current_dir_lock.take();
-        let lock =     CURRENT_DIR_LOCK.lock().unwrap();
+        let lock = CURRENT_DIR_LOCK.lock().unwrap();
         self.current_dir_lock = Some(lock);
         let p = p.as_ref();
-        pretty_err(p,std::env::set_current_dir(p));
+        pretty_err(p, std::env::set_current_dir(p));
     }
 
     /// Add an argument to pass to the command.
