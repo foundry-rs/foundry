@@ -9,13 +9,14 @@ use crate::cmd::{
 };
 
 #[derive(Debug, Parser)]
+#[clap(name = "forge")]
+#[clap(version)]
 pub struct Opts {
     #[clap(subcommand)]
     pub sub: Subcommands,
 }
 
 #[derive(Debug, Subcommand)]
-#[clap(name = "forge")]
 #[clap(about = "Build, test, fuzz, formally verify, debug & deploy solidity contracts.")]
 #[allow(clippy::large_enum_variant)]
 pub enum Subcommands {

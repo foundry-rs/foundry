@@ -92,6 +92,22 @@ jobs:
           fi
         shell: bash
 
+      - name: Build man page
+        id: man
+        if: ${{ matrix.job.platform == 'linux' }}
+        env:
+          PLATFORM_NAME: ${{ matrix.job.platform }}
+          TARGET: ${{ matrix.job.target }}
+        run: |
+          sudo apt-get -y install help2man
+          help2man -N ./target/${TARGET}/release/forge > forge.1
+          help2man -N ./target/${TARGET}/release/cast > cast.1
+          gzip forge.1
+          gzip cast.1
+          tar -czvf "foundry_man_${TAG_NAME}.tar.gz" forge.1.gz cast.1.gz
+          echo "::set-output name=foundry_man::foundry_man_${TAG_NAME}.tar.gz"
+        shell: bash
+
       - name: Build changelog
         id: build_changelog
         if: ${{ env.TAG_NAME != 'nightly' }}
@@ -124,4 +140,6 @@ jobs:
           tag_name: ${{ env.TAG_NAME }}
           prerelease: ${{ env.TAG_NAME == 'nightly' }}
           body: ${{ steps.build_changelog.outputs.changelog }}
-          files: ${{ steps.artifacts.outputs.file_name }}
+          files:  |
+            ${{ steps.artifacts.outputs.file_name }}
+            ${{ steps.man.outputs.foundry_man }}
