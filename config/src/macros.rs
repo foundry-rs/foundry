@@ -14,7 +14,7 @@
 /// ```rust
 /// use std::path::PathBuf;
 /// use serde::Serialize;
-/// use foundry_config::{Config, impl_figment};
+/// use foundry_config::{Config, impl_figment_convert};
 /// use foundry_config::figment::*;
 /// use foundry_config::figment::error::Kind::InvalidType;
 /// use foundry_config::figment::value::*;
@@ -22,7 +22,7 @@
 /// struct MyArgs {
 ///     root: Option<PathBuf>,
 /// }
-/// impl_figment!(MyArgs);
+/// impl_figment_convert!(MyArgs);
 ///
 /// impl Provider for MyArgs {
 ///     fn metadata(&self) -> Metadata {
@@ -48,13 +48,13 @@
 ///     second: MyArgs,
 ///     third: MyArgs,
 /// }
-/// impl_figment!(Outer, start, second, third);
+/// impl_figment_convert!(Outer, start, second, third);
 ///
 /// let figment: Figment = From::from(&Outer::default());
 /// let config: Config = From::from(&Outer::default());
 /// ```
 #[macro_export]
-macro_rules! impl_figment {
+macro_rules! impl_figment_convert {
     ($name:ty) => {
         impl<'a> From<&'a $name> for $crate::figment::Figment {
             fn from(args: &'a $name) -> Self {

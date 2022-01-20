@@ -26,7 +26,7 @@ use ethers_solc::{
 mod macros;
 
 // Utilities for making it easier to handle tests.
-mod utils;
+pub mod utils;
 pub use crate::utils::*;
 
 /// Foundry configuration
@@ -1190,7 +1190,7 @@ mod tests {
         struct MyArgs {
             root: Option<PathBuf>,
         }
-        impl_figment!(MyArgs);
+        impl_figment_convert!(MyArgs);
 
         impl Provider for MyArgs {
             fn metadata(&self) -> Metadata {
@@ -1214,7 +1214,7 @@ mod tests {
             other: MyArgs,
             another: MyArgs,
         }
-        impl_figment!(Outer, start, other, another);
+        impl_figment_convert!(Outer, start, other, another);
 
         let _figment: Figment = From::from(&Outer::default());
         let _config: Config = From::from(&Outer::default());
