@@ -1213,8 +1213,9 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "0.6.0"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/more-convenience#f8fb8d71806de5a13f1d703ff71c9084f8e9beae"
 dependencies = [
- "ethers-addressbook 0.1.0",
+ "ethers-addressbook 0.1.0 (git+https://github.com/mattsse/ethers-rs?branch=matt/more-convenience)",
  "ethers-contract",
  "ethers-core",
  "ethers-etherscan",
@@ -1227,6 +1228,7 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "0.1.0"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/more-convenience#f8fb8d71806de5a13f1d703ff71c9084f8e9beae"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -1237,7 +1239,7 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "0.1.0"
-source = "git+https://github.com/gakonst/ethers-rs#eb555c28cca0dbd6a6cafda96fb96d7c4a903abf"
+source = "git+https://github.com/gakonst/ethers-rs#fe12d10f29d6321751187959f19d920e7d065bc8"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -1248,6 +1250,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "0.6.0"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/more-convenience#f8fb8d71806de5a13f1d703ff71c9084f8e9beae"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1265,6 +1268,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "0.6.0"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/more-convenience#f8fb8d71806de5a13f1d703ff71c9084f8e9beae"
 dependencies = [
  "Inflector",
  "anyhow",
@@ -1287,6 +1291,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "0.6.0"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/more-convenience#f8fb8d71806de5a13f1d703ff71c9084f8e9beae"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -1300,6 +1305,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "0.6.0"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/more-convenience#f8fb8d71806de5a13f1d703ff71c9084f8e9beae"
 dependencies = [
  "arrayvec 0.7.2",
  "bytes",
@@ -1327,6 +1333,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "0.2.0"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/more-convenience#f8fb8d71806de5a13f1d703ff71c9084f8e9beae"
 dependencies = [
  "ethers-core",
  "reqwest",
@@ -1339,6 +1346,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "0.6.0"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/more-convenience#f8fb8d71806de5a13f1d703ff71c9084f8e9beae"
 dependencies = [
  "async-trait",
  "ethers-contract",
@@ -1361,6 +1369,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "0.6.0"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/more-convenience#f8fb8d71806de5a13f1d703ff71c9084f8e9beae"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -1390,6 +1399,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "0.6.0"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/more-convenience#f8fb8d71806de5a13f1d703ff71c9084f8e9beae"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1412,6 +1422,7 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "0.1.0"
+source = "git+https://github.com/mattsse/ethers-rs?branch=matt/more-convenience#f8fb8d71806de5a13f1d703ff71c9084f8e9beae"
 dependencies = [
  "colored",
  "dunce",
