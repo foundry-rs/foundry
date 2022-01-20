@@ -43,9 +43,7 @@ macro_rules! forgetest {
             $fun(prj, cmd);
         }
     };
-     (#[ignore], $test:ident, $style:expr, $fun:expr) => {
-
-     }
+    (#[ignore], $test:ident, $style:expr, $fun:expr) => {};
 }
 
 /// A helper macro to ignore `forgetest!` that should not run on CI
@@ -73,7 +71,7 @@ macro_rules! forgetest_init {
     ($test:ident, $style:expr, $fun:expr) => {
         #[test]
         fn $test() {
-             let (prj, cmd) = $crate::util::setup(stringify!($test),  $style);
+            let (prj, cmd) = $crate::util::setup(stringify!($test), $style);
             $crate::util::initialize(prj.root());
             $fun(prj, cmd);
         }

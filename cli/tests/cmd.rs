@@ -109,7 +109,7 @@ forgetest_init!(can_override_config, |prj: TestProject, mut cmd: TestCommand| {
     );
 
     cmd.arg("config");
-    let expected = profile.clone().to_string_pretty().unwrap();
+    let expected = profile.to_string_pretty().unwrap();
     pretty_eq!(expected.trim().to_string(), cmd.stdout().trim().to_string());
 
     // remappings work
@@ -137,7 +137,7 @@ forgetest_init!(can_override_config, |prj: TestProject, mut cmd: TestCommand| {
     pretty_err(&remappings_txt, fs::remove_file(&remappings_txt));
 
     cmd.set_cmd(prj.bin()).args(["config", "--basic"]);
-    let expected = profile.clone().into_basic().to_string_pretty().unwrap();
+    let expected = profile.into_basic().to_string_pretty().unwrap();
     pretty_eq!(expected.trim().to_string(), cmd.stdout().trim().to_string());
 });
 

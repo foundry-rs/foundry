@@ -5,9 +5,13 @@ use ethers_solc::{
 };
 use once_cell::sync::Lazy;
 use std::{
+    collections::HashMap,
     env,
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
+    fmt::Display,
     fs,
+    fs::File,
+    io::{BufWriter, Write},
     path::{Path, PathBuf},
     process::{self, Command},
     sync::{
@@ -15,11 +19,6 @@ use std::{
         Arc,
     },
 };
-use std::collections::HashMap;
-use std::ffi::OsString;
-use std::fmt::Display;
-use std::fs::File;
-use std::io::{BufWriter, Write};
 
 /// Contains a `forge init` initialized project
 pub static FORGE_INITIALIZED: Lazy<TestProject> = Lazy::new(|| {
@@ -117,9 +116,9 @@ impl TestProject {
     pub fn create_file(&self, path: impl AsRef<Path>, contents: &str) -> PathBuf {
         let path = path.as_ref();
         if !path.is_relative() {
-            panic!( "create_file(): file path is absolute");
+            panic!("create_file(): file path is absolute");
         }
-        let path  = self.root().join(path);
+        let path = self.root().join(path);
         let file = pretty_err(&path, File::create(&path));
         let mut writer = BufWriter::new(file);
         pretty_err(&path, writer.write_all(contents.as_bytes()));
@@ -163,7 +162,7 @@ impl Drop for TestCommand {
         for (key, value) in self.saved_env_vars.iter() {
             match value {
                 Some(val) => std::env::set_var(key, val),
-                None => std::env::remove_var(key)
+                None => std::env::remove_var(key),
             }
         }
     }
@@ -213,7 +212,7 @@ impl TestCommand {
     }
 
     /// replaces the command
-    pub fn set_cmd(&mut self, cmd: Command)  -> &mut TestCommand  {
+    pub fn set_cmd(&mut self, cmd: Command) -> &mut TestCommand {
         self.cmd = cmd;
         self
     }
@@ -251,7 +250,6 @@ impl TestCommand {
         let _ = self.saved_env_vars.remove(OsStr::new(key));
         std::env::remove_var(key);
     }
-
 
     /// Set the working directory for this command.
     ///
