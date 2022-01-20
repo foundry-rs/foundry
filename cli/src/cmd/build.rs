@@ -61,7 +61,7 @@ pub struct BuildArgs {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub remappings: Vec<ethers::solc::remappings::Remapping>,
 
-    #[clap(long = "remappings-env", env = "DAPP_REMAPPINGS")]
+    #[clap(help = "the env var that holds remappings", long = "remappings-env")]
     #[serde(skip)]
     pub remappings_env: Option<String>,
 

@@ -113,11 +113,8 @@ forgetest_init!(can_override_config, |prj: TestProject, mut cmd: TestCommand| {
     let expected = profile.to_string_pretty().unwrap();
     pretty_eq!(expected.trim().to_string(), cmd.stdout().trim().to_string());
 
-
-
     // remappings work
     let remappings_txt = prj.create_file("remappings.txt", "from-file/=lib/from-file");
-    dbg!(remappings_txt.clone());
     let config = forge_utils::load_config();
     assert_eq!(
         format!("from-file/={}", prj.root().join("lib/from-file").display()),
@@ -132,11 +129,12 @@ forgetest_init!(can_override_config, |prj: TestProject, mut cmd: TestCommand| {
         Remapping::from(config.remappings[0].clone()).to_string()
     );
 
-    cmd.arg("--remappings from-cli/=lib-from-cli");
+    let config = prj.config_from_output(["--remappings", "from-cli/=lib-from-cli"]);
     assert_eq!(
         format!("from-cli/={}", prj.root().join("lib-from-cli").display()),
         Remapping::from(config.remappings[0].clone()).to_string()
     );
+
     cmd.unset_env("DAPP_REMAPPINGS");
     pretty_err(&remappings_txt, fs::remove_file(&remappings_txt));
 

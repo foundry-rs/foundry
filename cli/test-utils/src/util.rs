@@ -19,6 +19,7 @@ use std::{
         Arc,
     },
 };
+use foundry_config::Config;
 
 /// Contains a `forge init` initialized project
 pub static FORGE_INITIALIZED: Lazy<TestProject> = Lazy::new(|| {
@@ -155,6 +156,23 @@ impl TestProject {
         let forge = self.root.join(format!("../forge{}", env::consts::EXE_SUFFIX));
         process::Command::new(forge)
     }
+
+    /// Returns the `Config` as spit out by `forge config`
+    pub fn config_from_output<I, A>(&self, args: I) -> Config
+        where
+            I: IntoIterator<Item = A>,
+            A: AsRef<OsStr>,
+    {
+        let mut cmd = self.bin();
+        cmd.arg("config");
+        cmd.args(args);
+        cmd.arg("--json");
+        let output = cmd.output().unwrap();
+        let c = String::from_utf8_lossy(&output.stdout);
+        let config: Config = serde_json::from_str(c.as_ref()).unwrap();
+        config.sanitized()
+    }
+
 }
 
 impl Drop for TestCommand {

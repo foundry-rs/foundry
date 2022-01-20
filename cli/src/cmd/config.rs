@@ -2,8 +2,7 @@
 
 use crate::cmd::{build::BuildArgs, Cmd};
 use clap::Parser;
-use foundry_config::Config;
-use foundry_config::figment::Figment;
+use foundry_config::{figment::Figment, Config};
 
 /// Command to list currently set config values
 #[derive(Debug, Clone, Parser)]
