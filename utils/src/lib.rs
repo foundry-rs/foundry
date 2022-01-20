@@ -62,7 +62,7 @@ pub fn remove_extra_costs(gas: U256, calldata: &[u8]) -> U256 {
             calldata_cost += 8;
         }
     }
-    gas - calldata_cost - BASE_TX_COST
+    gas.saturating_sub(calldata_cost.into()).saturating_sub(BASE_TX_COST.into())
 }
 
 /// Flattens a group of contracts into maps of all events and functions
