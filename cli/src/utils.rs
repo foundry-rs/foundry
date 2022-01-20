@@ -132,8 +132,8 @@ pub fn find_remappings(
     }
 
     // remove any potential duplicates
-    result.sort_unstable();
-    result.dedup();
+    result.sort_by(|a, b| a.name.cmp(&b.name));
+    result.dedup_by(|a, b| a.name.eq(&b.name));
 
     result
 }
@@ -142,11 +142,11 @@ pub fn find_remappings(
 pub fn find_libs(root: &Path, lib_paths: &[PathBuf], hardhat: bool) -> Vec<PathBuf> {
     if lib_paths.is_empty() {
         if hardhat {
-            return vec![root.join("node_modules")]
+            return vec![root.join("node_modules")];
         }
 
         // no libs directories provided
-        return ProjectPathsConfig::find_libs(&root)
+        return ProjectPathsConfig::find_libs(&root);
     }
 
     let mut libs = lib_paths.to_vec();
