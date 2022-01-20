@@ -1,6 +1,6 @@
 //! config command
 
-use crate::cmd::Cmd;
+use crate::cmd::{build::BuildArgs, Cmd};
 use clap::Parser;
 use foundry_config::Config;
 
@@ -11,14 +11,16 @@ pub struct ConfigArgs {
     json: bool,
     #[clap(help = "prints basic set of currently set config values", long)]
     basic: bool,
+    // support nested build arguments
+    #[clap(flatten)]
+    opts: BuildArgs,
 }
 
 impl Cmd for ConfigArgs {
     type Output = ();
 
     fn run(self) -> eyre::Result<Self::Output> {
-        let cwd = dunce::canonicalize(std::env::current_dir()?)?;
-        let config = Config::from(Config::figment_with_root(cwd));
+        let config = Config::from(&self.opts);
         let s = if self.basic {
             let config = config.into_basic();
             if self.json {
