@@ -142,7 +142,8 @@ where
         calldata: Bytes,
         value: U256,
     ) -> Result<(Address, ExitReason, u64, Vec<String>)> {
-        let gas_before = self.executor.gas_left();
+        let gas_used_before = self.executor.gas_used();
+        let refunded_gas_before = self.executor.gas_refund();
 
         // The account's created contract address is pre-computed by using the account's nonce
         // before it executes the contract deployment transaction.
@@ -155,8 +156,13 @@ where
         // and clear them
         self.executor.clear_logs();
 
-        let gas_after = self.executor.gas_left();
-        let gas = gas_before.saturating_sub(gas_after).saturating_sub(21000.into());
+        let refunded_gas = self.executor.gas_refund().saturating_sub(refunded_gas_before);
+        let gas_used_after = self.executor.gas_used();
+        // we dont remove call data costs here because its highly relevant to users
+        let gas = gas_used_after
+            .saturating_sub(gas_used_before)
+            .saturating_sub(refunded_gas)
+            .saturating_sub(21000.into());
 
         if Self::is_fail(&status) {
             tracing::trace!(?status, "failed");
@@ -176,15 +182,21 @@ where
         value: U256,
         _is_static: bool,
     ) -> Result<(Bytes, ExitReason, u64, Vec<String>)> {
-        let gas_before = self.executor.gas_left();
+        let gas_used_before = self.executor.gas_used();
+        let refunded_gas_before = self.executor.gas_refund();
 
         let (status, retdata) =
             self.executor.transact_call(from, to, value, calldata.to_vec(), self.gas_limit, vec![]);
 
         tracing::trace!(logs_before = ?self.executor.logs());
 
-        let gas_after = self.executor.gas_left();
-        let gas = gas_before.saturating_sub(gas_after).saturating_sub(21000.into());
+        let refunded_gas = self.executor.gas_refund().saturating_sub(refunded_gas_before);
+        let gas_used_after = self.executor.gas_used();
+        // remove base and calldata costs
+        let gas = foundry_utils::remove_extra_costs(
+            gas_used_after.saturating_sub(gas_used_before).saturating_sub(refunded_gas),
+            calldata.as_ref(),
+        );
 
         // get the logs
         let logs = self.executor.logs();
@@ -416,7 +428,7 @@ mod tests {
             _ => panic!("unexpected error variant"),
         };
         assert_eq!(reason, "not equal to `hi`".to_string());
-        assert_eq!(gas_used, 26633);
+        assert_eq!(gas_used, 26569);
     }
 
     #[test]
