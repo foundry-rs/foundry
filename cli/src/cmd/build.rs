@@ -139,7 +139,7 @@ impl<'a> From<&'a BuildArgs> for Figment {
 impl<'a> From<&'a BuildArgs> for Config {
     fn from(args: &'a BuildArgs) -> Self {
         let figment: Figment = args.into();
-        Config::from(figment).sanitized()
+        Config::from_provider(figment).sanitized()
     }
 }
 

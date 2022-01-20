@@ -58,7 +58,7 @@ impl<'a> From<&'a RunArgs> for Figment {
 impl<'a> From<&'a RunArgs> for Config {
     fn from(args: &'a RunArgs) -> Self {
         let figment: Figment = args.into();
-        Config::from(figment).sanitized()
+        Config::from_provider(figment).sanitized()
     }
 }
 
@@ -71,7 +71,7 @@ impl Cmd for RunArgs {
 
         let figment: Figment = From::from(&self);
         let mut evm_opts = figment.extract::<EvmOpts>()?;
-        let config = Config::from(figment).sanitized();
+        let config = Config::from_provider(figment).sanitized();
         let evm_version = config.evm_version;
         if evm_opts.debug {
             evm_opts.verbosity = 3;

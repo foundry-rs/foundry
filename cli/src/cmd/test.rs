@@ -113,7 +113,7 @@ impl<'a> From<&'a TestArgs> for Figment {
 impl<'a> From<&'a TestArgs> for Config {
     fn from(args: &'a TestArgs) -> Self {
         let figment: Figment = args.into();
-        Config::from(figment).sanitized()
+        Config::from_provider(figment).sanitized()
     }
 }
 
@@ -124,7 +124,7 @@ impl Cmd for TestArgs {
         // merge all configs
         let figment: Figment = From::from(&self);
         let evm_opts = figment.extract::<EvmOpts>()?;
-        let config = Config::from(figment).sanitized();
+        let config = Config::from_provider(figment).sanitized();
 
         let TestArgs { json, filter, allow_failure, .. } = self;
 

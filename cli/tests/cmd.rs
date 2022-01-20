@@ -24,9 +24,10 @@ forgetest!(print_help, |_: TestProject, mut cmd: TestCommand| {
 });
 
 // tests config gets printed to std out
-forgetest!(can_show_config, |_: TestProject, mut cmd: TestCommand| {
+forgetest!(can_show_config, |prj: TestProject, mut cmd: TestCommand| {
     cmd.arg("config");
-    let expected = Config::load().to_string_pretty().unwrap().trim().to_string();
+    set_current_dir(prj.root()).unwrap();
+    let expected = Config::load().sanitized().to_string_pretty().unwrap().trim().to_string();
     pretty_eq!(expected, cmd.stdout().trim().to_string());
 });
 
@@ -112,8 +113,11 @@ forgetest_init!(can_override_config, |prj: TestProject, mut cmd: TestCommand| {
     let expected = profile.to_string_pretty().unwrap();
     pretty_eq!(expected.trim().to_string(), cmd.stdout().trim().to_string());
 
+
+
     // remappings work
     let remappings_txt = prj.create_file("remappings.txt", "from-file/=lib/from-file");
+    dbg!(remappings_txt.clone());
     let config = forge_utils::load_config();
     assert_eq!(
         format!("from-file/={}", prj.root().join("lib/from-file").display()),

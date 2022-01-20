@@ -3,6 +3,7 @@
 use crate::cmd::{build::BuildArgs, Cmd};
 use clap::Parser;
 use foundry_config::Config;
+use foundry_config::figment::Figment;
 
 /// Command to list currently set config values
 #[derive(Debug, Clone, Parser)]
@@ -20,7 +21,9 @@ impl Cmd for ConfigArgs {
     type Output = ();
 
     fn run(self) -> eyre::Result<Self::Output> {
-        let config = Config::from(&self.opts);
+        let figment: Figment = From::from(&self.opts);
+        let config = Config::from_provider(figment);
+
         let s = if self.basic {
             let config = config.into_basic();
             if self.json {
