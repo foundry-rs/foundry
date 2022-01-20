@@ -104,7 +104,7 @@ pub enum Subcommands {
 /// to be merged into an existing `foundry_config::Config`.
 ///
 /// See also [`BuildArgs`]
-#[derive(Debug, Clone, Parser, Serialize)]
+#[derive(Default, Debug, Clone, Parser, Serialize)]
 pub struct CompilerArgs {
     #[clap(help = "choose the evm version", long)]
     #[serde(skip_serializing_if = "Option::is_none")]

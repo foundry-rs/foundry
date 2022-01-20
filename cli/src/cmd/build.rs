@@ -21,14 +21,14 @@ use serde::Serialize;
 ///
 /// CLI arguments take the highest precedence in the Config/Figment hierarchy.
 /// In order to override them in the foundry `Config` they need to be merged into an existing
-/// `figment::Provider`, like `Config` is.
+/// `figment::Provider`, like `foundry_config::Config` is.
 ///
 /// # Example
 ///
 /// ```ignore
 /// use foundry_config::Config;
 /// # fn t(args: BuildArgs) {
-/// let config = Config::load_with_root(".").merge(args);
+/// let config = Config::from(&args);
 /// # }
 /// ```
 ///
@@ -127,7 +127,12 @@ impl Cmd for BuildArgs {
 /// Loads project's figment and merges the build cli arguments into it
 impl<'a> From<&'a BuildArgs> for Figment {
     fn from(args: &'a BuildArgs) -> Self {
-        utils::load_figment().merge(args)
+        if let Some(root) = args.root.clone() {
+            utils::load_figment_with_root(root)
+        } else {
+            utils::load_figment()
+        }
+        .merge(args)
     }
 }
 

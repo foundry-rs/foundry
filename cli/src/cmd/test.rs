@@ -3,7 +3,6 @@
 use crate::{
     cmd::{build::BuildArgs, Cmd},
     opts::evm::EvmArgs,
-    utils,
 };
 use ansi_term::Colour;
 use clap::{AppSettings, Parser};
@@ -106,7 +105,8 @@ pub struct TestArgs {
 /// Loads project's figment and merges the build cli arguments into it
 impl<'a> From<&'a TestArgs> for Figment {
     fn from(args: &'a TestArgs) -> Self {
-        utils::load_figment().merge(&args.opts).merge(&args.evm_opts)
+        let figment: Figment = From::from(&args.opts);
+        figment.merge(&args.evm_opts)
     }
 }
 

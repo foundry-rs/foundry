@@ -8,7 +8,7 @@ use ui::{TUIExitReason, Tui, Ui};
 
 use ethers::solc::{MinimalCombinedArtifacts, Project};
 
-use crate::{opts::evm::EvmArgs, utils};
+use crate::opts::evm::EvmArgs;
 use ansi_term::Colour;
 use ethers::{
     prelude::{artifacts::ContractBytecode, Artifact},
@@ -50,7 +50,8 @@ pub struct RunArgs {
 /// Loads project's figment and merges the build cli arguments into it
 impl<'a> From<&'a RunArgs> for Figment {
     fn from(args: &'a RunArgs) -> Self {
-        utils::load_figment().merge(&args.opts).merge(&args.evm_opts)
+        let figment: Figment = From::from(&args.opts);
+        figment.merge(&args.evm_opts)
     }
 }
 
