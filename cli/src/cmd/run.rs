@@ -229,15 +229,15 @@ pub struct BuildOutput {
 impl RunArgs {
     /// Compiles the file with auto-detection and compiler params.
     pub fn build(&self, config: Config) -> eyre::Result<BuildOutput> {
-        let mut root = dunce::canonicalize(&self.path)?;
+        let target_contract = dunce::canonicalize(&self.path)?;
         let (project, output) = if let Ok(mut project) = config.project() {
             // TODO: caching causes no output until https://github.com/gakonst/ethers-rs/issues/727
             // is fixed
             project.cached = false;
             project.no_artifacts = true;
-            root = project.paths.root.clone();
+
             // target contract may not be in the compilation path, add it and manually compile
-            match manual_compile(&project, vec![root.clone()]) {
+            match manual_compile(&project, vec![target_contract.clone()]) {
                 Ok(output) => (project, output),
                 Err(e) => {
                     println!("No extra contracts compiled {:?}", e);
@@ -264,7 +264,7 @@ impl RunArgs {
         let contract_bytecode = if let Some(contract_name) = self.target_contract.clone() {
             let contract_bytecode: ContractBytecode = contracts
                 .0
-                .get(root.to_str().expect("OsString from path"))
+                .get(target_contract.to_str().expect("OsString from path"))
                 .ok_or_else(|| {
                     eyre::Error::msg(
                         "contract path not found; This is likely a bug, please report it",
@@ -280,7 +280,7 @@ impl RunArgs {
         } else {
             let contract = contracts
                 .0
-                .get(root.to_str().expect("OsString from path"))
+                .get(target_contract.to_str().expect("OsString from path"))
                 .ok_or_else(|| {
                     eyre::Error::msg(
                         "contract path not found; This is likely a bug, please report it",
