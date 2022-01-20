@@ -188,6 +188,15 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
         U256::from(self.state().metadata().gasometer().gas())
     }
 
+    fn gas_used(&self) -> U256 {
+        // NB: We do this to avoid `function cannot return without recursing`
+        U256::from(self.state().metadata().gasometer().total_used_gas())
+    }
+
+    fn gas_refund(&self) -> U256 {
+        U256::from(self.state().metadata().gasometer().refunded_gas())
+    }
+
     fn all_logs(&self) -> Vec<String> {
         self.handler.state().all_logs.clone()
     }
