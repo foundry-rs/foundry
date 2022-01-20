@@ -5,12 +5,14 @@ echo Installing foundryup...
 
 FOUNDRY_DIR=${FOUNDRY_DIR-"$HOME/.foundry"}
 FOUNDRY_BIN_DIR="$FOUNDRY_DIR/bin"
+FOUNDRY_MAN_DIR="$FOUNDRY_DIR/share/man/man1"
 
 FOUNDRYUP='#!/usr/bin/env bash
 set -e
 
 FOUNDRY_DIR=${FOUNDRY_DIR-"$HOME/.foundry"}
 FOUNDRY_BIN_DIR="$FOUNDRY_DIR/bin"
+FOUNDRY_MAN_DIR="$FOUNDRY_DIR/share/man/man1"
 
 while [[ $1 ]]; do
   case $1 in
@@ -63,10 +65,14 @@ if [[ "$FOUNDRYUP_REPO" == "gakonst/foundry" && -z "$FOUNDRYUP_BRANCH" ]]; then
   fi
   
   # Compute the URL of the release tarball in the Foundry repository.
-  TARBALL_URL="https://github.com/${FOUNDRYUP_REPO}/releases/download/${FOUNDRYUP_VERSION}/foundry_${FOUNDRYUP_VERSION}_${PLATFORM}_${ARCHITECTURE}.tar.gz"
+  RELEASE_URL="https://github.com/${FOUNDRYUP_REPO}/releases/download/${FOUNDRYUP_VERSION}/"
+  BIN_TARBALL_URL="${RELEASE_URL}foundry_${FOUNDRYUP_VERSION}_${PLATFORM}_${ARCHITECTURE}.tar.gz"
+  MAN_TARBALL_URL="${RELEASE_URL}foundry_man_${FOUNDRYUP_VERSION}.tar.gz"
 
-  # Download the release tarball and unpack it into the .foundry bin directory.
-  curl -L $TARBALL_URL | tar -xvzC $FOUNDRY_BIN_DIR
+  # Download the binaries tarball and unpack it into the .foundry bin directory.
+  curl -L $BIN_TARBALL_URL | tar -xvzC $FOUNDRY_BIN_DIR
+  # Download the man tarball and unpack it into the .foundry man directory.
+  curl -L $MAN_TARBALL_URL | tar -xvzC $FOUNDRY_MAN_DIR
 else 
   FOUNDRYUP_BRANCH=${FOUNDRYUP_BRANCH-master}
   
@@ -97,6 +103,22 @@ else
   # Build the repo and install it locally to the .foundry bin directory.
   # --root appends /bin to the directory it is given, so we pass FOUNDRY_DIR.
   cargo install --path ./cli --bins --locked --force --root $FOUNDRY_DIR
+
+  # Try to also manually build and install the man pages
+  if ! command -v help2man &> /dev/null ; then
+    # Warning if help2man is not installed
+    echo "warning: help2man is not installed, so we could not automatically install man entries"
+
+    if [[ "$PLATFORM" == "darwin" ]]; then
+      echo "You may need to install it manually on MacOS via Homebrew (`brew install help2man`)."
+    elif [[ "$PLATFORM" == "linux" ]]; then
+      echo "You may need to install it manually using your package manager."
+    fi
+    exit 0
+  fi
+
+  help2man -N $FOUNDRY_BIN_DIR/forge > $FOUNDRY_MAN_DIR/forge.1
+  help2man -N $FOUNDRY_BIN_DIR/cast > $FOUNDRY_MAN_DIR/cast.1
 fi'
 
 BINARY="$FOUNDRY_BIN_DIR/foundryup"
@@ -105,6 +127,9 @@ BINARY="$FOUNDRY_BIN_DIR/foundryup"
 mkdir -p $FOUNDRY_BIN_DIR
 echo "$FOUNDRYUP" > $BINARY
 chmod +x $BINARY
+
+# Create the man directory for future man files if it doesn't exist.
+mkdir -p $FOUNDRY_MAN_DIR
 
 # Store the correct profile file (i.e. .profile for bash or .zshrc for ZSH).
 case $SHELL in

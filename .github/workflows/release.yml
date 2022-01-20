@@ -100,8 +100,8 @@ jobs:
           TARGET: ${{ matrix.job.target }}
         run: |
           sudo apt-get -y install help2man
-          help2man --version-string=0.1 -N ./target/${TARGET}/release/forge > forge.1
-          help2man --version-string=0.1 -N ./target/${TARGET}/release/cast > cast.1
+          help2man -N ./target/${TARGET}/release/forge > forge.1
+          help2man -N ./target/${TARGET}/release/cast > cast.1
           gzip forge.1
           gzip cast.1
           mv forge.1.gz forge.1

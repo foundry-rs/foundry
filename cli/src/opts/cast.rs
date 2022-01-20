@@ -6,7 +6,6 @@ use ethers::types::{Address, BlockId, BlockNumber, NameOrAddress, H256};
 use super::{ClapChain, EthereumOpts, Wallet};
 
 #[derive(Debug, Subcommand)]
-#[clap(name = "cast")]
 #[clap(about = "Perform Ethereum RPC calls from the comfort of your command line.")]
 pub enum Subcommands {
     #[clap(name = "--max-int")]
@@ -431,6 +430,8 @@ fn parse_slot(s: &str) -> eyre::Result<H256> {
 }
 
 #[derive(Debug, Parser)]
+#[clap(name = "cast")]
+#[clap(version)]
 pub struct Opts {
     #[clap(subcommand)]
     pub sub: Subcommands,
