@@ -66,8 +66,8 @@ pub struct EvmArgs {
     pub sender: Option<Address>,
 
     #[clap(help = "enables the FFI cheatcode", long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ffi: Option<bool>,
+    #[serde(skip)]
+    pub ffi: bool,
 
     #[clap(
         help = r#"Verbosity mode of EVM output as number of occurences of the `v` flag (-v, -vv, -vvv, etc.)

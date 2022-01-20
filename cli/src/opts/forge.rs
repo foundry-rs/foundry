@@ -111,8 +111,9 @@ pub struct CompilerArgs {
     pub evm_version: Option<EvmVersion>,
 
     #[clap(help = "activate the solidity optimizer", long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub optimize: Option<bool>,
+    // skipped because, optimize is opt-in
+    #[serde(skip)]
+    pub optimize: bool,
 
     #[clap(help = "optimizer parameter runs", long)]
     #[serde(skip_serializing_if = "Option::is_none")]

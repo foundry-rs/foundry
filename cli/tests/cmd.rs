@@ -7,7 +7,7 @@ use foundry_cli_test_utils::{
 use foundry_config::{parse_with_profile, BasicConfig, Config};
 use pretty_assertions::assert_eq;
 use std::{
-    env::{self, set_current_dir},
+    env::{self},
     fs,
     str::FromStr,
 };
@@ -26,9 +26,9 @@ forgetest!(print_help, |_: TestProject, mut cmd: TestCommand| {
 // tests config gets printed to std out
 forgetest!(can_show_config, |prj: TestProject, mut cmd: TestCommand| {
     cmd.arg("config");
-    set_current_dir(prj.root()).unwrap();
-    let expected = Config::load().sanitized().to_string_pretty().unwrap().trim().to_string();
-    pretty_eq!(expected, cmd.stdout().trim().to_string());
+    cmd.set_current_dir(prj.root());
+    let expected = Config::load().to_string_pretty().unwrap().trim().to_string();
+    assert_eq!(expected, cmd.stdout().trim().to_string());
 });
 
 // checks that `clean` can be invoked even if out and cache don't exist
@@ -46,7 +46,7 @@ forgetest!(can_init_repo_with_config, |prj: TestProject, mut cmd: TestCommand| {
     cmd.arg("init").arg(prj.root());
     cmd.assert_non_empty_stdout();
 
-    set_current_dir(prj.root()).unwrap();
+    cmd.set_current_dir(prj.root());
     let file = Config::find_config_file().unwrap();
     assert_eq!(foundry_toml, file);
 
@@ -55,7 +55,7 @@ forgetest!(can_init_repo_with_config, |prj: TestProject, mut cmd: TestCommand| {
     // check ds-test is detected
     assert_eq!(
         basic.remappings,
-        vec![Remapping::from_str("ds-test/=lib/ds-test/src").unwrap().into()]
+        vec![Remapping::from_str("ds-test/=lib/ds-test/src/").unwrap().into()]
     );
     assert_eq!(basic, Config::load().into_basic());
 
@@ -65,7 +65,7 @@ forgetest!(can_init_repo_with_config, |prj: TestProject, mut cmd: TestCommand| {
     pretty_err(&nested, std::fs::create_dir_all(&nested));
 
     // even if nested
-    set_current_dir(&nested).unwrap();
+    cmd.set_current_dir(&nested);
     assert_eq!(prj.root(), forge_utils::find_project_root_path().unwrap());
 });
 
@@ -89,7 +89,7 @@ forgetest!(can_init_repo_repeatedly, |prj: TestProject, mut cmd: TestCommand| {
 // - paths are resolved properly
 // - config supports overrides from env, and cli
 forgetest_init!(can_override_config, |prj: TestProject, mut cmd: TestCommand| {
-    set_current_dir(prj.root()).unwrap();
+    cmd.set_current_dir(prj.root());
 
     let foundry_toml = prj.root().join(Config::FILE_NAME);
     assert!(foundry_toml.exists());
@@ -102,10 +102,10 @@ forgetest_init!(can_override_config, |prj: TestProject, mut cmd: TestCommand| {
 
     // ensure remappings contain test
     assert_eq!(profile.remappings.len(), 1);
-    assert_eq!("ds-test/=lib/ds-test/src".to_string(), profile.remappings[0].to_string());
+    assert_eq!("ds-test/=lib/ds-test/src/".to_string(), profile.remappings[0].to_string());
     // the loaded config has resolved, absolute paths
     assert_eq!(
-        format!("ds-test/={}", prj.root().join("lib/ds-test/src").display()),
+        format!("ds-test/={}/", prj.root().join("lib/ds-test/src").display()),
         Remapping::from(config.remappings[0].clone()).to_string()
     );
 
@@ -114,24 +114,24 @@ forgetest_init!(can_override_config, |prj: TestProject, mut cmd: TestCommand| {
     pretty_eq!(expected.trim().to_string(), cmd.stdout().trim().to_string());
 
     // remappings work
-    let remappings_txt = prj.create_file("remappings.txt", "from-file/=lib/from-file");
+    let remappings_txt = prj.create_file("remappings.txt", "from-file/=lib/from-file/");
     let config = forge_utils::load_config();
     assert_eq!(
-        format!("from-file/={}", prj.root().join("lib/from-file").display()),
+        format!("from-file/={}/", prj.root().join("lib/from-file").display()),
         Remapping::from(config.remappings[0].clone()).to_string()
     );
 
     // env vars work
-    cmd.set_env("DAPP_REMAPPINGS", "other/=lib/other/src");
+    cmd.set_env("DAPP_REMAPPINGS", "other/=lib/other/src/");
     let config = forge_utils::load_config();
     assert_eq!(
-        format!("other/={}", prj.root().join("lib/other/src").display()),
+        format!("other/={}/", prj.root().join("lib/other/src").display()),
         Remapping::from(config.remappings[0].clone()).to_string()
     );
 
     let config = prj.config_from_output(["--remappings", "from-cli/=lib-from-cli"]);
     assert_eq!(
-        format!("from-cli/={}", prj.root().join("lib-from-cli").display()),
+        format!("from-cli/={}/", prj.root().join("lib-from-cli").display()),
         Remapping::from(config.remappings[0].clone()).to_string()
     );
 

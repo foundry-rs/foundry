@@ -19,7 +19,11 @@ use std::{
         Arc,
     },
 };
+use std::sync::Mutex;
 use foundry_config::Config;
+
+static CURRENT_DIR_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+
 
 /// Contains a `forge init` initialized project
 pub static FORGE_INITIALIZED: Lazy<TestProject> = Lazy::new(|| {
@@ -148,7 +152,7 @@ impl TestProject {
     pub fn command(&self) -> TestCommand {
         let mut cmd = self.bin();
         cmd.current_dir(&self.inner.root());
-        TestCommand { project: self.clone(), cmd, saved_env_vars: HashMap::new() }
+        TestCommand { project: self.clone(), cmd, saved_env_vars: HashMap::new(), current_dir_lock: None }
     }
 
     /// Returns the path to the forge executable.
@@ -221,6 +225,7 @@ pub struct TestCommand {
     /// The actual command we use to control the process.
     cmd: Command,
     saved_env_vars: HashMap<OsString, Option<OsString>>,
+    current_dir_lock : Option<std::sync::MutexGuard<'static, ()>>
 }
 
 impl TestCommand {
@@ -233,6 +238,15 @@ impl TestCommand {
     pub fn set_cmd(&mut self, cmd: Command) -> &mut TestCommand {
         self.cmd = cmd;
         self
+    }
+
+    /// Sets the current working directory
+    pub fn set_current_dir(&mut self, p: impl AsRef<Path>) {
+        let _ = self.current_dir_lock.take();
+        let lock =     CURRENT_DIR_LOCK.lock().unwrap();
+        self.current_dir_lock = Some(lock);
+        let p = p.as_ref();
+        pretty_err(p,std::env::set_current_dir(p));
     }
 
     /// Add an argument to pass to the command.

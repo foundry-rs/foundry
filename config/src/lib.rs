@@ -284,7 +284,9 @@ impl Config {
         self.libs = self.libs.into_iter().map(|lib| p(&root, &lib)).collect();
 
         self.remappings =
-            self.remappings.into_iter().map(|r| RelativeRemapping::new(r.into(), &root)).collect();
+            self.remappings.into_iter().map(|r| {
+                RelativeRemapping::new(r.into(), &root)
+            }).collect();
 
         self
     }

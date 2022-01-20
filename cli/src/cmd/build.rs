@@ -94,15 +94,15 @@ pub struct BuildArgs {
         help = "if set to true, skips auto-detecting solc and uses what is in the user's $PATH ",
         long
     )]
-    #[serde(rename = "auto_detect_solc", skip_serializing_if = "Option::is_none")]
-    pub no_auto_detect: Option<bool>,
+    #[serde(skip)]
+    pub no_auto_detect: bool,
 
     #[clap(
         help = "force recompilation of the project, deletes the cache and artifacts folders",
         long
     )]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub force: Option<bool>,
+    #[serde(skip)]
+    pub force: bool,
 
     #[clap(
         help = "uses hardhat style project layout. This a convenience flag and is the same as `--contracts contracts --lib-paths node_modules`",
@@ -179,6 +179,18 @@ impl Provider for BuildArgs {
 
         if !libs.is_empty() {
             dict.insert("libs".to_string(), libs.into());
+        }
+
+        if self.no_auto_detect {
+            dict.insert("auto_detect_solc".to_string(), self.no_auto_detect.into());
+        }
+
+        if self.force {
+            dict.insert("force".to_string(), self.force.into());
+        }
+
+        if self.compiler.optimize {
+            dict.insert("optimize".to_string(), self.compiler.optimize.into());
         }
 
         if let Some(env_remappings) =
