@@ -100,7 +100,9 @@ Profile_](./config/README.md#default-profile)
 
 To see all currently set options run `forge config`, to only see the basic options (as set with `forge init`)
 run `forge config --basic`, this can be used to create a new `foundry.toml` file
-with `forge config --basic > foundry.toml`
+with `forge config --basic > foundry.toml`. 
+By default `forge config` shows the currently selected foundry profile and its values.
+It also accepts the same arguments as `forge build`.
 
 ### VSCode
 

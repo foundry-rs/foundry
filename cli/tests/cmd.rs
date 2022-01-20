@@ -1,12 +1,16 @@
 //! Contains various tests for checking forge's commands
-use foundry_cli_test_utils::{ethers_solc::{remappings::Remapping, PathStyle}, forgetest, forgetest_ignore, forgetest_init, pretty_eq, util::{pretty_err, read_string, TestCommand, TestProject}};
+use foundry_cli_test_utils::{
+    ethers_solc::{remappings::Remapping, PathStyle},
+    forgetest, forgetest_ignore, forgetest_init, pretty_eq,
+    util::{pretty_err, read_string, TestCommand, TestProject},
+};
 use foundry_config::{parse_with_profile, BasicConfig, Config};
+use pretty_assertions::assert_eq;
 use std::{
     env::{self, set_current_dir},
     fs,
     str::FromStr,
 };
-use pretty_assertions::assert_eq;
 
 // import forge utils as mod
 #[allow(unused)]
@@ -89,8 +93,25 @@ forgetest_init!(can_override_config, |prj: TestProject, mut cmd: TestCommand| {
     assert_eq!(foundry_toml, file);
 
     let config = forge_utils::load_config();
-    assert_eq!(config, Config::load().sanitized());
+    let profile = Config::load();
+    assert_eq!(config, profile.clone().sanitized());
 
+    // ensure remappings contain test
+    assert_eq!(profile.remappings.len(), 1);
+    assert_eq!("ds-test/=lib/ds-test/src".to_string(), profile.remappings[0].to_string());
+    // the loaded config has resolved, absolute paths
+    assert_eq!(
+        format!("ds-test/={}", prj.root().join("lib/ds-test/src").display()),
+        Remapping::from(config.remappings[0].clone()).to_string()
+    );
+
+    cmd.args(["forge", "config"]);
+    let expected = profile.clone().to_string_pretty().unwrap();
+    pretty_eq!(expected.trim().to_string(), cmd.stdout().trim().to_string());
+
+    cmd.arg("--basic");
+    let expected = profile.clone().into_basic().to_string_pretty().unwrap();
+    pretty_eq!(expected.trim().to_string(), cmd.stdout().trim().to_string());
 });
 
 // checks that `clean` removes dapptools style paths

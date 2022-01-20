@@ -68,9 +68,13 @@ macro_rules! forgetest_ignore {
 #[macro_export]
 macro_rules! forgetest_init {
     ($test:ident, $fun:expr) => {
+        $crate::forgetest_ignore!($test, $crate::ethers_solc::PathStyle::Dapptools, $fun);
+    };
+    ($test:ident, $style:expr, $fun:expr) => {
         #[test]
+        #[ignore]
         fn $test() {
-            let (prj, cmd) = $crate::util::setup(stringify!($test),  $crate::ethers_solc::PathStyle::Dapptools);
+             let (prj, cmd) = $crate::util::setup(stringify!($test),  $style);
             $crate::util::initialize(prj.root());
             $fun(prj, cmd);
         }
