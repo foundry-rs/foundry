@@ -83,7 +83,10 @@ forgetest!(can_init_repo_repeatedly, |prj: TestProject, mut cmd: TestCommand| {
     }
 });
 
-// checks that `clean` removes hardhat style paths
+// checks that config works
+// - foundry.toml is properly generated
+// - paths are resolved properly
+// - config supports overrides from env, and cli
 forgetest_init!(can_override_config, |prj: TestProject, mut cmd: TestCommand| {
     set_current_dir(prj.root()).unwrap();
 
@@ -105,11 +108,35 @@ forgetest_init!(can_override_config, |prj: TestProject, mut cmd: TestCommand| {
         Remapping::from(config.remappings[0].clone()).to_string()
     );
 
-    cmd.args(["forge", "config"]);
+    cmd.arg("config");
     let expected = profile.clone().to_string_pretty().unwrap();
     pretty_eq!(expected.trim().to_string(), cmd.stdout().trim().to_string());
 
-    cmd.arg("--basic");
+    // remappings work
+    let remappings_txt = prj.create_file("remappings.txt", "from-file/=lib/from-file");
+    let config = forge_utils::load_config();
+    assert_eq!(
+        format!("from-file/={}", prj.root().join("lib/from-file").display()),
+        Remapping::from(config.remappings[0].clone()).to_string()
+    );
+
+    // env vars work
+    cmd.set_env("DAPP_REMAPPINGS", "other/=lib/other/src");
+    let config = forge_utils::load_config();
+    assert_eq!(
+        format!("other/={}", prj.root().join("lib/other/src").display()),
+        Remapping::from(config.remappings[0].clone()).to_string()
+    );
+
+    cmd.arg("--remappings from-cli/=lib-from-cli");
+    assert_eq!(
+        format!("from-cli/={}", prj.root().join("lib-from-cli").display()),
+        Remapping::from(config.remappings[0].clone()).to_string()
+    );
+    cmd.unset_env("DAPP_REMAPPINGS");
+    pretty_err(&remappings_txt, fs::remove_file(&remappings_txt));
+
+    cmd.set_cmd(prj.bin()).args(["config", "--basic"]);
     let expected = profile.clone().into_basic().to_string_pretty().unwrap();
     pretty_eq!(expected.trim().to_string(), cmd.stdout().trim().to_string());
 });

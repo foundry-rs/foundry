@@ -72,7 +72,6 @@ macro_rules! forgetest_init {
     };
     ($test:ident, $style:expr, $fun:expr) => {
         #[test]
-        #[ignore]
         fn $test() {
              let (prj, cmd) = $crate::util::setup(stringify!($test),  $style);
             $crate::util::initialize(prj.root());

@@ -15,6 +15,11 @@ use std::{
         Arc,
     },
 };
+use std::collections::HashMap;
+use std::ffi::OsString;
+use std::fmt::Display;
+use std::fs::File;
+use std::io::{BufWriter, Write};
 
 /// Contains a `forge init` initialized project
 pub static FORGE_INITIALIZED: Lazy<TestProject> = Lazy::new(|| {
@@ -107,6 +112,20 @@ impl TestProject {
         pretty_err(target, copy_dir(self.root(), target));
     }
 
+    /// Creates a file with contents `contents` in the test project's directory. The
+    /// file will be deleted with the project is dropped.
+    pub fn create_file(&self, path: impl AsRef<Path>, contents: &str) -> PathBuf {
+        let path = path.as_ref();
+        if !path.is_relative() {
+            panic!( "create_file(): file path is absolute");
+        }
+        let path  = self.root().join(path);
+        let file = pretty_err(&path, File::create(&path));
+        let mut writer = BufWriter::new(file);
+        pretty_err(&path, writer.write_all(contents.as_bytes()));
+        path
+    }
+
     /// Asserts all project paths exist
     ///
     ///   - sources
@@ -129,13 +148,24 @@ impl TestProject {
     pub fn command(&self) -> TestCommand {
         let mut cmd = self.bin();
         cmd.current_dir(&self.inner.root());
-        TestCommand { project: self.clone(), cmd }
+        TestCommand { project: self.clone(), cmd, saved_env_vars: HashMap::new() }
     }
 
     /// Returns the path to the forge executable.
     pub fn bin(&self) -> process::Command {
         let forge = self.root.join(format!("../forge{}", env::consts::EXE_SUFFIX));
         process::Command::new(forge)
+    }
+}
+
+impl Drop for TestCommand {
+    fn drop(&mut self) {
+        for (key, value) in self.saved_env_vars.iter() {
+            match value {
+                Some(val) => std::env::set_var(key, val),
+                None => std::env::remove_var(key)
+            }
+        }
     }
 }
 
@@ -173,12 +203,19 @@ pub struct TestCommand {
     project: TestProject,
     /// The actual command we use to control the process.
     cmd: Command,
+    saved_env_vars: HashMap<OsString, Option<OsString>>,
 }
 
 impl TestCommand {
     /// Returns a mutable reference to the underlying command.
     pub fn cmd(&mut self) -> &mut Command {
         &mut self.cmd
+    }
+
+    /// replaces the command
+    pub fn set_cmd(&mut self, cmd: Command)  -> &mut TestCommand  {
+        self.cmd = cmd;
+        self
     }
 
     /// Add an argument to pass to the command.
@@ -196,6 +233,25 @@ impl TestCommand {
         self.cmd.args(args);
         self
     }
+
+    /// Set the environment variable `k` to value `v`. The variable will be
+    /// removed when the command is dropped.
+    pub fn set_env(&mut self, k: impl AsRef<str>, v: impl Display) {
+        let key = k.as_ref();
+        if !self.saved_env_vars.contains_key(OsStr::new(key)) {
+            self.saved_env_vars.insert(key.into(), std::env::var_os(key));
+        }
+
+        std::env::set_var(key, v.to_string());
+    }
+
+    /// Unsets the environment variable `k`
+    pub fn unset_env(&mut self, k: impl AsRef<str>) {
+        let key = k.as_ref();
+        let _ = self.saved_env_vars.remove(OsStr::new(key));
+        std::env::remove_var(key);
+    }
+
 
     /// Set the working directory for this command.
     ///
