@@ -1,12 +1,16 @@
 use ethers::solc::{artifacts::Contract, EvmVersion};
 
 use eyre::{ContextCompat, WrapErr};
-use std::{path::PathBuf, process::Command};
+use std::path::PathBuf;
 
 #[cfg(feature = "evmodin-evm")]
 use evmodin::Revision;
 #[cfg(feature = "sputnik-evm")]
 use sputnik::Config;
+
+// reexport all `foundry_config::utils`
+#[doc(hidden)]
+pub use foundry_config::utils::*;
 
 /// Default local RPC endpoint
 const LOCAL_RPC_URL: &str = "http://127.0.0.1:8545";
@@ -57,71 +61,6 @@ pub fn find_dapp_json_contract(path: &str, name: &str) -> eyre::Result<Contract>
     };
 
     Ok(serde_json::from_value(contract)?)
-}
-
-pub fn find_git_root_path() -> eyre::Result<PathBuf> {
-    let path = Command::new("git").args(&["rev-parse", "--show-toplevel"]).output()?.stdout;
-    let path = std::str::from_utf8(&path)?.trim_end_matches('\n');
-    Ok(PathBuf::from(path))
-}
-
-/// Returns the root path to set for the project root
-///
-/// traverse the dir tree up and look for a `foundry.toml` file starting at the cwd, but only until
-/// the root dir of the current repo so that
-///
-/// ```
-/// -- foundry.toml
-///
-/// -- repo
-///   |__ .git
-///   |__sub
-///      |__ cwd
-/// ```
-/// will still detect `repo` as root
-pub fn find_project_root_path() -> eyre::Result<PathBuf> {
-    let boundary = find_git_root_path().unwrap_or_else(|_| std::env::current_dir().unwrap());
-    let cwd = std::env::current_dir()?;
-    let mut cwd = cwd.as_path();
-    // traverse as long as we're in the current git repo cwd
-    while cwd.starts_with(&boundary) {
-        let file_path = cwd.join(foundry_config::Config::FILE_NAME);
-        if file_path.is_file() {
-            return Ok(cwd.to_path_buf())
-        }
-        if let Some(parent) = cwd.parent() {
-            cwd = parent;
-        } else {
-            break
-        }
-    }
-    // no foundry.toml found
-    Ok(boundary)
-}
-
-/// Loads the config for the current project workspace
-#[allow(unused)]
-pub fn load_config() -> foundry_config::Config {
-    foundry_config::Config::load_with_root(find_project_root_path().unwrap()).sanitized()
-}
-
-/// Loads the figment for the current project workspace
-///
-/// Compared to [`load_config()`] this returns the raw `Figment` as built by the
-/// [`foundry_config::Config`]. This is intended to be merged with additional [`figment::Provider`].
-/// See [`BuildArgs`]
-///
-/// # Example
-///
-/// ```no_run
-/// let config =  Config::from(utils::load_figment()).sanitized();
-/// ```
-pub fn load_figment() -> foundry_config::figment::Figment {
-    load_figment_with_root(find_project_root_path().unwrap())
-}
-
-pub fn load_figment_with_root(root: impl Into<PathBuf>) -> foundry_config::figment::Figment {
-    foundry_config::Config::figment_with_root(root)
 }
 
 #[cfg(feature = "sputnik-evm")]

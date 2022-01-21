@@ -18,7 +18,7 @@ Foundry consists of:
 
 ![demo](./assets/demo.svg)
 
-## Installation 
+## Installation
 
 First run the command below to get `foundryup`, the Foundry toolchain installer:
 
@@ -32,7 +32,8 @@ Then in a new terminal session or after reloading your PATH, run it to get the l
 foundryup
 ```
 
-Advanced ways to use `foundryup` and other documentation can be found in the [foundryup package](./foundryup/README.md). Happy forging!
+Advanced ways to use `foundryup` and other documentation can be found in the [foundryup package](./foundryup/README.md).
+Happy forging!
 
 ## Forge
 
@@ -98,11 +99,12 @@ Profile_](./config/README.md#default-profile)
 
 `forge init` creates a basic, extendable `foundry.toml` file.
 
+To set all `.dapprc` env vars run `source .dapprc` beforehand.
+
 To see all currently set options run `forge config`, to only see the basic options (as set with `forge init`)
 run `forge config --basic`, this can be used to create a new `foundry.toml` file
-with `forge config --basic > foundry.toml`. 
-By default `forge config` shows the currently selected foundry profile and its values.
-It also accepts the same arguments as `forge build`.
+with `forge config --basic > foundry.toml`. By default `forge config` shows the currently selected foundry profile and
+its values. It also accepts the same arguments as `forge build`.
 
 ### VSCode
 

@@ -1,9 +1,7 @@
 //! foundry configuration.
 use std::{
     borrow::Cow,
-    collections::BTreeMap,
     path::{Path, PathBuf},
-    str::FromStr,
 };
 
 use figment::{
@@ -20,9 +18,16 @@ use ethers_core::types::{Address, U256};
 use ethers_solc::{
     artifacts::{Optimizer, Settings},
     error::SolcError,
-    remappings::{RelativeRemapping, Remapping, RemappingError},
+    remappings::{RelativeRemapping, Remapping},
     EvmVersion, Project, ProjectPathsConfig, SolcConfig,
 };
+
+// Macros useful for creating a figment.
+mod macros;
+
+// Utilities for making it easier to handle tests.
+pub mod utils;
+pub use crate::utils::*;
 
 /// Foundry configuration
 ///
@@ -830,50 +835,6 @@ impl<'a> Provider for RemappingsProvider<'a> {
     }
 }
 
-/// Returns the remappings from the given var
-///
-/// Returns `None` if the env var is not set, otherwise all Remappings, see
-/// `remappings_from_newline`
-pub fn remappings_from_env_var(env_var: &str) -> Option<Result<Vec<Remapping>, RemappingError>> {
-    let val = std::env::var(env_var).ok()?;
-    Some(remappings_from_newline(&val).collect())
-}
-
-// helper function for parsing newline-separated remappings
-pub fn remappings_from_newline(
-    remappings: &str,
-) -> impl Iterator<Item = Result<Remapping, RemappingError>> + '_ {
-    remappings.lines().map(|x| x.trim()).filter(|x| !x.is_empty()).map(Remapping::from_str)
-}
-
-/// Parses all libraries in the form of
-/// `<file>:<lib>:<addr>`
-pub fn parse_libraries(
-    libs: &[String],
-) -> Result<BTreeMap<String, BTreeMap<String, String>>, SolcError> {
-    let mut libraries = BTreeMap::default();
-    for lib in libs {
-        let mut items = lib.split(':');
-        let file = items
-            .next()
-            .ok_or_else(|| SolcError::msg(format!("failed to parse invalid library: {}", lib)))?;
-        let lib = items
-            .next()
-            .ok_or_else(|| SolcError::msg(format!("failed to parse invalid library: {}", lib)))?;
-        let addr = items
-            .next()
-            .ok_or_else(|| SolcError::msg(format!("failed to parse invalid library: {}", lib)))?;
-        if items.next().is_some() {
-            return Err(SolcError::msg(format!("failed to parse invalid library: {}", lib)))
-        }
-        libraries
-            .entry(file.to_string())
-            .or_insert_with(BTreeMap::default)
-            .insert(lib.to_string(), addr.to_string());
-    }
-    Ok(libraries)
-}
-
 /// A subset of the foundry `Config`
 /// used to initialize a `foundry.toml` file
 ///
@@ -963,9 +924,10 @@ fn canonic(path: impl Into<PathBuf>) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    use figment::error::Kind::InvalidType;
     use std::str::FromStr;
 
-    use figment::Figment;
+    use figment::{value::Value, Figment};
     use pretty_assertions::assert_eq;
 
     use super::*;
@@ -1220,5 +1182,41 @@ mod tests {
             // println!("{}", default.to_string_pretty().unwrap());
             Ok(())
         });
+    }
+
+    #[test]
+    fn can_use_impl_figment_macro() {
+        #[derive(Default, Serialize)]
+        struct MyArgs {
+            root: Option<PathBuf>,
+        }
+        impl_figment_convert!(MyArgs);
+
+        impl Provider for MyArgs {
+            fn metadata(&self) -> Metadata {
+                Metadata::default()
+            }
+
+            fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+                let value = Value::serialize(self)?;
+                let error = InvalidType(value.to_actual(), "map".into());
+                let dict = value.into_dict().ok_or(error)?;
+                Ok(Map::from([(Config::selected_profile(), dict)]))
+            }
+        }
+
+        let _figment: Figment = From::from(&MyArgs::default());
+        let _config: Config = From::from(&MyArgs::default());
+
+        #[derive(Default)]
+        struct Outer {
+            start: MyArgs,
+            other: MyArgs,
+            another: MyArgs,
+        }
+        impl_figment_convert!(Outer, start, other, another);
+
+        let _figment: Figment = From::from(&Outer::default());
+        let _config: Config = From::from(&Outer::default());
     }
 }

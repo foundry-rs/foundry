@@ -78,6 +78,9 @@ impl TestFilter for Filter {
     }
 }
 
+// Loads project's figment and merges the build cli arguments into it
+foundry_config::impl_figment_convert!(TestArgs, opts, evm_opts);
+
 #[derive(Debug, Clone, Parser)]
 // This is required to group Filter options in help output
 #[clap(global_setting = AppSettings::DeriveDisplayOrder)]
@@ -100,21 +103,6 @@ pub struct TestArgs {
         env = "FORGE_ALLOW_FAILURE"
     )]
     allow_failure: bool,
-}
-
-/// Loads project's figment and merges the build cli arguments into it
-impl<'a> From<&'a TestArgs> for Figment {
-    fn from(args: &'a TestArgs) -> Self {
-        let figment: Figment = From::from(&args.opts);
-        figment.merge(&args.evm_opts)
-    }
-}
-
-impl<'a> From<&'a TestArgs> for Config {
-    fn from(args: &'a TestArgs) -> Self {
-        let figment: Figment = args.into();
-        Config::from_provider(figment).sanitized()
-    }
 }
 
 impl Cmd for TestArgs {
