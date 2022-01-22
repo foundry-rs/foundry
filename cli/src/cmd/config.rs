@@ -1,8 +1,13 @@
 //! config command
 
-use crate::cmd::{build::BuildArgs, Cmd};
+use crate::{
+    cmd::{build::BuildArgs, Cmd},
+    opts::evm::EvmArgs,
+};
 use clap::Parser;
-use foundry_config::{figment::Figment, Config};
+use foundry_config::Config;
+
+foundry_config::impl_figment_convert!(ConfigArgs, opts, evm_opts);
 
 /// Command to list currently set config values
 #[derive(Debug, Clone, Parser)]
@@ -14,14 +19,15 @@ pub struct ConfigArgs {
     // support nested build arguments
     #[clap(flatten)]
     opts: BuildArgs,
+    #[clap(flatten)]
+    evm_opts: EvmArgs,
 }
 
 impl Cmd for ConfigArgs {
     type Output = ();
 
     fn run(self) -> eyre::Result<Self::Output> {
-        let figment: Figment = From::from(&self.opts);
-        let config = Config::from_provider(figment);
+        let config: Config = From::from(&self);
 
         let s = if self.basic {
             let config = config.into_basic();
