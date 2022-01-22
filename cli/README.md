@@ -287,7 +287,7 @@ no files changed, compilation skipped.
 
 By default, `forge test` (and `forge snapshot`) will run every function in any contract if the function starts with `test`.
 
-You can narrow down the amount of test to run by using one or more of the four current available command line arguments.
+You can narrow down the amount of tests to run by using one or more of the current available command line arguments for matching tests.
 
 ```
 --match-test <TEST_PATTERN>
