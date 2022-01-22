@@ -36,7 +36,12 @@ pub struct InitArgs {
     no_commit: bool,
     #[clap(help = "do not print messages", short, long)]
     quiet: bool,
-    #[clap(help = "run without accessing the network", conflicts_with = "template", long)]
+    #[clap(
+        help = "run without installing libs from the network",
+        conflicts_with = "template",
+        long,
+        alias = "no-deps"
+    )]
     offline: bool,
     #[clap(help = "force init if project dir is not empty", conflicts_with = "template", long)]
     force: bool,
