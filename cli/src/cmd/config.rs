@@ -5,7 +5,7 @@ use crate::{
     opts::evm::EvmArgs,
 };
 use clap::Parser;
-use foundry_config::Config;
+use foundry_config::{figment::Figment, Config};
 
 foundry_config::impl_figment_convert!(ConfigArgs, opts, evm_opts);
 
@@ -27,8 +27,8 @@ impl Cmd for ConfigArgs {
     type Output = ();
 
     fn run(self) -> eyre::Result<Self::Output> {
-        let config: Config = From::from(&self);
-
+        let figment: Figment = From::from(&self);
+        let config = Config::from_provider(figment);
         let s = if self.basic {
             let config = config.into_basic();
             if self.json {
