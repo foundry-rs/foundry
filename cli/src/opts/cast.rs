@@ -138,6 +138,16 @@ pub enum Subcommands {
         #[clap(long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
+    #[clap(name = "receipt")]
+    #[clap(about = "Print information about the transaction receipt for <tx-hash>")]
+    Receipt {
+        hash: String,
+        field: Option<String>,
+        #[clap(long = "json", short = 'j')]
+        to_json: bool,
+        #[clap(long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+    },
     #[clap(name = "send")]
     #[clap(about = "Publish a transaction signed by <from> to call <to> with <data>")]
     SendTx {

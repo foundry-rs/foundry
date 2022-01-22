@@ -15,7 +15,7 @@ use ethers_etherscan::Client;
 use ethers_providers::{Middleware, PendingTransaction};
 use eyre::{Context, Result};
 use rustc_hex::{FromHexIter, ToHex};
-use std::str::FromStr;
+use std::{str::FromStr, thread, time};
 
 use foundry_utils::{encode_args, get_func, get_func_etherscan, to_table};
 
@@ -491,6 +491,49 @@ where
         let transaction =
             if to_json { serde_json::to_string(&transaction)? } else { to_table(transaction) };
         Ok(transaction)
+    }
+
+    /// ```no_run
+    /// use cast::Cast;
+    /// use ethers_providers::{Provider, Http};
+    /// use std::convert::TryFrom;
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
+    /// let cast = Cast::new(provider);
+    /// let tx_hash = "0xf8d1713ea15a81482958fb7ddf884baee8d3bcc478c5f2f604e008dc788ee4fc";
+    /// let receipt = cast.receipt(tx_hash.to_string(), None, false).await?;
+    /// println!("{}", receipt);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn receipt(
+        &self,
+        tx_hash: String,
+        field: Option<String>,
+        to_json: bool,
+    ) -> Result<String> {
+        let receipt_result = loop {
+            let receipt_result =
+                self.provider.get_transaction_receipt(H256::from_str(&tx_hash)?).await?;
+
+            match receipt_result {
+                Some(receipt_result) => break receipt_result,
+                None => thread::sleep(time::Duration::from_millis(1000)),
+            }
+        };
+
+        let receipt = if let Some(ref field) = field {
+            serde_json::to_value(&receipt_result)?
+                .get(field)
+                .cloned()
+                .ok_or_else(|| eyre::eyre!("field {} not found", field))?
+        } else {
+            serde_json::to_value(&receipt_result)?
+        };
+
+        let receipt = if to_json { serde_json::to_string(&receipt)? } else { to_table(receipt) };
+        Ok(receipt)
     }
 }
 
