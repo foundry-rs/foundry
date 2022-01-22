@@ -7,16 +7,20 @@ license = "MIT OR Apache-2.0"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [build-dependencies]
-vergen = { version = "6.0.0", default-features = false, features = ["build", "rustc", "git"] }
+vergen = { version = "6.0.0", default-features = false, features = [
+    "build",
+    "rustc",
+    "git",
+] }
 
 [dependencies]
-clap = { version = "3.0.7", features = [
+clap = { version = "3.0.10", features = [
     "derive",
     "env",
     "unicode",
     "wrap_help",
 ] }
-clap_complete = "3.0.3"
+clap_complete = "3.0.4"
 foundry-utils = { path = "../utils" }
 forge = { path = "../forge" }
 foundry-config = { path = "../config" }
