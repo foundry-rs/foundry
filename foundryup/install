@@ -99,21 +99,11 @@ else
   # --root appends /bin to the directory it is given, so we pass FOUNDRY_DIR.
   cargo install --path ./cli --bins --locked --force --root $FOUNDRY_DIR
 
-  # Try to also manually build and install the man pages
-  if ! command -v help2man &> /dev/null ; then
-    # Warning if help2man is not installed
-    echo "warning: help2man is not installed, so we could not automatically install man entries"
-
-    if [[ "$PLATFORM" == "darwin" ]]; then
-      echo "You may need to install it manually on MacOS via Homebrew (`brew install help2man`)."
-    elif [[ "$PLATFORM" == "linux" ]]; then
-      echo "You may need to install it manually using your package manager."
-    fi
-    exit 0
+  # If help2man is installed, use it to add Foundry man pages.
+  if command -v help2man &> /dev/null ; then
+    help2man -N $FOUNDRY_BIN_DIR/forge > $FOUNDRY_MAN_DIR/forge.1
+    help2man -N $FOUNDRY_BIN_DIR/cast > $FOUNDRY_MAN_DIR/cast.1
   fi
-
-  help2man -N $FOUNDRY_BIN_DIR/forge > $FOUNDRY_MAN_DIR/forge.1
-  help2man -N $FOUNDRY_BIN_DIR/cast > $FOUNDRY_MAN_DIR/cast.1
 fi'
 
 BINARY="$FOUNDRY_BIN_DIR/foundryup"
