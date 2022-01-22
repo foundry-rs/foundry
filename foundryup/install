@@ -123,7 +123,7 @@ case $SHELL in
     PREF_SHELL=zsh
     ;;
 */bash)
-    PROFILE=$HOME/.profile
+    PROFILE=$HOME/.bashrc
     PREF_SHELL=bash
     ;;
 */fish)
