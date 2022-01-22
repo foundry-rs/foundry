@@ -1508,9 +1508,9 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
 
             // handle expected calls
             if let Some(expecteds) = self.state_mut().expected_calls.get_mut(&code_address) {
-                if let Some(found_match) =
-                    expecteds.iter().position(|expected| expected == &input[..expected.len()])
-                {
+                if let Some(found_match) = expecteds.iter().position(|expected| {
+                    expected.len() <= input.len() && expected == &input[..expected.len()]
+                }) {
                     expecteds.remove(found_match);
                 }
             }
