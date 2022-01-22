@@ -102,6 +102,10 @@ impl Provider for EvmArgs {
             dict.insert("verbosity".to_string(), self.verbosity.into());
         }
 
+        if self.ffi {
+            dict.insert("ffi".to_string(), self.ffi.into());
+        }
+
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }
