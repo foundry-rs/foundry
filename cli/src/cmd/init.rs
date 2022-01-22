@@ -1,11 +1,20 @@
 //! init command
 
-use super::install;
-use crate::{cmd::Cmd, opts::forge::Dependency};
+use crate::{
+    cmd::{install::install, Cmd},
+    opts::forge::Dependency,
+    utils::p_println,
+};
 use clap::{Parser, ValueHint};
 use foundry_config::Config;
 
-use std::{path::PathBuf, process::Command, str::FromStr};
+use crate::cmd::install::DependencyInstallOpts;
+use ansi_term::Colour;
+use std::{
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+    str::FromStr,
+};
 
 /// Command to initialize a new forge project
 #[derive(Debug, Clone, Parser)]
@@ -17,13 +26,25 @@ pub struct InitArgs {
     root: Option<PathBuf>,
     #[clap(help = "optional solidity template to start from", long, short)]
     template: Option<String>,
+    #[clap(
+        help = "initialize without creating a git repository",
+        conflicts_with = "template",
+        long
+    )]
+    no_git: bool,
+    #[clap(help = "do not create initial commit", conflicts_with = "template", long)]
+    no_commit: bool,
+    #[clap(help = "do not print messages", short, long)]
+    quiet: bool,
+    #[clap(help = "run without accessing the network", conflicts_with = "template", long)]
+    offline: bool,
 }
 
 impl Cmd for InitArgs {
     type Output = ();
 
     fn run(self) -> eyre::Result<Self::Output> {
-        let InitArgs { root, template } = self;
+        let InitArgs { root, template, no_git, no_commit, quiet, offline } = self;
 
         let root = root.unwrap_or_else(|| std::env::current_dir().unwrap());
         // create the root dir if it does not exist
@@ -35,13 +56,13 @@ impl Cmd for InitArgs {
         // if a template is provided, then this command is just an alias to `git clone <url>
         // <path>`
         if let Some(ref template) = template {
-            println!("Initializing {} from {}...", root.display(), template);
+            p_println!(!quiet => "Initializing {} from {}...", root.display(), template);
             Command::new("git")
                 .args(&["clone", template, &root.display().to_string()])
                 .spawn()?
                 .wait()?;
         } else {
-            println!("Initializing {}...", root.display());
+            p_println!(!quiet => "Initializing {}...", root.display());
 
             // make the dirs
             let src = root.join("src");
@@ -58,24 +79,15 @@ impl Cmd for InitArgs {
             std::fs::write(contract_path, include_str!("../../../assets/ContractTemplate.t.sol"))?;
 
             // sets up git
-            let is_git = Command::new("git")
-                .args(&["rev-parse", "--is-inside-work-tree"])
-                .current_dir(&root)
-                .spawn()?
-                .wait()?;
-            if !is_git.success() {
-                let gitignore_path = root.join(".gitignore");
-                std::fs::write(gitignore_path, include_str!("../../../assets/.gitignoreTemplate"))?;
-                Command::new("git").arg("init").current_dir(&root).spawn()?.wait()?;
-                Command::new("git").args(&["add", "."]).current_dir(&root).spawn()?.wait()?;
-                Command::new("git")
-                    .args(&["commit", "-m", "chore: forge init"])
-                    .current_dir(&root)
-                    .spawn()?
-                    .wait()?;
+            if !no_git {
+                init_git_repo(&root, no_commit)?;
             }
-            Dependency::from_str("https://github.com/dapphub/ds-test")
-                .and_then(|dependency| install(&root, vec![dependency]))?;
+
+            if !offline {
+                let opts = DependencyInstallOpts { no_git, no_commit, quiet };
+                Dependency::from_str("https://github.com/dapphub/ds-test")
+                    .and_then(|dependency| install(&root, vec![dependency], opts))?;
+            }
 
             let dest = root.join(Config::FILE_NAME);
             if !dest.exists() {
@@ -85,7 +97,43 @@ impl Cmd for InitArgs {
             }
         }
 
-        println!("Done.");
+        p_println!(!quiet => "    {} forge project",   Colour::Green.paint("Initialized"));
         Ok(())
     }
+}
+
+/// initializes the root dir
+fn init_git_repo(root: &Path, no_commit: bool) -> eyre::Result<()> {
+    let is_git = Command::new("git")
+        .args(&["rev-parse", "--is-inside-work-tree"])
+        .current_dir(&root)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?
+        .wait()?;
+
+    if !is_git.success() {
+        let gitignore_path = root.join(".gitignore");
+        std::fs::write(gitignore_path, include_str!("../../../assets/.gitignoreTemplate"))?;
+
+        Command::new("git")
+            .arg("init")
+            .current_dir(&root)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?
+            .wait()?;
+
+        if !no_commit {
+            Command::new("git").args(&["add", "."]).current_dir(&root).spawn()?.wait()?;
+            Command::new("git")
+                .args(&["commit", "-m", "chore: forge init"])
+                .current_dir(&root)
+                .stdout(Stdio::piped())
+                .spawn()?
+                .wait()?;
+        }
+    }
+
+    Ok(())
 }
