@@ -56,7 +56,7 @@ pub(crate) fn install(
             install_as_submodule(&dep, root, &path, no_commit)?;
         }
 
-        p_println!(!quiet => "{}",    Colour::Green.paint("Installed"));
+        p_println!(!quiet => "    {}",    Colour::Green.paint("Installed"));
     }
     Ok(())
 }

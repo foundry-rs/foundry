@@ -97,7 +97,7 @@ impl Cmd for InitArgs {
             }
         }
 
-        p_println!(!quiet => "{} forge project.",   Colour::Green.paint("Initialized"));
+        p_println!(!quiet => "    {} forge project.",   Colour::Green.paint("Initialized"));
         Ok(())
     }
 }
