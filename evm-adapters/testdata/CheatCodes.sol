@@ -561,6 +561,15 @@ contract CheatCodes is DSTest {
         );
     }
 
+    function testFailExpectCallWithMoreParameters() public {
+        MockMe target = new MockMe();
+        hevm.expectCall(
+            address(target),
+            abi.encodeWithSelector(target.add.selector, 3, 3, 3)
+        );
+        target.add(3, 3);
+    }
+
     function testGetCode() public {
         bytes memory contractCode = hevm.getCode("./testdata/Contract.json");
         assertEq(
