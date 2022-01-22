@@ -94,6 +94,11 @@ impl TestProject {
         self.inner().paths()
     }
 
+    /// Asserts that the `<root>/foundry.toml` file exits
+    pub fn assert_config_exists(&self) {
+        assert!(self.root().join(Config::FILE_NAME).exists());
+    }
+
     /// Creates all project dirs and ensure they were created
     pub fn assert_create_dirs_exists(&self) {
         self.paths().create_all().unwrap_or_else(|_| panic!("Failed to create project paths"));

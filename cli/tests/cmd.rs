@@ -84,6 +84,36 @@ forgetest!(can_init_repo_repeatedly, |prj: TestProject, mut cmd: TestCommand| {
     }
 });
 
+// Checks that a forge project can be initialized without creating a git repository
+forgetest!(can_init_no_git, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.arg("init").arg(prj.root()).arg("--no-git");
+
+    cmd.assert_non_empty_stdout();
+    prj.assert_config_exists();
+
+    assert!(!prj.root().join(".git").exists());
+    assert!(prj.root().join("libs/ds-test").exists());
+    assert!(!prj.root().join("libs/ds-test/.git").exists());
+});
+
+// Checks that quiet mode does not print anything
+forgetest!(can_init_quiet, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.arg("init").arg(prj.root()).arg("-q");
+    cmd.assert_empty_stdout();
+});
+
+// `forge init` does only work on non-empty dirs
+forgetest!(can_init_non_empty, |prj: TestProject, mut cmd: TestCommand| {
+    prj.create_file("README.md", "non-empty dir");
+    cmd.arg("init").arg(prj.root());
+    cmd.assert_err();
+
+    cmd.arg("--force");
+    cmd.assert_non_empty_stdout();
+    assert!(prj.root().join(".git").exists());
+    assert!(prj.root().join("libs/ds-test").exists());
+});
+
 // checks that config works
 // - foundry.toml is properly generated
 // - paths are resolved properly

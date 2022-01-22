@@ -38,13 +38,15 @@ pub struct InitArgs {
     quiet: bool,
     #[clap(help = "run without accessing the network", conflicts_with = "template", long)]
     offline: bool,
+    #[clap(help = "force init if project dir is not empty", conflicts_with = "template", long)]
+    force: bool,
 }
 
 impl Cmd for InitArgs {
     type Output = ();
 
     fn run(self) -> eyre::Result<Self::Output> {
-        let InitArgs { root, template, no_git, no_commit, quiet, offline } = self;
+        let InitArgs { root, template, no_git, no_commit, quiet, offline, force } = self;
 
         let root = root.unwrap_or_else(|| std::env::current_dir().unwrap());
         // create the root dir if it does not exist
@@ -59,17 +61,27 @@ impl Cmd for InitArgs {
             p_println!(!quiet => "Initializing {} from {}...", root.display(), template);
             Command::new("git")
                 .args(&["clone", template, &root.display().to_string()])
+                .stdout(Stdio::piped())
                 .spawn()?
                 .wait()?;
         } else {
+            // check if target
+            if !force && root.read_dir().map(|mut i| i.next().is_some()).unwrap_or(false) {
+                eprintln!(
+                    r#"{}: `forge init` cannot be run on a non-empty directory.
+
+        run `forge init --force` to initialize regardless."#,
+                    Colour::Red.paint("error")
+                );
+                std::process::exit(1);
+            }
+
             p_println!(!quiet => "Initializing {}...", root.display());
 
             // make the dirs
             let src = root.join("src");
             let test = src.join("test");
             std::fs::create_dir_all(&test)?;
-            let lib = root.join("lib");
-            std::fs::create_dir_all(&lib)?;
 
             // write the contract file
             let contract_path = src.join("Contract.sol");

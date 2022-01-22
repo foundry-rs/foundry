@@ -56,14 +56,18 @@ pub(crate) fn install(
             install_as_submodule(&dep, root, &path, no_commit)?;
         }
 
-        p_println!(!quiet => "    {}",    Colour::Green.paint("Installed"));
+        p_println!(!quiet => "    {} {}",    Colour::Green.paint("Installed"), dep.name);
     }
     Ok(())
 }
 
 /// installs the dependency as an ordinary folder instead of a submodule
 fn install_as_folder(dep: &Dependency, path: &Path) -> eyre::Result<()> {
-    Command::new("git").args(&["clone", &dep.url, &path.display().to_string()]).spawn()?.wait()?;
+    Command::new("git")
+        .args(&["clone", &dep.url, &path.display().to_string()])
+        .stdout(Stdio::piped())
+        .spawn()?
+        .wait()?;
 
     if let Some(ref tag) = dep.tag {
         Command::new("git")
