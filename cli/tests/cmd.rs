@@ -147,8 +147,9 @@ forgetest_init!(can_override_config, |prj: TestProject, mut cmd: TestCommand| {
 // checks that `clean` removes dapptools style paths
 forgetest_init!(can_get_evm_opts, |prj: TestProject, mut cmd: TestCommand| {
     let url = "http://127.0.0.1:8545";
-    let config = prj.config_from_output(["--rpc-url", url]);
+    let config = prj.config_from_output(["--rpc-url", url, "--ffi"]);
     assert_eq!(config.eth_rpc_url, Some(url.to_string()));
+    assert!(config.ffi);
 
     cmd.set_current_dir(prj.root());
     cmd.set_env("FOUNDRY_ETH_RPC_URL", url);
