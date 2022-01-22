@@ -6,7 +6,6 @@ use ethers::types::{Address, BlockId, BlockNumber, NameOrAddress, H256};
 use super::{ClapChain, EthereumOpts, Wallet};
 
 #[derive(Debug, Subcommand)]
-#[clap(name = "cast")]
 #[clap(about = "Perform Ethereum RPC calls from the comfort of your command line.")]
 pub enum Subcommands {
     #[clap(name = "--max-int")]
@@ -54,11 +53,23 @@ pub enum Subcommands {
     #[clap(name = "--to-uint256")]
     #[clap(about = "convert a number into uint256 hex string with 0x prefix")]
     ToUint256 { value: Option<String> },
+    #[clap(name = "--to-unit")]
+    #[clap(
+        about = r#"convert an ETH amount into a specified unit: ether, gwei or wei (default: wei). 
+    Usage: 
+      - 1ether wei     | converts 1 ether to wei
+      - "1 ether" wei  | converts 1 ether to wei
+      - 1ether         | converts 1 ether to wei
+      - 1 gwei         | converts 1 wei to gwei
+      - 1gwei ether    | converts 1 gwei to ether
+    "#
+    )]
+    ToUnit { value: Option<String>, unit: Option<String> },
     #[clap(name = "--to-wei")]
-    #[clap(about = "convert an ETH amount into wei")]
+    #[clap(about = "convert an ETH amount into wei. Consider using --to-unit.")]
     ToWei { value: Option<String>, unit: Option<String> },
     #[clap(name = "--from-wei")]
-    #[clap(about = "convert wei into an ETH amount")]
+    #[clap(about = "convert wei into an ETH amount. Consider using --to-unit.")]
     FromWei { value: Option<String>, unit: Option<String> },
     #[clap(name = "block")]
     #[clap(
@@ -136,6 +147,16 @@ pub enum Subcommands {
         sig: String,
         #[clap(help = "the list of arguments you want to call the function with")]
         args: Vec<String>,
+        #[clap(long, env = "CAST_ASYNC")]
+        cast_async: bool,
+        #[clap(flatten)]
+        eth: EthereumOpts,
+    },
+    #[clap(name = "publish")]
+    #[clap(about = "Publish a raw transaction to the network")]
+    PublishTx {
+        #[clap(help = "the raw transaction you want to publish")]
+        raw_tx: String,
         #[clap(long, env = "CAST_ASYNC")]
         cast_async: bool,
         #[clap(flatten)]
@@ -409,6 +430,8 @@ fn parse_slot(s: &str) -> eyre::Result<H256> {
 }
 
 #[derive(Debug, Parser)]
+#[clap(name = "cast")]
+#[clap(version)]
 pub struct Opts {
     #[clap(subcommand)]
     pub sub: Subcommands,

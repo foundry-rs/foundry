@@ -6,7 +6,8 @@ members = [
     "forge",
     "cli",
     "cli/test-utils",
-    "fmt"
+    "config",
+    "fmt",
 ]
 
 # Binary size optimizations

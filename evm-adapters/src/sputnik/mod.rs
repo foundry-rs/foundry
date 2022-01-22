@@ -69,6 +69,8 @@ pub trait SputnikExecutor<S> {
     fn debug_calls(&self) -> Vec<DebugArena>;
     fn all_logs(&self) -> Vec<String>;
     fn gas_left(&self) -> U256;
+    fn gas_used(&self) -> U256;
+    fn gas_refund(&self) -> U256;
     fn transact_call(
         &mut self,
         caller: H160,
@@ -149,6 +151,14 @@ impl<'a, 'b, S: StackState<'a>, P: PrecompileSet> SputnikExecutor<S>
     fn gas_left(&self) -> U256 {
         // NB: We do this to avoid `function cannot return without recursing`
         U256::from(self.state().metadata().gasometer().gas())
+    }
+
+    fn gas_used(&self) -> U256 {
+        U256::from(self.state().metadata().gasometer().total_used_gas())
+    }
+
+    fn gas_refund(&self) -> U256 {
+        U256::from(self.state().metadata().gasometer().refunded_gas())
     }
 
     fn transact_call(

@@ -234,8 +234,16 @@ mod tests {
         let (addr, _, _, _) =
             evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
 
-        let (res, _, _, _) =
-            evm.call::<U256, _, _>(Address::zero(), addr, "time()(uint256)", (), 0.into()).unwrap();
+        let (res, _, _, _) = evm
+            .call::<U256, _, _>(
+                Address::zero(),
+                addr,
+                "time()(uint256)",
+                (),
+                0.into(),
+                compiled.abi,
+            )
+            .unwrap();
 
         // https://etherscan.io/block/13292465
         assert_eq!(res.as_u64(), 1632539668);

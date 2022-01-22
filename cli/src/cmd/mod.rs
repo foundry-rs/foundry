@@ -1,15 +1,55 @@
 //! Subcommands for forge
+//!
+//! All subcommands should respect the `foundry_config::Config`.
+//! If a subcommand accepts values that are supported by the `Config`, then the subcommand should
+//! implement `figment::Provider` which allows the subcommand to override the config's defaults, see
+//! [`foundry_config::Config`].
+//!
+//! See [`BuildArgs`] for a reference implementation.
+//! And [`RunArgs`] for how to merge `Providers`.
+//!
+//! # Example
+//!
+//! create a `clap` subcommand into a `figment::Provider` and integrate it in the
+//! `foundry_config::Config`:
+//!
+//! ```rust
+//! use crate::{cmd::build::BuildArgs, opts::evm::EvmArgs};
+//! use clap::Parser;
+//! use foundry_config::{figment::Figment, *};
+//!
+//! // A new clap subcommand that accepts both `EvmArgs` and `BuildArgs`
+//! #[derive(Debug, Clone, Parser)]
+//! pub struct MyArgs {
+//!     #[clap(flatten)]
+//!     evm_opts: EvmArgs,
+//!     #[clap(flatten)]
+//!     opts: BuildArgs,
+//! }
+//!
+//! // add `Figment` and `Config` converters
+//! foundry_config::impl_figment_convert!(MyArgs, opts, evm_opts);
+//! let args = MyArgs::parse_from(["build"]);
+//!
+//! let figment: Figment = From::from(&args);
+//! let evm_opts = figment.extract::<EvmOpts>().unwrap();
+//!
+//! let config: Config = From::from(&args);
+//! ```
 
 pub mod build;
+pub mod config;
 pub mod create;
+pub mod flatten;
 pub mod fmt;
+pub mod init;
 pub mod remappings;
 pub mod run;
 pub mod snapshot;
 pub mod test;
 pub mod verify;
 
-use crate::opts::forge::ContractInfo;
+use crate::opts::forge::{ContractInfo, Dependency};
 use ethers::{
     abi::Abi,
     prelude::Graph,
@@ -29,6 +69,8 @@ pub trait Cmd: clap::Parser + Sized {
 use ethers::solc::{
     artifacts::BytecodeObject, MinimalCombinedArtifacts, Project, ProjectCompileOutput,
 };
+
+use std::process::Command;
 
 /// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
 /// compilation was successful or if there was a cache hit.
@@ -184,4 +226,49 @@ fn get_artifact_from_path(
             .bin_runtime
             .ok_or_else(|| eyre::Error::msg(format!("bytecode not found for {}", name)))?,
     ))
+}
+
+pub(crate) fn install(
+    root: impl AsRef<std::path::Path>,
+    dependencies: Vec<Dependency>,
+) -> eyre::Result<()> {
+    let libs = std::path::Path::new("lib");
+
+    dependencies.iter().try_for_each(|dep| -> eyre::Result<_> {
+        let path = libs.join(&dep.name);
+        println!("Installing {} in {:?}, (url: {}, tag: {:?})", dep.name, path, dep.url, dep.tag);
+
+        // install the dep
+        Command::new("git")
+            .args(&["submodule", "add", &dep.url, &path.display().to_string()])
+            .current_dir(&root)
+            .spawn()?
+            .wait()?;
+
+        // call update on it
+        Command::new("git")
+            .args(&["submodule", "update", "--init", "--recursive", &path.display().to_string()])
+            .current_dir(&root)
+            .spawn()?
+            .wait()?;
+
+        // checkout the tag if necessary
+        let message = if let Some(ref tag) = dep.tag {
+            Command::new("git")
+                .args(&["checkout", "--recurse-submodules", tag])
+                .current_dir(&path)
+                .spawn()?
+                .wait()?;
+
+            Command::new("git").args(&["add", &path.display().to_string()]).spawn()?.wait()?;
+
+            format!("forge install: {}\n\n{}", dep.name, tag)
+        } else {
+            format!("forge install: {}", dep.name)
+        };
+
+        Command::new("git").args(&["commit", "-m", &message]).current_dir(&root).spawn()?.wait()?;
+
+        Ok(())
+    })
 }

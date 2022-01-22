@@ -56,7 +56,7 @@ pub mod test_helpers {
 
     impl Filter {
         pub fn new(test_pattern: &str, contract_pattern: &str) -> Self {
-            return Filter {
+            Filter {
                 test_regex: Regex::new(test_pattern).unwrap(),
                 contract_regex: Regex::new(contract_pattern).unwrap(),
             }

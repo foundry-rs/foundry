@@ -1,4 +1,5 @@
 pub mod cast;
+pub mod evm;
 pub mod forge;
 
 use std::{convert::TryFrom, str::FromStr};
@@ -14,6 +15,14 @@ use ethers::{
     types::{Address, Chain, U256},
 };
 use eyre::Result;
+use foundry_config::{
+    figment::{
+        self,
+        value::{Dict, Map, Value},
+        Metadata, Profile,
+    },
+    Config,
+};
 
 const FLASHBOTS_URL: &str = "https://rpc.flashbots.net";
 
@@ -121,7 +130,7 @@ impl EthereumOpts {
                 .or_else(|| self.wallet.mnemonic().transpose())
                 .or_else(|| self.wallet.keystore().transpose())
                 .transpose()?
-                .ok_or_else(|| eyre::eyre!("error accessing local wallet"))?;
+                .ok_or_else(|| eyre::eyre!("error accessing local wallet, did you set a private key, mnemonic or keystore? Run `cast send --help` or `forge create --help` and use the corresponding CLI flag to set your key via --private-key, --mnemonic-path, --interactive, --trezor or --ledger. Alternatively, if you're using a local node with unlocked accounts, set the `ETH_FROM` environment variable to the address of the account you want to use"))?;
 
             let local = local.with_chain_id(chain_id.as_u64());
 
@@ -135,6 +144,21 @@ impl EthereumOpts {
         } else {
             self.rpc_url.as_deref().ok_or_else(|| eyre::Error::msg("no Ethereum RPC provided, maybe you forgot to set the --rpc-url or the ETH_RPC_URL parameter? Alternatively, consider using the --flashbots flag to get frontrunning protection"))
         }
+    }
+}
+
+// Make this args a `Figment` so that it can be merged into the `Config`
+impl figment::Provider for EthereumOpts {
+    fn metadata(&self) -> Metadata {
+        Metadata::named("Ethereum Opts Provider")
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
+        let mut dict = Dict::new();
+        let rpc = self.rpc_url().map_err(|err| err.to_string())?;
+        dict.insert("eth_rpc_url".to_string(), Value::from(rpc.to_string()));
+        dict.insert("chain".to_string(), Value::from(self.chain.to_string()));
+        Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }
 

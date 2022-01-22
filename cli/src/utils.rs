@@ -1,12 +1,16 @@
 use ethers::solc::{artifacts::Contract, EvmVersion};
 
 use eyre::{ContextCompat, WrapErr};
-use std::{path::PathBuf, process::Command};
+use std::path::PathBuf;
 
 #[cfg(feature = "evmodin-evm")]
 use evmodin::Revision;
 #[cfg(feature = "sputnik-evm")]
 use sputnik::Config;
+
+// reexport all `foundry_config::utils`
+#[doc(hidden)]
+pub use foundry_config::utils::*;
 
 /// Default local RPC endpoint
 const LOCAL_RPC_URL: &str = "http://127.0.0.1:8545";
@@ -57,12 +61,6 @@ pub fn find_dapp_json_contract(path: &str, name: &str) -> eyre::Result<Contract>
     };
 
     Ok(serde_json::from_value(contract)?)
-}
-
-pub fn find_git_root_path() -> eyre::Result<PathBuf> {
-    let path = Command::new("git").args(&["rev-parse", "--show-toplevel"]).output()?.stdout;
-    let path = std::str::from_utf8(&path)?.trim_end_matches('\n');
-    Ok(PathBuf::from(path))
 }
 
 #[cfg(feature = "sputnik-evm")]

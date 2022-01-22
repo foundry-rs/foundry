@@ -107,6 +107,10 @@ async fn main() -> eyre::Result<()> {
             let val = unwrap_or_stdin(value)?;
             println!("{}", SimpleCast::to_uint256(&val)?);
         }
+        Subcommands::ToUnit { value, unit } => {
+            let val = unwrap_or_stdin(value)?;
+            println!("{}", SimpleCast::to_unit(val, unit.unwrap_or_else(|| String::from("wei")))?);
+        }
         Subcommands::ToWei { value, unit } => {
             let val = unwrap_or_stdin(value)?;
             println!(
@@ -227,6 +231,20 @@ async fn main() -> eyre::Result<()> {
                     cast_async,
                 )
                 .await?;
+            }
+        }
+        Subcommands::PublishTx { eth, raw_tx, cast_async } => {
+            let provider = Provider::try_from(eth.rpc_url()?)?;
+            let cast = Cast::new(&provider);
+            let pending_tx = cast.publish(raw_tx).await?;
+            let tx_hash = *pending_tx;
+
+            if cast_async {
+                println!("{:?}", pending_tx);
+            } else {
+                let receipt =
+                    pending_tx.await?.ok_or_else(|| eyre::eyre!("tx {} not found", tx_hash))?;
+                println!("Receipt: {:?}", receipt);
             }
         }
         Subcommands::Estimate { eth, to, sig, args } => {

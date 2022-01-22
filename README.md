@@ -18,18 +18,38 @@ Foundry consists of:
 
 ![demo](./assets/demo.svg)
 
+## Installation
+
+First run the command below to get `foundryup`, the Foundry toolchain installer:
+
+```
+curl -L https://foundry.paradigm.xyz | bash
+```
+
+Then in a new terminal session or after reloading your PATH, run it to get the latest `forge` and `cast` binaries:
+
+```
+foundryup
+```
+
+Advanced ways to use `foundryup` and other documentation can be found in the [foundryup package](./foundryup/README.md).
+Happy forging!
+
+### Libusb error when running forge/cast
+
+If you are using the binaries as released, you may see the following error on MacOS:
+
+```
+dyld: Library not loaded: /usr/local/opt/libusb/lib/libusb-1.0.0.dylib
+```
+
+In order to fix this, you must install `libusb` like so:
+
+```
+brew install libusb 
+```
+
 ## Forge
-
-```
-cargo install --git https://github.com/gakonst/foundry --bin forge --locked
-```
-
-If you are on a x86/x86_64 Unix machine, you can also use `--features=solc-asm`
-to enable Sha2 Assembly instructions, which further speedup the compilation pipeline cache.
-
-We also recommend using [forgeup](https://github.com/transmissions11/forgeup)
-for managing various versions of Forge, so that you can easily test out bleeding edge changes in open pull requests or
-forks from contributors.
 
 More documentation can be found in the [forge package](./forge/README.md) and in the [CLI README](./cli/README.md).
 
@@ -76,15 +96,29 @@ whereas Forge took 9.449 (~4s cached)
 
 Cast is a swiss army knife for interacting with Ethereum applications from the command line.
 
-```shell
-cargo install --git https://github.com/gakonst/foundry --bin cast
-// Get USDC's total supply
-cast call 0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48 "totalSupply()(uint256)" --rpc-url <..your node url>
-```
-
 More documentation can be found in the [cast package](./cast/README.md).
 
 ## Setup
+
+### Configuring foundry/forge
+
+foundry is designed to be very configurable. You can create a TOML file called [`foundry.toml`](./config/README.md)
+place it in the project or any other parent directory, and it will apply the options in that file. See [_Config
+Readme_](./config/README.md#all-options) for all available options.
+
+Configurations can be arbitrarily namespaced by profiles. Foundry's default configuration is also named `default`. The
+selected profile is the value of the `FOUNDRY_PROFILE` environment variable, or if it is not set, "default".
+`FOUNDRY_` or `DAPP_` prefixed environment variables, like `FOUNDRY_SRC` take precedence, [see _Default
+Profile_](./config/README.md#default-profile)
+
+`forge init` creates a basic, extendable `foundry.toml` file.
+
+To set all `.dapprc` env vars run `source .dapprc` beforehand.
+
+To see all currently set options run `forge config`, to only see the basic options (as set with `forge init`)
+run `forge config --basic`, this can be used to create a new `foundry.toml` file
+with `forge config --basic > foundry.toml`. By default `forge config` shows the currently selected foundry profile and
+its values. It also accepts the same arguments as `forge build`.
 
 ### VSCode
 

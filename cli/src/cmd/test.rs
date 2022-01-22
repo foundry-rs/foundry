@@ -1,11 +1,15 @@
 //! Test command
 
-use crate::cmd::{build::BuildArgs, Cmd};
+use crate::{
+    cmd::{build::BuildArgs, Cmd},
+    opts::evm::EvmArgs,
+};
 use ansi_term::Colour;
 use clap::{AppSettings, Parser};
 use ethers::solc::{ArtifactOutput, Project};
-use evm_adapters::{evm_opts::EvmOpts, sputnik::helpers::vm};
+use evm_adapters::{call_tracing::ExecutionInfo, evm_opts::EvmOpts, sputnik::helpers::vm};
 use forge::{MultiContractRunnerBuilder, TestFilter};
+use foundry_config::{figment::Figment, Config};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Parser)]
@@ -74,6 +78,9 @@ impl TestFilter for Filter {
     }
 }
 
+// Loads project's figment and merges the build cli arguments into it
+foundry_config::impl_figment_convert!(TestArgs, opts, evm_opts);
+
 #[derive(Debug, Clone, Parser)]
 // This is required to group Filter options in help output
 #[clap(global_setting = AppSettings::DeriveDisplayOrder)]
@@ -82,7 +89,7 @@ pub struct TestArgs {
     json: bool,
 
     #[clap(flatten)]
-    evm_opts: EvmOpts,
+    evm_opts: EvmArgs,
 
     #[clap(flatten)]
     filter: Filter,
@@ -102,17 +109,23 @@ impl Cmd for TestArgs {
     type Output = TestOutcome;
 
     fn run(self) -> eyre::Result<Self::Output> {
-        let TestArgs { opts, evm_opts, json, filter, allow_failure } = self;
+        // merge all configs
+        let figment: Figment = From::from(&self);
+        let evm_opts = figment.extract::<EvmOpts>()?;
+        let config = Config::from_provider(figment).sanitized();
+
+        let TestArgs { json, filter, allow_failure, .. } = self;
+
         // Setup the fuzzer
         // TODO: Add CLI Options to modify the persistence
         let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
         let fuzzer = proptest::test_runner::TestRunner::new(cfg);
 
         // Set up the project
-        let project = opts.project()?;
+        let project = config.project()?;
 
         // prepare the test builder
-        let mut evm_cfg = crate::utils::sputnik_cfg(&opts.compiler.evm_version);
+        let mut evm_cfg = crate::utils::sputnik_cfg(&config.evm_version);
         evm_cfg.create_contract_limit = None;
 
         let builder = MultiContractRunnerBuilder::default()
@@ -183,16 +196,47 @@ impl TestOutcome {
         if !self.allow_failure {
             let failures = self.failures().count();
             if failures > 0 {
+                println!();
+                println!("Failed tests:");
+                for (name, result) in self.failures() {
+                    short_test_result(name, result);
+                }
+                println!();
+
                 let successes = self.successes().count();
-                eyre::bail!(
+                println!(
                     "Encountered a total of {} failing tests, {} tests succeeded",
-                    failures,
-                    successes
+                    Colour::Red.paint(failures.to_string()),
+                    Colour::Green.paint(successes.to_string())
                 );
+                std::process::exit(1);
             }
         }
         Ok(())
     }
+}
+
+fn short_test_result(name: &str, result: &forge::TestResult) {
+    let status = if result.success {
+        Colour::Green.paint("[PASS]")
+    } else {
+        let txt = match (&result.reason, &result.counterexample) {
+            (Some(ref reason), Some(ref counterexample)) => {
+                format!("[FAIL. Reason: {}. Counterexample: {}]", reason, counterexample)
+            }
+            (None, Some(ref counterexample)) => {
+                format!("[FAIL. Counterexample: {}]", counterexample)
+            }
+            (Some(ref reason), None) => {
+                format!("[FAIL. Reason: {}]", reason)
+            }
+            (None, None) => "[FAIL]".to_string(),
+        };
+
+        Colour::Red.paint(txt)
+    };
+
+    println!("{} {} {}", status, name, result.kind.gas_used());
 }
 
 /// Runs all the tests
@@ -209,6 +253,7 @@ fn test<A: ArtifactOutput + 'static>(
 
     let results = runner.test(&filter)?;
 
+    let (funcs, events, errors) = runner.execution_info;
     if json {
         let res = serde_json::to_string(&results)?;
         println!("{}", res);
@@ -224,76 +269,63 @@ fn test<A: ArtifactOutput + 'static>(
             }
 
             for (name, result) in tests {
-                let status = if result.success {
-                    Colour::Green.paint("[PASS]")
-                } else {
-                    let txt = match (&result.reason, &result.counterexample) {
-                        (Some(ref reason), Some(ref counterexample)) => {
-                            format!(
-                                "[FAIL. Reason: {}. Counterexample: {}]",
-                                reason, counterexample
-                            )
-                        }
-                        (None, Some(ref counterexample)) => {
-                            format!("[FAIL. Counterexample: {}]", counterexample)
-                        }
-                        (Some(ref reason), None) => {
-                            format!("[FAIL. Reason: {}]", reason)
-                        }
-                        (None, None) => "[FAIL]".to_string(),
-                    };
+                short_test_result(name, result);
 
-                    Colour::Red.paint(txt)
-                };
-
-                println!("{} {} {}", status, name, result.kind.gas_used());
-            }
-
-            if verbosity > 1 {
-                println!();
-
-                for (name, result) in tests {
-                    let status = if result.success { "Success" } else { "Failure" };
-                    println!("{}: {}", status, name);
-                    println!();
-
+                // adds a linebreak only if there were any traces or logs, so that the
+                // output does not look like 1 big block.
+                let mut add_newline = false;
+                if verbosity > 1 && !result.logs.is_empty() {
+                    add_newline = true;
+                    println!("Logs:");
                     for log in &result.logs {
                         println!("  {}", log);
                     }
+                }
 
-                    println!();
-
-                    if verbosity > 2 {
-                        if let (Some(traces), Some(identified_contracts)) =
-                            (&result.traces, &result.identified_contracts)
-                        {
-                            if !result.success && verbosity == 3 || verbosity > 3 {
-                                let mut ident = identified_contracts.clone();
-                                if verbosity > 4 || !result.success {
-                                    // print setup calls as well
-                                    traces.iter().for_each(|trace| {
-                                        trace.pretty_print(
-                                            0,
-                                            &runner.known_contracts,
-                                            &mut ident,
-                                            &vm(),
-                                            "",
-                                        );
-                                    });
-                                } else if !traces.is_empty() {
-                                    traces.last().expect("no last but not empty").pretty_print(
-                                        0,
-                                        &runner.known_contracts,
-                                        &mut ident,
-                                        &vm(),
-                                        "",
-                                    );
-                                }
+                if verbosity > 2 {
+                    if let (Some(traces), Some(identified_contracts)) =
+                        (&result.traces, &result.identified_contracts)
+                    {
+                        if !result.success && verbosity == 3 || verbosity > 3 {
+                            // add a new line if any logs were printed & to separate them from
+                            // the traces to be printed
+                            if !result.logs.is_empty() {
+                                println!();
                             }
 
-                            println!();
+                            let mut ident = identified_contracts.clone();
+                            let mut exec_info = ExecutionInfo::new(
+                                &runner.known_contracts,
+                                &mut ident,
+                                &funcs,
+                                &events,
+                                &errors,
+                            );
+                            let vm = vm();
+                            if verbosity > 4 || !result.success {
+                                add_newline = true;
+                                println!("Traces:");
+
+                                // print setup calls as well
+                                traces.iter().for_each(|trace| {
+                                    trace.pretty_print(0, &mut exec_info, &vm, "  ");
+                                });
+                            } else if !traces.is_empty() {
+                                add_newline = true;
+                                println!("Traces:");
+                                traces.last().expect("no last but not empty").pretty_print(
+                                    0,
+                                    &mut exec_info,
+                                    &vm,
+                                    "  ",
+                                );
+                            }
                         }
                     }
+                }
+
+                if add_newline {
+                    println!();
                 }
             }
         }

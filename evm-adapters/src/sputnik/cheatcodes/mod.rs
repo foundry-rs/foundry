@@ -64,6 +64,7 @@ ethers::contract::abigen!(
             deal(address,uint256)
             etch(address,bytes)
             expectRevert(bytes)
+            expectRevert(bytes4)
             record()
             accesses(address)(bytes32[],bytes32[])
             expectEmit(bool,bool,bool,bool)
@@ -96,9 +97,11 @@ ethers::contract::abigen!(
             event log_named_string       (string key, string val)
             ]"#,
 );
+pub use hevmconsole_mod::HEVMCONSOLE_ABI;
 
 // Bindings for hardhat console
 ethers::contract::abigen!(Console, "./testdata/console.json",);
+pub use console_mod::CONSOLE_ABI;
 
 /// If the input starts with a known `hardhat/console.log` `uint` selector, then this will replace
 /// it with the selector `abigen!` bindings expect.
