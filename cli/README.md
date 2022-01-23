@@ -309,7 +309,7 @@ contract ContractBar { ... }
 * `forge test --match-contract Contract` will run the tests in all of those contracts
 * `forge test --match-contract Foo` will run the tests in the `ContractFoo` and `ContractFooBar`
 * `forge test --match-contract "Foo$"` will only run the tests in `ContractFoo`
-* `forge test --match-contract "ContractFoo|ContractBar"` will only run the tests of contracts including `ContractA` or `ContractB` in it's name
+* `forge test --match-contract "ContractFoo|ContractBar"` will only run the tests of contracts including `ContractFoo` or `ContractBar` in it's name
 * `forge test --no-match-contract FooBar` will run the tests in `ContractFoo` and `ContractBar`
 
 
