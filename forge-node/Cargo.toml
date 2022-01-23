@@ -1,0 +1,16 @@
+[package]
+name = "forge-node"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+axum = "0.2.8"
+ethers = { git = "https://github.com/gakonst/ethers-rs" }
+serde_json = "1.0.67"
+tokio = { version = "1.10.1", features = ["time"] }
+tower = "0.4.8"
+
+evm-adapters = { path = "../evm-adapters" }
+forge-node-types = { path = "../forge-node-types" }
+foundry-utils = { path = "../utils" }

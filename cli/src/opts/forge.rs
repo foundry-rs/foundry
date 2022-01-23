@@ -1,21 +1,11 @@
 use clap::{Parser, Subcommand, ValueHint};
-
-use ethers::solc::{artifacts::output_selection::ContractOutputSelection, EvmVersion};
+use ethers::{solc::EvmVersion, types::Address};
 use std::{path::PathBuf, str::FromStr};
 
-use crate::cmd::forge::{
-    bind::BindArgs,
-    build::BuildArgs,
-    config,
-    create::CreateArgs,
-    flatten,
-    init::InitArgs,
-    inspect,
-    install::InstallArgs,
-    remappings::RemappingArgs,
-    run::RunArgs,
-    snapshot, test, tree,
-    verify::{VerifyArgs, VerifyCheckArgs},
+use crate::cmd::{
+    bind::BindArgs, build::BuildArgs, config, create::CreateArgs, flatten, init::InitArgs,
+    install::InstallArgs, node::NodeArgs, remappings::RemappingArgs, run::RunArgs, snapshot,
+    test::TestArgs,
 };
 use serde::Serialize;
 
@@ -36,9 +26,12 @@ pub struct Opts {
 #[clap(about = "Build, test, fuzz, formally verify, debug & deploy solidity contracts.")]
 #[allow(clippy::large_enum_variant)]
 pub enum Subcommands {
-    #[clap(about = "Test your smart contracts")]
+    #[clap(about = "run a JSON-RPC node")]
+    Node(NodeArgs),
+
+    #[clap(about = "test your smart contracts")]
     #[clap(alias = "t")]
-    Test(test::TestArgs),
+    Test(TestArgs),
 
     #[clap(about = "Generate rust bindings for your smart contracts")]
     Bind(BindArgs),

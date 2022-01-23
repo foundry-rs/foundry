@@ -177,55 +177,11 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         // We set the nonce of the deployer accounts to 1 to get the same addresses as DappTools
         self.executor.set_nonce(self.sender, 1);
 
-        // Deploy libraries
-        let mut traces: Vec<(TraceKind, CallTraceArena)> = self
-            .predeploy_libs
-            .iter()
-            .filter_map(|code| {
-                let DeployResult { traces, .. } = self
-                    .executor
-                    .deploy(self.sender, code.0.clone(), 0u32.into())
-                    .expect("couldn't deploy library");
-
-                traces
-            })
-            .map(|traces| (TraceKind::Deployment, traces))
-            .collect();
-
-        // Deploy an instance of the contract
-        let DeployResult { address, mut logs, traces: constructor_traces, .. } = self
-            .executor
-            .deploy(self.sender, self.code.0.clone(), 0u32.into())
-            .expect("couldn't deploy");
-        traces.extend(constructor_traces.map(|traces| (TraceKind::Deployment, traces)).into_iter());
-        self.executor.set_balance(address, self.initial_balance);
-
-        // Optionally call the `setUp` function
-        Ok(if setup {
-            tracing::trace!("setting up");
-            let (setup_failed, setup_logs, setup_traces, labeled_addresses, reason) = match self
-                .executor
-                .setup(address)
-            {
-                Ok(CallResult { traces, labels, logs, .. }) => (false, logs, traces, labels, None),
-                Err(EvmError::Execution { traces, labels, logs, reason, .. }) => {
-                    (true, logs, traces, labels, Some(format!("Setup failed: {}", reason)))
-                }
-                Err(e) => (
-                    true,
-                    Vec::new(),
-                    None,
-                    BTreeMap::new(),
-                    Some(format!("Setup failed: {}", &e.to_string())),
-                ),
-            };
-            traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)).into_iter());
-            logs.extend_from_slice(&setup_logs);
-
-            TestSetup { address, logs, traces, labeled_addresses, setup_failed, reason }
-        } else {
-            TestSetup { address, logs, traces, ..Default::default() }
-        })
+        // deploy an instance of the contract inside the runner in the EVM
+        let output =
+            executor.deploy(self.sender, self.code.clone(), 0u32.into()).expect("couldn't deploy");
+        executor.set_balance(output.retdata, self.evm_opts.initial_balance);
+        Ok((output.retdata, executor, output.logs))
     }
 
     /// Runs all tests for a contract whose names match the provided regular expression
@@ -303,42 +259,76 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
 
         // Run unit test
         let start = Instant::now();
-        let (reverted, reason, gas, stipend, execution_traces, state_changeset) = match self
-            .executor
-            .call::<(), _, _>(self.sender, address, func.clone(), (), 0.into(), self.errors)
-        {
-            Ok(CallResult {
-                reverted,
-                gas,
-                stipend,
-                logs: execution_logs,
-                traces: execution_trace,
-                labels: new_labels,
-                state_changeset,
-                ..
-            }) => {
-                labeled_addresses.extend(new_labels);
-                logs.extend(execution_logs);
-                (reverted, None, gas, stipend, execution_trace, state_changeset)
-            }
-            Err(EvmError::Execution {
-                reverted,
-                reason,
-                gas,
-                stipend,
-                logs: execution_logs,
-                traces: execution_trace,
-                labels: new_labels,
-                state_changeset,
-                ..
-            }) => {
-                labeled_addresses.extend(new_labels);
-                logs.extend(execution_logs);
-                (reverted, Some(reason), gas, stipend, execution_trace, state_changeset)
-            }
-            Err(err) => {
-                tracing::error!(?err);
-                return Err(err.into())
+        // the expected result depends on the function name
+        // DAppTools' ds-test will not revert inside its `assertEq`-like functions
+        // which allows to test multiple assertions in 1 test function while also
+        // preserving logs.
+        let should_fail = func.name.starts_with("testFail");
+        tracing::debug!(func = ?func.signature(), should_fail, "unit-testing");
+
+        let (address, mut evm, init_logs) = self.new_sputnik_evm()?;
+
+        let errors_abi = self.execution_info.as_ref().map(|(_, _, errors)| errors);
+        let errors_abi = if let Some(ref abi) = errors_abi { abi } else { self.contract };
+
+        let mut logs = init_logs;
+
+        let mut traces: Option<Vec<CallTraceArena>> = None;
+        let mut identified_contracts: Option<BTreeMap<Address, (String, Abi)>> = None;
+
+        // clear out the deployment trace
+        evm.reset_traces();
+
+        // call the setup function in each test to reset the test's state.
+        if setup {
+            tracing::trace!("setting up");
+            let setup_logs = match evm.setup(address) {
+                Ok((_reason, setup_logs)) => setup_logs,
+                Err(e) => {
+                    // if tracing is enabled, just return it as a failed test
+                    // otherwise abort
+                    if evm.tracing_enabled() {
+                        self.update_traces(
+                            &mut traces,
+                            &mut identified_contracts,
+                            known_contracts,
+                            setup,
+                            &mut evm,
+                        );
+                    }
+
+                    return Ok(TestResult {
+                        success: false,
+                        reason: Some("Setup failed: ".to_string() + &e.to_string()),
+                        gas_used: 0,
+                        counterexample: None,
+                        logs,
+                        kind: TestKind::Standard(0),
+                        traces,
+                        identified_contracts,
+                        debug_calls: if evm.state().debug_enabled {
+                            Some(evm.debug_calls())
+                        } else {
+                            None
+                        },
+                        labeled_addresses: evm.state().labels.clone(),
+                    })
+                }
+            };
+            logs.extend_from_slice(&setup_logs);
+        }
+
+        let (status, reason, gas_used, logs) = match evm.call::<(), _, _>(
+            self.sender,
+            address,
+            func.clone(),
+            (),
+            0.into(),
+            Some(errors_abi),
+        ) {
+            Ok(output) => {
+                logs.extend(output.logs.clone());
+                (output.status, None, output.gas, output.logs)
             }
         };
         traces.extend(execution_traces.map(|traces| (TraceKind::Execution, traces)).into_iter());
@@ -398,6 +388,103 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
             success = %result.success
         );
 
+        // clear out the deployment trace
+        evm.reset_traces();
+
+        // call the setup function in each test to reset the test's state.
+        if setup {
+            tracing::trace!("setting up");
+            match evm.setup(address) {
+                Ok((_reason, _setup_logs)) => {}
+                Err(e) => {
+                    // if tracing is enabled, just return it as a failed test
+                    // otherwise abort
+                    if evm.tracing_enabled() {
+                        self.update_traces(
+                            &mut traces,
+                            &mut identified_contracts,
+                            known_contracts,
+                            setup,
+                            &mut evm,
+                        );
+                    }
+                    return Ok(TestResult {
+                        success: false,
+                        reason: Some("Setup failed: ".to_string() + &e.to_string()),
+                        gas_used: 0,
+                        counterexample: None,
+                        logs: vec![],
+                        kind: TestKind::Fuzz(FuzzedCases::new(vec![])),
+                        traces,
+                        identified_contracts,
+                        debug_calls: if evm.state().debug_enabled {
+                            Some(evm.debug_calls())
+                        } else {
+                            None
+                        },
+                        labeled_addresses: evm.state().labels.clone(),
+                    })
+                }
+            }
+        }
+
+        let mut logs = init_logs;
+
+        let prev = evm.set_tracing_enabled(false);
+
+        // instantiate the fuzzed evm in line
+        let evm = FuzzedExecutor::new(&mut evm, runner, self.sender);
+        let FuzzTestResult { cases, test_error } =
+            evm.fuzz(func, address, should_fail, Some(self.contract));
+
+        let evm = evm.into_inner();
+        if let Some(ref error) = test_error {
+            // we want traces for a failed fuzz
+            if let TestError::Fail(_reason, bytes) = &error.test_error {
+                if prev {
+                    let _ = evm.set_tracing_enabled(true);
+                }
+                let output = evm.call_raw(self.sender, address, bytes.clone(), 0.into(), false)?;
+                if is_fail(evm, output.status) {
+                    logs.extend(output.logs);
+                    // add reverted logs
+                    logs.extend(evm.all_logs());
+                } else {
+                    logs.extend(output.logs);
+                }
+                self.update_traces(
+                    &mut traces,
+                    &mut identified_contracts,
+                    known_contracts,
+                    setup,
+                    evm,
+                );
+            }
+        }
+
+        let success = test_error.is_none();
+        let mut counterexample = None;
+        let mut reason = None;
+        if let Some(err) = test_error {
+            match err.test_error {
+                TestError::Fail(_, value) => {
+                    // skip the function selector when decoding
+                    let args = func.decode_input(&value.as_ref()[4..])?;
+                    let counter = CounterExample { calldata: value.clone(), args };
+                    counterexample = Some(counter);
+                    tracing::info!("Found minimal failing case: {}", hex::encode(&value));
+                }
+                result => panic!("Unexpected test result: {:?}", result),
+            }
+            if !err.revert_reason.is_empty() {
+                reason = Some(err.revert_reason);
+            }
+        }
+
+        let duration = Instant::now().duration_since(start);
+        tracing::debug!(?duration, %success);
+
+        // from that call?
         Ok(TestResult {
             success: result.success,
             reason: result.reason,

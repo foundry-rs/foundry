@@ -3,6 +3,8 @@ members = [
     "utils",
     "cast",
     "forge",
+    "forge-node",
+    "forge-node-types",
     "cli",
     "cli/test-utils",
     "config",

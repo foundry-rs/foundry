@@ -1,9 +1,17 @@
-use crate::{ContractRunner, TestFilter, TestResult};
+use crate::{runner::TestResult, ContractRunner, TestFilter};
+use ethers::prelude::artifacts::CompactContractBytecode;
+use evm_adapters::{
+    evm_opts::{BackendKind, EvmOpts},
+    sputnik::cheatcodes::{CONSOLE_ABI, HEVMCONSOLE_ABI, HEVM_ABI},
+};
+use foundry_utils::PostLinkInput;
+use sputnik::{backend::Backend, Config};
+
 use ethers::{
-    abi::Abi,
-    prelude::{artifacts::CompactContractBytecode, ArtifactId, ArtifactOutput},
-    solc::{Artifact, ProjectCompileOutput},
-    types::{Address, Bytes, U256},
+    abi::{Abi, Event, Function},
+    prelude::ArtifactOutput,
+    solc::{Artifact, Project},
+    types::{Address, H256, U256},
 };
 use eyre::Result;
 use foundry_evm::executor::{opts::EvmOpts, DatabaseRef, Executor, ExecutorBuilder, Fork, SpecId};

@@ -24,6 +24,7 @@ clap_complete = "3.0.4"
 forge-fmt = { path = "../fmt" }
 foundry-utils = { path = "../utils" }
 forge = { path = "../forge" }
+forge-node = { path = "../forge-node" }
 foundry-config = { path = "../config" }
 cast = { path = "../cast" }
 ui = { path = "../ui" }

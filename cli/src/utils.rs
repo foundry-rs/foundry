@@ -66,6 +66,17 @@ pub fn evm_spec(evm: &EvmVersion) -> SpecId {
     }
 }
 
+#[cfg(feature = "evmodin-evm")]
+#[allow(dead_code)]
+pub fn evmodin_cfg(evm: &EvmVersion) -> Revision {
+    match evm {
+        EvmVersion::Istanbul => Revision::Istanbul,
+        EvmVersion::Berlin => Revision::Berlin,
+        EvmVersion::London => Revision::London,
+        _ => panic!("Unsupported EVM version"),
+    }
+}
+
 /// Securely reads a secret from stdin, or proceeds to return a fallback value
 /// which was provided in cleartext via CLI or env var
 #[allow(dead_code)]
