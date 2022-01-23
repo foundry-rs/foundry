@@ -770,12 +770,12 @@ impl<'a> RemappingsProvider<'a> {
     /// - `remappings.txt`
     /// - Environment variables
     /// - CLI parameters
-    fn get_remappings(&self, remappings: Vec<Remapping>) -> Result<Vec<Remapping>, Error> {
+    fn get_remappings(&self, mut remappings: Vec<Remapping>) -> Result<Vec<Remapping>, Error> {
         // check env var
         if let Some(env_remappings) = remappings_from_env_var("DAPP_REMAPPINGS")
             .or_else(|| remappings_from_env_var("FOUNDRY_REMAPPINGS"))
         {
-            return env_remappings.map_err(|err| err.to_string().into())
+            remappings.extend(env_remappings.map_err::<Error, _>(|err| err.to_string().into())?);
         }
 
         // check remappings.txt file
@@ -783,21 +783,26 @@ impl<'a> RemappingsProvider<'a> {
         if remappings_file.is_file() {
             let content =
                 std::fs::read_to_string(remappings_file).map_err(|err| err.to_string())?;
-            let remappings: Result<Vec<_>, _> = remappings_from_newline(&content).collect();
-            return remappings.map_err(|err| err.to_string().into())
+            let remappings_from_file: Result<Vec<_>, _> =
+                remappings_from_newline(&content).collect();
+            remappings
+                .extend(remappings_from_file.map_err::<Error, _>(|err| err.to_string().into())?);
         }
 
-        // if no remappings set, look up lib paths
-        if remappings.is_empty() {
-            Ok(self
-                .lib_paths
+        // look up lib paths
+        remappings.extend(
+            self.lib_paths
                 .iter()
                 .map(|lib| self.root.join(lib))
                 .flat_map(Remapping::find_many)
-                .collect())
-        } else {
-            Ok(remappings)
-        }
+                .collect::<Vec<Remapping>>(),
+        );
+
+        // remove duplicates
+        remappings.sort_by(|a, b| a.name.cmp(&b.name));
+        remappings.dedup_by(|a, b| a.name.eq(&b.name));
+
+        Ok(remappings)
     }
 }
 
