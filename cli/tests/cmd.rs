@@ -1,4 +1,5 @@
 //! Contains various tests for checking forge's commands
+use evm_adapters::evm_opts::{EvmOpts, EvmType};
 use foundry_cli_test_utils::{
     ethers_solc::{remappings::Remapping, PathStyle},
     forgetest, forgetest_ignore, forgetest_init, pretty_eq,
@@ -111,7 +112,7 @@ forgetest_init!(can_override_config, |prj: TestProject, mut cmd: TestCommand| {
 
     cmd.arg("config");
     let expected = profile.to_string_pretty().unwrap();
-    pretty_eq!(expected.trim().to_string(), cmd.stdout().trim().to_string());
+    assert_eq!(expected.trim().to_string(), cmd.stdout().trim().to_string());
 
     // remappings work
     let remappings_txt = prj.create_file("remappings.txt", "from-file/=lib/from-file/");
@@ -141,6 +142,22 @@ forgetest_init!(can_override_config, |prj: TestProject, mut cmd: TestCommand| {
     cmd.set_cmd(prj.bin()).args(["config", "--basic"]);
     let expected = profile.into_basic().to_string_pretty().unwrap();
     pretty_eq!(expected.trim().to_string(), cmd.stdout().trim().to_string());
+});
+
+// checks that `clean` removes dapptools style paths
+forgetest_init!(can_get_evm_opts, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.set_current_dir(prj.root());
+    let url = "http://127.0.0.1:8545";
+    let config = prj.config_from_output(["--rpc-url", url, "--ffi"]);
+    assert_eq!(config.eth_rpc_url, Some(url.to_string()));
+    assert!(config.ffi);
+
+    cmd.set_env("FOUNDRY_ETH_RPC_URL", url);
+    let figment = Config::figment_with_root(prj.root())
+        .merge(("evm_type", EvmType::Sputnik))
+        .merge(("debug", false));
+    let evm_opts: EvmOpts = figment.extract().unwrap();
+    assert_eq!(evm_opts.fork_url, Some(url.to_string()));
 });
 
 // checks that `clean` removes dapptools style paths

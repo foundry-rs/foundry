@@ -430,8 +430,7 @@ fn parse_slot(s: &str) -> eyre::Result<H256> {
 }
 
 #[derive(Debug, Parser)]
-#[clap(name = "cast")]
-#[clap(version)]
+#[clap(name = "cast", version = crate::utils::VERSION_MESSAGE)]
 pub struct Opts {
     #[clap(subcommand)]
     pub sub: Subcommands,

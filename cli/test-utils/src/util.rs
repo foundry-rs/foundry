@@ -171,9 +171,7 @@ impl TestProject {
         A: AsRef<OsStr>,
     {
         let mut cmd = self.bin();
-        cmd.arg("config");
-        cmd.args(args);
-        cmd.arg("--json");
+        cmd.arg("config").arg("--root").arg(self.root()).args(args).arg("--json");
         let output = cmd.output().unwrap();
         let c = String::from_utf8_lossy(&output.stdout);
         let config: Config = serde_json::from_str(c.as_ref()).unwrap();

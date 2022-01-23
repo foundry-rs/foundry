@@ -10,8 +10,7 @@ use crate::cmd::{
 use serde::Serialize;
 
 #[derive(Debug, Parser)]
-#[clap(name = "forge")]
-#[clap(version)]
+#[clap(name = "forge", version = crate::utils::VERSION_MESSAGE)]
 pub struct Opts {
     #[clap(subcommand)]
     pub sub: Subcommands,
