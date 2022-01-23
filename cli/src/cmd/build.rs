@@ -133,14 +133,10 @@ impl BuildArgs {
     ///
     /// This loads the `foundry_config::Config` for the current workspace (see
     /// [`utils::find_project_root_path`] and merges the cli `BuildArgs` into it before returning
-    /// [`foundry_config::Config::project`]
+    /// [`foundry_config::Config::project()`]
     pub fn project(&self) -> eyre::Result<Project> {
         let config: Config = self.into();
-        let project = config.project()?;
-        if config.force {
-            project.cleanup()?;
-        }
-        Ok(project)
+        Ok(config.project()?)
     }
 }
 
