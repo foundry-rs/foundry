@@ -29,10 +29,15 @@ function runTests() {
 
     # update the deps
     $FORGE update
-    # always have the ffi flag turned on
-    $FORGE test --ffi $FORK_ARGS
 
-    cd -
+    # always have the ffi flag turned on
+    $FORGE test --ffi $FORK_ARGS || {
+        if [[ "${FORGE_ALLOW_FAILURE}" == 1 ]]; then
+            exit 0
+        else
+            exit 1
+        fi
+    }
 }
 
 runTests $REPO
