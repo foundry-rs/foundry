@@ -4,8 +4,8 @@ use std::fmt::Write;
 
 use indent_write::fmt::IndentWriter;
 use solang_parser::pt::{
-    ContractDefinition, DocComment, EnumDefinition, FunctionDefinition, Identifier, Loc,
-    SourceUnit, SourceUnitPart, StringLiteral,
+    ContractDefinition, DocComment, EnumDefinition, Identifier, Loc, SourceUnit, SourceUnitPart,
+    StringLiteral,
 };
 
 use crate::{
@@ -263,6 +263,15 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    fn visit_doc_comments(&mut self, doc_comments: &mut Vec<DocComment>) -> VResult {
+        for doc_comment in doc_comments {
+            doc_comment.visit(self)?;
+            writeln!(self)?;
+        }
+
+        Ok(())
+    }
+
     fn visit_contract(&mut self, contract: &mut ContractDefinition) -> VResult {
         for doc_comment in &mut contract.doc {
             doc_comment.visit(self)?;
@@ -424,21 +433,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             self.dedent(1);
 
             write!(self, "}}")?;
-        }
-
-        Ok(())
-    }
-
-    fn visit_function(&mut self, func: &mut FunctionDefinition) -> VResult {
-        for doc_comment in &mut func.doc {
-            doc_comment.visit(self)?;
-            writeln!(self)?;
-        }
-
-        self.visit_source(func.loc())?;
-
-        if func.body.is_none() {
-            write!(self, ";")?;
         }
 
         Ok(())

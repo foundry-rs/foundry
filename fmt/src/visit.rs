@@ -21,6 +21,10 @@ pub trait Visitor {
         Ok(())
     }
 
+    fn visit_doc_comments(&mut self, _doc_comments: &mut Vec<DocComment>) -> VResult {
+        Ok(())
+    }
+
     fn visit_contract(&mut self, _contract: &mut ContractDefinition) -> VResult {
         Ok(())
     }
@@ -80,6 +84,7 @@ pub trait Visitor {
     }
 
     fn visit_var_def(&mut self, var: &mut VariableDefinition) -> VResult {
+        self.visit_doc_comments(&mut var.doc)?;
         self.visit_source(var.loc)?;
         self.visit_stray_semicolon()?;
 
@@ -106,17 +111,25 @@ pub trait Visitor {
         Ok(())
     }
 
-    fn visit_function(&mut self, _func: &mut FunctionDefinition) -> VResult {
+    fn visit_function(&mut self, func: &mut FunctionDefinition) -> VResult {
+        self.visit_doc_comments(&mut func.doc)?;
+        self.visit_source(func.loc())?;
+        if func.body.is_none() {
+            self.visit_stray_semicolon()?;
+        }
+
         Ok(())
     }
 
     fn visit_struct(&mut self, structure: &mut StructDefinition) -> VResult {
+        self.visit_doc_comments(&mut structure.doc)?;
         self.visit_source(structure.loc)?;
 
         Ok(())
     }
 
     fn visit_event(&mut self, event: &mut EventDefinition) -> VResult {
+        self.visit_doc_comments(&mut event.doc)?;
         self.visit_source(event.loc)?;
 
         Ok(())
