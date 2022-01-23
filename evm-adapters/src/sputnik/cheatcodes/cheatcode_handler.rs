@@ -866,7 +866,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         }
     }
 
-    /// Executes the call/create while also tracking the state of the machine (including opcodes)  
+    /// Executes the call/create while also tracking the state of the machine (including opcodes)
     fn debug_execute(
         &mut self,
         runtime: &mut Runtime,
@@ -1883,10 +1883,72 @@ mod tests {
         let (_, _, _, logs) = evm
             .call::<(), _, _>(Address::zero(), addr, "test_log_types()", (), 0.into(), compiled.abi)
             .unwrap();
-        let expected = ["String", "1337", "-20", "1245", "true"]
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>();
+        let expected =
+            ["String", "1337", "-20", "1245", "true", "0x1111111111111111111111111111111111111111"]
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>();
+        assert_eq!(logs, expected);
+    }
+
+    #[test]
+    fn console_logs_types_bytes() {
+        let mut evm = vm();
+
+        let compiled = COMPILED.find("ConsoleLogs").expect("could not find contract");
+        let (addr, _, _, _) =
+            evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
+
+        // after the evm call is done, we call `logs` and print it all to the user
+        let (_, _, _, logs) = evm
+            .call::<(), _, _>(
+                Address::zero(),
+                addr,
+                "test_log_types_bytes()",
+                (),
+                0.into(),
+                compiled.abi,
+            )
+            .unwrap();
+        let expected = [
+            r#"Bytes(b"logBytes")"#,
+            r#"Bytes(b"\xfb\xa3\xa4\xb5")"#,
+            "0xfb",
+            "0xfba3",
+            "0xfba3a4",
+            "0xfba3a4b5",
+            "0xfba3a4b500",
+            "0xfba3a4b50000",
+            "0xfba3a4b5000000",
+            "0xfba3a4b500000000",
+            "0xfba3a4b50000000000",
+            "0xfba3a4b5000000000000",
+            "0xfba3a4b500000000000000",
+            "0xfba3a4b50000000000000000",
+            "0xfba3a4b5000000000000000000",
+            "0xfba3a4b500000000000000000000",
+            "0xfba3a4b50000000000000000000000",
+            "0xfba3a4b5000000000000000000000000",
+            "0xfba3a4b500000000000000000000000000",
+            "0xfba3a4b50000000000000000000000000000",
+            "0xfba3a4b5000000000000000000000000000000",
+            "0xfba3a4b500000000000000000000000000000000",
+            "0xfba3a4b50000000000000000000000000000000000",
+            "0xfba3a4b5000000000000000000000000000000000000",
+            "0xfba3a4b500000000000000000000000000000000000000",
+            "0xfba3a4b50000000000000000000000000000000000000000",
+            "0xfba3a4b5000000000000000000000000000000000000000000",
+            "0xfba3a4b500000000000000000000000000000000000000000000",
+            "0xfba3a4b50000000000000000000000000000000000000000000000",
+            "0xfba3a4b5000000000000000000000000000000000000000000000000",
+            "0xfba3a4b500000000000000000000000000000000000000000000000000",
+            "0xfba3a4b50000000000000000000000000000000000000000000000000000",
+            "0xfba3a4b5000000000000000000000000000000000000000000000000000000",
+            "0xfba3a4b500000000000000000000000000000000000000000000000000000000",
+        ]
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
         assert_eq!(logs, expected);
     }
 
