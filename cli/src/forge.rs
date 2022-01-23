@@ -1,4 +1,5 @@
 pub mod cmd;
+
 mod opts;
 mod utils;
 
@@ -6,11 +7,13 @@ use crate::cmd::Cmd;
 
 use ethers::solc::{Project, ProjectPathsConfig};
 use opts::forge::{Dependency, FullContractInfo, Opts, Subcommands};
-use std::process::Command;
 
 use clap::{IntoApp, Parser};
 use clap_complete::generate;
 
+use std::process::Command;
+
+#[tracing::instrument(err)]
 fn main() -> eyre::Result<()> {
     color_eyre::install()?;
     utils::subscriber();
@@ -22,6 +25,9 @@ fn main() -> eyre::Result<()> {
             outcome.ensure_ok()?;
         }
         Subcommands::Bind(cmd) => {
+            cmd.run()?;
+        }
+        Subcommands::Node(cmd) => {
             cmd.run()?;
         }
         Subcommands::Build(cmd) => {

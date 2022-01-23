@@ -231,13 +231,13 @@ mod tests {
         let precompiles = PRECOMPILES_MAP.clone();
         let mut evm = Executor::new(12_000_000, &cfg, &backend, &precompiles);
 
-        let (addr, _, _, _) =
+        let deploy_output =
             evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
 
-        let (res, _, _, _) = evm
+        let call_output = evm
             .call::<U256, _, _>(
                 Address::zero(),
-                addr,
+                deploy_output.retdata,
                 "time()(uint256)",
                 (),
                 0.into(),
@@ -246,6 +246,6 @@ mod tests {
             .unwrap();
 
         // https://etherscan.io/block/13292465
-        assert_eq!(res.as_u64(), 1632539668);
+        assert_eq!(call_output.retdata.as_u64(), 1632539668);
     }
 }

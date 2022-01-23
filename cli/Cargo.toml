@@ -23,6 +23,7 @@ clap = { version = "3.0.10", features = [
 clap_complete = "3.0.4"
 foundry-utils = { path = "../utils" }
 forge = { path = "../forge" }
+forge-node = { path = "../forge-node" }
 foundry-config = { path = "../config" }
 cast = { path = "../cast" }
 evm-adapters = { path = "../evm-adapters" }

@@ -1,4 +1,4 @@
-use crate::{call_tracing::CallTraceArena, Evm, FAUCET_ACCOUNT};
+use crate::{call_tracing::CallTraceArena, CallOutput, Evm, FAUCET_ACCOUNT};
 use ethers::types::{Address, Bytes, U256};
 
 use crate::sputnik::cheatcodes::debugger::DebugArena;
@@ -108,6 +108,14 @@ where
         })
     }
 
+    fn get_balance(&self, address: Address) -> U256 {
+        self.executor.state().basic(address).balance
+    }
+
+    fn get_nonce(&self, address: Address) -> U256 {
+        self.executor.state().basic(address).nonce
+    }
+
     fn set_balance(&mut self, address: Address, balance: U256) {
         self.executor
             .state_mut()
@@ -141,8 +149,8 @@ where
         from: Address,
         calldata: Bytes,
         value: U256,
-    ) -> Result<(Address, ExitReason, u64, Vec<String>)> {
-        let gas_used_before = self.executor.gas_used();
+    ) -> Result<CallOutput<Address, ExitReason>> {
+        let gas_used_before = self.executor.gas_left();
         let refunded_gas_before = self.executor.gas_refund();
 
         // The account's created contract address is pre-computed by using the account's nonce
@@ -153,6 +161,7 @@ where
 
         // get the deployment logs
         let logs = self.executor.logs();
+        let evm_logs = self.executor.evm_logs();
         // and clear them
         self.executor.clear_logs();
 
@@ -169,7 +178,7 @@ where
             Err(eyre::eyre!("deployment reverted, reason: {:?}", status))
         } else {
             tracing::trace!(?status, ?address, ?gas, "success");
-            Ok((address, status, gas.as_u64(), logs))
+            Ok(CallOutput { retdata: address, status, gas: gas.as_u64(), evm_logs, logs })
         }
     }
 
@@ -181,8 +190,8 @@ where
         calldata: Bytes,
         value: U256,
         _is_static: bool,
-    ) -> Result<(Bytes, ExitReason, u64, Vec<String>)> {
-        let gas_used_before = self.executor.gas_used();
+    ) -> Result<CallOutput<Bytes, ExitReason>> {
+        let gas_used_before = self.executor.gas_left();
         let refunded_gas_before = self.executor.gas_refund();
 
         let (status, retdata) =
@@ -200,11 +209,12 @@ where
 
         // get the logs
         let logs = self.executor.logs();
+        let evm_logs = self.executor.evm_logs();
         tracing::trace!(logs_after = ?self.executor.logs());
         // clear them
         self.executor.clear_logs();
 
-        Ok((retdata.into(), status, gas.as_u64(), logs))
+        Ok(CallOutput { retdata: retdata.into(), status, gas: gas.as_u64(), evm_logs, logs })
     }
 }
 
@@ -386,12 +396,12 @@ mod tests {
         let mut evm = vm();
         let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
 
-        let (addr, _, _, _) =
+        let deploy_output =
             evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
 
         let (status, res) = evm.executor.transact_call(
             Address::zero(),
-            addr,
+            deploy_output.retdata,
             0.into(),
             id("testFailGreeting()").to_vec(),
             evm.gas_limit,
@@ -406,17 +416,17 @@ mod tests {
         let mut evm = vm();
         let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
 
-        let (addr, _, _, _) =
+        let deploy_output =
             evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
 
         // call the setup function to deploy the contracts inside the test
-        let status = evm.setup(addr).unwrap().0;
+        let status = evm.setup(deploy_output.retdata).unwrap().0;
         assert_eq!(status, ExitReason::Succeed(ExitSucceed::Stopped));
 
         let err = evm
             .call::<(), _, _>(
                 Address::zero(),
-                addr,
+                deploy_output.retdata,
                 "testFailGreeting()",
                 (),
                 0.into(),
@@ -437,15 +447,16 @@ mod tests {
         let compiled = COMPILED.find("LargeContract").expect("could not find contract");
 
         let from = Address::random();
-        let (addr, _, _, _) =
+        let deploy_output =
             evm.deploy(from, compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
 
         // makes a call to the contract
         let sig = ethers::utils::id("foo()").to_vec();
-        let res = evm.call_raw(from, addr, sig.into(), 0.into(), true).unwrap();
+        let call_output =
+            evm.call_raw(from, deploy_output.retdata, sig.into(), 0.into(), true).unwrap();
         // the retdata cannot be empty
-        assert!(!res.0.as_ref().is_empty());
+        assert!(!call_output.retdata.as_ref().is_empty());
         // the call must be successful
-        assert!(matches!(res.1, ExitReason::Succeed(_)));
+        assert!(matches!(call_output.status, ExitReason::Succeed(_)));
     }
 }

@@ -3,7 +3,13 @@
 /// Abstraction over [Sputnik EVM](https://github.com/rust-blockchain/evm)
 pub mod sputnik;
 #[cfg(feature = "sputnik")]
-use crate::sputnik::cheatcodes::debugger::DebugArena;
+use crate::sputnik::{
+    cheatcodes::debugger::DebugArena, sputnik_evm::executor::stack::Log as EvmLog,
+};
+
+/// Abstraction over [evmodin](https://github.com/rust-blockchain/evm)
+#[cfg(feature = "evmodin")]
+pub mod evmodin;
 
 mod blocking_provider;
 use crate::call_tracing::CallTraceArena;
@@ -49,6 +55,21 @@ pub enum EvmError {
     Eyre(#[from] eyre::Error),
 }
 
+/// Return type from having executed a call on the EVM state.
+#[derive(Debug)]
+pub struct CallOutput<D, R> {
+    /// Data returned from the call. `Bytes` for a call, `Address` for a deploy.
+    pub retdata: D,
+    /// Execution status.
+    pub status: R,
+    /// Gas used by the call.
+    pub gas: u64,
+    /// Typed logs from the EVM call.
+    pub evm_logs: Vec<EvmLog>,
+    /// String-encoded logs from the EVM call.
+    pub logs: Vec<String>,
+}
+
 // TODO: Any reason this should be an async trait?
 /// Low-level abstraction layer for interfacing with various EVMs. Once instantiated, one
 /// only needs to specify the transaction parameters
@@ -73,6 +94,12 @@ pub trait Evm<State> {
     fn state(&self) -> &State;
 
     fn code(&self, address: Address) -> Vec<u8>;
+
+    /// Gets the balance at the specified address
+    fn get_balance(&self, address: Address) -> U256;
+
+    /// Gets the nonce at the specified address
+    fn get_nonce(&self, address: Address) -> U256;
 
     /// Sets the balance at the specified address
     fn set_balance(&mut self, address: Address, amount: U256);
@@ -103,15 +130,22 @@ pub trait Evm<State> {
         args: T, // derive arbitrary for Tokenize?
         value: U256,
         abi: Option<&Abi>,
-    ) -> std::result::Result<(D, Self::ReturnReason, u64, Vec<String>), EvmError> {
+    ) -> std::result::Result<CallOutput<D, Self::ReturnReason>, EvmError> {
         let func = func.into();
-        let (retdata, status, gas, logs) = self.call_unchecked(from, to, &func, args, value)?;
-        if Self::is_fail(&status) {
-            let reason = foundry_utils::decode_revert(retdata.as_ref(), abi).unwrap_or_default();
-            Err(EvmError::Execution { reason, gas_used: gas, logs })
+        let call_output = self.call_unchecked(from, to, &func, args, value)?;
+        if Self::is_fail(&call_output.status) {
+            let reason =
+                foundry_utils::decode_revert(call_output.retdata.as_ref(), abi).unwrap_or_default();
+            Err(EvmError::Execution { reason, gas_used: call_output.gas, logs: call_output.logs })
         } else {
-            let retdata = decode_function_data(&func, retdata, false)?;
-            Ok((retdata, status, gas, logs))
+            let retdata = decode_function_data(&func, call_output.retdata, false)?;
+            Ok(CallOutput {
+                retdata,
+                status: call_output.status,
+                gas: call_output.gas,
+                evm_logs: call_output.evm_logs,
+                logs: call_output.logs,
+            })
         }
     }
 
@@ -131,7 +165,7 @@ pub trait Evm<State> {
         func: &ethers::abi::Function,
         args: T, // derive arbitrary for Tokenize?
         value: U256,
-    ) -> Result<(Bytes, Self::ReturnReason, u64, Vec<String>)> {
+    ) -> Result<CallOutput<Bytes, Self::ReturnReason>> {
         let calldata = encode_function_data(func, args)?;
         #[allow(deprecated)]
         let is_static = func.constant.unwrap_or_default() ||
@@ -149,7 +183,7 @@ pub trait Evm<State> {
         calldata: Bytes,
         value: U256,
         is_static: bool,
-    ) -> Result<(Bytes, Self::ReturnReason, u64, Vec<String>)>;
+    ) -> Result<CallOutput<Bytes, Self::ReturnReason>>;
 
     /// Deploys the provided contract bytecode and returns the address
     fn deploy(
@@ -157,22 +191,22 @@ pub trait Evm<State> {
         from: Address,
         calldata: Bytes,
         value: U256,
-    ) -> Result<(Address, Self::ReturnReason, u64, Vec<String>)>;
+    ) -> Result<CallOutput<Address, Self::ReturnReason>>;
 
     /// Runs the `setUp()` function call to instantiate the contract's state
     fn setup(&mut self, address: Address) -> Result<(Self::ReturnReason, Vec<String>)> {
         let span = tracing::trace_span!("setup", ?address);
         let _enter = span.enter();
-        let (_, status, _, logs) =
+        let output =
             self.call::<(), _, _>(Address::zero(), address, "setUp()", (), 0.into(), None)?;
-        Ok((status, logs))
+        Ok((output.status, output.logs))
     }
 
     /// Runs the `failed()` function call to inspect the test contract's state and
     /// see whether the `failed` state var is set. This is to allow compatibility
     /// with dapptools-style DSTest smart contracts to preserve emitting of logs
     fn failed(&mut self, address: Address) -> Result<bool> {
-        let (failed, _, _, _) = self.call::<bool, _, _>(
+        let output = self.call::<bool, _, _>(
             Address::zero(),
             address,
             "failed()(bool)",
@@ -180,7 +214,7 @@ pub trait Evm<State> {
             0.into(),
             None,
         )?;
-        Ok(failed)
+        Ok(output.retdata)
     }
 
     /// Given a smart contract address, the result type and whether it's expected to fail,
@@ -243,13 +277,13 @@ mod test_helpers {
     });
 
     pub fn can_call_vm_directly<S, E: Evm<S>>(mut evm: E, compiled: CompactContractRef) {
-        let (addr, _, _, _) =
+        let deploy_output =
             evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
 
-        let (_, status1, _, _) = evm
-            .call::<(), _, _>(
+        let call_output_1 = evm
+            .call::<String, _, _>(
                 Address::zero(),
-                addr,
+                deploy_output.retdata,
                 "greet(string)",
                 "hi".to_owned(),
                 0.into(),
@@ -257,37 +291,44 @@ mod test_helpers {
             )
             .unwrap();
 
-        let (retdata, status2, _, _) = evm
+        let call_output_2 = evm
             .call::<String, _, _>(
                 Address::zero(),
-                addr,
+                deploy_output.retdata,
                 "greeting()(string)",
                 (),
                 0.into(),
                 compiled.abi,
             )
             .unwrap();
-        assert_eq!(retdata, "hi");
+        assert_eq!(call_output_1.retdata, "hi".to_string());
 
-        vec![status1, status2].iter().for_each(|reason| {
-            let res = evm.check_success(addr, reason, false);
+        vec![call_output_1.status, call_output_2.status].iter().for_each(|reason| {
+            let res = evm.check_success(deploy_output.retdata, reason, false);
             assert!(res);
         });
     }
 
     pub fn solidity_unit_test<S, E: Evm<S>>(mut evm: E, compiled: CompactContractRef) {
-        let (addr, _, _, _) =
+        let deploy_output =
             evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
 
         // call the setup function to deploy the contracts inside the test
-        let status1 = evm.setup(addr).unwrap().0;
+        let status1 = evm.setup(deploy_output.retdata).unwrap().0;
 
-        let (_, status2, _, _) = evm
-            .call::<(), _, _>(Address::zero(), addr, "testGreeting()", (), 0.into(), compiled.abi)
+        let call_output_2 = evm
+            .call::<(), _, _>(
+                Address::zero(),
+                deploy_output.retdata,
+                "testGreeting()",
+                (),
+                0.into(),
+                compiled.abi,
+            )
             .unwrap();
 
-        vec![status1, status2].iter().for_each(|reason| {
-            let res = evm.check_success(addr, reason, false);
+        vec![status1, call_output_2.status].iter().for_each(|reason| {
+            let res = evm.check_success(deploy_output.retdata, reason, false);
             assert!(res);
         });
 

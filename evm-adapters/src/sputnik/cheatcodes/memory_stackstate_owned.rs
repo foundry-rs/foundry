@@ -11,12 +11,15 @@ use ethers::{
     types::{H160, H256, U256},
 };
 
-use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, RwLock},
+};
 
 #[derive(Clone, Default)]
 pub struct RecordAccess {
-    pub reads: RefCell<BTreeMap<H160, Vec<H256>>>,
-    pub writes: RefCell<BTreeMap<H160, Vec<H256>>>,
+    pub reads: Arc<RwLock<BTreeMap<H160, Vec<H256>>>>,
+    pub writes: Arc<RwLock<BTreeMap<H160, Vec<H256>>>>,
 }
 
 #[derive(Clone, Default, Debug)]
@@ -117,8 +120,10 @@ impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
 /// instruction counter as the index into the sourcemap vector. An instruction counter (pointer) is
 /// just the program counter minus the sum of push bytes (i.e. PUSH1(0x01), would apply a -1 effect
 /// to all subsequent instruction counters)
-pub type Dip =
-    (BTreeMap<H160, Rc<BTreeMap<usize, usize>>>, BTreeMap<H160, Rc<BTreeMap<usize, usize>>>);
+pub type Dip = (
+    BTreeMap<H160, Arc<RwLock<BTreeMap<usize, usize>>>>,
+    BTreeMap<H160, Arc<RwLock<BTreeMap<usize, usize>>>>,
+);
 
 impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
     pub fn new(
@@ -196,7 +201,13 @@ impl<'config, B: Backend> Backend for MemoryStackStateOwned<'config, B> {
 
     fn storage(&self, address: H160, key: H256) -> H256 {
         if let Some(record_accesses) = &self.accesses {
-            record_accesses.reads.borrow_mut().entry(address).or_insert_with(Vec::new).push(key);
+            record_accesses
+                .reads
+                .write()
+                .unwrap()
+                .entry(address)
+                .or_insert_with(Vec::new)
+                .push(key);
         }
         self.substate
             .known_storage(address, key)
@@ -265,7 +276,13 @@ impl<'config, B: Backend> StackState<'config> for MemoryStackStateOwned<'config,
 
     fn set_storage(&mut self, address: H160, key: H256, value: H256) {
         if let Some(record_accesses) = &self.accesses {
-            record_accesses.writes.borrow_mut().entry(address).or_insert_with(Vec::new).push(key);
+            record_accesses
+                .writes
+                .write()
+                .unwrap()
+                .entry(address)
+                .or_insert_with(Vec::new)
+                .push(key);
         }
         self.substate.set_storage(address, key, value)
     }

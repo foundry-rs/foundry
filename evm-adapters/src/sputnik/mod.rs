@@ -15,7 +15,9 @@ use ethers::{
 
 use sputnik::{
     backend::MemoryVicinity,
-    executor::stack::{PrecompileFailure, PrecompileOutput, StackExecutor, StackState},
+    executor::stack::{
+        Log as EvmLog, PrecompileFailure, PrecompileOutput, StackExecutor, StackState,
+    },
     Config, CreateScheme, ExitError, ExitReason, ExitSucceed,
 };
 
@@ -108,6 +110,8 @@ pub trait SputnikExecutor<S> {
     /// execution
     fn logs(&self) -> Vec<String>;
 
+    fn evm_logs(&self) -> Vec<EvmLog>;
+
     /// Clears all logs in the current EVM instance, so that subsequent calls to
     /// `logs` do not print duplicate logs on shared EVM instances.
     fn clear_logs(&mut self);
@@ -195,6 +199,10 @@ impl<'a, 'b, S: StackState<'a>, P: PrecompileSet> SputnikExecutor<S>
     }
 
     fn raw_logs(&self) -> Vec<RawLog> {
+        vec![]
+    }
+
+    fn evm_logs(&self) -> Vec<EvmLog> {
         vec![]
     }
 

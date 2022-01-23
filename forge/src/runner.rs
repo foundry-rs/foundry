@@ -220,10 +220,10 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
         });
 
         // deploy an instance of the contract inside the runner in the EVM
-        let (addr, _, _, logs) =
+        let output =
             executor.deploy(self.sender, self.code.clone(), 0u32.into()).expect("couldn't deploy");
-        executor.set_balance(addr, self.evm_opts.initial_balance);
-        Ok((addr, executor, logs))
+        executor.set_balance(output.retdata, self.evm_opts.initial_balance);
+        Ok((output.retdata, executor, output.logs))
     }
 
     /// Runs all tests for a contract whose names match the provided regular expression
@@ -355,9 +355,9 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
             0.into(),
             Some(errors_abi),
         ) {
-            Ok((_, status, gas_used, execution_logs)) => {
-                logs.extend(execution_logs);
-                (status, None, gas_used, logs)
+            Ok(output) => {
+                logs.extend(output.logs.clone());
+                (output.status, None, output.gas, output.logs)
             }
             Err(err) => match err {
                 EvmError::Execution { reason, gas_used, logs: execution_logs } => {
@@ -473,14 +473,13 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
                 if prev {
                     let _ = evm.set_tracing_enabled(true);
                 }
-                let (_retdata, status, _gas, execution_logs) =
-                    evm.call_raw(self.sender, address, bytes.clone(), 0.into(), false)?;
-                if is_fail(evm, status) {
-                    logs.extend(execution_logs);
+                let output = evm.call_raw(self.sender, address, bytes.clone(), 0.into(), false)?;
+                if is_fail(evm, output.status) {
+                    logs.extend(output.logs);
                     // add reverted logs
                     logs.extend(evm.all_logs());
                 } else {
-                    logs.extend(execution_logs);
+                    logs.extend(output.logs);
                 }
                 self.update_traces(
                     &mut traces,

@@ -12,6 +12,7 @@ use foundry_config::{
     Config,
 };
 use serde::Serialize;
+use sputnik::backend::MemoryVicinity;
 
 /// `EvmArgs` and `EnvArgs` take the highest precedence in the Config/Figment hierarchy.
 /// All vars are opt-in, their default values are expected to be set by the
@@ -153,4 +154,44 @@ pub struct EnvArgs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_gas_limit: Option<u64>,
     // TODO: Add configuration option for base fee.
+}
+
+impl EnvArgs {
+    #[cfg(feature = "sputnik")]
+    pub fn sputnik_state(&self) -> MemoryVicinity {
+        MemoryVicinity {
+            chain_id: self.chain_id.unwrap_or_default().into(),
+
+            gas_price: self.gas_price.unwrap_or_default().into(),
+            origin: self.tx_origin.unwrap_or_default(),
+
+            block_coinbase: self.block_coinbase.unwrap_or_default(),
+            block_number: self.block_number.unwrap_or_default().into(),
+            block_timestamp: self.block_timestamp.unwrap_or_default().into(),
+            block_difficulty: self.block_difficulty.unwrap_or_default().into(),
+            block_base_fee_per_gas: self.block_base_fee_per_gas.unwrap_or_default().into(),
+            block_gas_limit: self
+                .block_gas_limit
+                .unwrap_or_else(|| self.gas_limit.unwrap_or_default())
+                .into(),
+            block_hashes: Vec::new(),
+        }
+    }
+
+    #[cfg(feature = "evmodin")]
+    pub fn evmodin_state(&self) -> MockedHost {
+        let mut host = MockedHost::default();
+
+        host.tx_context.chain_id = self.chain_id.unwrap_or_default().into();
+        host.tx_context.tx_gas_price = self.gas_price.unwrap_or_default().into();
+        host.tx_context.tx_origin = self.tx_origin.unwrap_or_default();
+        host.tx_context.block_coinbase = self.block_coinbase.unwrap_or_default();
+        host.tx_context.block_number = self.block_number.unwrap_or_default();
+        host.tx_context.block_timestamp = self.block_timestamp.unwrap_or_default();
+        host.tx_context.block_difficulty = self.block_difficulty.unwrap_or_default().into();
+        host.tx_context.block_gas_limit =
+            self.block_gas_limit.unwrap_or(self.gas_limit.unwrap_or_default());
+
+        host
+    }
 }

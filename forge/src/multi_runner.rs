@@ -7,12 +7,10 @@ use evm_adapters::{
 use foundry_utils::PostLinkInput;
 use sputnik::{backend::Backend, Config};
 
-use ethers::solc::Artifact;
-
 use ethers::{
     abi::{Abi, Event, Function},
     prelude::ArtifactOutput,
-    solc::Project,
+    solc::{Artifact, Project},
     types::{Address, H256, U256},
 };
 

@@ -8,20 +8,24 @@ use crate::{
     sputnik::{cheatcodes::memory_stackstate_owned::ExpectedEmit, Executor, SputnikExecutor},
     Evm,
 };
-use std::collections::BTreeMap;
 
 use std::{fs::File, io::Read, path::Path};
 
 use sputnik::{
     backend::Backend,
     executor::stack::{
-        Log, PrecompileFailure, PrecompileOutput, PrecompileSet, StackExecutor, StackExitKind,
-        StackState, StackSubstateMetadata,
+        Log as EvmLog, PrecompileFailure, PrecompileOutput, PrecompileSet, StackExecutor,
+        StackExitKind, StackState, StackSubstateMetadata,
     },
     gasometer, Capture, Config, Context, CreateScheme, ExitError, ExitReason, ExitRevert,
     ExitSucceed, Handler, Memory, Opcode, Runtime, Transfer,
 };
-use std::{process::Command, rc::Rc};
+use std::{
+    collections::BTreeMap,
+    process::Command,
+    rc::Rc,
+    sync::{Arc, RwLock},
+};
 
 use ethers::{
     abi::{RawLog, Token},
@@ -107,7 +111,7 @@ pub struct CheatcodeHandler<H> {
     console_logs: Vec<String>,
 }
 
-pub(crate) fn convert_log(log: Log) -> Option<String> {
+pub(crate) fn convert_log(log: EvmLog) -> Option<String> {
     use HevmConsoleEvents::*;
     let log = RawLog { topics: log.topics, data: log.data };
     let event = HevmConsoleEvents::decode_log(&log).ok()?;
@@ -322,6 +326,16 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
     fn raw_logs(&self) -> Vec<RawLog> {
         let logs = self.state().substate.logs().to_vec();
         logs.into_iter().map(|log| RawLog { topics: log.topics, data: log.data }).collect()
+    }
+
+    fn evm_logs(&self) -> Vec<EvmLog> {
+        let logs = self.state().substate.logs().to_vec();
+        logs.into_iter()
+            .filter(|log| {
+                let log = RawLog { topics: log.topics.clone(), data: log.data.clone() };
+                HevmConsoleEvents::decode_log(&log).is_ok()
+            })
+            .collect()
     }
 
     fn traces(&self) -> Vec<CallTraceArena> {
@@ -815,21 +829,23 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                     res = ethers::abi::encode(&[
                         record_accesses
                             .reads
-                            .borrow_mut()
+                            .write()
+                            .unwrap()
                             .remove(&address)
                             .unwrap_or_default()
                             .into_tokens()[0]
                             .clone(),
                         record_accesses
                             .writes
-                            .borrow_mut()
+                            .write()
+                            .unwrap()
                             .remove(&address)
                             .unwrap_or_default()
                             .into_tokens()[0]
                             .clone(),
                     ]);
-                    if record_accesses.reads.borrow().len() == 0 &&
-                        record_accesses.writes.borrow().len() == 0
+                    if record_accesses.reads.read().unwrap().len() == 0 &&
+                        record_accesses.writes.read().unwrap().len() == 0
                     {
                         self.state_mut().accesses = None;
                     }
@@ -917,7 +933,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         runtime: &mut Runtime,
         code: Rc<Vec<u8>>,
         steps: &mut Vec<DebugStep>,
-        pc_ic: Rc<BTreeMap<usize, usize>>,
+        pc_ic: Arc<RwLock<BTreeMap<usize, usize>>>,
     ) -> bool {
         // grab the pc, opcode and stack
         let pc = runtime.machine().position().as_ref().map(|p| *p).unwrap_or_default();
@@ -948,7 +964,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 memory: runtime.machine().memory().clone(),
                 op: wrapped_op,
                 push_bytes,
-                ic: *pc_ic.get(&pc).as_ref().copied().unwrap_or(&0usize),
+                ic: *pc_ic.read().unwrap().get(&pc).as_ref().copied().unwrap_or(&0usize),
                 total_gas_used: self.handler.used_gas(),
             });
             match op {
@@ -975,7 +991,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 memory: runtime.machine().memory().clone(),
                 op: OpCode::from(Opcode::INVALID),
                 push_bytes,
-                ic: *pc_ic.get(&pc).as_ref().copied().unwrap_or(&0usize),
+                ic: *pc_ic.read().unwrap().get(&pc).as_ref().copied().unwrap_or(&0usize),
                 total_gas_used: self.handler.used_gas(),
             });
             true
@@ -1023,7 +1039,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                     i += 1;
                 }
             }
-            let pc_ic = Rc::new(pc_ic);
+            let pc_ic = Arc::new(RwLock::new(pc_ic));
 
             dip.insert(address, pc_ic.clone());
             pc_ic
@@ -1218,7 +1234,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         ) {
             return match result {
                 Ok(PrecompileOutput { exit_status, output, cost, logs }) => {
-                    for Log { address, topics, data } in logs {
+                    for EvmLog { address, topics, data } in logs {
                         match self.log(address, topics, data) {
                             Ok(_) => continue,
                             Err(error) => {
@@ -1692,7 +1708,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
         }
 
         if let Some(decoded) =
-            convert_log(Log { address, topics: topics.clone(), data: data.clone() })
+            convert_log(EvmLog { address, topics: topics.clone(), data: data.clone() })
         {
             self.state_mut().all_logs.push(decoded);
         }
@@ -1837,12 +1853,19 @@ mod tests {
     fn ds_test_logs() {
         let mut evm = vm();
         let compiled = COMPILED.find("DebugLogs").expect("could not find contract");
-        let (addr, _, _, _) =
+        let deploy_output =
             evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
 
         // after the evm call is done, we call `logs` and print it all to the user
-        let (_, _, _, logs) = evm
-            .call::<(), _, _>(Address::zero(), addr, "test_log()", (), 0.into(), compiled.abi)
+        let call_output = evm
+            .call::<(), _, _>(
+                Address::zero(),
+                deploy_output.retdata,
+                "test_log()",
+                (),
+                0.into(),
+                compiled.abi,
+            )
             .unwrap();
         let expected = [
             "Hi",
@@ -1873,7 +1896,7 @@ mod tests {
         .iter()
         .map(ToString::to_string)
         .collect::<Vec<_>>();
-        assert_eq!(logs, expected);
+        assert_eq!(call_output.logs, expected);
     }
 
     #[test]
@@ -1881,12 +1904,19 @@ mod tests {
         let mut evm = vm();
 
         let compiled = COMPILED.find("ConsoleLogs").expect("could not find contract");
-        let (addr, _, _, _) =
+        let deploy_output =
             evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
 
         // after the evm call is done, we call `logs` and print it all to the user
-        let (_, _, _, logs) = evm
-            .call::<(), _, _>(Address::zero(), addr, "test_log()", (), 0.into(), compiled.abi)
+        let call_output = evm
+            .call::<(), _, _>(
+                Address::zero(),
+                deploy_output.retdata,
+                "test_log()",
+                (),
+                0.into(),
+                compiled.abi,
+            )
             .unwrap();
         let expected = [
             "0x1111111111111111111111111111111111111111",
@@ -1899,12 +1929,19 @@ mod tests {
         .iter()
         .map(ToString::to_string)
         .collect::<Vec<_>>();
-        assert_eq!(logs, expected);
+        assert_eq!(call_output.logs, expected);
 
-        let (_, _, _, logs) = evm
-            .call::<(), _, _>(Address::zero(), addr, "test_log()", (), 0.into(), compiled.abi)
+        let call_output = evm
+            .call::<(), _, _>(
+                Address::zero(),
+                deploy_output.retdata,
+                "test_log()",
+                (),
+                0.into(),
+                compiled.abi,
+            )
             .unwrap();
-        assert_eq!(logs, expected);
+        assert_eq!(call_output.logs, expected);
     }
 
     #[test]
@@ -1912,19 +1949,26 @@ mod tests {
         let mut evm = vm();
 
         let compiled = COMPILED.find("ConsoleLogs").expect("could not find contract");
-        let (addr, _, _, _) =
+        let deploy_output =
             evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
 
         // after the evm call is done, we call `logs` and print it all to the user
-        let (_, _, _, logs) = evm
-            .call::<(), _, _>(Address::zero(), addr, "test_log_types()", (), 0.into(), compiled.abi)
+        let call_output = evm
+            .call::<(), _, _>(
+                Address::zero(),
+                deploy_output.retdata,
+                "test_log_types()",
+                (),
+                0.into(),
+                compiled.abi,
+            )
             .unwrap();
         let expected =
             ["String", "1337", "-20", "1245", "true", "0x1111111111111111111111111111111111111111"]
                 .iter()
                 .map(ToString::to_string)
                 .collect::<Vec<_>>();
-        assert_eq!(logs, expected);
+        assert_eq!(call_output.logs, expected);
     }
 
     #[test]
@@ -1936,7 +1980,7 @@ mod tests {
             evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
 
         // after the evm call is done, we call `logs` and print it all to the user
-        let (_, _, _, logs) = evm
+        let call_output = evm
             .call::<(), _, _>(
                 Address::zero(),
                 addr,
@@ -1985,7 +2029,7 @@ mod tests {
         .iter()
         .map(ToString::to_string)
         .collect::<Vec<_>>();
-        assert_eq!(logs, expected);
+        assert_eq!(call_output.logs, expected);
     }
 
     #[test]
@@ -1993,14 +2037,14 @@ mod tests {
         let mut evm = vm();
 
         let compiled = COMPILED.find("DebugLogs").expect("could not find contract");
-        let (addr, _, _, _) =
+        let deploy_output =
             evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
 
         // after the evm call is done, we call `logs` and print it all to the user
-        let (_, _, _, logs) = evm
+        let call_output = evm
             .call::<(), _, _>(
                 Address::zero(),
-                addr,
+                deploy_output.retdata,
                 "test_log_elsewhere()",
                 (),
                 0.into(),
@@ -2011,14 +2055,14 @@ mod tests {
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>();
-        assert_eq!(logs, expected);
+        assert_eq!(call_output.logs, expected);
     }
 
     #[test]
     fn cheatcodes() {
         let mut evm = vm_no_limit();
         let compiled = COMPILED.find("CheatCodes").expect("could not find contract");
-        let (addr, _, _, _) =
+        let deploy_output =
             evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
 
         let state = evm.state().clone();
@@ -2027,27 +2071,27 @@ mod tests {
         let runner = proptest::test_runner::TestRunner::new(cfg);
 
         // ensure the storage slot is set at 10 anyway
-        let (storage_contract, _, _, _) = evm
+        let storage_data_output = evm
             .call::<Address, _, _>(
                 Address::zero(),
-                addr,
+                deploy_output.retdata,
                 "store()(address)",
                 (),
                 0.into(),
                 compiled.abi,
             )
             .unwrap();
-        let (slot, _, _, _) = evm
+        let slot_data_output = evm
             .call::<U256, _, _>(
                 Address::zero(),
-                storage_contract,
+                storage_data_output.retdata,
                 "slot0()(uint256)",
                 (),
                 0.into(),
                 compiled.abi,
             )
             .unwrap();
-        assert_eq!(slot, 10.into());
+        assert_eq!(slot_data_output.retdata, 10.into());
 
         let evm = FuzzedExecutor::new(&mut evm, runner, Address::zero());
 
@@ -2060,11 +2104,17 @@ mod tests {
 
             let should_fail = func.name.starts_with("testFail");
             if func.inputs.is_empty() {
-                let (_, reason, _, _) =
-                    evm.as_mut().call_unchecked(Address::zero(), addr, func, (), 0.into()).unwrap();
-                assert!(evm.as_mut().check_success(addr, &reason, should_fail));
+                let unchecked_call = evm
+                    .as_mut()
+                    .call_unchecked(Address::zero(), deploy_output.retdata, func, (), 0.into())
+                    .unwrap();
+                assert!(evm.as_mut().check_success(
+                    deploy_output.retdata,
+                    &unchecked_call.status,
+                    should_fail
+                ));
             } else {
-                assert!(evm.fuzz(func, addr, should_fail, Some(abi)).is_ok());
+                assert!(evm.fuzz(func, deploy_output.retdata, should_fail, Some(abi)).is_ok());
             }
 
             evm.as_mut().reset(state.clone());
@@ -2077,11 +2127,18 @@ mod tests {
         evm.executor.enable_ffi = false;
 
         let compiled = COMPILED.find("CheatCodes").expect("could not find contract");
-        let (addr, _, _, _) =
+        let deploy_output =
             evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
 
         let err = evm
-            .call::<(), _, _>(Address::zero(), addr, "testFFI()", (), 0.into(), compiled.abi)
+            .call::<(), _, _>(
+                Address::zero(),
+                deploy_output.retdata,
+                "testFFI()",
+                (),
+                0.into(),
+                compiled.abi,
+            )
             .unwrap_err();
         let reason = match err {
             crate::EvmError::Execution { reason, .. } => reason,
@@ -2096,7 +2153,7 @@ mod tests {
         let mut evm = vm_tracing(false);
 
         let compiled = COMPILED.find("Trace").expect("could not find contract");
-        let (addr, _, _, _) = evm
+        let deploy_output = evm
             .deploy(
                 Address::zero(),
                 compiled.bin.unwrap().clone().into_bytes().expect("shouldn't be linked"),
@@ -2105,10 +2162,10 @@ mod tests {
             .unwrap();
 
         // after the evm call is done, we call `logs` and print it all to the user
-        let (_, _, _, _) = evm
+        let _call_output = evm
             .call::<(), _, _>(
                 Address::zero(),
-                addr,
+                deploy_output.retdata,
                 "recurseCall(uint256,uint256)",
                 (U256::from(2u32), U256::from(0u32)),
                 0u32.into(),
@@ -2161,7 +2218,7 @@ mod tests {
         let mut evm = vm_tracing(false);
 
         let compiled = COMPILED.find("Trace").expect("could not find contract");
-        let (addr, _, _, _) = evm
+        let deploy_output = evm
             .deploy(
                 Address::zero(),
                 compiled.bin.unwrap().clone().into_bytes().expect("shouldn't be linked"),
@@ -2170,10 +2227,10 @@ mod tests {
             .unwrap();
 
         // after the evm call is done, we call `logs` and print it all to the user
-        let (_, _, _, _) = evm
+        let _call_output = evm
             .call::<(), _, _>(
                 Address::zero(),
-                addr,
+                deploy_output.retdata,
                 "recurseCreate(uint256,uint256)",
                 (U256::from(3u32), U256::from(0u32)),
                 0u32.into(),

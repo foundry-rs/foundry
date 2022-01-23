@@ -83,20 +83,20 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
                 // Before each test, we must reset to the initial state
                 evm.reset(pre_test_state.clone());
 
-                let (returndata, reason, gas, _) = evm
+                let call_output = evm
                     .call_raw(self.sender, address, calldata.clone(), 0.into(), false)
                     .expect("could not make raw evm call");
 
                 // We must check success before resetting the state, otherwise resetting the state
                 // will also reset the `failed` state variable back to false.
-                let success = evm.check_success(address, &reason, should_fail);
+                let success = evm.check_success(address, &call_output.status, should_fail);
 
                 // store the result of this test case
-                let _ = return_reason.borrow_mut().insert(reason);
+                let _ = return_reason.borrow_mut().insert(call_output.status);
 
                 if !success {
-                    let revert =
-                        foundry_utils::decode_revert(returndata.as_ref(), abi).unwrap_or_default();
+                    let revert = foundry_utils::decode_revert(call_output.retdata.as_ref(), abi)
+                        .unwrap_or_default();
                     let _ = revert_reason.borrow_mut().insert(revert);
                 }
 
@@ -106,14 +106,14 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
                     "{}, expected failure: {}, reason: '{}'",
                     func.name,
                     should_fail,
-                    match foundry_utils::decode_revert(returndata.as_ref(), abi) {
+                    match foundry_utils::decode_revert(call_output.retdata.as_ref(), abi) {
                         Ok(e) => e,
                         Err(e) => e.to_string(),
                     }
                 );
 
                 // push test case to the case set
-                fuzz_cases.borrow_mut().push(FuzzCase { calldata, gas });
+                fuzz_cases.borrow_mut().push(FuzzCase { calldata, gas: call_output.gas });
 
                 Ok(())
             })
@@ -315,13 +315,13 @@ mod tests {
         let mut evm = vm();
 
         let compiled = COMPILED.find("FuzzTests").expect("could not find contract");
-        let (addr, _, _, _) =
+        let deploy_output =
             evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
 
         let evm = fuzzvm(&mut evm);
 
         let func = compiled.abi.unwrap().function("testFuzzedRevert").unwrap();
-        let res = evm.fuzz(func, addr, false, compiled.abi);
+        let res = evm.fuzz(&func, deploy_output.retdata, false, compiled.abi);
         let error = res.test_error.unwrap();
         let revert_reason = error.revert_reason;
         assert_eq!(revert_reason, "fuzztest-revert");
