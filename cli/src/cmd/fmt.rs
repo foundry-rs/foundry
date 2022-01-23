@@ -1,10 +1,14 @@
-use crate::cmd::Cmd;
-use ethers::solc::ProjectPathsConfig;
-use forge_fmt::{Formatter, FormatterConfig, Visitable};
-use rayon::prelude::*;
-use std::path::PathBuf;
+use std::{fmt::Write, path::PathBuf};
 
 use clap::Parser;
+use console::{style, Style};
+use ethers::solc::ProjectPathsConfig;
+use rayon::prelude::*;
+use similar::{ChangeTag, TextDiff};
+
+use forge_fmt::{Formatter, FormatterConfig, Visitable};
+
+use crate::cmd::Cmd;
 
 #[derive(Debug, Clone, Parser)]
 pub struct FmtArgs {
@@ -17,6 +21,17 @@ pub struct FmtArgs {
         long
     )]
     check: bool,
+}
+
+struct Line(Option<usize>);
+
+impl std::fmt::Display for Line {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self.0 {
+            None => write!(f, "    "),
+            Some(idx) => write!(f, "{:<4}", idx + 1),
+        }
+    }
 }
 
 impl Cmd for FmtArgs {
@@ -44,9 +59,9 @@ impl Cmd for FmtArgs {
             vec![]
         };
 
-        paths.par_iter().map(|path| {
+        let diffs = paths.par_iter().enumerate().map(|(i, path)| {
             let source = std::fs::read_to_string(&path)?;
-            let mut source_unit = solang_parser::parse(&source, 0)
+            let mut source_unit = solang_parser::parse(&source, i)
                 .map_err(|diags| eyre::eyre!(
                         "Failed to parse Solidity code for {}. Leave source unchanged.\nDebug info: {:?}",
                         path.to_string_lossy(),
@@ -68,15 +83,63 @@ impl Cmd for FmtArgs {
             })?;
 
             if self.check {
-                if source != output {
-                    std::process::exit(1);
+                let diff = TextDiff::from_lines(&source, &output);
+
+                if diff.ratio() < 1.0 {
+                    let mut diff_summary = String::new();
+
+                    writeln!(diff_summary, "Diff in {}:", path.to_string_lossy())?;
+                    for (j, group) in diff.grouped_ops(3).iter().enumerate() {
+                        if j > 0 {
+                            writeln!(diff_summary, "{:-^1$}", "-", 80)?;
+                        }
+                        for op in group {
+                            for change in diff.iter_inline_changes(op) {
+                                let (sign, s) = match change.tag() {
+                                    ChangeTag::Delete => ("-", Style::new().red()),
+                                    ChangeTag::Insert => ("+", Style::new().green()),
+                                    ChangeTag::Equal => (" ", Style::new().dim()),
+                                };
+                                write!(
+                                    diff_summary,
+                                    "{}{} |{}",
+                                    style(Line(change.old_index())).dim(),
+                                    style(Line(change.new_index())).dim(),
+                                    s.apply_to(sign).bold(),
+                                )?;
+                                for (emphasized, value) in change.iter_strings_lossy() {
+                                    if emphasized {
+                                        write!(diff_summary, "{}", s.apply_to(value).underlined().on_black())?;
+                                    } else {
+                                        write!(diff_summary, "{}", s.apply_to(value))?;
+                                    }
+                                }
+                                if change.missing_newline() {
+                                    writeln!(diff_summary)?;
+                                }
+                            }
+                        }
+                    }
+
+                    return Ok(Some(diff_summary))
                 }
             } else {
                 std::fs::write(path, output)?;
             }
 
-            Ok(())
-        }).collect::<eyre::Result<_>>()?;
+            Ok(None)
+        }).collect::<eyre::Result<Vec<Option<String>>>>()?.into_iter().filter_map(|result| result).collect::<Vec<_>>();
+
+        if diffs.len() > 0 {
+            for (i, diff) in diffs.iter().enumerate() {
+                if i > 0 {
+                    println!();
+                }
+                print!("{}", diff);
+            }
+
+            std::process::exit(1);
+        }
 
         Ok(())
     }
