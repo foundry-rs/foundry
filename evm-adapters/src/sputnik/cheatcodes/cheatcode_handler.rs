@@ -1874,17 +1874,11 @@ mod tests {
         let (_, _, _, logs) = evm
             .call::<(), _, _>(Address::zero(), addr, "test_log_types()", (), 0.into(), compiled.abi)
             .unwrap();
-        let expected = [
-            "String",
-            "1337",
-            "-20",
-            "1245",
-            "true",
-            "0x1111111111111111111111111111111111111111",
-        ]
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>();
+        let expected =
+            ["String", "1337", "-20", "1245", "true", "0x1111111111111111111111111111111111111111"]
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>();
         assert_eq!(logs, expected);
     }
 
@@ -1898,7 +1892,14 @@ mod tests {
 
         // after the evm call is done, we call `logs` and print it all to the user
         let (_, _, _, logs) = evm
-            .call::<(), _, _>(Address::zero(), addr, "test_log_types_bytes()", (), 0.into(), compiled.abi)
+            .call::<(), _, _>(
+                Address::zero(),
+                addr,
+                "test_log_types_bytes()",
+                (),
+                0.into(),
+                compiled.abi,
+            )
             .unwrap();
         let expected = [
             r#"Bytes(b"logBytes")"#,
@@ -1934,11 +1935,11 @@ mod tests {
             "0xfba3a4b500000000000000000000000000000000000000000000000000",
             "0xfba3a4b50000000000000000000000000000000000000000000000000000",
             "0xfba3a4b5000000000000000000000000000000000000000000000000000000",
-            "0xfba3a4b500000000000000000000000000000000000000000000000000000000"
+            "0xfba3a4b500000000000000000000000000000000000000000000000000000000",
         ]
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>();
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
         assert_eq!(logs, expected);
     }
 
