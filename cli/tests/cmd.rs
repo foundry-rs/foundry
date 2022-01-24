@@ -137,6 +137,13 @@ forgetest_init!(can_override_config, |prj: TestProject, mut cmd: TestCommand| {
         Remapping::from(config.remappings[0].clone()).to_string()
     );
 
+    let config = prj.config_from_output(["--remappings", "other-key/=lib/other/"]);
+    assert_eq!(config.remappings.len(), 2);
+    assert_eq!(
+        format!("other-key/={}/", prj.root().join("lib/other").display()),
+        Remapping::from(config.remappings[1].clone()).to_string()
+    );
+
     cmd.unset_env("DAPP_REMAPPINGS");
     pretty_err(&remappings_txt, fs::remove_file(&remappings_txt));
 
