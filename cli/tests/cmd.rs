@@ -58,7 +58,7 @@ forgetest!(can_init_repo_with_config, |prj: TestProject, mut cmd: TestCommand| {
         basic.remappings,
         vec![Remapping::from_str("ds-test/=lib/ds-test/src/").unwrap().into()]
     );
-    assert_eq!(basic, Config::load().into_basic());
+    assert_eq!(basic, Config::load_with_root(prj.root()).into_basic());
 
     // can detect root
     assert_eq!(prj.root(), forge_utils::find_project_root_path().unwrap());
