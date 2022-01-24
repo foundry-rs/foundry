@@ -215,7 +215,9 @@ First, see if the answer to your question can be found in the API documentation.
 an
 [issue](https://github.com/gakonst/foundry/issues/new) with the question.
 
-Join the [foundry telegram](https://t.me/foundry_rs) to chat with the community!
+To join the Foundry community, you can use our [main telegram](https://t.me/foundry_rs) to chat with us!
+
+To receive help with Foundry, you can use our [support telegram](https://t.me/+pqodMdZCoQQyZGI6) to asky any questions you may have.
 
 ## Acknowledgements
 
