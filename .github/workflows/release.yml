@@ -7,19 +7,50 @@ on:
   schedule:
     - cron: '0 0 * * *'
   workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Tag name to release or nightly for nightly releases'
-        required: true
-        default: nightly
 
 env:
-  TAG_NAME: ${{ (github.event_name == 'schedule' && 'nightly') || (github.event_name == 'workflow_dispatch' && github.event.inputs.tag) || github.ref_name }}
+  IS_NIGHTLY: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
 
 jobs:
+  prepare:
+    name: Prepare release
+    runs-on: ubuntu-latest
+
+    outputs:
+      tag_name: ${{ steps.release_info.outputs.tag_name }}
+      release_name: ${{ steps.release_info.outputs.release_name }}
+      changelog: ${{ steps.build_changelog.outputs.changelog }}
+
+    steps:
+      - name: Move nightly tag
+        if: ${{ env.IS_NIGHTLY }}
+        uses: actions/github-script@v5
+        with:
+          script: |
+            const moveTag = require('./.github/scripts/move-tag.js')
+            await moveTag({ github, context }, 'nightly')
+
+      - name: Compute release name and tag
+        id: release_info
+        run: |
+          if [[ $IS_NIGHTLY ]]; then
+            echo "::set-output name=tag_name::nightly-${GITHUB_SHA}"
+            echo "::set-output name=release_name::Nightly ($(date '+%Y-%m-%d'))"
+          else
+            echo "::set-output name=tag_name::${GITHUB_REF_NAME}"
+            echo "::set-output name=release_name::${GITHUB_REF_NAME}"
+          fi
+
+      - name: Build changelog
+        id: build_changelog
+        uses: mikepenz/release-changelog-builder-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   release:
     name: ${{ matrix.job.target }} (${{ matrix.job.os }})
     runs-on: ${{ matrix.job.os }}
+    needs: prepare
     strategy:
       matrix:
         job:
@@ -80,20 +111,21 @@ jobs:
           PLATFORM_NAME: ${{ matrix.job.platform }}
           TARGET: ${{ matrix.job.target }}
           ARCH: ${{ matrix.job.arch }}
+          VERSION_NAME: ${{ (env.IS_NIGHTLY && 'nightly') || needs.prepare.outputs.tag_name }}
         run: |
           if [ "$PLATFORM_NAME" == "linux" ]; then
-            tar -czvf "foundry_${TAG_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C ./target/${TARGET}/release forge cast
-            echo "::set-output name=file_name::foundry_${TAG_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz"
+            tar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C ./target/${TARGET}/release forge cast
+            echo "::set-output name=file_name::foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz"
           elif [ "$PLATFORM_NAME" == "darwin" ]; then
             # We need to use gtar here otherwise the archive is corrupt.
             # See: https://github.com/actions/virtual-environments/issues/2619
-            gtar -czvf "foundry_${TAG_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C ./target/${TARGET}/release forge cast
-            echo "::set-output name=file_name::foundry_${TAG_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz"
+            gtar -czvf "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz" -C ./target/${TARGET}/release forge cast
+            echo "::set-output name=file_name::foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.tar.gz"
           else
             cd ./target/${TARGET}/release
-            7z a -tzip "foundry_${TAG_NAME}_${PLATFORM_NAME}_${ARCH}.zip" forge.exe cast.exe
-            mv "foundry_${TAG_NAME}_${PLATFORM_NAME}_${ARCH}.zip" ../../../
-            echo "::set-output name=file_name::foundry_${TAG_NAME}_${PLATFORM_NAME}_${ARCH}.zip"
+            7z a -tzip "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" forge.exe cast.exe
+            mv "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" ../../../
+            echo "::set-output name=file_name::foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip"
           fi
         shell: bash
 
@@ -113,38 +145,25 @@ jobs:
           echo "::set-output name=foundry_man::foundry_man_${TAG_NAME}.tar.gz"
         shell: bash
 
-      - name: Build changelog
-        id: build_changelog
-        if: ${{ env.TAG_NAME != 'nightly' }}
-        uses: mikepenz/release-changelog-builder-action@v2.4.2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Move nightly tag
-        if: ${{ env.TAG_NAME == 'nightly' }}
-        uses: actions/github-script@v5
-        with:
-          script: |
-            try {
-              await github.rest.git.updateRef({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                ref: 'tags/nightly',
-                sha: context.sha,
-                force: true
-              })
-            } catch (err) {
-              console.error(`Failed to move nightly tag.`)
-              console.error(`This should only happen the first time.`)
-              console.error(err)
-            }
-
       - name: Create release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ env.TAG_NAME }}
-          prerelease: ${{ env.TAG_NAME == 'nightly' }}
-          body: ${{ steps.build_changelog.outputs.changelog }}
-          files:  |
+          name: ${{ needs.prepare.outputs.release_name }}
+          tag_name: ${{ needs.prepare.outputs.tag_name }}
+          prerelease: ${{ env.IS_NIGHTLY }}
+          body: ${{ needs.prepare.outputs.changelog }}
+          files: |
             ${{ steps.artifacts.outputs.file_name }}
             ${{ steps.man.outputs.foundry_man }}
+  cleanup:
+    name: Release cleanup
+    runs-on: ubuntu-latest
+    needs: release
+
+    steps:
+      - name: Delete old nightlies
+        uses: actions/github-script@v5
+        with:
+          script: |
+            const prunePrereleases = require('./.github/scripts/prune-prereleases.js')
+            await prunePrereleases({github, context})
