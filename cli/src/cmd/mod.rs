@@ -42,13 +42,14 @@ pub mod config;
 pub mod create;
 pub mod flatten;
 pub mod init;
+pub mod install;
 pub mod remappings;
 pub mod run;
 pub mod snapshot;
 pub mod test;
 pub mod verify;
 
-use crate::opts::forge::{ContractInfo, Dependency};
+use crate::opts::forge::ContractInfo;
 use ethers::{
     abi::Abi,
     prelude::Graph,
@@ -68,8 +69,6 @@ pub trait Cmd: clap::Parser + Sized {
 use ethers::solc::{
     artifacts::BytecodeObject, MinimalCombinedArtifacts, Project, ProjectCompileOutput,
 };
-
-use std::process::Command;
 
 /// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
 /// compilation was successful or if there was a cache hit.
@@ -225,49 +224,4 @@ fn get_artifact_from_path(
             .bin_runtime
             .ok_or_else(|| eyre::Error::msg(format!("bytecode not found for {}", name)))?,
     ))
-}
-
-pub(crate) fn install(
-    root: impl AsRef<std::path::Path>,
-    dependencies: Vec<Dependency>,
-) -> eyre::Result<()> {
-    let libs = std::path::Path::new("lib");
-
-    dependencies.iter().try_for_each(|dep| -> eyre::Result<_> {
-        let path = libs.join(&dep.name);
-        println!("Installing {} in {:?}, (url: {}, tag: {:?})", dep.name, path, dep.url, dep.tag);
-
-        // install the dep
-        Command::new("git")
-            .args(&["submodule", "add", &dep.url, &path.display().to_string()])
-            .current_dir(&root)
-            .spawn()?
-            .wait()?;
-
-        // call update on it
-        Command::new("git")
-            .args(&["submodule", "update", "--init", "--recursive", &path.display().to_string()])
-            .current_dir(&root)
-            .spawn()?
-            .wait()?;
-
-        // checkout the tag if necessary
-        let message = if let Some(ref tag) = dep.tag {
-            Command::new("git")
-                .args(&["checkout", "--recurse-submodules", tag])
-                .current_dir(&path)
-                .spawn()?
-                .wait()?;
-
-            Command::new("git").args(&["add", &path.display().to_string()]).spawn()?.wait()?;
-
-            format!("forge install: {}\n\n{}", dep.name, tag)
-        } else {
-            format!("forge install: {}", dep.name)
-        };
-
-        Command::new("git").args(&["commit", "-m", &message]).current_dir(&root).spawn()?.wait()?;
-
-        Ok(())
-    })
 }

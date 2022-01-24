@@ -1,10 +1,9 @@
-use ethers::solc::{artifacts::Contract, EvmVersion};
-
-use eyre::{ContextCompat, WrapErr};
 use std::path::PathBuf;
 
+use ethers::solc::{artifacts::Contract, EvmVersion};
 #[cfg(feature = "evmodin-evm")]
 use evmodin::Revision;
+use eyre::{ContextCompat, WrapErr};
 #[cfg(feature = "sputnik-evm")]
 use sputnik::Config;
 
@@ -107,3 +106,20 @@ pub fn read_secret(secret: bool, unsafe_secret: Option<String>) -> eyre::Result<
         unsafe_secret.unwrap()
     })
 }
+
+/// Conditionally print a message
+///
+/// This macro accepts a predicate and the message to print if the predicate is tru
+///
+/// ```rust
+/// let quiet = true;
+/// p_println!(!quiet => "message");
+/// ```
+macro_rules! p_println {
+    ($p:expr => $($arg:tt)*) => {{
+        if $p {
+            println!($($arg)*)
+        }
+    }}
+}
+pub(crate) use p_println;

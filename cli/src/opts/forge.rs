@@ -4,7 +4,7 @@ use ethers::{solc::EvmVersion, types::Address};
 use std::{path::PathBuf, str::FromStr};
 
 use crate::cmd::{
-    build::BuildArgs, config, create::CreateArgs, flatten, init::InitArgs,
+    build::BuildArgs, config, create::CreateArgs, flatten, init::InitArgs, install::InstallArgs,
     remappings::RemappingArgs, run::RunArgs, snapshot, test,
 };
 use serde::Serialize;
@@ -42,10 +42,7 @@ pub enum Subcommands {
     },
 
     #[clap(alias = "i", about = "installs one or more dependencies as git submodules")]
-    Install {
-        #[clap(help = "the submodule name of the library you want to install")]
-        dependencies: Vec<Dependency>,
-    },
+    Install(InstallArgs),
 
     #[clap(alias = "r", about = "removes one or more dependencies from git submodules")]
     Remove {
@@ -71,7 +68,7 @@ pub enum Subcommands {
     #[clap(alias = "c", about = "deploy a compiled contract")]
     Create(CreateArgs),
 
-    #[clap(alias = "i", about = "initializes a new forge sample repository")]
+    #[clap(alias = "i", about = "initializes a new forge sample project")]
     Init(InitArgs),
 
     #[clap(about = "generate shell completions script")]
