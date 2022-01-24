@@ -95,6 +95,13 @@ impl Cmd for InitArgs {
             let contract_path = test.join("Contract.t.sol");
             std::fs::write(contract_path, include_str!("../../../assets/ContractTemplate.t.sol"))?;
 
+            let dest = root.join(Config::FILE_NAME);
+            if !dest.exists() {
+                // write foundry.toml
+                let config = Config::load_with_root(&root).into_basic();
+                std::fs::write(dest, config.to_string_pretty()?)?;
+            }
+
             // sets up git
             if !no_git {
                 init_git_repo(&root, no_commit)?;
@@ -104,13 +111,6 @@ impl Cmd for InitArgs {
                 let opts = DependencyInstallOpts { no_git, no_commit, quiet };
                 Dependency::from_str("https://github.com/dapphub/ds-test")
                     .and_then(|dependency| install(&root, vec![dependency], opts))?;
-            }
-
-            let dest = root.join(Config::FILE_NAME);
-            if !dest.exists() {
-                // write foundry.toml
-                let config = Config::load_with_root(&root).into_basic();
-                std::fs::write(dest, config.to_string_pretty()?)?;
             }
         }
 
