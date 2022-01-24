@@ -152,25 +152,33 @@ forgetest_init!(can_override_config, |prj: TestProject, mut cmd: TestCommand| {
     assert_eq!(expected.trim().to_string(), cmd.stdout().trim().to_string());
 
     // remappings work
-    let remappings_txt = prj.create_file("remappings.txt", "from-file/=lib/from-file/");
+    let remappings_txt = prj.create_file("remappings.txt", "ds-test/=lib/ds-test/from-file/");
     let config = forge_utils::load_config();
+    println!("{:?}", config.remappings);
     assert_eq!(
-        format!("from-file/={}/", prj.root().join("lib/from-file").display()),
+        format!("ds-test/={}/", prj.root().join("lib/ds-test/from-file").display()),
         Remapping::from(config.remappings[0].clone()).to_string()
     );
 
     // env vars work
-    cmd.set_env("DAPP_REMAPPINGS", "other/=lib/other/src/");
+    cmd.set_env("DAPP_REMAPPINGS", "ds-test/=lib/ds-test/from-env/");
     let config = forge_utils::load_config();
     assert_eq!(
-        format!("other/={}/", prj.root().join("lib/other/src").display()),
+        format!("ds-test/={}/", prj.root().join("lib/ds-test/from-env").display()),
         Remapping::from(config.remappings[0].clone()).to_string()
     );
 
-    let config = prj.config_from_output(["--remappings", "from-cli/=lib-from-cli"]);
+    let config = prj.config_from_output(["--remappings", "ds-test/=lib/ds-test/from-cli"]);
     assert_eq!(
-        format!("from-cli/={}/", prj.root().join("lib-from-cli").display()),
+        format!("ds-test/={}/", prj.root().join("lib/ds-test/from-cli").display()),
         Remapping::from(config.remappings[0].clone()).to_string()
+    );
+
+    let config = prj.config_from_output(["--remappings", "other-key/=lib/other/"]);
+    assert_eq!(config.remappings.len(), 2);
+    assert_eq!(
+        format!("other-key/={}/", prj.root().join("lib/other").display()),
+        Remapping::from(config.remappings[1].clone()).to_string()
     );
 
     cmd.unset_env("DAPP_REMAPPINGS");
