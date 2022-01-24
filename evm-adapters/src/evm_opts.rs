@@ -56,6 +56,7 @@ pub struct EvmOpts {
     pub evm_type: EvmType,
 
     /// fetch state over a remote instead of starting from empty state
+    #[serde(rename = "eth_rpc_url")]
     pub fork_url: Option<String>,
 
     /// pins the block number for the state fork

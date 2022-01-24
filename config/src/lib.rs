@@ -312,7 +312,11 @@ impl Config {
         config
     }
 
+    /// Serves as the entrypoint for obtaining the project.
+    ///
     /// Returns the `Project` configured with all `solc` and path related values.
+    ///
+    /// *Note*: this also _cleans_ [`Project::cleanup`] the workspace if `force` is set to true.
     ///
     /// # Example
     ///
@@ -332,7 +336,7 @@ impl Config {
     }
 
     fn create_project(&self, cached: bool, no_artifacts: bool) -> Result<Project, SolcError> {
-        Project::builder()
+        let project = Project::builder()
             .paths(self.project_paths())
             .allowed_path(&self.__root.0)
             .allowed_paths(self.libraries.clone())
@@ -341,7 +345,13 @@ impl Config {
             .set_auto_detect(self.auto_detect_solc)
             .set_cached(cached)
             .set_no_artifacts(no_artifacts)
-            .build()
+            .build()?;
+
+        if self.force {
+            project.cleanup()?;
+        }
+
+        Ok(project)
     }
 
     /// Returns the `ProjectPathsConfig`  sub set of the config.
