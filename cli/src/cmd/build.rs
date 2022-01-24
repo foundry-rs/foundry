@@ -206,7 +206,7 @@ impl Provider for BuildArgs {
         }
 
         if self.compiler.optimize {
-            dict.insert("optimize".to_string(), self.compiler.optimize.into());
+            dict.insert("optimizer".to_string(), self.compiler.optimize.into());
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
