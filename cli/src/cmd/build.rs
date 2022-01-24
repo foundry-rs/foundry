@@ -163,7 +163,7 @@ impl Provider for BuildArgs {
         }
 
         if self.no_auto_detect {
-            dict.insert("auto_detect_solc".to_string(), self.no_auto_detect.into());
+            dict.insert("auto_detect_solc".to_string(), false.into());
         }
 
         if self.force {
