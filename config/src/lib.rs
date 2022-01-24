@@ -21,6 +21,8 @@ use ethers_solc::{
     remappings::{RelativeRemapping, Remapping},
     EvmVersion, Project, ProjectPathsConfig, SolcConfig,
 };
+use figment::providers::Data;
+use inflector::Inflector;
 
 // Macros useful for creating a figment.
 mod macros;
@@ -550,7 +552,9 @@ impl From<Config> for Figment {
         let profile = Config::selected_profile();
         let figment = Figment::default()
             .merge(DappHardhatDirProvider(&c.__root.0))
-            .merge(Toml::file(Env::var_or("FOUNDRY_CONFIG", Config::FILE_NAME)).nested())
+            .merge(ForcedSnakeCaseData(
+                Toml::file(Env::var_or("FOUNDRY_CONFIG", Config::FILE_NAME)).nested(),
+            ))
             .merge(Env::prefixed("DAPP_").ignore(&["REMAPPINGS"]).global())
             .merge(Env::prefixed("DAPP_TEST_").global())
             .merge(DappEnvCompatProvider)
@@ -663,6 +667,23 @@ impl Default for Config {
             ignored_error_codes: vec![],
             __non_exhaustive: (),
         }
+    }
+}
+
+/// A Provider that ensures all keys are snake case
+struct ForcedSnakeCaseData<F: Format>(Data<F>);
+
+impl<F: Format> Provider for ForcedSnakeCaseData<F> {
+    fn metadata(&self) -> Metadata {
+        Metadata::named("Snake Case toml provider")
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+        let mut map = Map::new();
+        for (profile, dict) in self.0.data()? {
+            map.insert(profile, dict.into_iter().map(|(k, v)| (k.to_snake_case(), v)).collect());
+        }
+        Ok(map)
     }
 }
 
@@ -1052,6 +1073,40 @@ mod tests {
                     eth_rpc_url: Some("https://example.com/".to_string()),
                     remappings: vec![Remapping::from_str("ds-test=lib/ds-test/").unwrap().into()],
                     verbosity: 3,
+                    ..Config::default()
+                }
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_toml_casing_file() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                src = "some-source"
+                out = "some-out"
+                cache = true
+                eth-rpc-url = "https://example.com/"
+                evm-version = "berlin"
+                auto-detect-solc = false
+            "#,
+            )?;
+
+            let config = Config::load();
+            assert_eq!(
+                config,
+                Config {
+                    src: "some-source".into(),
+                    out: "some-out".into(),
+                    cache: true,
+                    eth_rpc_url: Some("https://example.com/".to_string()),
+                    auto_detect_solc: false,
+                    evm_version: EvmVersion::Berlin,
                     ..Config::default()
                 }
             );
