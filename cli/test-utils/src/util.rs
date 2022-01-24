@@ -78,7 +78,11 @@ impl TestProject {
     pub fn with_project(project: TempProject) -> Self {
         let root =
             env::current_exe().unwrap().parent().expect("executable's directory").to_path_buf();
-        Self { root, inner: Arc::new(project), _saved_cwd: pretty_err(".", std::env::current_dir()) }
+        Self {
+            root,
+            inner: Arc::new(project),
+            _saved_cwd: pretty_err(".", std::env::current_dir()),
+        }
     }
 
     /// Returns the root path of the project's workspace.
