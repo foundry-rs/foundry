@@ -181,6 +181,21 @@ forgetest_init!(can_override_config, |prj: TestProject, mut cmd: TestCommand| {
     pretty_eq!(expected.trim().to_string(), cmd.stdout().trim().to_string());
 });
 
+forgetest_init!(can_detect_config_vals, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.set_current_dir(prj.root());
+
+    let config = prj.config_from_output(["--no-auto-detect"]);
+    assert!(!config.auto_detect_solc);
+
+    let mut config = Config::load_with_root(prj.root());
+
+    config.auto_detect_solc = false;
+    // write to `foundry.toml`
+    prj.create_file(Config::FILE_NAME, &config.to_string_pretty().unwrap());
+    let config = prj.config_from_output(["--force"]);
+    assert!(!config.auto_detect_solc);
+});
+
 // checks that `clean` removes dapptools style paths
 forgetest_init!(can_get_evm_opts, |prj: TestProject, mut cmd: TestCommand| {
     cmd.set_current_dir(prj.root());
