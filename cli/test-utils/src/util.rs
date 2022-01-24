@@ -58,7 +58,7 @@ pub fn setup_project(test: TestProject) -> (TestProject, TestCommand) {
 /// Test projects are created from a global atomic counter to avoid duplicates.
 #[derive(Clone, Debug)]
 pub struct TestProject<T: ArtifactOutput = MinimalCombinedArtifacts> {
-    saved_cwd: PathBuf,
+    _saved_cwd: PathBuf,
     /// The directory in which this test executable is running.
     root: PathBuf,
     /// The project in which the test should run.
@@ -78,7 +78,7 @@ impl TestProject {
     pub fn with_project(project: TempProject) -> Self {
         let root =
             env::current_exe().unwrap().parent().expect("executable's directory").to_path_buf();
-        Self { root, inner: Arc::new(project), saved_cwd: pretty_err(".", std::env::current_dir()) }
+        Self { root, inner: Arc::new(project), _saved_cwd: pretty_err(".", std::env::current_dir()) }
     }
 
     /// Returns the root path of the project's workspace.
@@ -198,12 +198,6 @@ impl Drop for TestCommand {
                 None => std::env::remove_var(key),
             }
         }
-    }
-}
-
-impl<T: ArtifactOutput> Drop for TestProject<T> {
-    fn drop(&mut self) {
-        let _ = std::env::set_current_dir(&self.saved_cwd);
     }
 }
 
