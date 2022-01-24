@@ -159,16 +159,6 @@ jobs:
       - name: Create release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ env.TAG_NAME }}
-          prerelease: ${{ env.TAG_NAME == 'nightly' }}
-          body: ${{ steps.build_changelog.outputs.changelog }}
-          files:  |
-            ${{ steps.artifacts.outputs.file_name }}
-            ${{ steps.man.outputs.foundry_man }}
-
-      - name: Create release
-        uses: softprops/action-gh-release@v1
-        with:
           name: ${{ needs.prepare.outputs.release_name }}
           tag_name: ${{ needs.prepare.outputs.tag_name }}
           prerelease: ${{ env.IS_NIGHTLY }}
