@@ -768,6 +768,18 @@ impl Provider for DappEnvCompatProvider {
                 val.parse::<u64>().map_err(figment::Error::custom)?.into(),
             );
         }
+        if let Ok(val) = env::var("DAPP_BUILD_OPTIMIZE") {
+            // Activate Solidity optimizer (0 or 1)
+            let val = val.parse::<u8>().map_err(figment::Error::custom)?;
+            if val > 1 {
+                return Err(format!(
+                    "Invalid $DAPP_BUILD_OPTIMIZE value `{}`,  expected 0 or 1",
+                    val
+                )
+                .into())
+            }
+            dict.insert("optimizer".to_string(), (val == 1).into());
+        }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
@@ -1281,6 +1293,7 @@ mod tests {
             jail.set_env("DAPP_TEST_FUZZ_RUNS", 420);
             jail.set_env("DAPP_FORK_BLOCK", 100);
             jail.set_env("DAPP_BUILD_OPTIMIZE_RUNS", 999);
+            jail.set_env("DAPP_BUILD_OPTIMIZE", 0);
 
             let config = Config::load();
 
@@ -1289,6 +1302,7 @@ mod tests {
             assert_eq!(config.fuzz_runs, 420);
             assert_eq!(config.fork_block_number, Some(100));
             assert_eq!(config.optimizer_runs, 999);
+            assert!(!config.optimizer);
 
             Ok(())
         });
