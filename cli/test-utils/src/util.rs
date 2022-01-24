@@ -26,7 +26,7 @@ static CURRENT_DIR_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 /// Contains a `forge init` initialized project
 pub static FORGE_INITIALIZED: Lazy<TestProject> = Lazy::new(|| {
     let (prj, mut cmd) = setup("init-template", PathStyle::Dapptools);
-    cmd.arg("init");
+    cmd.args(["init", "--force"]);
     cmd.assert_non_empty_stdout();
     prj
 });
@@ -181,6 +181,12 @@ impl TestProject {
         let c = String::from_utf8_lossy(&output.stdout);
         let config: Config = serde_json::from_str(c.as_ref()).unwrap();
         config.sanitized()
+    }
+
+    /// Removes all files and dirs inside the project's root dir
+    pub fn wipe(&self) {
+        pretty_err(self.root(), fs::remove_dir_all(self.root()));
+        pretty_err(self.root(), fs::create_dir_all(self.root()));
     }
 }
 

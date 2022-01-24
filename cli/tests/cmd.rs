@@ -44,7 +44,7 @@ forgetest!(can_init_repo_with_config, |prj: TestProject, mut cmd: TestCommand| {
     let foundry_toml = prj.root().join(Config::FILE_NAME);
     assert!(!foundry_toml.exists());
 
-    cmd.arg("init").arg(prj.root());
+    cmd.args(["init", "--force"]).arg(prj.root());
     cmd.assert_non_empty_stdout();
 
     cmd.set_current_dir(prj.root());
@@ -71,12 +71,16 @@ forgetest!(can_init_repo_with_config, |prj: TestProject, mut cmd: TestCommand| {
 });
 
 // checks that init works repeatedly
-forgetest!(can_init_repo_repeatedly, |prj: TestProject, mut cmd: TestCommand| {
+forgetest!(can_init_repo_repeatedly_with_force, |prj: TestProject, mut cmd: TestCommand| {
     let foundry_toml = prj.root().join(Config::FILE_NAME);
     assert!(!foundry_toml.exists());
 
+    prj.wipe();
+
     cmd.arg("init").arg(prj.root());
     cmd.assert_non_empty_stdout();
+
+    cmd.arg("--force");
 
     for _ in 0..2 {
         assert!(foundry_toml.exists());
@@ -87,8 +91,9 @@ forgetest!(can_init_repo_repeatedly, |prj: TestProject, mut cmd: TestCommand| {
 
 // Checks that a forge project can be initialized without creating a git repository
 forgetest!(can_init_no_git, |prj: TestProject, mut cmd: TestCommand| {
-    cmd.arg("init").arg(prj.root()).arg("--no-git");
+    prj.wipe();
 
+    cmd.arg("init").arg(prj.root()).arg("--no-git");
     cmd.assert_non_empty_stdout();
     prj.assert_config_exists();
 
@@ -99,8 +104,10 @@ forgetest!(can_init_no_git, |prj: TestProject, mut cmd: TestCommand| {
 
 // Checks that quiet mode does not print anything
 forgetest!(can_init_quiet, |prj: TestProject, mut cmd: TestCommand| {
+    prj.wipe();
+
     cmd.arg("init").arg(prj.root()).arg("-q");
-    cmd.assert_empty_stdout();
+    let _ = cmd.output();
 });
 
 // `forge init` does only work on non-empty dirs

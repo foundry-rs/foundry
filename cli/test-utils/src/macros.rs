@@ -43,7 +43,6 @@ macro_rules! forgetest {
             $fun(prj, cmd);
         }
     };
-    (#[ignore], $test:ident, $style:expr, $fun:expr) => {};
 }
 
 /// A helper macro to ignore `forgetest!` that should not run on CI
