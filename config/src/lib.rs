@@ -770,12 +770,15 @@ impl<'a> RemappingsProvider<'a> {
     /// - `remappings.txt`
     /// - Environment variables
     /// - CLI parameters
-    fn get_remappings(&self, mut remappings: Vec<Remapping>) -> Result<Vec<Remapping>, Error> {
+    fn get_remappings(&self, remappings: Vec<Remapping>) -> Result<Vec<Remapping>, Error> {
+        let mut new_remappings = Vec::new();
+
         // check env var
         if let Some(env_remappings) = remappings_from_env_var("DAPP_REMAPPINGS")
             .or_else(|| remappings_from_env_var("FOUNDRY_REMAPPINGS"))
         {
-            remappings.extend(env_remappings.map_err::<Error, _>(|err| err.to_string().into())?);
+            new_remappings
+                .extend(env_remappings.map_err::<Error, _>(|err| err.to_string().into())?);
         }
 
         // check remappings.txt file
@@ -785,12 +788,14 @@ impl<'a> RemappingsProvider<'a> {
                 std::fs::read_to_string(remappings_file).map_err(|err| err.to_string())?;
             let remappings_from_file: Result<Vec<_>, _> =
                 remappings_from_newline(&content).collect();
-            remappings
+            new_remappings
                 .extend(remappings_from_file.map_err::<Error, _>(|err| err.to_string().into())?);
         }
 
+        new_remappings.extend(remappings);
+
         // look up lib paths
-        remappings.extend(
+        new_remappings.extend(
             self.lib_paths
                 .iter()
                 .map(|lib| self.root.join(lib))
@@ -799,10 +804,10 @@ impl<'a> RemappingsProvider<'a> {
         );
 
         // remove duplicates
-        remappings.sort_by(|a, b| a.name.cmp(&b.name));
-        remappings.dedup_by(|a, b| a.name.eq(&b.name));
+        new_remappings.sort_by(|a, b| a.name.cmp(&b.name));
+        new_remappings.dedup_by(|a, b| a.name.eq(&b.name));
 
-        Ok(remappings)
+        Ok(new_remappings)
     }
 }
 
@@ -1002,7 +1007,7 @@ mod tests {
                 config.remappings,
                 vec![
                     Remapping::from_str("file-ds-test/=lib/ds-test/").unwrap().into(),
-                    Remapping::from_str("file-other/=lib/other/").unwrap().into()
+                    Remapping::from_str("file-other/=lib/other/").unwrap().into(),
                 ],
             );
 
@@ -1012,8 +1017,65 @@ mod tests {
             assert_eq!(
                 config.remappings,
                 vec![
+                    // From environment
                     Remapping::from_str("ds-test=lib/ds-test/").unwrap().into(),
-                    Remapping::from_str("other/=lib/other/").unwrap().into()
+                    // From remapping.txt
+                    Remapping::from_str("file-ds-test/=lib/ds-test/").unwrap().into(),
+                    Remapping::from_str("file-other/=lib/other/").unwrap().into(),
+                    // From environment
+                    Remapping::from_str("other/=lib/other/").unwrap().into(),
+                ],
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_remappings_override() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                src = "some-source"
+                out = "some-out"
+                cache = true
+            "#,
+            )?;
+            let config = Config::load();
+            assert!(config.remappings.is_empty());
+
+            jail.create_file(
+                "remappings.txt",
+                r#"
+                ds-test/=lib/ds-test/
+                other/=lib/other/
+            "#,
+            )?;
+
+            let config = Config::load();
+            assert_eq!(
+                config.remappings,
+                vec![
+                    Remapping::from_str("ds-test/=lib/ds-test/").unwrap().into(),
+                    Remapping::from_str("other/=lib/other/").unwrap().into(),
+                ],
+            );
+
+            jail.set_env("DAPP_REMAPPINGS", "ds-test/=lib/ds-test/src/\nenv-lib/=lib/env-lib/");
+            let config = Config::load();
+
+            // Remappings should now be:
+            // - ds-test from environment (lib/ds-test/src/)
+            // - other from remappings.txt (lib/other/)
+            // - env-lib from environment (lib/env-lib/)
+            assert_eq!(
+                config.remappings,
+                vec![
+                    Remapping::from_str("ds-test/=lib/ds-test/src/").unwrap().into(),
+                    Remapping::from_str("env-lib/=lib/env-lib/").unwrap().into(),
+                    Remapping::from_str("other/=lib/other/").unwrap().into(),
                 ],
             );
 
