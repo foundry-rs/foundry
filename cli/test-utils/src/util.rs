@@ -58,7 +58,6 @@ pub fn setup_project(test: TestProject) -> (TestProject, TestCommand) {
 /// Test projects are created from a global atomic counter to avoid duplicates.
 #[derive(Clone, Debug)]
 pub struct TestProject<T: ArtifactOutput = MinimalCombinedArtifacts> {
-    _saved_cwd: PathBuf,
     /// The directory in which this test executable is running.
     root: PathBuf,
     /// The project in which the test should run.
@@ -78,11 +77,7 @@ impl TestProject {
     pub fn with_project(project: TempProject) -> Self {
         let root =
             env::current_exe().unwrap().parent().expect("executable's directory").to_path_buf();
-        Self {
-            root,
-            inner: Arc::new(project),
-            _saved_cwd: pretty_err(".", std::env::current_dir()),
-        }
+        Self { root, inner: Arc::new(project) }
     }
 
     /// Returns the root path of the project's workspace.
@@ -164,6 +159,7 @@ impl TestProject {
             cmd,
             saved_env_vars: HashMap::new(),
             current_dir_lock: None,
+            saved_cwd: pretty_err(".", std::env::current_dir()),
         }
     }
 
@@ -202,6 +198,9 @@ impl Drop for TestCommand {
                 None => std::env::remove_var(key),
             }
         }
+        drop(self.current_dir_lock.take());
+        let _lock = CURRENT_DIR_LOCK.lock().unwrap();
+        let _ = std::env::set_current_dir(&self.saved_cwd);
     }
 }
 
@@ -229,6 +228,7 @@ pub fn read_string(path: impl AsRef<Path>) -> String {
 /// A simple wrapper around a process::Command with some conveniences.
 #[derive(Debug)]
 pub struct TestCommand {
+    saved_cwd: PathBuf,
     /// The project used to launch this command.
     project: TestProject,
     /// The actual command we use to control the process.
