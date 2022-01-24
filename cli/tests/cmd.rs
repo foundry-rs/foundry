@@ -183,17 +183,22 @@ forgetest_init!(can_override_config, |prj: TestProject, mut cmd: TestCommand| {
 
 forgetest_init!(can_detect_config_vals, |prj: TestProject, mut cmd: TestCommand| {
     cmd.set_current_dir(prj.root());
-
-    let config = prj.config_from_output(["--no-auto-detect"]);
+    let url = "http://127.0.0.1:8545";
+    let config = prj.config_from_output(["--no-auto-detect", "--rpc-url", url]);
     assert!(!config.auto_detect_solc);
+    assert_eq!(config.eth_rpc_url, Some(url.to_string()));
 
     let mut config = Config::load_with_root(prj.root());
-
+    config.eth_rpc_url = Some("http://127.0.0.1:8545".to_string());
     config.auto_detect_solc = false;
     // write to `foundry.toml`
-    prj.create_file(Config::FILE_NAME, &config.to_string_pretty().unwrap());
+    prj.create_file(
+        Config::FILE_NAME,
+        &config.to_string_pretty().unwrap().replace("eth_rpc_url", "eth-rpc-url"),
+    );
     let config = prj.config_from_output(["--force"]);
     assert!(!config.auto_detect_solc);
+    assert_eq!(config.eth_rpc_url, Some(url.to_string()));
 });
 
 // checks that `clean` removes dapptools style paths

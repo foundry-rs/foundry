@@ -1750,6 +1750,7 @@ dependencies = [
 name = "foundry-config"
 version = "0.1.0"
 dependencies = [
+ "Inflector",
  "dirs-next",
  "ethers-core",
  "ethers-solc",
