@@ -43,7 +43,7 @@ pub(crate) fn install(
     opts: DependencyInstallOpts,
 ) -> eyre::Result<()> {
     let root = root.as_ref();
-    let libs = root.join("libs");
+    let libs = root.join("lib");
     std::fs::create_dir_all(&libs)?;
 
     for dep in dependencies {
