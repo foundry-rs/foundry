@@ -56,7 +56,7 @@ forgetest!(can_init_repo_with_config, |prj: TestProject, mut cmd: TestCommand| {
     // check ds-test is detected
     assert_eq!(
         basic.remappings,
-        vec![Remapping::from_str("ds-test/=lib/ds-test/src/").unwrap().into()]
+        vec![Remapping::from_str("ds-test/=libs/ds-test/src/").unwrap().into()]
     );
     assert_eq!(basic, Config::load_with_root(prj.root()).into_basic());
 
