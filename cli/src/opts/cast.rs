@@ -415,6 +415,7 @@ fn parse_block_id(s: &str) -> eyre::Result<BlockId> {
     Ok(match s {
         "earliest" => BlockId::Number(BlockNumber::Earliest),
         "latest" => BlockId::Number(BlockNumber::Latest),
+        "pending" => BlockId::Number(BlockNumber::Pending),
         s if s.starts_with("0x") => BlockId::Hash(H256::from_str(s)?),
         s => BlockId::Number(BlockNumber::Number(u64::from_str(s)?.into())),
     })
