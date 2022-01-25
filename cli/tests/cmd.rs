@@ -98,8 +98,8 @@ forgetest!(can_init_no_git, |prj: TestProject, mut cmd: TestCommand| {
     prj.assert_config_exists();
 
     assert!(!prj.root().join(".git").exists());
-    assert!(prj.root().join("libs/ds-test").exists());
-    assert!(!prj.root().join("libs/ds-test/.git").exists());
+    assert!(prj.root().join("lib/ds-test").exists());
+    assert!(!prj.root().join("lib/ds-test/.git").exists());
 });
 
 // Checks that quiet mode does not print anything
@@ -119,7 +119,7 @@ forgetest!(can_init_non_empty, |prj: TestProject, mut cmd: TestCommand| {
     cmd.arg("--force");
     cmd.assert_non_empty_stdout();
     assert!(prj.root().join(".git").exists());
-    assert!(prj.root().join("libs/ds-test").exists());
+    assert!(prj.root().join("lib/ds-test").exists());
 });
 
 // checks that config works
