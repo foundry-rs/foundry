@@ -5,8 +5,10 @@ module.exports = async ({github, context}) => {
     owner: context.repo.owner,
     repo: context.repo.repo
   })
+
+  // Only consider releases tagged `nightly-${SHA}` for deletion
   let nightlies = releases.filter(
-    (release) => release.tag_name.includes('nightly')
+    (release) => release.tag_name.includes('nightly') && release.tag_name !== 'nightly'
   )
 
   // Keep newest 3 nightlies
