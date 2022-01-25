@@ -32,6 +32,15 @@ pub enum Subcommands {
     #[clap(alias = "r")]
     Run(RunArgs),
 
+    #[clap(alias = "f", about = "fetches upstream libs without grabbing new commits")]
+    Fetch {
+        #[clap(
+            help = "the submodule name of the library you want to fetch (will fetch all if none is provided)",
+            value_hint = ValueHint::DirPath
+        )]
+        lib: Option<PathBuf>,
+    },
+
     #[clap(alias = "u", about = "fetches all upstream lib changes")]
     Update {
         #[clap(

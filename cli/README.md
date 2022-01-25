@@ -27,6 +27,7 @@ SUBCOMMANDS:
     clean              removes the build artifacts and cache directories
     completions        generate shell completions script
     create             deploy a compiled contract
+    fetch              fetches upstream libs without grabbing new commits
     help               Print this message or the help of the given subcommand(s)
     init               initializes a new forge sample repository
     install            installs one or more dependencies as git submodules
