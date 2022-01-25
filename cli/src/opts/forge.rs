@@ -32,15 +32,6 @@ pub enum Subcommands {
     #[clap(alias = "r")]
     Run(RunArgs),
 
-    #[clap(alias = "f", about = "fetches upstream libs without grabbing new commits")]
-    Fetch {
-        #[clap(
-            help = "the submodule name of the library you want to fetch (will fetch all if none is provided)",
-            value_hint = ValueHint::DirPath
-        )]
-        lib: Option<PathBuf>,
-    },
-
     #[clap(alias = "u", about = "fetches all upstream lib changes")]
     Update {
         #[clap(
@@ -50,7 +41,7 @@ pub enum Subcommands {
         lib: Option<PathBuf>,
     },
 
-    #[clap(alias = "i", about = "installs one or more dependencies as git submodules")]
+    #[clap(alias = "i", about = "installs one or more dependencies as git submodules (will install existing dependencies if no arguments are provided")]
     Install(InstallArgs),
 
     #[clap(alias = "r", about = "removes one or more dependencies from git submodules")]
