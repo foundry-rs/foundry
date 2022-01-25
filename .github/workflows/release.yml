@@ -27,14 +27,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Move nightly tag
-        if: ${{ env.IS_NIGHTLY }}
-        uses: actions/github-script@v5
-        with:
-          script: |
-            const moveTag = require('./.github/scripts/move-tag.js')
-            await moveTag({ github, context }, 'nightly')
-
       - name: Compute release name and tag
         id: release_info
         run: |
@@ -46,9 +38,26 @@ jobs:
             echo "::set-output name=release_name::${GITHUB_REF_NAME}"
           fi
 
+      # Creates a `nightly-SHA` tag for this specific nightly
+      # This tag is used for this specific nightly version's release
+      # which allows users to roll back. It is also used to build
+      # the changelog.
+      - name: Create build-specific nightly tag
+        if: ${{ env.IS_NIGHTLY }}
+        uses: actions/github-script@v5
+        env:
+          TAG_NAME: ${{ steps.release_info.outputs.tag_name }}
+        with:
+          script: |
+            const createTag = require('./.github/scripts/create-tag.js')
+            await createTag({ github, context }, process.env.TAG_NAME)
+
       - name: Build changelog
         id: build_changelog
         uses: mikepenz/release-changelog-builder-action@v2
+        with:
+          fromTag: ${{ env.IS_NIGHTLY && 'nightly' || '' }}
+          toTag: ${{ steps.release_info.outputs.tag_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -151,6 +160,7 @@ jobs:
           echo "::set-output name=foundry_man::foundry_man_${VERSION_NAME}.tar.gz"
         shell: bash
 
+      # Creates the release for this specific version
       - name: Create release
         uses: softprops/action-gh-release@v1
         with:
@@ -161,6 +171,21 @@ jobs:
           files: |
             ${{ steps.artifacts.outputs.file_name }}
             ${{ steps.man.outputs.foundry_man }}
+
+      # If this is a nightly release, it also updates the release
+      # tagged `nightly` for compatability with `foundryup`
+      - name: Update nightly release
+        if: ${{ env.IS_NIGHTLY }}
+        uses: softprops/action-gh-release@v1
+        with:
+          name: 'Nightly'
+          tag_name: 'nightly'
+          prerelease: true
+          body: ${{ needs.prepare.outputs.changelog }}
+          files: |
+            ${{ steps.artifacts.outputs.file_name }}
+            ${{ steps.man.outputs.foundry_man }}
+
   cleanup:
     name: Release cleanup
     runs-on: ubuntu-latest
@@ -169,6 +194,16 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v2
+
+      # Moves the `nightly` tag to `HEAD`
+      - name: Move nightly tag
+        if: ${{ env.IS_NIGHTLY }}
+        uses: actions/github-script@v5
+        with:
+          script: |
+            const moveTag = require('./.github/scripts/move-tag.js')
+            await moveTag({ github, context }, 'nightly')
+
       - name: Delete old nightlies
         uses: actions/github-script@v5
         with:
