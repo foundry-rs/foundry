@@ -167,6 +167,8 @@ jobs:
     needs: release
 
     steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
       - name: Delete old nightlies
         uses: actions/github-script@v5
         with:
