@@ -74,7 +74,9 @@ More documentation can be found in the [forge package](./forge/README.md) and in
     - Dapptools-style, using `DsTest`'s emitted logs
     - Hardhat-style, using the popular `console.sol` contract
 - **Portable (5-10MB) & easy to install** without requiring Nix or any other package manager
-- **Abstracted over EVM implementations** (currently supported: Sputnik, EvmOdin)
+- **Fast CI** with the [Foundry GitHub action][foundry-gha].
+
+[foundry-gha]: https://github.com/onbjerg/foundry-toolchain
 
 ### How Fast?
 
