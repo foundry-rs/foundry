@@ -1,7 +1,7 @@
 # `forge`
 
 Forge is a fast and flexible Ethereum testing framework, inspired by
-[Dapp](https://github.com/dapphub/dapptools/tree/master/src/dapp)
+[Dapp](https://github.com/dapphub/dapptools/tree/master/src/dapp).
 
 If you are looking into how to consume the software as an end user, check the
 [CLI README](../cli/README.md).
