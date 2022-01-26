@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Support
+    url: https://t.me/foundry_support
+    about: This issue tracker is only for bugs and feature requests. Support is available on Telegram!
