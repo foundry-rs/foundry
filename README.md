@@ -17,7 +17,7 @@ Foundry consists of:
 - [**Cast**](./cast): Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain
   data.
 
-**To get started, read the [Foundry Book][foundry-book] (wip)!**
+**Need help getting started with Foundry? Read the [📖 Foundry Book][foundry-book] (WIP)!**
 
 [foundry-book]: https://onbjerg.github.io/foundry-book/
 
