@@ -9,6 +9,10 @@ If you are looking into how to consume the software as an end user, check the
 For more context on how the package works under the hood, look in the
 [code docs](./src/lib.rs).
 
+**Need help with Forge? Read the [📖 Foundry Book (Forge Guide)][foundry-book-forge-guide] (WIP)!**
+
+[foundry-book-forge-guide]: https://onbjerg.github.io/foundry-book/forge/
+
 ## Why?
 
 ### Write your tests in Solidity to minimize context switching
