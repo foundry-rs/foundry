@@ -597,16 +597,7 @@ mod tests {
             abi: &'a Abi,
             code: ethers::prelude::Bytes,
         ) -> ContractRunner<'a, MemoryBackend<'a>> {
-            ContractRunner::new(
-                &*EVM_OPTS,
-                &*CFG_NO_LMT,
-                &*BACKEND,
-                abi,
-                code,
-                None,
-                None,
-                vec![],
-            )
+            ContractRunner::new(&*EVM_OPTS, &*CFG_NO_LMT, &*BACKEND, abi, code, None, None, vec![])
         }
 
         #[test]

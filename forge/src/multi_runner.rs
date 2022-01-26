@@ -106,23 +106,22 @@ impl MultiContractRunnerBuilder {
 
         // TODO: we should look at parallelizing the linking
         for fname in contracts.keys() {
-            let (abi, maybe_deployment_bytes, maybe_runtime) = if let Some(c) = contracts.get(fname) {
+            let (abi, maybe_deployment_bytes, maybe_runtime) = if let Some(c) = contracts.get(fname)
+            {
                 (c.abi.as_ref(), c.bytecode.as_ref(), c.deployed_bytecode.as_ref())
             } else {
                 (None, None, None)
             };
-            if let (Some(abi), Some(bytecode), Some(runtime)) = (abi, maybe_deployment_bytes, maybe_runtime) {
-                
+            if let (Some(abi), Some(bytecode), Some(runtime)) =
+                (abi, maybe_deployment_bytes, maybe_runtime)
+            {
                 // we are going to mutate, but library contract addresses may change based on
                 // the test so we clone
                 //
                 // TODO: verify the above statement. Maybe not? and we can modify in place.
                 let mut target_bytecode = bytecode.clone();
-                let mut target_bytecode_runtime = runtime
-                    .clone()
-                    .bytecode
-                    .expect("No target runtime")
-                    .clone();
+                let mut target_bytecode_runtime =
+                    runtime.clone().bytecode.expect("No target runtime").clone();
 
                 // instantiate a vector that gets filled with library deployment bytecode
                 let mut dependencies = vec![];
@@ -149,14 +148,17 @@ impl MultiContractRunnerBuilder {
                 }
 
                 // get bytes
-                let bytecode = if let Some(b) =  target_bytecode.object.into_bytes() { b } else { continue };
+                let bytecode =
+                    if let Some(b) = target_bytecode.object.into_bytes() { b } else { continue };
 
                 // if its a test, add it to deployable contracts
                 if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) &&
                     abi.functions().any(|func| func.name.starts_with("test"))
                 {
-                    deployable_contracts
-                        .insert(fname.clone(), (abi.clone(), bytecode.clone(), dependencies.to_vec()));
+                    deployable_contracts.insert(
+                        fname.clone(),
+                        (abi.clone(), bytecode.clone(), dependencies.to_vec()),
+                    );
                 }
 
                 let split = fname.split(':').collect::<Vec<&str>>();
@@ -257,16 +259,13 @@ fn recurse_link<'a>(
             }
 
             // calculate the address for linking this dependency
-            let addr = foundry_utils::next_create_address(
-                sender,
-                init_nonce + deployment.len(),
-            );
+            let addr = foundry_utils::next_create_address(sender, init_nonce + deployment.len());
 
             // link the dependency to the target
             target_bytecode.0.link(file.clone(), key.clone(), addr);
             target_bytecode.1.link(file, key, addr);
 
-            // push the dependency into the library deployment vector 
+            // push the dependency into the library deployment vector
             deployment
                 .push(next_target_bytecode.object.into_bytes().expect("Bytecode should be linked"));
         });
