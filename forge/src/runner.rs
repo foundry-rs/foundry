@@ -164,9 +164,12 @@ pub struct ContractRunner<'a, B> {
 
     /// Contract execution info, (functions, events, errors)
     pub execution_info: MaybeExecutionInfo<'a>,
+    /// library contracts to be deployed before this contract
+    pub predeploy_libs: Vec<ethers::prelude::Bytes>,
 }
 
 impl<'a, B: Backend> ContractRunner<'a, B> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         evm_opts: &'a EvmOpts,
         evm_cfg: &'a Config,
@@ -175,6 +178,7 @@ impl<'a, B: Backend> ContractRunner<'a, B> {
         code: ethers::prelude::Bytes,
         sender: Option<Address>,
         execution_info: MaybeExecutionInfo<'a>,
+        predeploy_libs: Vec<ethers::prelude::Bytes>,
     ) -> Self {
         Self {
             evm_opts,
@@ -184,6 +188,7 @@ impl<'a, B: Backend> ContractRunner<'a, B> {
             code,
             sender: sender.unwrap_or_default(),
             execution_info,
+            predeploy_libs,
         }
     }
 }
@@ -204,6 +209,12 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
             self.evm_opts.verbosity > 2,
             self.evm_opts.debug,
         );
+
+        self.predeploy_libs.iter().for_each(|code| {
+            executor
+                .deploy(self.sender, code.clone(), 0u32.into())
+                .expect("couldn't deploy library");
+        });
 
         // deploy an instance of the contract inside the runner in the EVM
         let (addr, _, _, logs) =
@@ -586,7 +597,16 @@ mod tests {
             abi: &'a Abi,
             code: ethers::prelude::Bytes,
         ) -> ContractRunner<'a, MemoryBackend<'a>> {
-            ContractRunner::new(&*EVM_OPTS, &*CFG_NO_LMT, &*BACKEND, abi, code, None, None)
+            ContractRunner::new(
+                &*EVM_OPTS,
+                &*CFG_NO_LMT,
+                &*BACKEND,
+                abi,
+                code,
+                None,
+                None,
+                vec![],
+            )
         }
 
         #[test]

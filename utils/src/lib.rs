@@ -7,14 +7,47 @@ use ethers_core::{
         Abi, AbiParser, Event, Function, Param, ParamType, Token,
     },
     types::*,
+    utils::keccak256,
 };
 use ethers_etherscan::Client;
+use ethers_providers::{Middleware, Provider, ProviderError};
 use eyre::{Result, WrapErr};
 use serde::Deserialize;
 use std::{
     collections::{BTreeMap, HashSet},
     env::VarError,
 };
+
+use tokio::runtime::{Handle, Runtime};
+
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug)]
+pub enum RuntimeOrHandle {
+    Runtime(Runtime),
+    Handle(Handle),
+}
+
+impl Default for RuntimeOrHandle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl RuntimeOrHandle {
+    pub fn new() -> RuntimeOrHandle {
+        match Handle::try_current() {
+            Ok(handle) => RuntimeOrHandle::Handle(handle),
+            Err(_) => RuntimeOrHandle::Runtime(Runtime::new().expect("Failed to start runtime")),
+        }
+    }
+
+    pub fn block_on<F: std::future::Future>(&self, f: F) -> F::Output {
+        match &self {
+            RuntimeOrHandle::Runtime(runtime) => runtime.block_on(f),
+            RuntimeOrHandle::Handle(handle) => tokio::task::block_in_place(|| handle.block_on(f)),
+        }
+    }
+}
 
 const BASE_TX_COST: u64 = 21000;
 
@@ -63,6 +96,23 @@ pub fn remove_extra_costs(gas: U256, calldata: &[u8]) -> U256 {
         }
     }
     gas.saturating_sub(calldata_cost.into()).saturating_sub(BASE_TX_COST.into())
+}
+
+pub fn next_nonce(
+    caller: Address,
+    provider_url: &str,
+    block: Option<BlockId>,
+) -> Result<U256, ProviderError> {
+    let provider = Provider::try_from(provider_url).expect("Bad fork_url provider");
+    let rt = RuntimeOrHandle::new();
+    rt.block_on(provider.get_transaction_count(caller, block))
+}
+
+pub fn next_create_address(caller: Address, nonce: U256) -> Address {
+    let mut stream = rlp::RlpStream::new_list(2);
+    stream.append(&caller);
+    stream.append(&nonce);
+    H256::from_slice(keccak256(&stream.out()).as_slice()).into()
 }
 
 /// Flattens a group of contracts into maps of all events and functions

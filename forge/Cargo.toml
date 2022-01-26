@@ -25,6 +25,7 @@ tracing = "0.1.26"
 tracing-subscriber = "0.2.20"
 proptest = "1.0.0"
 rayon = "1.5"
+rlp = "0.5.1"
 
 # load sputnik for parallel evm usage
 sputnik = { package = "evm", git = "https://github.com/rust-blockchain/evm" }

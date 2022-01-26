@@ -49,6 +49,11 @@ impl Cmd for CreateArgs {
         // Get ABI and BIN
         let (abi, bin, _) = super::read_artifact(&project, compiled, self.contract.clone())?;
 
+        let bin = match bin.object {
+            BytecodeObject::Bytecode(_) => bin.object,
+            _ => eyre::bail!("Dynamic linking not supported in `create` command - deploy the library contract first, then provide the address to link at compile time")
+        };
+
         // Add arguments to constructor
         let provider = Provider::<Http>::try_from(self.eth.rpc_url()?)?;
         let params = match abi.constructor {

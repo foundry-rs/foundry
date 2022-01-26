@@ -1,6 +1,6 @@
 use crate::cmd::{build::BuildArgs, compile, manual_compile, Cmd};
 use clap::{Parser, ValueHint};
-use ethers::abi::Abi;
+use ethers::{abi::Abi, prelude::artifacts::CompactContract};
 use forge::ContractRunner;
 use foundry_utils::IntoFunction;
 use std::{collections::BTreeMap, path::PathBuf};
@@ -11,7 +11,7 @@ use ethers::solc::{MinimalCombinedArtifacts, Project};
 use crate::opts::evm::EvmArgs;
 use ansi_term::Colour;
 use ethers::{
-    prelude::{artifacts::ContractBytecode, Artifact},
+    prelude::artifacts::ContractBytecode,
     solc::artifacts::{CompactContractSome, ContractBytecodeSome},
 };
 use evm_adapters::{
@@ -87,7 +87,8 @@ impl Cmd for RunArgs {
         let bytecode = bin.into_bytes().unwrap();
         let needs_setup = abi.functions().any(|func| func.name == "setUp");
 
-        let cfg = crate::utils::sputnik_cfg(&evm_version);
+        let mut cfg = crate::utils::sputnik_cfg(&evm_version);
+        cfg.create_contract_limit = None;
         let vicinity = evm_opts.vicinity()?;
         let backend = evm_opts.backend(&vicinity)?;
 
@@ -102,6 +103,7 @@ impl Cmd for RunArgs {
                     bytecode,
                     Some(evm_opts.sender),
                     None,
+                    vec![],
                 );
                 runner.run_test(&func, needs_setup, Some(&known_contracts))?
             }
@@ -114,6 +116,7 @@ impl Cmd for RunArgs {
                     bytecode,
                     Some(evm_opts.sender),
                     None,
+                    vec![],
                 );
                 runner.run_test(&func, needs_setup, Some(&known_contracts))?
             }
@@ -285,7 +288,7 @@ impl RunArgs {
             contract.1
         };
 
-        let contract = contract_bytecode.into_compact_contract().unwrap();
+        let contract = CompactContract::from(contract_bytecode).try_into().expect("Couldn't create contract from bytecodes, either abi, bytecode, or deployed_bytecode were empty.");
 
         let mut highlevel_known_contracts = BTreeMap::new();
 

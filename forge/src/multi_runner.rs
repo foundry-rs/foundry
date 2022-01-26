@@ -1,4 +1,5 @@
 use crate::{runner::TestResult, ContractRunner, TestFilter};
+use ethers::prelude::artifacts::{BytecodeObject, CompactBytecode, CompactContractBytecode};
 use evm_adapters::{
     evm_opts::{BackendKind, EvmOpts},
     sputnik::cheatcodes::{CONSOLE_ABI, HEVMCONSOLE_ABI, HEVM_ABI},
@@ -55,29 +56,114 @@ impl MultiContractRunnerBuilder {
 
         // This is just the contracts compiled, but we need to merge this with the read cached
         // artifacts
-        let contracts = output.into_artifacts();
+        let contracts = output
+            .into_artifacts()
+            .map(|(n, c)| (n, c.into_contract_bytecode()))
+            .collect::<BTreeMap<String, CompactContractBytecode>>();
         let mut known_contracts: BTreeMap<String, (Abi, Vec<u8>)> = Default::default();
-        let mut deployable_contracts: BTreeMap<String, (Abi, ethers::prelude::Bytes)> =
-            Default::default();
 
-        for (fname, contract) in contracts {
-            let (maybe_abi, maybe_deploy_bytes, maybe_runtime_bytes) = contract.into_parts();
-            if let (Some(abi), Some(bytecode)) = (maybe_abi, maybe_deploy_bytes) {
-                // skip deployment of abstract contracts
-                if bytecode.as_ref().is_empty() {
-                    continue
+        // create a mapping of name => (abi, deployment code, Vec<library deployment code>)
+        let mut deployable_contracts: BTreeMap<
+            String,
+            (Abi, ethers::prelude::Bytes, Vec<ethers::prelude::Bytes>),
+        > = Default::default();
+
+        // grab the nonce, either from the rpc node or start from 1
+        let nonce = if let Some(url) = &evm_opts.fork_url {
+            foundry_utils::next_nonce(
+                evm_opts.sender,
+                url,
+                evm_opts.fork_block_number.map(Into::into),
+            )
+            .unwrap_or_default() +
+                1
+        } else {
+            U256::one()
+        };
+
+        // create a mapping of fname => Vec<(fname, file, key)>,
+        let link_tree: BTreeMap<String, Vec<(String, String, String)>> = contracts
+            .iter()
+            .map(|(fname, contract)| {
+                (
+                    fname.to_string(),
+                    contract
+                        .all_link_references()
+                        .iter()
+                        .flat_map(|(file, link)| {
+                            link.keys().map(|key| {
+                                (
+                                    key.to_string() + ".json:" + key,
+                                    file.to_string(),
+                                    key.to_string(),
+                                )
+                            })
+                        })
+                        .collect::<Vec<(String, String, String)>>(),
+                )
+            })
+            .collect();
+
+        // TODO: we should look at parallelizing the linking
+        for fname in contracts.keys() {
+            let (abi, maybe_deployment_bytes, maybe_runtime) = if let Some(c) = contracts.get(fname) {
+                (c.abi.as_ref(), c.bytecode.as_ref(), c.deployed_bytecode.as_ref())
+            } else {
+                (None, None, None)
+            };
+            if let (Some(abi), Some(bytecode), Some(runtime)) = (abi, maybe_deployment_bytes, maybe_runtime) {
+                
+                // we are going to mutate, but library contract addresses may change based on
+                // the test so we clone
+                //
+                // TODO: verify the above statement. Maybe not? and we can modify in place.
+                let mut target_bytecode = bytecode.clone();
+                let mut target_bytecode_runtime = runtime
+                    .clone()
+                    .bytecode
+                    .expect("No target runtime")
+                    .clone();
+
+                // instantiate a vector that gets filled with library deployment bytecode
+                let mut dependencies = vec![];
+
+                match bytecode.object {
+                    BytecodeObject::Unlinked(_) => {
+                        // link needed
+                        recurse_link(
+                            fname.to_string(),
+                            (&mut target_bytecode, &mut target_bytecode_runtime),
+                            &contracts,
+                            &link_tree,
+                            &mut dependencies,
+                            nonce,
+                            evm_opts.sender,
+                        );
+                    }
+                    BytecodeObject::Bytecode(ref bytes) => {
+                        if bytes.as_ref().is_empty() {
+                            // abstract, skip
+                            continue
+                        }
+                    }
                 }
 
+                // get bytes
+                let bytecode = if let Some(b) =  target_bytecode.object.into_bytes() { b } else { continue };
+
+                // if its a test, add it to deployable contracts
                 if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) &&
                     abi.functions().any(|func| func.name.starts_with("test"))
                 {
-                    deployable_contracts.insert(fname.clone(), (abi.clone(), bytecode.clone()));
+                    deployable_contracts
+                        .insert(fname.clone(), (abi.clone(), bytecode.clone(), dependencies.to_vec()));
                 }
 
                 let split = fname.split(':').collect::<Vec<&str>>();
                 let contract_name = if split.len() > 1 { split[1] } else { split[0] };
-                if let Some(runtime_code) = maybe_runtime_bytes {
-                    known_contracts.insert(contract_name.to_string(), (abi, runtime_code.to_vec()));
+                if let Some(runtime_code) = target_bytecode_runtime.object.into_bytes() {
+                    known_contracts
+                        .insert(contract_name.to_string(), (abi.clone(), runtime_code.to_vec()));
                 }
             }
         }
@@ -125,11 +211,73 @@ impl MultiContractRunnerBuilder {
     }
 }
 
+fn recurse_link<'a>(
+    // target name
+    target: String,
+    // to-be-modified/linked bytecode
+    target_bytecode: (&'a mut CompactBytecode, &'a mut CompactBytecode),
+    // Contracts
+    contracts: &'a BTreeMap<String, CompactContractBytecode>,
+    // fname => Vec<(fname, file, key)>
+    dependency_tree: &'a BTreeMap<String, Vec<(String, String, String)>>,
+    // library deployment vector
+    deployment: &'a mut Vec<ethers::prelude::Bytes>,
+    // nonce to start at
+    init_nonce: U256,
+    // sender
+    sender: Address,
+) {
+    // check if we have dependencies
+    if let Some(dependencies) = dependency_tree.get(&target) {
+        // for each dependency, try to link
+        dependencies.iter().for_each(|(next_target, file, key)| {
+            // get the dependency
+            let contract = contracts.get(next_target).expect("No target contract").clone();
+            let mut next_target_bytecode = contract.bytecode.expect("No target bytecode");
+            let mut next_target_runtime_bytecode = contract
+                .deployed_bytecode
+                .expect("No target runtime bytecode")
+                .bytecode
+                .expect("No target runtime");
+
+            // make sure dependency is fully linked
+            if let Some(deps) = dependency_tree.get(&target) {
+                if !deps.is_empty() {
+                    // actually link the nested dependencies to this dependency
+                    recurse_link(
+                        next_target.to_string(),
+                        (&mut next_target_bytecode, &mut next_target_runtime_bytecode),
+                        contracts,
+                        dependency_tree,
+                        deployment,
+                        init_nonce,
+                        sender,
+                    );
+                }
+            }
+
+            // calculate the address for linking this dependency
+            let addr = foundry_utils::next_create_address(
+                sender,
+                init_nonce + deployment.len(),
+            );
+
+            // link the dependency to the target
+            target_bytecode.0.link(file.clone(), key.clone(), addr);
+            target_bytecode.1.link(file, key, addr);
+
+            // push the dependency into the library deployment vector 
+            deployment
+                .push(next_target_bytecode.object.into_bytes().expect("Bytecode should be linked"));
+        });
+    }
+}
+
 /// A multi contract runner receives a set of contracts deployed in an EVM instance and proceeds
 /// to run all test functions in these contracts.
 pub struct MultiContractRunner {
     /// Mapping of contract name to Abi and creation bytecode
-    pub contracts: BTreeMap<String, (Abi, ethers::prelude::Bytes)>,
+    pub contracts: BTreeMap<String, (Abi, ethers::prelude::Bytes, Vec<ethers::prelude::Bytes>)>,
     /// Compiled contracts by name that have an Abi and runtime bytecode
     pub known_contracts: BTreeMap<String, (Abi, Vec<u8>)>,
     /// Identified contracts by test
@@ -160,14 +308,14 @@ impl MultiContractRunner {
         let results = contracts
             .par_iter()
             .filter(|(name, _)| filter.matches_contract(name))
-            .map(|(name, (abi, deploy_code))| {
+            .map(|(name, (abi, deploy_code, libs))| {
                 // unavoidable duplication here?
                 let result = match backend {
                     BackendKind::Simple(ref backend) => {
-                        self.run_tests(name, abi, backend, deploy_code.clone(), filter)?
+                        self.run_tests(name, abi, backend, deploy_code.clone(), libs, filter)?
                     }
                     BackendKind::Shared(ref backend) => {
-                        self.run_tests(name, abi, backend, deploy_code.clone(), filter)?
+                        self.run_tests(name, abi, backend, deploy_code.clone(), libs, filter)?
                     }
                 };
                 Ok((name.clone(), result))
@@ -194,6 +342,7 @@ impl MultiContractRunner {
         contract: &Abi,
         backend: &B,
         deploy_code: ethers::prelude::Bytes,
+        libs: &[ethers::prelude::Bytes],
         filter: &impl TestFilter,
     ) -> Result<BTreeMap<String, TestResult>> {
         let runner = ContractRunner::new(
@@ -204,6 +353,7 @@ impl MultiContractRunner {
             deploy_code,
             self.sender,
             Some((&self.execution_info.0, &self.execution_info.1, &self.execution_info.2)),
+            libs.to_vec(),
         );
         runner.run_tests(filter, self.fuzzer.clone(), Some(&self.known_contracts))
     }
@@ -240,8 +390,8 @@ mod tests {
         let mut runner = runner();
         let results = runner.test(&Filter::new(".*", ".*")).unwrap();
 
-        // 8 contracts being built
-        assert_eq!(results.keys().len(), 8);
+        // 9 contracts being built
+        assert_eq!(results.keys().len(), 9);
         for (key, contract_tests) in results {
             // for a bad setup, we dont want a successful test
             if key == "SetupTest.json:SetupTest" {
