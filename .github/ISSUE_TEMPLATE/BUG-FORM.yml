@@ -28,6 +28,11 @@ body:
         - label: Foundryup
     validations:
       required: true
+  - type: input
+    attributes:
+      label: What command(s) is the bug in?
+      description: Leave empty if not relevant
+      placeholder: "For example: forge test"
   - type: dropdown
     attributes:
       label: Operating System
