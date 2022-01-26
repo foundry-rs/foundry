@@ -15,7 +15,7 @@ The [dev Telegram][dev-tg] is available for any concerns you may have that are n
 
 The Foundry project adheres to the [Rust Code of Conduct][rust-coc]. This code of conduct describes the _minimum_ behavior expected from all contributors.
 
-Instances of violations of the Code of Conduct can be reported by conacting the team at [me@gakonst.com](mailto:me@gakonst.com).
+Instances of violations of the Code of Conduct can be reported by contacting the team at [me@gakonst.com](mailto:me@gakonst.com).
 
 ### Ways to contribute
 
@@ -124,7 +124,7 @@ Keep an eye out for comments from code owners to provide guidance on conflicting
 
 **Any Foundry community member is welcome to review any pull request**.
 
-All contributors wo choose to review and provide feedback on pull requests have a responsibility to both the project and individual making the contribution. Reviews and feedback must be helpful, insightful, and geared towards improving the contribution as opposed to simply blocking it. If there are reasons why you feel the PR should not be merged, explain what those are. Do not exepct to be able to block a PR from advancing simply because you say "no" without giving an explanation. Be open to having your mind changed. Be open to working *with* the contributor to make the pull request better.
+All contributors who choose to review and provide feedback on pull requests have a responsibility to both the project and individual making the contribution. Reviews and feedback must be helpful, insightful, and geared towards improving the contribution as opposed to simply blocking it. If there are reasons why you feel the PR should not be merged, explain what those are. Do not expect to be able to block a PR from advancing simply because you say "no" without giving an explanation. Be open to having your mind changed. Be open to working *with* the contributor to make the pull request better.
 
 Reviews that are dismissive or disrespectful of the contributor or any other reviewers are strictly counter to the Code of Conduct.
 
@@ -134,7 +134,7 @@ When reviewing a pull request, the primary goals are for the codebase to improve
 
 Do not overwhelm new contributors.
 
-It is tempting to micro-optimize and make everythign about relative performance, perfect grammar, or exact style matches. Do not succumb to that temptation..
+It is tempting to micro-optimize and make everything about relative performance, perfect grammar, or exact style matches. Do not succumb to that temptation..
 
 Focus first on the most significant aspects of the change:
 
@@ -153,7 +153,7 @@ Nits (requests for small changes that are not essential) are fine, but try to av
 
 It is always good to clearly indicate nits when you comment, e.g.: `Nit: change foo() to bar(). But this is not blocking`.
 
-If your comments were addressed but were not folded after new commits, or if they proved to be mistaken, please, [hide them][hiding-a-comment] with the appropriate reason to keep the converstaion flow concise and relevant.
+If your comments were addressed but were not folded after new commits, or if they proved to be mistaken, please, [hide them][hiding-a-comment] with the appropriate reason to keep the conversation flow concise and relevant.
 
 ##### Be aware of the person behind the code
 
@@ -170,7 +170,7 @@ _Adapted from the [ethers-rs contributing guide](https://github.com/gakonst/ethe
 Releases are automatically done by the release workflow when a tag is pushed, however, these steps still need to be taken:
 
 1. Ensure that the versions in the relevant `Cargo.toml` files are up-to-date.
-2. Update documentation lins
+2. Update documentation links
 3. Perform a final audit for breaking changes.
 
 [rust-coc]: https://github.com/rust-lang/rust/blob/master/CODE_OF_CONDUCT.md
