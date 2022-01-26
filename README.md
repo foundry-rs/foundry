@@ -1,12 +1,13 @@
 # <h1 align="center"> foundry </h1>
 
 ![Github Actions](https://github.com/gakonst/foundry/workflows/Tests/badge.svg)
-[![Telegram Chat](https://img.shields.io/endpoint?color=neon&style=flat-square&url=https%3A%2F%2Ftg.sumanjay.workers.dev%2Ffoundry_rs)](https://t.me/foundry_rs)
+[![Telegram Chat][tg-badge]][tg-url]
 [![Crates.io][crates-badge]][crates-url]
 
 [crates-badge]: https://img.shields.io/crates/v/foundry.svg
-
 [crates-url]: https://crates.io/crates/foundry-rs
+[tg-badge]: https://img.shields.io/endpoint?color=neon&style=flat-square&url=https%3A%2F%2Ftg.sumanjay.workers.dev%2Ffoundry_rs
+[tg-url]: https://t.me/foundry_rs
 
 **Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
 
