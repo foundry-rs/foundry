@@ -101,7 +101,7 @@ macro_rules! forgetest_external {
             // Skip fork tests if the RPC url is not set.
             if $fork_block > 0 && std::env::var("FOUNDRY_ETH_RPC_URL").is_err() {
                 eprintln!("Skipping test {}. FOUNDRY_ETH_RPC_URL is not set.", $repo);
-                return;
+                return
             };
 
             let (prj, mut cmd) = $crate::util::setup(stringify!($test), $style);
