@@ -1,0 +1,15 @@
+{
+  "categories": [{
+    "title": "## Features",
+    "labels": ["T-feature"]
+  }, {
+    "title": "## Fixes",
+    "labels": ["T-bug", "T-fix"]
+  }],
+  "ignore_labels": [
+    "L-ignore"
+  ],
+  "template": "${{CHANGELOG}}\n## Other\n\n${{UNCATEGORIZED}}",
+  "pr_template": "- ${{TITLE}} (#${{NUMBER}})",
+  "empty_template": "- No changes"
+}
