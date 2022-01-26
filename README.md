@@ -170,45 +170,7 @@ source ~/.zshrc
 
 ## Contributing
 
-### Directory structure
-
-This repository contains several Rust crates:
-
-- [`forge`](forge): Library for building and testing a Solidity repository.
-- [`cast`](cast): Library for interacting with a live Ethereum JSON-RPC compatible node, or for parsing data.
-- [`cli`](cli): Command line interfaces to `cast` and `forge`.
-- [`evm-adapters`](evm-adapters): Unified layer of abstraction over multiple EVM types. Currently supported EVMs:
-  [Sputnik](https://github.com/rust-blockchain/evm/),
-  [Evmodin](https://github.com/vorot93/evmodin).
-- [`utils`](utils): Utilities for parsing ABI data, will eventually be upstreamed
-  to [ethers-rs](https://github.com/gakonst/ethers-rs/).
-
-### Rust Toolchain
-
-We use the stable Rust toolchain. Install by running:
-`curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`.
-
-#### Minimum Supported Rust Version
-
-The current minimum supported Rust version is
-`rustc 1.54.0 (a178d0322 2021-07-26)`.
-
-### Testing
-
-```shell
-cargo check
-cargo test
-cargo doc --open
-```
-
-### Formatting
-
-We use the nightly toolchain for formatting and linting.
-
-```
-cargo +nightly fmt
-cargo +nightly clippy --all-features -- -D warnings
-```
+See our [contributing guidelines](./CONTRIBUTING.md).
 
 ## Getting Help
 
