@@ -1,5 +1,6 @@
 name: Bug report
 description: File a bug report
+labels: ["T-bug"]
 body:
   - type: markdown
     attributes:
