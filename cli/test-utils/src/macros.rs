@@ -78,61 +78,15 @@ macro_rules! forgetest_init {
 }
 
 /// Clones an external repository and makes sure the tests pass.
+/// Can optionally enable fork mode as well if a fork block is passed.
+/// The fork block needs to be greater than 0.
 #[macro_export]
 macro_rules! forgetest_external {
     ($test:ident, $repo:literal) => {
-        $crate::forgetest_external!($test, $repo, $crate::ethers_solc::PathStyle::Dapptools);
+        $crate::forgetest_external!($test, $repo, $crate::ethers_solc::PathStyle::Dapptools, 0);
     };
-    ($test:ident, $repo:literal, $style:expr) => {
-        #[test]
-        fn $test() {
-            use std::process::{Command, Stdio};
-            let (prj, mut cmd) = $crate::util::setup(stringify!($test), $style);
-
-            // Wipe the default structure
-            prj.wipe();
-
-            // Clone the external repository
-            let git_clone = Command::new("git")
-                .args([
-                    "clone",
-                    "--depth",
-                    "1",
-                    "--recursive",
-                    &format!("https://github.com/{}", $repo),
-                    prj.root().to_str().expect("could not get project root"),
-                ])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .expect("could not clone repository. is git installed?");
-            assert!(git_clone.success(), "could not clone repository");
-
-            // We just run make install, but we do not care if it worked or not
-            let make_install = Command::new("make")
-                .arg("install")
-                .current_dir(prj.root())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
-
-            // Run the tests
-            cmd.arg("test")
-                .arg("--optimize")
-                .arg("--optimize-runs")
-                .arg("20000")
-                .arg("--ffi")
-                .set_env("FOUNDRY_FUZZ_RUNS", "1");
-            cmd.assert_non_empty_stdout();
-        }
-    };
-}
-
-/// Like forgetest_external! but with RPC forking
-#[macro_export]
-macro_rules! forgetest_external_forking {
     ($test:ident, $repo:literal, $fork_block:literal) => {
-        $crate::forgetest_external_forking!(
+        $crate::forgetest_external!(
             $test,
             $repo,
             $crate::ethers_solc::PathStyle::Dapptools,
@@ -145,9 +99,9 @@ macro_rules! forgetest_external_forking {
             use std::process::{Command, Stdio};
 
             // Skip fork tests if the RPC url is not set.
-            if std::env::var("FOUNDRY_ETH_RPC_URL").is_err() {
+            if $fork_block > 0 && std::env::var("FOUNDRY_ETH_RPC_URL").is_err() {
                 eprintln!("Skipping test {}. FOUNDRY_ETH_RPC_URL is not set.", $repo);
-                return
+                return;
             };
 
             let (prj, mut cmd) = $crate::util::setup(stringify!($test), $style);
@@ -156,20 +110,9 @@ macro_rules! forgetest_external_forking {
             prj.wipe();
 
             // Clone the external repository
-            let git_clone = Command::new("git")
-                .args([
-                    "clone",
-                    "--depth",
-                    "1",
-                    "--recursive",
-                    &format!("https://github.com/{}", $repo),
-                    prj.root().to_str().expect("could not get project root"),
-                ])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .expect("could not clone repository. is git installed?");
-            assert!(git_clone.success(), "could not clone repository");
+            let git_clone =
+                $crate::util::clone_remote(&format!("https://github.com/{}", $repo), prj.root());
+            assert!(git_clone, "could not clone repository");
 
             // We just run make install, but we do not care if it worked or not,
             // since some repositories do not have that target
@@ -187,7 +130,9 @@ macro_rules! forgetest_external_forking {
                 .arg("20000")
                 .arg("--ffi")
                 .set_env("FOUNDRY_FUZZ_RUNS", "1");
-            cmd.set_env("FOUNDRY_FORK_BLOCK_NUMBER", stringify!($fork_block));
+            if $fork_block > 0 {
+                cmd.set_env("FOUNDRY_FORK_BLOCK_NUMBER", stringify!($fork_block));
+            }
             cmd.assert_non_empty_stdout();
         }
     };
