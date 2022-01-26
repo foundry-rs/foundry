@@ -45,6 +45,6 @@ body:
   - type: textarea
     attributes:
       label: Describe the bug
-      description: Please include what you expected to happen as well, if relevant.
+      description: Please include relevant Solidity snippets as well if relevant.
     validations:
       required: true
