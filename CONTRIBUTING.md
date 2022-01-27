@@ -84,7 +84,7 @@ Please also make sure that the following commands pass if you have changed the c
 cargo check --all
 cargo test --all --all-features
 cargo +nightly fmt -- --check
-cargo +nightly clippy -all --all-features -- -D warnings
+cargo +nightly clippy --all --all-features -- -D warnings
 ```
 
 If you are working on a larger feature, we encourage you to open up a draft pull request, to make sure that other contributors are not duplicating work.
