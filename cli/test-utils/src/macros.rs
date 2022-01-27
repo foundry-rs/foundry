@@ -101,7 +101,7 @@ macro_rules! forgetest_external {
             // Skip fork tests if the RPC url is not set.
             if $fork_block > 0 && std::env::var("ETH_RPC_URL").is_err() {
                 eprintln!("Skipping test {}. ETH_RPC_URL is not set.", $repo);
-                return
+                return;
             };
 
             let (prj, mut cmd) = $crate::util::setup(stringify!($test), $style);
@@ -124,14 +124,8 @@ macro_rules! forgetest_external {
                 .status();
 
             // Run the tests
-            cmd.arg("test").args([
-                "--optimize",
-                "--optimize-runs",
-                "20000",
-                "ffi",
-                "FOUNDRY_FUZZ_RUNS",
-                "1",
-            ]);
+            cmd.arg("test").args(["--optimize", "--optimize-runs", "20000", "--ffi"]);
+            cmd.set_env("FOUNDRY_FUZZ_RUNS", "1");
             if $fork_block > 0 {
                 cmd.set_env("FOUNDRY_ETH_RPC_URL", std::env::var("ETH_RPC_URL").unwrap());
                 cmd.set_env("FOUNDRY_FORK_BLOCK_NUMBER", stringify!($fork_block));
