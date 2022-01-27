@@ -82,18 +82,36 @@ macro_rules! forgetest_init {
 /// The fork block needs to be greater than 0.
 #[macro_export]
 macro_rules! forgetest_external {
+    // forgetest_external!(test_name, "owner/repo");
     ($test:ident, $repo:literal) => {
-        $crate::forgetest_external!($test, $repo, $crate::ethers_solc::PathStyle::Dapptools, 0);
+        $crate::forgetest_external!($test, $repo, 0, Vec::<String>::new());
     };
+    // forgetest_external!(test_name, "owner/repo", 1234);
     ($test:ident, $repo:literal, $fork_block:literal) => {
         $crate::forgetest_external!(
             $test,
             $repo,
             $crate::ethers_solc::PathStyle::Dapptools,
-            $fork_block
+            $fork_block,
+            Vec::<String>::new()
         );
     };
-    ($test:ident, $repo:literal, $style:expr, $fork_block:literal) => {
+    // forgetest_external!(test_name, "owner/repo", &["--extra-opt", "val"]);
+    ($test:ident, $repo:literal, $forge_opts:expr) => {
+        $crate::forgetest_external!($test, $repo, 0, $forge_opts);
+    };
+    // forgetest_external!(test_name, "owner/repo", 1234, &["--extra-opt", "val"]);
+    ($test:ident, $repo:literal, $fork_block:literal, $forge_opts:expr) => {
+        $crate::forgetest_external!(
+            $test,
+            $repo,
+            $crate::ethers_solc::PathStyle::Dapptools,
+            $fork_block,
+            $forge_opts
+        );
+    };
+    // forgetest_external!(test_name, "owner/repo", PathStyle::Dapptools, 123);
+    ($test:ident, $repo:literal, $style:expr, $fork_block:literal, $forge_opts:expr) => {
         #[test]
         fn $test() {
             use std::process::{Command, Stdio};
@@ -124,7 +142,12 @@ macro_rules! forgetest_external {
                 .status();
 
             // Run the tests
-            cmd.arg("test").args(["--optimize", "--optimize-runs", "20000", "--ffi"]);
+            cmd.arg("test").args($forge_opts).args([
+                "--optimize",
+                "--optimize-runs",
+                "20000",
+                "--ffi",
+            ]);
             cmd.set_env("FOUNDRY_FUZZ_RUNS", "1");
             if $fork_block > 0 {
                 cmd.set_env("FOUNDRY_ETH_RPC_URL", std::env::var("ETH_RPC_URL").unwrap());
