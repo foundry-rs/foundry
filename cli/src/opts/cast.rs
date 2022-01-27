@@ -147,11 +147,11 @@ pub enum Subcommands {
         sig: String,
         #[clap(help = "the list of arguments you want to call the function with")]
         args: Vec<String>,
-         #[clap(help = "gas quantity for the transaction")]
+        #[clap(long, help = "gas quantity for the transaction")]
         gas: Option<U256>,
-         #[clap(help = "ether value for the transaction")]
+        #[clap(long, help = "ether value for the transaction")]
         value: Option<U256>,
-         #[clap(help = "nonce for the transaction")]
+        #[clap(long, help = "nonce for the transaction")]
         nonce: Option<U256>,
         #[clap(long, env = "CAST_ASYNC")]
         cast_async: bool,
@@ -177,7 +177,7 @@ pub enum Subcommands {
         sig: String,
         #[clap(help = "the list of arguments you want to call the function with")]
         args: Vec<String>,
-        #[clap(help = "value for tx estimate")]
+        #[clap(long, help = "value for tx estimate")]
         value: Option<U256>,
         #[clap(flatten)]
         eth: EthereumOpts,
