@@ -35,7 +35,7 @@ pub mod test_helpers {
     });
 
     pub static EVM_OPTS: Lazy<EvmOpts> = Lazy::new(|| EvmOpts {
-        env: Env { gas_limit: 18446744073709551615, chain_id: Some(1), ..Default::default() },
+        env: Env { gas_limit: 18446744073709551615, chain_id: Some(99), ..Default::default() },
         initial_balance: U256::MAX,
         evm_type: EvmType::Sputnik,
         ..Default::default()

@@ -186,7 +186,7 @@ impl Env {
     #[cfg(feature = "sputnik")]
     pub fn sputnik_state(&self) -> MemoryVicinity {
         MemoryVicinity {
-            chain_id: self.chain_id.unwrap_or(1).into(),
+            chain_id: self.chain_id.unwrap_or(99).into(),
 
             gas_price: self.gas_price.into(),
             origin: self.tx_origin,
@@ -205,7 +205,7 @@ impl Env {
     pub fn evmodin_state(&self) -> MockedHost {
         let mut host = MockedHost::default();
 
-        host.tx_context.chain_id = self.chain_id.unwrap_or(1).into();
+        host.tx_context.chain_id = self.chain_id.unwrap_or(99).into();
         host.tx_context.tx_gas_price = self.gas_price.into();
         host.tx_context.tx_origin = self.tx_origin;
         host.tx_context.block_coinbase = self.block_coinbase;
