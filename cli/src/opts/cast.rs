@@ -1,7 +1,7 @@
 use std::{path::PathBuf, str::FromStr};
 
 use clap::{Parser, Subcommand};
-use ethers::types::{Address, BlockId, BlockNumber, NameOrAddress, H256};
+use ethers::types::{Address, BlockId, BlockNumber, NameOrAddress, H256, U256};
 
 use super::{ClapChain, EthereumOpts, Wallet};
 
@@ -147,6 +147,12 @@ pub enum Subcommands {
         sig: String,
         #[clap(help = "the list of arguments you want to call the function with")]
         args: Vec<String>,
+         #[clap(help = "gas quantity for the transaction")]
+        gas: Option<U256>,
+         #[clap(help = "ether value for the transaction")]
+        value: Option<U256>,
+         #[clap(help = "nonce for the transaction")]
+        nonce: Option<U256>,
         #[clap(long, env = "CAST_ASYNC")]
         cast_async: bool,
         #[clap(flatten)]
@@ -171,6 +177,8 @@ pub enum Subcommands {
         sig: String,
         #[clap(help = "the list of arguments you want to call the function with")]
         args: Vec<String>,
+        #[clap(help = "value for tx estimate")]
+        value: Option<U256>,
         #[clap(flatten)]
         eth: EthereumOpts,
     },
