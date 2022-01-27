@@ -391,7 +391,7 @@ impl TestCommand {
         if !o.status.success() || o.stdout.is_empty() {
             panic!(
                 "\n\n===== {:?} =====\n\
-                 command succeeded but expected failure!\
+                 command failed but expected success!\
                  \n\ncwd: {}\
                  \n\nstatus: {}\
                  \n\nstdout: {}\n\nstderr: {}\
