@@ -145,7 +145,10 @@ impl Cmd for TestArgs {
 /// The result of a single test
 #[derive(Debug, Clone)]
 pub struct Test {
-    /// The signature of the test
+    /// The identifier of the artifact/contract in the form of `<artifact file name>:<contract
+    /// name>`
+    pub artifact_id: String,
+    /// The signature of the solidity test
     pub signature: String,
     /// Result of the executed solidity test
     pub result: forge::TestResult,
@@ -188,11 +191,12 @@ impl TestOutcome {
         self.results.values().flat_map(|tests| tests.iter())
     }
 
+    /// Returns an iterator over all `Test`
     pub fn into_tests(self) -> impl Iterator<Item = Test> {
         self.results
-            .into_values()
-            .flat_map(|tests| tests.into_iter())
-            .map(|(name, result)| Test { signature: name, result })
+            .into_iter()
+            .flat_map(|(file, tests)| tests.into_iter().map(move |t| (file.clone(), t)))
+            .map(|(artifact_id, (signature, result))| Test { artifact_id, signature, result })
     }
 
     /// Checks if there are any failures and failures are disallowed

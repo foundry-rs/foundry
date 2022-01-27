@@ -107,6 +107,25 @@ pub fn read_secret(secret: bool, unsafe_secret: Option<String>) -> eyre::Result<
     })
 }
 
+/// Artifact/Contract identifier can take the following form:
+/// `<artifact file name>:<contract name>`, the `artifact file name` is the name of the json file of
+/// the contract's artifact and the contract name is the name of the solidity contract, like
+/// `SafeTransferLibTest.json:SafeTransferLibTest`
+///
+/// This returns the `contract name` part
+///
+/// # Example
+///
+/// ```
+/// assert_eq!(
+///     "SafeTransferLibTest",
+///     utils::get_contract_name("SafeTransferLibTest.json:SafeTransferLibTest")
+/// );
+/// ```
+pub fn get_contract_name(id: &str) -> &str {
+    id.rsplit(':').next().unwrap_or(id)
+}
+
 /// Conditionally print a message
 ///
 /// This macro accepts a predicate and the message to print if the predicate is tru
