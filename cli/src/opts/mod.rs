@@ -72,6 +72,7 @@ pub struct EthereumOpts {
 
     #[clap(long, env = "ETHERSCAN_API_KEY")]
     pub etherscan_api_key: Option<String>,
+
     #[clap(long, env = "CHAIN", default_value = "mainnet")]
     pub chain: Chain,
 }

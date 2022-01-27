@@ -7,7 +7,7 @@ use ethers_core::{
         token::{LenientTokenizer, Tokenizer},
         Abi, AbiParser, Token,
     },
-    types::{Chain, *},
+    types::{transaction::eip2718::TypedTransaction, Chain, *},
     utils::{self, keccak256},
 };
 
@@ -216,7 +216,7 @@ where
         args: Option<(&str, Vec<String>)>,
         chain: Chain,
         etherscan_api_key: Option<String>,
-    ) -> Result<(Eip1559TransactionRequest, Option<ethers_core::abi::Function>)> {
+    ) -> Result<(TypedTransaction, Option<ethers_core::abi::Function>)> {
         let from = match from.into() {
             NameOrAddress::Name(ref ens_name) => self.provider.resolve_name(ens_name).await?,
             NameOrAddress::Address(addr) => addr,
@@ -231,7 +231,11 @@ where
         };
 
         // make the call
-        let mut tx = Eip1559TransactionRequest::new().from(from).to(to);
+        let mut tx: TypedTransaction = if chain.is_legacy() {
+            TransactionRequest::new().from(from).to(to).into()
+        } else {
+            Eip1559TransactionRequest::new().from(from).to(to).into()
+        };
 
         let func = if let Some((sig, args)) = args {
             let func = if sig.contains('(') {
@@ -247,7 +251,7 @@ where
                 .await?
             };
             let data = encode_args(&func, &args)?;
-            tx = tx.data(data);
+            tx.set_data(data.into());
             Some(func)
         } else {
             None
