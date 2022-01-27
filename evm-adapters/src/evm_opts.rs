@@ -137,6 +137,7 @@ mod sputnik_helpers {
                 let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
                 rt.block_on(crate::sputnik::vicinity(
                     &provider,
+                    self.env.chain_id,
                     self.fork_block_number,
                     Some(self.env.tx_origin),
                 ))?
@@ -153,7 +154,7 @@ pub struct Env {
     pub gas_limit: u64,
 
     /// the chainid opcode value
-    pub chain_id: u64,
+    pub chain_id: Option<u64>,
 
     /// the tx.gasprice value during EVM execution
     pub gas_price: u64,
@@ -185,7 +186,7 @@ impl Env {
     #[cfg(feature = "sputnik")]
     pub fn sputnik_state(&self) -> MemoryVicinity {
         MemoryVicinity {
-            chain_id: self.chain_id.into(),
+            chain_id: self.chain_id.unwrap_or(1).into(),
 
             gas_price: self.gas_price.into(),
             origin: self.tx_origin,
@@ -204,7 +205,7 @@ impl Env {
     pub fn evmodin_state(&self) -> MockedHost {
         let mut host = MockedHost::default();
 
-        host.tx_context.chain_id = self.chain_id.into();
+        host.tx_context.chain_id = self.chain_id.unwrap_or(1).into();
         host.tx_context.tx_gas_price = self.gas_price.into();
         host.tx_context.tx_origin = self.tx_origin;
         host.tx_context.block_coinbase = self.block_coinbase;
