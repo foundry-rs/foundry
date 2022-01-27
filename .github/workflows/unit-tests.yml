@@ -10,6 +10,8 @@ jobs:
   tests-stable:
     name: Tests (Stable)
     runs-on: ubuntu-latest
+    env:
+      ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf
     steps:
       - name: Checkout sources
         uses: actions/checkout@v2
