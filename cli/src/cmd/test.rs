@@ -118,7 +118,11 @@ impl Cmd for TestArgs {
 
         // Setup the fuzzer
         // TODO: Add CLI Options to modify the persistence
-        let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
+        let cfg = proptest::test_runner::Config {
+            failure_persistence: None,
+            cases: config.fuzz_runs,
+            ..Default::default()
+        };
         let fuzzer = proptest::test_runner::TestRunner::new(cfg);
 
         // Set up the project
