@@ -68,18 +68,10 @@ impl MultiContractRunnerBuilder {
             (Abi, ethers::prelude::Bytes, Vec<ethers::prelude::Bytes>),
         > = Default::default();
 
-        // grab the nonce, either from the rpc node or start from 1
-        let nonce = if let Some(url) = &evm_opts.fork_url {
-            foundry_utils::next_nonce(
-                evm_opts.sender,
-                url,
-                evm_opts.fork_block_number.map(Into::into),
-            )
-            .unwrap_or_default() +
-                1
-        } else {
-            U256::one()
-        };
+        // we dont use mainnet state for evm_opts.sender so this will always be 1
+        // I am leaving this here so that in the future if this needs to change,
+        // its easy to find.
+        let nonce = U256::one();
 
         // create a mapping of fname => Vec<(fname, file, key)>,
         let link_tree: BTreeMap<String, Vec<(String, String, String)>> = contracts

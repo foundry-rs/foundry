@@ -310,18 +310,10 @@ impl RunArgs {
             })
             .collect();
 
-        // grab the nonce, either from the rpc node or start from 1
-        let nonce = if let Some(url) = &evm_opts.fork_url {
-            foundry_utils::next_nonce(
-                evm_opts.sender,
-                url,
-                evm_opts.fork_block_number.map(Into::into),
-            )
-            .unwrap_or_default() +
-                1
-        } else {
-            U256::one()
-        };
+        // we dont use mainnet state for evm_opts.sender so this will always be 1
+        // I am leaving this here so that in the future if this needs to change,
+        // its easy to find.
+        let nonce = U256::one();
 
         let mut run_dependencies = vec![];
         let mut contract =

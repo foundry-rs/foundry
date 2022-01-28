@@ -18,10 +18,10 @@ panic = "abort"
 debug = true
 
 # Patch ethers-rs with a local checkout
-[patch."https://github.com/gakonst/ethers-rs"]
-ethers = { git = "https://github.com/brockelmore/ethers-rs" }
-ethers-core = { git = "https://github.com/brockelmore/ethers-rs" }
-ethers-providers = { git = "https://github.com/brockelmore/ethers-rs" }
-ethers-signers = { git = "https://github.com/brockelmore/ethers-rs" }
-ethers-etherscan = { git = "https://github.com/brockelmore/ethers-rs" }
-ethers-solc = { git = "https://github.com/brockelmore/ethers-rs" }
+# [patch."https://github.com/gakonst/ethers-rs"]
+# ethers = { path = "../ethers-rs" }
+# ethers-core = { path = "../ethers-rs" }
+# ethers-providers = { path = "../ethers-rs" }
+# ethers-signers = { path = "../ethers-rs" }
+# ethers-etherscan = { path = "../ethers-rs" }
+# ethers-solc = { path = "../ethers-rs" }
