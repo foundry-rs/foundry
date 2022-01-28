@@ -1,8 +1,9 @@
 //! Create command
+use std::path::PathBuf;
 
 use crate::{cmd::Cmd, opts::forge::Dependency, utils::p_println};
 use ansi_term::Colour;
-use clap::Parser;
+use clap::{Parser, ValueHint};
 use foundry_config::find_project_root_path;
 use std::{
     path::Path,
@@ -12,17 +13,27 @@ use std::{
 /// Command to install dependencies
 #[derive(Debug, Clone, Parser)]
 pub struct InstallArgs {
-    #[clap(help = "the submodule name of the library you want to install")]
+    #[clap(
+        help = "installs one or more dependencies as git submodules (will install existing dependencies if no arguments are provided)"
+    )]
     dependencies: Vec<Dependency>,
     #[clap(flatten)]
     opts: DependencyInstallOpts,
+    #[clap(
+        help = "the project's root path. By default, this is the root directory of the current Git repository or the current working directory if it is not part of a Git repository",
+        long,
+        value_hint = ValueHint::DirPath
+    )]
+    pub root: Option<PathBuf>,
 }
 
 impl Cmd for InstallArgs {
     type Output = ();
 
     fn run(self) -> eyre::Result<Self::Output> {
-        install(find_project_root_path()?, self.dependencies, self.opts)
+        let InstallArgs { root, .. } = self;
+        let root = root.unwrap_or_else(|| find_project_root_path().unwrap());
+        install(root, self.dependencies, self.opts)
     }
 }
 
@@ -42,6 +53,12 @@ pub(crate) fn install(
     dependencies: Vec<Dependency>,
     opts: DependencyInstallOpts,
 ) -> eyre::Result<()> {
+    if dependencies.is_empty() {
+        let mut cmd = Command::new("git");
+        cmd.args(&["submodule", "update", "--init", "--recursive"]);
+        cmd.spawn()?.wait()?;
+    }
+
     let root = root.as_ref();
     let libs = root.join("lib");
     std::fs::create_dir_all(&libs)?;

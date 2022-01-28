@@ -56,6 +56,7 @@ jobs:
         id: build_changelog
         uses: mikepenz/release-changelog-builder-action@v2
         with:
+          configuration: "./.github/changelog.json"
           fromTag: ${{ env.IS_NIGHTLY && 'nightly' || '' }}
           toTag: ${{ steps.release_info.outputs.tag_name }}
         env:

@@ -7,7 +7,7 @@ use ethers_core::{
         token::{LenientTokenizer, Tokenizer},
         Abi, AbiParser, Token,
     },
-    types::{Chain, *},
+    types::{transaction::eip2718::TypedTransaction, Chain, *},
     utils::{self, keccak256},
 };
 
@@ -74,8 +74,8 @@ where
         chain: Chain,
         etherscan_api_key: Option<String>,
     ) -> Result<String> {
-        let (tx, func) = self.build_tx(from, to, Some(args), chain, etherscan_api_key).await?;
-        let tx = tx.into();
+        let (tx, func) =
+            self.build_tx(from, to, Some(args), None, None, None, chain, etherscan_api_key).await?;
         let res = self.provider.call(&tx, None).await?;
 
         // decode args into tokens
@@ -119,7 +119,7 @@ where
     ///
     /// ```no_run
     /// use cast::Cast;
-    /// use ethers_core::types::{Address, Chain};
+    /// use ethers_core::types::{Address, Chain, U256};
     /// use ethers_providers::{Provider, Http};
     /// use std::{str::FromStr, convert::TryFrom};
     ///
@@ -130,20 +130,28 @@ where
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let sig = "greet(string)()";
     /// let args = vec!["hello".to_owned()];
-    /// let data = cast.send(from, to, Some((sig, args)), Chain::Mainnet, None).await?;
+    /// let gas = U256::from_str("200000").unwrap();
+    /// let value = U256::from_str("1").unwrap();
+    /// let nonce = U256::from_str("1").unwrap();
+    /// let data = cast.send(from, to, Some((sig, args)), Some(gas), Some(value), Some(nonce), Chain::Mainnet, None).await?;
     /// println!("{}", *data);
     /// # Ok(())
     /// # }
     /// ```
+    #[allow(clippy::too_many_arguments)]
     pub async fn send<F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
         &self,
         from: F,
         to: T,
         args: Option<(&str, Vec<String>)>,
+        gas: Option<U256>,
+        value: Option<U256>,
+        nonce: Option<U256>,
         chain: Chain,
         etherscan_api_key: Option<String>,
     ) -> Result<PendingTransaction<'_, M::Provider>> {
-        let (tx, _) = self.build_tx(from, to, args, chain, etherscan_api_key).await?;
+        let (tx, _) =
+            self.build_tx(from, to, args, gas, value, nonce, chain, etherscan_api_key).await?;
         let res = self.provider.send_transaction(tx, None).await?;
 
         Ok::<_, eyre::Error>(res)
@@ -178,7 +186,7 @@ where
     ///
     /// ```no_run
     /// use cast::Cast;
-    /// use ethers_core::types::{Address, Chain};
+    /// use ethers_core::types::{Address, Chain, U256};
     /// use ethers_providers::{Provider, Http};
     /// use std::{str::FromStr, convert::TryFrom};
     ///
@@ -189,7 +197,8 @@ where
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let sig = "greet(string)()";
     /// let args = vec!["5".to_owned()];
-    /// let data = cast.estimate(from, to, Some((sig, args)), Chain::Mainnet, None).await?;
+    /// let value = U256::from_str("1").unwrap();
+    /// let data = cast.estimate(from, to, Some((sig, args)), Some(value), Chain::Mainnet, None).await?;
     /// println!("{}", data);
     /// # Ok(())
     /// # }
@@ -199,24 +208,29 @@ where
         from: F,
         to: T,
         args: Option<(&str, Vec<String>)>,
+        value: Option<U256>,
         chain: Chain,
         etherscan_api_key: Option<String>,
     ) -> Result<U256> {
-        let (tx, _) = self.build_tx(from, to, args, chain, etherscan_api_key).await?;
-        let tx = tx.into();
+        let (tx, _) =
+            self.build_tx(from, to, args, None, value, None, chain, etherscan_api_key).await?;
         let res = self.provider.estimate_gas(&tx).await?;
 
         Ok::<_, eyre::Error>(res)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn build_tx<F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
         &self,
         from: F,
         to: T,
         args: Option<(&str, Vec<String>)>,
+        gas: Option<U256>,
+        value: Option<U256>,
+        nonce: Option<U256>,
         chain: Chain,
         etherscan_api_key: Option<String>,
-    ) -> Result<(Eip1559TransactionRequest, Option<ethers_core::abi::Function>)> {
+    ) -> Result<(TypedTransaction, Option<ethers_core::abi::Function>)> {
         let from = match from.into() {
             NameOrAddress::Name(ref ens_name) => self.provider.resolve_name(ens_name).await?,
             NameOrAddress::Address(addr) => addr,
@@ -231,7 +245,11 @@ where
         };
 
         // make the call
-        let mut tx = Eip1559TransactionRequest::new().from(from).to(to);
+        let mut tx: TypedTransaction = if chain.is_legacy() {
+            TransactionRequest::new().from(from).to(to).into()
+        } else {
+            Eip1559TransactionRequest::new().from(from).to(to).into()
+        };
 
         let func = if let Some((sig, args)) = args {
             let func = if sig.contains('(') {
@@ -247,11 +265,23 @@ where
                 .await?
             };
             let data = encode_args(&func, &args)?;
-            tx = tx.data(data);
+            tx.set_data(data.into());
             Some(func)
         } else {
             None
         };
+
+        if let Some(gas) = gas {
+            tx.set_gas(gas);
+        }
+
+        if let Some(value) = value {
+            tx.set_value(value);
+        }
+
+        if let Some(nonce) = nonce {
+            tx.set_nonce(nonce);
+        }
 
         Ok((tx, func))
     }

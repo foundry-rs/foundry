@@ -123,7 +123,7 @@ pub struct Config {
     /// pins the block number for the state fork
     pub fork_block_number: Option<u64>,
     /// the chainid opcode value
-    pub chain_id: Chain,
+    pub chain_id: Option<Chain>,
     /// Block gas limit
     pub gas_limit: u64,
     /// `tx.gasprice` value during EVM execution"
@@ -650,7 +650,7 @@ impl Default for Config {
             initial_balance: U256::from(0xffffffffffffffffffffffffu128),
             block_number: 0,
             fork_block_number: None,
-            chain_id: Chain::Id(1),
+            chain_id: None,
             // toml-rs can't handle larger number because integers are stored signed
             // https://github.com/alexcrichton/toml-rs/issues/256
             gas_limit: i64::MAX as u64,

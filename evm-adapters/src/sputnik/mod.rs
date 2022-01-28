@@ -28,6 +28,7 @@ use sputnik_evm::executor::stack::PrecompileSet;
 /// the live chain data returned by the provider.
 pub async fn vicinity<M: Middleware>(
     provider: &M,
+    override_chain_id: Option<u64>,
     pin_block: Option<u64>,
     origin: Option<H160>,
 ) -> Result<MemoryVicinity, M::Error> {
@@ -36,7 +37,7 @@ pub async fn vicinity<M: Middleware>(
     } else {
         provider.get_block_number().await?.as_u64()
     };
-    let (gas_price, chain_id, block) = tokio::try_join!(
+    let (gas_price, rpc_chain_id, block) = tokio::try_join!(
         provider.get_gas_price(),
         provider.get_chainid(),
         provider.get_block(block_number)
@@ -45,7 +46,7 @@ pub async fn vicinity<M: Middleware>(
 
     Ok(MemoryVicinity {
         origin: origin.unwrap_or_default(),
-        chain_id,
+        chain_id: override_chain_id.map_or(rpc_chain_id, Into::into),
         block_hashes: Vec::new(),
         block_number: block.number.expect("block number not found").as_u64().into(),
         block_coinbase: block.author,

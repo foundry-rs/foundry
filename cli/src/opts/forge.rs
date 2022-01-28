@@ -41,7 +41,10 @@ pub enum Subcommands {
         lib: Option<PathBuf>,
     },
 
-    #[clap(alias = "i", about = "installs one or more dependencies as git submodules")]
+    #[clap(
+        alias = "i",
+        about = "installs one or more dependencies as git submodules (will install existing dependencies if no arguments are provided"
+    )]
     Install(InstallArgs),
 
     #[clap(alias = "r", about = "removes one or more dependencies from git submodules")]

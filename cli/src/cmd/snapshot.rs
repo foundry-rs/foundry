@@ -1,9 +1,12 @@
 //! Snapshot command
 
-use crate::cmd::{
-    test,
-    test::{Test, TestOutcome},
-    Cmd,
+use crate::{
+    cmd::{
+        test,
+        test::{Test, TestOutcome},
+        Cmd,
+    },
+    utils,
 };
 use ansi_term::Colour;
 use clap::{Parser, ValueHint};
@@ -22,9 +25,9 @@ use std::{
 };
 
 /// A regex that matches a basic snapshot entry like
-/// `testDeposit() (gas: 58804)`
+/// `Test:testDeposit() (gas: 58804)`
 pub static RE_BASIC_SNAPSHOT_ENTRY: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?P<sig>(\w+)\s*\((.*?)\))\s*\(((gas:)?\s*(?P<gas>\d+)|(runs:\s*(?P<runs>\d+),\s*μ:\s*(?P<avg>\d+),\s*~:\s*(?P<med>\d+)))\)").unwrap()
+    Regex::new(r"(?P<file>(.*?)):(?P<sig>(\w+)\s*\((.*?)\))\s*\(((gas:)?\s*(?P<gas>\d+)|(runs:\s*(?P<runs>\d+),\s*μ:\s*(?P<avg>\d+),\s*~:\s*(?P<med>\d+)))\)").unwrap()
 });
 
 #[derive(Debug, Clone, Parser)]
@@ -148,6 +151,7 @@ impl SnapshotConfig {
 /// Has the form `<signature>(gas:? 40181)`
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct SnapshotEntry {
+    pub file_name: String,
     pub signature: String,
     pub gas_used: TestKindGas,
 }
@@ -159,27 +163,31 @@ impl FromStr for SnapshotEntry {
         RE_BASIC_SNAPSHOT_ENTRY
             .captures(s)
             .and_then(|cap| {
-                cap.name("sig").and_then(|sig| {
-                    if let Some(gas) = cap.name("gas") {
-                        Some(SnapshotEntry {
-                            signature: sig.as_str().to_string(),
-                            gas_used: TestKindGas::Standard(gas.as_str().parse().unwrap()),
-                        })
-                    } else {
-                        cap.name("runs")
-                            .and_then(|runs| {
-                                cap.name("avg")
-                                    .and_then(|avg| cap.name("med").map(|med| (runs, avg, med)))
-                            })
-                            .map(|(runs, avg, med)| SnapshotEntry {
+                cap.name("file").and_then(|file| {
+                    cap.name("sig").and_then(|sig| {
+                        if let Some(gas) = cap.name("gas") {
+                            Some(SnapshotEntry {
+                                file_name: file.as_str().to_string(),
                                 signature: sig.as_str().to_string(),
-                                gas_used: TestKindGas::Fuzz {
-                                    runs: runs.as_str().parse().unwrap(),
-                                    median: med.as_str().parse().unwrap(),
-                                    mean: avg.as_str().parse().unwrap(),
-                                },
+                                gas_used: TestKindGas::Standard(gas.as_str().parse().unwrap()),
                             })
-                    }
+                        } else {
+                            cap.name("runs")
+                                .and_then(|runs| {
+                                    cap.name("avg")
+                                        .and_then(|avg| cap.name("med").map(|med| (runs, avg, med)))
+                                })
+                                .map(|(runs, avg, med)| SnapshotEntry {
+                                    file_name: file.as_str().to_string(),
+                                    signature: sig.as_str().to_string(),
+                                    gas_used: TestKindGas::Fuzz {
+                                        runs: runs.as_str().parse().unwrap(),
+                                        median: med.as_str().parse().unwrap(),
+                                        mean: avg.as_str().parse().unwrap(),
+                                    },
+                                })
+                        }
+                    })
                 })
             })
             .ok_or_else(|| format!("Could not extract Snapshot Entry for {}", s))
@@ -210,7 +218,13 @@ fn write_to_snapshot_file(
 ) -> eyre::Result<()> {
     let mut out = String::new();
     for test in tests {
-        writeln!(out, "{} {}", test.signature, test.result.kind.gas_used())?;
+        writeln!(
+            out,
+            "{}:{} {}",
+            utils::get_contract_name(&test.artifact_id),
+            test.signature,
+            test.result.kind.gas_used()
+        )?;
     }
     Ok(fs::write(path, out)?)
 }
@@ -338,11 +352,12 @@ mod tests {
 
     #[test]
     fn can_parse_basic_snapshot_entry() {
-        let s = "deposit() (gas: 7222)";
+        let s = "Test:deposit() (gas: 7222)";
         let entry = SnapshotEntry::from_str(s).unwrap();
         assert_eq!(
             entry,
             SnapshotEntry {
+                file_name: "Test".to_string(),
                 signature: "deposit()".to_string(),
                 gas_used: TestKindGas::Standard(7222)
             }
@@ -351,11 +366,12 @@ mod tests {
 
     #[test]
     fn can_parse_fuzz_snapshot_entry() {
-        let s = "deposit() (runs: 256, μ: 100, ~:200)";
+        let s = "Test:deposit() (runs: 256, μ: 100, ~:200)";
         let entry = SnapshotEntry::from_str(s).unwrap();
         assert_eq!(
             entry,
             SnapshotEntry {
+                file_name: "Test".to_string(),
                 signature: "deposit()".to_string(),
                 gas_used: TestKindGas::Fuzz { runs: 256, median: 200, mean: 100 }
             }

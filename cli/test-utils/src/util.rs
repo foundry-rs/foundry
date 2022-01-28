@@ -14,7 +14,7 @@ use std::{
     fs::File,
     io::{BufWriter, Write},
     path::{Path, PathBuf},
-    process::{self, Command},
+    process::{self, Command, Stdio},
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc, Mutex,
@@ -37,6 +37,24 @@ static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 /// Copies an initialized project to the given path
 pub fn initialize(target: impl AsRef<Path>) {
     FORGE_INITIALIZED.copy_to(target)
+}
+
+/// Clones a remote repository into the specified directory.
+pub fn clone_remote(repo_url: &str, target_dir: impl AsRef<Path>) -> bool {
+    Command::new("git")
+        .args([
+            "clone",
+            "--depth",
+            "1",
+            "--recursive",
+            repo_url,
+            target_dir.as_ref().to_str().expect("Target path for git clone does not exist"),
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("Could not clone repository. Is git installed?")
+        .success()
 }
 
 /// Setup an empty test project and return a command pointing to the forge
@@ -373,7 +391,7 @@ impl TestCommand {
         if !o.status.success() || o.stdout.is_empty() {
             panic!(
                 "\n\n===== {:?} =====\n\
-                 command succeeded but expected failure!\
+                 command failed but expected success!\
                  \n\ncwd: {}\
                  \n\nstatus: {}\
                  \n\nstdout: {}\n\nstderr: {}\

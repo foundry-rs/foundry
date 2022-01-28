@@ -79,6 +79,8 @@ evmodin-evm = [
     "evm-adapters/evmodin-helpers",
 ]
 
+integration-tests = []
+
 [[bin]]
 name = "cast"
 path = "src/cast.rs"

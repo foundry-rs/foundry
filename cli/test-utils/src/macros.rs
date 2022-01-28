@@ -77,6 +77,87 @@ macro_rules! forgetest_init {
     };
 }
 
+/// Clones an external repository and makes sure the tests pass.
+/// Can optionally enable fork mode as well if a fork block is passed.
+/// The fork block needs to be greater than 0.
+#[macro_export]
+macro_rules! forgetest_external {
+    // forgetest_external!(test_name, "owner/repo");
+    ($test:ident, $repo:literal) => {
+        $crate::forgetest_external!($test, $repo, 0, Vec::<String>::new());
+    };
+    // forgetest_external!(test_name, "owner/repo", 1234);
+    ($test:ident, $repo:literal, $fork_block:literal) => {
+        $crate::forgetest_external!(
+            $test,
+            $repo,
+            $crate::ethers_solc::PathStyle::Dapptools,
+            $fork_block,
+            Vec::<String>::new()
+        );
+    };
+    // forgetest_external!(test_name, "owner/repo", &["--extra-opt", "val"]);
+    ($test:ident, $repo:literal, $forge_opts:expr) => {
+        $crate::forgetest_external!($test, $repo, 0, $forge_opts);
+    };
+    // forgetest_external!(test_name, "owner/repo", 1234, &["--extra-opt", "val"]);
+    ($test:ident, $repo:literal, $fork_block:literal, $forge_opts:expr) => {
+        $crate::forgetest_external!(
+            $test,
+            $repo,
+            $crate::ethers_solc::PathStyle::Dapptools,
+            $fork_block,
+            $forge_opts
+        );
+    };
+    // forgetest_external!(test_name, "owner/repo", PathStyle::Dapptools, 123);
+    ($test:ident, $repo:literal, $style:expr, $fork_block:literal, $forge_opts:expr) => {
+        #[test]
+        fn $test() {
+            use std::process::{Command, Stdio};
+
+            // Skip fork tests if the RPC url is not set.
+            if $fork_block > 0 && std::env::var("ETH_RPC_URL").is_err() {
+                eprintln!("Skipping test {}. ETH_RPC_URL is not set.", $repo);
+                return
+            };
+
+            let (prj, mut cmd) = $crate::util::setup(stringify!($test), $style);
+
+            // Wipe the default structure
+            prj.wipe();
+
+            // Clone the external repository
+            let git_clone =
+                $crate::util::clone_remote(&format!("https://github.com/{}", $repo), prj.root());
+            assert!(git_clone, "could not clone repository");
+
+            // We just run make install, but we do not care if it worked or not,
+            // since some repositories do not have that target
+            let make_install = Command::new("make")
+                .arg("install")
+                .current_dir(prj.root())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+
+            // Run the tests
+            cmd.arg("test").args($forge_opts).args([
+                "--optimize",
+                "--optimize-runs",
+                "20000",
+                "--ffi",
+            ]);
+            cmd.set_env("FOUNDRY_FUZZ_RUNS", "1");
+            if $fork_block > 0 {
+                cmd.set_env("FOUNDRY_ETH_RPC_URL", std::env::var("ETH_RPC_URL").unwrap());
+                cmd.set_env("FOUNDRY_FORK_BLOCK_NUMBER", stringify!($fork_block));
+            }
+            cmd.assert_non_empty_stdout();
+        }
+    };
+}
+
 /// A macro to compare outputs
 #[macro_export]
 macro_rules! pretty_eq {
