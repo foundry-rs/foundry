@@ -191,7 +191,7 @@ pub struct Wallet {
     #[clap(long = "private-key", help = "Your private key string")]
     pub private_key: Option<String>,
 
-    #[clap(long = "keystore", help = "Path to your keystore folder / file")]
+    #[clap(env = "ETH_KEYSTORE", long = "keystore", help = "Path to your keystore folder / file")]
     pub keystore_path: Option<String>,
 
     #[clap(long = "password", help = "Your keystore password", requires = "keystore-path")]
