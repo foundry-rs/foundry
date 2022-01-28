@@ -1,8 +1,6 @@
-use evm_adapters::sputnik::cheatcodes::CONSOLE_ABI;
-use evm_adapters::sputnik::cheatcodes::HEVMCONSOLE_ABI;
-use evm_adapters::sputnik::cheatcodes::HEVM_ABI;
 use crate::cmd::{build::BuildArgs, compile, manual_compile, Cmd};
 use clap::{Parser, ValueHint};
+use evm_adapters::sputnik::cheatcodes::{CONSOLE_ABI, HEVMCONSOLE_ABI, HEVM_ABI};
 
 use forge::ContractRunner;
 use foundry_utils::IntoFunction;
@@ -16,8 +14,7 @@ use ansi_term::Colour;
 use ethers::{
     abi::Abi,
     solc::artifacts::{
-        BytecodeObject, CompactContractBytecode,
-        ContractBytecode, ContractBytecodeSome,
+        BytecodeObject, CompactContractBytecode, ContractBytecode, ContractBytecodeSome,
     },
     types::U256,
 };
@@ -222,7 +219,9 @@ impl Cmd for RunArgs {
             } else if result.traces.is_none() {
                 eyre::bail!("Unexpected error: No traces despite verbosity level. Please report this as a bug");
             } else if result.identified_contracts.is_none() {
-                eyre::bail!("Unexpected error: No identified contracts. Please report this as a bug");
+                eyre::bail!(
+                    "Unexpected error: No identified contracts. Please report this as a bug"
+                );
             }
         } else {
             // 5. print the result nicely

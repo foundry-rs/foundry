@@ -1,5 +1,5 @@
 use crate::{runner::TestResult, ContractRunner, TestFilter};
-use ethers::prelude::artifacts::{BytecodeObject, CompactBytecode, CompactContractBytecode};
+use ethers::prelude::artifacts::{BytecodeObject, CompactContractBytecode};
 use evm_adapters::{
     evm_opts::{BackendKind, EvmOpts},
     sputnik::cheatcodes::{CONSOLE_ABI, HEVMCONSOLE_ABI, HEVM_ABI},
