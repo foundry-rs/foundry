@@ -129,7 +129,7 @@ impl MultiContractRunnerBuilder {
                 match bytecode.object {
                     BytecodeObject::Unlinked(_) => {
                         // link needed
-                        recurse_link(
+                        foundry_utils::recurse_link(
                             fname.to_string(),
                             (&mut target_bytecode, &mut target_bytecode_runtime),
                             &contracts,
@@ -210,65 +210,6 @@ impl MultiContractRunnerBuilder {
     pub fn evm_cfg(mut self, evm_cfg: Config) -> Self {
         self.evm_cfg = Some(evm_cfg);
         self
-    }
-}
-
-fn recurse_link<'a>(
-    // target name
-    target: String,
-    // to-be-modified/linked bytecode
-    target_bytecode: (&'a mut CompactBytecode, &'a mut CompactBytecode),
-    // Contracts
-    contracts: &'a BTreeMap<String, CompactContractBytecode>,
-    // fname => Vec<(fname, file, key)>
-    dependency_tree: &'a BTreeMap<String, Vec<(String, String, String)>>,
-    // library deployment vector
-    deployment: &'a mut Vec<ethers::prelude::Bytes>,
-    // nonce to start at
-    init_nonce: U256,
-    // sender
-    sender: Address,
-) {
-    // check if we have dependencies
-    if let Some(dependencies) = dependency_tree.get(&target) {
-        // for each dependency, try to link
-        dependencies.iter().for_each(|(next_target, file, key)| {
-            // get the dependency
-            let contract = contracts.get(next_target).expect("No target contract").clone();
-            let mut next_target_bytecode = contract.bytecode.expect("No target bytecode");
-            let mut next_target_runtime_bytecode = contract
-                .deployed_bytecode
-                .expect("No target runtime bytecode")
-                .bytecode
-                .expect("No target runtime");
-
-            // make sure dependency is fully linked
-            if let Some(deps) = dependency_tree.get(&target) {
-                if !deps.is_empty() {
-                    // actually link the nested dependencies to this dependency
-                    recurse_link(
-                        next_target.to_string(),
-                        (&mut next_target_bytecode, &mut next_target_runtime_bytecode),
-                        contracts,
-                        dependency_tree,
-                        deployment,
-                        init_nonce,
-                        sender,
-                    );
-                }
-            }
-
-            // calculate the address for linking this dependency
-            let addr = foundry_utils::next_create_address(sender, init_nonce + deployment.len());
-
-            // link the dependency to the target
-            target_bytecode.0.link(file.clone(), key.clone(), addr);
-            target_bytecode.1.link(file, key, addr);
-
-            // push the dependency into the library deployment vector
-            deployment
-                .push(next_target_bytecode.object.into_bytes().expect("Bytecode should be linked"));
-        });
     }
 }
 

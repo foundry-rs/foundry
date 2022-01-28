@@ -12,6 +12,7 @@ ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features =
 ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-addressbook = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-providers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
+ethers-solc = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 
 
 

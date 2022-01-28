@@ -1,6 +1,9 @@
+use evm_adapters::sputnik::cheatcodes::CONSOLE_ABI;
+use evm_adapters::sputnik::cheatcodes::HEVMCONSOLE_ABI;
+use evm_adapters::sputnik::cheatcodes::HEVM_ABI;
 use crate::cmd::{build::BuildArgs, compile, manual_compile, Cmd};
 use clap::{Parser, ValueHint};
-use ethers::{abi::Abi, prelude::artifacts::CompactContract};
+
 use forge::ContractRunner;
 use foundry_utils::IntoFunction;
 use std::{collections::BTreeMap, path::PathBuf};
@@ -11,8 +14,12 @@ use ethers::solc::{MinimalCombinedArtifacts, Project};
 use crate::opts::evm::EvmArgs;
 use ansi_term::Colour;
 use ethers::{
-    prelude::artifacts::ContractBytecode,
-    solc::artifacts::{CompactContractSome, ContractBytecodeSome},
+    abi::Abi,
+    solc::artifacts::{
+        BytecodeObject, CompactContractBytecode,
+        ContractBytecode, ContractBytecodeSome,
+    },
+    types::U256,
 };
 use evm_adapters::{
     call_tracing::ExecutionInfo,
@@ -66,10 +73,15 @@ impl Cmd for RunArgs {
         }
 
         let func = IntoFunction::into(self.sig.as_deref().unwrap_or("run()"));
-        let BuildOutput { project, contract, highlevel_known_contracts, sources } =
-            self.build(config)?;
+        let BuildOutput {
+            project,
+            contract,
+            highlevel_known_contracts,
+            sources,
+            predeploy_libraries,
+        } = self.build(config, &evm_opts)?;
 
-        let known_contracts = highlevel_known_contracts
+        let mut known_contracts = highlevel_known_contracts
             .iter()
             .map(|(name, c)| {
                 (
@@ -82,9 +94,13 @@ impl Cmd for RunArgs {
             })
             .collect::<BTreeMap<String, (Abi, Vec<u8>)>>();
 
-        let CompactContractSome { abi, bin, .. } = contract;
-        // this should never fail if compilation was successful
-        let bytecode = bin.into_bytes().unwrap();
+        known_contracts.insert("VM".to_string(), (HEVM_ABI.clone(), Vec::new()));
+        known_contracts.insert("VM_CONSOLE".to_string(), (HEVMCONSOLE_ABI.clone(), Vec::new()));
+        known_contracts.insert("CONSOLE".to_string(), (CONSOLE_ABI.clone(), Vec::new()));
+
+        let CompactContractBytecode { abi, bytecode, .. } = contract;
+        let abi = abi.expect("No abi for contract");
+        let bytecode = bytecode.expect("No bytecode").object.into_bytes().unwrap();
         let needs_setup = abi.functions().any(|func| func.name == "setUp");
 
         let mut cfg = crate::utils::sputnik_cfg(&evm_version);
@@ -103,7 +119,7 @@ impl Cmd for RunArgs {
                     bytecode,
                     Some(evm_opts.sender),
                     None,
-                    vec![],
+                    predeploy_libraries,
                 );
                 runner.run_test(&func, needs_setup, Some(&known_contracts))?
             }
@@ -116,7 +132,7 @@ impl Cmd for RunArgs {
                     bytecode,
                     Some(evm_opts.sender),
                     None,
-                    vec![],
+                    predeploy_libraries,
                 );
                 runner.run_test(&func, needs_setup, Some(&known_contracts))?
             }
@@ -190,8 +206,23 @@ impl Cmd for RunArgs {
                             "",
                         );
                     }
+                } else {
+                    // 5. print the result nicely
+                    if result.success {
+                        println!("{}", Colour::Green.paint("Script ran successfully."));
+                    } else {
+                        println!("{}", Colour::Red.paint("Script failed."));
+                    }
+
+                    println!("Gas Used: {}", result.gas_used);
+                    println!("== Logs == ");
+                    result.logs.iter().for_each(|log| println!("{}", log));
                 }
                 println!();
+            } else if result.traces.is_none() {
+                eyre::bail!("Unexpected error: No traces despite verbosity level. Please report this as a bug");
+            } else if result.identified_contracts.is_none() {
+                eyre::bail!("Unexpected error: No identified contracts. Please report this as a bug");
             }
         } else {
             // 5. print the result nicely
@@ -212,14 +243,15 @@ impl Cmd for RunArgs {
 
 pub struct BuildOutput {
     pub project: Project<MinimalCombinedArtifacts>,
-    pub contract: CompactContractSome,
+    pub contract: CompactContractBytecode,
     pub highlevel_known_contracts: BTreeMap<String, ContractBytecodeSome>,
     pub sources: BTreeMap<u32, String>,
+    pub predeploy_libraries: Vec<ethers::types::Bytes>,
 }
 
 impl RunArgs {
     /// Compiles the file with auto-detection and compiler params.
-    pub fn build(&self, config: Config) -> eyre::Result<BuildOutput> {
+    pub fn build(&self, config: Config, evm_opts: &EvmOpts) -> eyre::Result<BuildOutput> {
         let target_contract = dunce::canonicalize(&self.path)?;
         let (project, output) = if let Ok(mut project) = config.project() {
             // TODO: caching causes no output until https://github.com/gakonst/ethers-rs/issues/727
@@ -228,7 +260,7 @@ impl RunArgs {
             project.no_artifacts = true;
 
             // target contract may not be in the compilation path, add it and manually compile
-            match manual_compile(&project, vec![target_contract.clone()]) {
+            match manual_compile(&project, vec![target_contract]) {
                 Ok(output) => (project, output),
                 Err(e) => {
                     println!("No extra contracts compiled {:?}", e);
@@ -248,69 +280,146 @@ impl RunArgs {
         };
         println!("success.");
 
-        // get the contracts
-        let (sources, contracts) = output.output().split();
+        let (sources, all_contracts) = output.output().split();
 
-        // get the specific contract
-        let contract_bytecode = if let Some(contract_name) = self.target_contract.clone() {
-            let contract_bytecode: ContractBytecode = contracts
-                .0
-                .get(target_contract.to_str().expect("OsString from path"))
-                .ok_or_else(|| {
-                    eyre::Error::msg(
-                        "contract path not found; This is likely a bug, please report it",
-                    )
-                })?
-                .get(&contract_name)
-                .ok_or_else(|| {
-                    eyre::Error::msg("contract not found, did you type the name wrong?")
-                })?
-                .clone()
-                .into();
-            contract_bytecode.unwrap()
+        let mut contracts: BTreeMap<String, CompactContractBytecode> = BTreeMap::new();
+        all_contracts.0.iter().for_each(|(source, output_contracts)| {
+            contracts.extend(
+                output_contracts
+                    .iter()
+                    .map(|(n, c)| (source.to_string() + ":" + n, c.clone().into()))
+                    .collect::<BTreeMap<String, CompactContractBytecode>>(),
+            );
+        });
+
+        // create a mapping of fname => Vec<(fname, file, key)>,
+        let link_tree: BTreeMap<String, Vec<(String, String, String)>> = contracts
+            .iter()
+            .map(|(fname, contract)| {
+                (
+                    fname.to_string(),
+                    contract
+                        .all_link_references()
+                        .iter()
+                        .flat_map(|(file, link)| {
+                            link.keys().map(|key| {
+                                (file.to_string() + ":" + key, file.to_string(), key.to_string())
+                            })
+                        })
+                        .collect::<Vec<(String, String, String)>>(),
+                )
+            })
+            .collect();
+
+        // grab the nonce, either from the rpc node or start from 1
+        let nonce = if let Some(url) = &evm_opts.fork_url {
+            foundry_utils::next_nonce(
+                evm_opts.sender,
+                url,
+                evm_opts.fork_block_number.map(Into::into),
+            )
+            .unwrap_or_default() +
+                1
         } else {
-            let contract = contracts
-                .0
-                .get(target_contract.to_str().expect("OsString from path"))
-                .ok_or_else(|| {
-                    eyre::Error::msg(
-                        "contract path not found; This is likely a bug, please report it",
-                    )
-                })?
-                .clone()
-                .into_iter()
-                .filter_map(|(name, c)| {
-                    let c: ContractBytecode = c.into();
-                    ContractBytecodeSome::try_from(c).ok().map(|c| (name, c))
-                })
-                .find(|(_, c)| c.bytecode.object.is_non_empty_bytecode())
-                .ok_or_else(|| eyre::Error::msg("no contract found"))?;
-            contract.1
+            U256::one()
         };
 
-        let contract = CompactContract::from(contract_bytecode).try_into().expect("Couldn't create contract from bytecodes, either abi, bytecode, or deployed_bytecode were empty.");
-
+        let mut run_dependencies = vec![];
+        let mut contract =
+            CompactContractBytecode { abi: None, bytecode: None, deployed_bytecode: None };
         let mut highlevel_known_contracts = BTreeMap::new();
 
-        // build the entire highlevel_known_contracts based on all compiled contracts
-        contracts.0.into_iter().for_each(|(src, mapping)| {
-            mapping.into_iter().for_each(|(name, c)| {
-                let cb: ContractBytecode = c.into();
-                if let Ok(cbs) = ContractBytecodeSome::try_from(cb) {
-                    if highlevel_known_contracts.contains_key(&name) {
-                        highlevel_known_contracts.insert(src.to_string() + ":" + &name, cbs);
-                    } else {
-                        highlevel_known_contracts.insert(name, cbs);
+        let mut target_fname = std::fs::canonicalize(self.path.clone())
+            .expect("Couldn't convert contract path to absolute path")
+            .to_str()
+            .expect("Bad path to string")
+            .to_string();
+
+        let mut no_target_name = true;
+        let mut matched = false;
+        if let Some(target_name) = &self.target_contract {
+            target_fname = target_fname + ":" + target_name;
+            no_target_name = false;
+        }
+        for fname in contracts.keys() {
+            let (abi, maybe_deployment_bytes, maybe_runtime) = if let Some(c) = contracts.get(fname)
+            {
+                (c.abi.as_ref(), c.bytecode.as_ref(), c.deployed_bytecode.as_ref())
+            } else {
+                (None, None, None)
+            };
+            if let (Some(abi), Some(bytecode), Some(runtime)) =
+                (abi, maybe_deployment_bytes, maybe_runtime)
+            {
+                // we are going to mutate, but library contract addresses may change based on
+                // the test so we clone
+                //
+                // TODO: verify the above statement. Maybe not? and we can modify in place.
+                let mut target_bytecode = bytecode.clone();
+                let mut rt = runtime.clone();
+                let mut target_bytecode_runtime = rt.bytecode.expect("No target runtime").clone();
+
+                // instantiate a vector that gets filled with library deployment bytecode
+                let mut dependencies = vec![];
+
+                match bytecode.object {
+                    BytecodeObject::Unlinked(_) => {
+                        // link needed
+                        foundry_utils::recurse_link(
+                            fname.to_string(),
+                            (&mut target_bytecode, &mut target_bytecode_runtime),
+                            &contracts,
+                            &link_tree,
+                            &mut dependencies,
+                            nonce,
+                            evm_opts.sender,
+                        );
+                    }
+                    BytecodeObject::Bytecode(ref bytes) => {
+                        if bytes.as_ref().is_empty() {
+                            // abstract, skip
+                            continue
+                        }
                     }
                 }
-            });
-        });
+
+                rt.bytecode = Some(target_bytecode_runtime);
+                let tc = CompactContractBytecode {
+                    abi: Some(abi.clone()),
+                    bytecode: Some(target_bytecode),
+                    deployed_bytecode: Some(rt),
+                };
+
+                let split = fname.split(':').collect::<Vec<&str>>();
+
+                // if its the target contract, grab the info
+                if no_target_name {
+                    if split[0] == target_fname {
+                        if matched {
+                            eyre::bail!("Multiple contracts in the target path. Please specify the contract name with `-t ContractName`")
+                        }
+                        run_dependencies = dependencies.clone();
+                        contract = tc.clone();
+                        matched = true;
+                    }
+                } else if &target_fname == fname {
+                    run_dependencies = dependencies.clone();
+                    contract = tc.clone();
+                    matched = true;
+                }
+
+                let tc: ContractBytecode = tc.into();
+                let contract_name = if split.len() > 1 { split[1] } else { split[0] };
+                highlevel_known_contracts.insert(contract_name.to_string(), tc.unwrap());
+            }
+        }
 
         Ok(BuildOutput {
             project,
             contract,
             highlevel_known_contracts,
             sources: sources.into_ids().collect(),
+            predeploy_libraries: run_dependencies,
         })
     }
 }
