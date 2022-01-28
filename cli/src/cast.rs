@@ -188,8 +188,8 @@ async fn main() -> eyre::Result<()> {
                             signer.address(),
                             to,
                             (sig, args),
-                            gas, 
-                            value, 
+                            gas,
+                            value,
                             nonce,
                             eth.chain,
                             eth.etherscan_api_key,
@@ -203,8 +203,8 @@ async fn main() -> eyre::Result<()> {
                             signer.address(),
                             to,
                             (sig, args),
-                            gas, 
-                            value, 
+                            gas,
+                            value,
                             nonce,
                             eth.chain,
                             eth.etherscan_api_key,
@@ -218,8 +218,8 @@ async fn main() -> eyre::Result<()> {
                             signer.address(),
                             to,
                             (sig, args),
-                            gas, 
-                            value, 
+                            gas,
+                            value,
                             nonce,
                             eth.chain,
                             eth.etherscan_api_key,
@@ -235,8 +235,8 @@ async fn main() -> eyre::Result<()> {
                     from,
                     to,
                     (sig, args),
-                    gas, 
-                    value, 
+                    gas,
+                    value,
                     nonce,
                     eth.chain,
                     eth.etherscan_api_key,
@@ -259,12 +259,19 @@ async fn main() -> eyre::Result<()> {
                 println!("Receipt: {:?}", receipt);
             }
         }
-        Subcommands::Estimate { eth, to, sig, args , value} => {
+        Subcommands::Estimate { eth, to, sig, args, value } => {
             let provider = Provider::try_from(eth.rpc_url()?)?;
             let cast = Cast::new(&provider);
             let from = eth.sender().await;
             let gas = cast
-                .estimate(from, to, Some((sig.as_str(), args)),value, eth.chain, eth.etherscan_api_key)
+                .estimate(
+                    from,
+                    to,
+                    Some((sig.as_str(), args)),
+                    value,
+                    eth.chain,
+                    eth.etherscan_api_key,
+                )
                 .await?;
             println!("{}", gas);
         }
@@ -591,7 +598,8 @@ where
     let sig = args.0;
     let params = args.1;
     let params = if !sig.is_empty() { Some((&sig[..], params)) } else { None };
-    let pending_tx = cast.send(from, to, params, gas, value, nonce, chain, etherscan_api_key).await?;
+    let pending_tx =
+        cast.send(from, to, params, gas, value, nonce, chain, etherscan_api_key).await?;
     let tx_hash = *pending_tx;
 
     if cast_async {

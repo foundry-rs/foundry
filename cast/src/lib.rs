@@ -74,8 +74,8 @@ where
         chain: Chain,
         etherscan_api_key: Option<String>,
     ) -> Result<String> {
-        let (tx, func) = self.build_tx(from, to, Some(args), None, None, None, chain, etherscan_api_key).await?;
-        let tx = tx.into();
+        let (tx, func) =
+            self.build_tx(from, to, Some(args), None, None, None, chain, etherscan_api_key).await?;
         let res = self.provider.call(&tx, None).await?;
 
         // decode args into tokens
@@ -138,6 +138,7 @@ where
     /// # Ok(())
     /// # }
     /// ```
+    #[allow(clippy::too_many_arguments)]
     pub async fn send<F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
         &self,
         from: F,
@@ -149,8 +150,8 @@ where
         chain: Chain,
         etherscan_api_key: Option<String>,
     ) -> Result<PendingTransaction<'_, M::Provider>> {
-
-        let (tx, _) = self.build_tx(from, to, args, gas, value, nonce, chain, etherscan_api_key).await?;
+        let (tx, _) =
+            self.build_tx(from, to, args, gas, value, nonce, chain, etherscan_api_key).await?;
         let res = self.provider.send_transaction(tx, None).await?;
 
         Ok::<_, eyre::Error>(res)
@@ -211,13 +212,14 @@ where
         chain: Chain,
         etherscan_api_key: Option<String>,
     ) -> Result<U256> {
-        let (tx, _) = self.build_tx(from, to, args, None, value, None, chain, etherscan_api_key).await?;
-        let tx = tx.into();
+        let (tx, _) =
+            self.build_tx(from, to, args, None, value, None, chain, etherscan_api_key).await?;
         let res = self.provider.estimate_gas(&tx).await?;
 
         Ok::<_, eyre::Error>(res)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn build_tx<F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
         &self,
         from: F,
@@ -270,15 +272,15 @@ where
         };
 
         if let Some(gas) = gas {
-            tx = tx.gas(gas)
+            tx.set_gas(gas);
         }
 
         if let Some(value) = value {
-            tx = tx.value(value)
+            tx.set_value(value);
         }
 
         if let Some(nonce) = nonce {
-            tx = tx.nonce(nonce)
+            tx.set_nonce(nonce);
         }
 
         Ok((tx, func))

@@ -96,12 +96,13 @@ impl CreateArgs {
         let factory = ContractFactory::new(abi, bin, Arc::new(provider));
 
         let deployer = factory.deploy_tokens(args)?;
-        let deployer =
-            if self.legacy || Chain::try_from(chain).map(Chain::is_legacy).unwrap_or_default() {
-                deployer.legacy()
-            } else {
-                deployer
-            };
+        let deployer = if self.legacy ||
+            Chain::try_from(chain).map(|x| Chain::is_legacy(&x)).unwrap_or_default()
+        {
+            deployer.legacy()
+        } else {
+            deployer
+        };
 
         let deployed_contract = deployer.send().await?;
 
