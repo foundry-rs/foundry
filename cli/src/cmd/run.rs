@@ -1,6 +1,6 @@
 use crate::cmd::{build::BuildArgs, compile, manual_compile, Cmd};
 use clap::{Parser, ValueHint};
-use ethers::abi::Abi;
+use ethers::{abi::Abi, prelude::artifacts::CompactContract};
 use forge::ContractRunner;
 use foundry_utils::IntoFunction;
 use std::{collections::BTreeMap, path::PathBuf};
@@ -11,7 +11,7 @@ use ethers::solc::{MinimalCombinedArtifacts, Project};
 use crate::opts::evm::EvmArgs;
 use ansi_term::Colour;
 use ethers::{
-    prelude::{artifacts::ContractBytecode, Artifact},
+    prelude::artifacts::ContractBytecode,
     solc::artifacts::{CompactContractSome, ContractBytecodeSome},
 };
 use evm_adapters::{
@@ -285,7 +285,7 @@ impl RunArgs {
             contract.1
         };
 
-        let contract = contract_bytecode.into_compact_contract().unwrap();
+        let contract = CompactContract::from(contract_bytecode).try_into().expect("Couldn't create contract from bytecodes, either abi, bytecode, or deployed_bytecode were empty.");
 
         let mut highlevel_known_contracts = BTreeMap::new();
 
