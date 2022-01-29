@@ -109,9 +109,11 @@ fn install_as_submodule(
     path: &Path,
     no_commit: bool,
 ) -> eyre::Result<()> {
+    let relative_path = path.strip_prefix(&root)?;
+
     // install the dep
     Command::new("git")
-        .args(&["submodule", "add", &dep.url, &path.display().to_string()])
+        .args(&["submodule", "add", &dep.url, &relative_path.display().to_string()])
         .current_dir(&root)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -119,7 +121,13 @@ fn install_as_submodule(
         .wait()?;
     // call update on it
     Command::new("git")
-        .args(&["submodule", "update", "--init", "--recursive", &path.display().to_string()])
+        .args(&[
+            "submodule",
+            "update",
+            "--init",
+            "--recursive",
+            &relative_path.display().to_string(),
+        ])
         .current_dir(&root)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
