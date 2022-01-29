@@ -257,6 +257,15 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
                         ))]),
                     )
                 }
+
+                if !self.state().expected_emits.is_empty() {
+                    return (
+                        ExitReason::Revert(ExitRevert::Reverted),
+                        ethers::abi::encode(&[Token::String(
+                            "Expected an emit, but no logs were emitted afterward".to_string(),
+                        )]),
+                    )
+                }
                 (s, v)
             }
             Capture::Trap(_) => {
@@ -1557,6 +1566,9 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
                     .all(|expected| expected.found)
             {
                 return evm_error("Log != expected log")
+            } else {
+                // empty out expected_emits after successfully capturing all of them
+                self.state_mut().expected_emits = Vec::new();
             }
 
             self.expected_revert(ExpectRevertReturn::Call(res), expected_revert).into_call_inner()
@@ -1770,6 +1782,9 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
                 .all(|expected| expected.found)
         {
             return revert_return_evm(false, None, || "Log != expected log").into_create_inner()
+        } else {
+            // empty out expected_emits after successfully capturing all of them
+            self.state_mut().expected_emits = Vec::new();
         }
 
         self.expected_revert(ExpectRevertReturn::Create(res), expected_revert).into_create_inner()
