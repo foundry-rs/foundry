@@ -360,7 +360,7 @@ where
     }
 
     pub async fn base_fee<T: Into<BlockId>>(&self, block: T) -> Result<U256> {
-        Ok(Cast::block_field_as_num(self, block, String::from("baseFeePerGas")).await?)
+        Cast::block_field_as_num(self, block, String::from("baseFeePerGas")).await
     }
 
     pub async fn age<T: Into<BlockId>>(&self, block: T) -> Result<String> {
