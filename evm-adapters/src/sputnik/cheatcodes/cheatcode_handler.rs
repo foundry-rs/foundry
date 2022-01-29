@@ -867,12 +867,24 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 self.add_debug(CheatOp::EXPECTCALL);
                 self.state_mut().expected_calls.entry(inner.0).or_default().push(inner.1.to_vec());
             }
+
             HEVMCalls::Label(inner) => {
                 self.add_debug(CheatOp::LABEL);
                 let address = inner.0;
                 let label = inner.1;
 
                 self.state_mut().labels.insert(address, label);
+            }
+
+            HEVMCalls::GetNonce(inner) => {
+                self.add_debug(CheatOp::GETNONCE);
+                let nonce = self.state().basic(inner.0).nonce;
+                res = ethers::abi::encode(&[Token::Uint(nonce)]);
+            }
+            HEVMCalls::SetNonce(inner) => {
+                self.add_debug(CheatOp::SETNONCE);
+                // TODO
+
             }
         };
 

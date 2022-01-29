@@ -61,6 +61,12 @@ interface Hevm {
     function getCode(string calldata) external returns (bytes memory);
     // Labels an address in call traces
     function label(address, string calldata) external;
+
+    // Get account nonce
+    function getNonce(address) external returns (uint256);
+
+    // Set account nonce
+    function setNonce(address,uint256) external;
 }
 
 contract HasStorage {
@@ -614,6 +620,25 @@ contract CheatCodes is DSTest {
             extcodecopy(who, add(o_code, 0x20), 0, size)
         }
     }
+
+    function testSetAndGetNonce() public {
+        address alice = address(1337);
+        assertEq(hevm.getNonce(alice), 0);
+
+        MockMe target = new MockMe();
+
+        hevm.startPrank(alice);
+        target.setA();
+        target.setA();
+        assertEq(hevm.getNonce(alice), 2);
+
+        hevm.setNonce(alice, 20);
+        assertEq(hevm.getNonce(alice), 20);
+
+        hevm.setNonce(alice, 14);
+        assertEq(hevm.getNonce(alice), 14);
+        hevm.stopPrank();
+    }
 }
 
 contract Label {
@@ -793,6 +818,7 @@ contract ExpectEmit {
 }
 
 contract MockMe {
+    uint256 _a;
     function numberA() public returns (uint256) {
         return 1;
     }
@@ -803,6 +829,10 @@ contract MockMe {
 
     function add(uint256 a, uint256 b) public returns (uint256) {
         return a + b;
+    }
+
+    function setA() public {
+        _a = 1;
     }
 }
 

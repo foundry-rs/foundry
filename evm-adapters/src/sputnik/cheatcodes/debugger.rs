@@ -180,6 +180,8 @@ pub enum CheatOp {
     EXPECTCALL,
     GETCODE,
     LABEL,
+    SETNONCE,
+    GETNONCE,
 }
 
 impl From<CheatOp> for OpCode {
@@ -214,6 +216,8 @@ impl CheatOp {
             CheatOp::EXPECTCALL => "VM_EXPECTCALL",
             CheatOp::GETCODE => "VM_GETCODE",
             CheatOp::LABEL => "VM_LABEL",
+            CheatOp::GETNONCE => "VM_GETNONCE",
+            CheatOp::SETNONCE => "VM_SETNONCE",
         }
     }
 }
