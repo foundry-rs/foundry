@@ -87,7 +87,8 @@ impl Cmd for RunArgs {
         let bytecode = bin.into_bytes().unwrap();
         let needs_setup = abi.functions().any(|func| func.name == "setUp");
 
-        let cfg = crate::utils::sputnik_cfg(&evm_version);
+        let mut cfg = crate::utils::sputnik_cfg(&evm_version);
+        cfg.create_contract_limit = None;
         let vicinity = evm_opts.vicinity()?;
         let backend = evm_opts.backend(&vicinity)?;
 

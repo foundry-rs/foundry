@@ -407,6 +407,8 @@ pub struct CallTrace {
     pub idx: usize,
     /// Successful
     pub success: bool,
+    /// Label for an address
+    pub label: Option<String>,
     /// Callee
     pub addr: H160,
     /// Creation
@@ -463,7 +465,11 @@ impl CallTrace {
                     "{}[{}] {}::{}{}({})",
                     left,
                     self.cost,
-                    color.paint(name.unwrap_or(&self.addr.to_string())),
+                    color.paint(
+                        // clippy bug makes us do this
+                        #[allow(clippy::or_fun_call)]
+                        self.label.as_ref().unwrap_or(name.unwrap_or(&self.addr.to_string()))
+                    ),
                     color.paint(func.name.clone()),
                     if self.value > 0.into() {
                         format!("{{value: {}}}", self.value)
@@ -495,7 +501,11 @@ impl CallTrace {
                 "{}[{}] {}::fallback{}()",
                 left,
                 self.cost,
-                color.paint(name.unwrap_or(&self.addr.to_string())),
+                color.paint(
+                    // clippy bug makes us do this
+                    #[allow(clippy::or_fun_call)]
+                    self.label.as_ref().unwrap_or(name.unwrap_or(&self.addr.to_string()))
+                ),
                 if self.value > 0.into() {
                     format!("{{value: {}}}", self.value)
                 } else {
@@ -518,7 +528,7 @@ impl CallTrace {
             "{}[{}] {}::{}{}({})",
             left,
             self.cost,
-            color.paint(format!("{}", self.addr)),
+            color.paint(self.label.as_ref().unwrap_or(&self.addr.to_string()).to_string()),
             if self.data.len() >= 4 {
                 hex::encode(&self.data[0..4])
             } else {
