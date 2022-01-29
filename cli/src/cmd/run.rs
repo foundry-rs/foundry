@@ -347,11 +347,11 @@ impl RunArgs {
             .expect("Bad path to string")
             .to_string();
 
-        let mut no_target_name = true;
-        if let Some(target_name) = &self.target_contract {
+        
+        let no_target_name = if let Some(target_name) = &self.target_contract {
             target_fname = target_fname + ":" + target_name;
-            no_target_name = false;
-        }
+            false
+        } else {true};
 
         foundry_utils::link(
             &contracts,
