@@ -74,8 +74,9 @@ where
         chain: Chain,
         etherscan_api_key: Option<String>,
     ) -> Result<String> {
-        let (tx, func) =
-            self.build_tx(from, to, Some(args), None, None, None, chain, etherscan_api_key).await?;
+        let (tx, func) = self
+            .build_tx(from, to, Some(args), None, None, None, chain, etherscan_api_key, false)
+            .await?;
         let res = self.provider.call(&tx, None).await?;
 
         // decode args into tokens
@@ -133,7 +134,7 @@ where
     /// let gas = U256::from_str("200000").unwrap();
     /// let value = U256::from_str("1").unwrap();
     /// let nonce = U256::from_str("1").unwrap();
-    /// let data = cast.send(from, to, Some((sig, args)), Some(gas), Some(value), Some(nonce), Chain::Mainnet, None).await?;
+    /// let data = cast.send(from, to, Some((sig, args)), Some(gas), Some(value), Some(nonce), Chain::Mainnet, None, false).await?;
     /// println!("{}", *data);
     /// # Ok(())
     /// # }
@@ -149,9 +150,11 @@ where
         nonce: Option<U256>,
         chain: Chain,
         etherscan_api_key: Option<String>,
+        legacy: bool,
     ) -> Result<PendingTransaction<'_, M::Provider>> {
-        let (tx, _) =
-            self.build_tx(from, to, args, gas, value, nonce, chain, etherscan_api_key).await?;
+        let (tx, _) = self
+            .build_tx(from, to, args, gas, value, nonce, chain, etherscan_api_key, legacy)
+            .await?;
         let res = self.provider.send_transaction(tx, None).await?;
 
         Ok::<_, eyre::Error>(res)
@@ -212,8 +215,9 @@ where
         chain: Chain,
         etherscan_api_key: Option<String>,
     ) -> Result<U256> {
-        let (tx, _) =
-            self.build_tx(from, to, args, None, value, None, chain, etherscan_api_key).await?;
+        let (tx, _) = self
+            .build_tx(from, to, args, None, value, None, chain, etherscan_api_key, false)
+            .await?;
         let res = self.provider.estimate_gas(&tx).await?;
 
         Ok::<_, eyre::Error>(res)
@@ -230,6 +234,7 @@ where
         nonce: Option<U256>,
         chain: Chain,
         etherscan_api_key: Option<String>,
+        legacy: bool,
     ) -> Result<(TypedTransaction, Option<ethers_core::abi::Function>)> {
         let from = match from.into() {
             NameOrAddress::Name(ref ens_name) => self.provider.resolve_name(ens_name).await?,
@@ -245,7 +250,7 @@ where
         };
 
         // make the call
-        let mut tx: TypedTransaction = if chain.is_legacy() {
+        let mut tx: TypedTransaction = if chain.is_legacy() || legacy {
             TransactionRequest::new().from(from).to(to).into()
         } else {
             Eip1559TransactionRequest::new().from(from).to(to).into()
