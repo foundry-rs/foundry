@@ -110,7 +110,7 @@ impl MultiContractRunnerBuilder {
         let mut known_contracts: BTreeMap<String, (Abi, Vec<u8>)> = Default::default();
 
         // create a mapping of name => (abi, deployment code, Vec<library deployment code>)
-        let mut deployable_contracts: DeployableContracts = Default::default();
+        let mut deployable_contracts = DeployableContracts::default();
 
         foundry_utils::link(
             &contracts,
