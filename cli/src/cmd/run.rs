@@ -341,7 +341,7 @@ impl RunArgs {
             CompactContractBytecode { abi: None, bytecode: None, deployed_bytecode: None };
         let mut highlevel_known_contracts = BTreeMap::new();
 
-        let mut target_fname = std::fs::canonicalize(self.path.clone())
+        let mut target_fname = dunce::canonicalize(&self.path)
             .expect("Couldn't convert contract path to absolute path")
             .to_str()
             .expect("Bad path to string")
