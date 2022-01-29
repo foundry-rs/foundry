@@ -677,12 +677,21 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                     outdir.join(format!("{}/{}.json", contract_file, contract_name))
                 };
 
-                let mut file = File::open(path).unwrap();
                 let mut data = String::new();
-                file.read_to_string(&mut data).unwrap();
+                match File::open(path) {
+                    Ok(mut file) => match file.read_to_string(&mut data) {
+                        Ok(_) => {}
+                        Err(e) => return evm_error(&e.to_string()),
+                    },
+                    Err(e) => return evm_error(&e.to_string()),
+                }
 
-                let contract_file: ContractFile = serde_json::from_str(&data).unwrap();
-                res = ethers::abi::encode(&[Token::Bytes(contract_file.bin.to_vec())]);
+                match serde_json::from_str::<ContractFile>(&data) {
+                    Ok(contract_file) => {
+                        res = ethers::abi::encode(&[Token::Bytes(contract_file.bin.to_vec())]);
+                    }
+                    Err(e) => return evm_error(&e.to_string()),
+                }
             }
             HEVMCalls::Addr(inner) => {
                 self.add_debug(CheatOp::ADDR);
@@ -720,7 +729,11 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 // The EVM precompile does not use EIP-155
                 let sig = wallet.sign_hash(digest.into(), false);
 
-                let recovered = sig.recover(digest).unwrap();
+                let recovered = match sig.recover(digest) {
+                    Ok(rec) => rec,
+                    Err(e) => return evm_error(&e.to_string()),
+                };
+
                 assert_eq!(recovered, wallet.address());
 
                 let mut r_bytes = [0u8; 32];
