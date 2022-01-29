@@ -514,14 +514,14 @@ impl Tui {
         // Scroll:
         // Focused line is line that should always be at the center of the screen.
         let display_start;
-        let scroll_offset = 4;
-        let extra_top_lines = 10;
+
         let height = area.height as i32;
+        let extra_top_lines = height / 2;
         let prev_start = draw_memory.current_startline;
         // Absolute minimum start line
         let abs_min_start = 0;
         // Adjust for weird scrolling for max top line
-        let abs_max_start = (opcode_list.len() as i32 - 1) - height + scroll_offset;
+        let abs_max_start = (opcode_list.len() as i32 - 1) - (height / 2);
         // actual minimum start line
         let mut min_start =
             max(current_step as i32 - height + extra_top_lines, abs_min_start) as usize;
