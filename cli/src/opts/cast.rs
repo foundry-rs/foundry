@@ -189,6 +189,11 @@ pub enum Subcommands {
         cast_async: bool,
         #[clap(flatten)]
         eth: EthereumOpts,
+        #[clap(
+            long,
+            help = "use legacy transactions instead of EIP1559 ones. this is auto-enabled for common networks without EIP1559"
+        )]
+        legacy: bool,
     },
     #[clap(name = "publish")]
     #[clap(about = "Publish a raw transaction to the network")]
