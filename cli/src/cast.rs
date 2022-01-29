@@ -418,6 +418,15 @@ async fn main() -> eyre::Result<()> {
             let value = provider.get_storage_at(address, slot, block).await?;
             println!("{:?}", value);
         }
+        Subcommands::Receipt { hash, field, to_json, rpc_url, cast_async, confirmations } => {
+            let provider = Provider::try_from(rpc_url)?;
+            println!(
+                "{}",
+                Cast::new(provider)
+                    .receipt(hash, field, confirmations, cast_async, to_json)
+                    .await?
+            );
+        }
         Subcommands::Nonce { block, who, rpc_url } => {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).nonce(who, block).await?);

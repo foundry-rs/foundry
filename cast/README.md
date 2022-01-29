@@ -50,7 +50,7 @@
 - [x] `namehash`
 - [x] `nonce`
 - [x] `publish`
-- [ ] `receipt`
+- [x] `receipt`
 - [x] `resolve-name`
 - [ ] `run-tx`
 - [x] `send` (partial)

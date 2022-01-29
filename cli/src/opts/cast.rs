@@ -59,8 +59,8 @@ pub enum Subcommands {
     ToUint256 { value: Option<String> },
     #[clap(name = "--to-unit")]
     #[clap(
-        about = r#"convert an ETH amount into a specified unit: ether, gwei or wei (default: wei). 
-    Usage: 
+        about = r#"convert an ETH amount into a specified unit: ether, gwei or wei (default: wei).
+    Usage:
       - 1ether wei     | converts 1 ether to wei
       - "1 ether" wei  | converts 1 ether to wei
       - 1ether         | converts 1 ether to wei
@@ -146,6 +146,25 @@ pub enum Subcommands {
     Tx {
         hash: String,
         field: Option<String>,
+        #[clap(long = "json", short = 'j')]
+        to_json: bool,
+        #[clap(long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+    },
+    #[clap(name = "receipt")]
+    #[clap(about = "Print information about the transaction receipt for <tx-hash>")]
+    Receipt {
+        hash: String,
+        field: Option<String>,
+        #[clap(
+            short,
+            long,
+            help = "the number of confirmations until the receipt is fetched",
+            default_value = "1"
+        )]
+        confirmations: usize,
+        #[clap(long, env = "CAST_ASYNC")]
+        cast_async: bool,
         #[clap(long = "json", short = 'j')]
         to_json: bool,
         #[clap(long, env = "ETH_RPC_URL")]
