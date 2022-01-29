@@ -1,9 +1,10 @@
 use crate::{runner::TestResult, ContractRunner, TestFilter};
-use ethers::prelude::artifacts::{BytecodeObject, CompactContractBytecode};
+use ethers::prelude::artifacts::CompactContractBytecode;
 use evm_adapters::{
     evm_opts::{BackendKind, EvmOpts},
     sputnik::cheatcodes::{CONSOLE_ABI, HEVMCONSOLE_ABI, HEVM_ABI},
 };
+use foundry_utils::PostLinkInput;
 use sputnik::{backend::Backend, Config};
 
 use ethers::solc::Artifact;
@@ -35,6 +36,52 @@ pub struct MultiContractRunnerBuilder {
     pub evm_cfg: Option<Config>,
 }
 
+fn link_key_construction(file: String, key: String) -> (String, String, String) {
+    (key.to_string() + ".json:" + &key, file, key.to_string())
+}
+
+pub type DeployableContracts =
+    BTreeMap<String, (Abi, ethers::prelude::Bytes, Vec<ethers::prelude::Bytes>)>;
+
+fn post_link(
+    post_link_input: PostLinkInput<(Abi, Vec<u8>), DeployableContracts>,
+) -> eyre::Result<()> {
+    let PostLinkInput {
+        contract,
+        known_contracts,
+        fname,
+        extra: deployable_contracts,
+        dependencies,
+        ..
+    } = post_link_input;
+
+    // get bytes
+    let bytecode = if let Some(b) = contract.bytecode.expect("No bytecode").object.into_bytes() {
+        b
+    } else {
+        return Ok(())
+    };
+
+    let abi = contract.abi.expect("We should have an abi by now");
+    // if its a test, add it to deployable contracts
+    if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) &&
+        abi.functions().any(|func| func.name.starts_with("test"))
+    {
+        deployable_contracts.insert(fname.clone(), (abi.clone(), bytecode, dependencies.to_vec()));
+    }
+
+    let split = fname.split(':').collect::<Vec<&str>>();
+    let contract_name = if split.len() > 1 { split[1] } else { split[0] };
+    if let Some(d_bcode) = contract.deployed_bytecode {
+        if let Some(bcode) = d_bcode.bytecode {
+            if let Some(runtime_code) = bcode.object.into_bytes() {
+                known_contracts.insert(contract_name.to_string(), (abi, runtime_code.to_vec()));
+            }
+        }
+    }
+    Ok(())
+}
+
 impl MultiContractRunnerBuilder {
     /// Given an EVM, proceeds to return a runner which is able to execute all tests
     /// against that evm
@@ -63,104 +110,16 @@ impl MultiContractRunnerBuilder {
         let mut known_contracts: BTreeMap<String, (Abi, Vec<u8>)> = Default::default();
 
         // create a mapping of name => (abi, deployment code, Vec<library deployment code>)
-        let mut deployable_contracts: BTreeMap<
-            String,
-            (Abi, ethers::prelude::Bytes, Vec<ethers::prelude::Bytes>),
-        > = Default::default();
+        let mut deployable_contracts: DeployableContracts = Default::default();
 
-        // we dont use mainnet state for evm_opts.sender so this will always be 1
-        // I am leaving this here so that in the future if this needs to change,
-        // its easy to find.
-        let nonce = U256::one();
-
-        // create a mapping of fname => Vec<(fname, file, key)>,
-        let link_tree: BTreeMap<String, Vec<(String, String, String)>> = contracts
-            .iter()
-            .map(|(fname, contract)| {
-                (
-                    fname.to_string(),
-                    contract
-                        .all_link_references()
-                        .iter()
-                        .flat_map(|(file, link)| {
-                            link.keys().map(|key| {
-                                (
-                                    key.to_string() + ".json:" + key,
-                                    file.to_string(),
-                                    key.to_string(),
-                                )
-                            })
-                        })
-                        .collect::<Vec<(String, String, String)>>(),
-                )
-            })
-            .collect();
-
-        // TODO: we should look at parallelizing the linking
-        for fname in contracts.keys() {
-            let (abi, maybe_deployment_bytes, maybe_runtime) = if let Some(c) = contracts.get(fname)
-            {
-                (c.abi.as_ref(), c.bytecode.as_ref(), c.deployed_bytecode.as_ref())
-            } else {
-                (None, None, None)
-            };
-            if let (Some(abi), Some(bytecode), Some(runtime)) =
-                (abi, maybe_deployment_bytes, maybe_runtime)
-            {
-                // we are going to mutate, but library contract addresses may change based on
-                // the test so we clone
-                //
-                // TODO: verify the above statement. Maybe not? and we can modify in place.
-                let mut target_bytecode = bytecode.clone();
-                let mut target_bytecode_runtime =
-                    runtime.clone().bytecode.expect("No target runtime").clone();
-
-                // instantiate a vector that gets filled with library deployment bytecode
-                let mut dependencies = vec![];
-
-                match bytecode.object {
-                    BytecodeObject::Unlinked(_) => {
-                        // link needed
-                        foundry_utils::recurse_link(
-                            fname.to_string(),
-                            (&mut target_bytecode, &mut target_bytecode_runtime),
-                            &contracts,
-                            &link_tree,
-                            &mut dependencies,
-                            nonce,
-                            evm_opts.sender,
-                        );
-                    }
-                    BytecodeObject::Bytecode(ref bytes) => {
-                        if bytes.as_ref().is_empty() {
-                            // abstract, skip
-                            continue
-                        }
-                    }
-                }
-
-                // get bytes
-                let bytecode =
-                    if let Some(b) = target_bytecode.object.into_bytes() { b } else { continue };
-
-                // if its a test, add it to deployable contracts
-                if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) &&
-                    abi.functions().any(|func| func.name.starts_with("test"))
-                {
-                    deployable_contracts.insert(
-                        fname.clone(),
-                        (abi.clone(), bytecode.clone(), dependencies.to_vec()),
-                    );
-                }
-
-                let split = fname.split(':').collect::<Vec<&str>>();
-                let contract_name = if split.len() > 1 { split[1] } else { split[0] };
-                if let Some(runtime_code) = target_bytecode_runtime.object.into_bytes() {
-                    known_contracts
-                        .insert(contract_name.to_string(), (abi.clone(), runtime_code.to_vec()));
-                }
-            }
-        }
+        foundry_utils::link(
+            &contracts,
+            link_key_construction,
+            &mut known_contracts,
+            evm_opts.sender,
+            &mut deployable_contracts,
+            post_link,
+        )?;
 
         // add forge+sputnik specific contracts
         known_contracts.insert("VM".to_string(), (HEVM_ABI.clone(), Vec::new()));

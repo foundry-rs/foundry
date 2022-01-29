@@ -13,10 +13,7 @@ use crate::opts::evm::EvmArgs;
 use ansi_term::Colour;
 use ethers::{
     abi::Abi,
-    solc::artifacts::{
-        BytecodeObject, CompactContractBytecode, ContractBytecode, ContractBytecodeSome,
-    },
-    types::U256,
+    solc::artifacts::{CompactContractBytecode, ContractBytecode, ContractBytecodeSome},
 };
 use evm_adapters::{
     call_tracing::ExecutionInfo,
@@ -24,6 +21,7 @@ use evm_adapters::{
     sputnik::{cheatcodes::debugger::DebugArena, helpers::vm},
 };
 use foundry_config::{figment::Figment, Config};
+use foundry_utils::PostLinkInput;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::impl_figment_convert!(RunArgs, opts, evm_opts);
@@ -240,6 +238,53 @@ impl Cmd for RunArgs {
     }
 }
 
+struct ExtraLinkingInfo<'a> {
+    no_target_name: bool,
+    target_fname: String,
+    contract: &'a mut CompactContractBytecode,
+    dependencies: &'a mut Vec<ethers::types::Bytes>,
+}
+
+fn link_key_construction(file: String, key: String) -> (String, String, String) {
+    (file.to_string() + ":" + &key, file, key.to_string())
+}
+
+// post link step for run command
+fn post_link(
+    post_link_input: PostLinkInput<ContractBytecodeSome, ExtraLinkingInfo>,
+) -> eyre::Result<()> {
+    let PostLinkInput {
+        contract,
+        known_contracts: highlevel_known_contracts,
+        fname,
+        matched,
+        extra,
+        dependencies,
+    } = post_link_input;
+    let split = fname.split(':').collect::<Vec<&str>>();
+
+    // if its the target contract, grab the info
+    if extra.no_target_name {
+        if split[0] == extra.target_fname {
+            if *matched {
+                eyre::bail!("Multiple contracts in the target path. Please specify the contract name with `-t ContractName`")
+            }
+            *extra.dependencies = dependencies;
+            *extra.contract = contract.clone();
+            *matched = true;
+        }
+    } else if extra.target_fname == fname {
+        *extra.dependencies = dependencies;
+        *extra.contract = contract.clone();
+        *matched = true;
+    }
+
+    let tc: ContractBytecode = contract.into();
+    let contract_name = if split.len() > 1 { split[1] } else { split[0] };
+    highlevel_known_contracts.insert(contract_name.to_string(), tc.unwrap());
+    Ok(())
+}
+
 pub struct BuildOutput {
     pub project: Project<MinimalCombinedArtifacts>,
     pub contract: CompactContractBytecode,
@@ -291,30 +336,6 @@ impl RunArgs {
             );
         });
 
-        // create a mapping of fname => Vec<(fname, file, key)>,
-        let link_tree: BTreeMap<String, Vec<(String, String, String)>> = contracts
-            .iter()
-            .map(|(fname, contract)| {
-                (
-                    fname.to_string(),
-                    contract
-                        .all_link_references()
-                        .iter()
-                        .flat_map(|(file, link)| {
-                            link.keys().map(|key| {
-                                (file.to_string() + ":" + key, file.to_string(), key.to_string())
-                            })
-                        })
-                        .collect::<Vec<(String, String, String)>>(),
-                )
-            })
-            .collect();
-
-        // we dont use mainnet state for evm_opts.sender so this will always be 1
-        // I am leaving this here so that in the future if this needs to change,
-        // its easy to find.
-        let nonce = U256::one();
-
         let mut run_dependencies = vec![];
         let mut contract =
             CompactContractBytecode { abi: None, bytecode: None, deployed_bytecode: None };
@@ -327,83 +348,24 @@ impl RunArgs {
             .to_string();
 
         let mut no_target_name = true;
-        let mut matched = false;
         if let Some(target_name) = &self.target_contract {
             target_fname = target_fname + ":" + target_name;
             no_target_name = false;
         }
-        for fname in contracts.keys() {
-            let (abi, maybe_deployment_bytes, maybe_runtime) = if let Some(c) = contracts.get(fname)
-            {
-                (c.abi.as_ref(), c.bytecode.as_ref(), c.deployed_bytecode.as_ref())
-            } else {
-                (None, None, None)
-            };
-            if let (Some(abi), Some(bytecode), Some(runtime)) =
-                (abi, maybe_deployment_bytes, maybe_runtime)
-            {
-                // we are going to mutate, but library contract addresses may change based on
-                // the test so we clone
-                //
-                // TODO: verify the above statement. Maybe not? and we can modify in place.
-                let mut target_bytecode = bytecode.clone();
-                let mut rt = runtime.clone();
-                let mut target_bytecode_runtime = rt.bytecode.expect("No target runtime").clone();
 
-                // instantiate a vector that gets filled with library deployment bytecode
-                let mut dependencies = vec![];
-
-                match bytecode.object {
-                    BytecodeObject::Unlinked(_) => {
-                        // link needed
-                        foundry_utils::recurse_link(
-                            fname.to_string(),
-                            (&mut target_bytecode, &mut target_bytecode_runtime),
-                            &contracts,
-                            &link_tree,
-                            &mut dependencies,
-                            nonce,
-                            evm_opts.sender,
-                        );
-                    }
-                    BytecodeObject::Bytecode(ref bytes) => {
-                        if bytes.as_ref().is_empty() {
-                            // abstract, skip
-                            continue
-                        }
-                    }
-                }
-
-                rt.bytecode = Some(target_bytecode_runtime);
-                let tc = CompactContractBytecode {
-                    abi: Some(abi.clone()),
-                    bytecode: Some(target_bytecode),
-                    deployed_bytecode: Some(rt),
-                };
-
-                let split = fname.split(':').collect::<Vec<&str>>();
-
-                // if its the target contract, grab the info
-                if no_target_name {
-                    if split[0] == target_fname {
-                        if matched {
-                            eyre::bail!("Multiple contracts in the target path. Please specify the contract name with `-t ContractName`")
-                        }
-                        run_dependencies = dependencies.clone();
-                        contract = tc.clone();
-                        matched = true;
-                    }
-                } else if &target_fname == fname {
-                    run_dependencies = dependencies.clone();
-                    contract = tc.clone();
-                    matched = true;
-                }
-
-                let tc: ContractBytecode = tc.into();
-                let contract_name = if split.len() > 1 { split[1] } else { split[0] };
-                highlevel_known_contracts.insert(contract_name.to_string(), tc.unwrap());
-            }
-        }
+        foundry_utils::link(
+            &contracts,
+            link_key_construction,
+            &mut highlevel_known_contracts,
+            evm_opts.sender,
+            &mut ExtraLinkingInfo {
+                no_target_name,
+                target_fname,
+                contract: &mut contract,
+                dependencies: &mut run_dependencies,
+            },
+            post_link,
+        )?;
 
         Ok(BuildOutput {
             project,

@@ -11,7 +11,7 @@ use ethers_core::{
 };
 use ethers_etherscan::Client;
 use ethers_providers::{Middleware, Provider, ProviderError};
-use ethers_solc::artifacts::{CompactBytecode, CompactContractBytecode};
+use ethers_solc::artifacts::{BytecodeObject, CompactBytecode, CompactContractBytecode};
 use eyre::{Result, WrapErr};
 use serde::Deserialize;
 use std::{
@@ -728,6 +728,110 @@ pub fn abi_to_solidity(contract_abi: &Abi, mut contract_name: &str) -> Result<St
             contract_name, structs, functions
         )
     })
+}
+
+pub struct PostLinkInput<'a, T, U> {
+    pub contract: CompactContractBytecode,
+    pub known_contracts: &'a mut BTreeMap<String, T>,
+    pub fname: String,
+    pub matched: &'a mut bool,
+    pub extra: &'a mut U,
+    pub dependencies: Vec<ethers_core::types::Bytes>,
+}
+
+pub fn link<T, U>(
+    contracts: &BTreeMap<String, CompactContractBytecode>,
+    link_key_construction: fn(String, String) -> (String, String, String),
+    known_contracts: &mut BTreeMap<String, T>,
+    sender: Address,
+    extra: &mut U,
+    post_link: fn(PostLinkInput<T, U>) -> eyre::Result<()>,
+) -> eyre::Result<()> {
+    // we dont use mainnet state for evm_opts.sender so this will always be 1
+    // I am leaving this here so that in the future if this needs to change,
+    // its easy to find.
+    let nonce = U256::one();
+
+    // create a mapping of fname => Vec<(fname, file, key)>,
+    let link_tree: BTreeMap<String, Vec<(String, String, String)>> = contracts
+        .iter()
+        .map(|(fname, contract)| {
+            (
+                fname.to_string(),
+                contract
+                    .all_link_references()
+                    .iter()
+                    .flat_map(|(file, link)| {
+                        link.keys()
+                            .map(|key| link_key_construction(file.to_string(), key.to_string()))
+                    })
+                    .collect::<Vec<(String, String, String)>>(),
+            )
+        })
+        .collect();
+
+    let mut matched = false;
+    for fname in contracts.keys() {
+        let (abi, maybe_deployment_bytes, maybe_runtime) = if let Some(c) = contracts.get(fname) {
+            (c.abi.as_ref(), c.bytecode.as_ref(), c.deployed_bytecode.as_ref())
+        } else {
+            (None, None, None)
+        };
+        if let (Some(abi), Some(bytecode), Some(runtime)) =
+            (abi, maybe_deployment_bytes, maybe_runtime)
+        {
+            // we are going to mutate, but library contract addresses may change based on
+            // the test so we clone
+            //
+            // TODO: verify the above statement. Maybe not? and we can modify in place.
+            let mut target_bytecode = bytecode.clone();
+            let mut rt = runtime.clone();
+            let mut target_bytecode_runtime = rt.bytecode.expect("No target runtime").clone();
+
+            // instantiate a vector that gets filled with library deployment bytecode
+            let mut dependencies = vec![];
+
+            match bytecode.object {
+                BytecodeObject::Unlinked(_) => {
+                    // link needed
+                    recurse_link(
+                        fname.to_string(),
+                        (&mut target_bytecode, &mut target_bytecode_runtime),
+                        contracts,
+                        &link_tree,
+                        &mut dependencies,
+                        nonce,
+                        sender,
+                    );
+                }
+                BytecodeObject::Bytecode(ref bytes) => {
+                    if bytes.as_ref().is_empty() {
+                        // abstract, skip
+                        continue
+                    }
+                }
+            }
+
+            rt.bytecode = Some(target_bytecode_runtime);
+            let tc = CompactContractBytecode {
+                abi: Some(abi.clone()),
+                bytecode: Some(target_bytecode),
+                deployed_bytecode: Some(rt),
+            };
+
+            let post_link_input = PostLinkInput {
+                contract: tc,
+                known_contracts,
+                fname: fname.to_string(),
+                matched: &mut matched,
+                extra,
+                dependencies,
+            };
+
+            post_link(post_link_input)?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
