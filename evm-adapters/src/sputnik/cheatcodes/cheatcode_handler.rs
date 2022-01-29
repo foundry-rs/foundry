@@ -257,6 +257,15 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
                         ))]),
                     )
                 }
+
+                if !self.state().expected_emits.is_empty() {
+                    return (
+                        ExitReason::Revert(ExitRevert::Reverted),
+                        ethers::abi::encode(&[Token::String(
+                            "Expected an emit, but no logs were emitted afterward".to_string(),
+                        )]),
+                    )
+                }
                 (s, v)
             }
             Capture::Trap(_) => {
@@ -668,12 +677,21 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                     outdir.join(format!("{}/{}.json", contract_file, contract_name))
                 };
 
-                let mut file = File::open(path).unwrap();
                 let mut data = String::new();
-                file.read_to_string(&mut data).unwrap();
+                match File::open(path) {
+                    Ok(mut file) => match file.read_to_string(&mut data) {
+                        Ok(_) => {}
+                        Err(e) => return evm_error(&e.to_string()),
+                    },
+                    Err(e) => return evm_error(&e.to_string()),
+                }
 
-                let contract_file: ContractFile = serde_json::from_str(&data).unwrap();
-                res = ethers::abi::encode(&[Token::Bytes(contract_file.bin.to_vec())]);
+                match serde_json::from_str::<ContractFile>(&data) {
+                    Ok(contract_file) => {
+                        res = ethers::abi::encode(&[Token::Bytes(contract_file.bin.to_vec())]);
+                    }
+                    Err(e) => return evm_error(&e.to_string()),
+                }
             }
             HEVMCalls::Addr(inner) => {
                 self.add_debug(CheatOp::ADDR);
@@ -711,7 +729,11 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 // The EVM precompile does not use EIP-155
                 let sig = wallet.sign_hash(digest.into(), false);
 
-                let recovered = sig.recover(digest).unwrap();
+                let recovered = match sig.recover(digest) {
+                    Ok(rec) => rec,
+                    Err(e) => return evm_error(&e.to_string()),
+                };
+
                 assert_eq!(recovered, wallet.address());
 
                 let mut r_bytes = [0u8; 32];
@@ -1557,6 +1579,9 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
                     .all(|expected| expected.found)
             {
                 return evm_error("Log != expected log")
+            } else {
+                // empty out expected_emits after successfully capturing all of them
+                self.state_mut().expected_emits = Vec::new();
             }
 
             self.expected_revert(ExpectRevertReturn::Call(res), expected_revert).into_call_inner()
@@ -1770,6 +1795,9 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
                 .all(|expected| expected.found)
         {
             return revert_return_evm(false, None, || "Log != expected log").into_create_inner()
+        } else {
+            // empty out expected_emits after successfully capturing all of them
+            self.state_mut().expected_emits = Vec::new();
         }
 
         self.expected_revert(ExpectRevertReturn::Create(res), expected_revert).into_create_inner()

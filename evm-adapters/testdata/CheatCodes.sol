@@ -364,6 +364,13 @@ contract CheatCodes is DSTest {
         emitter.t();
     }
 
+    function testFailDanglingExpectEmit() public {
+        ExpectEmit emitter = new ExpectEmit();
+        // check topic 1, topic 2, and data are the same as the following emitted event
+        hevm.expectEmit(true,true,false,true);
+        emit Transfer(address(this), address(1337), 1337);
+    }
+
     function testExpectEmitMultiple() public {
         ExpectEmit emitter = new ExpectEmit();
         hevm.expectEmit(true,true,false,true);
