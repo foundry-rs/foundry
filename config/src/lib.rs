@@ -755,6 +755,11 @@ impl Provider for DappEnvCompatProvider {
                 "fork_block_number".to_string(),
                 val.parse::<u64>().map_err(figment::Error::custom)?.into(),
             );
+        } else if let Ok(val) = env::var("DAPP_TEST_NUMBER") {
+            dict.insert(
+                "fork_block_number".to_string(),
+                val.parse::<u64>().map_err(figment::Error::custom)?.into(),
+            );
         }
         if let Ok(val) = env::var("DAPP_TEST_TIMESTAMP") {
             dict.insert(
