@@ -15,7 +15,7 @@ use ethers_etherscan::Client;
 use ethers_providers::{Middleware, PendingTransaction};
 use eyre::{Context, Result};
 use rustc_hex::{FromHexIter, ToHex};
-use std::{str::FromStr, thread, time};
+use std::str::FromStr;
 
 use foundry_utils::{encode_args, get_func, get_func_etherscan, to_table};
 
@@ -502,7 +502,7 @@ where
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
     /// let cast = Cast::new(provider);
     /// let tx_hash = "0xf8d1713ea15a81482958fb7ddf884baee8d3bcc478c5f2f604e008dc788ee4fc";
-    /// let receipt = cast.receipt(tx_hash.to_string(), None, false).await?;
+    /// let receipt = cast.receipt(tx_hash.to_string(), None, 1, false, false).await?;
     /// println!("{}", receipt);
     /// # Ok(())
     /// # }
@@ -511,25 +511,42 @@ where
         &self,
         tx_hash: String,
         field: Option<String>,
+        confs: usize,
+        cast_async: bool,
         to_json: bool,
     ) -> Result<String> {
-        let receipt_result = loop {
-            let receipt_result =
-                self.provider.get_transaction_receipt(H256::from_str(&tx_hash)?).await?;
+        let tx_hash = H256::from_str(&tx_hash)?;
 
-            match receipt_result {
-                Some(receipt_result) => break receipt_result,
-                None => thread::sleep(time::Duration::from_millis(1000)),
+        // try to get the receipt
+        let receipt = self.provider.get_transaction_receipt(tx_hash).await?;
+
+        // if the async flag is provided, immediately exit if no tx is found,
+        // otherwise try to poll for it
+        let receipt = if cast_async {
+            match receipt {
+                Some(inner) => inner,
+                None => return Ok("receipt not found".to_string()),
+            }
+        } else {
+            match receipt {
+                Some(inner) => inner,
+                None => {
+                    let tx = PendingTransaction::new(tx_hash, self.provider.provider());
+                    match tx.confirmations(confs).await? {
+                        Some(inner) => inner,
+                        None => return Ok("receipt not found when polling pending tx. was the transaction dropped from the mempool?".to_string())
+                    }
+                }
             }
         };
 
         let receipt = if let Some(ref field) = field {
-            serde_json::to_value(&receipt_result)?
+            serde_json::to_value(&receipt)?
                 .get(field)
                 .cloned()
                 .ok_or_else(|| eyre::eyre!("field {} not found", field))?
         } else {
-            serde_json::to_value(&receipt_result)?
+            serde_json::to_value(&receipt)?
         };
 
         let receipt = if to_json { serde_json::to_string(&receipt)? } else { to_table(receipt) };
