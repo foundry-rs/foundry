@@ -136,7 +136,7 @@ impl BindArgs {
     }
 
     // Clean the contents of the binding directory
-    fn clean_old_bindings(&self) {
+    fn clean_old_crate(&self) {
         // real lazy dir management. To ensure
         std::fs::create_dir_all(self.crate_root()).expect("could not create bindings dir");
         std::fs::remove_dir_all(self.crate_root()).expect("could not delete old bindings");
@@ -145,23 +145,25 @@ impl BindArgs {
 
     // Get a list of all directories that may contain built artifacts
     // Allow `*.sol`, then filter all `*.t.sol`
-    fn get_directories(&self) -> Vec<std::fs::DirEntry> {
-        dbg!(self.artifacts());
+    fn get_directories(&self) -> eyre::Result<Vec<std::fs::DirEntry>> {
         // get a list of all artifact directories
-        let d = std::fs::read_dir(self.artifacts())
-            .expect("could not read artifacts folder")
+        Ok(std::fs::read_dir(self.artifacts())
+            .wrap_err_with(||
+                format!(
+                    "Error attempting to read artifact directories at {}.\nHint: are you in a foundry project?",
+                    self.artifacts().to_str().unwrap()
+                ),
+            )?
             .filter_map(Result::ok)
             .filter(|e| e.file_type().unwrap().is_dir())
             .filter(|e| e.file_name().into_string().unwrap().ends_with(".sol"))
             .filter(|e| !e.file_name().into_string().unwrap().ends_with(".t.sol"))
-            .collect();
-        dbg!(&d);
-        d
+            .collect())
     }
 
     // Get the path to a contract's json artifact from the directory that
     // contains it, if any exists.
-    fn get_contract(&self, dir: &std::fs::DirEntry) -> Option<PathBuf> {
+    fn get_contract_artifact(&self, dir: &std::fs::DirEntry) -> Option<PathBuf> {
         let dir_name = dir.file_name().into_string().unwrap();
         let mut contract = dir_name.split(".").next().unwrap().to_owned();
         contract.extend([".json"]);
@@ -177,21 +179,16 @@ impl BindArgs {
     }
 
     // Generate and write each contract binding file
-    fn generate_bindings(&self, contract_json_path: &Path) -> eyre::Result<String> {
+    fn generate_binding(&self, contract_json_path: &Path) -> eyre::Result<String> {
         let contract = contract_json_path.file_stem().unwrap().to_owned().into_string().unwrap();
 
         let bindings =
             Abigen::new(&contract, contract_json_path.to_str().expect("valid utf8 path"))
-                .map_err(|e| eyre!(e))
-                .wrap_err("abigen instantiation error")?
+                .map_err(|e| eyre!(e))?
                 .generate()
-                .map_err(|e| eyre!(e))
-                .wrap_err("abigen binding error")?;
+                .map_err(|e| eyre!(e))?;
 
-        bindings
-            .write_to_file(self.contract_binding_path(&contract))
-            .map_err(|e| eyre!(e))
-            .wrap_err("abigen serialization error")?;
+        bindings.write_to_file(self.contract_binding_path(&contract)).map_err(|e| eyre!(e))?;
         Ok(contract)
     }
 
@@ -239,32 +236,52 @@ impl BindArgs {
 
         Ok(())
     }
-}
 
-impl Cmd for BindArgs {
-    type Output = ();
+    // generate the crate
+    fn generate_crate(&self) -> eyre::Result<()> {
+        // TODO: consider generating the new crate in a tmp dir, then copying
+        // to the correct location on success
+        self.clean_old_crate();
 
-    fn run(self) -> eyre::Result<Self::Output> {
-        self.clean_old_bindings();
+        let directories = self.get_directories()?;
+        if directories.is_empty() {
+            bail!(
+                "No contract artifacts found.\nHint: have you run forge build?
+            "
+            );
+        }
 
         let mut contracts = vec![];
-        for dir in self.get_directories().iter() {
-            if let Some(c) = self.get_contract(dir) {
-                let res = self.generate_bindings(&c);
+        for dir in directories.iter() {
+            if let Some(c) = self.get_contract_artifact(dir) {
+                let res = self.generate_binding(&c);
                 match res {
                     Ok(contract_name) => contracts.push(contract_name),
                     Err(e) => {
-                        self.clean_old_bindings();
+                        self.clean_old_crate();
                         bail!(e);
                     }
                 }
             }
         }
 
-        self.generate_cargo_toml()?;
-        self.generate_lib_rs(contracts)?;
+        self.generate_cargo_toml().wrap_err("Error generating Cargo.toml")?;
+        self.generate_lib_rs(contracts).wrap_err("Error generating lib.rs")?;
+        Ok(())
+    }
+}
 
-        println!("done");
+impl Cmd for BindArgs {
+    type Output = ();
+
+    fn run(self) -> eyre::Result<Self::Output> {
+        if let Err(e) = self.generate_crate() {
+            println!("An error occurred. Cleaning partially-generated crate.");
+            self.clean_old_crate();
+            bail!(e)
+        }
+
+        println!("Bindings have been output to {}", self.crate_root().to_str().unwrap());
         Ok(())
     }
 }
