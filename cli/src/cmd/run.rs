@@ -243,10 +243,11 @@ struct ExtraLinkingInfo<'a> {
     target_fname: String,
     contract: &'a mut CompactContractBytecode,
     dependencies: &'a mut Vec<ethers::types::Bytes>,
+    matched: bool,
 }
 
 fn link_key_construction(file: String, key: String) -> (String, String, String) {
-    (file.to_string() + ":" + &key, file, key.to_string())
+    (format!("{}:{}", file, key), file, key)
 }
 
 // post link step for run command
@@ -257,26 +258,23 @@ fn post_link(
         contract,
         known_contracts: highlevel_known_contracts,
         fname,
-        matched,
         extra,
         dependencies,
     } = post_link_input;
     let split = fname.split(':').collect::<Vec<&str>>();
 
     // if its the target contract, grab the info
-    if extra.no_target_name {
-        if split[0] == extra.target_fname {
-            if *matched {
-                eyre::bail!("Multiple contracts in the target path. Please specify the contract name with `-t ContractName`")
-            }
-            *extra.dependencies = dependencies;
-            *extra.contract = contract.clone();
-            *matched = true;
+    if extra.no_target_name && split[0] == extra.target_fname {
+        if extra.matched {
+            eyre::bail!("Multiple contracts in the target path. Please specify the contract name with `-t ContractName`")
         }
+        *extra.dependencies = dependencies;
+        *extra.contract = contract.clone();
+        extra.matched = true;
     } else if extra.target_fname == fname {
         *extra.dependencies = dependencies;
         *extra.contract = contract.clone();
-        *matched = true;
+        extra.matched = true;
     }
 
     let tc: ContractBytecode = contract.into();
@@ -331,7 +329,7 @@ impl RunArgs {
             contracts.extend(
                 output_contracts
                     .iter()
-                    .map(|(n, c)| (source.to_string() + ":" + n, c.clone().into()))
+                    .map(|(n, c)| (format!("{}:{}", source, n), c.clone().into()))
                     .collect::<BTreeMap<String, CompactContractBytecode>>(),
             );
         });
@@ -347,11 +345,12 @@ impl RunArgs {
             .expect("Bad path to string")
             .to_string();
 
-        
         let no_target_name = if let Some(target_name) = &self.target_contract {
             target_fname = target_fname + ":" + target_name;
             false
-        } else {true};
+        } else {
+            true
+        };
 
         foundry_utils::link(
             &contracts,
@@ -363,6 +362,7 @@ impl RunArgs {
                 target_fname,
                 contract: &mut contract,
                 dependencies: &mut run_dependencies,
+                matched: false,
             },
             post_link,
         )?;

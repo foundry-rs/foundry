@@ -37,7 +37,7 @@ pub struct MultiContractRunnerBuilder {
 }
 
 fn link_key_construction(file: String, key: String) -> (String, String, String) {
-    (key.to_string() + ".json:" + &key, file, key.to_string())
+    (format!("{}.json:{}", key, key), file, key)
 }
 
 pub type DeployableContracts =
@@ -52,7 +52,6 @@ fn post_link(
         fname,
         extra: deployable_contracts,
         dependencies,
-        ..
     } = post_link_input;
 
     // get bytes
@@ -72,13 +71,11 @@ fn post_link(
 
     let split = fname.split(':').collect::<Vec<&str>>();
     let contract_name = if split.len() > 1 { split[1] } else { split[0] };
-    if let Some(d_bcode) = contract.deployed_bytecode {
-        if let Some(bcode) = d_bcode.bytecode {
-            if let Some(runtime_code) = bcode.object.into_bytes() {
-                known_contracts.insert(contract_name.to_string(), (abi, runtime_code.to_vec()));
-            }
-        }
-    }
+    contract
+        .deployed_bytecode
+        .and_then(|d_bcode| d_bcode.bytecode)
+        .and_then(|bcode| bcode.object.into_bytes())
+        .and_then(|bytes| known_contracts.insert(contract_name.to_string(), (abi, bytes.to_vec())));
     Ok(())
 }
 

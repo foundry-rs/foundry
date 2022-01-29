@@ -734,7 +734,6 @@ pub struct PostLinkInput<'a, T, U> {
     pub contract: CompactContractBytecode,
     pub known_contracts: &'a mut BTreeMap<String, T>,
     pub fname: String,
-    pub matched: &'a mut bool,
     pub extra: &'a mut U,
     pub dependencies: Vec<ethers_core::types::Bytes>,
 }
@@ -770,7 +769,6 @@ pub fn link<T, U>(
         })
         .collect();
 
-    let mut matched = false;
     for fname in contracts.keys() {
         let (abi, maybe_deployment_bytes, maybe_runtime) = if let Some(c) = contracts.get(fname) {
             (c.abi.as_ref(), c.bytecode.as_ref(), c.deployed_bytecode.as_ref())
@@ -823,7 +821,6 @@ pub fn link<T, U>(
                 contract: tc,
                 known_contracts,
                 fname: fname.to_string(),
-                matched: &mut matched,
                 extra,
                 dependencies,
             };
