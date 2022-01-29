@@ -49,7 +49,11 @@ pub enum Subcommands {
     ToDec { hexvalue: Option<String> },
     #[clap(name = "--to-fix")]
     #[clap(about = "convert integers into fixed point with specified decimals")]
-    ToFix { decimals: Option<u128>, value: Option<String> },
+    ToFix {
+        decimals: Option<u128>,
+        #[clap(allow_hyphen_values = true)] // negative values not yet supported internally
+        value: Option<String>,
+    },
     #[clap(name = "--to-uint256")]
     #[clap(about = "convert a number into uint256 hex string with 0x prefix")]
     ToUint256 { value: Option<String> },
@@ -67,10 +71,18 @@ pub enum Subcommands {
     ToUnit { value: Option<String>, unit: Option<String> },
     #[clap(name = "--to-wei")]
     #[clap(about = "convert an ETH amount into wei. Consider using --to-unit.")]
-    ToWei { value: Option<String>, unit: Option<String> },
+    ToWei {
+        #[clap(allow_hyphen_values = true)] // negative values not yet supported internally
+        value: Option<String>,
+        unit: Option<String>,
+    },
     #[clap(name = "--from-wei")]
     #[clap(about = "convert wei into an ETH amount. Consider using --to-unit.")]
-    FromWei { value: Option<String>, unit: Option<String> },
+    FromWei {
+        #[clap(allow_hyphen_values = true)] // negative values not yet supported internally
+        value: Option<String>,
+        unit: Option<String>,
+    },
     #[clap(name = "block")]
     #[clap(
         about = "Prints information about <block>. If <field> is given, print only the value of that field"
@@ -111,6 +123,7 @@ pub enum Subcommands {
         "#
         )]
         sig: String,
+        #[clap(allow_hyphen_values = true)] // negative values not yet supported internally
         args: Vec<String>,
     },
     #[clap(name = "chain")]
@@ -214,6 +227,7 @@ pub enum Subcommands {
         #[clap(help = "the function signature")]
         sig: String,
         #[clap(help = "the list of function arguments")]
+        #[clap(allow_hyphen_values = true)]
         args: Vec<String>,
     },
     #[clap(name = "4byte")]
