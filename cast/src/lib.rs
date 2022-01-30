@@ -61,7 +61,7 @@ where
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let sig = "function greeting(uint256 i) public returns (string)";
     /// let args = vec!["5".to_owned()];
-    /// let data = cast.call(Address::zero(), to, (sig, args), Chain::Mainnet, None).await?;
+    /// let data = cast.call(Address::zero(), to, (sig, args), Chain::Mainnet, None, None).await?;
     /// println!("{}", data);
     /// # Ok(())
     /// # }
@@ -73,11 +73,12 @@ where
         args: (&str, Vec<String>),
         chain: Chain,
         etherscan_api_key: Option<String>,
+        block: Option<BlockId>,
     ) -> Result<String> {
         let (tx, func) = self
             .build_tx(from, to, Some(args), None, None, None, chain, etherscan_api_key, false)
             .await?;
-        let res = self.provider.call(&tx, None).await?;
+        let res = self.provider.call(&tx, block).await?;
 
         // decode args into tokens
         let func = func.expect("no valid function signature was provided.");

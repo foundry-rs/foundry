@@ -867,6 +867,13 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 self.add_debug(CheatOp::EXPECTCALL);
                 self.state_mut().expected_calls.entry(inner.0).or_default().push(inner.1.to_vec());
             }
+            HEVMCalls::Label(inner) => {
+                self.add_debug(CheatOp::LABEL);
+                let address = inner.0;
+                let label = inner.1;
+
+                self.state_mut().labels.insert(address, label);
+            }
         };
 
         self.fill_trace(&trace, true, Some(res.clone()), pre_index);
@@ -1089,6 +1096,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 created: creation,
                 data: input,
                 value: transfer,
+                label: self.state().labels.get(&address).cloned(),
                 ..Default::default()
             };
 
@@ -2138,8 +2146,12 @@ mod tests {
         );
         let mut identified = Default::default();
         let (funcs, events, errors) = foundry_utils::flatten_known_contracts(&mapping);
-        let mut exec_info = ExecutionInfo::new(&mapping, &mut identified, &funcs, &events, &errors);
-        evm.traces()[1].pretty_print(0, &mut exec_info, &evm, "");
+        let labels = BTreeMap::new();
+        let mut exec_info =
+            ExecutionInfo::new(&mapping, &mut identified, &labels, &funcs, &events, &errors);
+        let mut trace_string = "".to_string();
+        evm.traces()[1].construct_trace_string(0, &mut exec_info, &evm, "", &mut trace_string);
+        println!("{}", trace_string);
     }
 
     #[test]
@@ -2199,7 +2211,11 @@ mod tests {
         );
         let mut identified = Default::default();
         let (funcs, events, errors) = foundry_utils::flatten_known_contracts(&mapping);
-        let mut exec_info = ExecutionInfo::new(&mapping, &mut identified, &funcs, &events, &errors);
-        evm.traces()[1].pretty_print(0, &mut exec_info, &evm, "");
+        let labels = BTreeMap::new();
+        let mut exec_info =
+            ExecutionInfo::new(&mapping, &mut identified, &labels, &funcs, &events, &errors);
+        let mut trace_string = "".to_string();
+        evm.traces()[1].construct_trace_string(0, &mut exec_info, &evm, "", &mut trace_string);
+        println!("{}", trace_string);
     }
 }

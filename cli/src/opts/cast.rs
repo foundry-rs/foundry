@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand};
 use ethers::types::{Address, BlockId, BlockNumber, NameOrAddress, H256, U256};
 
 use super::{ClapChain, EthereumOpts, Wallet};
+use crate::utils::parse_u256;
 
 #[derive(Debug, Subcommand)]
 #[clap(about = "Perform Ethereum RPC calls from the comfort of your command line.")]
@@ -111,6 +112,8 @@ pub enum Subcommands {
         address: NameOrAddress,
         sig: String,
         args: Vec<String>,
+        #[clap(long, short, help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
+        block: Option<BlockId>,
         #[clap(flatten)]
         eth: EthereumOpts,
     },
@@ -135,6 +138,12 @@ pub enum Subcommands {
     #[clap(name = "chain-id")]
     #[clap(about = "returns ethereum chain id")]
     ChainId {
+        #[clap(long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+    },
+    #[clap(name = "client")]
+    #[clap(about = "returns the current client version")]
+    Client {
         #[clap(long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
@@ -179,11 +188,11 @@ pub enum Subcommands {
         sig: String,
         #[clap(help = "the list of arguments you want to call the function with")]
         args: Vec<String>,
-        #[clap(long, help = "gas quantity for the transaction")]
+        #[clap(long, help = "gas quantity for the transaction", parse(try_from_str = parse_u256))]
         gas: Option<U256>,
-        #[clap(long, help = "ether value (in wei) for the transaction")]
+        #[clap(long, help = "ether value (in wei) for the transaction", parse(try_from_str = parse_u256))]
         value: Option<U256>,
-        #[clap(long, help = "nonce for the transaction")]
+        #[clap(long, help = "nonce for the transaction", parse(try_from_str = parse_u256))]
         nonce: Option<U256>,
         #[clap(long, env = "CAST_ASYNC")]
         cast_async: bool,

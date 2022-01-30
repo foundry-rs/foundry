@@ -139,7 +139,7 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).block_number().await?);
         }
-        Subcommands::Call { eth, address, sig, args } => {
+        Subcommands::Call { eth, address, sig, args, block } => {
             let provider = Provider::try_from(eth.rpc_url()?)?;
             println!(
                 "{}",
@@ -149,7 +149,8 @@ async fn main() -> eyre::Result<()> {
                         address,
                         (&sig, args),
                         eth.chain,
-                        eth.etherscan_api_key
+                        eth.etherscan_api_key,
+                        block
                     )
                     .await?
             );
@@ -164,6 +165,10 @@ async fn main() -> eyre::Result<()> {
         Subcommands::ChainId { rpc_url } => {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).chain_id().await?);
+        }
+        Subcommands::Client { rpc_url } => {
+            let provider = Provider::try_from(rpc_url)?;
+            println!("{}", provider.client_version().await?);
         }
         Subcommands::Code { block, who, rpc_url } => {
             let provider = Provider::try_from(rpc_url)?;

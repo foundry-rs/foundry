@@ -57,8 +57,10 @@ interface Hevm {
     // Expect a call to an address with the specified calldata.
     // Calldata can either be strict or a partial match
     function expectCall(address,bytes calldata) external;
-
+    // Gets the code from an artifact file. Takes in the relative path to the json file
     function getCode(string calldata) external returns (bytes memory);
+    // Labels an address in call traces
+    function label(address, string calldata) external;
 }
 
 contract HasStorage {
@@ -585,6 +587,18 @@ contract CheatCodes is DSTest {
         );
     }
 
+    function testLabel() public {
+        address bob = address(1337);
+        hevm.label(bob, "bob");
+        bob.call{value: 100}("");
+    }
+
+    function testLabelInputReturn() public {
+        Label labeled = new Label();
+        hevm.label(address(labeled), "MyCustomLabel");
+        labeled.withInput(address(labeled));
+    }
+
     function getCode(address who) internal returns (bytes memory o_code) {
         assembly {
             // retrieve the size of the code, this needs assembly
@@ -599,6 +613,12 @@ contract CheatCodes is DSTest {
             // actually retrieve the code, this needs assembly
             extcodecopy(who, add(o_code, 0x20), 0, size)
         }
+    }
+}
+
+contract Label {
+    function withInput(address labeled) public pure returns (address) {
+        return labeled;
     }
 }
 

@@ -179,6 +179,7 @@ pub enum CheatOp {
     CLEARMOCKEDCALLS,
     EXPECTCALL,
     GETCODE,
+    LABEL,
 }
 
 impl From<CheatOp> for OpCode {
@@ -212,6 +213,7 @@ impl CheatOp {
             CheatOp::CLEARMOCKEDCALLS => "VM_CLEARMOCKEDCALLS",
             CheatOp::EXPECTCALL => "VM_EXPECTCALL",
             CheatOp::GETCODE => "VM_GETCODE",
+            CheatOp::LABEL => "VM_LABEL",
         }
     }
 }

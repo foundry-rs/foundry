@@ -75,6 +75,9 @@ pub struct TestResult {
     /// Debug Steps
     #[serde(skip)]
     pub debug_calls: Option<Vec<DebugArena>>,
+
+    /// Labeled addresses
+    pub labeled_addresses: BTreeMap<Address, String>,
 }
 
 impl TestResult {
@@ -337,6 +340,7 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
                         } else {
                             None
                         },
+                        labeled_addresses: evm.state().labels.clone(),
                     })
                 }
             };
@@ -391,6 +395,7 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
             traces,
             identified_contracts,
             debug_calls: if evm.state().debug_enabled { Some(evm.debug_calls()) } else { None },
+            labeled_addresses: evm.state().labels.clone(),
         })
     }
 
@@ -446,6 +451,7 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
                         } else {
                             None
                         },
+                        labeled_addresses: evm.state().labels.clone(),
                     })
                 }
             }
@@ -519,6 +525,7 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
             traces,
             identified_contracts,
             debug_calls: if evm.state().debug_enabled { Some(evm.debug_calls()) } else { None },
+            labeled_addresses: evm.state().labels.clone(),
         })
     }
 

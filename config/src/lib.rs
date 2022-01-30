@@ -91,6 +91,8 @@ pub struct Config {
     /// evm version to use
     #[serde(with = "from_str_lowercase")]
     pub evm_version: EvmVersion,
+    /// list of contracts to report gas of
+    pub gas_reports: Vec<String>,
     /// Concrete solc version to use if any.
     ///
     /// This takes precedence over `auto_detect_solc`, if a version is set then this overrides
@@ -638,6 +640,7 @@ impl Default for Config {
             cache: true,
             force: false,
             evm_version: Default::default(),
+            gas_reports: vec!["*".to_string()],
             solc_version: None,
             auto_detect_solc: true,
             optimizer: true,
