@@ -681,7 +681,9 @@ mod tests {
         let sigs = fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", Some("145".to_string())).await.unwrap();
         assert_eq!(sigs[0], "transfer(address,uint256)".to_string());
     }
+
     #[test]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn abi2solidity() {
         let contract_abi: Abi =
             serde_json::from_slice(&std::fs::read("testdata/interfaceTestABI.json").unwrap())
