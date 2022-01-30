@@ -2146,8 +2146,12 @@ mod tests {
         );
         let mut identified = Default::default();
         let (funcs, events, errors) = foundry_utils::flatten_known_contracts(&mapping);
-        let mut exec_info = ExecutionInfo::new(&mapping, &mut identified, &funcs, &events, &errors);
-        evm.traces()[1].pretty_print(0, &mut exec_info, &evm, "");
+        let labels = BTreeMap::new();
+        let mut exec_info =
+            ExecutionInfo::new(&mapping, &mut identified, &labels, &funcs, &events, &errors);
+        let mut trace_string = "".to_string();
+        evm.traces()[1].construct_trace_string(0, &mut exec_info, &evm, "", &mut trace_string);
+        println!("{}", trace_string);
     }
 
     #[test]
@@ -2207,7 +2211,11 @@ mod tests {
         );
         let mut identified = Default::default();
         let (funcs, events, errors) = foundry_utils::flatten_known_contracts(&mapping);
-        let mut exec_info = ExecutionInfo::new(&mapping, &mut identified, &funcs, &events, &errors);
-        evm.traces()[1].pretty_print(0, &mut exec_info, &evm, "");
+        let labels = BTreeMap::new();
+        let mut exec_info =
+            ExecutionInfo::new(&mapping, &mut identified, &labels, &funcs, &events, &errors);
+        let mut trace_string = "".to_string();
+        evm.traces()[1].construct_trace_string(0, &mut exec_info, &evm, "", &mut trace_string);
+        println!("{}", trace_string);
     }
 }

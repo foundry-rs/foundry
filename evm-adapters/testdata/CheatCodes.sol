@@ -593,6 +593,12 @@ contract CheatCodes is DSTest {
         bob.call{value: 100}("");
     }
 
+    function testLabelInputReturn() public {
+        Label labeled = new Label();
+        hevm.label(address(labeled), "MyCustomLabel");
+        labeled.withInput(address(labeled));
+    }
+
     function getCode(address who) internal returns (bytes memory o_code) {
         assembly {
             // retrieve the size of the code, this needs assembly
@@ -607,6 +613,12 @@ contract CheatCodes is DSTest {
             // actually retrieve the code, this needs assembly
             extcodecopy(who, add(o_code, 0x20), 0, size)
         }
+    }
+}
+
+contract Label {
+    function withInput(address labeled) public pure returns (address) {
+        return labeled;
     }
 }
 
