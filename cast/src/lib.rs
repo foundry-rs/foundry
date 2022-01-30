@@ -61,7 +61,7 @@ where
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let sig = "function greeting(uint256 i) public returns (string)";
     /// let args = vec!["5".to_owned()];
-    /// let data = cast.call(Address::zero(), to, (sig, args), Chain::Mainnet, None).await?;
+    /// let data = cast.call(Address::zero(), to, (sig, args), Chain::Mainnet, None, None).await?;
     /// println!("{}", data);
     /// # Ok(())
     /// # }
