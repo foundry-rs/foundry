@@ -73,11 +73,12 @@ where
         args: (&str, Vec<String>),
         chain: Chain,
         etherscan_api_key: Option<String>,
+        block: Option<BlockId>,
     ) -> Result<String> {
         let (tx, func) = self
             .build_tx(from, to, Some(args), None, None, None, chain, etherscan_api_key, false)
             .await?;
-        let res = self.provider.call(&tx, None).await?;
+        let res = self.provider.call(&tx, block).await?;
 
         // decode args into tokens
         let func = func.expect("no valid function signature was provided.");
