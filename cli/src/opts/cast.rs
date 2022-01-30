@@ -138,6 +138,12 @@ pub enum Subcommands {
         #[clap(long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
+    #[clap(name = "client")]
+    #[clap(about = "returns the current client version")]
+    Client {
+        #[clap(long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+    },
     #[clap(name = "namehash")]
     #[clap(about = "returns ENS namehash of provided name")]
     Namehash { name: String },
