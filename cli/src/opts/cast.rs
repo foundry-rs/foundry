@@ -49,14 +49,18 @@ pub enum Subcommands {
     ToDec { hexvalue: Option<String> },
     #[clap(name = "--to-fix")]
     #[clap(about = "convert integers into fixed point with specified decimals")]
-    ToFix { decimals: Option<u128>, value: Option<String> },
+    ToFix {
+        decimals: Option<u128>,
+        #[clap(allow_hyphen_values = true)] // negative values not yet supported internally
+        value: Option<String>,
+    },
     #[clap(name = "--to-uint256")]
     #[clap(about = "convert a number into uint256 hex string with 0x prefix")]
     ToUint256 { value: Option<String> },
     #[clap(name = "--to-unit")]
     #[clap(
-        about = r#"convert an ETH amount into a specified unit: ether, gwei or wei (default: wei). 
-    Usage: 
+        about = r#"convert an ETH amount into a specified unit: ether, gwei or wei (default: wei).
+    Usage:
       - 1ether wei     | converts 1 ether to wei
       - "1 ether" wei  | converts 1 ether to wei
       - 1ether         | converts 1 ether to wei
@@ -67,10 +71,18 @@ pub enum Subcommands {
     ToUnit { value: Option<String>, unit: Option<String> },
     #[clap(name = "--to-wei")]
     #[clap(about = "convert an ETH amount into wei. Consider using --to-unit.")]
-    ToWei { value: Option<String>, unit: Option<String> },
+    ToWei {
+        #[clap(allow_hyphen_values = true)] // negative values not yet supported internally
+        value: Option<String>,
+        unit: Option<String>,
+    },
     #[clap(name = "--from-wei")]
     #[clap(about = "convert wei into an ETH amount. Consider using --to-unit.")]
-    FromWei { value: Option<String>, unit: Option<String> },
+    FromWei {
+        #[clap(allow_hyphen_values = true)] // negative values not yet supported internally
+        value: Option<String>,
+        unit: Option<String>,
+    },
     #[clap(name = "block")]
     #[clap(
         about = "Prints information about <block>. If <field> is given, print only the value of that field"
@@ -111,6 +123,7 @@ pub enum Subcommands {
         "#
         )]
         sig: String,
+        #[clap(allow_hyphen_values = true)] // negative values not yet supported internally
         args: Vec<String>,
     },
     #[clap(name = "chain")]
@@ -138,6 +151,25 @@ pub enum Subcommands {
         #[clap(long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
+    #[clap(name = "receipt")]
+    #[clap(about = "Print information about the transaction receipt for <tx-hash>")]
+    Receipt {
+        hash: String,
+        field: Option<String>,
+        #[clap(
+            short,
+            long,
+            help = "the number of confirmations until the receipt is fetched",
+            default_value = "1"
+        )]
+        confirmations: usize,
+        #[clap(long, env = "CAST_ASYNC")]
+        cast_async: bool,
+        #[clap(long = "json", short = 'j')]
+        to_json: bool,
+        #[clap(long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+    },
     #[clap(name = "send")]
     #[clap(about = "Publish a transaction signed by <from> to call <to> with <data>")]
     SendTx {
@@ -157,6 +189,11 @@ pub enum Subcommands {
         cast_async: bool,
         #[clap(flatten)]
         eth: EthereumOpts,
+        #[clap(
+            long,
+            help = "use legacy transactions instead of EIP1559 ones. this is auto-enabled for common networks without EIP1559"
+        )]
+        legacy: bool,
     },
     #[clap(name = "publish")]
     #[clap(about = "Publish a raw transaction to the network")]
@@ -214,6 +251,7 @@ pub enum Subcommands {
         #[clap(help = "the function signature")]
         sig: String,
         #[clap(help = "the list of function arguments")]
+        #[clap(allow_hyphen_values = true)]
         args: Vec<String>,
     },
     #[clap(name = "4byte")]

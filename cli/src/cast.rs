@@ -176,7 +176,7 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(&provider).transaction(hash, field, to_json).await?)
         }
-        Subcommands::SendTx { eth, to, sig, cast_async, args, gas, value, nonce } => {
+        Subcommands::SendTx { eth, to, sig, cast_async, args, gas, value, nonce, legacy } => {
             let provider = Provider::try_from(eth.rpc_url()?)?;
             let chain_id = Cast::new(&provider).chain_id().await?;
 
@@ -194,6 +194,7 @@ async fn main() -> eyre::Result<()> {
                             eth.chain,
                             eth.etherscan_api_key,
                             cast_async,
+                            legacy,
                         )
                         .await?;
                     }
@@ -209,6 +210,7 @@ async fn main() -> eyre::Result<()> {
                             eth.chain,
                             eth.etherscan_api_key,
                             cast_async,
+                            legacy,
                         )
                         .await?;
                     }
@@ -224,6 +226,7 @@ async fn main() -> eyre::Result<()> {
                             eth.chain,
                             eth.etherscan_api_key,
                             cast_async,
+                            legacy,
                         )
                         .await?;
                     }
@@ -241,6 +244,7 @@ async fn main() -> eyre::Result<()> {
                     eth.chain,
                     eth.etherscan_api_key,
                     cast_async,
+                    legacy,
                 )
                 .await?;
             }
@@ -418,6 +422,15 @@ async fn main() -> eyre::Result<()> {
             let value = provider.get_storage_at(address, slot, block).await?;
             println!("{:?}", value);
         }
+        Subcommands::Receipt { hash, field, to_json, rpc_url, cast_async, confirmations } => {
+            let provider = Provider::try_from(rpc_url)?;
+            println!(
+                "{}",
+                Cast::new(provider)
+                    .receipt(hash, field, confirmations, cast_async, to_json)
+                    .await?
+            );
+        }
         Subcommands::Nonce { block, who, rpc_url } => {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).nonce(who, block).await?);
@@ -590,6 +603,7 @@ async fn cast_send<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>
     chain: Chain,
     etherscan_api_key: Option<String>,
     cast_async: bool,
+    legacy: bool,
 ) -> eyre::Result<()>
 where
     M::Error: 'static,
@@ -600,7 +614,7 @@ where
     let params = args.1;
     let params = if !sig.is_empty() { Some((&sig[..], params)) } else { None };
     let pending_tx =
-        cast.send(from, to, params, gas, value, nonce, chain, etherscan_api_key).await?;
+        cast.send(from, to, params, gas, value, nonce, chain, etherscan_api_key, legacy).await?;
     let tx_hash = *pending_tx;
 
     if cast_async {

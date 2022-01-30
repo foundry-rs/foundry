@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 #[derive(Debug, Clone, Parser)]
 pub struct CreateArgs {
-    #[clap(long, help = "constructor args calldata arguments.")]
+    #[clap(long, multiple_values = true, help = "constructor args calldata arguments.")]
     constructor_args: Vec<String>,
 
     #[clap(flatten)]

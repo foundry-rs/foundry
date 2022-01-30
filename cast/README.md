@@ -1,5 +1,9 @@
 # `cast`
 
+**Need help with Cast? Read the [📖 Foundry Book (Cast Guide)][foundry-book-cast-guide] (WIP)!**
+
+[foundry-book-cast-guide]: https://onbjerg.github.io/foundry-book/cast/
+
 ## Features
 
 - [x] `--abi-decode`
@@ -50,7 +54,7 @@
 - [x] `namehash`
 - [x] `nonce`
 - [x] `publish`
-- [ ] `receipt`
+- [x] `receipt`
 - [x] `resolve-name`
 - [ ] `run-tx`
 - [x] `send` (partial)
