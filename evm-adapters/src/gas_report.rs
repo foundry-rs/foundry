@@ -6,6 +6,9 @@ use ethers::{
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt::Display};
 
+#[cfg(feature = "sputnik")]
+use crate::sputnik::cheatcodes::cheatcode_handler::{CHEATCODE_ADDRESS, CONSOLE_ADDRESS};
+
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, *};
 
 #[derive(Default, Debug, Serialize, Deserialize)]
@@ -64,6 +67,12 @@ impl GasReport {
     ) {
         let node = &arena.arena[node_index];
         let trace = &node.trace;
+
+        #[cfg(feature = "sputnik")]
+        if trace.addr == *CHEATCODE_ADDRESS || trace.addr == *CONSOLE_ADDRESS {
+            return
+        }
+
         if let Some((name, abi)) = identified_contracts.get(&trace.addr) {
             let report_for = self.report_for.iter().any(|s| s == name);
             if !report_for && abi.functions().any(|func| func.name == "IS_TEST") {
@@ -103,7 +112,17 @@ impl GasReport {
                 func.max = func.calls.last().cloned().unwrap_or_default();
                 func.mean =
                     func.calls.iter().fold(U256::zero(), |acc, x| acc + x) / func.calls.len();
-                func.median = func.calls[func.calls.len() / 2];
+
+                let len = func.calls.len();
+                func.median = if len > 0 {
+                    if len % 2 == 0 {
+                        (func.calls[len / 2 - 1] + func.calls[len / 2]) / 2
+                    } else {
+                        func.calls[len / 2]
+                    }
+                } else {
+                    0.into()
+                };
             });
         });
     }
