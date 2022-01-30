@@ -305,28 +305,43 @@ fn test<A: ArtifactOutput + 'static>(
                             let mut exec_info = ExecutionInfo::new(
                                 &runner.known_contracts,
                                 &mut ident,
+                                &result.labeled_addresses,
                                 &funcs,
                                 &events,
                                 &errors,
                             );
                             let vm = vm();
+                            let mut trace_string = "".to_string();
                             if verbosity > 4 || !result.success {
                                 add_newline = true;
                                 println!("Traces:");
 
                                 // print setup calls as well
                                 traces.iter().for_each(|trace| {
-                                    trace.pretty_print(0, &mut exec_info, &vm, "  ");
+                                    trace.construct_trace_string(
+                                        0,
+                                        &mut exec_info,
+                                        &vm,
+                                        "  ",
+                                        &mut trace_string,
+                                    );
                                 });
                             } else if !traces.is_empty() {
                                 add_newline = true;
                                 println!("Traces:");
-                                traces.last().expect("no last but not empty").pretty_print(
-                                    0,
-                                    &mut exec_info,
-                                    &vm,
-                                    "  ",
-                                );
+                                traces
+                                    .last()
+                                    .expect("no last but not empty")
+                                    .construct_trace_string(
+                                        0,
+                                        &mut exec_info,
+                                        &vm,
+                                        "  ",
+                                        &mut trace_string,
+                                    );
+                            }
+                            if !trace_string.is_empty() {
+                                println!("{}", trace_string);
                             }
                         }
                     }

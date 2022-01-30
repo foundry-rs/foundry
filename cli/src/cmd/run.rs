@@ -87,7 +87,8 @@ impl Cmd for RunArgs {
         let bytecode = bin.into_bytes().unwrap();
         let needs_setup = abi.functions().any(|func| func.name == "setUp");
 
-        let cfg = crate::utils::sputnik_cfg(&evm_version);
+        let mut cfg = crate::utils::sputnik_cfg(&evm_version);
+        cfg.create_contract_limit = None;
         let vicinity = evm_opts.vicinity()?;
         let backend = evm_opts.backend(&vicinity)?;
 
@@ -171,21 +172,38 @@ impl Cmd for RunArgs {
                     let mut ident = identified_contracts.clone();
                     let (funcs, events, errors) =
                         foundry_utils::flatten_known_contracts(&known_contracts);
-                    let mut exec_info =
-                        ExecutionInfo::new(&known_contracts, &mut ident, &funcs, &events, &errors);
+                    let mut exec_info = ExecutionInfo::new(
+                        &known_contracts,
+                        &mut ident,
+                        &result.labeled_addresses,
+                        &funcs,
+                        &events,
+                        &errors,
+                    );
                     let vm = vm();
+                    let mut trace_string = "".to_string();
                     if evm_opts.verbosity > 4 || !result.success {
                         // print setup calls as well
                         traces.iter().for_each(|trace| {
-                            trace.pretty_print(0, &mut exec_info, &vm, "");
+                            trace.construct_trace_string(
+                                0,
+                                &mut exec_info,
+                                &vm,
+                                "",
+                                &mut trace_string,
+                            );
                         });
                     } else if !traces.is_empty() {
-                        traces.last().expect("no last but not empty").pretty_print(
+                        traces.last().expect("no last but not empty").construct_trace_string(
                             0,
                             &mut exec_info,
                             &vm,
                             "",
+                            &mut trace_string,
                         );
+                    }
+                    if !trace_string.is_empty() {
+                        println!("{}", trace_string);
                     }
                 }
                 println!();

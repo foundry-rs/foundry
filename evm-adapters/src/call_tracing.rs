@@ -1,5 +1,5 @@
 use ethers::{
-    abi::{Abi, Event, Function, RawLog},
+    abi::{Abi, Event, Function, RawLog, Token},
     types::{H160, H256, U256},
 };
 use serde::{Deserialize, Serialize};
@@ -30,6 +30,20 @@ impl Default for CallTraceArena {
     }
 }
 
+// Gets pretty print strings for tokens
+pub fn format_labeled_token(param: &Token, exec_info: &ExecutionInfo<'_>) -> String {
+    match param {
+        Token::Address(addr) => {
+            if let Some(label) = exec_info.labeled_addrs.get(addr) {
+                format!("{} [{:?}]", label, addr)
+            } else {
+                format_token(param)
+            }
+        }
+        _ => format_token(param),
+    }
+}
+
 /// Function output type
 pub enum Output {
     /// Decoded vec of tokens
@@ -42,6 +56,7 @@ pub enum Output {
 pub struct ExecutionInfo<'a> {
     pub contracts: &'a BTreeMap<String, (Abi, Vec<u8>)>,
     pub identified_contracts: &'a mut BTreeMap<H160, (String, Abi)>,
+    pub labeled_addrs: &'a BTreeMap<H160, String>,
     pub funcs: &'a BTreeMap<[u8; 4], Function>,
     pub events: &'a BTreeMap<H256, Event>,
     pub errors: &'a Abi,
@@ -51,30 +66,40 @@ impl<'a> ExecutionInfo<'a> {
     pub fn new(
         contracts: &'a BTreeMap<String, (Abi, Vec<u8>)>,
         identified_contracts: &'a mut BTreeMap<H160, (String, Abi)>,
+        labeled_addrs: &'a BTreeMap<H160, String>,
         funcs: &'a BTreeMap<[u8; 4], Function>,
         events: &'a BTreeMap<H256, Event>,
         errors: &'a Abi,
     ) -> Self {
-        Self { contracts, identified_contracts, funcs, events, errors }
+        Self { contracts, identified_contracts, labeled_addrs, funcs, events, errors }
     }
 }
 
 impl Output {
-    /// Prints the output of a function call
-    pub fn print(self, color: Colour, left: &str) {
+    pub fn construct_string<'a, 'b>(
+        self,
+        exec_info: &'b ExecutionInfo<'a>,
+        color: Colour,
+        left: &str,
+        full_str: &mut String,
+    ) {
         match self {
             Output::Token(token) => {
-                let strings = token.iter().map(format_token).collect::<Vec<_>>().join(", ");
-                println!(
-                    "{}  └─ {} {}",
+                let strings = token
+                    .iter()
+                    .map(|token| format_labeled_token(token, exec_info))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                full_str.push_str(&*format!(
+                    "\n{}  └─ {} {}",
                     left.replace("├─", "│").replace("└─", "  "),
                     color.paint("←"),
                     if strings.is_empty() { "()" } else { &*strings }
-                );
+                ));
             }
             Output::Raw(bytes) => {
-                println!(
-                    "{}  └─ {} {}",
+                full_str.push_str(&*format!(
+                    "\n{}  └─ {} {}",
                     left.replace("├─", "│").replace("└─", "  "),
                     color.paint("←"),
                     if bytes.is_empty() {
@@ -82,7 +107,7 @@ impl Output {
                     } else {
                         "0x".to_string() + &hex::encode(&bytes)
                     }
-                );
+                ));
             }
         }
     }
@@ -181,7 +206,7 @@ impl CallTraceArena {
         });
     }
 
-    /// Pretty print a CallTraceArena
+    /// Construct a CallTraceArena trace string
     ///
     /// `idx` is the call arena index to start at. Generally this will be 0, but if you want to
     /// print a subset of the tree, you can pass in a different index
@@ -198,12 +223,13 @@ impl CallTraceArena {
     ///
     /// For a user, `left` input should generally be `""`. Left is used recursively
     /// to build the tree print out structure and is built up as we recurse down the tree.
-    pub fn pretty_print<'a, S: Clone, E: crate::Evm<S>>(
+    pub fn construct_trace_string<'a, S: Clone, E: crate::Evm<S>>(
         &self,
         idx: usize,
         exec_info: &mut ExecutionInfo<'a>,
         evm: &'a E,
         left: &str,
+        full_str: &mut String,
     ) {
         let trace = &self.arena[idx].trace;
 
@@ -248,72 +274,98 @@ impl CallTraceArena {
                 // found matching contract, insert and print
                 exec_info.identified_contracts.insert(trace.addr, (name.to_string(), abi.clone()));
                 if trace.created {
-                    println!("{}{} {}@{}", left, Colour::Yellow.paint("→ new"), name, trace.addr);
-                    self.print_children_and_logs(idx, exec_info, evm, left);
-                    println!(
-                        "{}  └─ {} {} bytes of code",
+                    full_str.push_str(&*format!(
+                        "\n{}{} {}@{}",
+                        left,
+                        Colour::Yellow.paint("→ new"),
+                        name,
+                        trace.addr
+                    ));
+                    self.construct_children_and_logs(idx, exec_info, evm, left, full_str);
+                    full_str.push_str(&*format!(
+                        "\n{}  └─ {} {} bytes of code",
                         left.replace("├─", "│").replace("└─", "  "),
                         color.paint("←"),
                         trace.output.len()
-                    );
+                    ));
                 } else {
                     // re-enter this function at the current node
-                    self.pretty_print(idx, exec_info, evm, left);
+                    self.construct_trace_string(idx, exec_info, evm, left, full_str);
                 }
             } else if trace.created {
                 // we couldn't identify, print the children and logs without the abi
-                println!("{}{} <Unknown>@{}", left, Colour::Yellow.paint("→ new"), trace.addr);
-                self.print_children_and_logs(idx, exec_info, evm, left);
-                println!(
-                    "{}  └─ {} {} bytes of code",
+                full_str.push_str(&*format!(
+                    "\n{}{} <Unknown>@{}",
+                    left,
+                    Colour::Yellow.paint("→ new"),
+                    trace.addr
+                ));
+                self.construct_children_and_logs(idx, exec_info, evm, left, full_str);
+                full_str.push_str(&*format!(
+                    "\n{}  └─ {} {} bytes of code",
                     left.replace("├─", "│").replace("└─", "  "),
                     color.paint("←"),
                     trace.output.len()
-                );
+                ));
             } else {
-                let output = trace.print_func_call(exec_info, None, color, left);
-                self.print_children_and_logs(idx, exec_info, evm, left);
-                output.print(color, left);
+                let output = trace.construct_func_call(exec_info, None, color, left, full_str);
+                self.construct_children_and_logs(idx, exec_info, evm, left, full_str);
+                output.construct_string(exec_info, color, left, full_str);
             }
         } else if let Some((name, _abi)) = res {
             if trace.created {
-                println!("{}{} {}@{}", left, Colour::Yellow.paint("→ new"), name, trace.addr);
-                self.print_children_and_logs(idx, exec_info, evm, left);
-                println!(
-                    "{}  └─ {} {} bytes of code",
+                full_str.push_str(&*format!(
+                    "\n{}{} {}@{}",
+                    left,
+                    Colour::Yellow.paint("→ new"),
+                    name,
+                    trace.addr
+                ));
+                self.construct_children_and_logs(idx, exec_info, evm, left, full_str);
+                full_str.push_str(&*format!(
+                    "\n{}  └─ {} {} bytes of code",
                     left.replace("├─", "│").replace("└─", "  "),
                     color.paint("←"),
                     trace.output.len()
-                );
+                ));
             } else {
-                let output = trace.print_func_call(exec_info, Some(&name), color, left);
-                self.print_children_and_logs(idx, exec_info, evm, left);
-                output.print(color, left);
+                let output =
+                    trace.construct_func_call(exec_info, Some(&name), color, left, full_str);
+                self.construct_children_and_logs(idx, exec_info, evm, left, full_str);
+                output.construct_string(exec_info, color, left, full_str);
             }
         }
     }
 
     /// Prints child calls and logs in order
-    pub fn print_children_and_logs<'a, S: Clone, E: crate::Evm<S>>(
+    pub fn construct_children_and_logs<'a, S: Clone, E: crate::Evm<S>>(
         &self,
         node_idx: usize,
         exec_info: &mut ExecutionInfo<'a>,
         evm: &'a E,
         left: &str,
+        full_str: &mut String,
     ) {
         // Ordering stores a vec of `LogCallOrder` which is populated based on if
         // a log or a call was called first. This makes it such that we always print
         // logs and calls in the correct order
         self.arena[node_idx].ordering.iter().for_each(|ordering| match ordering {
             LogCallOrder::Log(index) => {
-                self.arena[node_idx].print_log(*index, exec_info.events, left);
+                self.arena[node_idx].construct_log(
+                    exec_info,
+                    *index,
+                    exec_info.events,
+                    left,
+                    full_str,
+                );
             }
             LogCallOrder::Call(index) => {
-                self.pretty_print(
+                self.construct_trace_string(
                     self.arena[node_idx].children[*index],
                     exec_info,
                     evm,
                     &(left.replace("├─", "│").replace("└─", "  ") + "  ├─ "),
+                    full_str,
                 );
             }
         });
@@ -340,7 +392,14 @@ pub struct CallTraceNode {
 
 impl CallTraceNode {
     /// Prints a log at a particular index, optionally decoding if abi is provided
-    pub fn print_log(&self, index: usize, events: &BTreeMap<H256, Event>, left: &str) {
+    pub fn construct_log<'a, 'b>(
+        &self,
+        exec_info: &'b ExecutionInfo<'a>,
+        index: usize,
+        events: &BTreeMap<H256, Event>,
+        left: &str,
+        full_str: &mut String,
+    ) {
         let log = &self.logs[index];
         let right = "  ├─ ";
 
@@ -349,15 +408,17 @@ impl CallTraceNode {
                 let params = parsed.params;
                 let strings = params
                     .into_iter()
-                    .map(|param| format!("{}: {}", param.name, format_token(&param.value)))
+                    .map(|param| {
+                        format!("{}: {}", param.name, format_labeled_token(&param.value, exec_info))
+                    })
                     .collect::<Vec<String>>()
                     .join(", ");
-                println!(
-                    "{}emit {}({})",
+                full_str.push_str(&*format!(
+                    "\n{}emit {}({})",
                     left.replace("├─", "│") + right,
                     Colour::Cyan.paint(event.name.clone()),
                     strings
-                );
+                ));
                 return
             }
         }
@@ -369,8 +430,8 @@ impl CallTraceNode {
             } else {
                 "  ├─"
             };
-            println!(
-                "{}{}topic {}: {}",
+            full_str.push_str(&*format!(
+                "\n{}{}topic {}: {}",
                 if i == 0 {
                     left.replace("├─", "│") + right
                 } else {
@@ -379,13 +440,13 @@ impl CallTraceNode {
                 if i == 0 { " emit " } else { "      " },
                 i,
                 Colour::Cyan.paint(format!("0x{}", hex::encode(&topic)))
-            )
+            ))
         }
-        println!(
-            "{}        data: {}",
+        full_str.push_str(&*format!(
+            "\n{}        data: {}",
             left.replace("├─", "│").replace("└─", "  ") + "  │  ",
             Colour::Cyan.paint(format!("0x{}", hex::encode(&log.data)))
-        )
+        ))
     }
 }
 
@@ -407,6 +468,8 @@ pub struct CallTrace {
     pub idx: usize,
     /// Successful
     pub success: bool,
+    /// Label for an address
+    pub label: Option<String>,
     /// Callee
     pub addr: H160,
     /// Creation
@@ -433,12 +496,13 @@ impl CallTrace {
     }
 
     /// Prints function call, returning the decoded or raw output
-    pub fn print_func_call<'a>(
+    pub fn construct_func_call<'a>(
         &self,
         exec_info: &mut ExecutionInfo<'a>,
         name: Option<&String>,
         color: Colour,
         left: &str,
+        full_str: &mut String,
     ) -> Output {
         // Is data longer than 4, meaning we can attempt to decode it
         if self.data.len() >= 4 {
@@ -446,7 +510,11 @@ impl CallTrace {
                 let mut strings = "".to_string();
                 if !self.data[4..].is_empty() {
                     let params = func.decode_input(&self.data[4..]).expect("Bad func data decode");
-                    strings = params.iter().map(format_token).collect::<Vec<_>>().join(", ");
+                    strings = params
+                        .iter()
+                        .map(|token| format_labeled_token(token, exec_info))
+                        .collect::<Vec<_>>()
+                        .join(", ");
 
                     #[cfg(feature = "sputnik")]
                     if self.addr == *CHEATCODE_ADDRESS && func.name == "expectRevert" {
@@ -459,11 +527,15 @@ impl CallTrace {
                     }
                 }
 
-                println!(
-                    "{}[{}] {}::{}{}({})",
+                full_str.push_str(&*format!(
+                    "\n{}[{}] {}::{}{}({})",
                     left,
                     self.cost,
-                    color.paint(name.unwrap_or(&self.addr.to_string())),
+                    color.paint(
+                        // clippy bug makes us do this
+                        #[allow(clippy::or_fun_call)]
+                        self.label.as_ref().unwrap_or(name.unwrap_or(&self.addr.to_string()))
+                    ),
                     color.paint(func.name.clone()),
                     if self.value > 0.into() {
                         format!("{{value: {}}}", self.value)
@@ -471,7 +543,7 @@ impl CallTrace {
                         "".to_string()
                     },
                     strings,
-                );
+                ));
 
                 if !self.output.is_empty() && self.success {
                     return Output::Token(
@@ -491,17 +563,21 @@ impl CallTrace {
             }
         } else {
             // fallback function
-            println!(
-                "{}[{}] {}::fallback{}()",
+            full_str.push_str(&*format!(
+                "\n{}[{}] {}::fallback{}()",
                 left,
                 self.cost,
-                color.paint(name.unwrap_or(&self.addr.to_string())),
+                color.paint(
+                    // clippy bug makes us do this
+                    #[allow(clippy::or_fun_call)]
+                    self.label.as_ref().unwrap_or(name.unwrap_or(&self.addr.to_string()))
+                ),
                 if self.value > 0.into() {
                     format!("{{value: {}}}", self.value)
                 } else {
                     "".to_string()
                 }
-            );
+            ));
 
             if !self.success {
                 if let Ok(decoded_error) =
@@ -514,11 +590,11 @@ impl CallTrace {
         }
 
         // We couldn't decode the function call, so print it as an abstract call
-        println!(
-            "{}[{}] {}::{}{}({})",
+        full_str.push_str(&*format!(
+            "\n{}[{}] {}::{}{}({})",
             left,
             self.cost,
-            color.paint(format!("{}", self.addr)),
+            color.paint(self.label.as_ref().unwrap_or(&self.addr.to_string()).to_string()),
             if self.data.len() >= 4 {
                 hex::encode(&self.data[0..4])
             } else {
@@ -534,7 +610,7 @@ impl CallTrace {
             } else {
                 hex::encode(&vec![][..])
             },
-        );
+        ));
 
         if !self.success {
             if let Ok(decoded_error) =
