@@ -25,6 +25,7 @@ pub struct Filter {
 
     #[clap(
         long = "match-test",
+        alias = "mt",
         help = "only run test methods matching regex",
         conflicts_with = "pattern"
     )]
@@ -32,6 +33,7 @@ pub struct Filter {
 
     #[clap(
         long = "no-match-test",
+        alias = "nmt",
         help = "only run test methods not matching regex",
         conflicts_with = "pattern"
     )]
@@ -39,6 +41,7 @@ pub struct Filter {
 
     #[clap(
         long = "match-contract",
+        alias = "mc",
         help = "only run test methods in contracts matching regex",
         conflicts_with = "pattern"
     )]
@@ -46,6 +49,7 @@ pub struct Filter {
 
     #[clap(
         long = "no-match-contract",
+        alias = "nmc",
         help = "only run test methods in contracts not matching regex",
         conflicts_with = "pattern"
     )]

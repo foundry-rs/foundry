@@ -40,7 +40,7 @@ impl GasReport {
         traces: &[CallTraceArena],
         identified_contracts: &BTreeMap<H160, (String, Abi)>,
     ) {
-        let report_for_all = self.report_for.iter().any(|s| s == "*");
+        let report_for_all = self.report_for.is_empty() || self.report_for.iter().any(|s| s == "*");
         traces.iter().for_each(|trace| {
             self.analyze_trace(trace, identified_contracts, report_for_all);
         });
