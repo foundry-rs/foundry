@@ -1,6 +1,9 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, str::FromStr};
 
-use ethers::solc::{artifacts::Contract, EvmVersion};
+use ethers::{
+    solc::{artifacts::Contract, EvmVersion},
+    types::U256,
+};
 #[cfg(feature = "evmodin-evm")]
 use evmodin::Revision;
 use eyre::{ContextCompat, WrapErr};
@@ -124,6 +127,11 @@ pub fn read_secret(secret: bool, unsafe_secret: Option<String>) -> eyre::Result<
 /// ```
 pub fn get_contract_name(id: &str) -> &str {
     id.rsplit(':').next().unwrap_or(id)
+}
+
+/// parse a hex str or decimal str as U256
+pub fn parse_u256(s: &str) -> eyre::Result<U256> {
+    Ok(if s.starts_with("0x") { U256::from_str(s)? } else { U256::from_dec_str(s)? })
 }
 
 /// Conditionally print a message
