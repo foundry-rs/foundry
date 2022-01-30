@@ -740,11 +740,11 @@ pub struct PostLinkInput<'a, T, U> {
 
 pub fn link<T, U>(
     contracts: &BTreeMap<String, CompactContractBytecode>,
-    link_key_construction: fn(String, String) -> (String, String, String),
     known_contracts: &mut BTreeMap<String, T>,
     sender: Address,
     extra: &mut U,
-    post_link: fn(PostLinkInput<T, U>) -> eyre::Result<()>,
+    link_key_construction: impl Fn(String, String) -> (String, String, String),
+    post_link: impl Fn(PostLinkInput<T, U>) -> eyre::Result<()>,
 ) -> eyre::Result<()> {
     // we dont use mainnet state for evm_opts.sender so this will always be 1
     // I am leaving this here so that in the future if this needs to change,

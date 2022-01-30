@@ -246,43 +246,6 @@ struct ExtraLinkingInfo<'a> {
     matched: bool,
 }
 
-fn link_key_construction(file: String, key: String) -> (String, String, String) {
-    (format!("{}:{}", file, key), file, key)
-}
-
-// post link step for run command
-fn post_link(
-    post_link_input: PostLinkInput<ContractBytecodeSome, ExtraLinkingInfo>,
-) -> eyre::Result<()> {
-    let PostLinkInput {
-        contract,
-        known_contracts: highlevel_known_contracts,
-        fname,
-        extra,
-        dependencies,
-    } = post_link_input;
-    let split = fname.split(':').collect::<Vec<&str>>();
-
-    // if its the target contract, grab the info
-    if extra.no_target_name && split[0] == extra.target_fname {
-        if extra.matched {
-            eyre::bail!("Multiple contracts in the target path. Please specify the contract name with `-t ContractName`")
-        }
-        *extra.dependencies = dependencies;
-        *extra.contract = contract.clone();
-        extra.matched = true;
-    } else if extra.target_fname == fname {
-        *extra.dependencies = dependencies;
-        *extra.contract = contract.clone();
-        extra.matched = true;
-    }
-
-    let tc: ContractBytecode = contract.into();
-    let contract_name = if split.len() > 1 { split[1] } else { split[0] };
-    highlevel_known_contracts.insert(contract_name.to_string(), tc.unwrap());
-    Ok(())
-}
-
 pub struct BuildOutput {
     pub project: Project<MinimalCombinedArtifacts>,
     pub contract: CompactContractBytecode,
@@ -354,7 +317,6 @@ impl RunArgs {
 
         foundry_utils::link(
             &contracts,
-            link_key_construction,
             &mut highlevel_known_contracts,
             evm_opts.sender,
             &mut ExtraLinkingInfo {
@@ -364,7 +326,36 @@ impl RunArgs {
                 dependencies: &mut run_dependencies,
                 matched: false,
             },
-            post_link,
+            |file, key| (format!("{}:{}", file, key), file, key),
+            |post_link_input| {
+                let PostLinkInput {
+                    contract,
+                    known_contracts: highlevel_known_contracts,
+                    fname,
+                    extra,
+                    dependencies,
+                } = post_link_input;
+                let split = fname.split(':').collect::<Vec<&str>>();
+
+                // if its the target contract, grab the info
+                if extra.no_target_name && split[0] == extra.target_fname {
+                    if extra.matched {
+                        eyre::bail!("Multiple contracts in the target path. Please specify the contract name with `-t ContractName`")
+                    }
+                    *extra.dependencies = dependencies;
+                    *extra.contract = contract.clone();
+                    extra.matched = true;
+                } else if extra.target_fname == fname {
+                    *extra.dependencies = dependencies;
+                    *extra.contract = contract.clone();
+                    extra.matched = true;
+                }
+
+                let tc: ContractBytecode = contract.into();
+                let contract_name = if split.len() > 1 { split[1] } else { split[0] };
+                highlevel_known_contracts.insert(contract_name.to_string(), tc.unwrap());
+                Ok(())
+            },
         )?;
 
         Ok(BuildOutput {

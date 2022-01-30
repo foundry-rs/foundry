@@ -36,48 +36,8 @@ pub struct MultiContractRunnerBuilder {
     pub evm_cfg: Option<Config>,
 }
 
-fn link_key_construction(file: String, key: String) -> (String, String, String) {
-    (format!("{}.json:{}", key, key), file, key)
-}
-
 pub type DeployableContracts =
     BTreeMap<String, (Abi, ethers::prelude::Bytes, Vec<ethers::prelude::Bytes>)>;
-
-fn post_link(
-    post_link_input: PostLinkInput<(Abi, Vec<u8>), DeployableContracts>,
-) -> eyre::Result<()> {
-    let PostLinkInput {
-        contract,
-        known_contracts,
-        fname,
-        extra: deployable_contracts,
-        dependencies,
-    } = post_link_input;
-
-    // get bytes
-    let bytecode = if let Some(b) = contract.bytecode.expect("No bytecode").object.into_bytes() {
-        b
-    } else {
-        return Ok(())
-    };
-
-    let abi = contract.abi.expect("We should have an abi by now");
-    // if its a test, add it to deployable contracts
-    if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) &&
-        abi.functions().any(|func| func.name.starts_with("test"))
-    {
-        deployable_contracts.insert(fname.clone(), (abi.clone(), bytecode, dependencies.to_vec()));
-    }
-
-    let split = fname.split(':').collect::<Vec<&str>>();
-    let contract_name = if split.len() > 1 { split[1] } else { split[0] };
-    contract
-        .deployed_bytecode
-        .and_then(|d_bcode| d_bcode.bytecode)
-        .and_then(|bcode| bcode.object.into_bytes())
-        .and_then(|bytes| known_contracts.insert(contract_name.to_string(), (abi, bytes.to_vec())));
-    Ok(())
-}
 
 impl MultiContractRunnerBuilder {
     /// Given an EVM, proceeds to return a runner which is able to execute all tests
@@ -111,11 +71,47 @@ impl MultiContractRunnerBuilder {
 
         foundry_utils::link(
             &contracts,
-            link_key_construction,
             &mut known_contracts,
             evm_opts.sender,
             &mut deployable_contracts,
-            post_link,
+            |file, key| (format!("{}.json:{}", key, key), file, key),
+            |post_link_input| {
+                let PostLinkInput {
+                    contract,
+                    known_contracts,
+                    fname,
+                    extra: deployable_contracts,
+                    dependencies,
+                } = post_link_input;
+
+                // get bytes
+                let bytecode =
+                    if let Some(b) = contract.bytecode.expect("No bytecode").object.into_bytes() {
+                        b
+                    } else {
+                        return Ok(())
+                    };
+
+                let abi = contract.abi.expect("We should have an abi by now");
+                // if its a test, add it to deployable contracts
+                if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) &&
+                    abi.functions().any(|func| func.name.starts_with("test"))
+                {
+                    deployable_contracts
+                        .insert(fname.clone(), (abi.clone(), bytecode, dependencies.to_vec()));
+                }
+
+                let split = fname.split(':').collect::<Vec<&str>>();
+                let contract_name = if split.len() > 1 { split[1] } else { split[0] };
+                contract
+                    .deployed_bytecode
+                    .and_then(|d_bcode| d_bcode.bytecode)
+                    .and_then(|bcode| bcode.object.into_bytes())
+                    .and_then(|bytes| {
+                        known_contracts.insert(contract_name.to_string(), (abi, bytes.to_vec()))
+                    });
+                Ok(())
+            },
         )?;
 
         // add forge+sputnik specific contracts
