@@ -210,7 +210,7 @@ pub struct Wallet {
     pub hd_path: Option<String>,
 
     #[clap(
-        long = "mnemonic_index",
+        long = "mnemonic-index",
         help = "your index in the standard hd path",
         default_value = "0"
     )]
