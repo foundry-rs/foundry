@@ -640,7 +640,7 @@ impl Default for Config {
             cache: true,
             force: false,
             evm_version: Default::default(),
-            gas_reports: vec![],
+            gas_reports: vec!["*".to_string()],
             solc_version: None,
             auto_detect_solc: true,
             optimizer: true,

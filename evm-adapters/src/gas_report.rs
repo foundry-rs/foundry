@@ -65,7 +65,10 @@ impl GasReport {
         let node = &arena.arena[node_index];
         let trace = &node.trace;
         if let Some((name, abi)) = identified_contracts.get(&trace.addr) {
-            if self.report_for.iter().any(|s| s == name) || report_for_all {
+            let report_for = self.report_for.iter().any(|s| s == name);
+            if !report_for && abi.functions().any(|func| func.name == "IS_TEST") {
+                // do nothing
+            } else if report_for || report_for_all {
                 // report for this contract
                 let mut contract =
                     self.contracts.entry(name.to_string()).or_insert_with(Default::default);
@@ -73,7 +76,7 @@ impl GasReport {
                 if trace.created {
                     contract.gas = trace.cost.into();
                     contract.size = trace.data.len().into();
-                } else {
+                } else if trace.data.len() >= 4 {
                     let func =
                         abi.functions().find(|func| func.short_signature() == trace.data[0..4]);
 
