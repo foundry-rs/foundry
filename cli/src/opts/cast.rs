@@ -111,6 +111,8 @@ pub enum Subcommands {
         address: NameOrAddress,
         sig: String,
         args: Vec<String>,
+        #[clap(long, short, help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
+        block: Option<BlockId>,
         #[clap(flatten)]
         eth: EthereumOpts,
     },
