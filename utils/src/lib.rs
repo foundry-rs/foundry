@@ -7,7 +7,6 @@ use ethers_core::{
         Abi, AbiParser, Event, Function, Param, ParamType, Token,
     },
     types::*,
-    utils::keccak256,
 };
 use ethers_etherscan::Client;
 use ethers_providers::{Middleware, Provider, ProviderError};
@@ -99,7 +98,8 @@ pub fn recurse_link<'a>(
             }
 
             // calculate the address for linking this dependency
-            let addr = next_create_address(sender, init_nonce + deployment.len());
+            let addr =
+                ethers_core::utils::get_contract_address(sender, init_nonce + deployment.len());
 
             // link the dependency to the target
             target_bytecode.0.link(file.clone(), key.clone(), addr);
@@ -169,13 +169,6 @@ pub fn next_nonce(
     let provider = Provider::try_from(provider_url).expect("Bad fork_url provider");
     let rt = RuntimeOrHandle::new();
     rt.block_on(provider.get_transaction_count(caller, block))
-}
-
-pub fn next_create_address(caller: Address, nonce: U256) -> Address {
-    let mut stream = rlp::RlpStream::new_list(2);
-    stream.append(&caller);
-    stream.append(&nonce);
-    H256::from_slice(keccak256(&stream.out()).as_slice()).into()
 }
 
 /// Flattens a group of contracts into maps of all events and functions
@@ -780,8 +773,6 @@ pub fn link<T, U>(
         {
             // we are going to mutate, but library contract addresses may change based on
             // the test so we clone
-            //
-            // TODO: verify the above statement. Maybe not? and we can modify in place.
             let mut target_bytecode = bytecode.clone();
             let mut rt = runtime.clone();
             let mut target_bytecode_runtime = rt.bytecode.expect("No target runtime").clone();

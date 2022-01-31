@@ -160,7 +160,7 @@ impl MultiContractRunnerBuilder {
 /// A multi contract runner receives a set of contracts deployed in an EVM instance and proceeds
 /// to run all test functions in these contracts.
 pub struct MultiContractRunner {
-    /// Mapping of contract name to Abi, creation bytecode and library bytecode which 
+    /// Mapping of contract name to Abi, creation bytecode and library bytecode which
     /// needs to be deployed & linked against
     pub contracts: BTreeMap<String, (Abi, ethers::prelude::Bytes, Vec<ethers::prelude::Bytes>)>,
     /// Compiled contracts by name that have an Abi and runtime bytecode
@@ -238,7 +238,7 @@ impl MultiContractRunner {
             deploy_code,
             self.sender,
             Some((&self.execution_info.0, &self.execution_info.1, &self.execution_info.2)),
-            libs.to_vec(),
+            libs,
         );
         runner.run_tests(filter, self.fuzzer.clone(), Some(&self.known_contracts))
     }

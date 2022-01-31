@@ -168,7 +168,7 @@ pub struct ContractRunner<'a, B> {
     /// Contract execution info, (functions, events, errors)
     pub execution_info: MaybeExecutionInfo<'a>,
     /// library contracts to be deployed before this contract
-    pub predeploy_libs: Vec<ethers::prelude::Bytes>,
+    pub predeploy_libs: &'a [ethers::prelude::Bytes],
 }
 
 impl<'a, B: Backend> ContractRunner<'a, B> {
@@ -181,7 +181,7 @@ impl<'a, B: Backend> ContractRunner<'a, B> {
         code: ethers::prelude::Bytes,
         sender: Option<Address>,
         execution_info: MaybeExecutionInfo<'a>,
-        predeploy_libs: Vec<ethers::prelude::Bytes>,
+        predeploy_libs: &'a [ethers::prelude::Bytes],
     ) -> Self {
         Self {
             evm_opts,

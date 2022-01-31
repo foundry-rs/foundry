@@ -114,7 +114,7 @@ impl Cmd for RunArgs {
                     bytecode,
                     Some(evm_opts.sender),
                     None,
-                    predeploy_libraries,
+                    &predeploy_libraries,
                 );
                 runner.run_test(&func, needs_setup, Some(&known_contracts))?
             }
@@ -127,7 +127,7 @@ impl Cmd for RunArgs {
                     bytecode,
                     Some(evm_opts.sender),
                     None,
-                    predeploy_libraries,
+                    &predeploy_libraries,
                 );
                 runner.run_test(&func, needs_setup, Some(&known_contracts))?
             }
