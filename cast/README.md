@@ -39,6 +39,7 @@
 - [x] `calldata`
 - [x] `chain`
 - [x] `chain-id`
+- [x] `client` 
 - [x] `code`
 - [ ] `debug`
 - [x] `estimate`
@@ -58,6 +59,7 @@
 - [x] `resolve-name`
 - [ ] `run-tx`
 - [x] `send` (partial)
+- [x] `sig`
 - [ ] `sign`
 - [x] `storage`
 - [x] `tx`
