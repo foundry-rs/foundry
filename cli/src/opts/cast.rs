@@ -492,7 +492,7 @@ fn parse_ether_value(value: &str) -> eyre::Result<U256> {
     Ok(if value.starts_with("0x") {
         U256::from_str(value)?
     } else {
-        U256::from(LenientTokenizer::tokenize_uint(&value)?)
+        U256::from(LenientTokenizer::tokenize_uint(value)?)
     })
 }
 
