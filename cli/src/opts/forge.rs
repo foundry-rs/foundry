@@ -120,7 +120,7 @@ pub struct CompilerArgs {
     pub optimize_runs: Option<usize>,
 
     #[clap(
-        help = "extra output types [evm.assembly, ewasm, ir, irOptimized] eg: `--extra-output asm`",
+        help = "extra output types [evm.assembly, ewasm, ir, irOptimized] eg: `--extra-output evm.assembly`",
         long
     )]
     #[serde(skip_serializing_if = "Option::is_none")]
