@@ -680,7 +680,8 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
 
                 match serde_json::from_str::<CompactContractBytecode>(&data) {
                     Ok(contract_file) => {
-                        if let Some(bin) =  contract_file.bytecode.and_then(|bcode| bcode.object.into_bytes())
+                        if let Some(bin) =
+                            contract_file.bytecode.and_then(|bcode| bcode.object.into_bytes())
                         {
                             res = ethers::abi::encode(&[Token::Bytes(bin.to_vec())]);
                         } else {
