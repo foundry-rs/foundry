@@ -603,8 +603,9 @@ mod tests {
         pub fn runner<'a>(
             abi: &'a Abi,
             code: ethers::prelude::Bytes,
+            libs: &'a mut Vec<ethers::prelude::Bytes>,
         ) -> ContractRunner<'a, MemoryBackend<'a>> {
-            ContractRunner::new(&*EVM_OPTS, &*CFG_NO_LMT, &*BACKEND, abi, code, None, None, vec![])
+            ContractRunner::new(&*EVM_OPTS, &*CFG_NO_LMT, &*BACKEND, abi, code, None, None, libs)
         }
 
         #[test]
@@ -618,7 +619,8 @@ mod tests {
             let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
 
             let (_, code, _) = compiled.into_parts_or_default();
-            let runner = runner(compiled.abi.as_ref().unwrap(), code);
+            let mut libs = vec![];
+            let runner = runner(compiled.abi.as_ref().unwrap(), code, &mut libs);
 
             let mut cfg = FuzzConfig::default();
             cfg.failure_persistence = None;
@@ -634,7 +636,8 @@ mod tests {
         fn test_fuzzing_counterexamples() {
             let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
             let (_, code, _) = compiled.into_parts_or_default();
-            let runner = runner(compiled.abi.as_ref().unwrap(), code);
+            let mut libs = vec![];
+            let runner = runner(compiled.abi.as_ref().unwrap(), code, &mut libs);
 
             let mut cfg = FuzzConfig::default();
             cfg.failure_persistence = None;
@@ -651,7 +654,8 @@ mod tests {
         fn test_fuzzing_ok() {
             let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
             let (_, code, _) = compiled.into_parts_or_default();
-            let runner = runner(compiled.abi.as_ref().unwrap(), code);
+            let mut libs = vec![];
+            let runner = runner(compiled.abi.as_ref().unwrap(), code, &mut libs);
 
             let mut cfg = FuzzConfig::default();
             cfg.failure_persistence = None;
@@ -666,7 +670,8 @@ mod tests {
         fn test_fuzz_shrinking() {
             let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
             let (_, code, _) = compiled.into_parts_or_default();
-            let runner = runner(compiled.abi.as_ref().unwrap(), code);
+            let mut libs = vec![];
+            let runner = runner(compiled.abi.as_ref().unwrap(), code, &mut libs);
 
             let mut cfg = FuzzConfig::default();
             cfg.failure_persistence = None;
@@ -702,7 +707,8 @@ mod tests {
 
     pub fn test_runner(compiled: CompactContractRef) {
         let (_, code, _) = compiled.into_parts_or_default();
-        let runner = sputnik::runner(compiled.abi.as_ref().unwrap(), code);
+        let mut libs = vec![];
+        let runner = sputnik::runner(compiled.abi.as_ref().unwrap(), code, &mut libs);
 
         let res = runner.run_tests(&Filter::new(".*", ".*"), None, None).unwrap();
         assert!(!res.is_empty());
