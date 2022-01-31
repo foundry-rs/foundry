@@ -232,7 +232,7 @@ impl Cmd for RunArgs {
                 }
                 println!();
             } else if result.traces.is_none() {
-                eyre::bail!("Unexpected error: No traces despite verbosity level. Please report this as a bug");
+                eyre::bail!("Unexpected error: No traces despite verbosity level. Please report this as a bug: https://github.com/gakonst/foundry/issues/new?assignees=&labels=T-bug&template=BUG-FORM.yml");
             } else if result.identified_contracts.is_none() {
                 eyre::bail!(
                     "Unexpected error: No identified contracts. Please report this as a bug"
