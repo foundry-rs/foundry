@@ -7,7 +7,9 @@ use cast::{Cast, SimpleCast};
 mod opts;
 use cast::InterfacePath;
 use ethers::{
+    contract::BaseContract,
     core::{
+        abi::parse_abi,
         rand::thread_rng,
         types::{BlockId, BlockNumber::Latest},
     },
@@ -445,6 +447,11 @@ async fn main() -> eyre::Result<()> {
                 "{}",
                 SimpleCast::etherscan_source(chain.inner, address, etherscan_api_key).await?
             );
+        }
+        Subcommands::Sig { sig } => {
+            let contract = BaseContract::from(parse_abi(&[&sig]).unwrap());
+            let selector = contract.abi().functions().last().unwrap().short_signature();
+            println!("0x{}", hex::encode(selector));
         }
         Subcommands::Wallet { command } => match command {
             WalletSubcommands::New { path, password, unsafe_password } => {
