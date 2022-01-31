@@ -9,7 +9,6 @@ use ethers_core::{
     types::*,
 };
 use ethers_etherscan::Client;
-use ethers_providers::{Middleware, Provider, ProviderError};
 use ethers_solc::artifacts::{BytecodeObject, CompactBytecode, CompactContractBytecode};
 use eyre::{Result, WrapErr};
 use serde::Deserialize;
