@@ -194,6 +194,9 @@ impl Config {
     /// File name of config toml file
     pub const FILE_NAME: &'static str = "foundry.toml";
 
+    /// The name of the directory foundry reserves for itself under the user's home directory: `~`
+    pub const FOUNDRY_DIR_NAME: &'static str = ".foundry";
+
     /// Returns the current `Config`
     ///
     /// See `Config::figment`
@@ -545,9 +548,22 @@ impl Config {
         Profile::from_env_or("FOUNDRY_PROFILE", Config::DEFAULT_PROFILE)
     }
 
+    /// Returns the path to foundry's global toml file that's stored at `~/.foundry/foundry.toml`
+    pub fn foundry_dir_toml() -> Option<PathBuf> {
+        Self::foundry_dir().map(|p| p.join(Config::FILE_NAME))
+    }
+
+    /// Returns the path to foundry's config dir `~/.foundry/`
+    pub fn foundry_dir() -> Option<PathBuf> {
+        dirs_next::home_dir().map(|p| p.join(Config::FOUNDRY_DIR_NAME))
+    }
+
     /// Returns the path to the `foundry.toml` file, the file is searched for in
     /// the current working directory and all parent directories until the root,
     /// and the first hit is used.
+    ///
+    /// If this search comes up empty, then it checks if a global `foundry.toml` exists at
+    /// `~/.foundry/foundry.tol`, see [`Self::foundry_dir_toml()`]
     pub fn find_config_file() -> Option<PathBuf> {
         fn find(path: &Path) -> Option<PathBuf> {
             if path.is_absolute() {
@@ -567,14 +583,21 @@ impl Config {
             }
         }
         find(Env::var_or("FOUNDRY_CONFIG", Config::FILE_NAME).as_ref())
+            .or_else(|| Self::foundry_dir_toml().filter(|p| p.exists()))
     }
 }
 
 impl From<Config> for Figment {
     fn from(c: Config) -> Figment {
         let profile = Config::selected_profile();
-        let figment = Figment::default()
-            .merge(DappHardhatDirProvider(&c.__root.0))
+        let mut figment = Figment::default().merge(DappHardhatDirProvider(&c.__root.0));
+
+        // check global foundry.toml file
+        if let Some(global_toml) = Config::foundry_dir_toml().filter(|p| p.exists()) {
+            figment = figment.merge(ForcedSnakeCaseData(Toml::file(global_toml).nested()))
+        }
+
+        figment = figment
             .merge(ForcedSnakeCaseData(
                 Toml::file(Env::var_or("FOUNDRY_CONFIG", Config::FILE_NAME)).nested(),
             ))
