@@ -1,7 +1,10 @@
 use std::{path::PathBuf, str::FromStr};
 
 use clap::{Parser, Subcommand};
-use ethers::types::{Address, BlockId, BlockNumber, NameOrAddress, H256, U256};
+use ethers::{
+    abi::token::{LenientTokenizer, Tokenizer},
+    types::{Address, BlockId, BlockNumber, NameOrAddress, H256, U256},
+};
 
 use super::{ClapChain, EthereumOpts, Wallet};
 use crate::utils::parse_u256;
@@ -190,7 +193,7 @@ pub enum Subcommands {
         args: Vec<String>,
         #[clap(long, help = "gas quantity for the transaction", parse(try_from_str = parse_u256))]
         gas: Option<U256>,
-        #[clap(long, help = "ether value (in wei) for the transaction", parse(try_from_str = parse_u256))]
+        #[clap(long, help = "ether value (in wei or string with unit type e.g. 1ether, 10gwei, 0.01ether) for the transaction", parse(try_from_str = parse_ether_value))]
         value: Option<U256>,
         #[clap(long, help = "nonce for the transaction", parse(try_from_str = parse_u256))]
         nonce: Option<U256>,
@@ -482,6 +485,14 @@ fn parse_slot(s: &str) -> eyre::Result<H256> {
         H256::from_str(&padded)?
     } else {
         H256::from_low_u64_be(u64::from_str(s)?)
+    })
+}
+
+fn parse_ether_value(value: &str) -> eyre::Result<U256> {
+    Ok(if value.starts_with("0x") {
+        U256::from_str(value)?
+    } else {
+        U256::from(LenientTokenizer::tokenize_uint(value)?)
     })
 }
 
