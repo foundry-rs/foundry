@@ -28,7 +28,7 @@ The following is an example of what such a file might look like:
 src = "src"
 out = "out"
 libs = ["lib"]
-solc-version = "8.0.10"
+solc-version = "0.8.10"
 eth-rpc-url = "https://mainnet.infura.io"
 
 ## set only when the `hardhat` profile is selected
