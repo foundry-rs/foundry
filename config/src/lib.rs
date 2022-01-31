@@ -388,24 +388,16 @@ impl Config {
     }
 
     pub fn output_selection(&self) -> BTreeMap<String, BTreeMap<String, Vec<String>>> {
-        let mut outputs = vec![
-            "abi".to_string(),
-            "evm.bytecode".to_string(),
-            "evm.deployedBytecode".to_string(),
-            "evm.methodIdentifiers".to_string(),
-        ];
+        let mut output_selection = Settings::default_output_selection();
 
         if let Some(extras) = &self.extra_output {
-            outputs.extend_from_slice(extras.as_slice());
+            output_selection.entry("*".to_string()).and_modify(|e1| {
+                e1.entry("*".to_string()).and_modify(|e2| {
+                    e2.extend_from_slice(extras.as_slice());
+                });
+            });
         }
 
-        let mut output_selection = BTreeMap::default();
-        let mut output = BTreeMap::default();
-
-        output.insert("*".to_string(), outputs);
-        output.insert("".to_string(), vec!["ast".to_string()]);
-
-        output_selection.insert("*".to_string(), output);
         output_selection
     }
 
@@ -418,13 +410,13 @@ impl Config {
         let optimizer = self.optimizer();
         let output_selection = self.output_selection();
 
-        Ok(Settings {
+        Ok((Settings {
             optimizer,
             evm_version: Some(self.evm_version),
             libraries,
             output_selection,
             ..Default::default()
-        })
+        }).with_ast())
     }
 
     /// Returns the default figment
