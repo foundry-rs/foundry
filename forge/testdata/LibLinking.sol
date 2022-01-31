@@ -3,7 +3,7 @@ pragma solidity 0.8.11;
 
 // a library that needs to be linked with another library
 library LibTestNested {
-	enum TestEnum2 {
+    enum TestEnum2 {
         A,
         B,
         C
