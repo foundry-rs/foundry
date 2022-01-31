@@ -402,6 +402,11 @@ pub enum Subcommands {
         #[clap(flatten)]
         chain: ClapChain,
     },
+    #[clap(name = "sig", about = "Print a function's 4-byte selector")]
+    Sig {
+        #[clap(help = "The human-readable function signature, e.g. 'transfer(address,uint256)'")]
+        sig: String,
+    },
     #[clap(about = "generate shell completions script")]
     Completions {
         #[clap(arg_enum)]
