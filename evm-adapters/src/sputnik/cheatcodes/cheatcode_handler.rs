@@ -10,7 +10,6 @@ use crate::{
 };
 use std::collections::BTreeMap;
 
-use serde::Deserialize;
 use std::{fs::File, io::Read, path::Path};
 
 use sputnik::{
@@ -28,12 +27,11 @@ use ethers::{
     abi::{RawLog, Token},
     contract::EthLogDecode,
     core::{abi::AbiDecode, k256::ecdsa::SigningKey, utils},
-    prelude::artifacts::deserialize_bytes,
     signers::{LocalWallet, Signer},
-    solc::ProjectPathsConfig,
+    solc::{artifacts::CompactContractBytecode, ProjectPathsConfig},
     types::{Address, H160, H256, U256},
 };
-use ethers_core::types::Bytes;
+
 use std::{convert::Infallible, str::FromStr};
 
 use crate::sputnik::cheatcodes::{
@@ -656,12 +654,6 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
             HEVMCalls::GetCode(inner) => {
                 self.add_debug(CheatOp::GETCODE);
 
-                #[derive(Deserialize)]
-                struct ContractFile {
-                    #[serde(deserialize_with = "deserialize_bytes")]
-                    bin: Bytes,
-                }
-
                 let path = if inner.0.ends_with(".json") {
                     Path::new(&inner.0).to_path_buf()
                 } else {
@@ -686,9 +678,17 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                     Err(e) => return evm_error(&e.to_string()),
                 }
 
-                match serde_json::from_str::<ContractFile>(&data) {
+                match serde_json::from_str::<CompactContractBytecode>(&data) {
                     Ok(contract_file) => {
-                        res = ethers::abi::encode(&[Token::Bytes(contract_file.bin.to_vec())]);
+                        if let Some(bin) =
+                            contract_file.bytecode.and_then(|bcode| bcode.object.into_bytes())
+                        {
+                            res = ethers::abi::encode(&[Token::Bytes(bin.to_vec())]);
+                        } else {
+                            return evm_error(
+                                "No bytecode for contract. is it abstract or unlinked?",
+                            )
+                        }
                     }
                     Err(e) => return evm_error(&e.to_string()),
                 }
