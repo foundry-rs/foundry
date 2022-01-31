@@ -118,6 +118,13 @@ pub struct CompilerArgs {
     #[clap(help = "optimizer parameter runs", long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub optimize_runs: Option<usize>,
+
+    #[clap(
+        help = "extra output types [evm.assembly, ewasm, ir, irOptimized] eg: `--extra-output evm.assembly`",
+        long
+    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extra_output: Option<Vec<String>>,
 }
 
 /// Represents the common dapp argument pattern for `<path>:<contractname>` where `<path>:` is

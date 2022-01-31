@@ -209,6 +209,10 @@ impl Provider for BuildArgs {
             dict.insert("optimizer".to_string(), self.compiler.optimize.into());
         }
 
+        if let Some(extra) = &self.compiler.extra_output {
+            dict.insert("extra_output".to_string(), extra.clone().into());
+        }
+
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }

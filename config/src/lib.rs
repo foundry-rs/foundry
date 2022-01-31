@@ -1,6 +1,7 @@
 //! foundry configuration.
 use std::{
     borrow::Cow,
+    collections::BTreeMap,
     path::{Path, PathBuf},
 };
 
@@ -140,6 +141,8 @@ pub struct Config {
     pub block_difficulty: u64,
     /// the `block.gaslimit` value during EVM execution
     pub block_gas_limit: Option<u64>,
+    /// Pass extra output types
+    pub extra_output: Option<Vec<String>>,
     /// Settings to pass to the `solc` compiler input
     // TODO consider making this more structured https://stackoverflow.com/questions/48998034/does-toml-support-nested-arrays-of-objects-tables
     // TODO this needs to work as extension to the defaults:
@@ -384,6 +387,20 @@ impl Config {
         Optimizer { enabled: Some(self.optimizer), runs: Some(self.optimizer_runs) }
     }
 
+    pub fn output_selection(&self) -> BTreeMap<String, BTreeMap<String, Vec<String>>> {
+        let mut output_selection = Settings::default_output_selection();
+
+        if let Some(extras) = &self.extra_output {
+            output_selection.entry("*".to_string()).and_modify(|e1| {
+                e1.entry("*".to_string()).and_modify(|e2| {
+                    e2.extend_from_slice(extras.as_slice());
+                });
+            });
+        }
+
+        output_selection
+    }
+
     /// Returns the configured `solc` `Settings` that includes:
     ///   - all libraries
     ///   - the optimizer
@@ -391,12 +408,16 @@ impl Config {
     pub fn solc_settings(&self) -> Result<Settings, SolcError> {
         let libraries = parse_libraries(&self.libraries)?;
         let optimizer = self.optimizer();
-        Ok(Settings {
+        let output_selection = self.output_selection();
+
+        Ok((Settings {
             optimizer,
             evm_version: Some(self.evm_version),
             libraries,
+            output_selection,
             ..Default::default()
         })
+        .with_ast())
     }
 
     /// Returns the default figment
@@ -645,6 +666,7 @@ impl Default for Config {
             auto_detect_solc: true,
             optimizer: true,
             optimizer_runs: 200,
+            extra_output: None,
             solc_settings: None,
             fuzz_runs: 256,
             ffi: false,
