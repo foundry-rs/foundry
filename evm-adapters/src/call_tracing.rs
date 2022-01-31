@@ -546,9 +546,11 @@ impl CallTrace {
                 ));
 
                 if !self.output.is_empty() && self.success {
-                    return Output::Token(
-                        func.decode_output(&self.output[..]).expect("Bad func output decode"),
-                    )
+                    if let Ok(tokens) = func.decode_output(&self.output[..]) {
+                        return Output::Token(tokens)
+                    } else {
+                        return Output::Raw(self.output[..].to_vec())
+                    }
                 } else if !self.output.is_empty() && !self.success {
                     if let Ok(decoded_error) =
                         foundry_utils::decode_revert(&self.output[..], Some(exec_info.errors))

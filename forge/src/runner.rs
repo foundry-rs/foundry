@@ -167,9 +167,12 @@ pub struct ContractRunner<'a, B> {
 
     /// Contract execution info, (functions, events, errors)
     pub execution_info: MaybeExecutionInfo<'a>,
+    /// library contracts to be deployed before this contract
+    pub predeploy_libs: &'a [ethers::prelude::Bytes],
 }
 
 impl<'a, B: Backend> ContractRunner<'a, B> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         evm_opts: &'a EvmOpts,
         evm_cfg: &'a Config,
@@ -178,6 +181,7 @@ impl<'a, B: Backend> ContractRunner<'a, B> {
         code: ethers::prelude::Bytes,
         sender: Option<Address>,
         execution_info: MaybeExecutionInfo<'a>,
+        predeploy_libs: &'a [ethers::prelude::Bytes],
     ) -> Self {
         Self {
             evm_opts,
@@ -187,6 +191,7 @@ impl<'a, B: Backend> ContractRunner<'a, B> {
             code,
             sender: sender.unwrap_or_default(),
             execution_info,
+            predeploy_libs,
         }
     }
 }
@@ -207,6 +212,12 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
             self.evm_opts.verbosity > 2,
             self.evm_opts.debug,
         );
+
+        self.predeploy_libs.iter().for_each(|code| {
+            executor
+                .deploy(self.sender, code.clone(), 0u32.into())
+                .expect("couldn't deploy library");
+        });
 
         // deploy an instance of the contract inside the runner in the EVM
         let (addr, _, _, logs) =
@@ -592,8 +603,9 @@ mod tests {
         pub fn runner<'a>(
             abi: &'a Abi,
             code: ethers::prelude::Bytes,
+            libs: &'a mut Vec<ethers::prelude::Bytes>,
         ) -> ContractRunner<'a, MemoryBackend<'a>> {
-            ContractRunner::new(&*EVM_OPTS, &*CFG_NO_LMT, &*BACKEND, abi, code, None, None)
+            ContractRunner::new(&*EVM_OPTS, &*CFG_NO_LMT, &*BACKEND, abi, code, None, None, libs)
         }
 
         #[test]
@@ -607,7 +619,8 @@ mod tests {
             let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
 
             let (_, code, _) = compiled.into_parts_or_default();
-            let runner = runner(compiled.abi.as_ref().unwrap(), code);
+            let mut libs = vec![];
+            let runner = runner(compiled.abi.as_ref().unwrap(), code, &mut libs);
 
             let mut cfg = FuzzConfig::default();
             cfg.failure_persistence = None;
@@ -623,7 +636,8 @@ mod tests {
         fn test_fuzzing_counterexamples() {
             let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
             let (_, code, _) = compiled.into_parts_or_default();
-            let runner = runner(compiled.abi.as_ref().unwrap(), code);
+            let mut libs = vec![];
+            let runner = runner(compiled.abi.as_ref().unwrap(), code, &mut libs);
 
             let mut cfg = FuzzConfig::default();
             cfg.failure_persistence = None;
@@ -640,7 +654,8 @@ mod tests {
         fn test_fuzzing_ok() {
             let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
             let (_, code, _) = compiled.into_parts_or_default();
-            let runner = runner(compiled.abi.as_ref().unwrap(), code);
+            let mut libs = vec![];
+            let runner = runner(compiled.abi.as_ref().unwrap(), code, &mut libs);
 
             let mut cfg = FuzzConfig::default();
             cfg.failure_persistence = None;
@@ -655,7 +670,8 @@ mod tests {
         fn test_fuzz_shrinking() {
             let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
             let (_, code, _) = compiled.into_parts_or_default();
-            let runner = runner(compiled.abi.as_ref().unwrap(), code);
+            let mut libs = vec![];
+            let runner = runner(compiled.abi.as_ref().unwrap(), code, &mut libs);
 
             let mut cfg = FuzzConfig::default();
             cfg.failure_persistence = None;
@@ -691,7 +707,8 @@ mod tests {
 
     pub fn test_runner(compiled: CompactContractRef) {
         let (_, code, _) = compiled.into_parts_or_default();
-        let runner = sputnik::runner(compiled.abi.as_ref().unwrap(), code);
+        let mut libs = vec![];
+        let runner = sputnik::runner(compiled.abi.as_ref().unwrap(), code, &mut libs);
 
         let res = runner.run_tests(&Filter::new(".*", ".*"), None, None).unwrap();
         assert!(!res.is_empty());

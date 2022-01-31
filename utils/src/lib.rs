@@ -9,12 +9,107 @@ use ethers_core::{
     types::*,
 };
 use ethers_etherscan::Client;
+use ethers_solc::artifacts::{BytecodeObject, CompactBytecode, CompactContractBytecode};
 use eyre::{Result, WrapErr};
 use serde::Deserialize;
 use std::{
     collections::{BTreeMap, HashSet},
     env::VarError,
 };
+
+use tokio::runtime::{Handle, Runtime};
+
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug)]
+pub enum RuntimeOrHandle {
+    Runtime(Runtime),
+    Handle(Handle),
+}
+
+impl Default for RuntimeOrHandle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl RuntimeOrHandle {
+    pub fn new() -> RuntimeOrHandle {
+        match Handle::try_current() {
+            Ok(handle) => RuntimeOrHandle::Handle(handle),
+            Err(_) => RuntimeOrHandle::Runtime(Runtime::new().expect("Failed to start runtime")),
+        }
+    }
+
+    pub fn block_on<F: std::future::Future>(&self, f: F) -> F::Output {
+        match &self {
+            RuntimeOrHandle::Runtime(runtime) => runtime.block_on(f),
+            RuntimeOrHandle::Handle(handle) => tokio::task::block_in_place(|| handle.block_on(f)),
+        }
+    }
+}
+
+/// Recursively links bytecode given a target contract artifact name, the bytecode(s) to be linked,
+/// a mapping of contract artifact name to bytecode, a dependency mapping, a mutable list that
+/// will be filled with the predeploy libraries, initial nonce, and the sender.
+pub fn recurse_link<'a>(
+    // target name
+    target: String,
+    // to-be-modified/linked bytecode
+    target_bytecode: (&'a mut CompactBytecode, &'a mut CompactBytecode),
+    // Contracts
+    contracts: &'a BTreeMap<String, CompactContractBytecode>,
+    // fname => Vec<(fname, file, key)>
+    dependency_tree: &'a BTreeMap<String, Vec<(String, String, String)>>,
+    // library deployment vector
+    deployment: &'a mut Vec<ethers_core::types::Bytes>,
+    // nonce to start at
+    init_nonce: U256,
+    // sender
+    sender: Address,
+) {
+    // check if we have dependencies
+    if let Some(dependencies) = dependency_tree.get(&target) {
+        // for each dependency, try to link
+        dependencies.iter().for_each(|(next_target, file, key)| {
+            // get the dependency
+            let contract = contracts.get(next_target).expect("No target contract").clone();
+            let mut next_target_bytecode = contract.bytecode.expect("No target bytecode");
+            let mut next_target_runtime_bytecode = contract
+                .deployed_bytecode
+                .expect("No target runtime bytecode")
+                .bytecode
+                .expect("No target runtime");
+
+            // make sure dependency is fully linked
+            if let Some(deps) = dependency_tree.get(&target) {
+                if !deps.is_empty() {
+                    // actually link the nested dependencies to this dependency
+                    recurse_link(
+                        next_target.to_string(),
+                        (&mut next_target_bytecode, &mut next_target_runtime_bytecode),
+                        contracts,
+                        dependency_tree,
+                        deployment,
+                        init_nonce,
+                        sender,
+                    );
+                }
+            }
+
+            // calculate the address for linking this dependency
+            let addr =
+                ethers_core::utils::get_contract_address(sender, init_nonce + deployment.len());
+
+            // link the dependency to the target
+            target_bytecode.0.link(file.clone(), key.clone(), addr);
+            target_bytecode.1.link(file, key, addr);
+
+            // push the dependency into the library deployment vector
+            deployment
+                .push(next_target_bytecode.object.into_bytes().expect("Bytecode should be linked"));
+        });
+    }
+}
 
 const BASE_TX_COST: u64 = 21000;
 
@@ -615,6 +710,105 @@ pub fn abi_to_solidity(contract_abi: &Abi, mut contract_name: &str) -> Result<St
             contract_name, structs, functions
         )
     })
+}
+
+pub struct PostLinkInput<'a, T, U> {
+    pub contract: CompactContractBytecode,
+    pub known_contracts: &'a mut BTreeMap<String, T>,
+    pub fname: String,
+    pub extra: &'a mut U,
+    pub dependencies: Vec<ethers_core::types::Bytes>,
+}
+
+pub fn link<T, U>(
+    contracts: &BTreeMap<String, CompactContractBytecode>,
+    known_contracts: &mut BTreeMap<String, T>,
+    sender: Address,
+    extra: &mut U,
+    link_key_construction: impl Fn(String, String) -> (String, String, String),
+    post_link: impl Fn(PostLinkInput<T, U>) -> eyre::Result<()>,
+) -> eyre::Result<()> {
+    // we dont use mainnet state for evm_opts.sender so this will always be 1
+    // I am leaving this here so that in the future if this needs to change,
+    // its easy to find.
+    let nonce = U256::one();
+
+    // create a mapping of fname => Vec<(fname, file, key)>,
+    let link_tree: BTreeMap<String, Vec<(String, String, String)>> = contracts
+        .iter()
+        .map(|(fname, contract)| {
+            (
+                fname.to_string(),
+                contract
+                    .all_link_references()
+                    .iter()
+                    .flat_map(|(file, link)| {
+                        link.keys()
+                            .map(|key| link_key_construction(file.to_string(), key.to_string()))
+                    })
+                    .collect::<Vec<(String, String, String)>>(),
+            )
+        })
+        .collect();
+
+    for fname in contracts.keys() {
+        let (abi, maybe_deployment_bytes, maybe_runtime) = if let Some(c) = contracts.get(fname) {
+            (c.abi.as_ref(), c.bytecode.as_ref(), c.deployed_bytecode.as_ref())
+        } else {
+            (None, None, None)
+        };
+        if let (Some(abi), Some(bytecode), Some(runtime)) =
+            (abi, maybe_deployment_bytes, maybe_runtime)
+        {
+            // we are going to mutate, but library contract addresses may change based on
+            // the test so we clone
+            let mut target_bytecode = bytecode.clone();
+            let mut rt = runtime.clone();
+            let mut target_bytecode_runtime = rt.bytecode.expect("No target runtime").clone();
+
+            // instantiate a vector that gets filled with library deployment bytecode
+            let mut dependencies = vec![];
+
+            match bytecode.object {
+                BytecodeObject::Unlinked(_) => {
+                    // link needed
+                    recurse_link(
+                        fname.to_string(),
+                        (&mut target_bytecode, &mut target_bytecode_runtime),
+                        contracts,
+                        &link_tree,
+                        &mut dependencies,
+                        nonce,
+                        sender,
+                    );
+                }
+                BytecodeObject::Bytecode(ref bytes) => {
+                    if bytes.as_ref().is_empty() {
+                        // abstract, skip
+                        continue
+                    }
+                }
+            }
+
+            rt.bytecode = Some(target_bytecode_runtime);
+            let tc = CompactContractBytecode {
+                abi: Some(abi.clone()),
+                bytecode: Some(target_bytecode),
+                deployed_bytecode: Some(rt),
+            };
+
+            let post_link_input = PostLinkInput {
+                contract: tc,
+                known_contracts,
+                fname: fname.to_string(),
+                extra,
+                dependencies,
+            };
+
+            post_link(post_link_input)?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
