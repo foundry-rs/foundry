@@ -161,16 +161,6 @@ pub fn remove_extra_costs(gas: U256, calldata: &[u8]) -> U256 {
     gas.saturating_sub(calldata_cost.into()).saturating_sub(BASE_TX_COST.into())
 }
 
-pub fn next_nonce(
-    caller: Address,
-    provider_url: &str,
-    block: Option<BlockId>,
-) -> Result<U256, ProviderError> {
-    let provider = Provider::try_from(provider_url).expect("Bad fork_url provider");
-    let rt = RuntimeOrHandle::new();
-    rt.block_on(provider.get_transaction_count(caller, block))
-}
-
 /// Flattens a group of contracts into maps of all events and functions
 pub fn flatten_known_contracts(
     contracts: &BTreeMap<String, (Abi, Vec<u8>)>,
