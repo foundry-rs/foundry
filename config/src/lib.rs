@@ -416,7 +416,8 @@ impl Config {
             libraries,
             output_selection,
             ..Default::default()
-        }).with_ast())
+        })
+        .with_ast())
     }
 
     /// Returns the default figment
