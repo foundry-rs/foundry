@@ -47,7 +47,7 @@ pub enum Subcommands {
     )]
     Install(InstallArgs),
 
-    #[clap(alias = "r", about = "removes one or more dependencies from git submodules")]
+    #[clap(alias = "rm", about = "removes one or more dependencies from git submodules")]
     Remove {
         #[clap(help = "the submodule name of the library you want to remove")]
         dependencies: Vec<Dependency>,
