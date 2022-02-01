@@ -271,7 +271,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_doc_comments(&mut self, doc_comments: &mut Vec<DocComment>) -> VResult {
+    fn visit_doc_comments(&mut self, doc_comments: &mut [DocComment]) -> VResult {
         for (i, doc_comment) in doc_comments.iter_mut().enumerate() {
             if i > 0 {
                 writeln!(self)?;
@@ -383,7 +383,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
     fn visit_import_renames(
         &mut self,
-        imports: &mut Vec<(Identifier, Option<Identifier>)>,
+        imports: &mut [(Identifier, Option<Identifier>)],
         from: &mut StringLiteral,
     ) -> VResult {
         write!(self, "import ")?;

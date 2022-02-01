@@ -21,7 +21,7 @@ pub trait Visitor {
         Ok(())
     }
 
-    fn visit_doc_comments(&mut self, _doc_comments: &mut Vec<DocComment>) -> VResult {
+    fn visit_doc_comments(&mut self, _doc_comments: &mut [DocComment]) -> VResult {
         Ok(())
     }
 
@@ -47,7 +47,7 @@ pub trait Visitor {
 
     fn visit_import_renames(
         &mut self,
-        _imports: &mut Vec<(Identifier, Option<Identifier>)>,
+        _imports: &mut [(Identifier, Option<Identifier>)],
         _from: &mut StringLiteral,
     ) -> VResult {
         Ok(())
