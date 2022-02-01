@@ -43,16 +43,20 @@ pub mod create;
 pub mod flatten;
 pub mod fmt;
 pub mod init;
+pub mod install;
 pub mod remappings;
 pub mod run;
 pub mod snapshot;
 pub mod test;
 pub mod verify;
 
-use crate::opts::forge::{ContractInfo, Dependency};
+use crate::opts::forge::ContractInfo;
 use ethers::{
     abi::Abi,
-    prelude::Graph,
+    prelude::{
+        artifacts::{CompactBytecode, CompactDeployedBytecode},
+        Graph,
+    },
     solc::{
         artifacts::{Source, Sources},
         cache::SolFilesCache,
@@ -66,11 +70,7 @@ pub trait Cmd: clap::Parser + Sized {
     fn run(self) -> eyre::Result<Self::Output>;
 }
 
-use ethers::solc::{
-    artifacts::BytecodeObject, MinimalCombinedArtifacts, Project, ProjectCompileOutput,
-};
-
-use std::process::Command;
+use ethers::solc::{MinimalCombinedArtifacts, Project, ProjectCompileOutput};
 
 /// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
 /// compilation was successful or if there was a cache hit.
@@ -137,7 +137,7 @@ pub fn read_artifact(
     project: &Project,
     compiled: ProjectCompileOutput<MinimalCombinedArtifacts>,
     contract: ContractInfo,
-) -> eyre::Result<(Abi, BytecodeObject, BytecodeObject)> {
+) -> eyre::Result<(Abi, CompactBytecode, CompactDeployedBytecode)> {
     Ok(match contract.path {
         Some(path) => get_artifact_from_path(project, path, contract.name)?,
         None => get_artifact_from_name(contract, compiled)?,
@@ -150,7 +150,7 @@ pub fn read_artifact(
 fn get_artifact_from_name(
     contract: ContractInfo,
     compiled: ProjectCompileOutput<MinimalCombinedArtifacts>,
-) -> eyre::Result<(Abi, BytecodeObject, BytecodeObject)> {
+) -> eyre::Result<(Abi, CompactBytecode, CompactDeployedBytecode)> {
     let mut has_found_contract = false;
     let mut contract_artifact = None;
 
@@ -177,10 +177,10 @@ fn get_artifact_from_name(
             artifact
                 .abi
                 .ok_or_else(|| eyre::Error::msg(format!("abi not found for {}", contract.name)))?,
-            artifact.bin.ok_or_else(|| {
+            artifact.bytecode.ok_or_else(|| {
                 eyre::Error::msg(format!("bytecode not found for {}", contract.name))
             })?,
-            artifact.bin_runtime.ok_or_else(|| {
+            artifact.deployed_bytecode.ok_or_else(|| {
                 eyre::Error::msg(format!("bytecode not found for {}", contract.name))
             })?,
         ),
@@ -197,7 +197,7 @@ fn get_artifact_from_path(
     project: &Project,
     path: String,
     name: String,
-) -> eyre::Result<(Abi, BytecodeObject, BytecodeObject)> {
+) -> eyre::Result<(Abi, CompactBytecode, CompactDeployedBytecode)> {
     // Get sources from the requested location
     let abs_path = dunce::canonicalize(PathBuf::from(path))?;
     let mut sources = Sources::new();
@@ -221,54 +221,11 @@ fn get_artifact_from_path(
 
     Ok((
         artifact.abi.ok_or_else(|| eyre::Error::msg(format!("abi not found for {}", name)))?,
-        artifact.bin.ok_or_else(|| eyre::Error::msg(format!("bytecode not found for {}", name)))?,
         artifact
-            .bin_runtime
+            .bytecode
+            .ok_or_else(|| eyre::Error::msg(format!("bytecode not found for {}", name)))?,
+        artifact
+            .deployed_bytecode
             .ok_or_else(|| eyre::Error::msg(format!("bytecode not found for {}", name)))?,
     ))
-}
-
-pub(crate) fn install(
-    root: impl AsRef<std::path::Path>,
-    dependencies: Vec<Dependency>,
-) -> eyre::Result<()> {
-    let libs = std::path::Path::new("lib");
-
-    dependencies.iter().try_for_each(|dep| -> eyre::Result<_> {
-        let path = libs.join(&dep.name);
-        println!("Installing {} in {:?}, (url: {}, tag: {:?})", dep.name, path, dep.url, dep.tag);
-
-        // install the dep
-        Command::new("git")
-            .args(&["submodule", "add", &dep.url, &path.display().to_string()])
-            .current_dir(&root)
-            .spawn()?
-            .wait()?;
-
-        // call update on it
-        Command::new("git")
-            .args(&["submodule", "update", "--init", "--recursive", &path.display().to_string()])
-            .current_dir(&root)
-            .spawn()?
-            .wait()?;
-
-        // checkout the tag if necessary
-        let message = if let Some(ref tag) = dep.tag {
-            Command::new("git")
-                .args(&["checkout", "--recurse-submodules", tag])
-                .current_dir(&path)
-                .spawn()?
-                .wait()?;
-
-            Command::new("git").args(&["add", &path.display().to_string()]).spawn()?.wait()?;
-
-            format!("forge install: {}\n\n{}", dep.name, tag)
-        } else {
-            format!("forge install: {}", dep.name)
-        };
-
-        Command::new("git").args(&["commit", "-m", &message]).current_dir(&root).spawn()?.wait()?;
-
-        Ok(())
-    })
 }

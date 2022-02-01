@@ -14,7 +14,7 @@ use std::{
     fs::File,
     io::{BufWriter, Write},
     path::{Path, PathBuf},
-    process::{self, Command},
+    process::{self, Command, Stdio},
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc, Mutex,
@@ -26,7 +26,7 @@ static CURRENT_DIR_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 /// Contains a `forge init` initialized project
 pub static FORGE_INITIALIZED: Lazy<TestProject> = Lazy::new(|| {
     let (prj, mut cmd) = setup("init-template", PathStyle::Dapptools);
-    cmd.arg("init");
+    cmd.args(["init", "--force"]);
     cmd.assert_non_empty_stdout();
     prj
 });
@@ -37,6 +37,24 @@ static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 /// Copies an initialized project to the given path
 pub fn initialize(target: impl AsRef<Path>) {
     FORGE_INITIALIZED.copy_to(target)
+}
+
+/// Clones a remote repository into the specified directory.
+pub fn clone_remote(repo_url: &str, target_dir: impl AsRef<Path>) -> bool {
+    Command::new("git")
+        .args([
+            "clone",
+            "--depth",
+            "1",
+            "--recursive",
+            repo_url,
+            target_dir.as_ref().to_str().expect("Target path for git clone does not exist"),
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("Could not clone repository. Is git installed?")
+        .success()
 }
 
 /// Setup an empty test project and return a command pointing to the forge
@@ -58,7 +76,6 @@ pub fn setup_project(test: TestProject) -> (TestProject, TestCommand) {
 /// Test projects are created from a global atomic counter to avoid duplicates.
 #[derive(Clone, Debug)]
 pub struct TestProject<T: ArtifactOutput = MinimalCombinedArtifacts> {
-    saved_cwd: PathBuf,
     /// The directory in which this test executable is running.
     root: PathBuf,
     /// The project in which the test should run.
@@ -78,7 +95,7 @@ impl TestProject {
     pub fn with_project(project: TempProject) -> Self {
         let root =
             env::current_exe().unwrap().parent().expect("executable's directory").to_path_buf();
-        Self { root, inner: Arc::new(project), saved_cwd: pretty_err(".", std::env::current_dir()) }
+        Self { root, inner: Arc::new(project) }
     }
 
     /// Returns the root path of the project's workspace.
@@ -92,6 +109,11 @@ impl TestProject {
 
     pub fn paths(&self) -> &ProjectPathsConfig {
         self.inner().paths()
+    }
+
+    /// Asserts that the `<root>/foundry.toml` file exits
+    pub fn assert_config_exists(&self) {
+        assert!(self.root().join(Config::FILE_NAME).exists());
     }
 
     /// Creates all project dirs and ensure they were created
@@ -155,6 +177,7 @@ impl TestProject {
             cmd,
             saved_env_vars: HashMap::new(),
             current_dir_lock: None,
+            saved_cwd: pretty_err(".", std::env::current_dir()),
         }
     }
 
@@ -177,6 +200,12 @@ impl TestProject {
         let config: Config = serde_json::from_str(c.as_ref()).unwrap();
         config.sanitized()
     }
+
+    /// Removes all files and dirs inside the project's root dir
+    pub fn wipe(&self) {
+        pretty_err(self.root(), fs::remove_dir_all(self.root()));
+        pretty_err(self.root(), fs::create_dir_all(self.root()));
+    }
 }
 
 impl Drop for TestCommand {
@@ -187,11 +216,8 @@ impl Drop for TestCommand {
                 None => std::env::remove_var(key),
             }
         }
-    }
-}
-
-impl<T: ArtifactOutput> Drop for TestProject<T> {
-    fn drop(&mut self) {
+        drop(self.current_dir_lock.take());
+        let _lock = CURRENT_DIR_LOCK.lock().unwrap();
         let _ = std::env::set_current_dir(&self.saved_cwd);
     }
 }
@@ -220,6 +246,7 @@ pub fn read_string(path: impl AsRef<Path>) -> String {
 /// A simple wrapper around a process::Command with some conveniences.
 #[derive(Debug)]
 pub struct TestCommand {
+    saved_cwd: PathBuf,
     /// The project used to launch this command.
     project: TestProject,
     /// The actual command we use to control the process.
@@ -364,7 +391,7 @@ impl TestCommand {
         if !o.status.success() || o.stdout.is_empty() {
             panic!(
                 "\n\n===== {:?} =====\n\
-                 command succeeded but expected failure!\
+                 command failed but expected success!\
                  \n\ncwd: {}\
                  \n\nstatus: {}\
                  \n\nstdout: {}\n\nstderr: {}\

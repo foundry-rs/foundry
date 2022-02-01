@@ -48,8 +48,8 @@ fn main() -> eyre::Result<()> {
             cmd.spawn()?.wait()?;
         }
         // TODO: Make it work with updates?
-        Subcommands::Install { dependencies } => {
-            cmd::install(std::env::current_dir()?, dependencies)?;
+        Subcommands::Install(cmd) => {
+            cmd.run()?;
         }
         Subcommands::Remove { dependencies } => {
             remove(std::env::current_dir()?, dependencies)?;

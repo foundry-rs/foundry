@@ -18,6 +18,8 @@ pub mod fuzz;
 
 pub mod call_tracing;
 
+pub mod gas_report;
+
 /// Helpers for easily constructing EVM objects.
 pub mod evm_opts;
 

@@ -5,7 +5,7 @@ use std::{path::PathBuf, str::FromStr};
 
 use crate::cmd::{
     build::BuildArgs, config, create::CreateArgs, flatten, fmt::FmtArgs, init::InitArgs,
-    remappings::RemappingArgs, run::RunArgs, snapshot, test,
+    install::InstallArgs, remappings::RemappingArgs, run::RunArgs, snapshot, test,
 };
 use serde::Serialize;
 
@@ -41,11 +41,11 @@ pub enum Subcommands {
         lib: Option<PathBuf>,
     },
 
-    #[clap(alias = "i", about = "installs one or more dependencies as git submodules")]
-    Install {
-        #[clap(help = "the submodule name of the library you want to install")]
-        dependencies: Vec<Dependency>,
-    },
+    #[clap(
+        alias = "i",
+        about = "installs one or more dependencies as git submodules (will install existing dependencies if no arguments are provided"
+    )]
+    Install(InstallArgs),
 
     #[clap(alias = "r", about = "removes one or more dependencies from git submodules")]
     Remove {
@@ -71,7 +71,7 @@ pub enum Subcommands {
     #[clap(alias = "c", about = "deploy a compiled contract")]
     Create(CreateArgs),
 
-    #[clap(alias = "i", about = "initializes a new forge sample repository")]
+    #[clap(alias = "i", about = "initializes a new forge sample project")]
     Init(InitArgs),
 
     #[clap(about = "generate shell completions script")]
@@ -121,6 +121,13 @@ pub struct CompilerArgs {
     #[clap(help = "optimizer parameter runs", long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub optimize_runs: Option<usize>,
+
+    #[clap(
+        help = "extra output types [evm.assembly, ewasm, ir, irOptimized] eg: `--extra-output evm.assembly`",
+        long
+    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extra_output: Option<Vec<String>>,
 }
 
 /// Represents the common dapp argument pattern for `<path>:<contractname>` where `<path>:` is

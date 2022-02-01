@@ -7,7 +7,9 @@ use cast::{Cast, SimpleCast};
 mod opts;
 use cast::InterfacePath;
 use ethers::{
+    contract::BaseContract,
     core::{
+        abi::parse_abi,
         rand::thread_rng,
         types::{BlockId, BlockNumber::Latest},
     },
@@ -139,7 +141,7 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).block_number().await?);
         }
-        Subcommands::Call { eth, address, sig, args } => {
+        Subcommands::Call { eth, address, sig, args, block } => {
             let provider = Provider::try_from(eth.rpc_url()?)?;
             println!(
                 "{}",
@@ -149,7 +151,8 @@ async fn main() -> eyre::Result<()> {
                         address,
                         (&sig, args),
                         eth.chain,
-                        eth.etherscan_api_key
+                        eth.etherscan_api_key,
+                        block
                     )
                     .await?
             );
@@ -165,6 +168,10 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).chain_id().await?);
         }
+        Subcommands::Client { rpc_url } => {
+            let provider = Provider::try_from(rpc_url)?;
+            println!("{}", provider.client_version().await?);
+        }
         Subcommands::Code { block, who, rpc_url } => {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).code(who, block).await?);
@@ -176,7 +183,7 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(&provider).transaction(hash, field, to_json).await?)
         }
-        Subcommands::SendTx { eth, to, sig, cast_async, args } => {
+        Subcommands::SendTx { eth, to, sig, cast_async, args, gas, value, nonce, legacy } => {
             let provider = Provider::try_from(eth.rpc_url()?)?;
             let chain_id = Cast::new(&provider).chain_id().await?;
 
@@ -188,9 +195,13 @@ async fn main() -> eyre::Result<()> {
                             signer.address(),
                             to,
                             (sig, args),
+                            gas,
+                            value,
+                            nonce,
                             eth.chain,
                             eth.etherscan_api_key,
                             cast_async,
+                            legacy,
                         )
                         .await?;
                     }
@@ -200,9 +211,13 @@ async fn main() -> eyre::Result<()> {
                             signer.address(),
                             to,
                             (sig, args),
+                            gas,
+                            value,
+                            nonce,
                             eth.chain,
                             eth.etherscan_api_key,
                             cast_async,
+                            legacy,
                         )
                         .await?;
                     }
@@ -212,9 +227,13 @@ async fn main() -> eyre::Result<()> {
                             signer.address(),
                             to,
                             (sig, args),
+                            gas,
+                            value,
+                            nonce,
                             eth.chain,
                             eth.etherscan_api_key,
                             cast_async,
+                            legacy,
                         )
                         .await?;
                     }
@@ -226,9 +245,13 @@ async fn main() -> eyre::Result<()> {
                     from,
                     to,
                     (sig, args),
+                    gas,
+                    value,
+                    nonce,
                     eth.chain,
                     eth.etherscan_api_key,
                     cast_async,
+                    legacy,
                 )
                 .await?;
             }
@@ -247,12 +270,19 @@ async fn main() -> eyre::Result<()> {
                 println!("Receipt: {:?}", receipt);
             }
         }
-        Subcommands::Estimate { eth, to, sig, args } => {
+        Subcommands::Estimate { eth, to, sig, args, value } => {
             let provider = Provider::try_from(eth.rpc_url()?)?;
             let cast = Cast::new(&provider);
             let from = eth.sender().await;
             let gas = cast
-                .estimate(from, to, Some((sig.as_str(), args)), eth.chain, eth.etherscan_api_key)
+                .estimate(
+                    from,
+                    to,
+                    Some((sig.as_str(), args)),
+                    value,
+                    eth.chain,
+                    eth.etherscan_api_key,
+                )
                 .await?;
             println!("{}", gas);
         }
@@ -399,6 +429,15 @@ async fn main() -> eyre::Result<()> {
             let value = provider.get_storage_at(address, slot, block).await?;
             println!("{:?}", value);
         }
+        Subcommands::Receipt { hash, field, to_json, rpc_url, cast_async, confirmations } => {
+            let provider = Provider::try_from(rpc_url)?;
+            println!(
+                "{}",
+                Cast::new(provider)
+                    .receipt(hash, field, confirmations, cast_async, to_json)
+                    .await?
+            );
+        }
         Subcommands::Nonce { block, who, rpc_url } => {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).nonce(who, block).await?);
@@ -408,6 +447,11 @@ async fn main() -> eyre::Result<()> {
                 "{}",
                 SimpleCast::etherscan_source(chain.inner, address, etherscan_api_key).await?
             );
+        }
+        Subcommands::Sig { sig } => {
+            let contract = BaseContract::from(parse_abi(&[&sig]).unwrap());
+            let selector = contract.abi().functions().last().unwrap().short_signature();
+            println!("0x{}", hex::encode(selector));
         }
         Subcommands::Wallet { command } => match command {
             WalletSubcommands::New { path, password, unsafe_password } => {
@@ -559,14 +603,19 @@ where
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn cast_send<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
     provider: M,
     from: F,
     to: T,
     args: (String, Vec<String>),
+    gas: Option<U256>,
+    value: Option<U256>,
+    nonce: Option<U256>,
     chain: Chain,
     etherscan_api_key: Option<String>,
     cast_async: bool,
+    legacy: bool,
 ) -> eyre::Result<()>
 where
     M::Error: 'static,
@@ -576,7 +625,8 @@ where
     let sig = args.0;
     let params = args.1;
     let params = if !sig.is_empty() { Some((&sig[..], params)) } else { None };
-    let pending_tx = cast.send(from, to, params, chain, etherscan_api_key).await?;
+    let pending_tx =
+        cast.send(from, to, params, gas, value, nonce, chain, etherscan_api_key, legacy).await?;
     let tx_hash = *pending_tx;
 
     if cast_async {

@@ -7,7 +7,9 @@ use crate::{
 use ansi_term::Colour;
 use clap::{AppSettings, Parser};
 use ethers::solc::{ArtifactOutput, Project};
-use evm_adapters::{call_tracing::ExecutionInfo, evm_opts::EvmOpts, sputnik::helpers::vm};
+use evm_adapters::{
+    call_tracing::ExecutionInfo, evm_opts::EvmOpts, gas_report::GasReport, sputnik::helpers::vm,
+};
 use forge::{MultiContractRunnerBuilder, TestFilter};
 use foundry_config::{figment::Figment, Config};
 use std::collections::BTreeMap;
@@ -23,6 +25,7 @@ pub struct Filter {
 
     #[clap(
         long = "match-test",
+        alias = "mt",
         help = "only run test methods matching regex",
         conflicts_with = "pattern"
     )]
@@ -30,6 +33,7 @@ pub struct Filter {
 
     #[clap(
         long = "no-match-test",
+        alias = "nmt",
         help = "only run test methods not matching regex",
         conflicts_with = "pattern"
     )]
@@ -37,6 +41,7 @@ pub struct Filter {
 
     #[clap(
         long = "match-contract",
+        alias = "mc",
         help = "only run test methods in contracts matching regex",
         conflicts_with = "pattern"
     )]
@@ -44,6 +49,7 @@ pub struct Filter {
 
     #[clap(
         long = "no-match-contract",
+        alias = "nmc",
         help = "only run test methods in contracts not matching regex",
         conflicts_with = "pattern"
     )]
@@ -88,6 +94,9 @@ pub struct TestArgs {
     #[clap(help = "print the test results in json format", long, short)]
     json: bool,
 
+    #[clap(help = "print a gas report", long = "gas-report")]
+    gas_report: bool,
+
     #[clap(flatten)]
     evm_opts: EvmArgs,
 
@@ -118,7 +127,11 @@ impl Cmd for TestArgs {
 
         // Setup the fuzzer
         // TODO: Add CLI Options to modify the persistence
-        let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
+        let cfg = proptest::test_runner::Config {
+            failure_persistence: None,
+            cases: config.fuzz_runs,
+            ..Default::default()
+        };
         let fuzzer = proptest::test_runner::TestRunner::new(cfg);
 
         // Set up the project
@@ -134,14 +147,25 @@ impl Cmd for TestArgs {
             .evm_cfg(evm_cfg)
             .sender(evm_opts.sender);
 
-        test(builder, project, evm_opts, filter, json, allow_failure)
+        test(
+            builder,
+            project,
+            evm_opts,
+            filter,
+            json,
+            allow_failure,
+            (self.gas_report, config.gas_reports),
+        )
     }
 }
 
 /// The result of a single test
 #[derive(Debug, Clone)]
 pub struct Test {
-    /// The signature of the test
+    /// The identifier of the artifact/contract in the form of `<artifact file name>:<contract
+    /// name>`
+    pub artifact_id: String,
+    /// The signature of the solidity test
     pub signature: String,
     /// Result of the executed solidity test
     pub result: forge::TestResult,
@@ -184,11 +208,12 @@ impl TestOutcome {
         self.results.values().flat_map(|tests| tests.iter())
     }
 
+    /// Returns an iterator over all `Test`
     pub fn into_tests(self) -> impl Iterator<Item = Test> {
         self.results
-            .into_values()
-            .flat_map(|tests| tests.into_iter())
-            .map(|(name, result)| Test { signature: name, result })
+            .into_iter()
+            .flat_map(|(file, tests)| tests.into_iter().map(move |t| (file.clone(), t)))
+            .map(|(artifact_id, (signature, result))| Test { artifact_id, signature, result })
     }
 
     /// Checks if there are any failures and failures are disallowed
@@ -243,15 +268,25 @@ fn short_test_result(name: &str, result: &forge::TestResult) {
 fn test<A: ArtifactOutput + 'static>(
     builder: MultiContractRunnerBuilder,
     project: Project<A>,
-    evm_opts: EvmOpts,
+    mut evm_opts: EvmOpts,
     filter: Filter,
     json: bool,
     allow_failure: bool,
+    gas_reports: (bool, Vec<String>),
 ) -> eyre::Result<TestOutcome> {
     let verbosity = evm_opts.verbosity;
+    let gas_reporting = gas_reports.0;
+
+    if gas_reporting && evm_opts.verbosity < 3 {
+        // force evm to do tracing, but dont hit the verbosity print path
+        evm_opts.verbosity = 3;
+    }
+
     let mut runner = builder.build(project, evm_opts)?;
 
     let results = runner.test(&filter)?;
+
+    let mut gas_report = GasReport::new(gas_reports.1);
 
     let (funcs, events, errors) = runner.execution_info;
     if json {
@@ -269,6 +304,15 @@ fn test<A: ArtifactOutput + 'static>(
             }
 
             for (name, result) in tests {
+                // build up gas report
+                if gas_reporting {
+                    if let (Some(traces), Some(identified_contracts)) =
+                        (&result.traces, &result.identified_contracts)
+                    {
+                        gas_report.analyze(traces, identified_contracts);
+                    }
+                }
+
                 short_test_result(name, result);
 
                 // adds a linebreak only if there were any traces or logs, so that the
@@ -297,28 +341,43 @@ fn test<A: ArtifactOutput + 'static>(
                             let mut exec_info = ExecutionInfo::new(
                                 &runner.known_contracts,
                                 &mut ident,
+                                &result.labeled_addresses,
                                 &funcs,
                                 &events,
                                 &errors,
                             );
                             let vm = vm();
+                            let mut trace_string = "".to_string();
                             if verbosity > 4 || !result.success {
                                 add_newline = true;
                                 println!("Traces:");
 
                                 // print setup calls as well
                                 traces.iter().for_each(|trace| {
-                                    trace.pretty_print(0, &mut exec_info, &vm, "  ");
+                                    trace.construct_trace_string(
+                                        0,
+                                        &mut exec_info,
+                                        &vm,
+                                        "  ",
+                                        &mut trace_string,
+                                    );
                                 });
                             } else if !traces.is_empty() {
                                 add_newline = true;
                                 println!("Traces:");
-                                traces.last().expect("no last but not empty").pretty_print(
-                                    0,
-                                    &mut exec_info,
-                                    &vm,
-                                    "  ",
-                                );
+                                traces
+                                    .last()
+                                    .expect("no last but not empty")
+                                    .construct_trace_string(
+                                        0,
+                                        &mut exec_info,
+                                        &vm,
+                                        "  ",
+                                        &mut trace_string,
+                                    );
+                            }
+                            if !trace_string.is_empty() {
+                                println!("{}", trace_string);
                             }
                         }
                     }
@@ -329,6 +388,11 @@ fn test<A: ArtifactOutput + 'static>(
                 }
             }
         }
+    }
+
+    if gas_reporting {
+        gas_report.finalize();
+        println!("{}", gas_report);
     }
 
     Ok(TestOutcome::new(results, allow_failure))

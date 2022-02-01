@@ -283,6 +283,95 @@ no files changed, compilation skipped.
 {"\"Gm.json\":Gm":{"testNonOwnerCannotGm":{"success":true,"reason":null,"gas_used":3782,"counterexample":null,"logs":[]},"testOwnerCannotGmOnBadBlocks":{"success":true,"reason":null,"gas_used":7771,"counterexample":null,"logs":[]},"testOwnerCanGmOnGoodBlocks":{"success":true,"reason":null,"gas_used":31696,"counterexample":null,"logs":[]}},"\"Greet.json\":Greet":{"testWorksForAllGreetings":{"success":true,"reason":null,"gas_used":null,"counterexample":null,"logs":[]},"testCannotGm":{"success":true,"reason":null,"gas_used":6819,"counterexample":null,"logs":[]},"testCanSetGreeting":{"success":true,"reason":null,"gas_used":31070,"counterexample":null,"logs":[]}}}
 ```
 
+## Running a Subset of Tests
+
+By default, `forge test` (and `forge snapshot`) will run every function in any contract if the function starts with `test`.
+
+You can narrow down the amount of tests to run by using one or more of the current available command line arguments for matching tests.
+
+```
+--match-test <TEST_PATTERN>
+--no-match-test <TEST_PATTERN_INVERSE>
+--match-contract <CONTRACT_PATTERN>
+--no-match-contract <CONTRACT_PATTERN_INVERSE>
+```
+
+### Examples
+
+`--match-contract` and `--no-match-contract` matches against the name of the contracts containing tests. Consider the following contracts, each containing a few tests.
+
+```solidity
+contract ContractFoo { ... }
+contract ContractFooBar { ... }
+contract ContractBar { ... }
+```
+
+* `forge test --match-contract Contract` will run the tests in all of those contracts
+* `forge test --match-contract Foo` will run the tests in the `ContractFoo` and `ContractFooBar`
+* `forge test --match-contract "Foo$"` will only run the tests in `ContractFoo`
+* `forge test --match-contract "ContractFoo|ContractBar"` will only run the tests of contracts including `ContractFoo` or `ContractBar` in it's name
+* `forge test --no-match-contract FooBar` will run the tests in `ContractFoo` and `ContractBar`
+
+
+`--match-test` and `--no-match-test` matches agains the test function names, by default they start with the `test` prefix. Consider the following contracts with a few test functions.
+
+```solidity
+contract ContractFoo {
+  func testFoo() {}
+  func testFooBar() {}
+}
+
+contract ContractBar {
+  func testBar() {}
+  func testFooBar() {}
+}
+```
+
+* `forge test --match-test testFoo` will run all tests except for `ContractBar.testBar`
+* `forge test --match-test "Foo$"` will run only `ContractFoo.testFoo`
+* `forge test --match-test "testFoo$|testBar$"` will run `ContractFoo.testFoo` and `ContractBar.testBar`
+* `forge test --no-match-test Bar` will only run `ContractBar.testBar`
+* `forge test --no-match-test test` will run no tests
+
+You can always combine any of the four arguments, they have AND semantics.
+
+### Common Patterns
+
+A few common patterns to help with your development workflow.
+
+#### Tracing
+
+When you're trying to find out why a specific test is failing, you can clean up the logs a bit by running only the test you're tracing:
+
+```console
+forge test --match-contract MyContractTest --match-test "testBar$" -vvv
+# use $ to indicate end of line, otherwise it can match testBarFoo, testBarFooBar etc.
+# `--match-contract` is only necessary if you have multiple tests with the same name
+```
+
+#### Separating Tests
+
+You might want to run your different kind of tests separately, for example, unit tests vs benchmark, you can suffix the contract name with the type of test to run them separately.
+
+```solidity
+contract FooUnitTest {}
+contract BarUnitTest {}
+contract FooBenchmark {}
+contract BarBenchmark {}
+```
+
+* To run unit tests `forge test --match-contract "UnitTest$"`
+* To get a gas snapshot only of the benchmark tests `forge snapshot --match-contract "Benchmark$"`
+
+### Edge cases
+
+If you have two tests with the same name but different arity (number of arguments), you can't run them individually.
+
+```solidity
+function testFoo() public { assert(1 == 1); }
+function testFoo(uint256 bar) public { assert(bar == bar); }
+```
+
 ## cast
 
 ```

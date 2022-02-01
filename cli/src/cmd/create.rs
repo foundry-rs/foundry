@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 #[derive(Debug, Clone, Parser)]
 pub struct CreateArgs {
-    #[clap(long, help = "constructor args calldata arguments.")]
+    #[clap(long, multiple_values = true, help = "constructor args calldata arguments.")]
     constructor_args: Vec<String>,
 
     #[clap(flatten)]
@@ -48,6 +48,11 @@ impl Cmd for CreateArgs {
 
         // Get ABI and BIN
         let (abi, bin, _) = super::read_artifact(&project, compiled, self.contract.clone())?;
+
+        let bin = match bin.object {
+            BytecodeObject::Bytecode(_) => bin.object,
+            _ => eyre::bail!("Dynamic linking not supported in `create` command - deploy the library contract first, then provide the address to link at compile time")
+        };
 
         // Add arguments to constructor
         let provider = Provider::<Http>::try_from(self.eth.rpc_url()?)?;
@@ -96,7 +101,13 @@ impl CreateArgs {
         let factory = ContractFactory::new(abi, bin, Arc::new(provider));
 
         let deployer = factory.deploy_tokens(args)?;
-        let deployer = if self.legacy || is_legacy(chain) { deployer.legacy() } else { deployer };
+        let deployer = if self.legacy ||
+            Chain::try_from(chain).map(|x| Chain::is_legacy(&x)).unwrap_or_default()
+        {
+            deployer.legacy()
+        } else {
+            deployer
+        };
 
         let deployed_contract = deployer.send().await?;
 
@@ -116,17 +127,4 @@ impl CreateArgs {
 
         parse_tokens(params, true)
     }
-}
-
-/// Helper function for checking if a chainid corresponds to a legacy chainid
-/// without eip1559
-fn is_legacy<T: TryInto<Chain>>(chain: T) -> bool {
-    let chain = match chain.try_into() {
-        Ok(inner) => inner,
-        _ => return false,
-    };
-
-    use Chain::*;
-    // TODO: Add other chains which do not support EIP1559.
-    matches!(chain, Optimism | OptimismKovan | Fantom | FantomTestnet)
 }

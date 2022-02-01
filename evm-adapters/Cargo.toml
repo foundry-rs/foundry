@@ -29,6 +29,7 @@ revm_precompiles = { git = "https://github.com/bluealloy/revm", default-features
 serde_json = "1.0.72"
 serde = "1.0.130"
 ansi_term = "0.12.1"
+comfy-table = "5.0.0"
 
 [dev-dependencies]
 evmodin = { git = "https://github.com/vorot93/evmodin", features = ["util"] }

@@ -1,6 +1,7 @@
 //! foundry configuration.
 use std::{
     borrow::Cow,
+    collections::BTreeMap,
     path::{Path, PathBuf},
 };
 
@@ -21,6 +22,8 @@ use ethers_solc::{
     remappings::{RelativeRemapping, Remapping},
     EvmVersion, Project, ProjectPathsConfig, SolcConfig,
 };
+use figment::providers::Data;
+use inflector::Inflector;
 
 // Macros useful for creating a figment.
 mod macros;
@@ -89,6 +92,8 @@ pub struct Config {
     /// evm version to use
     #[serde(with = "from_str_lowercase")]
     pub evm_version: EvmVersion,
+    /// list of contracts to report gas of
+    pub gas_reports: Vec<String>,
     /// Concrete solc version to use if any.
     ///
     /// This takes precedence over `auto_detect_solc`, if a version is set then this overrides
@@ -121,7 +126,7 @@ pub struct Config {
     /// pins the block number for the state fork
     pub fork_block_number: Option<u64>,
     /// the chainid opcode value
-    pub chain_id: Chain,
+    pub chain_id: Option<Chain>,
     /// Block gas limit
     pub gas_limit: u64,
     /// `tx.gasprice` value during EVM execution"
@@ -136,6 +141,8 @@ pub struct Config {
     pub block_difficulty: u64,
     /// the `block.gaslimit` value during EVM execution
     pub block_gas_limit: Option<u64>,
+    /// Pass extra output types
+    pub extra_output: Option<Vec<String>>,
     /// Settings to pass to the `solc` compiler input
     // TODO consider making this more structured https://stackoverflow.com/questions/48998034/does-toml-support-nested-arrays-of-objects-tables
     // TODO this needs to work as extension to the defaults:
@@ -186,6 +193,9 @@ impl Config {
 
     /// File name of config toml file
     pub const FILE_NAME: &'static str = "foundry.toml";
+
+    /// The name of the directory foundry reserves for itself under the user's home directory: `~`
+    pub const FOUNDRY_DIR_NAME: &'static str = ".foundry";
 
     /// Returns the current `Config`
     ///
@@ -312,7 +322,11 @@ impl Config {
         config
     }
 
+    /// Serves as the entrypoint for obtaining the project.
+    ///
     /// Returns the `Project` configured with all `solc` and path related values.
+    ///
+    /// *Note*: this also _cleans_ [`Project::cleanup`] the workspace if `force` is set to true.
     ///
     /// # Example
     ///
@@ -332,7 +346,7 @@ impl Config {
     }
 
     fn create_project(&self, cached: bool, no_artifacts: bool) -> Result<Project, SolcError> {
-        Project::builder()
+        let project = Project::builder()
             .paths(self.project_paths())
             .allowed_path(&self.__root.0)
             .allowed_paths(self.libraries.clone())
@@ -341,7 +355,13 @@ impl Config {
             .set_auto_detect(self.auto_detect_solc)
             .set_cached(cached)
             .set_no_artifacts(no_artifacts)
-            .build()
+            .build()?;
+
+        if self.force {
+            project.cleanup()?;
+        }
+
+        Ok(project)
     }
 
     /// Returns the `ProjectPathsConfig`  sub set of the config.
@@ -370,6 +390,20 @@ impl Config {
         Optimizer { enabled: Some(self.optimizer), runs: Some(self.optimizer_runs) }
     }
 
+    pub fn output_selection(&self) -> BTreeMap<String, BTreeMap<String, Vec<String>>> {
+        let mut output_selection = Settings::default_output_selection();
+
+        if let Some(extras) = &self.extra_output {
+            output_selection.entry("*".to_string()).and_modify(|e1| {
+                e1.entry("*".to_string()).and_modify(|e2| {
+                    e2.extend_from_slice(extras.as_slice());
+                });
+            });
+        }
+
+        output_selection
+    }
+
     /// Returns the configured `solc` `Settings` that includes:
     ///   - all libraries
     ///   - the optimizer
@@ -377,12 +411,16 @@ impl Config {
     pub fn solc_settings(&self) -> Result<Settings, SolcError> {
         let libraries = parse_libraries(&self.libraries)?;
         let optimizer = self.optimizer();
-        Ok(Settings {
+        let output_selection = self.output_selection();
+
+        Ok((Settings {
             optimizer,
             evm_version: Some(self.evm_version),
             libraries,
+            output_selection,
             ..Default::default()
         })
+        .with_ast())
     }
 
     /// Returns the default figment
@@ -510,9 +548,22 @@ impl Config {
         Profile::from_env_or("FOUNDRY_PROFILE", Config::DEFAULT_PROFILE)
     }
 
+    /// Returns the path to foundry's global toml file that's stored at `~/.foundry/foundry.toml`
+    pub fn foundry_dir_toml() -> Option<PathBuf> {
+        Self::foundry_dir().map(|p| p.join(Config::FILE_NAME))
+    }
+
+    /// Returns the path to foundry's config dir `~/.foundry/`
+    pub fn foundry_dir() -> Option<PathBuf> {
+        dirs_next::home_dir().map(|p| p.join(Config::FOUNDRY_DIR_NAME))
+    }
+
     /// Returns the path to the `foundry.toml` file, the file is searched for in
     /// the current working directory and all parent directories until the root,
     /// and the first hit is used.
+    ///
+    /// If this search comes up empty, then it checks if a global `foundry.toml` exists at
+    /// `~/.foundry/foundry.tol`, see [`Self::foundry_dir_toml()`]
     pub fn find_config_file() -> Option<PathBuf> {
         fn find(path: &Path) -> Option<PathBuf> {
             if path.is_absolute() {
@@ -532,15 +583,24 @@ impl Config {
             }
         }
         find(Env::var_or("FOUNDRY_CONFIG", Config::FILE_NAME).as_ref())
+            .or_else(|| Self::foundry_dir_toml().filter(|p| p.exists()))
     }
 }
 
 impl From<Config> for Figment {
     fn from(c: Config) -> Figment {
         let profile = Config::selected_profile();
-        let figment = Figment::default()
-            .merge(DappHardhatDirProvider(&c.__root.0))
-            .merge(Toml::file(Env::var_or("FOUNDRY_CONFIG", Config::FILE_NAME)).nested())
+        let mut figment = Figment::default().merge(DappHardhatDirProvider(&c.__root.0));
+
+        // check global foundry.toml file
+        if let Some(global_toml) = Config::foundry_dir_toml().filter(|p| p.exists()) {
+            figment = figment.merge(ForcedSnakeCaseData(Toml::file(global_toml).nested()))
+        }
+
+        figment = figment
+            .merge(ForcedSnakeCaseData(
+                Toml::file(Env::var_or("FOUNDRY_CONFIG", Config::FILE_NAME)).nested(),
+            ))
             .merge(Env::prefixed("DAPP_").ignore(&["REMAPPINGS"]).global())
             .merge(Env::prefixed("DAPP_TEST_").global())
             .merge(DappEnvCompatProvider)
@@ -624,10 +684,12 @@ impl Default for Config {
             cache: true,
             force: false,
             evm_version: Default::default(),
+            gas_reports: vec!["*".to_string()],
             solc_version: None,
             auto_detect_solc: true,
             optimizer: true,
             optimizer_runs: 200,
+            extra_output: None,
             solc_settings: None,
             fuzz_runs: 256,
             ffi: false,
@@ -636,7 +698,7 @@ impl Default for Config {
             initial_balance: U256::from(0xffffffffffffffffffffffffu128),
             block_number: 0,
             fork_block_number: None,
-            chain_id: Chain::Id(1),
+            chain_id: None,
             // toml-rs can't handle larger number because integers are stored signed
             // https://github.com/alexcrichton/toml-rs/issues/256
             gas_limit: i64::MAX as u64,
@@ -653,6 +715,23 @@ impl Default for Config {
             ignored_error_codes: vec![],
             __non_exhaustive: (),
         }
+    }
+}
+
+/// A Provider that ensures all keys are snake case
+struct ForcedSnakeCaseData<F: Format>(Data<F>);
+
+impl<F: Format> Provider for ForcedSnakeCaseData<F> {
+    fn metadata(&self) -> Metadata {
+        Metadata::named("Snake Case toml provider")
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+        let mut map = Map::new();
+        for (profile, dict) in self.0.data()? {
+            map.insert(profile, dict.into_iter().map(|(k, v)| (k.to_snake_case(), v)).collect());
+        }
+        Ok(map)
     }
 }
 
@@ -724,6 +803,11 @@ impl Provider for DappEnvCompatProvider {
                 "fork_block_number".to_string(),
                 val.parse::<u64>().map_err(figment::Error::custom)?.into(),
             );
+        } else if let Ok(val) = env::var("DAPP_TEST_NUMBER") {
+            dict.insert(
+                "fork_block_number".to_string(),
+                val.parse::<u64>().map_err(figment::Error::custom)?.into(),
+            );
         }
         if let Ok(val) = env::var("DAPP_TEST_TIMESTAMP") {
             dict.insert(
@@ -736,6 +820,18 @@ impl Provider for DappEnvCompatProvider {
                 "optimizer_runs".to_string(),
                 val.parse::<u64>().map_err(figment::Error::custom)?.into(),
             );
+        }
+        if let Ok(val) = env::var("DAPP_BUILD_OPTIMIZE") {
+            // Activate Solidity optimizer (0 or 1)
+            let val = val.parse::<u8>().map_err(figment::Error::custom)?;
+            if val > 1 {
+                return Err(format!(
+                    "Invalid $DAPP_BUILD_OPTIMIZE value `{}`,  expected 0 or 1",
+                    val
+                )
+                .into())
+            }
+            dict.insert("optimizer".to_string(), (val == 1).into());
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
@@ -771,11 +867,14 @@ impl<'a> RemappingsProvider<'a> {
     /// - Environment variables
     /// - CLI parameters
     fn get_remappings(&self, remappings: Vec<Remapping>) -> Result<Vec<Remapping>, Error> {
+        let mut new_remappings = Vec::new();
+
         // check env var
         if let Some(env_remappings) = remappings_from_env_var("DAPP_REMAPPINGS")
             .or_else(|| remappings_from_env_var("FOUNDRY_REMAPPINGS"))
         {
-            return env_remappings.map_err(|err| err.to_string().into())
+            new_remappings
+                .extend(env_remappings.map_err::<Error, _>(|err| err.to_string().into())?);
         }
 
         // check remappings.txt file
@@ -783,21 +882,28 @@ impl<'a> RemappingsProvider<'a> {
         if remappings_file.is_file() {
             let content =
                 std::fs::read_to_string(remappings_file).map_err(|err| err.to_string())?;
-            let remappings: Result<Vec<_>, _> = remappings_from_newline(&content).collect();
-            return remappings.map_err(|err| err.to_string().into())
+            let remappings_from_file: Result<Vec<_>, _> =
+                remappings_from_newline(&content).collect();
+            new_remappings
+                .extend(remappings_from_file.map_err::<Error, _>(|err| err.to_string().into())?);
         }
 
-        // if no remappings set, look up lib paths
-        if remappings.is_empty() {
-            Ok(self
-                .lib_paths
+        new_remappings.extend(remappings);
+
+        // look up lib paths
+        new_remappings.extend(
+            self.lib_paths
                 .iter()
                 .map(|lib| self.root.join(lib))
                 .flat_map(Remapping::find_many)
-                .collect())
-        } else {
-            Ok(remappings)
-        }
+                .collect::<Vec<Remapping>>(),
+        );
+
+        // remove duplicates
+        new_remappings.sort_by(|a, b| a.name.cmp(&b.name));
+        new_remappings.dedup_by(|a, b| a.name.eq(&b.name));
+
+        Ok(new_remappings)
     }
 }
 
@@ -997,7 +1103,7 @@ mod tests {
                 config.remappings,
                 vec![
                     Remapping::from_str("file-ds-test/=lib/ds-test/").unwrap().into(),
-                    Remapping::from_str("file-other/=lib/other/").unwrap().into()
+                    Remapping::from_str("file-other/=lib/other/").unwrap().into(),
                 ],
             );
 
@@ -1007,8 +1113,65 @@ mod tests {
             assert_eq!(
                 config.remappings,
                 vec![
+                    // From environment
                     Remapping::from_str("ds-test=lib/ds-test/").unwrap().into(),
-                    Remapping::from_str("other/=lib/other/").unwrap().into()
+                    // From remapping.txt
+                    Remapping::from_str("file-ds-test/=lib/ds-test/").unwrap().into(),
+                    Remapping::from_str("file-other/=lib/other/").unwrap().into(),
+                    // From environment
+                    Remapping::from_str("other/=lib/other/").unwrap().into(),
+                ],
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_remappings_override() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                src = "some-source"
+                out = "some-out"
+                cache = true
+            "#,
+            )?;
+            let config = Config::load();
+            assert!(config.remappings.is_empty());
+
+            jail.create_file(
+                "remappings.txt",
+                r#"
+                ds-test/=lib/ds-test/
+                other/=lib/other/
+            "#,
+            )?;
+
+            let config = Config::load();
+            assert_eq!(
+                config.remappings,
+                vec![
+                    Remapping::from_str("ds-test/=lib/ds-test/").unwrap().into(),
+                    Remapping::from_str("other/=lib/other/").unwrap().into(),
+                ],
+            );
+
+            jail.set_env("DAPP_REMAPPINGS", "ds-test/=lib/ds-test/src/\nenv-lib/=lib/env-lib/");
+            let config = Config::load();
+
+            // Remappings should now be:
+            // - ds-test from environment (lib/ds-test/src/)
+            // - other from remappings.txt (lib/other/)
+            // - env-lib from environment (lib/env-lib/)
+            assert_eq!(
+                config.remappings,
+                vec![
+                    Remapping::from_str("ds-test/=lib/ds-test/src/").unwrap().into(),
+                    Remapping::from_str("env-lib/=lib/env-lib/").unwrap().into(),
+                    Remapping::from_str("other/=lib/other/").unwrap().into(),
                 ],
             );
 
@@ -1042,6 +1205,40 @@ mod tests {
                     eth_rpc_url: Some("https://example.com/".to_string()),
                     remappings: vec![Remapping::from_str("ds-test=lib/ds-test/").unwrap().into()],
                     verbosity: 3,
+                    ..Config::default()
+                }
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_toml_casing_file() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                src = "some-source"
+                out = "some-out"
+                cache = true
+                eth-rpc-url = "https://example.com/"
+                evm-version = "berlin"
+                auto-detect-solc = false
+            "#,
+            )?;
+
+            let config = Config::load();
+            assert_eq!(
+                config,
+                Config {
+                    src: "some-source".into(),
+                    out: "some-out".into(),
+                    cache: true,
+                    eth_rpc_url: Some("https://example.com/".to_string()),
+                    auto_detect_solc: false,
+                    evm_version: EvmVersion::Berlin,
                     ..Config::default()
                 }
             );
@@ -1149,6 +1346,7 @@ mod tests {
             jail.set_env("DAPP_TEST_FUZZ_RUNS", 420);
             jail.set_env("DAPP_FORK_BLOCK", 100);
             jail.set_env("DAPP_BUILD_OPTIMIZE_RUNS", 999);
+            jail.set_env("DAPP_BUILD_OPTIMIZE", 0);
 
             let config = Config::load();
 
@@ -1157,6 +1355,7 @@ mod tests {
             assert_eq!(config.fuzz_runs, 420);
             assert_eq!(config.fork_block_number, Some(100));
             assert_eq!(config.optimizer_runs, 999);
+            assert!(!config.optimizer);
 
             Ok(())
         });

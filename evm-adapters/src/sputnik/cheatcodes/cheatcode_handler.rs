@@ -10,7 +10,6 @@ use crate::{
 };
 use std::collections::BTreeMap;
 
-use serde::Deserialize;
 use std::{fs::File, io::Read, path::Path};
 
 use sputnik::{
@@ -28,12 +27,11 @@ use ethers::{
     abi::{RawLog, Token},
     contract::EthLogDecode,
     core::{abi::AbiDecode, k256::ecdsa::SigningKey, utils},
-    prelude::artifacts::deserialize_bytes,
     signers::{LocalWallet, Signer},
-    solc::ProjectPathsConfig,
+    solc::{artifacts::CompactContractBytecode, ProjectPathsConfig},
     types::{Address, H160, H256, U256},
 };
-use ethers_core::types::Bytes;
+
 use std::{convert::Infallible, str::FromStr};
 
 use crate::sputnik::cheatcodes::{
@@ -255,6 +253,15 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
                             address,
                             ethers::types::Bytes::from(expecteds[0].clone())
                         ))]),
+                    )
+                }
+
+                if !self.state().expected_emits.is_empty() {
+                    return (
+                        ExitReason::Revert(ExitRevert::Reverted),
+                        ethers::abi::encode(&[Token::String(
+                            "Expected an emit, but no logs were emitted afterward".to_string(),
+                        )]),
                     )
                 }
                 (s, v)
@@ -636,7 +643,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
 
                 // get the hex string & decode it
                 let output = unsafe { std::str::from_utf8_unchecked(&output) };
-                let decoded = match hex::decode(&output[2..]) {
+                let decoded = match hex::decode(&output.trim()[2..]) {
                     Ok(res) => res,
                     Err(err) => return evm_error(&err.to_string()),
                 };
@@ -646,12 +653,6 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
             }
             HEVMCalls::GetCode(inner) => {
                 self.add_debug(CheatOp::GETCODE);
-
-                #[derive(Deserialize)]
-                struct ContractFile {
-                    #[serde(deserialize_with = "deserialize_bytes")]
-                    bin: Bytes,
-                }
 
                 let path = if inner.0.ends_with(".json") {
                     Path::new(&inner.0).to_path_buf()
@@ -668,12 +669,29 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                     outdir.join(format!("{}/{}.json", contract_file, contract_name))
                 };
 
-                let mut file = File::open(path).unwrap();
                 let mut data = String::new();
-                file.read_to_string(&mut data).unwrap();
+                match File::open(path) {
+                    Ok(mut file) => match file.read_to_string(&mut data) {
+                        Ok(_) => {}
+                        Err(e) => return evm_error(&e.to_string()),
+                    },
+                    Err(e) => return evm_error(&e.to_string()),
+                }
 
-                let contract_file: ContractFile = serde_json::from_str(&data).unwrap();
-                res = ethers::abi::encode(&[Token::Bytes(contract_file.bin.to_vec())]);
+                match serde_json::from_str::<CompactContractBytecode>(&data) {
+                    Ok(contract_file) => {
+                        if let Some(bin) =
+                            contract_file.bytecode.and_then(|bcode| bcode.object.into_bytes())
+                        {
+                            res = ethers::abi::encode(&[Token::Bytes(bin.to_vec())]);
+                        } else {
+                            return evm_error(
+                                "No bytecode for contract. is it abstract or unlinked?",
+                            )
+                        }
+                    }
+                    Err(e) => return evm_error(&e.to_string()),
+                }
             }
             HEVMCalls::Addr(inner) => {
                 self.add_debug(CheatOp::ADDR);
@@ -711,7 +729,11 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 // The EVM precompile does not use EIP-155
                 let sig = wallet.sign_hash(digest.into(), false);
 
-                let recovered = sig.recover(digest).unwrap();
+                let recovered = match sig.recover(digest) {
+                    Ok(rec) => rec,
+                    Err(e) => return evm_error(&e.to_string()),
+                };
+
                 assert_eq!(recovered, wallet.address());
 
                 let mut r_bytes = [0u8; 32];
@@ -845,6 +867,13 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 self.add_debug(CheatOp::EXPECTCALL);
                 self.state_mut().expected_calls.entry(inner.0).or_default().push(inner.1.to_vec());
             }
+            HEVMCalls::Label(inner) => {
+                self.add_debug(CheatOp::LABEL);
+                let address = inner.0;
+                let label = inner.1;
+
+                self.state_mut().labels.insert(address, label);
+            }
         };
 
         self.fill_trace(&trace, true, Some(res.clone()), pre_index);
@@ -866,7 +895,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         }
     }
 
-    /// Executes the call/create while also tracking the state of the machine (including opcodes)  
+    /// Executes the call/create while also tracking the state of the machine (including opcodes)
     fn debug_execute(
         &mut self,
         runtime: &mut Runtime,
@@ -1067,6 +1096,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 created: creation,
                 data: input,
                 value: transfer,
+                label: self.state().labels.get(&address).cloned(),
                 ..Default::default()
             };
 
@@ -1557,6 +1587,9 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
                     .all(|expected| expected.found)
             {
                 return evm_error("Log != expected log")
+            } else {
+                // empty out expected_emits after successfully capturing all of them
+                self.state_mut().expected_emits = Vec::new();
             }
 
             self.expected_revert(ExpectRevertReturn::Call(res), expected_revert).into_call_inner()
@@ -1770,6 +1803,9 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
                 .all(|expected| expected.found)
         {
             return revert_return_evm(false, None, || "Log != expected log").into_create_inner()
+        } else {
+            // empty out expected_emits after successfully capturing all of them
+            self.state_mut().expected_emits = Vec::new();
         }
 
         self.expected_revert(ExpectRevertReturn::Create(res), expected_revert).into_create_inner()
@@ -1883,10 +1919,72 @@ mod tests {
         let (_, _, _, logs) = evm
             .call::<(), _, _>(Address::zero(), addr, "test_log_types()", (), 0.into(), compiled.abi)
             .unwrap();
-        let expected = ["String", "1337", "-20", "1245", "true"]
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>();
+        let expected =
+            ["String", "1337", "-20", "1245", "true", "0x1111111111111111111111111111111111111111"]
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>();
+        assert_eq!(logs, expected);
+    }
+
+    #[test]
+    fn console_logs_types_bytes() {
+        let mut evm = vm();
+
+        let compiled = COMPILED.find("ConsoleLogs").expect("could not find contract");
+        let (addr, _, _, _) =
+            evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
+
+        // after the evm call is done, we call `logs` and print it all to the user
+        let (_, _, _, logs) = evm
+            .call::<(), _, _>(
+                Address::zero(),
+                addr,
+                "test_log_types_bytes()",
+                (),
+                0.into(),
+                compiled.abi,
+            )
+            .unwrap();
+        let expected = [
+            r#"Bytes(b"logBytes")"#,
+            r#"Bytes(b"\xfb\xa3\xa4\xb5")"#,
+            "0xfb",
+            "0xfba3",
+            "0xfba3a4",
+            "0xfba3a4b5",
+            "0xfba3a4b500",
+            "0xfba3a4b50000",
+            "0xfba3a4b5000000",
+            "0xfba3a4b500000000",
+            "0xfba3a4b50000000000",
+            "0xfba3a4b5000000000000",
+            "0xfba3a4b500000000000000",
+            "0xfba3a4b50000000000000000",
+            "0xfba3a4b5000000000000000000",
+            "0xfba3a4b500000000000000000000",
+            "0xfba3a4b50000000000000000000000",
+            "0xfba3a4b5000000000000000000000000",
+            "0xfba3a4b500000000000000000000000000",
+            "0xfba3a4b50000000000000000000000000000",
+            "0xfba3a4b5000000000000000000000000000000",
+            "0xfba3a4b500000000000000000000000000000000",
+            "0xfba3a4b50000000000000000000000000000000000",
+            "0xfba3a4b5000000000000000000000000000000000000",
+            "0xfba3a4b500000000000000000000000000000000000000",
+            "0xfba3a4b50000000000000000000000000000000000000000",
+            "0xfba3a4b5000000000000000000000000000000000000000000",
+            "0xfba3a4b500000000000000000000000000000000000000000000",
+            "0xfba3a4b50000000000000000000000000000000000000000000000",
+            "0xfba3a4b5000000000000000000000000000000000000000000000000",
+            "0xfba3a4b500000000000000000000000000000000000000000000000000",
+            "0xfba3a4b50000000000000000000000000000000000000000000000000000",
+            "0xfba3a4b5000000000000000000000000000000000000000000000000000000",
+            "0xfba3a4b500000000000000000000000000000000000000000000000000000000",
+        ]
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
         assert_eq!(logs, expected);
     }
 
@@ -2048,8 +2146,12 @@ mod tests {
         );
         let mut identified = Default::default();
         let (funcs, events, errors) = foundry_utils::flatten_known_contracts(&mapping);
-        let mut exec_info = ExecutionInfo::new(&mapping, &mut identified, &funcs, &events, &errors);
-        evm.traces()[1].pretty_print(0, &mut exec_info, &evm, "");
+        let labels = BTreeMap::new();
+        let mut exec_info =
+            ExecutionInfo::new(&mapping, &mut identified, &labels, &funcs, &events, &errors);
+        let mut trace_string = "".to_string();
+        evm.traces()[1].construct_trace_string(0, &mut exec_info, &evm, "", &mut trace_string);
+        println!("{}", trace_string);
     }
 
     #[test]
@@ -2109,7 +2211,11 @@ mod tests {
         );
         let mut identified = Default::default();
         let (funcs, events, errors) = foundry_utils::flatten_known_contracts(&mapping);
-        let mut exec_info = ExecutionInfo::new(&mapping, &mut identified, &funcs, &events, &errors);
-        evm.traces()[1].pretty_print(0, &mut exec_info, &evm, "");
+        let labels = BTreeMap::new();
+        let mut exec_info =
+            ExecutionInfo::new(&mapping, &mut identified, &labels, &funcs, &events, &errors);
+        let mut trace_string = "".to_string();
+        evm.traces()[1].construct_trace_string(0, &mut exec_info, &evm, "", &mut trace_string);
+        println!("{}", trace_string);
     }
 }

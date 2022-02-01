@@ -1,9 +1,13 @@
 use std::{path::PathBuf, str::FromStr};
 
 use clap::{Parser, Subcommand};
-use ethers::types::{Address, BlockId, BlockNumber, NameOrAddress, H256};
+use ethers::{
+    abi::token::{LenientTokenizer, Tokenizer},
+    types::{Address, BlockId, BlockNumber, NameOrAddress, H256, U256},
+};
 
 use super::{ClapChain, EthereumOpts, Wallet};
+use crate::utils::parse_u256;
 
 #[derive(Debug, Subcommand)]
 #[clap(about = "Perform Ethereum RPC calls from the comfort of your command line.")]
@@ -49,14 +53,18 @@ pub enum Subcommands {
     ToDec { hexvalue: Option<String> },
     #[clap(name = "--to-fix")]
     #[clap(about = "convert integers into fixed point with specified decimals")]
-    ToFix { decimals: Option<u128>, value: Option<String> },
+    ToFix {
+        decimals: Option<u128>,
+        #[clap(allow_hyphen_values = true)] // negative values not yet supported internally
+        value: Option<String>,
+    },
     #[clap(name = "--to-uint256")]
     #[clap(about = "convert a number into uint256 hex string with 0x prefix")]
     ToUint256 { value: Option<String> },
     #[clap(name = "--to-unit")]
     #[clap(
-        about = r#"convert an ETH amount into a specified unit: ether, gwei or wei (default: wei). 
-    Usage: 
+        about = r#"convert an ETH amount into a specified unit: ether, gwei or wei (default: wei).
+    Usage:
       - 1ether wei     | converts 1 ether to wei
       - "1 ether" wei  | converts 1 ether to wei
       - 1ether         | converts 1 ether to wei
@@ -67,10 +75,18 @@ pub enum Subcommands {
     ToUnit { value: Option<String>, unit: Option<String> },
     #[clap(name = "--to-wei")]
     #[clap(about = "convert an ETH amount into wei. Consider using --to-unit.")]
-    ToWei { value: Option<String>, unit: Option<String> },
+    ToWei {
+        #[clap(allow_hyphen_values = true)] // negative values not yet supported internally
+        value: Option<String>,
+        unit: Option<String>,
+    },
     #[clap(name = "--from-wei")]
     #[clap(about = "convert wei into an ETH amount. Consider using --to-unit.")]
-    FromWei { value: Option<String>, unit: Option<String> },
+    FromWei {
+        #[clap(allow_hyphen_values = true)] // negative values not yet supported internally
+        value: Option<String>,
+        unit: Option<String>,
+    },
     #[clap(name = "block")]
     #[clap(
         about = "Prints information about <block>. If <field> is given, print only the value of that field"
@@ -99,6 +115,8 @@ pub enum Subcommands {
         address: NameOrAddress,
         sig: String,
         args: Vec<String>,
+        #[clap(long, short, help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
+        block: Option<BlockId>,
         #[clap(flatten)]
         eth: EthereumOpts,
     },
@@ -111,6 +129,7 @@ pub enum Subcommands {
         "#
         )]
         sig: String,
+        #[clap(allow_hyphen_values = true)] // negative values not yet supported internally
         args: Vec<String>,
     },
     #[clap(name = "chain")]
@@ -122,6 +141,12 @@ pub enum Subcommands {
     #[clap(name = "chain-id")]
     #[clap(about = "returns ethereum chain id")]
     ChainId {
+        #[clap(long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+    },
+    #[clap(name = "client")]
+    #[clap(about = "returns the current client version")]
+    Client {
         #[clap(long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
@@ -138,6 +163,25 @@ pub enum Subcommands {
         #[clap(long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
+    #[clap(name = "receipt")]
+    #[clap(about = "Print information about the transaction receipt for <tx-hash>")]
+    Receipt {
+        hash: String,
+        field: Option<String>,
+        #[clap(
+            short,
+            long,
+            help = "the number of confirmations until the receipt is fetched",
+            default_value = "1"
+        )]
+        confirmations: usize,
+        #[clap(long, env = "CAST_ASYNC")]
+        cast_async: bool,
+        #[clap(long = "json", short = 'j')]
+        to_json: bool,
+        #[clap(long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+    },
     #[clap(name = "send")]
     #[clap(about = "Publish a transaction signed by <from> to call <to> with <data>")]
     SendTx {
@@ -147,10 +191,21 @@ pub enum Subcommands {
         sig: String,
         #[clap(help = "the list of arguments you want to call the function with")]
         args: Vec<String>,
+        #[clap(long, help = "gas quantity for the transaction", parse(try_from_str = parse_u256))]
+        gas: Option<U256>,
+        #[clap(long, help = "ether value (in wei or string with unit type e.g. 1ether, 10gwei, 0.01ether) for the transaction", parse(try_from_str = parse_ether_value))]
+        value: Option<U256>,
+        #[clap(long, help = "nonce for the transaction", parse(try_from_str = parse_u256))]
+        nonce: Option<U256>,
         #[clap(long, env = "CAST_ASYNC")]
         cast_async: bool,
         #[clap(flatten)]
         eth: EthereumOpts,
+        #[clap(
+            long,
+            help = "use legacy transactions instead of EIP1559 ones. this is auto-enabled for common networks without EIP1559"
+        )]
+        legacy: bool,
     },
     #[clap(name = "publish")]
     #[clap(about = "Publish a raw transaction to the network")]
@@ -171,6 +226,8 @@ pub enum Subcommands {
         sig: String,
         #[clap(help = "the list of arguments you want to call the function with")]
         args: Vec<String>,
+        #[clap(long, help = "value for tx estimate (in wei)")]
+        value: Option<U256>,
         #[clap(flatten)]
         eth: EthereumOpts,
     },
@@ -206,6 +263,7 @@ pub enum Subcommands {
         #[clap(help = "the function signature")]
         sig: String,
         #[clap(help = "the list of function arguments")]
+        #[clap(allow_hyphen_values = true)]
         args: Vec<String>,
     },
     #[clap(name = "4byte")]
@@ -344,6 +402,11 @@ pub enum Subcommands {
         #[clap(flatten)]
         chain: ClapChain,
     },
+    #[clap(name = "sig", about = "Print a function's 4-byte selector")]
+    Sig {
+        #[clap(help = "The human-readable function signature, e.g. 'transfer(address,uint256)'")]
+        sig: String,
+    },
     #[clap(about = "generate shell completions script")]
     Completions {
         #[clap(arg_enum)]
@@ -415,6 +478,7 @@ fn parse_block_id(s: &str) -> eyre::Result<BlockId> {
     Ok(match s {
         "earliest" => BlockId::Number(BlockNumber::Earliest),
         "latest" => BlockId::Number(BlockNumber::Latest),
+        "pending" => BlockId::Number(BlockNumber::Pending),
         s if s.starts_with("0x") => BlockId::Hash(H256::from_str(s)?),
         s => BlockId::Number(BlockNumber::Number(u64::from_str(s)?.into())),
     })
@@ -426,6 +490,14 @@ fn parse_slot(s: &str) -> eyre::Result<H256> {
         H256::from_str(&padded)?
     } else {
         H256::from_low_u64_be(u64::from_str(s)?)
+    })
+}
+
+fn parse_ether_value(value: &str) -> eyre::Result<U256> {
+    Ok(if value.starts_with("0x") {
+        U256::from_str(value)?
+    } else {
+        U256::from(LenientTokenizer::tokenize_uint(value)?)
     })
 }
 

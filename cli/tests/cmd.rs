@@ -44,7 +44,7 @@ forgetest!(can_init_repo_with_config, |prj: TestProject, mut cmd: TestCommand| {
     let foundry_toml = prj.root().join(Config::FILE_NAME);
     assert!(!foundry_toml.exists());
 
-    cmd.arg("init").arg(prj.root());
+    cmd.args(["init", "--force"]).arg(prj.root());
     cmd.assert_non_empty_stdout();
 
     cmd.set_current_dir(prj.root());
@@ -58,7 +58,7 @@ forgetest!(can_init_repo_with_config, |prj: TestProject, mut cmd: TestCommand| {
         basic.remappings,
         vec![Remapping::from_str("ds-test/=lib/ds-test/src/").unwrap().into()]
     );
-    assert_eq!(basic, Config::load().into_basic());
+    assert_eq!(basic, Config::load_with_root(prj.root()).into_basic());
 
     // can detect root
     assert_eq!(prj.root(), forge_utils::find_project_root_path().unwrap());
@@ -71,18 +71,55 @@ forgetest!(can_init_repo_with_config, |prj: TestProject, mut cmd: TestCommand| {
 });
 
 // checks that init works repeatedly
-forgetest!(can_init_repo_repeatedly, |prj: TestProject, mut cmd: TestCommand| {
+forgetest!(can_init_repo_repeatedly_with_force, |prj: TestProject, mut cmd: TestCommand| {
     let foundry_toml = prj.root().join(Config::FILE_NAME);
     assert!(!foundry_toml.exists());
 
+    prj.wipe();
+
     cmd.arg("init").arg(prj.root());
     cmd.assert_non_empty_stdout();
+
+    cmd.arg("--force");
 
     for _ in 0..2 {
         assert!(foundry_toml.exists());
         pretty_err(&foundry_toml, fs::remove_file(&foundry_toml));
         cmd.assert_non_empty_stdout();
     }
+});
+
+// Checks that a forge project can be initialized without creating a git repository
+forgetest!(can_init_no_git, |prj: TestProject, mut cmd: TestCommand| {
+    prj.wipe();
+
+    cmd.arg("init").arg(prj.root()).arg("--no-git");
+    cmd.assert_non_empty_stdout();
+    prj.assert_config_exists();
+
+    assert!(!prj.root().join(".git").exists());
+    assert!(prj.root().join("lib/ds-test").exists());
+    assert!(!prj.root().join("lib/ds-test/.git").exists());
+});
+
+// Checks that quiet mode does not print anything
+forgetest!(can_init_quiet, |prj: TestProject, mut cmd: TestCommand| {
+    prj.wipe();
+
+    cmd.arg("init").arg(prj.root()).arg("-q");
+    let _ = cmd.output();
+});
+
+// `forge init` does only work on non-empty dirs
+forgetest!(can_init_non_empty, |prj: TestProject, mut cmd: TestCommand| {
+    prj.create_file("README.md", "non-empty dir");
+    cmd.arg("init").arg(prj.root());
+    cmd.assert_err();
+
+    cmd.arg("--force");
+    cmd.assert_non_empty_stdout();
+    assert!(prj.root().join(".git").exists());
+    assert!(prj.root().join("lib/ds-test").exists());
 });
 
 // checks that config works
@@ -115,25 +152,33 @@ forgetest_init!(can_override_config, |prj: TestProject, mut cmd: TestCommand| {
     assert_eq!(expected.trim().to_string(), cmd.stdout().trim().to_string());
 
     // remappings work
-    let remappings_txt = prj.create_file("remappings.txt", "from-file/=lib/from-file/");
+    let remappings_txt = prj.create_file("remappings.txt", "ds-test/=lib/ds-test/from-file/");
     let config = forge_utils::load_config();
+    println!("{:?}", config.remappings);
     assert_eq!(
-        format!("from-file/={}/", prj.root().join("lib/from-file").display()),
+        format!("ds-test/={}/", prj.root().join("lib/ds-test/from-file").display()),
         Remapping::from(config.remappings[0].clone()).to_string()
     );
 
     // env vars work
-    cmd.set_env("DAPP_REMAPPINGS", "other/=lib/other/src/");
+    cmd.set_env("DAPP_REMAPPINGS", "ds-test/=lib/ds-test/from-env/");
     let config = forge_utils::load_config();
     assert_eq!(
-        format!("other/={}/", prj.root().join("lib/other/src").display()),
+        format!("ds-test/={}/", prj.root().join("lib/ds-test/from-env").display()),
         Remapping::from(config.remappings[0].clone()).to_string()
     );
 
-    let config = prj.config_from_output(["--remappings", "from-cli/=lib-from-cli"]);
+    let config = prj.config_from_output(["--remappings", "ds-test/=lib/ds-test/from-cli"]);
     assert_eq!(
-        format!("from-cli/={}/", prj.root().join("lib-from-cli").display()),
+        format!("ds-test/={}/", prj.root().join("lib/ds-test/from-cli").display()),
         Remapping::from(config.remappings[0].clone()).to_string()
+    );
+
+    let config = prj.config_from_output(["--remappings", "other-key/=lib/other/"]);
+    assert_eq!(config.remappings.len(), 2);
+    assert_eq!(
+        format!("other-key/={}/", prj.root().join("lib/other").display()),
+        Remapping::from(config.remappings[1].clone()).to_string()
     );
 
     cmd.unset_env("DAPP_REMAPPINGS");
@@ -142,6 +187,26 @@ forgetest_init!(can_override_config, |prj: TestProject, mut cmd: TestCommand| {
     cmd.set_cmd(prj.bin()).args(["config", "--basic"]);
     let expected = profile.into_basic().to_string_pretty().unwrap();
     pretty_eq!(expected.trim().to_string(), cmd.stdout().trim().to_string());
+});
+
+forgetest_init!(can_detect_config_vals, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.set_current_dir(prj.root());
+    let url = "http://127.0.0.1:8545";
+    let config = prj.config_from_output(["--no-auto-detect", "--rpc-url", url]);
+    assert!(!config.auto_detect_solc);
+    assert_eq!(config.eth_rpc_url, Some(url.to_string()));
+
+    let mut config = Config::load_with_root(prj.root());
+    config.eth_rpc_url = Some("http://127.0.0.1:8545".to_string());
+    config.auto_detect_solc = false;
+    // write to `foundry.toml`
+    prj.create_file(
+        Config::FILE_NAME,
+        &config.to_string_pretty().unwrap().replace("eth_rpc_url", "eth-rpc-url"),
+    );
+    let config = prj.config_from_output(["--force"]);
+    assert!(!config.auto_detect_solc);
+    assert_eq!(config.eth_rpc_url, Some(url.to_string()));
 });
 
 // checks that `clean` removes dapptools style paths

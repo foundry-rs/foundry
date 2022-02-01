@@ -6,19 +6,43 @@ use std::path::PathBuf;
 use crate::{cmd::Cmd, opts::forge::CompilerArgs};
 
 use clap::{Parser, ValueHint};
+use ethers::solc::remappings::Remapping;
 use foundry_config::{
     figment::{
         self,
         error::Kind::InvalidType,
         value::{Dict, Map, Value},
-        Metadata, Profile, Provider,
+        Figment, Metadata, Profile, Provider,
     },
-    remappings_from_env_var, Config,
+    find_project_root_path, remappings_from_env_var, Config,
 };
 use serde::Serialize;
 
 // Loads project's figment and merges the build cli arguments into it
-foundry_config::impl_figment_convert!(BuildArgs);
+impl<'a> From<&'a BuildArgs> for Figment {
+    fn from(args: &'a BuildArgs) -> Self {
+        let figment = if let Some(root) = args.root.clone() {
+            Config::figment_with_root(root)
+        } else {
+            Config::figment_with_root(find_project_root_path().unwrap())
+        };
+
+        // remappings should stack
+        let mut remappings = args.get_remappings();
+        remappings
+            .extend(figment.extract_inner::<Vec<Remapping>>("remappings").unwrap_or_default());
+        remappings.sort_by(|a, b| a.name.cmp(&b.name));
+        remappings.dedup_by(|a, b| a.name.eq(&b.name));
+        figment.merge(("remappings", remappings)).merge(args)
+    }
+}
+
+impl<'a> From<&'a BuildArgs> for Config {
+    fn from(args: &'a BuildArgs) -> Self {
+        let figment: Figment = args.into();
+        Config::from_provider(figment).sanitized()
+    }
+}
 
 /// All `forge build` related arguments
 ///
@@ -61,7 +85,7 @@ pub struct BuildArgs {
     pub contracts: Option<PathBuf>,
 
     #[clap(help = "the remappings", long, short)]
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip)]
     pub remappings: Vec<ethers::solc::remappings::Remapping>,
 
     #[clap(help = "the env var that holds remappings", long = "remappings-env")]
@@ -133,14 +157,21 @@ impl BuildArgs {
     ///
     /// This loads the `foundry_config::Config` for the current workspace (see
     /// [`utils::find_project_root_path`] and merges the cli `BuildArgs` into it before returning
-    /// [`foundry_config::Config::project`]
+    /// [`foundry_config::Config::project()`]
     pub fn project(&self) -> eyre::Result<Project> {
         let config: Config = self.into();
-        let project = config.project()?;
-        if config.force {
-            project.cleanup()?;
+        Ok(config.project()?)
+    }
+
+    /// Returns the remappings to add to the config
+    pub fn get_remappings(&self) -> Vec<Remapping> {
+        let mut remappings = self.remappings.clone();
+        if let Some(env_remappings) =
+            self.remappings_env.as_ref().and_then(|env| remappings_from_env_var(env))
+        {
+            remappings.extend(env_remappings.expect("Failed to parse env var remappings"));
         }
-        Ok(project)
+        remappings
     }
 }
 
@@ -167,7 +198,7 @@ impl Provider for BuildArgs {
         }
 
         if self.no_auto_detect {
-            dict.insert("auto_detect_solc".to_string(), self.no_auto_detect.into());
+            dict.insert("auto_detect_solc".to_string(), false.into());
         }
 
         if self.force {
@@ -175,17 +206,11 @@ impl Provider for BuildArgs {
         }
 
         if self.compiler.optimize {
-            dict.insert("optimize".to_string(), self.compiler.optimize.into());
+            dict.insert("optimizer".to_string(), self.compiler.optimize.into());
         }
 
-        if let Some(env_remappings) =
-            self.remappings_env.as_ref().and_then(|env| remappings_from_env_var(env))
-        {
-            let remappings = env_remappings.map_err(|err| err.to_string())?;
-            dict.insert(
-                "remappings".to_string(),
-                remappings.iter().map(|r| r.to_string()).collect::<Vec<_>>().into(),
-            );
+        if let Some(extra) = &self.compiler.extra_output {
+            dict.insert("extra_output".to_string(), extra.clone().into());
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
