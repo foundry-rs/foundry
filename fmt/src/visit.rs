@@ -84,7 +84,10 @@ pub trait Visitor {
     }
 
     fn visit_var_def(&mut self, var: &mut VariableDefinition) -> VResult {
-        self.visit_doc_comments(&mut var.doc)?;
+        if !var.doc.is_empty() {
+            self.visit_doc_comments(&mut var.doc)?;
+            self.visit_newline()?;
+        }
         self.visit_source(var.loc)?;
         self.visit_stray_semicolon()?;
 
@@ -112,7 +115,10 @@ pub trait Visitor {
     }
 
     fn visit_function(&mut self, func: &mut FunctionDefinition) -> VResult {
-        self.visit_doc_comments(&mut func.doc)?;
+        if !func.doc.is_empty() {
+            self.visit_doc_comments(&mut func.doc)?;
+            self.visit_newline()?;
+        }
         self.visit_source(func.loc())?;
         if func.body.is_none() {
             self.visit_stray_semicolon()?;
@@ -122,15 +128,22 @@ pub trait Visitor {
     }
 
     fn visit_struct(&mut self, structure: &mut StructDefinition) -> VResult {
-        self.visit_doc_comments(&mut structure.doc)?;
+        if !structure.doc.is_empty() {
+            self.visit_doc_comments(&mut structure.doc)?;
+            self.visit_newline()?;
+        }
         self.visit_source(structure.loc)?;
 
         Ok(())
     }
 
     fn visit_event(&mut self, event: &mut EventDefinition) -> VResult {
-        self.visit_doc_comments(&mut event.doc)?;
+        if !event.doc.is_empty() {
+            self.visit_doc_comments(&mut event.doc)?;
+            self.visit_newline()?;
+        }
         self.visit_source(event.loc)?;
+        self.visit_stray_semicolon()?;
 
         Ok(())
     }
@@ -141,9 +154,9 @@ pub trait Visitor {
         Ok(())
     }
 
-    fn visit_stray_semicolon(&mut self) -> VResult {
-        Ok(())
-    }
+    fn visit_stray_semicolon(&mut self) -> VResult;
+
+    fn visit_newline(&mut self) -> VResult;
 
     fn visit_using(&mut self, using: &mut Using) -> VResult {
         self.visit_source(using.loc)?;
@@ -174,6 +187,14 @@ impl Visitable for Loc {
 impl Visitable for DocComment {
     fn visit(&mut self, v: &mut impl Visitor) -> VResult {
         v.visit_doc_comment(self)?;
+
+        Ok(())
+    }
+}
+
+impl Visitable for Vec<DocComment> {
+    fn visit(&mut self, v: &mut impl Visitor) -> VResult {
+        v.visit_doc_comments(self)?;
 
         Ok(())
     }
@@ -222,5 +243,13 @@ impl Visitable for ContractPart {
             ContractPart::StraySemicolon(_) => v.visit_stray_semicolon(),
             ContractPart::Using(using) => v.visit_using(using),
         }
+    }
+}
+
+impl Visitable for Statement {
+    fn visit(&mut self, v: &mut impl Visitor) -> VResult {
+        v.visit_statement(self)?;
+
+        Ok(())
     }
 }

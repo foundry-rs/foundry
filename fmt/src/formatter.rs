@@ -101,8 +101,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         write!(self, "{}", if self.config.bracket_spacing { "{ }" } else { "{}" })
     }
 
-    /// Length of the line consisting of `items` separated by `separator` with respect to
-    /// already written line
+    /// Length of the line `s` with respect to already written line
     fn len_indented_with_current(&self, s: &str) -> usize {
         if self.pending_indent { self.config.tab_width * self.level } else { 0 }
             .saturating_add(self.current_line)
@@ -202,6 +201,12 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    fn visit_newline(&mut self) -> VResult {
+        writeln!(self)?;
+
+        Ok(())
+    }
+
     fn visit_source_unit(&mut self, source_unit: &mut SourceUnit) -> VResult {
         // TODO: do we need to put pragma and import directives at the top of the file?
         // source_unit.0.sort_by_key(|item| match item {
@@ -254,9 +259,12 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             DocComment::Block { comments } => {
                 writeln!(self, "/**")?;
                 for comment in comments {
-                    write!(self, "@{} {}", comment.tag, comment.value)?;
+                    write!(self, "@{} ", comment.tag)?;
+                    for line in comment.value.split('\n') {
+                        writeln!(self, "{}", line)?;
+                    }
                 }
-                write!(self, "\n*/")?;
+                write!(self, "*/")?;
             }
         };
 
@@ -264,17 +272,19 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_doc_comments(&mut self, doc_comments: &mut Vec<DocComment>) -> VResult {
-        for doc_comment in doc_comments {
+        for (i, doc_comment) in doc_comments.iter_mut().enumerate() {
+            if i > 0 {
+                writeln!(self)?;
+            }
             doc_comment.visit(self)?;
-            writeln!(self)?;
         }
 
         Ok(())
     }
 
     fn visit_contract(&mut self, contract: &mut ContractDefinition) -> VResult {
-        for doc_comment in &mut contract.doc {
-            doc_comment.visit(self)?;
+        if !contract.doc.is_empty() {
+            contract.doc.visit(self)?;
             writeln!(self)?;
         }
 
