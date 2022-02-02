@@ -29,9 +29,6 @@ rlp = "0.5.1"
 
 # load sputnik for parallel evm usage
 sputnik = { package = "evm", git = "https://github.com/rust-blockchain/evm" }
-# For now we ignore evmodin in Forge.
-# evmodin = { git = "https://github.com/vorot93/evmodin" }
 
 [dev-dependencies]
-evmodin = { git = "https://github.com/vorot93/evmodin", features = ["util"] }
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["solc-full", "solc-tests"] }

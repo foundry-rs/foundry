@@ -11,8 +11,6 @@ foundry-utils = { path = "./../utils" }
 
 sputnik = { package = "evm", git = "https://github.com/rust-blockchain/evm",  optional = true, features = ["tracing"] }
 
-evmodin = { git = "https://github.com/vorot93/evmodin",  optional = true, features = ["util"] }
-
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["solc-full"] }
 ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 eyre = "0.6.5"
@@ -32,9 +30,7 @@ ansi_term = "0.12.1"
 comfy-table = "5.0.0"
 
 [dev-dependencies]
-evmodin = { git = "https://github.com/vorot93/evmodin", features = ["util"] }
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["solc-full", "solc-tests"] }
 
 [features]
 sputnik-helpers = ["sputnik"]
-evmodin-helpers = ["evmodin"]

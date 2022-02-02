@@ -4,8 +4,6 @@ use ethers::{
     solc::{artifacts::Contract, EvmVersion},
     types::U256,
 };
-#[cfg(feature = "evmodin-evm")]
-use evmodin::Revision;
 use eyre::{ContextCompat, WrapErr};
 #[cfg(feature = "sputnik-evm")]
 use sputnik::Config;
@@ -82,17 +80,6 @@ pub fn sputnik_cfg(evm: &EvmVersion) -> Config {
         EvmVersion::Istanbul => Config::istanbul(),
         EvmVersion::Berlin => Config::berlin(),
         EvmVersion::London => Config::london(),
-        _ => panic!("Unsupported EVM version"),
-    }
-}
-
-#[cfg(feature = "evmodin-evm")]
-#[allow(dead_code)]
-pub fn evmodin_cfg(evm: EvmVersion) -> Revision {
-    match evm {
-        EvmVersion::Istanbul => Revision::Istanbul,
-        EvmVersion::Berlin => Revision::Berlin,
-        EvmVersion::London => Revision::London,
         _ => panic!("Unsupported EVM version"),
     }
 }
