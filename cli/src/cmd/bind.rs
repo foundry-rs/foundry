@@ -103,7 +103,7 @@ impl BindArgs {
 
     /// Instantiate the multi-abigen
     fn get_multi(&self) -> eyre::Result<MultiAbigen> {
-        Ok(MultiAbigen::from_json_files(self.artifacts()).map_err(eyre::Report::msg)?)
+        MultiAbigen::from_json_files(self.artifacts()).map_err(eyre::Report::msg)
     }
 
     /// Check that the existing bindings match the expected abigen output
