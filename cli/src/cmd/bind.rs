@@ -98,47 +98,39 @@ impl BindArgs {
 
     /// Instantiate the multi-abigen
     fn get_multi(&self) -> eyre::Result<MultiAbigen> {
-        MultiAbigen::from_json_files(self.artifacts()).map_err(eyre::Report::msg)
+        MultiAbigen::from_json_files(self.artifacts())
     }
 
     /// Check that the existing bindings match the expected abigen output
     fn check_existing_bindings(&self) -> eyre::Result<()> {
-        let bindings = self.get_multi()?.build().map_err(eyre::Report::msg)?;
+        let bindings = self.get_multi()?.build()?;
         println!("Checkign bindings for {} contracts", bindings.len());
         if self.gen_crate() {
-            bindings
-                .ensure_consistent_crate(
-                    &self.crate_name,
-                    &self.crate_version,
-                    self.bindings_root(),
-                    self.single_file,
-                )
-                .map_err(eyre::Report::msg)?;
+            bindings.ensure_consistent_crate(
+                &self.crate_name,
+                &self.crate_version,
+                self.bindings_root(),
+                self.single_file,
+            )?;
         } else {
-            bindings
-                .ensure_consistent_module(self.bindings_root(), self.single_file)
-                .map_err(eyre::Report::msg)?;
+            bindings.ensure_consistent_module(self.bindings_root(), self.single_file)?;
         }
         Ok(())
     }
 
     /// Generate the bindings
     fn generate_bindings(&self) -> eyre::Result<()> {
-        let bindings = self.get_multi()?.build().map_err(eyre::Report::msg)?;
+        let bindings = self.get_multi()?.build()?;
         println!("Generating bindings for {} contracts", bindings.len());
         if self.gen_crate() {
-            bindings
-                .write_to_crate(
-                    &self.crate_name,
-                    &self.crate_version,
-                    self.bindings_root(),
-                    self.single_file,
-                )
-                .map_err(eyre::Report::msg)?;
+            bindings.write_to_crate(
+                &self.crate_name,
+                &self.crate_version,
+                self.bindings_root(),
+                self.single_file,
+            )?;
         } else {
-            bindings
-                .write_to_module(self.bindings_root(), self.single_file)
-                .map_err(eyre::Report::msg)?;
+            bindings.write_to_module(self.bindings_root(), self.single_file)?;
         }
         Ok(())
     }
