@@ -2,7 +2,6 @@ use crate::cmd::Cmd;
 
 use clap::{Parser, ValueHint};
 use ethers::contract::MultiAbigen;
-use eyre::WrapErr;
 use foundry_config::{
     figment::{
         self,
@@ -104,39 +103,47 @@ impl BindArgs {
 
     /// Instantiate the multi-abigen
     fn get_multi(&self) -> eyre::Result<MultiAbigen> {
-        Ok(MultiAbigen::from_json_files(self.artifacts())?)
+        Ok(MultiAbigen::from_json_files(self.artifacts()).map_err(eyre::Report::msg)?)
     }
 
     /// Check that the existing bindings match the expected abigen output
     fn check_existing_bindings(&self) -> eyre::Result<()> {
-        let bindings = self.get_multi()?.build()?;
+        let bindings = self.get_multi()?.build().map_err(eyre::Report::msg)?;
         println!("Checkign bindings for {} contracts", bindings.len());
         if self.gen_crate() {
-            bindings.ensure_consistent_crate(
-                self.crate_name(),
-                self.crate_version(),
-                self.bindings_root(),
-                self.single_file,
-            )?;
+            bindings
+                .ensure_consistent_crate(
+                    self.crate_name(),
+                    self.crate_version(),
+                    self.bindings_root(),
+                    self.single_file,
+                )
+                .map_err(eyre::Report::msg)?;
         } else {
-            bindings.ensure_consistent_module(self.bindings_root(), self.single_file)?;
+            bindings
+                .ensure_consistent_module(self.bindings_root(), self.single_file)
+                .map_err(eyre::Report::msg)?;
         }
         Ok(())
     }
 
     /// Generate the bindings
     fn generate_bindings(&self) -> eyre::Result<()> {
-        let bindings = self.get_multi()?.build()?;
+        let bindings = self.get_multi()?.build().map_err(eyre::Report::msg)?;
         println!("Generating bindings for {} contracts", bindings.len());
         if self.gen_crate() {
-            bindings.write_to_crate(
-                self.crate_name(),
-                self.crate_version(),
-                self.bindings_root(),
-                self.single_file,
-            )?;
+            bindings
+                .write_to_crate(
+                    self.crate_name(),
+                    self.crate_version(),
+                    self.bindings_root(),
+                    self.single_file,
+                )
+                .map_err(eyre::Report::msg)?;
         } else {
-            bindings.write_to_module(self.bindings_root(), self.single_file)?;
+            bindings
+                .write_to_module(self.bindings_root(), self.single_file)
+                .map_err(eyre::Report::msg)?;
         }
         Ok(())
     }
@@ -146,12 +153,9 @@ impl Cmd for BindArgs {
     type Output = ();
 
     fn run(self) -> eyre::Result<Self::Output> {
-        let multi = MultiAbigen::from_json_files(self.artifacts())?;
-
         if !self.overwrite && self.bindings_exist() {
             println!("Bindings found. Checking for consistency.");
-            self.check_existing_bindings()?;
-            return Ok(())
+            return self.check_existing_bindings()
         }
 
         if self.overwrite {
