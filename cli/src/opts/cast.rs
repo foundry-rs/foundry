@@ -188,7 +188,7 @@ pub enum Subcommands {
         #[clap(help = "the address you want to transact with", parse(try_from_str = parse_name_or_address))]
         to: NameOrAddress,
         #[clap(help = "the function signature or name you want to call")]
-        sig: String,
+        sig: Option<String>,
         #[clap(help = "the list of arguments you want to call the function with")]
         args: Vec<String>,
         #[clap(long, help = "gas quantity for the transaction", parse(try_from_str = parse_u256))]
