@@ -2,8 +2,6 @@ use ethers::types::{Address, U256};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
-#[cfg(feature = "evmodin")]
-use evmodin::util::mocked_host::MockedHost;
 #[cfg(feature = "sputnik")]
 use sputnik::backend::MemoryVicinity;
 
@@ -11,21 +9,15 @@ use sputnik::backend::MemoryVicinity;
 pub enum EvmType {
     #[cfg(feature = "sputnik")]
     Sputnik,
-    #[cfg(feature = "evmodin")]
-    EvmOdin,
 }
 
-#[cfg(any(feature = "sputnik", feature = "evmodin"))]
+#[cfg(any(feature = "sputnik"))]
 impl Default for EvmType {
     fn default() -> Self {
         // if sputnik is enabled, default to it
         #[cfg(feature = "sputnik")]
         #[rustfmt::skip]
         return EvmType::Sputnik;
-        // if not, fall back to evmodin
-        #[allow(unreachable_code)]
-        #[cfg(feature = "evmodin")]
-        EvmType::EvmOdin
     }
 }
 
@@ -39,15 +31,13 @@ impl FromStr for EvmType {
         Ok(match s.to_lowercase().as_str() {
             #[cfg(feature = "sputnik")]
             "sputnik" => EvmType::Sputnik,
-            #[cfg(feature = "evmodin")]
-            "evmodin" => EvmType::EvmOdin,
             other => eyre::bail!("unknown EVM type {}", other),
         })
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(any(feature = "sputnik", feature = "evmodin"), derive(Default))]
+#[cfg_attr(any(feature = "sputnik"), derive(Default))]
 pub struct EvmOpts {
     #[serde(flatten)]
     pub env: Env,
@@ -199,21 +189,5 @@ impl Env {
             block_gas_limit: self.block_gas_limit.unwrap_or(self.gas_limit).into(),
             block_hashes: Vec::new(),
         }
-    }
-
-    #[cfg(feature = "evmodin")]
-    pub fn evmodin_state(&self) -> MockedHost {
-        let mut host = MockedHost::default();
-
-        host.tx_context.chain_id = self.chain_id.unwrap_or(99).into();
-        host.tx_context.tx_gas_price = self.gas_price.into();
-        host.tx_context.tx_origin = self.tx_origin;
-        host.tx_context.block_coinbase = self.block_coinbase;
-        host.tx_context.block_number = self.block_number;
-        host.tx_context.block_timestamp = self.block_timestamp;
-        host.tx_context.block_difficulty = self.block_difficulty.into();
-        host.tx_context.block_gas_limit = self.block_gas_limit.unwrap_or(self.gas_limit);
-
-        host
     }
 }

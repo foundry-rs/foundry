@@ -177,7 +177,7 @@ OPTIONS:
         --block-gas-limit <BLOCK_GAS_LIMIT>
             the block.gaslimit value during EVM execution
     -e, --evm-type <EVM_TYPE>
-            the EVM type you want to use (e.g. sputnik, evmodin) [default: sputnik]
+            the EVM type you want to use (e.g. sputnik) [default: sputnik]
     -f, --fork-url <FORK_URL>
             fetch state over a remote instead of starting from empty state
         --fork-block-number <FORK_BLOCK_NUMBER>

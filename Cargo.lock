@@ -86,9 +86,6 @@ name = "arrayvec"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8da52d66c7071e2e3fa2a1e5c6d088fec47b593032b254f5e980de8ea54454d6"
-dependencies = [
- "serde",
-]
 
 [[package]]
 name = "ascii-canvas"
@@ -147,7 +144,7 @@ version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7862e21c893d65a1650125d157eaeec691439379a1cee17ee49031b79236ada4"
 dependencies = [
- "proc-macro-error 1.0.4",
+ "proc-macro-error",
  "proc-macro2",
  "quote",
  "syn",
@@ -565,7 +562,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fd2078197a22f338bd4fbf7d6387eb6f0d6a3c69e6cbc09f5c93e97321fd92a"
 dependencies = [
  "heck 0.4.0",
- "proc-macro-error 1.0.4",
+ "proc-macro-error",
  "proc-macro2",
  "quote",
  "syn",
@@ -698,7 +695,7 @@ checksum = "c42350b81f044f576ff88ac750419f914abb46a03831bb1747134344ee7a4e64"
 dependencies = [
  "crossterm 0.22.1",
  "strum",
- "strum_macros 0.22.0",
+ "strum_macros",
  "unicode-width",
 ]
 
@@ -741,12 +738,6 @@ name = "constant_time_eq"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "245097e9a4535ee1e3e3931fcfcd55a796a44c643e8596ff6566d68f09b87bbc"
-
-[[package]]
-name = "convert_case"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6245d59a3e82a7fc217c5828a6692dbc6dfb63a0c8c90495621f7b9d79704a0e"
 
 [[package]]
 name = "convert_case"
@@ -954,10 +945,8 @@ version = "0.99.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4fb810d30a7c1953f91334de7244731fc3f3c10d7fe163338a35b9f640960321"
 dependencies = [
- "convert_case 0.4.0",
  "proc-macro2",
  "quote",
- "rustc_version",
  "syn",
 ]
 
@@ -1048,18 +1037,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "educe"
-version = "0.4.18"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f86b50932a01e7ec5c06160492ab660fb19b6bb2a7878030dd6cd68d21df9d4d"
-dependencies = [
- "enum-ordinalize",
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "either"
 version = "1.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1108,18 +1085,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "enum-as-inner"
-version = "0.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c5f0096a91d210159eceb2ff5e1c4da18388a170e1e3ce948aac9c8fdbbf595"
-dependencies = [
- "heck 0.3.3",
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "enum-iterator"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1134,19 +1099,6 @@ version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c134c37760b27a871ba422106eedbb8247da973a09e82558bf26d619c882b159"
 dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
-name = "enum-ordinalize"
-version = "3.1.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b166c9e378360dd5a6666a9604bb4f54ae0cac39023ffbac425e917a2a04fef"
-dependencies = [
- "num-bigint",
- "num-traits",
  "proc-macro2",
  "quote",
  "syn",
@@ -1335,7 +1287,7 @@ dependencies = [
  "arrayvec 0.7.2",
  "bytes",
  "cargo_metadata",
- "convert_case 0.5.0",
+ "convert_case",
  "ecdsa",
  "elliptic-curve",
  "ethabi",
@@ -1509,7 +1461,6 @@ dependencies = [
  "ethers",
  "ethers-core",
  "evm",
- "evmodin",
  "eyre",
  "foundry-utils",
  "futures",
@@ -1558,33 +1509,6 @@ dependencies = [
  "evm-core",
  "primitive-types",
  "sha3 0.8.2",
-]
-
-[[package]]
-name = "evmodin"
-version = "0.1.0"
-source = "git+https://github.com/vorot93/evmodin#dfcc33d944b15932af18e8a780bbb9ad93ca78e4"
-dependencies = [
- "arrayvec 0.7.2",
- "bytes",
- "derive_more",
- "educe",
- "enum-as-inner",
- "ethereum-types",
- "genawaiter",
- "getrandom",
- "getset",
- "hex",
- "hex-literal",
- "i256",
- "num-traits",
- "once_cell",
- "parking_lot",
- "primitive-types",
- "serde",
- "serde_json",
- "sha3 0.10.0",
- "strum_macros 0.23.1",
 ]
 
 [[package]]
@@ -1684,7 +1608,6 @@ dependencies = [
  "ethers",
  "evm",
  "evm-adapters",
- "evmodin",
  "eyre",
  "foundry-utils",
  "glob",
@@ -1724,7 +1647,6 @@ dependencies = [
  "ethers",
  "evm",
  "evm-adapters",
- "evmodin",
  "eyre",
  "forge",
  "foundry-cli-test-utils",
@@ -1906,31 +1828,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "genawaiter"
-version = "0.99.1"
-source = "git+https://github.com/cuviper/genawaiter?branch=unhacked#8b21e28be9a00deb4f63c7fb2b528a143e890895"
-dependencies = [
- "genawaiter-macro",
- "genawaiter-proc-macro",
-]
-
-[[package]]
-name = "genawaiter-macro"
-version = "0.99.1"
-source = "git+https://github.com/cuviper/genawaiter?branch=unhacked#8b21e28be9a00deb4f63c7fb2b528a143e890895"
-
-[[package]]
-name = "genawaiter-proc-macro"
-version = "0.99.1"
-source = "git+https://github.com/cuviper/genawaiter?branch=unhacked#8b21e28be9a00deb4f63c7fb2b528a143e890895"
-dependencies = [
- "proc-macro-error 0.4.12",
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "generic-array"
 version = "0.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1968,7 +1865,7 @@ version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e45727250e75cc04ff2846a66397da8ef2b3db8e40e0cef4df67950a07621eb9"
 dependencies = [
- "proc-macro-error 1.0.4",
+ "proc-macro-error",
  "proc-macro2",
  "quote",
  "syn",
@@ -2090,12 +1987,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
-name = "hex-literal"
-version = "0.3.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ebdb29d2ea9ed0083cd8cece49bbd968021bd99b0849edb4a9a7ee0fdf6a4e0"
-
-[[package]]
 name = "hidapi-rusb"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2208,14 +2099,6 @@ dependencies = [
  "native-tls",
  "tokio",
  "tokio-native-tls",
-]
-
-[[package]]
-name = "i256"
-version = "0.1.0"
-source = "git+https://github.com/vorot93/rust-i256#7e14ceab6bc45cf1ba6b4f1fb083e38f7187ddd0"
-dependencies = [
- "primitive-types",
 ]
 
 [[package]]
@@ -3080,40 +2963,14 @@ dependencies = [
 
 [[package]]
 name = "proc-macro-error"
-version = "0.4.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "18f33027081eba0a6d8aba6d1b1c3a3be58cbb12106341c2d5759fcd9b5277e7"
-dependencies = [
- "proc-macro-error-attr 0.4.12",
- "proc-macro2",
- "quote",
- "syn",
- "version_check",
-]
-
-[[package]]
-name = "proc-macro-error"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da25490ff9892aab3fcf7c36f08cfb902dd3e71ca0f9f9517bea02a73a5ce38c"
 dependencies = [
- "proc-macro-error-attr 1.0.4",
+ "proc-macro-error-attr",
  "proc-macro2",
  "quote",
  "syn",
- "version_check",
-]
-
-[[package]]
-name = "proc-macro-error-attr"
-version = "0.4.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a5b4b77fdb63c1eca72173d68d24501c54ab1269409f6b672c85deb18af69de"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
- "syn-mid",
  "version_check",
 ]
 
@@ -3985,19 +3842,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "strum_macros"
-version = "0.23.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5bb0dc7ee9c15cea6199cde9a127fa16a4c5819af85395457ad72d68edc85a38"
-dependencies = [
- "heck 0.3.3",
- "proc-macro2",
- "quote",
- "rustversion",
- "syn",
-]
-
-[[package]]
 name = "substrate-bn"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4052,17 +3896,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-xid",
-]
-
-[[package]]
-name = "syn-mid"
-version = "0.5.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "baa8e7560a164edb1621a55d18a0c59abf49d360f47aa7b821061dd7eea7fac9"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
 ]
 
 [[package]]

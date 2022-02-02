@@ -5,10 +5,6 @@ pub mod sputnik;
 #[cfg(feature = "sputnik")]
 use crate::sputnik::cheatcodes::debugger::DebugArena;
 
-/// Abstraction over [evmodin](https://github.com/rust-blockchain/evm)
-#[cfg(feature = "evmodin")]
-pub mod evmodin;
-
 mod blocking_provider;
 use crate::call_tracing::CallTraceArena;
 
