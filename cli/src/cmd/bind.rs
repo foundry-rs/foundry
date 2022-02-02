@@ -12,10 +12,7 @@ use foundry_config::{
     impl_figment_convert, Config,
 };
 use serde::Serialize;
-use std::{
-    path::{ PathBuf},
-};
-use tokio::fs;
+use std::{fs, path::PathBuf};
 
 impl_figment_convert!(BindArgs);
 
