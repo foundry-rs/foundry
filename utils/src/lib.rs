@@ -1,5 +1,7 @@
 #![doc = include_str!("../README.md")]
+use coins_bip32::path::DerivationPath;
 use ethers_addressbook::contract;
+use ethers_core::types::Address;
 use ethers_core::{
     abi::{
         self, parse_abi,
@@ -9,6 +11,7 @@ use ethers_core::{
     types::*,
 };
 use ethers_etherscan::Client;
+use ethers_signers::{HDPath, Ledger};
 use ethers_solc::artifacts::{BytecodeObject, CompactBytecode, CompactContractBytecode};
 use eyre::{Result, WrapErr};
 use serde::Deserialize;
@@ -18,7 +21,72 @@ use std::{
     fmt,
 };
 
+use std::{fmt, path::PathBuf, str::FromStr};
+
 use tokio::runtime::{Handle, Runtime};
+
+#[derive(Debug)]
+pub struct CastAccount {
+    pub address: Address,
+    pub path: Option<DerivationPath>,
+    pub kind: CastAccountType,
+}
+
+#[derive(Debug)]
+pub enum CastAccountType {
+    Keystore,
+    Ledger,
+    Trezor,
+    Remote,
+}
+
+impl fmt::Display for CastAccount {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match &self.path {
+            Some(p) => write!(f, "{:?} {}-{}", self.address, self.kind, p.derivation_string()),
+            _ => write!(f, "{:?} {}", self.address, self.kind),
+        }
+    }
+}
+
+impl fmt::Display for CastAccountType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            CastAccountType::Keystore => write!(f, "keystore"),
+            CastAccountType::Ledger => write!(f, "ledger"),
+            CastAccountType::Trezor => write!(f, "trezor"),
+            CastAccountType::Remote => write!(f, "remote"),
+        }
+    }
+}
+
+pub async fn get_default_keystore() -> Option<PathBuf> {
+    let home = dirs_next::home_dir()?;
+    let mut path = std::path::Path::new(&home).to_path_buf();
+
+    match std::env::consts::OS {
+        "macos" => path = path.join("Library").join("Ethereum"),
+        "windows" => {
+            if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+                path = std::path::Path::new(&local_app_data).join("Ethereum");
+            }
+        }
+        "linux" | _ => path = path.join(".ethereum"),
+    }
+
+    path = path.join("keystore");
+
+    Some(path)
+}
+
+pub async fn get_account(ledger: &Ledger, path: HDPath) -> Result<CastAccount> {
+    let address = ledger.get_address_with_path(&path).await?;
+
+    let s = format!("{}", path);
+    let derivation_path = DerivationPath::from_str(&s.to_string()).expect("valid hd path");
+
+    Ok(CastAccount { address, path: Some(derivation_path), kind: CastAccountType::Ledger })
+}
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug)]

@@ -100,6 +100,14 @@ pub enum Subcommands {
         value: Option<String>,
         unit: Option<String>,
     },
+    #[clap(name = "accounts")]
+    #[clap(
+        about = "Print information about accounts"
+    )]
+    Accounts {
+        #[clap(long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+    },
     #[clap(name = "block")]
     #[clap(
         about = "Prints information about <block>. If <field> is given, print only the value of that field"
@@ -399,6 +407,12 @@ pub enum Subcommands {
         rpc_url: String,
         #[clap(long, short, help = "do a forward resolution to ensure the address is correct")]
         verify: bool,
+    },
+    #[clap(name = "ls")]
+    #[clap(about = "Display a list of your local accounts and balances (in wei)")]
+    Ls {
+        #[clap(short, long, env = "ETH_RPC_URL")]
+        rpc_url: String,
     },
     #[clap(name = "storage", about = "Show the raw value of a contract's storage slot")]
     Storage {

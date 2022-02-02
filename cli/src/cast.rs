@@ -149,6 +149,13 @@ async fn main() -> eyre::Result<()> {
                 )?
             );
         }
+        Subcommands::Accounts { rpc_url } => {
+            let provider = Provider::try_from(rpc_url)?;
+            let accounts = Cast::new(provider).accounts().await?;
+            for account in accounts {
+                println!("{}", account);
+            }
+        }
         Subcommands::Block { rpc_url, block, full, field, to_json } => {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).block(block, full, field, to_json).await?);
@@ -482,6 +489,14 @@ async fn main() -> eyre::Result<()> {
                 );
             }
             println!("{}", name);
+        }
+        Subcommands::Ls { rpc_url } => {
+            let provider = Provider::try_from(rpc_url)?;
+            let (accounts, balances) = Cast::new(provider).ls().await?;
+
+            for (account, balance) in accounts.iter().zip(balances.iter()) {
+                println!("{:?}\t{}", account.address, balance)
+            }
         }
         Subcommands::Storage { address, slot, rpc_url, block } => {
             let provider = Provider::try_from(rpc_url)?;

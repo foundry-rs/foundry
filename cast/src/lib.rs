@@ -10,15 +10,21 @@ use ethers_core::{
     types::{transaction::eip2718::TypedTransaction, Chain, *},
     utils::{self, keccak256, parse_units},
 };
+use futures::future::join_all;
 
 use ethers_etherscan::Client;
 use ethers_providers::{Middleware, PendingTransaction};
+use ethers_signers::{HDPath, Ledger};
 use eyre::{Context, Result};
 use futures::future::join_all;
 use rustc_hex::{FromHexIter, ToHex};
-use std::str::FromStr;
+use serde::Deserialize;
+use std::{fs, str::FromStr};
 
-use foundry_utils::{encode_args, get_func, get_func_etherscan, to_table};
+use foundry_utils::{
+    encode_args, get_account, get_default_keystore, get_func, get_func_etherscan, to_table,
+    CastAccount, CastAccountType,
+};
 
 // TODO: CastContract with common contract initializers? Same for CastProviders?
 
@@ -50,7 +56,7 @@ where
     /// Makes a read-only call to the specified address
     ///
     /// ```no_run
-    /// 
+    ///
     /// use cast::Cast;
     /// use ethers_core::types::{Address, Chain};
     /// use ethers_providers::{Provider, Http};
@@ -474,6 +480,77 @@ where
 
     pub async fn gas_price(&self) -> Result<U256> {
         Ok(self.provider.get_gas_price().await?)
+    }
+
+    pub async fn accounts(&self) -> Result<Vec<CastAccount>> {
+        let mut accounts: Vec<CastAccount> = Vec::new();
+
+        // fetch remote accounts
+        if let Ok(remotes) = self.provider.get_accounts().await {
+            for remote in remotes {
+                accounts.push(CastAccount {
+                    address: remote,
+                    kind: CastAccountType::Remote,
+                    path: None,
+                })
+            }
+        }
+
+        // Check the keystore
+        if let Some(keystore) = get_default_keystore().await {
+            #[derive(Deserialize)]
+            struct Entry {
+                address: Address,
+            }
+            let entries = fs::read_dir(keystore)?;
+            for entry in entries {
+                let entry = entry?;
+                let path = entry.path();
+                let file = fs::read_to_string(path)?;
+                let entry: Entry = serde_json::from_str(&file.to_string())?;
+
+                accounts.push(CastAccount {
+                    address: entry.address,
+                    kind: CastAccountType::Keystore,
+                    path: None,
+                });
+            }
+        }
+
+        let chain_id = self.chain_id().await?;
+        match Ledger::new(HDPath::LedgerLive(0), chain_id.as_u64()).await {
+            Ok(ledger) => {
+                for i in 0..6 {
+                    let path = HDPath::LedgerLive(i);
+                    let account = get_account(&ledger, path).await?;
+                    accounts.push(account);
+                }
+                for i in 0..6 {
+                    let path = HDPath::Legacy(i);
+                    let account = get_account(&ledger, path).await?;
+                    accounts.push(account);
+                }
+            }
+            Err(_) => {}
+        }
+
+        Ok(accounts)
+    }
+
+    pub async fn ls(&self) -> Result<(Vec<CastAccount>, Vec<U256>)> {
+        let accounts = self.accounts().await?;
+        let results =
+            join_all(accounts.iter().map(|acct| self.balance(acct.address.clone(), None))).await;
+
+        let mut balances: Vec<U256> = Vec::new();
+        for balance in results.iter() {
+            match balance {
+                Ok(balance) => balances.push(balance.into()),
+                Err(_) => balances.push(0.into()),
+            };
+        }
+
+        Ok((accounts, balances))
     }
 
     /// ```no_run

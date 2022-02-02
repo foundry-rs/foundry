@@ -421,6 +421,7 @@ dependencies = [
  "futures",
  "hex",
  "rustc-hex",
+ "serde",
  "serde_json",
 ]
 
@@ -1677,10 +1678,13 @@ name = "foundry-utils"
 version = "0.1.0"
 dependencies = [
  "ethers",
+ "coins-bip32",
+ "dirs-next",
  "ethers-addressbook",
  "ethers-core",
  "ethers-etherscan",
  "ethers-providers",
+ "ethers-signers",
  "ethers-solc",
  "eyre",
  "hex",

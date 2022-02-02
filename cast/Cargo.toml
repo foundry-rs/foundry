@@ -8,13 +8,14 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 foundry-utils = { path = "../utils" }
-futures = "0.3.17"
+futures = "0.3.19"
 ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-providers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-signers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 eyre = "0.6.5"
 rustc-hex = "2.1.0"
+serde = "1.0.132"
 serde_json = "1.0.67"
 chrono = "0.2"
 hex = "0.4.3"
