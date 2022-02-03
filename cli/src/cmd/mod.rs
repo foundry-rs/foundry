@@ -37,6 +37,7 @@
 //! let config: Config = From::from(&args);
 //! ```
 
+pub mod bind;
 pub mod build;
 pub mod config;
 pub mod create;
