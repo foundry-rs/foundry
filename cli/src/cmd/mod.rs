@@ -56,10 +56,7 @@ use ethers::{
         artifacts::{CompactBytecode, CompactDeployedBytecode},
         Graph,
     },
-    solc::{
-        artifacts::{Source},
-        cache::SolFilesCache,
-    },
+    solc::{artifacts::Source, cache::SolFilesCache},
 };
 use std::path::PathBuf;
 
@@ -72,7 +69,6 @@ pub trait Cmd: clap::Parser + Sized {
 use ethers::solc::{
     artifacts::CompactContractBytecode, MinimalCombinedArtifacts, Project, ProjectCompileOutput,
 };
-
 
 /// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
 /// compilation was successful or if there was a cache hit.
