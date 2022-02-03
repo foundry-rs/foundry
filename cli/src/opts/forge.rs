@@ -4,8 +4,8 @@ use ethers::{solc::EvmVersion, types::Address};
 use std::{path::PathBuf, str::FromStr};
 
 use crate::cmd::{
-    build::BuildArgs, config, create::CreateArgs, flatten, init::InitArgs, install::InstallArgs,
-    remappings::RemappingArgs, run::RunArgs, snapshot, test,
+    bind::BindArgs, build::BuildArgs, config, create::CreateArgs, flatten, init::InitArgs,
+    install::InstallArgs, remappings::RemappingArgs, run::RunArgs, snapshot, test,
 };
 use serde::Serialize;
 
@@ -23,6 +23,9 @@ pub enum Subcommands {
     #[clap(about = "test your smart contracts")]
     #[clap(alias = "t")]
     Test(test::TestArgs),
+
+    #[clap(about = "generate rust bindings for your smart contracts")]
+    Bind(BindArgs),
 
     #[clap(about = "build your smart contracts")]
     #[clap(alias = "b")]
