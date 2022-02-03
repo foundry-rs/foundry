@@ -1570,7 +1570,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
- "tracing-subscriber",
+ "tracing-subscriber 0.2.25",
 ]
 
 [[package]]
@@ -1616,7 +1616,7 @@ dependencies = [
  "tokio",
  "toml",
  "tracing",
- "tracing-subscriber",
+ "tracing-subscriber 0.2.25",
  "ui",
  "vergen",
 ]
@@ -1667,6 +1667,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tracing-subscriber 0.3.7",
 ]
 
 [[package]]
@@ -2307,6 +2308,15 @@ name = "matchers"
 version = "0.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f099785f7595cc4b4553a174ce30dd7589ef93391ff414dbb67f62392b9e0ce1"
+dependencies = [
+ "regex-automata",
+]
+
+[[package]]
+name = "matchers"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8263075bb86c5a1b1427b5ae862e8889656f126e9f77c484496e8b47cf5c5558"
 dependencies = [
  "regex-automata",
 ]
@@ -4088,7 +4098,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4d7c0b83d4a500748fa5879461652b361edf5c9d51ede2a2ac03875ca185e24"
 dependencies = [
  "tracing",
- "tracing-subscriber",
+ "tracing-subscriber 0.2.25",
 ]
 
 [[package]]
@@ -4131,7 +4141,7 @@ dependencies = [
  "ansi_term",
  "chrono 0.4.19",
  "lazy_static",
- "matchers",
+ "matchers 0.0.1",
  "regex",
  "serde",
  "serde_json",
@@ -4142,6 +4152,21 @@ dependencies = [
  "tracing-core",
  "tracing-log",
  "tracing-serde",
+]
+
+[[package]]
+name = "tracing-subscriber"
+version = "0.3.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5312f325fe3588e277415f5a6cca1f4ccad0f248c4cd5a4bd33032d7286abc22"
+dependencies = [
+ "lazy_static",
+ "matchers 0.1.0",
+ "regex",
+ "sharded-slab",
+ "thread_local",
+ "tracing",
+ "tracing-core",
 ]
 
 [[package]]

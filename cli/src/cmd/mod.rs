@@ -93,6 +93,7 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
     } else if output.is_unchanged() {
         println!("no files changed, compilation skipped.");
     } else {
+        println!("{}", output);
         println!("success.");
     }
     Ok(output)
@@ -190,8 +191,6 @@ fn get_artifact_from_name(
 }
 
 /// Find using src/ContractSource.sol:ContractName
-// TODO: Is there a better / more ergonomic way to get the artifacts given a project and a
-// path?
 fn get_artifact_from_path(
     project: &Project,
     contract_path: String,

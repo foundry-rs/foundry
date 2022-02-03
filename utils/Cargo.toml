@@ -13,7 +13,7 @@ ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", default-featu
 ethers-addressbook = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-providers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-solc = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
-
+tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "fmt"], optional = true }
 
 
 eyre = { version = "0.6.5", default-features = false }
@@ -24,3 +24,6 @@ serde = "1.0.132"
 serde_json = { version = "1.0.67", default-features = false }
 tokio = { version = "1.12.0", features = ["rt-multi-thread", "macros"] }
 rlp = "0.5.1"
+
+[features]
+test = ["tracing-subscriber"]
