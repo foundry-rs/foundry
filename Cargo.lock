@@ -1150,8 +1150,9 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "0.6.0"
+source = "git+https://github.com/mattsse/ethers-rs/?branch=matt/more-refactor#18e8218a359160a42750bcc830b36a650d537d62"
 dependencies = [
- "ethers-addressbook 0.1.0",
+ "ethers-addressbook 0.1.0 (git+https://github.com/mattsse/ethers-rs/?branch=matt/more-refactor)",
  "ethers-contract",
  "ethers-core",
  "ethers-etherscan",
@@ -1164,6 +1165,7 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "0.1.0"
+source = "git+https://github.com/mattsse/ethers-rs/?branch=matt/more-refactor#18e8218a359160a42750bcc830b36a650d537d62"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -1174,7 +1176,7 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "0.1.0"
-source = "git+https://github.com/gakonst/ethers-rs#7e4e8e200aeb0af8a766e78daa61bac5b233e5e9"
+source = "git+https://github.com/gakonst/ethers-rs#99230afd3278388da24532ab45d25010e1c49412"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -1185,6 +1187,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "0.6.0"
+source = "git+https://github.com/mattsse/ethers-rs/?branch=matt/more-refactor#18e8218a359160a42750bcc830b36a650d537d62"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1202,6 +1205,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "0.6.0"
+source = "git+https://github.com/mattsse/ethers-rs/?branch=matt/more-refactor#18e8218a359160a42750bcc830b36a650d537d62"
 dependencies = [
  "Inflector",
  "cfg-if 1.0.0",
@@ -1224,6 +1228,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "0.6.0"
+source = "git+https://github.com/mattsse/ethers-rs/?branch=matt/more-refactor#18e8218a359160a42750bcc830b36a650d537d62"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -1237,6 +1242,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "0.6.0"
+source = "git+https://github.com/mattsse/ethers-rs/?branch=matt/more-refactor#18e8218a359160a42750bcc830b36a650d537d62"
 dependencies = [
  "arrayvec 0.7.2",
  "bytes",
@@ -1264,6 +1270,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "0.2.0"
+source = "git+https://github.com/mattsse/ethers-rs/?branch=matt/more-refactor#18e8218a359160a42750bcc830b36a650d537d62"
 dependencies = [
  "ethers-core",
  "reqwest",
@@ -1276,6 +1283,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "0.6.0"
+source = "git+https://github.com/mattsse/ethers-rs/?branch=matt/more-refactor#18e8218a359160a42750bcc830b36a650d537d62"
 dependencies = [
  "async-trait",
  "ethers-contract",
@@ -1298,6 +1306,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "0.6.0"
+source = "git+https://github.com/mattsse/ethers-rs/?branch=matt/more-refactor#18e8218a359160a42750bcc830b36a650d537d62"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -1329,6 +1338,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "0.6.0"
+source = "git+https://github.com/mattsse/ethers-rs/?branch=matt/more-refactor#18e8218a359160a42750bcc830b36a650d537d62"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1351,6 +1361,7 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "0.2.0"
+source = "git+https://github.com/mattsse/ethers-rs/?branch=matt/more-refactor#18e8218a359160a42750bcc830b36a650d537d62"
 dependencies = [
  "colored",
  "dunce",
