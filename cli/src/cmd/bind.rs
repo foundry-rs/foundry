@@ -16,8 +16,8 @@ use std::{fs, path::PathBuf};
 
 impl_figment_convert!(BindArgs);
 
-static DEFAULT_CRATE_NAME: &'static str = "foundry-contracts";
-static DEFAULT_CRATE_VERSION: &'static str = "0.0.1";
+static DEFAULT_CRATE_NAME: &str = "foundry-contracts";
+static DEFAULT_CRATE_VERSION: &str = "0.0.1";
 
 #[derive(Debug, Clone, Parser, Serialize)]
 pub struct BindArgs {
