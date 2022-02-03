@@ -4,7 +4,7 @@ use ethers_core::{
     abi::{
         self, parse_abi,
         token::{LenientTokenizer, StrictTokenizer, Tokenizer},
-        Abi, AbiParser, Event, Function, Param, ParamType, Token,
+        Abi, AbiParser, Event, Function, Param, EventParam, ParamType, Token,
     },
     types::*,
 };
@@ -636,6 +636,49 @@ fn format_param(param: &Param, structs: &mut HashSet<String>) -> String {
     }
 }
 
+fn format_event_params(param: &EventParam, structs: &mut HashSet<String>) -> String {
+    let (kind, v2_struct) = match param.kind {
+        // We need to do some extra work to parse ABI Encoder V2 types.
+        ParamType::Tuple(ref args) => {
+            let name = capitalize(&param.name);
+            let name = if name.contains('.') {
+                name.split('.').nth(1).expect("could not get struct name").to_owned()
+            } else {
+                name
+            };
+
+            // NB: This does not take into account recursive ABI Encoder v2 structs. Left
+            // as future work.
+            let args = args
+                .iter()
+                .enumerate()
+                // Unfortunately Solidity does not support unnamed struct fields, so we
+                // just codegen ones alphabetically.
+                .map(|(i, x)| format!("{} {};", x, ASCII_LOWER[i]))
+                .collect::<Vec<_>>()
+                .join(" ");
+
+            let v2_struct = format!("struct {} {{ {} }}", name, args);
+            (name, Some(v2_struct))
+        }
+        // If not, just get the string of the param kind.
+        _ => (param.kind.to_string(), None),
+    };
+
+    // if there was a v2 struct, push it for later usage
+    if let Some(v2_struct) = v2_struct {
+        structs.insert(v2_struct);
+    }
+
+    if param.name.is_empty() {
+        kind
+    } else if param.indexed == true {
+        format!("{} indexed {}", kind, param.name)
+    } else {
+        format!("{} {}", kind, param.name)
+    }
+}
+
 /// This function takes a contract [`Abi`] and a name and proceeds to generate a Solidity
 /// `interface` from that ABI. If the provided name is empty, then it defaults to `interface
 /// Interface`.
@@ -648,12 +691,28 @@ fn format_param(param: &Param, structs: &mut HashSet<String>) -> String {
 /// * Kudos to https://github.com/maxme/abi2solidity for the algorithm
 pub fn abi_to_solidity(contract_abi: &Abi, mut contract_name: &str) -> Result<String> {
     let functions_iterator = contract_abi.functions();
+    let events_iterator = contract_abi.events();
     if contract_name.trim().is_empty() {
         contract_name = "Interface";
     };
 
     // instantiate an array of all ABI Encoder v2 structs
     let mut structs = HashSet::new();
+
+    let events = events_iterator
+        .map(|event| {
+            let inputs = event
+                .inputs
+                .iter()
+                .map(|param| format_event_params(param, &mut structs))
+                .collect::<Vec<String>>()
+                .join(", ");
+            
+            let event_final = format!("event {}({})", event.name, inputs);
+            format!("{};", event_final)
+        })
+        .collect::<Vec<_>>()
+        .join("\n    ");
 
     let functions = functions_iterator
         .map(|function| {
@@ -691,24 +750,48 @@ pub fn abi_to_solidity(contract_abi: &Abi, mut contract_name: &str) -> Result<St
         .join("\n    ");
 
     Ok(if structs.is_empty() {
-        format!(
+    match events.is_empty() {
+        true => format!(
             r#"interface {} {{
     {}
 }}
 "#,
-            contract_name, functions
-        )
-    } else {
-        let structs = structs.into_iter().collect::<Vec<_>>().join("\n    ");
-        format!(
-            r#"interface {} {{
+            contract_name, functions 
+        ),
+       false =>  format!(
+        r#"interface {} {{
     {}
 
     {}
 }}
 "#,
-            contract_name, structs, functions
+        contract_name, events, functions 
+    )
+    }
+    } else {
+        let structs = structs.into_iter().collect::<Vec<_>>().join("\n    ");
+        match events.is_empty() {
+            true => format!(
+                r#"interface {} {{
+    {}
+
+    {}
+}}
+"#,
+            contract_name, structs, functions 
+        ),
+            false =>  format!(
+                r#"interface {} {{
+    {}
+
+    {}
+    
+    {}
+}}
+"#,
+            contract_name, structs, events, functions 
         )
+        }
     })
 }
 
