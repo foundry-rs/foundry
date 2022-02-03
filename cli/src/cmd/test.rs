@@ -12,7 +12,10 @@ use evm_adapters::{
 };
 use forge::{MultiContractRunnerBuilder, TestFilter};
 use foundry_config::{figment::Figment, Config};
-use std::collections::BTreeMap;
+use std::{
+    path::Path,
+    collections::BTreeMap,
+};
 
 #[derive(Debug, Clone, Parser)]
 pub struct Filter {
@@ -57,30 +60,34 @@ pub struct Filter {
 }
 
 impl TestFilter for Filter {
-    fn matches_test(&self, test_name: &str) -> bool {
+    fn matches_test(&self, test_name: impl AsRef<str>) -> bool {
         let mut ok = true;
         // Handle the deprecated option match
         if let Some(re) = &self.pattern {
-            ok &= re.is_match(test_name);
+            ok &= re.is_match(test_name.as_ref());
         }
         if let Some(re) = &self.test_pattern {
-            ok &= re.is_match(test_name);
+            ok &= re.is_match(test_name.as_ref());
         }
         if let Some(re) = &self.test_pattern_inverse {
-            ok &= !re.is_match(test_name);
+            ok &= !re.is_match(test_name.as_ref());
         }
         ok
     }
 
-    fn matches_contract(&self, contract_name: &str) -> bool {
+    fn matches_contract(&self, contract_name: impl AsRef<str>) -> bool {
         let mut ok = true;
         if let Some(re) = &self.contract_pattern {
-            ok &= re.is_match(contract_name);
+            ok &= re.is_match(contract_name.as_ref());
         }
         if let Some(re) = &self.contract_pattern_inverse {
-            ok &= !re.is_match(contract_name);
+            ok &= !re.is_match(contract_name.as_ref());
         }
         ok
+    }
+
+    fn matches_path(&self, path: impl AsRef<Path>) -> bool {
+        unimplemented!()
     }
 }
 

@@ -4,9 +4,12 @@ pub use runner::{ContractRunner, TestKind, TestKindGas, TestResult};
 mod multi_runner;
 pub use multi_runner::{MultiContractRunner, MultiContractRunnerBuilder};
 
+use std::path::Path;
+
 pub trait TestFilter {
-    fn matches_test(&self, test_name: &str) -> bool;
-    fn matches_contract(&self, contract_name: &str) -> bool;
+    fn matches_test(&self, test_name: impl AsRef<str>) -> bool;
+    fn matches_contract(&self, contract_name: impl AsRef<str>) -> bool;
+    fn matches_path(&self, path: impl AsRef<Path>) -> bool;
 }
 
 #[cfg(test)]
@@ -70,6 +73,10 @@ pub mod test_helpers {
 
         fn matches_contract(&self, contract_name: &str) -> bool {
             self.contract_regex.is_match(contract_name)
+        }
+
+        fn matches_path(&self, path: impl AsRef<Path>) -> bool {
+            todo!()
         }
     }
 }
