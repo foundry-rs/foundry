@@ -73,7 +73,6 @@ use ethers::solc::{
 
 /// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
 /// compilation was successful or if there was a cache hit.
-// TODO: Move this to ethers-solc.
 pub fn compile(project: &Project) -> eyre::Result<ProjectCompileOutput<MinimalCombinedArtifacts>> {
     if !project.paths.sources.exists() {
         eyre::bail!(

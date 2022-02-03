@@ -816,7 +816,8 @@ pub fn link<T, U>(
 pub fn init_tracing_subscriber() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .try_init().ok();
+        .try_init()
+        .ok();
 }
 
 #[cfg(test)]

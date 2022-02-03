@@ -3711,7 +3711,7 @@ dependencies = [
 [[package]]
 name = "solang-parser"
 version = "0.1.1"
-source = "git+https://github.com/hyperledger-labs/solang#bee43dddd9af857248585a086eaca7f0040e20f8"
+source = "git+https://github.com/hyperledger-labs/solang#f3e8f6fcabab91c959833cf85e3f13d327b00e38"
 dependencies = [
  "lalrpop",
  "lalrpop-util",
@@ -3802,8 +3802,8 @@ checksum = "6bdef32e8150c2a081110b42772ffe7d7c9032b606bc226c8260fd97e0976601"
 
 [[package]]
 name = "svm-rs"
-version = "0.2.2"
-source = "git+https://github.com/roynalnaruto/svm-rs#146021b95ef9f17bb3b084bc77fbb84f3d4c5ee2"
+version = "0.2.3"
+source = "git+https://github.com/roynalnaruto/svm-rs#d8c57e26f8bacb131487116a7b3a062d86db95b1"
 dependencies = [
  "anyhow",
  "cfg-if 1.0.0",
