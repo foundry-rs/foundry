@@ -1033,12 +1033,20 @@ impl SimpleCast {
     /// fn main() -> eyre::Result<()> {
     ///     assert_eq!(Cast::keccak("foo")?, "0x41b1a0649752af1b28b3dc29a1556eee781e4a4c3a1f7f53f90fa834de098c4d");
     ///     assert_eq!(Cast::keccak("123abc")?, "0xb1f1c74a1ba56f07a892ea1110a39349d40f66ca01d245e704621033cb7046a4");
+    ///     assert_eq!(Cast::keccak("0x12")?, "0x5fa2358263196dbbf23d1ca7a509451f7a2f64c15837bfbb81298b1e3e24e4fa");
+    ///     assert_eq!(Cast::keccak("12")?, "0x7f8b6b088b6d74c2852fc86c796dca07b44eed6fb3daf5e6b59f7c364db14528");
     ///
     ///     Ok(())
     /// }
     /// ```
     pub fn keccak(data: &str) -> Result<String> {
-        let hash: String = keccak256(data.as_bytes()).to_hex();
+        let hash: String = match data.as_bytes() {
+             // If has a 0x prefix, read it as hexdata.
+             // If has no 0x prefix, read it as text
+            [b'0', b'x', rest @ ..] => keccak256(hex::decode(rest)?).to_hex(),
+            _ => keccak256(data).to_hex(),
+        };
+
         Ok(format!("0x{}", hash))
     }
 
