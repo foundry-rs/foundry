@@ -5,6 +5,8 @@ mod forked_backend;
 pub use forked_backend::*;
 
 pub mod cheatcodes;
+pub mod macros;
+pub mod script;
 pub mod state;
 
 use ethers::{

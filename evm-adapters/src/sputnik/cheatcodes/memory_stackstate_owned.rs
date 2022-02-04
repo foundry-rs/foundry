@@ -1,3 +1,4 @@
+use crate::sputnik::macros::forward_backend_methods;
 use sputnik::{
     backend::{Backend, Basic},
     executor::stack::{MemoryStackSubstate, StackState, StackSubstateMetadata},
@@ -151,37 +152,6 @@ impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
 }
 
 impl<'config, B: Backend> Backend for MemoryStackStateOwned<'config, B> {
-    fn gas_price(&self) -> U256 {
-        self.backend.gas_price()
-    }
-    fn origin(&self) -> H160 {
-        self.backend.origin()
-    }
-    fn block_hash(&self, number: U256) -> H256 {
-        self.backend.block_hash(number)
-    }
-    fn block_number(&self) -> U256 {
-        self.backend.block_number()
-    }
-    fn block_coinbase(&self) -> H160 {
-        self.backend.block_coinbase()
-    }
-    fn block_timestamp(&self) -> U256 {
-        self.backend.block_timestamp()
-    }
-    fn block_difficulty(&self) -> U256 {
-        self.backend.block_difficulty()
-    }
-    fn block_gas_limit(&self) -> U256 {
-        self.backend.block_gas_limit()
-    }
-    fn block_base_fee_per_gas(&self) -> U256 {
-        self.backend.block_base_fee_per_gas()
-    }
-    fn chain_id(&self) -> U256 {
-        self.backend.chain_id()
-    }
-
     fn exists(&self, address: H160) -> bool {
         self.substate.known_account(address).is_some() || self.backend.exists(address)
     }
@@ -209,6 +179,19 @@ impl<'config, B: Backend> Backend for MemoryStackStateOwned<'config, B> {
         }
 
         self.backend.original_storage(address, key)
+    }
+
+    forward_backend_methods! {
+        origin() -> H160,
+        gas_price() -> U256,
+        block_hash(number: U256) -> H256,
+        block_number() -> U256,
+        block_coinbase() -> H160,
+        block_timestamp() -> U256,
+        block_difficulty() -> U256,
+        block_gas_limit() -> U256,
+        block_base_fee_per_gas() -> U256,
+        chain_id() -> U256
     }
 }
 

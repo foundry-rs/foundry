@@ -1,7 +1,10 @@
 //! Cheatcode-enabled backend implementation
-use super::Cheatcodes;
 use ethers::types::{H160, H256, U256};
 use sputnik::backend::{Backend, Basic};
+
+use crate::sputnik::macros::forward_backend_methods;
+
+use super::Cheatcodes;
 
 #[derive(Debug, Clone)]
 /// A cheatcode backend is a wrapper around the inner backend which returns the
@@ -19,25 +22,12 @@ pub struct CheatcodeBackend<B> {
 }
 
 impl<B: Backend> Backend for CheatcodeBackend<B> {
-    // TODO: Override the return values based on the values of `self.cheats`
-    fn gas_price(&self) -> U256 {
-        self.backend.gas_price()
-    }
-
     fn origin(&self) -> H160 {
         self.cheats.origin.unwrap_or_else(|| self.backend.origin())
     }
 
-    fn block_hash(&self, number: U256) -> H256 {
-        self.backend.block_hash(number)
-    }
-
     fn block_number(&self) -> U256 {
         self.cheats.block_number.unwrap_or_else(|| self.backend.block_number())
-    }
-
-    fn block_coinbase(&self) -> H160 {
-        self.backend.block_coinbase()
     }
 
     fn block_timestamp(&self) -> U256 {
@@ -48,35 +38,17 @@ impl<B: Backend> Backend for CheatcodeBackend<B> {
         self.cheats.block_base_fee_per_gas.unwrap_or_else(|| self.backend.block_base_fee_per_gas())
     }
 
-    fn block_difficulty(&self) -> U256 {
-        self.backend.block_difficulty()
-    }
-
-    fn block_gas_limit(&self) -> U256 {
-        self.backend.block_gas_limit()
-    }
-
-    fn chain_id(&self) -> U256 {
-        self.backend.chain_id()
-    }
-
-    fn exists(&self, address: H160) -> bool {
-        self.backend.exists(address)
-    }
-
-    fn basic(&self, address: H160) -> Basic {
-        self.backend.basic(address)
-    }
-
-    fn code(&self, address: H160) -> Vec<u8> {
-        self.backend.code(address)
-    }
-
-    fn storage(&self, address: H160, index: H256) -> H256 {
-        self.backend.storage(address, index)
-    }
-
-    fn original_storage(&self, address: H160, index: H256) -> Option<H256> {
-        self.backend.original_storage(address, index)
+    forward_backend_methods! {
+        gas_price() -> U256,
+        block_hash(number: U256) -> H256,
+        block_coinbase() -> H160,
+        block_difficulty() -> U256,
+        block_gas_limit() -> U256,
+        chain_id() -> U256,
+        exists(address: H160) -> bool,
+        basic(address: H160) -> Basic,
+        code(address: H160) -> Vec<u8>,
+        storage(address: H160, index: H256) -> H256,
+        original_storage(address: H160, index: H256) -> Option<H256>
     }
 }
