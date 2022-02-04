@@ -80,6 +80,30 @@ where
         !Self::is_success(reason)
     }
 
+    /// given an iterator of contract address to contract bytecode, initializes
+    /// the state with the contract deployed at the specified address
+    fn initialize_contracts<T: IntoIterator<Item = (Address, Bytes)>>(&mut self, contracts: T) {
+        let state_ = self.executor.state_mut();
+        contracts.into_iter().for_each(|(address, bytecode)| {
+            state_.set_code(address, bytecode.to_vec());
+        })
+    }
+
+    fn state(&self) -> &S {
+        self.executor.state()
+    }
+
+    fn code(&self, address: Address) -> Vec<u8> {
+        self.executor.state().code(address)
+    }
+
+    fn set_balance(&mut self, address: Address, balance: U256) {
+        self.executor
+            .state_mut()
+            .transfer(Transfer { source: *FAUCET_ACCOUNT, target: address, value: balance })
+            .expect("could not transfer funds")
+    }
+
     fn reset(&mut self, state: S) {
         let mut _state = self.executor.state_mut();
         *_state = state;
@@ -99,28 +123,8 @@ where
         self.executor.debug_calls()
     }
 
-    /// given an iterator of contract address to contract bytecode, initializes
-    /// the state with the contract deployed at the specified address
-    fn initialize_contracts<T: IntoIterator<Item = (Address, Bytes)>>(&mut self, contracts: T) {
-        let state_ = self.executor.state_mut();
-        contracts.into_iter().for_each(|(address, bytecode)| {
-            state_.set_code(address, bytecode.to_vec());
-        })
-    }
-
-    fn set_balance(&mut self, address: Address, balance: U256) {
-        self.executor
-            .state_mut()
-            .transfer(Transfer { source: *FAUCET_ACCOUNT, target: address, value: balance })
-            .expect("could not transfer funds")
-    }
-
-    fn state(&self) -> &S {
-        self.executor.state()
-    }
-
-    fn code(&self, address: Address) -> Vec<u8> {
-        self.executor.state().code(address)
+    fn all_logs(&self) -> Vec<String> {
+        self.executor.all_logs()
     }
 
     fn traces(&self) -> Vec<CallTraceArena> {
@@ -131,8 +135,38 @@ where
         self.executor.reset_traces()
     }
 
-    fn all_logs(&self) -> Vec<String> {
-        self.executor.all_logs()
+    /// Runs the selected function
+    fn call_raw(
+        &mut self,
+        from: Address,
+        to: Address,
+        calldata: Bytes,
+        value: U256,
+        _is_static: bool,
+    ) -> Result<(Bytes, ExitReason, u64, Vec<String>)> {
+        let gas_used_before = self.executor.gas_used();
+        let refunded_gas_before = self.executor.gas_refund();
+
+        let (status, retdata) =
+            self.executor.transact_call(from, to, value, calldata.to_vec(), self.gas_limit, vec![]);
+
+        tracing::trace!(logs_before = ?self.executor.logs());
+
+        let refunded_gas = self.executor.gas_refund().saturating_sub(refunded_gas_before);
+        let gas_used_after = self.executor.gas_used();
+        // remove base and calldata costs
+        let gas = foundry_utils::remove_extra_costs(
+            gas_used_after.saturating_sub(gas_used_before).saturating_sub(refunded_gas),
+            calldata.as_ref(),
+        );
+
+        // get the logs
+        let logs = self.executor.logs();
+        tracing::trace!(logs_after = ?self.executor.logs());
+        // clear them
+        self.executor.clear_logs();
+
+        Ok((retdata.into(), status, gas.as_u64(), logs))
     }
 
     /// Deploys the provided contract bytecode
@@ -171,40 +205,6 @@ where
             tracing::trace!(?status, ?address, ?gas, "success");
             Ok((address, status, gas.as_u64(), logs))
         }
-    }
-
-    /// Runs the selected function
-    fn call_raw(
-        &mut self,
-        from: Address,
-        to: Address,
-        calldata: Bytes,
-        value: U256,
-        _is_static: bool,
-    ) -> Result<(Bytes, ExitReason, u64, Vec<String>)> {
-        let gas_used_before = self.executor.gas_used();
-        let refunded_gas_before = self.executor.gas_refund();
-
-        let (status, retdata) =
-            self.executor.transact_call(from, to, value, calldata.to_vec(), self.gas_limit, vec![]);
-
-        tracing::trace!(logs_before = ?self.executor.logs());
-
-        let refunded_gas = self.executor.gas_refund().saturating_sub(refunded_gas_before);
-        let gas_used_after = self.executor.gas_used();
-        // remove base and calldata costs
-        let gas = foundry_utils::remove_extra_costs(
-            gas_used_after.saturating_sub(gas_used_before).saturating_sub(refunded_gas),
-            calldata.as_ref(),
-        );
-
-        // get the logs
-        let logs = self.executor.logs();
-        tracing::trace!(logs_after = ?self.executor.logs());
-        // clear them
-        self.executor.clear_logs();
-
-        Ok((retdata.into(), status, gas.as_u64(), logs))
     }
 }
 

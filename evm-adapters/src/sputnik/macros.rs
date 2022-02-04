@@ -52,11 +52,10 @@ macro_rules! forward_backend_method {
 ///    }
 /// }
 /// ```
-fn x() {}
 macro_rules! forward_backend_methods {
     ( $($name: ident ($($arg: ident : $arg_type: ty),* $(,)? ) -> $return_type: ty),* ) => {
         $(
-            $crate::sputnik::macros::forward_backend_method!($name($(, $arg : $arg_type)*) -> $return_type);
+            $crate::sputnik::macros::forward_backend_method!($name(&self $(, $arg : $arg_type)*) -> $return_type);
         )*
     };
 }

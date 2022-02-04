@@ -8,6 +8,7 @@ pub mod cheatcodes;
 pub mod macros;
 pub mod script;
 pub mod state;
+pub mod utils;
 
 use ethers::{
     abi::RawLog,
@@ -191,12 +192,12 @@ impl<'a, 'b, S: StackState<'a>, P: PrecompileSet> SputnikExecutor<S>
         self.create_address(scheme)
     }
 
-    // Empty impls for non-cheatcode handlers
-    fn logs(&self) -> Vec<String> {
+    fn raw_logs(&self) -> Vec<RawLog> {
         vec![]
     }
 
-    fn raw_logs(&self) -> Vec<RawLog> {
+    // Empty impls for non-cheatcode handlers
+    fn logs(&self) -> Vec<String> {
         vec![]
     }
 
