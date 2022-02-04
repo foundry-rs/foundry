@@ -14,7 +14,7 @@ pub mod test_helpers {
     use super::*;
     use ethers::{
         prelude::Lazy,
-        solc::{CompilerOutput, Project, ProjectPathsConfig},
+        solc::{AggregatedCompilerOutput, Project, ProjectPathsConfig},
         types::U256,
     };
     use evm_adapters::{
@@ -25,7 +25,7 @@ pub mod test_helpers {
     use regex::Regex;
     use sputnik::backend::MemoryBackend;
 
-    pub static COMPILED: Lazy<CompilerOutput> = Lazy::new(|| {
+    pub static COMPILED: Lazy<AggregatedCompilerOutput> = Lazy::new(|| {
         // NB: should we add a test-helper function that makes creating these
         // ephemeral projects easier?
         let paths =

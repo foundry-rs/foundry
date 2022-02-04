@@ -257,8 +257,7 @@ mod tests {
         let paths = ProjectPathsConfig::builder().root(&root).sources(&root).build().unwrap();
 
         Project::builder()
-            // need to add the ilb path here. would it be better placed in the ProjectPathsConfig
-            // instead? what is the `libs` modifier useful for then? linked libraries?
+            // need to explicitly allow a path outside the project
             .allowed_path(root.join("../../evm-adapters/testdata"))
             .paths(paths)
             .ephemeral()

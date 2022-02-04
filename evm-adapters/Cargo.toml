@@ -31,6 +31,7 @@ comfy-table = "5.0.0"
 
 [dev-dependencies]
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["solc-full", "solc-tests"] }
+foundry-utils = { path = "./../utils", features = ["test"] }
 
 [features]
 sputnik-helpers = ["sputnik"]

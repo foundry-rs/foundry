@@ -304,15 +304,10 @@ impl RunArgs {
 
         let (sources, all_contracts) = output.output().split();
 
-        let mut contracts: BTreeMap<String, CompactContractBytecode> = BTreeMap::new();
-        all_contracts.0.iter().for_each(|(source, output_contracts)| {
-            contracts.extend(
-                output_contracts
-                    .iter()
-                    .map(|(n, c)| (format!("{}:{}", source, n), c.clone().into()))
-                    .collect::<BTreeMap<String, CompactContractBytecode>>(),
-            );
-        });
+        let contracts: BTreeMap<String, CompactContractBytecode> = all_contracts
+            .contracts_with_files()
+            .map(|(file, name, contract)| (format!("{}:{}", file, name), contract.clone().into()))
+            .collect();
 
         let mut run_dependencies = vec![];
         let mut contract =

@@ -2,6 +2,7 @@ use crate::cmd::Cmd;
 
 use clap::{Parser, ValueHint};
 use ethers::contract::MultiAbigen;
+use eyre::WrapErr;
 use foundry_config::{
     figment::{
         self,
@@ -98,13 +99,21 @@ impl BindArgs {
 
     /// Instantiate the multi-abigen
     fn get_multi(&self) -> eyre::Result<MultiAbigen> {
-        MultiAbigen::from_json_files(self.artifacts())
+        let multi = MultiAbigen::from_json_files(self.artifacts())?;
+
+        eyre::ensure!(
+            !multi.is_empty(),
+            r#"
+            No contract artifacts found. Hint: Have you built your contracts yet? `forge bind` does not currently invoke `forge build`, although this is planned for future versions.
+            "#
+        );
+        Ok(multi)
     }
 
     /// Check that the existing bindings match the expected abigen output
     fn check_existing_bindings(&self) -> eyre::Result<()> {
         let bindings = self.get_multi()?.build()?;
-        println!("Checkign bindings for {} contracts", bindings.len());
+        println!("Checking bindings for {} contracts", bindings.len());
         if self.gen_crate() {
             bindings.ensure_consistent_crate(
                 &self.crate_name,
@@ -134,12 +143,28 @@ impl BindArgs {
         }
         Ok(())
     }
+
+    /// Check the following
+    /// - that a Cargo.toml exists for the foundry project
+    /// -
+    fn check_preconditions(&self) -> eyre::Result<()> {
+        locate_cargo_manifest::locate_manifest().wrap_err(
+            r#"
+                Could not locate a Cargo manifest file.
+                Hint: `forge bind` is currently only usable within an existing crate or workspace. Navigate to an existing cargo project, or start a new cargo project with `cargo init`.
+                "#,
+        )?;
+
+        Ok(())
+    }
 }
 
 impl Cmd for BindArgs {
     type Output = ();
 
     fn run(self) -> eyre::Result<Self::Output> {
+        self.check_preconditions()?;
+
         if !self.overwrite && self.bindings_exist() {
             println!("Bindings found. Checking for consistency.");
             return self.check_existing_bindings()
