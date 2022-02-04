@@ -193,6 +193,8 @@ pub enum Subcommands {
         args: Vec<String>,
         #[clap(long, help = "gas quantity for the transaction", parse(try_from_str = parse_u256))]
         gas: Option<U256>,
+        #[clap(long, help = "gas price for the transaction", env = "ETH_GAS_PRICE", parse(try_from_str = parse_ether_value))]
+        gas_price: Option<U256>,
         #[clap(long, help = "ether value (in wei or string with unit type e.g. 1ether, 10gwei, 0.01ether) for the transaction", parse(try_from_str = parse_ether_value))]
         value: Option<U256>,
         #[clap(long, help = "nonce for the transaction", parse(try_from_str = parse_u256))]
