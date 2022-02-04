@@ -104,7 +104,7 @@ impl BindArgs {
     /// Check that the existing bindings match the expected abigen output
     fn check_existing_bindings(&self) -> eyre::Result<()> {
         let bindings = self.get_multi()?.build()?;
-        println!("Checkign bindings for {} contracts", bindings.len());
+        println!("Checking bindings for {} contracts", bindings.len());
         if self.gen_crate() {
             bindings.ensure_consistent_crate(
                 &self.crate_name,
