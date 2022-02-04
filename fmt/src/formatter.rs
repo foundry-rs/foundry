@@ -532,7 +532,7 @@ mod tests {
             }
         }
 
-        let mut source_unit = solang_parser::parse(source, 1).unwrap();
+        let (mut source_unit, _comments) = solang_parser::parse(source, 1).unwrap();
         let mut result = String::new();
         let mut f = Formatter::new(&mut result, &source, config);
 

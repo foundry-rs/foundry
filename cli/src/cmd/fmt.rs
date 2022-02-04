@@ -64,7 +64,7 @@ impl Cmd for FmtArgs {
             .enumerate()
             .map(|(i, path)| {
                 let source = std::fs::read_to_string(&path)?;
-                let mut source_unit = solang_parser::parse(&source, i)
+                let (mut source_unit, _comments) = solang_parser::parse(&source, i)
                     .map_err(|diags| eyre::eyre!(
                             "Failed to parse Solidity code for {}. Leaving source unchanged.\nDebug info: {:?}",
                             path.to_string_lossy(),
