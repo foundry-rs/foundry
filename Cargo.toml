@@ -25,11 +25,3 @@ debug = true
 #ethers-signers = { path = "../ethers-rs/ethers-signers" }
 #ethers-etherscan = { path = "../ethers-rs/ethers-etherscan" }
 #ethers-solc = { path = "../ethers-rs/ethers-solc" }
-
-[patch."https://github.com/gakonst/ethers-rs"]
-ethers = { git = "https://github.com/mattsse/ethers-rs/", branch = "matt/more-refactor" }
-ethers-core = { git = "https://github.com/mattsse/ethers-rs/", branch = "matt/more-refactor" }
-ethers-providers = { git = "https://github.com/mattsse/ethers-rs/", branch = "matt/more-refactor" }
-ethers-signers = { git = "https://github.com/mattsse/ethers-rs/", branch = "matt/more-refactor" }
-ethers-etherscan = { git = "https://github.com/mattsse/ethers-rs/", branch = "matt/more-refactor" }
-ethers-solc = { git = "https://github.com/mattsse/ethers-rs/", branch = "matt/more-refactor" }
