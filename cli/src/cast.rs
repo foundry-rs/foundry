@@ -183,7 +183,18 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(&provider).transaction(hash, field, to_json).await?)
         }
-        Subcommands::SendTx { eth, to, sig, cast_async, args, gas, value, nonce, legacy } => {
+        Subcommands::SendTx {
+            eth,
+            to,
+            sig,
+            cast_async,
+            args,
+            gas,
+            gas_price,
+            value,
+            nonce,
+            legacy,
+        } => {
             let provider = Provider::try_from(eth.rpc_url()?)?;
             let chain_id = Cast::new(&provider).chain_id().await?;
             let sig = sig.unwrap_or_default();
@@ -197,6 +208,7 @@ async fn main() -> eyre::Result<()> {
                             to,
                             (sig, args),
                             gas,
+                            gas_price,
                             value,
                             nonce,
                             eth.chain,
@@ -213,6 +225,7 @@ async fn main() -> eyre::Result<()> {
                             to,
                             (sig, args),
                             gas,
+                            gas_price,
                             value,
                             nonce,
                             eth.chain,
@@ -229,6 +242,7 @@ async fn main() -> eyre::Result<()> {
                             to,
                             (sig, args),
                             gas,
+                            gas_price,
                             value,
                             nonce,
                             eth.chain,
@@ -247,6 +261,7 @@ async fn main() -> eyre::Result<()> {
                     to,
                     (sig, args),
                     gas,
+                    gas_price,
                     value,
                     nonce,
                     eth.chain,
@@ -611,6 +626,7 @@ async fn cast_send<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>
     to: T,
     args: (String, Vec<String>),
     gas: Option<U256>,
+    gas_price: Option<U256>,
     value: Option<U256>,
     nonce: Option<U256>,
     chain: Chain,
@@ -626,8 +642,9 @@ where
     let sig = args.0;
     let params = args.1;
     let params = if !sig.is_empty() { Some((&sig[..], params)) } else { None };
-    let pending_tx =
-        cast.send(from, to, params, gas, value, nonce, chain, etherscan_api_key, legacy).await?;
+    let pending_tx = cast
+        .send(from, to, params, gas, gas_price, value, nonce, chain, etherscan_api_key, legacy)
+        .await?;
     let tx_hash = *pending_tx;
 
     if cast_async {
