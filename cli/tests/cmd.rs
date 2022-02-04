@@ -256,7 +256,7 @@ forgetest_ignore!(can_compile_local_spells, |_: TestProject, mut cmd: TestComman
     let dss_exec_lib = "src/DssSpell.sol:DssExecLib:0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4";
 
     cmd.args([
-        "test",
+        "build",
         "--root",
         root.as_str(),
         "--fork-url",
