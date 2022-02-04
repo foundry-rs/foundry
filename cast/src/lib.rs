@@ -76,7 +76,7 @@ where
         block: Option<BlockId>,
     ) -> Result<String> {
         let (tx, func) = self
-            .build_tx(from, to, Some(args), None, None, None, chain, etherscan_api_key, false)
+            .build_tx(from, to, Some(args), None, None, None, None, chain, etherscan_api_key, false)
             .await?;
         let res = self.provider.call(&tx, block).await?;
 
@@ -135,7 +135,7 @@ where
     /// let gas = U256::from_str("200000").unwrap();
     /// let value = U256::from_str("1").unwrap();
     /// let nonce = U256::from_str("1").unwrap();
-    /// let data = cast.send(from, to, Some((sig, args)), Some(gas), Some(value), Some(nonce), Chain::Mainnet, None, false).await?;
+    /// let data = cast.send(from, to, Some((sig, args)), Some(gas), None, Some(value), Some(nonce), Chain::Mainnet, None, false).await?;
     /// println!("{}", *data);
     /// # Ok(())
     /// # }
@@ -147,6 +147,7 @@ where
         to: T,
         args: Option<(&str, Vec<String>)>,
         gas: Option<U256>,
+        gas_price: Option<U256>,
         value: Option<U256>,
         nonce: Option<U256>,
         chain: Chain,
@@ -154,7 +155,18 @@ where
         legacy: bool,
     ) -> Result<PendingTransaction<'_, M::Provider>> {
         let (tx, _) = self
-            .build_tx(from, to, args, gas, value, nonce, chain, etherscan_api_key, legacy)
+            .build_tx(
+                from,
+                to,
+                args,
+                gas,
+                gas_price,
+                value,
+                nonce,
+                chain,
+                etherscan_api_key,
+                legacy,
+            )
             .await?;
         let res = self.provider.send_transaction(tx, None).await?;
 
@@ -217,7 +229,7 @@ where
         etherscan_api_key: Option<String>,
     ) -> Result<U256> {
         let (tx, _) = self
-            .build_tx(from, to, args, None, value, None, chain, etherscan_api_key, false)
+            .build_tx(from, to, args, None, None, value, None, chain, etherscan_api_key, false)
             .await?;
         let res = self.provider.estimate_gas(&tx).await?;
 
@@ -231,6 +243,7 @@ where
         to: T,
         args: Option<(&str, Vec<String>)>,
         gas: Option<U256>,
+        gas_price: Option<U256>,
         value: Option<U256>,
         nonce: Option<U256>,
         chain: Chain,
@@ -279,6 +292,10 @@ where
 
         if let Some(gas) = gas {
             tx.set_gas(gas);
+        }
+
+        if let Some(gas_price) = gas_price {
+            tx.set_gas_price(gas_price)
         }
 
         if let Some(value) = value {
