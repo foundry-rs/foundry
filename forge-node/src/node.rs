@@ -25,6 +25,10 @@ use forge_node_types::{
 
 use crate::{blockchain::Blockchain, config::NodeConfig};
 
+pub enum NodeError {
+    MissingParent,
+}
+
 /// Node represents an EVM-compatible node designed for development environments. It serves an
 /// Ethereum-compatible JSON-RPC 2.0 server
 pub struct Node<S, E: Evm<S>> {
@@ -383,22 +387,18 @@ where
     }
 
     /// Mine a new block
-    #[allow(unreachable_code)]
-    pub fn mine_block(&mut self) {
-        // TODO(rohit): block builder
+    pub fn mine_block(&mut self) -> Result<(), NodeError> {
+        let pending_txs = self.blockchain.pending_txs(self.config.gas_limit);
+        let txs = pending_txs.iter().map(|t| t.0.clone()).collect::<Vec<Transaction>>();
 
-        let _pending_txs = self.blockchain.pending_txs(self.config.gas_limit);
+        let (block, tx_receipts) = self.build_block(pending_txs)?;
 
-        let (_block, _txs, _tx_receipts): (
-            Block<TxHash>,
-            Vec<Transaction>,
-            Vec<TransactionReceipt>,
-        ) = todo!();
-
-        self.insert_block(_block);
-        for (tx, tx_receipt) in _txs.iter().zip(_tx_receipts.iter()) {
+        self.insert_block(block);
+        for (tx, tx_receipt) in txs.iter().zip(tx_receipts.iter()) {
             self.insert_tx(tx.clone(), tx_receipt.clone());
         }
+
+        Ok(())
     }
 
     fn insert_block(&mut self, block: Block<TxHash>) {
@@ -411,6 +411,69 @@ where
 
     fn insert_tx(&mut self, tx: Transaction, tx_receipt: TransactionReceipt) {
         self.blockchain.txs.insert(tx.hash(), (tx, tx_receipt));
+    }
+
+    fn build_block(
+        &self,
+        pending_txs: Vec<(Transaction, Vec<Log>, Option<String>)>,
+    ) -> Result<(Block<TxHash>, Vec<TransactionReceipt>), NodeError> {
+        let parent = self.blockchain.latest_block().ok_or(NodeError::MissingParent)?;
+
+        let total_gas_used = pending_txs.iter().map(|t| t.0.gas.as_u64()).sum::<u64>();
+
+        let tx_receipts = pending_txs
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                let tx = &t.0;
+                let logs = &t.1;
+                TransactionReceipt {
+                    block_hash: None,
+                    block_number: None,
+                    transaction_hash: tx.hash,
+                    transaction_index: U64::from(i),
+                    status: Some(U64::from(t.2.is_none() as u64)),
+                    gas_used: Some(tx.gas),
+                    cumulative_gas_used: tx.gas,
+                    effective_gas_price: Some(self.config.gas_price),
+                    logs: logs.to_vec(),
+                    transaction_type: tx.transaction_type,
+                    root: None,          // this is None since EIP-658, ignore for now.
+                    logs_bloom: todo!(), // calculate_logs_bloom(logs)
+                    contract_address: todo!(), // get deployed contract addr
+                }
+            })
+            .collect::<Vec<TransactionReceipt>>();
+
+        let tx_hashes = pending_txs.iter().map(|t| t.0.hash()).collect();
+
+        let block = Block {
+            author: Address::zero(),
+            parent_hash: parent.hash.ok_or(NodeError::MissingParent)?,
+            uncles: vec![],
+            number: parent.number.ok_or(NodeError::MissingParent)?.checked_add(1u64.into()),
+            gas_used: U256::from(total_gas_used),
+            timestamp: U256::from(chrono::Utc::now().timestamp()),
+            difficulty: U256::from(1u64),
+            total_difficulty: Some(parent.difficulty + U256::from(1u64)),
+            nonce: Some(U64::from(0u64)),
+            gas_limit: self.config.gas_limit,
+            transactions: tx_hashes,
+            logs_bloom: todo!(),        // calculate_logs_bloom(tx_receipts)
+            receipts_root: todo!(),     // rlp_root(tx_receipts)
+            transactions_root: todo!(), // rlp_root(txs),
+            uncles_hash: todo!(),       // empty rlp root
+            hash: None,                 // TODO: compute hash of RLP-encoded block and add
+            base_fee_per_gas: None,     /* TODO: add base fee in node config, then calculate base
+                                         * fee for this block as per EIP-1559 */
+            extra_data: vec![].into(), // TODO: fill this up
+            mix_hash: None,            // TODO: handle this
+            seal_fields: vec![],       // TODO: handle this
+            size: None,                // TODO: fill this up once block is ready
+            state_root: H256::zero(),  // TODO: maintain state in the forge-node Node/Blockchain
+        };
+
+        Ok((block, tx_receipts))
     }
 }
 
