@@ -1165,7 +1165,7 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "0.1.0"
-source = "git+https://github.com/gakonst/ethers-rs#99230afd3278388da24532ab45d25010e1c49412"
+source = "git+https://github.com/gakonst/ethers-rs#b2b891dcf2f7bcc7560d3b929deb3bbf3446261d"
 dependencies = [
  "ethers-core",
  "once_cell",
