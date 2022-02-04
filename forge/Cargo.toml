@@ -10,7 +10,6 @@ license = "MIT OR Apache-2.0"
 foundry-utils = { path = "./../utils" }
 evm-adapters = { path = "./../evm-adapters", features = ["sputnik", "sputnik-helpers"] }
 
-# ethers = { version = "0.5.2" }
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["solc-full"] }
 eyre = "0.6.5"
 semver = "1.0.4"
@@ -32,3 +31,4 @@ sputnik = { package = "evm", git = "https://github.com/rust-blockchain/evm" }
 
 [dev-dependencies]
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["solc-full", "solc-tests"] }
+foundry-utils = { path = "./../utils", features = ["test"] }

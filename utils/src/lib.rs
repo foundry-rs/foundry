@@ -811,6 +811,15 @@ pub fn link<T, U>(
     Ok(())
 }
 
+/// Enables tracing
+#[cfg(any(feature = "test", test))]
+pub fn init_tracing_subscriber() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init()
+        .ok();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

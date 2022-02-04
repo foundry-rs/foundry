@@ -228,10 +228,12 @@ mod test_helpers {
     use super::*;
     use ethers::{
         prelude::Lazy,
-        solc::{artifacts::CompactContractRef, CompilerOutput, Project, ProjectPathsConfig},
+        solc::{
+            artifacts::CompactContractRef, AggregatedCompilerOutput, Project, ProjectPathsConfig,
+        },
     };
 
-    pub static COMPILED: Lazy<CompilerOutput> = Lazy::new(|| {
+    pub static COMPILED: Lazy<AggregatedCompilerOutput> = Lazy::new(|| {
         let paths =
             ProjectPathsConfig::builder().root("testdata").sources("testdata").build().unwrap();
         let project = Project::builder().paths(paths).ephemeral().no_artifacts().build().unwrap();
