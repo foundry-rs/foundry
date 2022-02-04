@@ -186,6 +186,7 @@ async fn main() -> eyre::Result<()> {
         Subcommands::SendTx { eth, to, sig, cast_async, args, gas, value, nonce, legacy } => {
             let provider = Provider::try_from(eth.rpc_url()?)?;
             let chain_id = Cast::new(&provider).chain_id().await?;
+            let sig = sig.unwrap_or_default();
 
             if let Some(signer) = eth.signer_with(chain_id, provider.clone()).await? {
                 match signer {

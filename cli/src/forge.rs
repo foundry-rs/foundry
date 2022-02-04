@@ -21,6 +21,9 @@ fn main() -> eyre::Result<()> {
             let outcome = cmd.run()?;
             outcome.ensure_ok()?;
         }
+        Subcommands::Bind(cmd) => {
+            cmd.run()?;
+        }
         Subcommands::Build(cmd) => {
             cmd.run()?;
         }

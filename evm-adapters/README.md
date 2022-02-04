@@ -1,8 +1,7 @@
 # evm-adapters
 
 Abstraction over various EVM implementations via the `Evm` trait. Currently
-supported: [Sputnik EVM](https://github.com/rust-blockchain/evm/) and
-[Evmodin](https://github.com/vorot93/evmodin).
+supported: [Sputnik EVM](https://github.com/rust-blockchain/evm/).
 
 Any implementation of the EVM trait receives [fuzzing support](./src/fuzz.rs)
 using the [`proptest`](https://docs.rs/proptest) crate.

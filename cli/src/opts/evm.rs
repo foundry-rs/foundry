@@ -43,7 +43,7 @@ pub struct EvmArgs {
     #[clap(
         long,
         short,
-        help = "the EVM type you want to use (e.g. sputnik, evmodin)",
+        help = "the EVM type you want to use (e.g. sputnik)",
         default_value = "sputnik"
     )]
     pub evm_type: EvmType,
