@@ -902,6 +902,40 @@ impl SimpleCast {
         Ok(format!("0x{}{}", "0".repeat(64 - num_hex.len()), num_hex))
     }
 
+    /// Converts a number into uint256 hex string with 0x prefix
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    /// use ethers_core::types::I256;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(Cast::to_uint256("0")?, "0x0000000000000000000000000000000000000000000000000000000000000000");
+    ///     assert_eq!(Cast::to_uint256("100")?, "0x0000000000000000000000000000000000000000000000000000000000000064");
+    ///     assert_eq!(Cast::to_int256("-100")?, "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff9c");
+    ///     assert_eq!(Cast::to_int256("192038293923")?, "0x0000000000000000000000000000000000000000000000000000002cb65fd1a3");
+    ///     assert_eq!(Cast::to_int256("-192038293923")?, "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffd349a02e5d");
+    ///     assert_eq!(
+    ///         Cast::to_int256("57896044618658097711785492504343953926634992332820282019728792003956564819967")?, 
+    ///         "0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    ///     );
+    ///     assert_eq!(
+    ///         Cast::to_int256("-57896044618658097711785492504343953926634992332820282019728792003956564819968")?, 
+    ///         "0x8000000000000000000000000000000000000000000000000000000000000000"
+    ///     );
+    /// 
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn to_int256(value: &str) -> Result<String> {
+        let num_i256 = I256::from_dec_str(value)?;
+        let num_hex = format!("{:x}", num_i256.into_raw());
+        if num_i256.is_negative() {
+            Ok(format!("0x{}{}", "f".repeat(64 - num_hex.len()), num_hex))
+        } else {
+            Ok(format!("0x{}{}", "0".repeat(64 - num_hex.len()), num_hex))
+        }
+    }
+
     /// Converts an eth amount into a specified unit
     ///
     /// ```
