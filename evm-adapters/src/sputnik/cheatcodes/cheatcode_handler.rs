@@ -1,7 +1,7 @@
 //! Hooks to EVM execution
 use super::{
     backend::CheatcodeBackend, memory_stackstate_owned::MemoryStackStateOwned, ConsoleCalls,
-    HEVMCalls, HevmConsoleEvents,
+    HEVMCalls,
 };
 use crate::{
     call_tracing::{CallTrace, CallTraceArena, LogCallOrder},
@@ -25,14 +25,13 @@ use std::{process::Command, rc::Rc};
 
 use ethers::{
     abi::{RawLog, Token},
-    contract::EthLogDecode,
     core::{abi::AbiDecode, k256::ecdsa::SigningKey, utils},
     signers::{LocalWallet, Signer},
     solc::{artifacts::CompactContractBytecode, ProjectPathsConfig},
     types::{Address, H160, H256, U256},
 };
 
-use std::{convert::Infallible, str::FromStr};
+use std::convert::Infallible;
 
 use crate::sputnik::cheatcodes::{
     debugger::{CheatOp, DebugArena, DebugNode, DebugStep, OpCode},

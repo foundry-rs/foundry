@@ -1,48 +1,36 @@
 //! Additional traits and common implementation to create a custom `SputnikExecutor`
 
 use crate::{
-    call_tracing::{CallTrace, CallTraceArena, LogCallOrder},
-    sputnik::{cheatcodes::memory_stackstate_owned::ExpectedEmit, Executor, SputnikExecutor},
-    Evm,
+    call_tracing::{CallTrace, CallTraceArena},
+    sputnik::SputnikExecutor,
 };
-use std::collections::BTreeMap;
 
-use std::{fs::File, io::Read, path::Path};
+use std::io::Read;
 
 use sputnik::{
     backend::Backend,
     executor::stack::{
         Log, PrecompileFailure, PrecompileOutput, PrecompileSet, StackExecutor, StackExitKind,
-        StackState, StackSubstateMetadata,
+        StackState,
     },
-    gasometer, Capture, Config, Context, CreateScheme, ExitError, ExitReason, ExitRevert,
-    ExitSucceed, Handler, Memory, Opcode, Runtime, Stack, Transfer,
+    Capture, Config, Context, CreateScheme, ExitError, ExitReason, Handler, Opcode, Runtime, Stack,
+    Transfer,
 };
-use std::{process::Command, rc::Rc};
+use std::rc::Rc;
 
 use ethers::{
-    abi::{RawLog, Token},
-    contract::EthLogDecode,
-    core::{abi::AbiDecode, k256::ecdsa::SigningKey, utils},
-    signers::{LocalWallet, Signer},
-    solc::{artifacts::CompactContractBytecode, ProjectPathsConfig},
+    abi::RawLog,
+    signers::Signer,
     types::{Address, H160, H256, U256},
 };
 
-use std::{convert::Infallible, marker::PhantomData, str::FromStr};
+use std::{convert::Infallible, marker::PhantomData};
 
-use crate::sputnik::cheatcodes::{
-    debugger::{CheatOp, DebugArena, DebugNode, DebugStep, OpCode},
-    memory_stackstate_owned::Prank,
-    patch_hardhat_console_log_selector,
-};
-use once_cell::sync::Lazy;
+use crate::sputnik::cheatcodes::debugger::DebugArena;
 
 use crate::sputnik::{
-    cheatcodes::memory_stackstate_owned::MemoryStackStateOwned,
-    utils::{convert_log, evm_error, revert_return_evm, ExpectRevertReturn},
+    cheatcodes::memory_stackstate_owned::MemoryStackStateOwned, utils::convert_log,
 };
-use ethers::abi::Tokenize;
 
 /// an(other) abstraction over a sputnik `Handler` implementation
 ///
@@ -551,7 +539,7 @@ where
         self.handler_mut().set_storage(address, index, value)
     }
 
-    fn log(&mut self, address: H160, topics: Vec<H256>, data: Vec<u8>) -> Result<(), ExitError> {
+    fn log(&mut self, _address: H160, _topics: Vec<H256>, _data: Vec<u8>) -> Result<(), ExitError> {
         todo!()
     }
 
@@ -561,23 +549,23 @@ where
 
     fn create(
         &mut self,
-        caller: H160,
-        scheme: CreateScheme,
-        value: U256,
-        init_code: Vec<u8>,
-        target_gas: Option<u64>,
+        _caller: H160,
+        _scheme: CreateScheme,
+        _value: U256,
+        _init_code: Vec<u8>,
+        _target_gas: Option<u64>,
     ) -> Capture<(ExitReason, Option<H160>, Vec<u8>), Self::CreateInterrupt> {
         todo!()
     }
 
     fn call(
         &mut self,
-        code_address: H160,
-        transfer: Option<Transfer>,
-        input: Vec<u8>,
-        target_gas: Option<u64>,
-        is_static: bool,
-        context: Context,
+        _code_address: H160,
+        _transfer: Option<Transfer>,
+        _input: Vec<u8>,
+        _target_gas: Option<u64>,
+        _is_static: bool,
+        _context: Context,
     ) -> Capture<(ExitReason, Vec<u8>), Self::CallInterrupt> {
         todo!()
     }
@@ -651,23 +639,23 @@ where
 
     fn transact_call(
         &mut self,
-        caller: H160,
-        address: H160,
-        value: U256,
-        data: Vec<u8>,
-        gas_limit: u64,
-        access_list: Vec<(H160, Vec<H256>)>,
+        _caller: H160,
+        _address: H160,
+        _value: U256,
+        _data: Vec<u8>,
+        _gas_limit: u64,
+        _access_list: Vec<(H160, Vec<H256>)>,
     ) -> (ExitReason, Vec<u8>) {
         todo!()
     }
 
     fn transact_create(
         &mut self,
-        caller: H160,
-        value: U256,
-        data: Vec<u8>,
-        gas_limit: u64,
-        access_list: Vec<(H160, Vec<H256>)>,
+        _caller: H160,
+        _value: U256,
+        _data: Vec<u8>,
+        _gas_limit: u64,
+        _access_list: Vec<(H160, Vec<H256>)>,
     ) -> ExitReason {
         todo!()
     }
