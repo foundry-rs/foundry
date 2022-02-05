@@ -407,6 +407,7 @@ SUBCOMMANDS:
                                    - absolute path to file
                                    - @tag, where $TAG is defined in environment variables
     --to-uint256             convert a number into uint256 hex string with 0x prefix
+    --to-int256              convert a number into int256 hex string with 0x prefix
     --to-wei                 convert an ETH amount into wei
     4byte                    Fetches function signatures given the selector from 4byte.directory
     4byte-decode             Decodes transaction calldata by fetching the signature using 4byte.directory

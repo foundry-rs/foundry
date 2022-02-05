@@ -22,7 +22,7 @@
 - [x] `--to-fix`
 - [x] `--to-hex`
 - [x] `--to-hexdata`
-- [ ] `--to-int256`
+- [x] `--to-int256`
 - [x] `--to-uint256`
 - [x] `--to-wei`
 - [x] `4byte`

@@ -902,14 +902,14 @@ impl SimpleCast {
         Ok(format!("0x{}{}", "0".repeat(64 - num_hex.len()), num_hex))
     }
 
-    /// Converts a number into uint256 hex string with 0x prefix
+    /// Converts a number into int256 hex string with 0x prefix
     ///
     /// ```
     /// use cast::SimpleCast as Cast;
     ///
     /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(Cast::to_uint256("0")?, "0x0000000000000000000000000000000000000000000000000000000000000000");
-    ///     assert_eq!(Cast::to_uint256("100")?, "0x0000000000000000000000000000000000000000000000000000000000000064");
+    ///     assert_eq!(Cast::to_int256("0")?, "0x0000000000000000000000000000000000000000000000000000000000000000");
+    ///     assert_eq!(Cast::to_int256("100")?, "0x0000000000000000000000000000000000000000000000000000000000000064");
     ///     assert_eq!(Cast::to_int256("-100")?, "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff9c");
     ///     assert_eq!(Cast::to_int256("192038293923")?, "0x0000000000000000000000000000000000000000000000000000002cb65fd1a3");
     ///     assert_eq!(Cast::to_int256("-192038293923")?, "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffd349a02e5d");
