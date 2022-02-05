@@ -271,6 +271,20 @@ pub enum Subcommands {
         #[clap(allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    #[clap(name = "index")]
+    #[clap(
+        about = "Get storage slot of value from mapping type, mapping slot number and input value"
+    )]
+    Index {
+        #[clap(help = "mapping key type")]
+        from_type: String,
+        #[clap(help = "mapping value type")]
+        to_type: String,
+        #[clap(help = "the value")]
+        from_value: String,
+        #[clap(help = "storage slot of the mapping")]
+        slot_number: String,
+    },
     #[clap(name = "4byte")]
     #[clap(about = "Fetches function signatures given the selector from 4byte.directory")]
     FourByte {

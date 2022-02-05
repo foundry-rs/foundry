@@ -319,6 +319,10 @@ async fn main() -> eyre::Result<()> {
         Subcommands::AbiEncode { sig, args } => {
             println!("{}", SimpleCast::abi_encode(&sig, &args)?);
         }
+        Subcommands::Index { from_type, to_type, from_value, slot_number } => {
+            let encoded = SimpleCast::index(&from_type, &to_type, &from_value, &slot_number)?;
+            println!("{}", encoded);
+        }
         Subcommands::FourByte { selector } => {
             let sigs = foundry_utils::fourbyte(&selector).await?;
             sigs.iter().for_each(|sig| println!("{}", sig.0));
