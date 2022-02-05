@@ -784,7 +784,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
     }
 
     /// Executes the call/create while also tracking the state of the machine (including opcodes)
-    fn debug_execute(
+    fn do_debug_execute(
         &mut self,
         runtime: &mut Runtime,
         address: Address,
@@ -1143,7 +1143,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         let reason = if self.state().debug_enabled {
             let code = Rc::new(code);
             runtime = Runtime::new(code.clone(), Rc::new(input), context, &config);
-            self.debug_execute(&mut runtime, code_address, code, false)
+            self.do_debug_execute(&mut runtime, code_address, code, false)
         } else {
             runtime = Runtime::new(Rc::new(code), Rc::new(input), context, &config);
             self.execute(&mut runtime)
@@ -1290,7 +1290,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         let reason = if self.state().debug_enabled {
             let code = Rc::new(init_code);
             runtime = Runtime::new(code.clone(), Rc::new(Vec::new()), context, &config);
-            self.debug_execute(&mut runtime, address, code, true)
+            self.do_debug_execute(&mut runtime, address, code, true)
         } else {
             runtime = Runtime::new(Rc::new(init_code), Rc::new(Vec::new()), context, &config);
             self.execute(&mut runtime)
@@ -1716,13 +1716,13 @@ where
     Precom: PrecompileSet,
 {
     fn stack_executor(&self) -> &StackExecutor<'a, 'b, CheatcodeStackState<'a, Back>, Precom> {
-        todo!()
+        &self.handler
     }
 
     fn stack_executor_mut(
         &mut self,
     ) -> &mut StackExecutor<'a, 'b, CheatcodeStackState<'a, Back>, Precom> {
-        todo!()
+        &mut self.handler
     }
 
     fn on_clear_logs(&mut self) {
@@ -1734,7 +1734,7 @@ where
     }
 
     fn is_tracing_enabled(&self) -> bool {
-        todo!()
+        self.enable_trace
     }
 
     fn debug_execute(
@@ -1744,7 +1744,7 @@ where
         code: Rc<Vec<u8>>,
         creation: bool,
     ) -> ExitReason {
-        todo!()
+        self.do_debug_execute(runtime, address, code, creation)
     }
 }
 

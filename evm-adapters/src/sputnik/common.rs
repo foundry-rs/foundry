@@ -24,6 +24,7 @@ use ethers::{
     types::{Address, H160, H256, U256},
 };
 
+use crate::call_tracing::LogCallOrder;
 use std::{convert::Infallible, marker::PhantomData};
 
 use crate::sputnik::cheatcodes::debugger::DebugArena;
@@ -539,8 +540,63 @@ where
         self.handler_mut().set_storage(address, index, value)
     }
 
-    fn log(&mut self, _address: H160, _topics: Vec<H256>, _data: Vec<u8>) -> Result<(), ExitError> {
-        todo!()
+    fn log(&mut self, address: H160, topics: Vec<H256>, data: Vec<u8>) -> Result<(), ExitError> {
+        if self.state().trace_enabled {
+            let index = self.state().trace_index;
+            let node = &mut self.state_mut().traces.last_mut().expect("no traces").arena[index];
+            node.ordering.push(LogCallOrder::Log(node.logs.len()));
+            node.logs.push(RawLog { topics: topics.clone(), data: data.clone() });
+        }
+
+        if let Some(decoded) =
+            convert_log(Log { address, topics: topics.clone(), data: data.clone() })
+        {
+            self.state_mut().all_logs.push(decoded);
+        }
+
+        if !self.state().expected_emits.is_empty() {
+            // get expected emits
+            let expected_emits = &mut self.state_mut().expected_emits;
+
+            // do we have empty expected emits to fill?
+            if let Some(next_expect_to_fill) =
+                expected_emits.iter_mut().find(|expect| expect.log.is_none())
+            {
+                next_expect_to_fill.log =
+                    Some(RawLog { topics: topics.clone(), data: data.clone() });
+            } else {
+                // no unfilled, grab next unfound
+                // try to fill the first unfound
+                if let Some(next_expect) = expected_emits.iter_mut().find(|expect| !expect.found) {
+                    // unpack the log
+                    if let Some(RawLog { topics: expected_topics, data: expected_data }) =
+                        &next_expect.log
+                    {
+                        if expected_topics[0] == topics[0] {
+                            // same event topic 0, topic length should be the same
+                            let topics_match = topics
+                                .iter()
+                                .skip(1)
+                                .enumerate()
+                                .filter(|(i, _topic)| {
+                                    // do we want to check?
+                                    next_expect.checks[*i]
+                                })
+                                .all(|(i, topic)| topic == &expected_topics[i + 1]);
+
+                            // check data
+                            next_expect.found = if next_expect.checks[3] {
+                                expected_data == &data && topics_match
+                            } else {
+                                topics_match
+                            };
+                        }
+                    }
+                }
+            }
+        }
+
+        self.stack_executor_mut().log(address, topics, data)
     }
 
     fn mark_delete(&mut self, address: H160, target: H160) -> Result<(), ExitError> {
