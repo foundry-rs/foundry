@@ -1041,8 +1041,8 @@ impl SimpleCast {
     /// ```
     pub fn keccak(data: &str) -> Result<String> {
         let hash: String = match data.as_bytes() {
-             // If has a 0x prefix, read it as hexdata.
-             // If has no 0x prefix, read it as text
+            // If has a 0x prefix, read it as hexdata.
+            // If has no 0x prefix, read it as text
             [b'0', b'x', rest @ ..] => keccak256(hex::decode(rest)?).to_hex(),
             _ => keccak256(data).to_hex(),
         };

@@ -70,7 +70,7 @@ libraries = []
 cache = true
 force = false
 evm_version = 'london'
-gas_reports = ["*"]
+gas_reports = ['*']
 ## Sets the concrete solc version to use, this overrides the `auto_detect_solc` value
 # solc_version = '0.8.10'
 auto_detect_solc = true
@@ -84,13 +84,27 @@ sender = '0x00a329c0648769a73afac7f9381e08fb43dbea72'
 tx_origin = '0x00a329c0648769a73afac7f9381e08fb43dbea72'
 initial_balance = '0xffffffffffffffffffffffff'
 block_number = 0
-chain_id = 1
 gas_limit = 9223372036854775807
 gas_price = 0
 block_base_fee_per_gas = 0
 block_coinbase = '0x0000000000000000000000000000000000000000'
 block_timestamp = 0
 block_difficulty = 0
+```
+
+##### Additional Optimizer settings
+
+Optimizer components can be tweaked with the `OptimizerDetails` object:
+
+See [Compiler Input Description `settings.optimizer.details`](https://docs.soliditylang.org/en/latest/using-the-compiler.html#compiler-input-and-output-json-description)
+
+```toml
+[optimizer_details]
+constantOptimizer = true
+yul = true
+
+[optimizer_details.yulDetails]
+optimizerSteps = 'dhfoDgvulfnTUtnIf'
 ```
 
 ## Environment Variables
