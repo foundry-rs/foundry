@@ -906,7 +906,6 @@ impl SimpleCast {
     ///
     /// ```
     /// use cast::SimpleCast as Cast;
-    /// use ethers_core::types::I256;
     ///
     /// fn main() -> eyre::Result<()> {
     ///     assert_eq!(Cast::to_uint256("0")?, "0x0000000000000000000000000000000000000000000000000000000000000000");
