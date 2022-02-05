@@ -914,14 +914,14 @@ impl SimpleCast {
     ///     assert_eq!(Cast::to_int256("192038293923")?, "0x0000000000000000000000000000000000000000000000000000002cb65fd1a3");
     ///     assert_eq!(Cast::to_int256("-192038293923")?, "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffd349a02e5d");
     ///     assert_eq!(
-    ///         Cast::to_int256("57896044618658097711785492504343953926634992332820282019728792003956564819967")?, 
+    ///         Cast::to_int256("57896044618658097711785492504343953926634992332820282019728792003956564819967")?,
     ///         "0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
     ///     );
     ///     assert_eq!(
-    ///         Cast::to_int256("-57896044618658097711785492504343953926634992332820282019728792003956564819968")?, 
+    ///         Cast::to_int256("-57896044618658097711785492504343953926634992332820282019728792003956564819968")?,
     ///         "0x8000000000000000000000000000000000000000000000000000000000000000"
     ///     );
-    /// 
+    ///
     ///     Ok(())
     /// }
     /// ```
@@ -931,15 +931,12 @@ impl SimpleCast {
             Some(b'-') => (Sign::Negative, &value[1..]),
             _ => (Sign::Positive, value),
         };
-        let (num_u256, _) = match sign {
-            Sign::Positive => {
-                (U256::from_str_radix(value, 10)?, false)
-            },
-            Sign::Negative => {
-                (!(U256::from_str_radix(value, 10)?)).overflowing_add(U256::one())
-            },
-        };
-        let num_hex = format!("{:x}", num_u256);
+
+        let mut num = U256::from_str_radix(value, 10)?;
+        if matches!(sign, Sign::Negative) {
+            num = (!num).overflowing_add(U256::one()).0;
+        }
+        let num_hex = format!("{:x}", num);
         Ok(format!("0x{}{}", "0".repeat(64 - num_hex.len()), num_hex))
     }
 
@@ -1082,8 +1079,8 @@ impl SimpleCast {
     /// ```
     pub fn keccak(data: &str) -> Result<String> {
         let hash: String = match data.as_bytes() {
-             // If has a 0x prefix, read it as hexdata.
-             // If has no 0x prefix, read it as text
+            // If has a 0x prefix, read it as hexdata.
+            // If has no 0x prefix, read it as text
             [b'0', b'x', rest @ ..] => keccak256(hex::decode(rest)?).to_hex(),
             _ => keccak256(data).to_hex(),
         };
