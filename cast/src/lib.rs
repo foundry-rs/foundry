@@ -902,6 +902,44 @@ impl SimpleCast {
         Ok(format!("0x{}{}", "0".repeat(64 - num_hex.len()), num_hex))
     }
 
+    /// Converts a number into int256 hex string with 0x prefix
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(Cast::to_int256("0")?, "0x0000000000000000000000000000000000000000000000000000000000000000");
+    ///     assert_eq!(Cast::to_int256("100")?, "0x0000000000000000000000000000000000000000000000000000000000000064");
+    ///     assert_eq!(Cast::to_int256("-100")?, "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff9c");
+    ///     assert_eq!(Cast::to_int256("192038293923")?, "0x0000000000000000000000000000000000000000000000000000002cb65fd1a3");
+    ///     assert_eq!(Cast::to_int256("-192038293923")?, "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffd349a02e5d");
+    ///     assert_eq!(
+    ///         Cast::to_int256("57896044618658097711785492504343953926634992332820282019728792003956564819967")?,
+    ///         "0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    ///     );
+    ///     assert_eq!(
+    ///         Cast::to_int256("-57896044618658097711785492504343953926634992332820282019728792003956564819968")?,
+    ///         "0x8000000000000000000000000000000000000000000000000000000000000000"
+    ///     );
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn to_int256(value: &str) -> Result<String> {
+        let (sign, value) = match value.as_bytes().get(0) {
+            Some(b'+') => (Sign::Positive, &value[1..]),
+            Some(b'-') => (Sign::Negative, &value[1..]),
+            _ => (Sign::Positive, value),
+        };
+
+        let mut num = U256::from_str_radix(value, 10)?;
+        if matches!(sign, Sign::Negative) {
+            num = (!num).overflowing_add(U256::one()).0;
+        }
+        let num_hex = format!("{:x}", num);
+        Ok(format!("0x{}{}", "0".repeat(64 - num_hex.len()), num_hex))
+    }
+
     /// Converts an eth amount into a specified unit
     ///
     /// ```
