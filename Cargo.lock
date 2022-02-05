@@ -1150,9 +1150,9 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "0.6.0"
-source = "git+https://github.com/mattsse/ethers-rs/?branch=matt/add-optimizer-details#78deca88a1c43ce2a3470d46a22796004bdc2529"
+source = "git+https://github.com/gakonst/ethers-rs#b26b505651c155647f1b999befa83d246f3be44f"
 dependencies = [
- "ethers-addressbook 0.1.0 (git+https://github.com/mattsse/ethers-rs/?branch=matt/add-optimizer-details)",
+ "ethers-addressbook",
  "ethers-contract",
  "ethers-core",
  "ethers-etherscan",
@@ -1165,18 +1165,7 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "0.1.0"
-source = "git+https://github.com/mattsse/ethers-rs/?branch=matt/add-optimizer-details#78deca88a1c43ce2a3470d46a22796004bdc2529"
-dependencies = [
- "ethers-core",
- "once_cell",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "ethers-addressbook"
-version = "0.1.0"
-source = "git+https://github.com/gakonst/ethers-rs#b2b891dcf2f7bcc7560d3b929deb3bbf3446261d"
+source = "git+https://github.com/gakonst/ethers-rs#b26b505651c155647f1b999befa83d246f3be44f"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -1187,7 +1176,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "0.6.0"
-source = "git+https://github.com/mattsse/ethers-rs/?branch=matt/add-optimizer-details#78deca88a1c43ce2a3470d46a22796004bdc2529"
+source = "git+https://github.com/gakonst/ethers-rs#b26b505651c155647f1b999befa83d246f3be44f"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1205,7 +1194,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "0.6.0"
-source = "git+https://github.com/mattsse/ethers-rs/?branch=matt/add-optimizer-details#78deca88a1c43ce2a3470d46a22796004bdc2529"
+source = "git+https://github.com/gakonst/ethers-rs#b26b505651c155647f1b999befa83d246f3be44f"
 dependencies = [
  "Inflector",
  "cfg-if 1.0.0",
@@ -1228,7 +1217,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "0.6.0"
-source = "git+https://github.com/mattsse/ethers-rs/?branch=matt/add-optimizer-details#78deca88a1c43ce2a3470d46a22796004bdc2529"
+source = "git+https://github.com/gakonst/ethers-rs#b26b505651c155647f1b999befa83d246f3be44f"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -1242,7 +1231,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "0.6.0"
-source = "git+https://github.com/mattsse/ethers-rs/?branch=matt/add-optimizer-details#78deca88a1c43ce2a3470d46a22796004bdc2529"
+source = "git+https://github.com/gakonst/ethers-rs#b26b505651c155647f1b999befa83d246f3be44f"
 dependencies = [
  "arrayvec 0.7.2",
  "bytes",
@@ -1270,7 +1259,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "0.2.0"
-source = "git+https://github.com/mattsse/ethers-rs/?branch=matt/add-optimizer-details#78deca88a1c43ce2a3470d46a22796004bdc2529"
+source = "git+https://github.com/gakonst/ethers-rs#b26b505651c155647f1b999befa83d246f3be44f"
 dependencies = [
  "ethers-core",
  "ethers-solc",
@@ -1284,7 +1273,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "0.6.0"
-source = "git+https://github.com/mattsse/ethers-rs/?branch=matt/add-optimizer-details#78deca88a1c43ce2a3470d46a22796004bdc2529"
+source = "git+https://github.com/gakonst/ethers-rs#b26b505651c155647f1b999befa83d246f3be44f"
 dependencies = [
  "async-trait",
  "ethers-contract",
@@ -1307,7 +1296,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "0.6.0"
-source = "git+https://github.com/mattsse/ethers-rs/?branch=matt/add-optimizer-details#78deca88a1c43ce2a3470d46a22796004bdc2529"
+source = "git+https://github.com/gakonst/ethers-rs#b26b505651c155647f1b999befa83d246f3be44f"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -1339,7 +1328,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "0.6.0"
-source = "git+https://github.com/mattsse/ethers-rs/?branch=matt/add-optimizer-details#78deca88a1c43ce2a3470d46a22796004bdc2529"
+source = "git+https://github.com/gakonst/ethers-rs#b26b505651c155647f1b999befa83d246f3be44f"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1362,7 +1351,7 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "0.2.0"
-source = "git+https://github.com/mattsse/ethers-rs/?branch=matt/add-optimizer-details#78deca88a1c43ce2a3470d46a22796004bdc2529"
+source = "git+https://github.com/gakonst/ethers-rs#b26b505651c155647f1b999befa83d246f3be44f"
 dependencies = [
  "colored",
  "dunce",
@@ -1667,7 +1656,7 @@ dependencies = [
 name = "foundry-utils"
 version = "0.1.0"
 dependencies = [
- "ethers-addressbook 0.1.0 (git+https://github.com/gakonst/ethers-rs)",
+ "ethers-addressbook",
  "ethers-core",
  "ethers-etherscan",
  "ethers-providers",
