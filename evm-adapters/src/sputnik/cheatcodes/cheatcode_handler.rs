@@ -40,7 +40,10 @@ use crate::sputnik::cheatcodes::{
 };
 use once_cell::sync::Lazy;
 
-use crate::sputnik::utils::{convert_log, evm_error, revert_return_evm, ExpectRevertReturn};
+use crate::sputnik::{
+    common::ExecutionHandler,
+    utils::{convert_log, evm_error, revert_return_evm, ExpectRevertReturn},
+};
 use ethers::abi::Tokenize;
 
 // This is now getting us the right hash? Also tried [..20]
@@ -1703,6 +1706,45 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
         stack: &sputnik::Stack,
     ) -> Result<(), ExitError> {
         self.handler.pre_validate(context, opcode, stack)
+    }
+}
+
+impl<'a, 'b, Back, Precom: 'b> ExecutionHandler<'a, 'b, Back, Precom, CheatcodeStackState<'a, Back>>
+    for CheatcodeStackExecutor<'a, 'b, Back, Precom>
+where
+    Back: Backend,
+    Precom: PrecompileSet,
+{
+    fn stack_executor(&self) -> &StackExecutor<'a, 'b, CheatcodeStackState<'a, Back>, Precom> {
+        todo!()
+    }
+
+    fn stack_executor_mut(
+        &mut self,
+    ) -> &mut StackExecutor<'a, 'b, CheatcodeStackState<'a, Back>, Precom> {
+        todo!()
+    }
+
+    fn on_clear_logs(&mut self) {
+        self.console_logs.clear();
+    }
+
+    fn additional_logs(&self) -> Vec<String> {
+        self.console_logs.clone()
+    }
+
+    fn is_tracing_enabled(&self) -> bool {
+        todo!()
+    }
+
+    fn debug_execute(
+        &mut self,
+        runtime: &mut Runtime,
+        address: Address,
+        code: Rc<Vec<u8>>,
+        creation: bool,
+    ) -> ExitReason {
+        todo!()
     }
 }
 
