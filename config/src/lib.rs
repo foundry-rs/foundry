@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use ethers_core::types::{Address, U256};
 use ethers_solc::{
-    artifacts::{Optimizer, Settings},
+    artifacts::{Optimizer, OptimizerDetails, Settings},
     error::SolcError,
     remappings::{RelativeRemapping, Remapping},
     EvmVersion, Project, ProjectPathsConfig, SolcConfig,
@@ -105,6 +105,10 @@ pub struct Config {
     pub optimizer: bool,
     /// Sets the optimizer runs
     pub optimizer_runs: usize,
+    /// Switch optimizer components on or off in detail.
+    /// The "enabled" switch above provides two defaults which can be
+    /// tweaked here. If "details" is given, "enabled" can be omitted.
+    pub optimizer_details: Option<OptimizerDetails>,
     /// verbosity to use
     pub verbosity: u8,
     /// url of the rpc server that should be used for any rpc calls
@@ -387,7 +391,11 @@ impl Config {
 
     /// Returns the `Optimizer` based on the configured settings
     pub fn optimizer(&self) -> Optimizer {
-        Optimizer { enabled: Some(self.optimizer), runs: Some(self.optimizer_runs) }
+        Optimizer {
+            enabled: Some(self.optimizer),
+            runs: Some(self.optimizer_runs),
+            details: self.optimizer_details.clone(),
+        }
     }
 
     pub fn output_selection(&self) -> BTreeMap<String, BTreeMap<String, Vec<String>>> {
@@ -406,7 +414,7 @@ impl Config {
 
     /// Returns the configured `solc` `Settings` that includes:
     ///   - all libraries
-    ///   - the optimizer
+    ///   - the optimizer (including details, if configured)
     ///   - evm version
     pub fn solc_settings(&self) -> Result<Settings, SolcError> {
         let libraries = parse_libraries(&self.libraries)?;
@@ -533,7 +541,9 @@ impl Config {
     /// # ...
     /// ```
     pub fn to_string_pretty(&self) -> Result<String, toml::ser::Error> {
-        let s = toml::to_string_pretty(self)?;
+        // serializing to value first to prevent `ValueAfterTable` errors
+        let value = toml::Value::try_from(self)?;
+        let s = toml::to_string_pretty(&value)?;
         Ok(format!(
             r#"[{}]
 {}"#,
@@ -689,6 +699,7 @@ impl Default for Config {
             auto_detect_solc: true,
             optimizer: true,
             optimizer_runs: 200,
+            optimizer_details: None,
             extra_output: None,
             solc_settings: None,
             fuzz_runs: 256,
@@ -1030,6 +1041,7 @@ fn canonic(path: impl Into<PathBuf>) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    use ethers_solc::artifacts::YulDetails;
     use figment::error::Kind::InvalidType;
     use std::str::FromStr;
 
@@ -1378,9 +1390,32 @@ mod tests {
             let other = Config::load();
             assert_eq!(default, other);
 
-            // println!("{}", default.to_string_pretty().unwrap());
             Ok(())
         });
+    }
+
+    // a test to print the config, mainly used to update the example config in the README
+    #[test]
+    #[ignore]
+    fn print_config() {
+        let config = Config {
+            optimizer_details: Some(OptimizerDetails {
+                peephole: None,
+                inliner: None,
+                jumpdest_remover: None,
+                order_literals: None,
+                deduplicate: None,
+                cse: None,
+                constant_optimizer: Some(true),
+                yul: Some(true),
+                yul_details: Some(YulDetails {
+                    stack_allocation: None,
+                    optimizer_steps: Some("dhfoDgvulfnTUtnIf".to_string()),
+                }),
+            }),
+            ..Default::default()
+        };
+        println!("{}", config.to_string_pretty().unwrap());
     }
 
     #[test]
