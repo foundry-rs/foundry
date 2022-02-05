@@ -47,8 +47,12 @@ use ethers::abi::Tokenize;
 /// an(other) abstraction over a sputnik `Handler` implementation
 ///
 /// This provides default implementations for `Handler` functions that can be replaced by
-/// implementers. The main purpose of this trait is to ease the implementation of custom
-/// `SputnikExecutor`s as this comes with a lot of boilerplate.
+/// implementers. In other words, unless overwritten by the implementer all functions are delegated
+/// to `<sputnik::StackExecutor as sputnik::Handler>` The main purpose of this trait is to ease the
+/// implementation of custom `SputnikExecutor`s as this comes with a lot of boilerplate.
+///
+/// On top of delegates for the `sputnik::Handler`, this trait provides additional hooks that are
+/// invoked by the `SputnikExecutor`.
 pub trait ExecutionHandler<'a, 'b, Back, Precom: 'b, State>
 where
     Back: Backend,
