@@ -927,13 +927,21 @@ impl SimpleCast {
     /// }
     /// ```
     pub fn to_int256(value: &str) -> Result<String> {
-        let num_i256 = I256::from_dec_str(value)?;
-        let num_hex = format!("{:x}", num_i256.into_raw());
-        if num_i256.is_negative() {
-            Ok(format!("0x{}{}", "f".repeat(64 - num_hex.len()), num_hex))
-        } else {
-            Ok(format!("0x{}{}", "0".repeat(64 - num_hex.len()), num_hex))
-        }
+        let (sign, value) = match value.as_bytes().get(0) {
+            Some(b'+') => (Sign::Positive, &value[1..]),
+            Some(b'-') => (Sign::Negative, &value[1..]),
+            _ => (Sign::Positive, value),
+        };
+        let (num_u256, _) = match sign {
+            Sign::Positive => {
+                (U256::from_str_radix(value, 10)?, false)
+            },
+            Sign::Negative => {
+                (!(U256::from_str_radix(value, 10)?)).overflowing_add(U256::one())
+            },
+        };
+        let num_hex = format!("{:x}", num_u256);
+        Ok(format!("0x{}{}", "0".repeat(64 - num_hex.len()), num_hex))
     }
 
     /// Converts an eth amount into a specified unit
