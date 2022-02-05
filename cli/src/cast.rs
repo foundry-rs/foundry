@@ -349,6 +349,10 @@ async fn main() -> eyre::Result<()> {
 
             tokens.for_each(|t| println!("{}", t));
         }
+        Subcommands::FourByteEvent { topic } => {
+            let sigs = foundry_utils::fourbyte_event(&topic).await?;
+            sigs.iter().for_each(|sig| println!("{}", sig.0));
+        }
         Subcommands::Age { block, rpc_url } => {
             let provider = Provider::try_from(rpc_url)?;
             println!(

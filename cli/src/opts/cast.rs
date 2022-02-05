@@ -299,6 +299,12 @@ pub enum Subcommands {
         #[clap(long, help = "the 4byte selector id to use, can also be earliest/latest")]
         id: Option<String>,
     },
+    #[clap(name = "4byte-event")]
+    #[clap(about = "Takes a 32 byte topic and prints the response from querying 4byte.directory for that topic")]
+    FourByteEvent {
+        #[clap(help = "the 32 byte topic")]
+        topic: String,
+    },
     #[clap(name = "age")]
     #[clap(about = "Prints the timestamp of a block")]
     Age {

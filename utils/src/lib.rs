@@ -472,6 +472,37 @@ pub async fn fourbyte_possible_sigs(calldata: &str, id: Option<String>) -> Resul
     }
 }
 
+/// Fetches a event signature given the 32 byte topic using 4byte.directory
+pub async fn fourbyte_event(topic: &str) -> Result<Vec<(String, i32)>> {
+    #[derive(Deserialize)]
+    struct Decoded {
+        text_signature: String,
+        id: i32,
+    }
+
+    #[derive(Deserialize)]
+    struct ApiResponse {
+        results: Vec<Decoded>,
+    }
+
+    let topic = &topic.strip_prefix("0x").unwrap_or(topic);
+    if topic.len() < 64 {
+        return Err(eyre::eyre!("Invalid topic"));
+    }
+    let topic = &topic[..8];
+
+    let url =
+        format!("https://www.4byte.directory/api/v1/event-signatures/?hex_signature={}", topic);
+    let res = reqwest::get(url).await?;
+    let api_response = res.json::<ApiResponse>().await?;
+
+    Ok(api_response
+        .results
+        .into_iter()
+        .map(|d| (d.text_signature, d.id))
+        .collect::<Vec<(String, i32)>>())
+}
+
 pub fn abi_decode(sig: &str, calldata: &str, input: bool) -> Result<Vec<Token>> {
     let func = IntoFunction::into(sig);
     let calldata = calldata.strip_prefix("0x").unwrap_or(calldata);
