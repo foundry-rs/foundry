@@ -4,7 +4,7 @@ use ethers_core::{
     abi::{
         self, parse_abi,
         token::{LenientTokenizer, StrictTokenizer, Tokenizer},
-        Abi, AbiParser, Event, Function, Param, ParamType, Token,
+        Abi, AbiParser, Event, EventParam, Function, Param, ParamType, Token,
     },
     types::*,
 };
@@ -583,7 +583,9 @@ fn capitalize(s: &str) -> String {
 // Returns the function parameter formatted as a string, as well as inserts into the provided
 // `structs` set in order to create type definitions for any Abi Encoder v2 structs.
 fn format_param(param: &Param, structs: &mut HashSet<String>) -> String {
-    // check if it requires a memory tag
+    let kind = get_param_type(&param.kind, &param.name, param.internal_type.as_deref(), structs);
+
+    // add `memory` if required (not needed for events, only for functions)
     let is_memory = matches!(
         param.kind,
         ParamType::Array(_) |
@@ -592,11 +594,37 @@ fn format_param(param: &Param, structs: &mut HashSet<String>) -> String {
             ParamType::FixedArray(_, _) |
             ParamType::Tuple(_),
     );
+    let kind = if is_memory { format!("{} memory", kind) } else { kind };
 
-    let (kind, v2_struct) = match param.kind {
+    if param.name.is_empty() {
+        kind
+    } else {
+        format!("{} {}", kind, param.name)
+    }
+}
+
+fn format_event_params(param: &EventParam, structs: &mut HashSet<String>) -> String {
+    let kind = get_param_type(&param.kind, &param.name, None, structs);
+
+    if param.name.is_empty() {
+        kind
+    } else if param.indexed {
+        format!("{} indexed {}", kind, param.name)
+    } else {
+        format!("{} {}", kind, param.name)
+    }
+}
+
+fn get_param_type(
+    kind: &ParamType,
+    name: &str,
+    internal_type: Option<&str>,
+    structs: &mut HashSet<String>,
+) -> String {
+    let (kind, v2_struct) = match kind {
         // We need to do some extra work to parse ABI Encoder V2 types.
         ParamType::Tuple(ref args) => {
-            let name = param.internal_type.clone().unwrap_or_else(|| capitalize(&param.name));
+            let name = internal_type.map(|x| x.to_owned()).unwrap_or_else(|| capitalize(name));
             let name = if name.contains('.') {
                 name.split('.').nth(1).expect("could not get struct name").to_owned()
             } else {
@@ -618,22 +646,15 @@ fn format_param(param: &Param, structs: &mut HashSet<String>) -> String {
             (name, Some(v2_struct))
         }
         // If not, just get the string of the param kind.
-        _ => (param.kind.to_string(), None),
+        _ => (kind.to_string(), None),
     };
-
-    // add `memory` if required
-    let kind = if is_memory { format!("{} memory", kind) } else { kind };
 
     // if there was a v2 struct, push it for later usage
     if let Some(v2_struct) = v2_struct {
         structs.insert(v2_struct);
     }
 
-    if param.name.is_empty() {
-        kind
-    } else {
-        format!("{} {}", kind, param.name)
-    }
+    kind
 }
 
 /// This function takes a contract [`Abi`] and a name and proceeds to generate a Solidity
@@ -648,12 +669,28 @@ fn format_param(param: &Param, structs: &mut HashSet<String>) -> String {
 /// * Kudos to https://github.com/maxme/abi2solidity for the algorithm
 pub fn abi_to_solidity(contract_abi: &Abi, mut contract_name: &str) -> Result<String> {
     let functions_iterator = contract_abi.functions();
+    let events_iterator = contract_abi.events();
     if contract_name.trim().is_empty() {
         contract_name = "Interface";
     };
 
     // instantiate an array of all ABI Encoder v2 structs
     let mut structs = HashSet::new();
+
+    let events = events_iterator
+        .map(|event| {
+            let inputs = event
+                .inputs
+                .iter()
+                .map(|param| format_event_params(param, &mut structs))
+                .collect::<Vec<String>>()
+                .join(", ");
+
+            let event_final = format!("event {}({})", event.name, inputs);
+            format!("{};", event_final)
+        })
+        .collect::<Vec<_>>()
+        .join("\n    ");
 
     let functions = functions_iterator
         .map(|function| {
@@ -691,24 +728,48 @@ pub fn abi_to_solidity(contract_abi: &Abi, mut contract_name: &str) -> Result<St
         .join("\n    ");
 
     Ok(if structs.is_empty() {
-        format!(
-            r#"interface {} {{
+        match events.is_empty() {
+            true => format!(
+                r#"interface {} {{
     {}
 }}
 "#,
-            contract_name, functions
-        )
-    } else {
-        let structs = structs.into_iter().collect::<Vec<_>>().join("\n    ");
-        format!(
-            r#"interface {} {{
+                contract_name, functions
+            ),
+            false => format!(
+                r#"interface {} {{
     {}
 
     {}
 }}
 "#,
-            contract_name, structs, functions
-        )
+                contract_name, events, functions
+            ),
+        }
+    } else {
+        let structs = structs.into_iter().collect::<Vec<_>>().join("\n    ");
+        match events.is_empty() {
+            true => format!(
+                r#"interface {} {{
+    {}
+
+    {}
+}}
+"#,
+                contract_name, structs, functions
+            ),
+            false => format!(
+                r#"interface {} {{
+    {}
+
+    {}
+
+    {}
+}}
+"#,
+                contract_name, events, structs, functions
+            ),
+        }
     })
 }
 
