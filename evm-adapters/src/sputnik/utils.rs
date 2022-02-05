@@ -7,7 +7,7 @@ use ethers_core::{
     types::{Address, H160},
 };
 use sputnik::{backend::Log, Capture, ExitReason, ExitRevert, ExitSucceed};
-use std::convert::Infallible;
+use std::{convert::Infallible, str::FromStr};
 
 /// For certain cheatcodes, we may internally change the status of the call, i.e. in
 /// `expectRevert`. Solidity will see a successful call and attempt to abi.decode for the called
