@@ -24,10 +24,14 @@ pub enum Subcommands {
     #[clap(aliases = &["--from-ascii"])]
     #[clap(name = "--from-utf8")]
     #[clap(about = "convert text data into hexdata")]
-    FromUtf8 { text: Option<String> },
+    FromUtf8 {
+        text: Option<String>,
+    },
     #[clap(name = "--to-hex")]
     #[clap(about = "convert a decimal number into hex")]
-    ToHex { decimal: Option<String> },
+    ToHex {
+        decimal: Option<String>,
+    },
     #[clap(name = "--to-hexdata")]
     #[clap(about = r#"[<hex>|</path>|<@tag>]
     Output lowercase, 0x-prefixed hex, converting from the
@@ -37,14 +41,20 @@ pub enum Subcommands {
       - absolute path to file
       - @tag, where $TAG is defined in environment variables
     "#)]
-    ToHexdata { input: Option<String> },
+    ToHexdata {
+        input: Option<String>,
+    },
     #[clap(aliases = &["--to-checksum"])] // Compatibility with dapptools' cast
     #[clap(name = "--to-checksum-address")]
     #[clap(about = "convert an address to a checksummed format (EIP-55)")]
-    ToCheckSumAddress { address: Option<Address> },
+    ToCheckSumAddress {
+        address: Option<Address>,
+    },
     #[clap(name = "--to-ascii")]
     #[clap(about = "convert hex data to text data")]
-    ToAscii { hexdata: Option<String> },
+    ToAscii {
+        hexdata: Option<String>,
+    },
     #[clap(name = "--to-bytes32")]
     #[clap(about = "left-pads a hex bytes string to 32 bytes)")]
     #[clap(name = "--from-fix")]
@@ -54,10 +64,14 @@ pub enum Subcommands {
         #[clap(allow_hyphen_values = true)] // negative values not yet supported internally
         value: Option<String>,
     },
-    ToBytes32 { bytes: Option<String> },
+    ToBytes32 {
+        bytes: Option<String>,
+    },
     #[clap(name = "--to-dec")]
     #[clap(about = "convert hex value into decimal number")]
-    ToDec { hexvalue: Option<String> },
+    ToDec {
+        hexvalue: Option<String>,
+    },
     #[clap(name = "--to-fix")]
     #[clap(about = "convert integers into fixed point with specified decimals")]
     ToFix {
@@ -67,10 +81,14 @@ pub enum Subcommands {
     },
     #[clap(name = "--to-uint256")]
     #[clap(about = "convert a number into uint256 hex string with 0x prefix")]
-    ToUint256 { value: Option<String> },
+    ToUint256 {
+        value: Option<String>,
+    },
     #[clap(name = "--to-int256")]
     #[clap(about = "convert a number into int256 hex string with 0x prefix")]
-    ToInt256 { value: Option<String> },
+    ToInt256 {
+        value: Option<String>,
+    },
     #[clap(name = "--to-unit")]
     #[clap(
         about = r#"convert an ETH amount into a specified unit: ether, gwei or wei (default: wei).
@@ -82,7 +100,10 @@ pub enum Subcommands {
       - 1gwei ether    | converts 1 gwei to ether
     "#
     )]
-    ToUnit { value: Option<String>, unit: Option<String> },
+    ToUnit {
+        value: Option<String>,
+        unit: Option<String>,
+    },
     #[clap(name = "--to-wei")]
     #[clap(about = "convert an ETH amount into wei. Consider using --to-unit.")]
     ToWei {
@@ -162,7 +183,9 @@ pub enum Subcommands {
     },
     #[clap(name = "namehash")]
     #[clap(about = "returns ENS namehash of provided name")]
-    Namehash { name: String },
+    Namehash {
+        name: String,
+    },
     #[clap(name = "tx")]
     #[clap(about = "Show information about the transaction <tx-hash>")]
     Tx {
@@ -307,7 +330,9 @@ pub enum Subcommands {
         id: Option<String>,
     },
     #[clap(name = "4byte-event")]
-    #[clap(about = "Takes a 32 byte topic and prints the response from querying 4byte.directory for that topic")]
+    #[clap(
+        about = "Takes a 32 byte topic and prints the response from querying 4byte.directory for that topic"
+    )]
     FourByteEvent {
         #[clap(help = "the 32 byte topic")]
         topic: String,
@@ -356,7 +381,9 @@ pub enum Subcommands {
     },
     #[clap(name = "keccak")]
     #[clap(about = "Keccak-256 hashes arbitrary data")]
-    Keccak { data: String },
+    Keccak {
+        data: String,
+    },
     #[clap(name = "resolve-name")]
     #[clap(about = "Returns the address the provided ENS name resolves to")]
     ResolveName {

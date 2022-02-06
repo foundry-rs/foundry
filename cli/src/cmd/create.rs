@@ -74,15 +74,16 @@ impl Cmd for CreateArgs {
         let provider = Provider::<Http>::try_from(self.eth.rpc_url()?)?;
         let params = match abi.constructor {
             Some(ref v) => {
-                let constructor_args = if let Some(ref constructor_args_path) = self.constructor_args_path {
-                    if !std::path::Path::new(&constructor_args_path).exists() {
-                        eyre::bail!("constructor args path not found");
-                    }
-                    let file = fs::read_to_string(constructor_args_path)?;
-                    file.split(" ").map(|s| s.to_string()).collect::<Vec<String>>()
-                } else {
-                    self.constructor_args.clone()
-                };
+                let constructor_args =
+                    if let Some(ref constructor_args_path) = self.constructor_args_path {
+                        if !std::path::Path::new(&constructor_args_path).exists() {
+                            eyre::bail!("constructor args path not found");
+                        }
+                        let file = fs::read_to_string(constructor_args_path)?;
+                        file.split(" ").map(|s| s.to_string()).collect::<Vec<String>>()
+                    } else {
+                        self.constructor_args.clone()
+                    };
                 self.parse_constructor_args(v, &constructor_args)?
             }
             None => vec![],
@@ -128,8 +129,8 @@ impl CreateArgs {
         let factory = ContractFactory::new(abi, bin, Arc::new(provider));
 
         let deployer = factory.deploy_tokens(args)?;
-        let deployer = if self.legacy
-            || Chain::try_from(chain).map(|x| Chain::is_legacy(&x)).unwrap_or_default()
+        let deployer = if self.legacy ||
+            Chain::try_from(chain).map(|x| Chain::is_legacy(&x)).unwrap_or_default()
         {
             deployer.legacy()
         } else {
