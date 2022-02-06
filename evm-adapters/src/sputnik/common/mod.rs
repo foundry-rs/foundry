@@ -79,19 +79,19 @@ use macros::{call_inner, create_inner, start_trace};
 /// // additional functions like `ExecutionHandler::do_call` can be replaced,
 /// // essentially intercepting the call
 /// // the control flow is `SputnikExecutor -> ExecutionHandler -> sputnik::Handler`
-// impl<'a, 'b, Back, Precom: 'b> ExecutionHandler<'a, 'b, Back, Precom, MyStackState<'a, Back>>
-// for MyStackExecutor<'a, 'b, Back, Precom>
+// impl<'a, 'b, Back, Pre: 'b> ExecutionHandler<'a, 'b, Back, Pre, MyStackState<'a, Back>>
+// for MyStackExecutor<'a, 'b, Back, Pre>
 //     where
 //         Back: Backend,
-//         Precom: PrecompileSet,
+//         Pre: PrecompileSet,
 // {
-//     fn stack_executor(&self) -> &StackExecutor<'a, 'b, MyStackState<'a, Back>, Precom> {
+//     fn stack_executor(&self) -> &StackExecutor<'a, 'b, MyStackState<'a, Back>, Pre> {
 //         &self.handler
 //     }
 //
 //     fn stack_executor_mut(
 //         &mut self,
-//     ) -> &mut StackExecutor<'a, 'b, MyStackState<'a, Back>, Precom> {
+//     ) -> &mut StackExecutor<'a, 'b, MyStackState<'a, Back>, Pre> {
 //         &mut self.handler
 //     }
 //
@@ -110,17 +110,17 @@ use macros::{call_inner, create_inner, start_trace};
 //     }
 // }
 // ```
-pub trait ExecutionHandler<'a, 'b, Back, Precom: 'b, State>
+pub trait ExecutionHandler<'a, 'b, Back, Pre: 'b, State>
 where
     Back: Backend,
-    Precom: PrecompileSet,
+    Pre: PrecompileSet,
     State: StackState<'a>,
 {
     // /// This allows has to turn this mutable ref into a type that implements `sputnik::Handler`
     // to /// execute runtime operations
     // fn as_handler<'handler>(
     //     &'handler mut self,
-    // ) -> RuntimeExecutionHandler<'handler, 'a, 'b, Back, Precom, State, Self>
+    // ) -> RuntimeExecutionHandler<'handler, 'a, 'b, Back, Pre, State, Self>
     // where
     //     Self: Sized,
     // {
@@ -128,10 +128,10 @@ where
     // }
 
     /// returns the wrapper sputnik `StackExecutor`
-    fn stack_executor(&self) -> &StackExecutor<'a, 'b, State, Precom>;
+    fn stack_executor(&self) -> &StackExecutor<'a, 'b, State, Pre>;
 
     /// returns the wrapper sputnik `StackExecutor`
-    fn stack_executor_mut(&mut self) -> &mut StackExecutor<'a, 'b, State, Precom>;
+    fn stack_executor_mut(&mut self) -> &mut StackExecutor<'a, 'b, State, Pre>;
 
     // Everything else is left the same
     fn balance(&self, address: H160) -> U256 {
@@ -302,29 +302,29 @@ pub struct RuntimeExecutionHandler<
     'a,
     'b,
     Back,
-    Precom: 'b,
+    Pre: 'b,
     State,
     ExecHandler,
     HandlerBackend,
 > where
     Back: Backend,
-    Precom: PrecompileSet,
+    Pre: PrecompileSet,
     State: StackState<'a>,
-    ExecHandler: ExecutionHandler<'a, 'b, Back, Precom, State>,
+    ExecHandler: ExecutionHandler<'a, 'b, Back, Pre, State>,
     HandlerBackend: Backend,
 {
     /// The wrapped `ExecutionHandler`
     handler: &'handler mut ExecHandler,
     // this is necessary because of all the unconstrained trait generics...
-    _marker: PhantomData<(&'a (), State, &'b (), Back, Precom, HandlerBackend)>,
+    _marker: PhantomData<(&'a (), State, &'b (), Back, Pre, HandlerBackend)>,
 }
 
-impl<'handler, 'a, 'b, Back, Precom: 'b, State, ExecHandler, HandlerBackend>
-    RuntimeExecutionHandler<'handler, 'a, 'b, Back, Precom, State, ExecHandler, HandlerBackend>
+impl<'handler, 'a, 'b, Back, Pre: 'b, State, ExecHandler, HandlerBackend>
+    RuntimeExecutionHandler<'handler, 'a, 'b, Back, Pre, State, ExecHandler, HandlerBackend>
 where
-    ExecHandler: ExecutionHandler<'a, 'b, Back, Precom, State>,
+    ExecHandler: ExecutionHandler<'a, 'b, Back, Pre, State>,
     Back: Backend,
-    Precom: PrecompileSet,
+    Pre: PrecompileSet,
     State: StackState<'a>,
     HandlerBackend: Backend,
 {
@@ -333,18 +333,18 @@ where
     }
 
     pub fn handler(&self) -> &ExecHandler {
-        &self.handler
+        self.handler
     }
 
     pub fn handler_mut(&mut self) -> &mut ExecHandler {
         &mut self.handler
     }
 
-    fn stack_executor(&self) -> &StackExecutor<'a, 'b, State, Precom> {
+    fn stack_executor(&self) -> &StackExecutor<'a, 'b, State, Pre> {
         self.handler().stack_executor()
     }
 
-    fn stack_executor_mut(&mut self) -> &mut StackExecutor<'a, 'b, State, Precom> {
+    fn stack_executor_mut(&mut self) -> &mut StackExecutor<'a, 'b, State, Pre> {
         self.handler_mut().stack_executor_mut()
     }
 
@@ -357,21 +357,21 @@ where
     }
 }
 
-impl<'handler, 'a, 'b, Back, Precom: 'b, ExecHandler, HandlerBackend>
+impl<'handler, 'a, 'b, Back, Pre: 'b, ExecHandler, HandlerBackend>
     RuntimeExecutionHandler<
         'handler,
         'a,
         'b,
         Back,
-        Precom,
+        Pre,
         MemoryStackStateOwned<'a, HandlerBackend>,
         ExecHandler,
         HandlerBackend,
     >
 where
-    ExecHandler: ExecutionHandler<'a, 'b, Back, Precom, MemoryStackStateOwned<'a, HandlerBackend>>,
+    ExecHandler: ExecutionHandler<'a, 'b, Back, Pre, MemoryStackStateOwned<'a, HandlerBackend>>,
     Back: Backend,
-    Precom: PrecompileSet,
+    Pre: PrecompileSet,
     HandlerBackend: Backend,
 {
     fn config(&self) -> &Config {
@@ -451,21 +451,21 @@ where
     }
 }
 
-impl<'handler, 'a, 'b, Back, Precom: 'b, ExecHandler, HandlerBackend> Handler
+impl<'handler, 'a, 'b, Back, Pre: 'b, ExecHandler, HandlerBackend> Handler
     for RuntimeExecutionHandler<
         'handler,
         'a,
         'b,
         Back,
-        Precom,
+        Pre,
         MemoryStackStateOwned<'a, HandlerBackend>,
         ExecHandler,
         HandlerBackend,
     >
 where
-    ExecHandler: ExecutionHandler<'a, 'b, Back, Precom, MemoryStackStateOwned<'a, HandlerBackend>>,
+    ExecHandler: ExecutionHandler<'a, 'b, Back, Pre, MemoryStackStateOwned<'a, HandlerBackend>>,
     Back: Backend,
-    Precom: PrecompileSet,
+    Pre: PrecompileSet,
     HandlerBackend: Backend,
 {
     type CreateInterrupt = Infallible;
@@ -600,26 +600,26 @@ where
 
 /// This wrapper type is necessary as we can't implement foreign traits for traits (Handler for
 /// ExecutionHandler)
-pub struct ExecutionHandlerWrapper<'a, 'b, Back, Precom: 'b, State, ExecHandler>
+pub struct ExecutionHandlerWrapper<'a, 'b, Back, Pre: 'b, State, ExecHandler>
 where
     Back: Backend,
-    Precom: PrecompileSet,
+    Pre: PrecompileSet,
     State: StackState<'a>,
-    ExecHandler: ExecutionHandler<'a, 'b, Back, Precom, State>,
+    ExecHandler: ExecutionHandler<'a, 'b, Back, Pre, State>,
 {
     /// The wrapped `ExecutionHandler`
     handler: ExecHandler,
     // this is necessary because of all the unconstrained trait generics...
-    _marker: PhantomData<(&'a (), State, &'b (), Back, Precom)>,
+    _marker: PhantomData<(&'a (), State, &'b (), Back, Pre)>,
 }
 
-impl<'a, 'b, Back, Precom: 'b, State, ExecHandler>
-    ExecutionHandlerWrapper<'a, 'b, Back, Precom, State, ExecHandler>
+impl<'a, 'b, Back, Pre: 'b, State, ExecHandler>
+    ExecutionHandlerWrapper<'a, 'b, Back, Pre, State, ExecHandler>
 where
     Back: Backend,
-    Precom: PrecompileSet,
+    Pre: PrecompileSet,
     State: StackState<'a>,
-    ExecHandler: ExecutionHandler<'a, 'b, Back, Precom, State>,
+    ExecHandler: ExecutionHandler<'a, 'b, Back, Pre, State>,
 {
     pub fn new(handler: ExecHandler) -> Self {
         Self { handler, _marker: Default::default() }
@@ -633,44 +633,23 @@ where
         &mut self.handler
     }
 
-    fn stack_executor(&self) -> &StackExecutor<'a, 'b, State, Precom> {
+    fn stack_executor(&self) -> &StackExecutor<'a, 'b, State, Pre> {
         self.handler().stack_executor()
     }
 
-    fn stack_executor_mut(&mut self) -> &mut StackExecutor<'a, 'b, State, Precom> {
+    fn stack_executor_mut(&mut self) -> &mut StackExecutor<'a, 'b, State, Pre> {
         self.handler_mut().stack_executor_mut()
     }
 }
 
-impl<'a, 'b, Back, Precom: 'b, ExecHandler, HandlerBack>
-    ExecutionHandlerWrapper<
-        'a,
-        'b,
-        Back,
-        Precom,
-        MemoryStackStateOwned<'a, HandlerBack>,
-        ExecHandler,
-    >
+impl<'a, 'b, Back, Pre: 'b, ExecHandler, HandlerBack>
+    ExecutionHandlerWrapper<'a, 'b, Back, Pre, MemoryStackStateOwned<'a, HandlerBack>, ExecHandler>
 where
-    ExecHandler: ExecutionHandler<'a, 'b, Back, Precom, MemoryStackStateOwned<'a, HandlerBack>>,
+    ExecHandler: ExecutionHandler<'a, 'b, Back, Pre, MemoryStackStateOwned<'a, HandlerBack>>,
     Back: Backend,
-    Precom: PrecompileSet,
+    Pre: PrecompileSet,
     HandlerBack: Backend,
 {
-    // fn as_executor<'handler>(
-    //     &'handler mut self,
-    // ) -> RuntimeExecutionHandler<
-    //     'handler,
-    //     'a,
-    //     'b,
-    //     Back,
-    //     Precom,
-    //     MemoryStackStateOwned<'a, Back>,
-    //     ExecHandler,
-    // > {
-    //     RuntimeExecutionHandler::new(&mut self.handler)
-    // }
-
     // NB: This function is copy-pasted from upstream's `execute`, adjusted so that we call the
     // Runtime with our own handler
     pub fn execute(&mut self, runtime: &mut Runtime) -> ExitReason {
@@ -740,19 +719,19 @@ where
     }
 }
 
-impl<'a, 'b, Back, Precom: 'b, ExecHandler, HandlerBack> Handler
+impl<'a, 'b, Back, Pre: 'b, ExecHandler, HandlerBack> Handler
     for ExecutionHandlerWrapper<
         'a,
         'b,
         Back,
-        Precom,
+        Pre,
         MemoryStackStateOwned<'a, HandlerBack>,
         ExecHandler,
     >
 where
-    ExecHandler: ExecutionHandler<'a, 'b, Back, Precom, MemoryStackStateOwned<'a, HandlerBack>>,
+    ExecHandler: ExecutionHandler<'a, 'b, Back, Pre, MemoryStackStateOwned<'a, HandlerBack>>,
     Back: Backend,
-    Precom: PrecompileSet,
+    Pre: PrecompileSet,
     HandlerBack: Backend,
 {
     type CreateInterrupt = Infallible;
@@ -886,20 +865,20 @@ where
 }
 
 // Forwards everything internally except for the transact_call which is overwritten.
-impl<'a, 'b, Back, Precom: 'b, ExecHandler, HandlerBack>
+impl<'a, 'b, Back, Pre: 'b, ExecHandler, HandlerBack>
     SputnikExecutor<MemoryStackStateOwned<'a, HandlerBack>>
     for ExecutionHandlerWrapper<
         'a,
         'b,
         Back,
-        Precom,
+        Pre,
         MemoryStackStateOwned<'a, HandlerBack>,
         ExecHandler,
     >
 where
-    ExecHandler: ExecutionHandler<'a, 'b, Back, Precom, MemoryStackStateOwned<'a, HandlerBack>>,
+    ExecHandler: ExecutionHandler<'a, 'b, Back, Pre, MemoryStackStateOwned<'a, HandlerBack>>,
     Back: Backend,
-    Precom: PrecompileSet,
+    Pre: PrecompileSet,
     HandlerBack: Backend,
 {
     fn config(&self) -> &Config {

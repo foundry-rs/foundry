@@ -4,8 +4,8 @@ use super::{
     HEVMCalls,
 };
 use crate::{
-    call_tracing::{CallTrace, CallTraceArena, LogCallOrder},
-    sputnik::{cheatcodes::memory_stackstate_owned::ExpectedEmit, Executor, SputnikExecutor},
+    call_tracing::CallTrace,
+    sputnik::{cheatcodes::memory_stackstate_owned::ExpectedEmit, Executor},
     Evm,
 };
 use std::collections::BTreeMap;
@@ -14,27 +14,24 @@ use std::{fs::File, io::Read, path::Path};
 
 use sputnik::{
     backend::Backend,
-    executor::stack::{
-        Log, PrecompileFailure, PrecompileOutput, PrecompileSet, StackExecutor, StackExitKind,
-        StackState, StackSubstateMetadata,
-    },
-    gasometer, Capture, Config, Context, CreateScheme, ExitError, ExitReason, ExitRevert,
-    ExitSucceed, Handler, Memory, Opcode, Runtime, Transfer,
+    executor::stack::{PrecompileSet, StackExecutor, StackState, StackSubstateMetadata},
+    Capture, Config, Context, CreateScheme, ExitReason, ExitSucceed, Handler, Memory, Opcode,
+    Runtime, Transfer,
 };
 use std::{process::Command, rc::Rc};
 
 use ethers::{
-    abi::{RawLog, Token},
+    abi::Token,
     core::{abi::AbiDecode, k256::ecdsa::SigningKey, utils},
     signers::{LocalWallet, Signer},
     solc::{artifacts::CompactContractBytecode, ProjectPathsConfig},
-    types::{Address, H160, H256, U256},
+    types::{Address, H160, U256},
 };
 
-use std::{convert::Infallible, marker::PhantomData};
+use std::convert::Infallible;
 
 use crate::sputnik::cheatcodes::{
-    debugger::{CheatOp, DebugArena, DebugNode, DebugStep, OpCode},
+    debugger::{CheatOp, DebugNode, DebugStep, OpCode},
     memory_stackstate_owned::Prank,
     patch_hardhat_console_log_selector,
 };
@@ -42,7 +39,7 @@ use once_cell::sync::Lazy;
 
 use crate::sputnik::{
     common::{ExecutionHandler, ExecutionHandlerWrapper, RuntimeExecutionHandler},
-    utils::{convert_log, evm_error, revert_return_evm, ExpectRevertReturn},
+    utils::{evm_error, revert_return_evm, ExpectRevertReturn},
 };
 use ethers::abi::Tokenize;
 

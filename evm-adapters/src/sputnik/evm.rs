@@ -217,9 +217,7 @@ pub mod helpers {
     use crate::{
         fuzz::FuzzedExecutor,
         sputnik::{
-            cheatcodes::cheatcode_handler::{
-                CheatcodeExecutionHandler, CheatcodeStackExecutor, CheatcodeStackState,
-            },
+            cheatcodes::cheatcode_handler::{CheatcodeExecutionHandler, CheatcodeStackState},
             PrecompileFn, PRECOMPILES_MAP,
         },
     };
