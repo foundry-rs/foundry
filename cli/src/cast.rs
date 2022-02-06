@@ -92,10 +92,7 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::FromFix { decimals, value } => {
             let val = unwrap_or_stdin(value)?;
-            println!(
-                "{}",
-                SimpleCast::from_fix(unwrap_or_stdin(decimals)? as u32, &val)?
-            );
+            println!("{}", SimpleCast::from_fix(unwrap_or_stdin(decimals)? as u32, &val)?);
         }
         Subcommands::ToBytes32 { bytes } => {
             let val = unwrap_or_stdin(bytes)?;
