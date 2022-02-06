@@ -46,7 +46,7 @@
 - [x] `etherscan-source`
 - [ ] `events`
 - [x] `gas-price`
-- [ ] `index`
+- [x] `index`
 - [x] `keccak`
 - [ ] `logs`
 - [x] `lookup-address`
