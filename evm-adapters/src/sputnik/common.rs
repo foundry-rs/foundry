@@ -74,7 +74,7 @@ use crate::sputnik::{
 ///
 /// // finally, we implement `ExecutionHandler`
 /// // the default implementation delegates all `sputnik::Handler` calls to `MyHandler.handler`
-/// // additional functions like `ExecutionHandler::do_create` can be replaced,
+/// // additional functions like `ExecutionHandler::do_call` can be replaced,
 /// // essentially intercepting the call
 /// // the control flow is `SputnikExecutor -> ExecutionHandler -> sputnik::Handler`
 /// impl<'a, 'b, Back, Precom: 'b> ExecutionHandler<'a, 'b, Back, Precom, MyStackState<'a, Back>>
@@ -240,6 +240,7 @@ where
         creation: bool,
     ) -> ExitReason;
 
+    /// The delegate for `sputnik::Handler::create`
     fn do_create(
         &mut self,
         caller: H160,
@@ -251,6 +252,7 @@ where
         self.stack_executor_mut().create(caller, scheme, value, init_code, target_gas)
     }
 
+    /// The delegate for `sputnik::Handler::call`
     fn do_call(
         &mut self,
         code_address: H160,
