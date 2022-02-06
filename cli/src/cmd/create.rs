@@ -147,7 +147,7 @@ impl CreateArgs {
     fn parse_constructor_args(
         &self,
         constructor: &Constructor,
-        constructor_args: &Vec<String>,
+        constructor_args: &[String],
     ) -> Result<Vec<Token>> {
         let params = constructor
             .inputs
