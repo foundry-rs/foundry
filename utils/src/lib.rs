@@ -472,6 +472,37 @@ pub async fn fourbyte_possible_sigs(calldata: &str, id: Option<String>) -> Resul
     }
 }
 
+/// Fetches a event signature given the 32 byte topic using 4byte.directory
+pub async fn fourbyte_event(topic: &str) -> Result<Vec<(String, i32)>> {
+    #[derive(Deserialize)]
+    struct Decoded {
+        text_signature: String,
+        id: i32,
+    }
+
+    #[derive(Deserialize)]
+    struct ApiResponse {
+        results: Vec<Decoded>,
+    }
+
+    let topic = &topic.strip_prefix("0x").unwrap_or(topic);
+    if topic.len() < 64 {
+        return Err(eyre::eyre!("Invalid topic"));
+    }
+    let topic = &topic[..8];
+
+    let url =
+        format!("https://www.4byte.directory/api/v1/event-signatures/?hex_signature={}", topic);
+    let res = reqwest::get(url).await?;
+    let api_response = res.json::<ApiResponse>().await?;
+
+    Ok(api_response
+        .results
+        .into_iter()
+        .map(|d| (d.text_signature, d.id))
+        .collect::<Vec<(String, i32)>>())
+}
+
 pub fn abi_decode(sig: &str, calldata: &str, input: bool) -> Result<Vec<Token>> {
     let func = IntoFunction::into(sig);
     let calldata = calldata.strip_prefix("0x").unwrap_or(calldata);
@@ -944,6 +975,16 @@ mod tests {
 
         let sigs = fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", Some("145".to_string())).await.unwrap();
         assert_eq!(sigs[0], "transfer(address,uint256)".to_string());
+    }
+
+    #[tokio::test]
+    async fn test_fourbyte_event() {
+        let sigs = fourbyte_event("0x7e1db2a1cd12f0506ecd806dba508035b290666b84b096a87af2fd2a1516ede6").await.unwrap();
+        assert_eq!(sigs[0].0, "updateAuthority(address,uint8)".to_string());
+        assert_eq!(sigs[0].1, 79573);
+
+        let sigs = fourbyte_event("0xb7009613e63fb13fd59a2fa4c206a992c1f090a44e5d530be255aa17fed0b3dd").await.unwrap();
+        assert_eq!(sigs[0].0, "canCall(address,address,bytes4)".to_string());
     }
 
     #[test]

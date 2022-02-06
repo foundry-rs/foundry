@@ -27,7 +27,7 @@
 - [x] `--to-wei`
 - [x] `4byte`
 - [x] `4byte-decode`
-- [ ] `4byte-event`
+- [x] `4byte-event`
 - [x] `abi-encode`
 - [x] `age`
 - [x] `balance`
