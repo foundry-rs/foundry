@@ -336,8 +336,7 @@ pub mod helpers {
         let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
 
         let runner = proptest::test_runner::TestRunner::new(cfg);
-        // FuzzedExecutor::new(evm, runner, Address::zero())
-        todo!("reimplement again")
+        FuzzedExecutor::new(evm, runner, Address::zero())
     }
 
     pub fn new_backend(vicinity: &MemoryVicinity, state: MemoryState) -> MemoryBackend<'_> {
