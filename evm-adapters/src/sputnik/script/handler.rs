@@ -8,7 +8,7 @@ use sputnik::{
 };
 use std::rc::Rc;
 
-use crate::sputnik::common::ExecutionHandler;
+use crate::{call_tracing::CallTrace, sputnik::common::ExecutionHandler};
 use ethers::types::Address;
 
 pub type ScriptStackState<'config, Backend> = MemoryStackStateOwned<'config, Backend>;
@@ -39,6 +39,24 @@ where
 
     fn is_tracing_enabled(&self) -> bool {
         false
+    }
+
+    fn fill_trace(
+        &mut self,
+        new_trace: &Option<CallTrace>,
+        success: bool,
+        output: Option<Vec<u8>>,
+        pre_trace_index: usize,
+    ) {
+        self.stack_executor_mut().state_mut().trace_index = pre_trace_index;
+        if let Some(new_trace) = new_trace {
+            let used_gas = self.stack_executor().used_gas();
+            let trace =
+                &mut self.stack_executor_mut().state_mut().trace_mut().arena[new_trace.idx].trace;
+            trace.output = output.unwrap_or_default();
+            trace.cost = used_gas;
+            trace.success = success;
+        }
     }
 
     fn debug_execute(

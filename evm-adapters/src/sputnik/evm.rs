@@ -217,7 +217,9 @@ pub mod helpers {
     use crate::{
         fuzz::FuzzedExecutor,
         sputnik::{
-            cheatcodes::cheatcode_handler::{CheatcodeStackExecutor, CheatcodeStackState},
+            cheatcodes::cheatcode_handler::{
+                CheatcodeExecutionHandler, CheatcodeStackExecutor, CheatcodeStackState,
+            },
             PrecompileFn, PRECOMPILES_MAP,
         },
     };
@@ -227,7 +229,7 @@ pub mod helpers {
         // state
         CheatcodeStackState<'a, B>,
         // actual stack executor
-        CheatcodeStackExecutor<'a, 'a, B, BTreeMap<Address, PrecompileFn>>,
+        CheatcodeExecutionHandler<'a, 'a, B, BTreeMap<Address, PrecompileFn>>,
     >;
 
     pub static CFG: Lazy<Config> = Lazy::new(Config::london);
@@ -334,7 +336,8 @@ pub mod helpers {
         let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
 
         let runner = proptest::test_runner::TestRunner::new(cfg);
-        FuzzedExecutor::new(evm, runner, Address::zero())
+        // FuzzedExecutor::new(evm, runner, Address::zero())
+        todo!("reimplement again")
     }
 
     pub fn new_backend(vicinity: &MemoryVicinity, state: MemoryState) -> MemoryBackend<'_> {

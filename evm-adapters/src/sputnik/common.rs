@@ -240,6 +240,15 @@ where
         creation: bool,
     ) -> ExitReason;
 
+    /// This is provided so the implementers can also access fill_trace
+    fn fill_trace(
+        &mut self,
+        new_trace: &Option<CallTrace>,
+        success: bool,
+        output: Option<Vec<u8>>,
+        pre_trace_index: usize,
+    );
+
     /// The delegate for `sputnik::Handler::create`
     fn do_create(
         &mut self,
@@ -282,7 +291,9 @@ where
     State: StackState<'a>,
     ExecHandler: ExecutionHandler<'a, 'b, Back, Precom, State>,
 {
+    /// The wrapped `ExecutionHandler`
     handler: ExecHandler,
+    // this is necessary because of all the unconstrained trait generics...
     _marker: PhantomData<(&'a Back, &'b State, Precom)>,
 }
 
@@ -294,6 +305,10 @@ where
     State: StackState<'a>,
     ExecHandler: ExecutionHandler<'a, 'b, Back, Precom, State>,
 {
+    pub fn new(handler: ExecHandler) -> Self {
+        Self { handler, _marker: Default::default() }
+    }
+
     pub fn handler(&self) -> &ExecHandler {
         &self.handler
     }
@@ -366,14 +381,7 @@ where
         output: Option<Vec<u8>>,
         pre_trace_index: usize,
     ) {
-        self.state_mut().trace_index = pre_trace_index;
-        if let Some(new_trace) = new_trace {
-            let used_gas = self.stack_executor().used_gas();
-            let trace = &mut self.state_mut().trace_mut().arena[new_trace.idx].trace;
-            trace.output = output.unwrap_or_default();
-            trace.cost = used_gas;
-            trace.success = success;
-        }
+        self.handler.fill_trace(new_trace, success, output, pre_trace_index)
     }
 
     // NB: This function is copy-pasted from upstream's create_inner
