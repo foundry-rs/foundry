@@ -427,6 +427,7 @@ SUBCOMMANDS:
     completions              generate shell completions script
     estimate                 Estimate the gas cost of a transaction from <from> to <to> with <data>
     gas-price                Prints current gas price of target chain
+    index                    Get storage slot of value from mapping type, mapping slot number and input value
     help                     Print this message or the help of the given subcommand(s)
     keccak                   Keccak-256 hashes arbitrary data
     lookup-address           Returns the name the provided address resolves to
