@@ -1,15 +1,25 @@
 //! The handler that sits in between and intercepts script calls
 
+pub mod fs;
+use fs::ForgeFsCalls;
+
 use crate::sputnik::cheatcodes::memory_stackstate_owned::MemoryStackStateOwned;
 use sputnik::{
     backend::Backend,
     executor::stack::{PrecompileSet, StackExecutor},
-    ExitReason, ExitSucceed, Runtime,
+    Capture, Context, ExitReason, ExitSucceed, Handler, Runtime, Transfer,
 };
-use std::rc::Rc;
+use std::{convert::Infallible, rc::Rc};
 
-use crate::{call_tracing::CallTrace, sputnik::common::ExecutionHandler};
+use crate::{
+    call_tracing::CallTrace,
+    sputnik::{
+        common::ExecutionHandler,
+        script::{fs::FsManager, FORGE_SCRIPT_ADDRESS},
+    },
+};
 use ethers::types::Address;
+use ethers_core::types::H160;
 
 pub type ScriptStackState<'config, Backend> = MemoryStackStateOwned<'config, Backend>;
 
@@ -41,6 +51,16 @@ where
         false
     }
 
+    fn debug_execute(
+        &mut self,
+        _runtime: &mut Runtime,
+        _address: Address,
+        _code: Rc<Vec<u8>>,
+        _creation: bool,
+    ) -> ExitReason {
+        ExitReason::Succeed(ExitSucceed::Returned)
+    }
+
     fn fill_trace(
         &mut self,
         new_trace: &Option<CallTrace>,
@@ -59,19 +79,34 @@ where
         }
     }
 
-    fn debug_execute(
+    fn do_call(
         &mut self,
-        _runtime: &mut Runtime,
-        _address: Address,
-        _code: Rc<Vec<u8>>,
-        _creation: bool,
-    ) -> ExitReason {
-        ExitReason::Succeed(ExitSucceed::Returned)
+        code_address: H160,
+        transfer: Option<Transfer>,
+        input: Vec<u8>,
+        target_gas: Option<u64>,
+        is_static: bool,
+        context: Context,
+    ) -> Capture<(ExitReason, Vec<u8>), Infallible> {
+        if code_address == *FORGE_SCRIPT_ADDRESS {
+            // if let Ok(fs_call) =
+
+            todo!()
+        } else {
+            self.stack_executor_mut().call(
+                code_address,
+                transfer,
+                input,
+                target_gas,
+                is_static,
+                context,
+            )
+        }
     }
 }
 
 /// Tracks the state of the script that's currently being executed
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct ScriptState {
-    // TODO file handles etc
+    fs: FsManager,
 }
