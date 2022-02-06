@@ -31,7 +31,7 @@ use crate::sputnik::{
     cheatcodes::memory_stackstate_owned::MemoryStackStateOwned, utils::convert_log,
 };
 mod macros;
-use macros::{call_inner, create_inner};
+use macros::{call_inner, create_inner, start_trace};
 
 /// an(other) abstraction over a sputnik `Handler` implementation
 ///
@@ -321,6 +321,22 @@ where
     pub fn new(handler: &'handler mut ExecHandler) -> Self {
         Self { handler, _marker: Default::default() }
     }
+
+    pub fn handler(&self) -> &ExecHandler {
+        &self.handler
+    }
+
+    pub fn handler_mut(&mut self) -> &mut ExecHandler {
+        &mut self.handler
+    }
+
+    fn stack_executor(&self) -> &StackExecutor<'a, 'b, State, Precom> {
+        self.handler().stack_executor()
+    }
+
+    fn stack_executor_mut(&mut self) -> &mut StackExecutor<'a, 'b, State, Precom> {
+        self.handler_mut().stack_executor_mut()
+    }
 }
 
 impl<'handler, 'a, 'b, Back, Precom: 'b, ExecHandler>
@@ -566,29 +582,7 @@ where
         transfer: U256,
         creation: bool,
     ) -> Option<CallTrace> {
-        if self.handler().is_tracing_enabled() {
-            let mut trace: CallTrace = CallTrace {
-                // depth only starts tracking at first child substate and is 0. so add 1 when depth
-                // is some.
-                depth: if let Some(depth) = self.state().metadata().depth() {
-                    depth + 1
-                } else {
-                    0
-                },
-                addr: address,
-                created: creation,
-                data: input,
-                value: transfer,
-                label: self.state().labels.get(&address).cloned(),
-                ..Default::default()
-            };
-
-            self.state_mut().trace_mut().push_trace(0, &mut trace);
-            self.state_mut().trace_index = trace.idx;
-            Some(trace)
-        } else {
-            None
-        }
+        start_trace!(self, address, input, transfer, creation)
     }
 
     fn fill_trace(
@@ -738,62 +732,7 @@ where
     }
 
     fn log(&mut self, address: H160, topics: Vec<H256>, data: Vec<u8>) -> Result<(), ExitError> {
-        if self.state().trace_enabled {
-            let index = self.state().trace_index;
-            let node = &mut self.state_mut().traces.last_mut().expect("no traces").arena[index];
-            node.ordering.push(LogCallOrder::Log(node.logs.len()));
-            node.logs.push(RawLog { topics: topics.clone(), data: data.clone() });
-        }
-
-        if let Some(decoded) =
-            convert_log(Log { address, topics: topics.clone(), data: data.clone() })
-        {
-            self.state_mut().all_logs.push(decoded);
-        }
-
-        if !self.state().expected_emits.is_empty() {
-            // get expected emits
-            let expected_emits = &mut self.state_mut().expected_emits;
-
-            // do we have empty expected emits to fill?
-            if let Some(next_expect_to_fill) =
-                expected_emits.iter_mut().find(|expect| expect.log.is_none())
-            {
-                next_expect_to_fill.log =
-                    Some(RawLog { topics: topics.clone(), data: data.clone() });
-            } else {
-                // no unfilled, grab next unfound
-                // try to fill the first unfound
-                if let Some(next_expect) = expected_emits.iter_mut().find(|expect| !expect.found) {
-                    // unpack the log
-                    if let Some(RawLog { topics: expected_topics, data: expected_data }) =
-                        &next_expect.log
-                    {
-                        if expected_topics[0] == topics[0] {
-                            // same event topic 0, topic length should be the same
-                            let topics_match = topics
-                                .iter()
-                                .skip(1)
-                                .enumerate()
-                                .filter(|(i, _topic)| {
-                                    // do we want to check?
-                                    next_expect.checks[*i]
-                                })
-                                .all(|(i, topic)| topic == &expected_topics[i + 1]);
-
-                            // check data
-                            next_expect.found = if next_expect.checks[3] {
-                                expected_data == &data && topics_match
-                            } else {
-                                topics_match
-                            };
-                        }
-                    }
-                }
-            }
-        }
-
-        self.stack_executor_mut().log(address, topics, data)
+        macros::log!(self, address, topics, data)
     }
 
     fn mark_delete(&mut self, address: H160, target: H160) -> Result<(), ExitError> {
