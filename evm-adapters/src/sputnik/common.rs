@@ -42,6 +42,74 @@ use crate::sputnik::{
 ///
 /// On top of delegates for the `sputnik::Handler`, this trait provides additional hooks that are
 /// invoked by the `SputnikExecutor`.
+///
+/// # Example
+///
+/// Implement your own `ExecutionHandler`
+///
+/// ```rust
+/// use std::rc::Rc;
+/// use evm_adapters::sputnik::cheatcodes::memory_stackstate_owned::MemoryStackStateOwned;
+/// use sputnik::{
+///     backend::Backend,
+///     executor::stack::{PrecompileSet, StackExecutor},
+///     ExitReason, ExitSucceed, Runtime,
+/// };
+/// use evm_adapters::sputnik::common::ExecutionHandler;
+/// use ethers::types::Address;
+///
+/// // declare your custom handler, the type that's essentially the wrapper around the standard
+/// // sputnik handler, but with additional context and state
+/// pub struct MyHandler<H> {
+///     /// placeholder for the sputnik `StackExecutor`
+///     handler: H,
+///     /// additional, custom state, for example diagnostics, cheatcode context, etc.
+///     custom_state: (),
+/// }
+///
+/// // declare your state
+/// pub type MyStackState<'config, Backend> = MemoryStackStateOwned<'config, Backend>;
+///
+/// // declare your `StackExecutor`, the type that actually drives the runtime
+/// pub type MyStackExecutor<'a, 'b, B, P> =
+///     MyHandler<StackExecutor<'a, 'b, MyStackState<'a, B>, P>>;
+///
+/// // finally, we implement `ExecutionHandler`
+/// // the default implementation delegates all `sputnik::Handler` calls to `MyHandler.handler`
+/// // additional functions like `ExecutionHandler::do_create` can be replaced,
+/// // essentially intercepting the call
+/// // the control flow is `SputnikExecutor -> ExecutionHandler -> sputnik::Handler`
+/// impl<'a, 'b, Back, Precom: 'b> ExecutionHandler<'a, 'b, Back, Precom, MyStackState<'a, Back>>
+/// for MyStackExecutor<'a, 'b, Back, Precom>
+///     where
+///         Back: Backend,
+///         Precom: PrecompileSet,
+/// {
+///     fn stack_executor(&self) -> &StackExecutor<'a, 'b, MyStackState<'a, Back>, Precom> {
+///         &self.handler
+///     }
+///
+///     fn stack_executor_mut(
+///         &mut self,
+///     ) -> &mut StackExecutor<'a, 'b, MyStackState<'a, Back>, Precom> {
+///         &mut self.handler
+///     }
+///
+///     fn is_tracing_enabled(&self) -> bool {
+///         false
+///     }
+///
+///     fn debug_execute(
+///         &mut self,
+///         _runtime: &mut Runtime,
+///         _address: Address,
+///         _code: Rc<Vec<u8>>,
+///         _creation: bool,
+///     ) -> ExitReason {
+///         ExitReason::Succeed(ExitSucceed::Returned)
+///     }
+/// }
+/// ```
 pub trait ExecutionHandler<'a, 'b, Back, Precom: 'b, State>
 where
     Back: Backend,
