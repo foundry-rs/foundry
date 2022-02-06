@@ -31,8 +31,7 @@ use ethers::{
     types::{Address, H160, H256, U256},
 };
 
-use std::convert::Infallible;
-use std::marker::PhantomData;
+use std::{convert::Infallible, marker::PhantomData};
 
 use crate::sputnik::cheatcodes::{
     debugger::{CheatOp, DebugArena, DebugNode, DebugStep, OpCode},
@@ -42,11 +41,10 @@ use crate::sputnik::cheatcodes::{
 use once_cell::sync::Lazy;
 
 use crate::sputnik::{
-    common::{ExecutionHandler, ExecutionHandlerWrapper},
+    common::{ExecutionHandler, ExecutionHandlerWrapper, RuntimeExecutionHandler},
     utils::{convert_log, evm_error, revert_return_evm, ExpectRevertReturn},
 };
 use ethers::abi::Tokenize;
-use crate::sputnik::common::RuntimeExecutionHandler;
 
 // This is now getting us the right hash? Also tried [..20]
 // Lazy::new(|| Address::from_slice(&keccak256("hevm cheat code")[12..]));
@@ -99,20 +97,34 @@ pub struct CheatcodeHandler<H> {
     console_logs: Vec<String>,
 }
 
-impl<'a, 'b, B: Backend, P: PrecompileSet + 'b > CheatcodeStackExecutor<'a, 'b, B, P> {
+impl<'a, 'b, B: Backend, P: PrecompileSet + 'b>
+    CheatcodeHandler<StackExecutor<'a, 'b, MemoryStackStateOwned<'a, CheatcodeBackend<B>>, P>>
+{
+}
 
-    fn x(&mut self) {
-        fn assert_handler<T:Handler>(h:T) {}
-        self.as_handler();
-        assert_handler(self.as_handler());
-
+impl<'a, 'b, Back: Backend, Pre: PrecompileSet + 'b> CheatcodeStackExecutor<'a, 'b, Back, Pre> {
+    /// This allows has to turn this mutable ref into a type that implements `sputnik::Handler` to
+    /// execute runtime operations
+    fn as_handler<'handler>(
+        &'handler mut self,
+    ) -> RuntimeExecutionHandler<
+        'handler,
+        'a,
+        'b,
+        Back,
+        Pre,
+        CheatcodeStackState<'a, Back>,
+        Self,
+        CheatcodeBackend<Back>,
+    > {
+        RuntimeExecutionHandler::new(self)
     }
 
-    fn state(&self) -> &CheatcodeStackState<'a, B> {
+    fn state(&self) -> &CheatcodeStackState<'a, Back> {
         self.handler.state()
     }
 
-    fn state_mut(&mut self) -> &mut CheatcodeStackState<'a, B> {
+    fn state_mut(&mut self) -> &mut CheatcodeStackState<'a, Back> {
         self.handler.state_mut()
     }
 
@@ -662,92 +674,96 @@ impl<'a, 'b, B: Backend, P: PrecompileSet + 'b > CheatcodeStackExecutor<'a, 'b, 
         code: Rc<Vec<u8>>,
         creation: bool,
     ) -> Capture<ExitReason, ()> {
+        let mut done = false;
+        let mut res = Capture::Exit(ExitReason::Succeed(ExitSucceed::Returned));
+        let mut steps = Vec::new();
+        // grab the debug instruction pointers for either construct or runtime bytecode
+        let dip = if creation {
+            &mut self.state_mut().debug_instruction_pointers.0
+        } else {
+            &mut self.state_mut().debug_instruction_pointers.1
+        };
+        // get the program counter => instruction counter mapping from memory or construct it
+        let ics = if let Some(pc_ic) = dip.get(&address) {
+            // grabs an Rc<BTreemap> of an already created pc -> ic mapping
+            pc_ic.clone()
+        } else {
+            // builds a program counter to instruction counter map
+            // basically this strips away bytecodes to make it work
+            // with the sourcemap output from the solc compiler
+            let mut pc_ic: BTreeMap<usize, usize> = BTreeMap::new();
 
-        // let mut done = false;
-        // let mut res = Capture::Exit(ExitReason::Succeed(ExitSucceed::Returned));
-        // let mut steps = Vec::new();
-        // // grab the debug instruction pointers for either construct or runtime bytecode
-        // let dip = if creation {
-        //     &mut self.state_mut().debug_instruction_pointers.0
-        // } else {
-        //     &mut self.state_mut().debug_instruction_pointers.1
-        // };
-        // // get the program counter => instruction counter mapping from memory or construct it
-        // let ics = if let Some(pc_ic) = dip.get(&address) {
-        //     // grabs an Rc<BTreemap> of an already created pc -> ic mapping
-        //     pc_ic.clone()
-        // } else {
-        //     // builds a program counter to instruction counter map
-        //     // basically this strips away bytecodes to make it work
-        //     // with the sourcemap output from the solc compiler
-        //     let mut pc_ic: BTreeMap<usize, usize> = BTreeMap::new();
-        //
-        //     let mut i = 0;
-        //     let mut push_ctr = 0usize;
-        //     while i < code.len() {
-        //         let wrapped_op = OpCode::from(Opcode(code[i]));
-        //         pc_ic.insert(i, i - push_ctr);
-        //
-        //         if let Some(push_size) = wrapped_op.push_size() {
-        //             i += push_size as usize;
-        //             i += 1;
-        //             push_ctr += push_size as usize;
-        //         } else {
-        //             i += 1;
-        //         }
-        //     }
-        //     let pc_ic = Rc::new(pc_ic);
-        //
-        //     dip.insert(address, pc_ic.clone());
-        //     pc_ic
-        // };
-        // while !done {
-        //     // debug step doesnt actually execute the step, it just peeks into the machine
-        //     // will return true or false, which signifies whether to push the steps
-        //     // as a node and reset the steps vector or not
-        //     if self.debug_step(runtime, code.clone(), &mut steps, ics.clone()) &&
-        // !steps.is_empty()     {
-        //         self.state_mut().debug_mut().push_node(
-        //             0,
-        //             DebugNode {
-        //                 address,
-        //                 depth,
-        //                 steps: steps.clone(),
-        //                 creation,
-        //                 ..Default::default()
-        //             },
-        //         );
-        //         steps = Vec::new();
-        //     }
-        //     // actually executes the opcode step
-        //     let r = runtime.step(&mut self.as_handler());
-        //     match r {
-        //         Ok(()) => {}
-        //         Err(e) => {
-        //             done = true;
-        //             // we wont hit an interrupt when we finish stepping
-        //             // so we have add the accumulated steps as if debug_step returned true
-        //             if !steps.is_empty() {
-        //                 self.state_mut().debug_mut().push_node(
-        //                     0,
-        //                     DebugNode {
-        //                         address,
-        //                         depth,
-        //                         steps: steps.clone(),
-        //                         creation,
-        //                         ..Default::default()
-        //                     },
-        //                 );
-        //             }
-        //             match e {
-        //                 Capture::Exit(s) => res = Capture::Exit(s),
-        //                 Capture::Trap(_) => unreachable!("Trap is Infallible"),
-        //             }
-        //         }
-        //     }
-        // }
-        // res
-        panic!()
+            let mut i = 0;
+            let mut push_ctr = 0usize;
+            while i < code.len() {
+                let wrapped_op = OpCode::from(Opcode(code[i]));
+                pc_ic.insert(i, i - push_ctr);
+
+                if let Some(push_size) = wrapped_op.push_size() {
+                    i += push_size as usize;
+                    i += 1;
+                    push_ctr += push_size as usize;
+                } else {
+                    i += 1;
+                }
+            }
+            let pc_ic = Rc::new(pc_ic);
+
+            dip.insert(address, pc_ic.clone());
+            pc_ic
+        };
+        while !done {
+            // debug step doesnt actually execute the step, it just peeks into the machine
+            // will return true or false, which signifies whether to push the steps
+            // as a node and reset the steps vector or not
+            if self.debug_step(runtime, code.clone(), &mut steps, ics.clone()) && !steps.is_empty()
+            {
+                self.state_mut().debug_mut().push_node(
+                    0,
+                    DebugNode {
+                        address,
+                        depth,
+                        steps: steps.clone(),
+                        creation,
+                        ..Default::default()
+                    },
+                );
+                steps = Vec::new();
+            }
+
+            let mut dbg_node = None;
+
+            // actually executes the opcode step
+            let r = runtime.step(&mut self.as_handler());
+            match r {
+                Ok(()) => {}
+                Err(e) => {
+                    done = true;
+                    // we wont hit an interrupt when we finish stepping
+                    // so we have add the accumulated steps as if debug_step returned true
+                    if !steps.is_empty() {
+                        dbg_node = Some(DebugNode {
+                            address,
+                            depth,
+                            steps: steps.clone(),
+                            creation,
+                            ..Default::default()
+                        });
+                    }
+                    match e {
+                        Capture::Exit(s) => res = Capture::Exit(s),
+                        Capture::Trap(_) => unreachable!("Trap is Infallible"),
+                    }
+                }
+            }
+
+            // need to push the node here because of mutable borrow
+            if let Some(node) = dbg_node {
+                self.state_mut().debug_mut().push_node(0, node);
+            }
+        }
+
+        res
     }
 
     fn start_trace(
@@ -757,30 +773,29 @@ impl<'a, 'b, B: Backend, P: PrecompileSet + 'b > CheatcodeStackExecutor<'a, 'b, 
         transfer: U256,
         creation: bool,
     ) -> Option<CallTrace> {
-        // if self.enable_trace {
-        //     let mut trace: CallTrace = CallTrace {
-        //         // depth only starts tracking at first child substate and is 0. so add 1 when
-        // depth         // is some.
-        //         depth: if let Some(depth) = self.state().metadata().depth() {
-        //             depth + 1
-        //         } else {
-        //             0
-        //         },
-        //         addr: address,
-        //         created: creation,
-        //         data: input,
-        //         value: transfer,
-        //         label: self.state().labels.get(&address).cloned(),
-        //         ..Default::default()
-        //     };
-        //
-        //     self.state_mut().trace_mut().push_trace(0, &mut trace);
-        //     self.state_mut().trace_index = trace.idx;
-        //     Some(trace)
-        // } else {
-        //     None
-        // }
-        panic!()
+        if self.enable_trace {
+            let mut trace: CallTrace = CallTrace {
+                // depth only starts tracking at first child substate and is 0. so add 1 when depth
+                // is some.
+                depth: if let Some(depth) = self.state().metadata().depth() {
+                    depth + 1
+                } else {
+                    0
+                },
+                addr: address,
+                created: creation,
+                data: input,
+                value: transfer,
+                label: self.state().labels.get(&address).cloned(),
+                ..Default::default()
+            };
+
+            self.state_mut().trace_mut().push_trace(0, &mut trace);
+            self.state_mut().trace_index = trace.idx;
+            Some(trace)
+        } else {
+            None
+        }
     }
 }
 
@@ -847,65 +862,68 @@ where
         init_code: Vec<u8>,
         target_gas: Option<u64>,
     ) -> Capture<(ExitReason, Option<H160>, Vec<u8>), Infallible> {
-        // // modify execution context depending on the cheatcode
-        //
-        // let prev_origin = self.state().backend.cheats.origin;
-        // let expected_revert = self.state_mut().expected_revert.take();
-        // let mut new_tx_caller = caller;
-        // let mut new_scheme = scheme;
-        // let curr_depth =
-        //     if let Some(depth) = self.state().metadata().depth() { depth + 1 } else { 0 };
-        //
-        // // handle `startPrank` - see apply_cheatcodes for more info
-        // if let Some(Prank { prank_caller, new_caller, new_origin, depth }) = self.state().prank {
-        //     if curr_depth == depth && new_tx_caller == prank_caller {
-        //         new_tx_caller = new_caller;
-        //
-        //         self.state_mut().backend.cheats.origin = new_origin
-        //     }
-        // }
-        //
-        // // handle normal `prank`
-        // if let Some(Prank { new_caller, new_origin, .. }) = self.state_mut().next_prank.take() {
-        //     new_tx_caller = new_caller;
-        //
-        //     self.state_mut().backend.cheats.origin = new_origin
-        // }
-        //
-        // if caller != new_tx_caller {
-        //     new_scheme = match scheme {
-        //         CreateScheme::Legacy { .. } => CreateScheme::Legacy { caller: new_tx_caller },
-        //         CreateScheme::Create2 { code_hash, salt, .. } => {
-        //             CreateScheme::Create2 { caller: new_tx_caller, code_hash, salt }
-        //         }
-        //         _ => scheme,
-        //     };
-        // }
-        //
-        // let res = self.create_inner(new_tx_caller, new_scheme, value, init_code, target_gas,
-        // true);
-        //
-        // // if we set the origin, now we should reset to prior origin
-        // self.state_mut().backend.cheats.origin = prev_origin;
-        //
-        // if !self.state_mut().expected_emits.is_empty() &&
-        //     !self
-        //         .state()
-        //         .expected_emits
-        //         .iter()
-        //         .filter(|expected| expected.depth == curr_depth)
-        //         .all(|expected| expected.found)
-        // {
-        //     return revert_return_evm(false, None, || "Log != expected log").into_create_inner()
-        // } else {
-        //     // empty out expected_emits after successfully capturing all of them
-        //     self.state_mut().expected_emits = Vec::new();
-        // }
-        //
-        // self.expected_revert(ExpectRevertReturn::Create(res),
-        // expected_revert).into_create_inner()
+        // modify execution context depending on the cheatcode
 
-        panic!()
+        let prev_origin = self.state().backend.cheats.origin;
+        let expected_revert = self.state_mut().expected_revert.take();
+        let mut new_tx_caller = caller;
+        let mut new_scheme = scheme;
+        let curr_depth =
+            if let Some(depth) = self.state().metadata().depth() { depth + 1 } else { 0 };
+
+        // handle `startPrank` - see apply_cheatcodes for more info
+        if let Some(Prank { prank_caller, new_caller, new_origin, depth }) = self.state().prank {
+            if curr_depth == depth && new_tx_caller == prank_caller {
+                new_tx_caller = new_caller;
+
+                self.state_mut().backend.cheats.origin = new_origin
+            }
+        }
+
+        // handle normal `prank`
+        if let Some(Prank { new_caller, new_origin, .. }) = self.state_mut().next_prank.take() {
+            new_tx_caller = new_caller;
+
+            self.state_mut().backend.cheats.origin = new_origin
+        }
+
+        if caller != new_tx_caller {
+            new_scheme = match scheme {
+                CreateScheme::Legacy { .. } => CreateScheme::Legacy { caller: new_tx_caller },
+                CreateScheme::Create2 { code_hash, salt, .. } => {
+                    CreateScheme::Create2 { caller: new_tx_caller, code_hash, salt }
+                }
+                _ => scheme,
+            };
+        }
+
+        let res = self.as_handler().create_inner(
+            new_tx_caller,
+            new_scheme,
+            value,
+            init_code,
+            target_gas,
+            true,
+        );
+
+        // if we set the origin, now we should reset to prior origin
+        self.state_mut().backend.cheats.origin = prev_origin;
+
+        if !self.state_mut().expected_emits.is_empty() &&
+            !self
+                .state()
+                .expected_emits
+                .iter()
+                .filter(|expected| expected.depth == curr_depth)
+                .all(|expected| expected.found)
+        {
+            return revert_return_evm(false, None, || "Log != expected log").into_create_inner()
+        } else {
+            // empty out expected_emits after successfully capturing all of them
+            self.state_mut().expected_emits = Vec::new();
+        }
+
+        self.expected_revert(ExpectRevertReturn::Create(res), expected_revert).into_create_inner()
     }
 
     fn do_call(
@@ -917,113 +935,112 @@ where
         is_static: bool,
         context: Context,
     ) -> Capture<(ExitReason, Vec<u8>), Infallible> {
-        // // We intercept calls to the `CHEATCODE_ADDRESS` to apply the cheatcode directly
-        // // to the state.
-        // // NB: This is very similar to how Optimism's custom intercept logic to "predeploys" work
-        // // (e.g. with the StateManager)
-        // if code_address == *CHEATCODE_ADDRESS {
-        //     self.apply_cheatcode(input, context.caller)
-        // } else if code_address == *CONSOLE_ADDRESS {
-        //     self.console_log(input)
-        // } else {
-        //     // record prior origin
-        //     let prev_origin = self.state().backend.cheats.origin;
-        //
-        //     // modify execution context depending on the cheatcode
-        //     let expected_revert = self.state_mut().expected_revert.take();
-        //     let mut new_context = context;
-        //     let mut new_transfer = transfer;
-        //     let curr_depth =
-        //         if let Some(depth) = self.state().metadata().depth() { depth + 1 } else { 0 };
-        //
-        //     // handle `startPrank` - see apply_cheatcodes for more info
-        //     if let Some(Prank { prank_caller, new_caller, new_origin, depth }) =
-        // self.state().prank     {
-        //         // if depth and msg.sender match, perform the prank
-        //         if curr_depth == depth && new_context.caller == prank_caller {
-        //             new_context.caller = new_caller;
-        //
-        //             if let Some(t) = &new_transfer {
-        //                 new_transfer =
-        //                     Some(Transfer { source: new_caller, target: t.target, value: t.value
-        // });             }
-        //
-        //             // set the origin if the user used the overloaded func
-        //             self.state_mut().backend.cheats.origin = new_origin;
-        //         }
-        //     }
-        //
-        //     // handle normal `prank`
-        //     if let Some(Prank { new_caller, new_origin, .. }) =
-        // self.state_mut().next_prank.take() {         new_context.caller = new_caller;
-        //
-        //         if let Some(t) = &new_transfer {
-        //             new_transfer =
-        //                 Some(Transfer { source: new_caller, target: t.target, value: t.value });
-        //         }
-        //
-        //         self.state_mut().backend.cheats.origin = new_origin;
-        //     }
-        //
-        //     // handle expected calls
-        //     if let Some(expecteds) = self.state_mut().expected_calls.get_mut(&code_address) {
-        //         if let Some(found_match) = expecteds.iter().position(|expected| {
-        //             expected.len() <= input.len() && expected == &input[..expected.len()]
-        //         }) {
-        //             expecteds.remove(found_match);
-        //         }
-        //     }
-        //
-        //     // handle mocked calls
-        //     if let Some(mocks) = self.state().mocked_calls.get(&code_address) {
-        //         if let Some(mock_retdata) = mocks.get(&input) {
-        //             return Capture::Exit((
-        //                 ExitReason::Succeed(ExitSucceed::Returned),
-        //                 mock_retdata.clone(),
-        //             ))
-        //         } else if let Some((_, mock_retdata)) =
-        //             mocks.iter().find(|(mock, _)| *mock == &input[..mock.len()])
-        //         {
-        //             return Capture::Exit((
-        //                 ExitReason::Succeed(ExitSucceed::Returned),
-        //                 mock_retdata.clone(),
-        //             ))
-        //         }
-        //     }
-        //
-        //     // perform the call
-        //     let res = self.call_inner(
-        //         code_address,
-        //         new_transfer,
-        //         input,
-        //         target_gas,
-        //         is_static,
-        //         true,
-        //         true,
-        //         new_context,
-        //     );
-        //
-        //     // if we set the origin, now we should reset to previous
-        //     self.state_mut().backend.cheats.origin = prev_origin;
-        //
-        //     // handle expected emits
-        //     if !self.state_mut().expected_emits.is_empty() &&
-        //         !self
-        //             .state()
-        //             .expected_emits
-        //             .iter()
-        //             .filter(|expected| expected.depth == curr_depth)
-        //             .all(|expected| expected.found)
-        //     {
-        //         return evm_error("Log != expected log")
-        //     } else {
-        //         // empty out expected_emits after successfully capturing all of them
-        //         self.state_mut().expected_emits = Vec::new();
-        //     }
-        //
-        //     self.expected_revert(ExpectRevertReturn::Call(res),
-        // expected_revert).into_call_inner() }
-        panic!()
+        // We intercept calls to the `CHEATCODE_ADDRESS` to apply the cheatcode directly
+        // to the state.
+        // NB: This is very similar to how Optimism's custom intercept logic to "predeploys" work
+        // (e.g. with the StateManager)
+        if code_address == *CHEATCODE_ADDRESS {
+            self.apply_cheatcode(input, context.caller)
+        } else if code_address == *CONSOLE_ADDRESS {
+            self.console_log(input)
+        } else {
+            // record prior origin
+            let prev_origin = self.state().backend.cheats.origin;
+
+            // modify execution context depending on the cheatcode
+            let expected_revert = self.state_mut().expected_revert.take();
+            let mut new_context = context;
+            let mut new_transfer = transfer;
+            let curr_depth =
+                if let Some(depth) = self.state().metadata().depth() { depth + 1 } else { 0 };
+
+            // handle `startPrank` - see apply_cheatcodes for more info
+            if let Some(Prank { prank_caller, new_caller, new_origin, depth }) = self.state().prank
+            {
+                // if depth and msg.sender match, perform the prank
+                if curr_depth == depth && new_context.caller == prank_caller {
+                    new_context.caller = new_caller;
+
+                    if let Some(t) = &new_transfer {
+                        new_transfer =
+                            Some(Transfer { source: new_caller, target: t.target, value: t.value });
+                    }
+
+                    // set the origin if the user used the overloaded func
+                    self.state_mut().backend.cheats.origin = new_origin;
+                }
+            }
+
+            // handle normal `prank`
+            if let Some(Prank { new_caller, new_origin, .. }) = self.state_mut().next_prank.take() {
+                new_context.caller = new_caller;
+
+                if let Some(t) = &new_transfer {
+                    new_transfer =
+                        Some(Transfer { source: new_caller, target: t.target, value: t.value });
+                }
+
+                self.state_mut().backend.cheats.origin = new_origin;
+            }
+
+            // handle expected calls
+            if let Some(expecteds) = self.state_mut().expected_calls.get_mut(&code_address) {
+                if let Some(found_match) = expecteds.iter().position(|expected| {
+                    expected.len() <= input.len() && expected == &input[..expected.len()]
+                }) {
+                    expecteds.remove(found_match);
+                }
+            }
+
+            // handle mocked calls
+            if let Some(mocks) = self.state().mocked_calls.get(&code_address) {
+                if let Some(mock_retdata) = mocks.get(&input) {
+                    return Capture::Exit((
+                        ExitReason::Succeed(ExitSucceed::Returned),
+                        mock_retdata.clone(),
+                    ))
+                } else if let Some((_, mock_retdata)) =
+                    mocks.iter().find(|(mock, _)| *mock == &input[..mock.len()])
+                {
+                    return Capture::Exit((
+                        ExitReason::Succeed(ExitSucceed::Returned),
+                        mock_retdata.clone(),
+                    ))
+                }
+            }
+
+            // perform the call
+            let res = self.as_handler().call_inner(
+                code_address,
+                new_transfer,
+                input,
+                target_gas,
+                is_static,
+                true,
+                true,
+                new_context,
+            );
+
+            // if we set the origin, now we should reset to previous
+            self.state_mut().backend.cheats.origin = prev_origin;
+
+            // handle expected emits
+            if !self.state_mut().expected_emits.is_empty() &&
+                !self
+                    .state()
+                    .expected_emits
+                    .iter()
+                    .filter(|expected| expected.depth == curr_depth)
+                    .all(|expected| expected.found)
+            {
+                return evm_error("Log != expected log")
+            } else {
+                // empty out expected_emits after successfully capturing all of them
+                self.state_mut().expected_emits = Vec::new();
+            }
+
+            self.expected_revert(ExpectRevertReturn::Call(res), expected_revert).into_call_inner()
+        }
     }
 }
 
@@ -1057,14 +1074,16 @@ impl<'a, 'b, B: Backend, P: PrecompileSet + 'b>
             console_logs: Vec::new(),
         };
 
-        let mut evm = Executor::from_executor(CheatcodeExecutionHandler::new(executor), gas_limit);
+        let executor = CheatcodeExecutionHandler::new(executor);
+
+        let mut evm = Executor::from_executor(executor, gas_limit);
 
         // Need to create a non-empty contract at the cheat code address so that the EVM backend
         // thinks that something exists there.
-        // evm.initialize_contracts([
-        //     (*CHEATCODE_ADDRESS, vec![0u8; 1].into()),
-        //     (*CONSOLE_ADDRESS, vec![0u8; 1].into()),
-        // ]);
+        evm.initialize_contracts([
+            (*CHEATCODE_ADDRESS, vec![0u8; 1].into()),
+            (*CONSOLE_ADDRESS, vec![0u8; 1].into()),
+        ]);
 
         evm
     }
