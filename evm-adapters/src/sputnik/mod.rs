@@ -7,7 +7,7 @@ pub use forked_backend::*;
 pub mod cheatcodes;
 pub mod common;
 pub mod macros;
-// pub mod script;
+pub mod script;
 pub mod state;
 pub mod utils;
 

@@ -184,6 +184,25 @@ where
     ) -> Capture<(ExitReason, Option<H160>, Vec<u8>), Infallible> {
         self.stack_executor_mut().create(caller, scheme, value, init_code, target_gas)
     }
+
+    fn do_call(
+        &mut self,
+        code_address: H160,
+        transfer: Option<Transfer>,
+        input: Vec<u8>,
+        target_gas: Option<u64>,
+        is_static: bool,
+        context: Context,
+    ) -> Capture<(ExitReason, Vec<u8>), Infallible> {
+        self.stack_executor_mut().call(
+            code_address,
+            transfer,
+            input,
+            target_gas,
+            is_static,
+            context,
+        )
+    }
 }
 
 /// This wrapper type is necessary as we can't implement foreign traits for traits (Handler for
@@ -627,14 +646,14 @@ where
 
     fn call(
         &mut self,
-        _code_address: H160,
-        _transfer: Option<Transfer>,
-        _input: Vec<u8>,
-        _target_gas: Option<u64>,
-        _is_static: bool,
-        _context: Context,
+        code_address: H160,
+        transfer: Option<Transfer>,
+        input: Vec<u8>,
+        target_gas: Option<u64>,
+        is_static: bool,
+        context: Context,
     ) -> Capture<(ExitReason, Vec<u8>), Self::CallInterrupt> {
-        todo!()
+        self.handler_mut().do_call(code_address, transfer, input, target_gas, is_static, context)
     }
 
     fn pre_validate(

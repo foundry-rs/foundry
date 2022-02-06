@@ -19,7 +19,7 @@ use sputnik::{
         StackState, StackSubstateMetadata,
     },
     gasometer, Capture, Config, Context, CreateScheme, ExitError, ExitReason, ExitRevert,
-    ExitSucceed, Handler, Memory, Opcode, Runtime, Stack, Transfer,
+    ExitSucceed, Handler, Memory, Opcode, Runtime, Transfer,
 };
 use std::{process::Command, rc::Rc};
 
@@ -1810,6 +1810,123 @@ where
         }
 
         self.expected_revert(ExpectRevertReturn::Create(res), expected_revert).into_create_inner()
+    }
+
+    fn do_call(
+        &mut self,
+        code_address: H160,
+        transfer: Option<Transfer>,
+        input: Vec<u8>,
+        target_gas: Option<u64>,
+        is_static: bool,
+        context: Context,
+    ) -> Capture<(ExitReason, Vec<u8>), Infallible> {
+        // We intercept calls to the `CHEATCODE_ADDRESS` to apply the cheatcode directly
+        // to the state.
+        // NB: This is very similar to how Optimism's custom intercept logic to "predeploys" work
+        // (e.g. with the StateManager)
+        if code_address == *CHEATCODE_ADDRESS {
+            self.apply_cheatcode(input, context.caller)
+        } else if code_address == *CONSOLE_ADDRESS {
+            self.console_log(input)
+        } else {
+            // record prior origin
+            let prev_origin = self.state().backend.cheats.origin;
+
+            // modify execution context depending on the cheatcode
+            let expected_revert = self.state_mut().expected_revert.take();
+            let mut new_context = context;
+            let mut new_transfer = transfer;
+            let curr_depth =
+                if let Some(depth) = self.state().metadata().depth() { depth + 1 } else { 0 };
+
+            // handle `startPrank` - see apply_cheatcodes for more info
+            if let Some(Prank { prank_caller, new_caller, new_origin, depth }) = self.state().prank
+            {
+                // if depth and msg.sender match, perform the prank
+                if curr_depth == depth && new_context.caller == prank_caller {
+                    new_context.caller = new_caller;
+
+                    if let Some(t) = &new_transfer {
+                        new_transfer =
+                            Some(Transfer { source: new_caller, target: t.target, value: t.value });
+                    }
+
+                    // set the origin if the user used the overloaded func
+                    self.state_mut().backend.cheats.origin = new_origin;
+                }
+            }
+
+            // handle normal `prank`
+            if let Some(Prank { new_caller, new_origin, .. }) = self.state_mut().next_prank.take() {
+                new_context.caller = new_caller;
+
+                if let Some(t) = &new_transfer {
+                    new_transfer =
+                        Some(Transfer { source: new_caller, target: t.target, value: t.value });
+                }
+
+                self.state_mut().backend.cheats.origin = new_origin;
+            }
+
+            // handle expected calls
+            if let Some(expecteds) = self.state_mut().expected_calls.get_mut(&code_address) {
+                if let Some(found_match) = expecteds.iter().position(|expected| {
+                    expected.len() <= input.len() && expected == &input[..expected.len()]
+                }) {
+                    expecteds.remove(found_match);
+                }
+            }
+
+            // handle mocked calls
+            if let Some(mocks) = self.state().mocked_calls.get(&code_address) {
+                if let Some(mock_retdata) = mocks.get(&input) {
+                    return Capture::Exit((
+                        ExitReason::Succeed(ExitSucceed::Returned),
+                        mock_retdata.clone(),
+                    ))
+                } else if let Some((_, mock_retdata)) =
+                    mocks.iter().find(|(mock, _)| *mock == &input[..mock.len()])
+                {
+                    return Capture::Exit((
+                        ExitReason::Succeed(ExitSucceed::Returned),
+                        mock_retdata.clone(),
+                    ))
+                }
+            }
+
+            // perform the call
+            let res = self.call_inner(
+                code_address,
+                new_transfer,
+                input,
+                target_gas,
+                is_static,
+                true,
+                true,
+                new_context,
+            );
+
+            // if we set the origin, now we should reset to previous
+            self.state_mut().backend.cheats.origin = prev_origin;
+
+            // handle expected emits
+            if !self.state_mut().expected_emits.is_empty() &&
+                !self
+                    .state()
+                    .expected_emits
+                    .iter()
+                    .filter(|expected| expected.depth == curr_depth)
+                    .all(|expected| expected.found)
+            {
+                return evm_error("Log != expected log")
+            } else {
+                // empty out expected_emits after successfully capturing all of them
+                self.state_mut().expected_emits = Vec::new();
+            }
+
+            self.expected_revert(ExpectRevertReturn::Call(res), expected_revert).into_call_inner()
+        }
     }
 }
 
