@@ -116,9 +116,6 @@ fn remove(root: impl AsRef<std::path::Path>, dependencies: Vec<Dependency>) -> e
             .spawn()?
             .wait()?;
 
-        // tell git to discard the removal of the submodule
-        Command::new("git").args(&["checkout", "--", "."]).current_dir(&root).spawn()?.wait()?;
-
         Ok(())
     })
 }
