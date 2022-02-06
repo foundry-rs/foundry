@@ -61,6 +61,7 @@ use macros::{call_inner, create_inner, start_trace};
 /// };
 /// use evm_adapters::sputnik::common::ExecutionHandler;
 /// use ethers::types::Address;
+/// use evm_adapters::call_tracing::CallTrace;
 ///
 /// // declare your custom handler, the type that's essentially the wrapper around the standard
 /// // sputnik handler, but with additional context and state
@@ -83,37 +84,41 @@ use macros::{call_inner, create_inner, start_trace};
 /// // additional functions like `ExecutionHandler::do_call` can be replaced,
 /// // essentially intercepting the call
 /// // the control flow is `SputnikExecutor -> ExecutionHandler -> sputnik::Handler`
-// impl<'a, 'b, Back, Pre: 'b> ExecutionHandler<'a, 'b, Back, Pre, MyStackState<'a, Back>>
-// for MyStackExecutor<'a, 'b, Back, Pre>
-//     where
-//         Back: Backend,
-//         Pre: PrecompileSet,
-// {
-//     fn stack_executor(&self) -> &StackExecutor<'a, 'b, MyStackState<'a, Back>, Pre> {
-//         &self.handler
-//     }
-//
-//     fn stack_executor_mut(
-//         &mut self,
-//     ) -> &mut StackExecutor<'a, 'b, MyStackState<'a, Back>, Pre> {
-//         &mut self.handler
-//     }
-//
-//     fn is_tracing_enabled(&self) -> bool {
-//         false
-//     }
-//
-//     fn debug_execute(
-//         &mut self,
-//         _runtime: &mut Runtime,
-//         _address: Address,
-//         _code: Rc<Vec<u8>>,
-//         _creation: bool,
-//     ) -> ExitReason {
-//         ExitReason::Succeed(ExitSucceed::Returned)
-//     }
-// }
-// ```
+/// impl<'a, 'b, Back, Pre: 'b> ExecutionHandler<'a, 'b, Back, Pre, MyStackState<'a, Back>>
+/// for MyStackExecutor<'a, 'b, Back, Pre>
+///     where
+///         Back: Backend,
+///         Pre: PrecompileSet,
+/// {
+///     fn stack_executor(&self) -> &StackExecutor<'a, 'b, MyStackState<'a, Back>, Pre> {
+///         &self.handler
+///     }
+///
+///     fn stack_executor_mut(
+///         &mut self,
+///     ) -> &mut StackExecutor<'a, 'b, MyStackState<'a, Back>, Pre> {
+///         &mut self.handler
+///     }
+///
+///     fn is_tracing_enabled(&self) -> bool {
+///         false
+///     }
+///
+///     fn debug_execute(
+///         &mut self,
+///         _runtime: &mut Runtime,
+///         _address: Address,
+///         _code: Rc<Vec<u8>>,
+///         _creation: bool,
+///     ) -> ExitReason {
+///         ExitReason::Succeed(ExitSucceed::Returned)
+///     }
+///
+/// fn fill_trace(&mut self, new_trace: &Option<CallTrace>, success: bool, output: Option<Vec<u8>>, pre_trace_index: usize) {
+///
+///     }
+/// }
+/// ```
 pub trait ExecutionHandler<'a, 'b, Back, Pre: 'b, State>
 where
     Back: Backend,
