@@ -32,6 +32,7 @@ use ethers::{
 };
 
 use std::convert::Infallible;
+use std::marker::PhantomData;
 
 use crate::sputnik::cheatcodes::{
     debugger::{CheatOp, DebugArena, DebugNode, DebugStep, OpCode},
@@ -45,6 +46,7 @@ use crate::sputnik::{
     utils::{convert_log, evm_error, revert_return_evm, ExpectRevertReturn},
 };
 use ethers::abi::Tokenize;
+use crate::sputnik::common::RuntimeExecutionHandler;
 
 // This is now getting us the right hash? Also tried [..20]
 // Lazy::new(|| Address::from_slice(&keccak256("hevm cheat code")[12..]));
@@ -97,7 +99,15 @@ pub struct CheatcodeHandler<H> {
     console_logs: Vec<String>,
 }
 
-impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> {
+impl<'a, 'b, B: Backend, P: PrecompileSet + 'b > CheatcodeStackExecutor<'a, 'b, B, P> {
+
+    fn x(&mut self) {
+        fn assert_handler<T:Handler>(h:T) {}
+        self.as_handler();
+        assert_handler(self.as_handler());
+
+    }
+
     fn state(&self) -> &CheatcodeStackState<'a, B> {
         self.handler.state()
     }
@@ -652,6 +662,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         code: Rc<Vec<u8>>,
         creation: bool,
     ) -> Capture<ExitReason, ()> {
+
         // let mut done = false;
         // let mut res = Capture::Exit(ExitReason::Succeed(ExitSucceed::Returned));
         // let mut steps = Vec::new();
@@ -709,7 +720,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         //         steps = Vec::new();
         //     }
         //     // actually executes the opcode step
-        //     let r = runtime.step(self);
+        //     let r = runtime.step(&mut self.as_handler());
         //     match r {
         //         Ok(()) => {}
         //         Err(e) => {

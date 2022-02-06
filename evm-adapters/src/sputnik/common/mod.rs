@@ -307,7 +307,7 @@ where
     /// The wrapped `ExecutionHandler`
     handler: &'handler mut ExecHandler,
     // this is necessary because of all the unconstrained trait generics...
-    _marker: PhantomData<(&'a Back, &'b State, Precom)>,
+    _marker: PhantomData<(&'a (), State, &'b (), Back, Precom)>,
 }
 
 impl<'handler, 'a, 'b, Back, Precom: 'b, State, ExecHandler>
@@ -579,7 +579,7 @@ where
     /// The wrapped `ExecutionHandler`
     handler: ExecHandler,
     // this is necessary because of all the unconstrained trait generics...
-    _marker: PhantomData<(&'a Back, &'b State, Precom)>,
+    _marker: PhantomData<(&'a (), State, &'b (), Back, Precom)>,
 }
 
 impl<'a, 'b, Back, Precom: 'b, State, ExecHandler>
