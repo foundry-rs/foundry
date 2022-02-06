@@ -47,6 +47,13 @@ pub enum Subcommands {
     ToAscii { hexdata: Option<String> },
     #[clap(name = "--to-bytes32")]
     #[clap(about = "left-pads a hex bytes string to 32 bytes)")]
+    #[clap(name = "--from-fix")]
+    #[clap(about = "convert fixed point into specified number of decimals")]
+    FromFix {
+        decimals: Option<u128>,
+        #[clap(allow_hyphen_values = true)] // negative values not yet supported internally
+        value: Option<String>,
+    },
     ToBytes32 { bytes: Option<String> },
     #[clap(name = "--to-dec")]
     #[clap(about = "convert hex value into decimal number")]
