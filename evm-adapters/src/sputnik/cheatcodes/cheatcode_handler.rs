@@ -1339,11 +1339,11 @@ mod tests {
     #[test]
     fn ffi_fails_if_disabled() {
         let mut evm = vm_no_limit();
-        evm.executor.enable_ffi = false;
+        evm.executor.handler_mut().enable_ffi = false;
 
         let compiled = COMPILED.find("CheatCodes").expect("could not find contract");
         let (addr, _, _, _) =
-            evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
+            evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0u64.into()).unwrap();
 
         let err = evm
             .call::<(), _, _>(Address::zero(), addr, "testFFI()", (), 0.into(), compiled.abi)

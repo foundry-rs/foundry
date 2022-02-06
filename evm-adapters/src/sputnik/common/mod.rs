@@ -23,7 +23,11 @@ use ethers::{
 
 use crate::call_tracing::LogCallOrder;
 use ethers_core::abi::Token;
-use std::{convert::Infallible, marker::PhantomData};
+use std::{
+    convert::Infallible,
+    marker::PhantomData,
+    ops::{Deref, DerefMut},
+};
 
 use crate::sputnik::cheatcodes::debugger::DebugArena;
 
@@ -613,6 +617,34 @@ where
     _marker: PhantomData<(&'a (), State, &'b (), Back, Pre)>,
 }
 
+impl<'a, 'b, Back, Pre: 'b, State, ExecHandler> Deref
+    for ExecutionHandlerWrapper<'a, 'b, Back, Pre, State, ExecHandler>
+where
+    Back: Backend,
+    Pre: PrecompileSet,
+    State: StackState<'a>,
+    ExecHandler: ExecutionHandler<'a, 'b, Back, Pre, State>,
+{
+    type Target = ExecHandler;
+
+    fn deref(&self) -> &Self::Target {
+        &self.handler
+    }
+}
+
+impl<'a, 'b, Back, Pre: 'b, State, ExecHandler> DerefMut
+    for ExecutionHandlerWrapper<'a, 'b, Back, Pre, State, ExecHandler>
+where
+    Back: Backend,
+    Pre: PrecompileSet,
+    State: StackState<'a>,
+    ExecHandler: ExecutionHandler<'a, 'b, Back, Pre, State>,
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.handler
+    }
+}
+
 impl<'a, 'b, Back, Pre: 'b, State, ExecHandler>
     ExecutionHandlerWrapper<'a, 'b, Back, Pre, State, ExecHandler>
 where
@@ -1063,6 +1095,7 @@ where
     }
 
     fn clear_logs(&mut self) {
+        self.handler.on_clear_logs();
         self.state_mut().substate.logs_mut().clear()
     }
 }
