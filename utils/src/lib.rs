@@ -487,7 +487,7 @@ pub async fn fourbyte_event(topic: &str) -> Result<Vec<(String, i32)>> {
 
     let topic = &topic.strip_prefix("0x").unwrap_or(topic);
     if topic.len() < 64 {
-        return Err(eyre::eyre!("Invalid topic"));
+        return Err(eyre::eyre!("Invalid topic"))
     }
     let topic = &topic[..8];
 
@@ -979,11 +979,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_fourbyte_event() {
-        let sigs = fourbyte_event("0x7e1db2a1cd12f0506ecd806dba508035b290666b84b096a87af2fd2a1516ede6").await.unwrap();
+        let sigs =
+            fourbyte_event("0x7e1db2a1cd12f0506ecd806dba508035b290666b84b096a87af2fd2a1516ede6")
+                .await
+                .unwrap();
         assert_eq!(sigs[0].0, "updateAuthority(address,uint8)".to_string());
         assert_eq!(sigs[0].1, 79573);
 
-        let sigs = fourbyte_event("0xb7009613e63fb13fd59a2fa4c206a992c1f090a44e5d530be255aa17fed0b3dd").await.unwrap();
+        let sigs =
+            fourbyte_event("0xb7009613e63fb13fd59a2fa4c206a992c1f090a44e5d530be255aa17fed0b3dd")
+                .await
+                .unwrap();
         assert_eq!(sigs[0].0, "canCall(address,address,bytes4)".to_string());
     }
 

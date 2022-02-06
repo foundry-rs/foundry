@@ -12,15 +12,31 @@ use ethers::{
 
 use eyre::Result;
 use foundry_utils::parse_tokens;
+use std::fs;
 
 use crate::opts::forge::ContractInfo;
-use clap::Parser;
-use std::sync::Arc;
+use clap::{Parser, ValueHint};
+use std::{path::PathBuf, sync::Arc};
 
 #[derive(Debug, Clone, Parser)]
 pub struct CreateArgs {
-    #[clap(long, multiple_values = true, help = "constructor args calldata arguments.")]
+    #[clap(
+        long,
+        multiple_values = true,
+        help = "constructor args calldata arguments",
+        name = "constructor_args",
+        conflicts_with = "constructor_args_path"
+    )]
     constructor_args: Vec<String>,
+
+    #[clap(
+        long,
+        help = "path to a file containing the constructor args",
+        value_hint = ValueHint::FilePath,
+        name = "constructor_args_path",
+        conflicts_with = "constructor_args",
+    )]
+    constructor_args_path: Option<PathBuf>,
 
     #[clap(flatten)]
     opts: BuildArgs,
@@ -57,7 +73,19 @@ impl Cmd for CreateArgs {
         // Add arguments to constructor
         let provider = Provider::<Http>::try_from(self.eth.rpc_url()?)?;
         let params = match abi.constructor {
-            Some(ref v) => self.parse_constructor_args(v)?,
+            Some(ref v) => {
+                let constructor_args =
+                    if let Some(ref constructor_args_path) = self.constructor_args_path {
+                        if !std::path::Path::new(&constructor_args_path).exists() {
+                            eyre::bail!("constructor args path not found");
+                        }
+                        let file = fs::read_to_string(constructor_args_path)?;
+                        file.split(' ').map(|s| s.to_string()).collect::<Vec<String>>()
+                    } else {
+                        self.constructor_args.clone()
+                    };
+                self.parse_constructor_args(v, &constructor_args)?
+            }
             None => vec![],
         };
 
@@ -117,11 +145,15 @@ impl CreateArgs {
         Ok(())
     }
 
-    fn parse_constructor_args(&self, constructor: &Constructor) -> Result<Vec<Token>> {
+    fn parse_constructor_args(
+        &self,
+        constructor: &Constructor,
+        constructor_args: &[String],
+    ) -> Result<Vec<Token>> {
         let params = constructor
             .inputs
             .iter()
-            .zip(&self.constructor_args)
+            .zip(constructor_args)
             .map(|(input, arg)| (&input.kind, arg.as_str()))
             .collect::<Vec<_>>();
 
