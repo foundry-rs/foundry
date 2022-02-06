@@ -173,6 +173,17 @@ where
         code: Rc<Vec<u8>>,
         creation: bool,
     ) -> ExitReason;
+
+    fn do_create(
+        &mut self,
+        caller: H160,
+        scheme: CreateScheme,
+        value: U256,
+        init_code: Vec<u8>,
+        target_gas: Option<u64>,
+    ) -> Capture<(ExitReason, Option<H160>, Vec<u8>), Infallible> {
+        self.stack_executor_mut().create(caller, scheme, value, init_code, target_gas)
+    }
 }
 
 /// This wrapper type is necessary as we can't implement foreign traits for traits (Handler for
@@ -605,13 +616,13 @@ where
 
     fn create(
         &mut self,
-        _caller: H160,
-        _scheme: CreateScheme,
-        _value: U256,
-        _init_code: Vec<u8>,
-        _target_gas: Option<u64>,
+        caller: H160,
+        scheme: CreateScheme,
+        value: U256,
+        init_code: Vec<u8>,
+        target_gas: Option<u64>,
     ) -> Capture<(ExitReason, Option<H160>, Vec<u8>), Self::CreateInterrupt> {
-        todo!()
+        self.handler_mut().do_create(caller, scheme, value, init_code, target_gas)
     }
 
     fn call(

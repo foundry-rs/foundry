@@ -19,7 +19,7 @@ use sputnik::{
         StackState, StackSubstateMetadata,
     },
     gasometer, Capture, Config, Context, CreateScheme, ExitError, ExitReason, ExitRevert,
-    ExitSucceed, Handler, Memory, Opcode, Runtime, Transfer,
+    ExitSucceed, Handler, Memory, Opcode, Runtime, Stack, Transfer,
 };
 use std::{process::Command, rc::Rc};
 
@@ -1745,6 +1745,71 @@ where
         creation: bool,
     ) -> ExitReason {
         self.do_debug_execute(runtime, address, code, creation)
+    }
+
+    fn do_create(
+        &mut self,
+        caller: H160,
+        scheme: CreateScheme,
+        value: U256,
+        init_code: Vec<u8>,
+        target_gas: Option<u64>,
+    ) -> Capture<(ExitReason, Option<H160>, Vec<u8>), Infallible> {
+        // modify execution context depending on the cheatcode
+
+        let prev_origin = self.state().backend.cheats.origin;
+        let expected_revert = self.state_mut().expected_revert.take();
+        let mut new_tx_caller = caller;
+        let mut new_scheme = scheme;
+        let curr_depth =
+            if let Some(depth) = self.state().metadata().depth() { depth + 1 } else { 0 };
+
+        // handle `startPrank` - see apply_cheatcodes for more info
+        if let Some(Prank { prank_caller, new_caller, new_origin, depth }) = self.state().prank {
+            if curr_depth == depth && new_tx_caller == prank_caller {
+                new_tx_caller = new_caller;
+
+                self.state_mut().backend.cheats.origin = new_origin
+            }
+        }
+
+        // handle normal `prank`
+        if let Some(Prank { new_caller, new_origin, .. }) = self.state_mut().next_prank.take() {
+            new_tx_caller = new_caller;
+
+            self.state_mut().backend.cheats.origin = new_origin
+        }
+
+        if caller != new_tx_caller {
+            new_scheme = match scheme {
+                CreateScheme::Legacy { .. } => CreateScheme::Legacy { caller: new_tx_caller },
+                CreateScheme::Create2 { code_hash, salt, .. } => {
+                    CreateScheme::Create2 { caller: new_tx_caller, code_hash, salt }
+                }
+                _ => scheme,
+            };
+        }
+
+        let res = self.create_inner(new_tx_caller, new_scheme, value, init_code, target_gas, true);
+
+        // if we set the origin, now we should reset to prior origin
+        self.state_mut().backend.cheats.origin = prev_origin;
+
+        if !self.state_mut().expected_emits.is_empty() &&
+            !self
+                .state()
+                .expected_emits
+                .iter()
+                .filter(|expected| expected.depth == curr_depth)
+                .all(|expected| expected.found)
+        {
+            return revert_return_evm(false, None, || "Log != expected log").into_create_inner()
+        } else {
+            // empty out expected_emits after successfully capturing all of them
+            self.state_mut().expected_emits = Vec::new();
+        }
+
+        self.expected_revert(ExpectRevertReturn::Create(res), expected_revert).into_create_inner()
     }
 }
 
