@@ -389,6 +389,7 @@ SUBCOMMANDS:
                              `--calldata-decode`
     --calldata-decode        Decode ABI-encoded hex input data. Use `--abi-decode` to decode output data
     --from-utf8              convert text data into hexdata
+    --from-fix               convert fixed point into specified number of decimals
     --from-wei               convert wei into an ETH amount
     --max-int                maximum i256 value
     --max-uint               maximum u256 value

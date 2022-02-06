@@ -8,7 +8,7 @@ use ethers_core::{
         Abi, AbiParser, Token,
     },
     types::{transaction::eip2718::TypedTransaction, Chain, *},
-    utils::{self, keccak256},
+    utils::{self, keccak256, parse_units},
 };
 
 use ethers_etherscan::Client;
@@ -716,6 +716,24 @@ impl SimpleCast {
             ascii.push(letter.unwrap() as char);
         }
         Ok(ascii)
+    }
+
+    /// Converts fixed point number into specified number of decimals
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    /// use ethers_core::types::U256;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(Cast::from_fix(0, "10")?, 10.into());
+    ///     assert_eq!(Cast::from_fix(1, "1.0")?, 10.into());
+    ///     assert_eq!(Cast::from_fix(2, "0.10")?, 10.into());
+    ///     assert_eq!(Cast::from_fix(3, "0.010")?, 10.into());
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn from_fix(decimals: u32, value: &str) -> Result<U256> {
+        Ok(parse_units(value, decimals).unwrap())
     }
 
     /// Converts hex input to decimal
