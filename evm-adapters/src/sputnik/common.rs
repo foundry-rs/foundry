@@ -5,26 +5,24 @@ use crate::{
     sputnik::SputnikExecutor,
 };
 
-use std::io::Read;
-
 use sputnik::{
     backend::Backend,
     executor::stack::{
         Log, PrecompileFailure, PrecompileOutput, PrecompileSet, StackExecutor, StackExitKind,
         StackState,
     },
-    Capture, Config, Context, CreateScheme, ExitError, ExitReason, Handler, Opcode, Runtime, Stack,
-    Transfer,
+    gasometer, Capture, Config, Context, CreateScheme, ExitError, ExitReason, ExitRevert, Handler,
+    Opcode, Runtime, Stack, Transfer,
 };
 use std::rc::Rc;
 
 use ethers::{
     abi::RawLog,
-    signers::Signer,
     types::{Address, H160, H256, U256},
 };
 
 use crate::call_tracing::LogCallOrder;
+use ethers_core::abi::Token;
 use std::{convert::Infallible, marker::PhantomData};
 
 use crate::sputnik::cheatcodes::debugger::DebugArena;
@@ -373,6 +371,187 @@ where
             trace.output = output.unwrap_or_default();
             trace.cost = used_gas;
             trace.success = success;
+        }
+    }
+
+    // NB: This function is copy-pasted from upstream's create_inner
+    fn create_inner(
+        &mut self,
+        caller: H160,
+        scheme: CreateScheme,
+        value: U256,
+        init_code: Vec<u8>,
+        target_gas: Option<u64>,
+        take_l64: bool,
+    ) -> Capture<(ExitReason, Option<H160>, Vec<u8>), Infallible> {
+        let pre_index = self.state().trace_index;
+
+        let address = self.create_address(scheme);
+        let trace = self.start_trace(address, init_code.clone(), value, true);
+
+        macro_rules! try_or_fail {
+            ( $e:expr ) => {
+                match $e {
+                    Ok(v) => v,
+                    Err(e) => {
+                        self.fill_trace(&trace, false, None, pre_index);
+                        return Capture::Exit((e.into(), None, Vec::new()))
+                    }
+                }
+            };
+        }
+
+        fn check_first_byte(config: &Config, code: &[u8]) -> Result<(), ExitError> {
+            if config.disallow_executable_format {
+                if let Some(0xef) = code.get(0) {
+                    return Err(ExitError::InvalidCode)
+                }
+            }
+            Ok(())
+        }
+
+        fn l64(gas: u64) -> u64 {
+            gas - gas / 64
+        }
+
+        self.state_mut().metadata_mut().access_address(caller);
+        self.state_mut().metadata_mut().access_address(address);
+
+        if let Some(depth) = self.state().metadata().depth() {
+            if depth > self.config().call_stack_limit {
+                self.fill_trace(&trace, false, None, pre_index);
+                return Capture::Exit((ExitError::CallTooDeep.into(), None, Vec::new()))
+            }
+        }
+
+        if self.balance(caller) < value {
+            self.fill_trace(&trace, false, None, pre_index);
+            return Capture::Exit((ExitError::OutOfFund.into(), None, Vec::new()))
+        }
+
+        let after_gas = if take_l64 && self.config().call_l64_after_gas {
+            if self.config().estimate {
+                let initial_after_gas = self.state().metadata().gasometer().gas();
+                let diff = initial_after_gas - l64(initial_after_gas);
+                try_or_fail!(self.state_mut().metadata_mut().gasometer_mut().record_cost(diff));
+                self.state().metadata().gasometer().gas()
+            } else {
+                l64(self.state().metadata().gasometer().gas())
+            }
+        } else {
+            self.state().metadata().gasometer().gas()
+        };
+
+        let target_gas = target_gas.unwrap_or(after_gas);
+
+        let gas_limit = core::cmp::min(after_gas, target_gas);
+        try_or_fail!(self.state_mut().metadata_mut().gasometer_mut().record_cost(gas_limit));
+
+        self.state_mut().inc_nonce(caller);
+
+        self.stack_executor_mut().enter_substate(gas_limit, false);
+
+        {
+            if self.code_size(address) != U256::zero() {
+                self.fill_trace(&trace, false, None, pre_index);
+                let _ = self.stack_executor_mut().exit_substate(StackExitKind::Failed);
+                return Capture::Exit((ExitError::CreateCollision.into(), None, Vec::new()))
+            }
+
+            if self.stack_executor_mut().nonce(address) > U256::zero() {
+                self.fill_trace(&trace, false, None, pre_index);
+                let _ = self.stack_executor_mut().exit_substate(StackExitKind::Failed);
+                return Capture::Exit((ExitError::CreateCollision.into(), None, Vec::new()))
+            }
+
+            self.state_mut().reset_storage(address);
+        }
+
+        let context = Context { address, caller, apparent_value: value };
+        let transfer = Transfer { source: caller, target: address, value };
+        match self.state_mut().transfer(transfer) {
+            Ok(()) => (),
+            Err(e) => {
+                self.fill_trace(&trace, false, None, pre_index);
+                let _ = self.stack_executor_mut().exit_substate(StackExitKind::Reverted);
+                return Capture::Exit((ExitReason::Error(e), None, Vec::new()))
+            }
+        }
+
+        if self.config().create_increase_nonce {
+            self.state_mut().inc_nonce(address);
+        }
+
+        let config = self.config().clone();
+        let mut runtime;
+        let reason = if self.state().debug_enabled {
+            let code = Rc::new(init_code);
+            runtime = Runtime::new(code.clone(), Rc::new(Vec::new()), context, &config);
+            self.handler_mut().debug_execute(&mut runtime, address, code, true)
+        } else {
+            runtime = Runtime::new(Rc::new(init_code), Rc::new(Vec::new()), context, &config);
+            self.execute(&mut runtime)
+        };
+        // log::debug!(target: "evm", "Create execution using address {}: {:?}", address, reason);
+
+        match reason {
+            ExitReason::Succeed(s) => {
+                let out = runtime.machine().return_value();
+
+                // As of EIP-3541 code starting with 0xef cannot be deployed
+                if let Err(e) = check_first_byte(self.config(), &out) {
+                    self.state_mut().metadata_mut().gasometer_mut().fail();
+                    self.fill_trace(&trace, false, None, pre_index);
+                    let _ = self.stack_executor_mut().exit_substate(StackExitKind::Failed);
+                    return Capture::Exit((e.into(), None, Vec::new()))
+                }
+
+                if let Some(limit) = self.config().create_contract_limit {
+                    if out.len() > limit {
+                        self.state_mut().metadata_mut().gasometer_mut().fail();
+                        self.fill_trace(&trace, false, None, pre_index);
+                        let _ = self.stack_executor_mut().exit_substate(StackExitKind::Failed);
+                        return Capture::Exit((
+                            ExitError::CreateContractLimit.into(),
+                            None,
+                            Vec::new(),
+                        ))
+                    }
+                }
+
+                match self.state_mut().metadata_mut().gasometer_mut().record_deposit(out.len()) {
+                    Ok(()) => {
+                        self.fill_trace(&trace, true, Some(out.clone()), pre_index);
+                        let e = self.stack_executor_mut().exit_substate(StackExitKind::Succeeded);
+                        self.state_mut().set_code(address, out);
+                        // this may overwrite the trace and thats okay
+                        try_or_fail!(e);
+                        Capture::Exit((ExitReason::Succeed(s), Some(address), Vec::new()))
+                    }
+                    Err(e) => {
+                        self.fill_trace(&trace, false, None, pre_index);
+                        let _ = self.stack_executor_mut().exit_substate(StackExitKind::Failed);
+                        Capture::Exit((ExitReason::Error(e), None, Vec::new()))
+                    }
+                }
+            }
+            ExitReason::Error(e) => {
+                self.state_mut().metadata_mut().gasometer_mut().fail();
+                self.fill_trace(&trace, false, None, pre_index);
+                let _ = self.stack_executor_mut().exit_substate(StackExitKind::Failed);
+                Capture::Exit((ExitReason::Error(e), None, Vec::new()))
+            }
+            ExitReason::Revert(e) => {
+                self.fill_trace(&trace, false, Some(runtime.machine().return_value()), pre_index);
+                let _ = self.stack_executor_mut().exit_substate(StackExitKind::Reverted);
+                Capture::Exit((ExitReason::Revert(e), None, runtime.machine().return_value()))
+            }
+            ExitReason::Fatal(e) => {
+                self.state_mut().metadata_mut().gasometer_mut().fail();
+                self.fill_trace(&trace, false, None, pre_index);
+                let _ = self.stack_executor_mut().exit_substate(StackExitKind::Failed);
+                Capture::Exit((ExitReason::Fatal(e), None, Vec::new()))
+            }
         }
     }
 
@@ -793,25 +972,113 @@ where
 
     fn transact_call(
         &mut self,
-        _caller: H160,
-        _address: H160,
-        _value: U256,
-        _data: Vec<u8>,
-        _gas_limit: u64,
-        _access_list: Vec<(H160, Vec<H256>)>,
+        caller: H160,
+        address: H160,
+        value: U256,
+        data: Vec<u8>,
+        gas_limit: u64,
+        access_list: Vec<(H160, Vec<H256>)>,
     ) -> (ExitReason, Vec<u8>) {
-        todo!()
+        // reset all_logs because its a new call
+        self.state_mut().all_logs = vec![];
+
+        let transaction_cost = gasometer::call_transaction_cost(&data, &access_list);
+        match self.state_mut().metadata_mut().gasometer_mut().record_transaction(transaction_cost) {
+            Ok(()) => (),
+            Err(e) => return (e.into(), Vec::new()),
+        }
+
+        // Initialize initial addresses for EIP-2929
+        if self.config().increase_state_access_gas {
+            let addresses = core::iter::once(caller).chain(core::iter::once(address));
+            self.state_mut().metadata_mut().access_addresses(addresses);
+
+            self.stack_executor_mut().initialize_with_access_list(access_list);
+        }
+
+        self.state_mut().inc_nonce(caller);
+
+        let context = Context { caller, address, apparent_value: value };
+
+        match self.call_inner(
+            address,
+            Some(Transfer { source: caller, target: address, value }),
+            data,
+            Some(gas_limit),
+            false,
+            false,
+            false,
+            context,
+        ) {
+            Capture::Exit((s, v)) => {
+                self.state_mut().increment_call_index();
+
+                // check if all expected calls were made
+                if let Some((address, expecteds)) =
+                    self.state().expected_calls.iter().find(|(_, expecteds)| !expecteds.is_empty())
+                {
+                    return (
+                        ExitReason::Revert(ExitRevert::Reverted),
+                        ethers::abi::encode(&[Token::String(format!(
+                            "Expected a call to 0x{} with data {}, but got none",
+                            address,
+                            ethers::types::Bytes::from(expecteds[0].clone())
+                        ))]),
+                    )
+                }
+
+                if !self.state().expected_emits.is_empty() {
+                    return (
+                        ExitReason::Revert(ExitRevert::Reverted),
+                        ethers::abi::encode(&[Token::String(
+                            "Expected an emit, but no logs were emitted afterward".to_string(),
+                        )]),
+                    )
+                }
+                (s, v)
+            }
+            Capture::Trap(_) => {
+                self.state_mut().increment_call_index();
+                unreachable!()
+            }
+        }
     }
 
     fn transact_create(
         &mut self,
-        _caller: H160,
-        _value: U256,
-        _data: Vec<u8>,
-        _gas_limit: u64,
-        _access_list: Vec<(H160, Vec<H256>)>,
+        caller: H160,
+        value: U256,
+        init_code: Vec<u8>,
+        gas_limit: u64,
+        access_list: Vec<(H160, Vec<H256>)>,
     ) -> ExitReason {
-        todo!()
+        // reset all_logs because its a new call
+        self.state_mut().all_logs = Vec::new();
+
+        let transaction_cost = gasometer::create_transaction_cost(&init_code, &access_list);
+        match self.state_mut().metadata_mut().gasometer_mut().record_transaction(transaction_cost) {
+            Ok(()) => (),
+            Err(e) => return e.into(),
+        };
+        self.stack_executor_mut().initialize_with_access_list(access_list);
+
+        match self.create_inner(
+            caller,
+            CreateScheme::Legacy { caller },
+            value,
+            init_code,
+            Some(gas_limit),
+            false,
+        ) {
+            Capture::Exit((s, _, _)) => {
+                self.state_mut().increment_call_index();
+                s
+            }
+            Capture::Trap(_) => {
+                self.state_mut().increment_call_index();
+                unreachable!()
+            }
+        }
     }
 
     fn create_address(&self, caller: CreateScheme) -> Address {
