@@ -30,6 +30,8 @@ use crate::sputnik::cheatcodes::debugger::DebugArena;
 use crate::sputnik::{
     cheatcodes::memory_stackstate_owned::MemoryStackStateOwned, utils::convert_log,
 };
+mod macros;
+use macros::{call_inner, create_inner};
 
 /// an(other) abstraction over a sputnik `Handler` implementation
 ///
@@ -77,43 +79,54 @@ use crate::sputnik::{
 /// // additional functions like `ExecutionHandler::do_call` can be replaced,
 /// // essentially intercepting the call
 /// // the control flow is `SputnikExecutor -> ExecutionHandler -> sputnik::Handler`
-/// impl<'a, 'b, Back, Precom: 'b> ExecutionHandler<'a, 'b, Back, Precom, MyStackState<'a, Back>>
-/// for MyStackExecutor<'a, 'b, Back, Precom>
-///     where
-///         Back: Backend,
-///         Precom: PrecompileSet,
-/// {
-///     fn stack_executor(&self) -> &StackExecutor<'a, 'b, MyStackState<'a, Back>, Precom> {
-///         &self.handler
-///     }
-///
-///     fn stack_executor_mut(
-///         &mut self,
-///     ) -> &mut StackExecutor<'a, 'b, MyStackState<'a, Back>, Precom> {
-///         &mut self.handler
-///     }
-///
-///     fn is_tracing_enabled(&self) -> bool {
-///         false
-///     }
-///
-///     fn debug_execute(
-///         &mut self,
-///         _runtime: &mut Runtime,
-///         _address: Address,
-///         _code: Rc<Vec<u8>>,
-///         _creation: bool,
-///     ) -> ExitReason {
-///         ExitReason::Succeed(ExitSucceed::Returned)
-///     }
-/// }
-/// ```
+// impl<'a, 'b, Back, Precom: 'b> ExecutionHandler<'a, 'b, Back, Precom, MyStackState<'a, Back>>
+// for MyStackExecutor<'a, 'b, Back, Precom>
+//     where
+//         Back: Backend,
+//         Precom: PrecompileSet,
+// {
+//     fn stack_executor(&self) -> &StackExecutor<'a, 'b, MyStackState<'a, Back>, Precom> {
+//         &self.handler
+//     }
+//
+//     fn stack_executor_mut(
+//         &mut self,
+//     ) -> &mut StackExecutor<'a, 'b, MyStackState<'a, Back>, Precom> {
+//         &mut self.handler
+//     }
+//
+//     fn is_tracing_enabled(&self) -> bool {
+//         false
+//     }
+//
+//     fn debug_execute(
+//         &mut self,
+//         _runtime: &mut Runtime,
+//         _address: Address,
+//         _code: Rc<Vec<u8>>,
+//         _creation: bool,
+//     ) -> ExitReason {
+//         ExitReason::Succeed(ExitSucceed::Returned)
+//     }
+// }
+// ```
 pub trait ExecutionHandler<'a, 'b, Back, Precom: 'b, State>
 where
     Back: Backend,
     Precom: PrecompileSet,
     State: StackState<'a>,
 {
+    /// This allows has to turn this mutable ref into a type that implements `sputnik::Handler` to
+    /// execute runtime operations
+    fn as_handler<'handler>(
+        &'handler mut self,
+    ) -> RuntimeExecutionHandler<'handler, 'a, 'b, Back, Precom, State, Self>
+    where
+        Self: Sized,
+    {
+        RuntimeExecutionHandler::new(self)
+    }
+
     /// returns the wrapper sputnik `StackExecutor`
     fn stack_executor(&self) -> &StackExecutor<'a, 'b, State, Precom>;
 
@@ -282,6 +295,196 @@ where
     }
 }
 
+/// Yet another helper type that provides all necessary runtime operations for which both the
+/// `ExecutionHandlerWrapper` and the actual implementer need access to
+pub struct RuntimeExecutionHandler<'handler, 'a, 'b, Back, Precom: 'b, State, ExecHandler>
+where
+    Back: Backend,
+    Precom: PrecompileSet,
+    State: StackState<'a>,
+    ExecHandler: ExecutionHandler<'a, 'b, Back, Precom, State>,
+{
+    /// The wrapped `ExecutionHandler`
+    handler: &'handler mut ExecHandler,
+    // this is necessary because of all the unconstrained trait generics...
+    _marker: PhantomData<(&'a Back, &'b State, Precom)>,
+}
+
+impl<'handler, 'a, 'b, Back, Precom: 'b, State, ExecHandler>
+    RuntimeExecutionHandler<'handler, 'a, 'b, Back, Precom, State, ExecHandler>
+where
+    ExecHandler: ExecutionHandler<'a, 'b, Back, Precom, State>,
+    Back: Backend,
+    Precom: PrecompileSet,
+    State: StackState<'a>,
+{
+    pub fn new(handler: &'handler mut ExecHandler) -> Self {
+        Self { handler, _marker: Default::default() }
+    }
+}
+
+impl<'handler, 'a, 'b, Back, Precom: 'b, ExecHandler>
+    RuntimeExecutionHandler<
+        'handler,
+        'a,
+        'b,
+        Back,
+        Precom,
+        MemoryStackStateOwned<'a, Back>,
+        ExecHandler,
+    >
+where
+    ExecHandler: ExecutionHandler<'a, 'b, Back, Precom, MemoryStackStateOwned<'a, Back>>,
+    Back: Backend,
+    Precom: PrecompileSet,
+{
+}
+
+impl<'handler, 'a, 'b, Back, Precom: 'b, ExecHandler> Handler
+    for RuntimeExecutionHandler<
+        'handler,
+        'a,
+        'b,
+        Back,
+        Precom,
+        MemoryStackStateOwned<'a, Back>,
+        ExecHandler,
+    >
+where
+    ExecHandler: ExecutionHandler<'a, 'b, Back, Precom, MemoryStackStateOwned<'a, Back>>,
+    Back: Backend,
+    Precom: PrecompileSet,
+{
+    type CreateInterrupt = Infallible;
+    type CreateFeedback = Infallible;
+    type CallInterrupt = Infallible;
+    type CallFeedback = Infallible;
+
+    fn balance(&self, address: H160) -> U256 {
+        todo!()
+    }
+
+    fn code_size(&self, address: H160) -> U256 {
+        todo!()
+    }
+
+    fn code_hash(&self, address: H160) -> H256 {
+        todo!()
+    }
+
+    fn code(&self, address: H160) -> Vec<u8> {
+        todo!()
+    }
+
+    fn storage(&self, address: H160, index: H256) -> H256 {
+        todo!()
+    }
+
+    fn original_storage(&self, address: H160, index: H256) -> H256 {
+        todo!()
+    }
+
+    fn gas_left(&self) -> U256 {
+        todo!()
+    }
+
+    fn gas_price(&self) -> U256 {
+        todo!()
+    }
+
+    fn origin(&self) -> H160 {
+        todo!()
+    }
+
+    fn block_hash(&self, number: U256) -> H256 {
+        todo!()
+    }
+
+    fn block_number(&self) -> U256 {
+        todo!()
+    }
+
+    fn block_coinbase(&self) -> H160 {
+        todo!()
+    }
+
+    fn block_timestamp(&self) -> U256 {
+        todo!()
+    }
+
+    fn block_difficulty(&self) -> U256 {
+        todo!()
+    }
+
+    fn block_gas_limit(&self) -> U256 {
+        todo!()
+    }
+
+    fn block_base_fee_per_gas(&self) -> U256 {
+        todo!()
+    }
+
+    fn chain_id(&self) -> U256 {
+        todo!()
+    }
+
+    fn exists(&self, address: H160) -> bool {
+        todo!()
+    }
+
+    fn deleted(&self, address: H160) -> bool {
+        todo!()
+    }
+
+    fn is_cold(&self, address: H160, index: Option<H256>) -> bool {
+        todo!()
+    }
+
+    fn set_storage(&mut self, address: H160, index: H256, value: H256) -> Result<(), ExitError> {
+        todo!()
+    }
+
+    fn log(&mut self, address: H160, topics: Vec<H256>, data: Vec<u8>) -> Result<(), ExitError> {
+        todo!()
+    }
+
+    fn mark_delete(&mut self, address: H160, target: H160) -> Result<(), ExitError> {
+        todo!()
+    }
+
+    fn create(
+        &mut self,
+        caller: H160,
+        scheme: CreateScheme,
+        value: U256,
+        init_code: Vec<u8>,
+        target_gas: Option<u64>,
+    ) -> Capture<(ExitReason, Option<H160>, Vec<u8>), Self::CreateInterrupt> {
+        todo!()
+    }
+
+    fn call(
+        &mut self,
+        code_address: H160,
+        transfer: Option<Transfer>,
+        input: Vec<u8>,
+        target_gas: Option<u64>,
+        is_static: bool,
+        context: Context,
+    ) -> Capture<(ExitReason, Vec<u8>), Self::CallInterrupt> {
+        todo!()
+    }
+
+    fn pre_validate(
+        &mut self,
+        context: &Context,
+        opcode: Opcode,
+        stack: &Stack,
+    ) -> Result<(), ExitError> {
+        todo!()
+    }
+}
+
 /// This wrapper type is necessary as we can't implement foreign traits for traits (Handler for
 /// ExecutionHandler)
 pub struct ExecutionHandlerWrapper<'a, 'b, Back, Precom: 'b, State, ExecHandler>
@@ -333,6 +536,20 @@ where
     Back: Backend,
     Precom: PrecompileSet,
 {
+    fn as_executor<'handler>(
+        &'handler mut self,
+    ) -> RuntimeExecutionHandler<
+        'handler,
+        'a,
+        'b,
+        Back,
+        Precom,
+        MemoryStackStateOwned<'a, Back>,
+        ExecHandler,
+    > {
+        RuntimeExecutionHandler::new(&mut self.handler)
+    }
+
     // NB: This function is copy-pasted from upstream's `execute`, adjusted so that we call the
     // Runtime with our own handler
     pub fn execute(&mut self, runtime: &mut Runtime) -> ExitReason {
@@ -394,175 +611,7 @@ where
         target_gas: Option<u64>,
         take_l64: bool,
     ) -> Capture<(ExitReason, Option<H160>, Vec<u8>), Infallible> {
-        let pre_index = self.state().trace_index;
-
-        let address = self.create_address(scheme);
-        let trace = self.start_trace(address, init_code.clone(), value, true);
-
-        macro_rules! try_or_fail {
-            ( $e:expr ) => {
-                match $e {
-                    Ok(v) => v,
-                    Err(e) => {
-                        self.fill_trace(&trace, false, None, pre_index);
-                        return Capture::Exit((e.into(), None, Vec::new()))
-                    }
-                }
-            };
-        }
-
-        fn check_first_byte(config: &Config, code: &[u8]) -> Result<(), ExitError> {
-            if config.disallow_executable_format {
-                if let Some(0xef) = code.get(0) {
-                    return Err(ExitError::InvalidCode)
-                }
-            }
-            Ok(())
-        }
-
-        fn l64(gas: u64) -> u64 {
-            gas - gas / 64
-        }
-
-        self.state_mut().metadata_mut().access_address(caller);
-        self.state_mut().metadata_mut().access_address(address);
-
-        if let Some(depth) = self.state().metadata().depth() {
-            if depth > self.config().call_stack_limit {
-                self.fill_trace(&trace, false, None, pre_index);
-                return Capture::Exit((ExitError::CallTooDeep.into(), None, Vec::new()))
-            }
-        }
-
-        if self.balance(caller) < value {
-            self.fill_trace(&trace, false, None, pre_index);
-            return Capture::Exit((ExitError::OutOfFund.into(), None, Vec::new()))
-        }
-
-        let after_gas = if take_l64 && self.config().call_l64_after_gas {
-            if self.config().estimate {
-                let initial_after_gas = self.state().metadata().gasometer().gas();
-                let diff = initial_after_gas - l64(initial_after_gas);
-                try_or_fail!(self.state_mut().metadata_mut().gasometer_mut().record_cost(diff));
-                self.state().metadata().gasometer().gas()
-            } else {
-                l64(self.state().metadata().gasometer().gas())
-            }
-        } else {
-            self.state().metadata().gasometer().gas()
-        };
-
-        let target_gas = target_gas.unwrap_or(after_gas);
-
-        let gas_limit = core::cmp::min(after_gas, target_gas);
-        try_or_fail!(self.state_mut().metadata_mut().gasometer_mut().record_cost(gas_limit));
-
-        self.state_mut().inc_nonce(caller);
-
-        self.stack_executor_mut().enter_substate(gas_limit, false);
-
-        {
-            if self.code_size(address) != U256::zero() {
-                self.fill_trace(&trace, false, None, pre_index);
-                let _ = self.stack_executor_mut().exit_substate(StackExitKind::Failed);
-                return Capture::Exit((ExitError::CreateCollision.into(), None, Vec::new()))
-            }
-
-            if self.stack_executor_mut().nonce(address) > U256::zero() {
-                self.fill_trace(&trace, false, None, pre_index);
-                let _ = self.stack_executor_mut().exit_substate(StackExitKind::Failed);
-                return Capture::Exit((ExitError::CreateCollision.into(), None, Vec::new()))
-            }
-
-            self.state_mut().reset_storage(address);
-        }
-
-        let context = Context { address, caller, apparent_value: value };
-        let transfer = Transfer { source: caller, target: address, value };
-        match self.state_mut().transfer(transfer) {
-            Ok(()) => (),
-            Err(e) => {
-                self.fill_trace(&trace, false, None, pre_index);
-                let _ = self.stack_executor_mut().exit_substate(StackExitKind::Reverted);
-                return Capture::Exit((ExitReason::Error(e), None, Vec::new()))
-            }
-        }
-
-        if self.config().create_increase_nonce {
-            self.state_mut().inc_nonce(address);
-        }
-
-        let config = self.config().clone();
-        let mut runtime;
-        let reason = if self.state().debug_enabled {
-            let code = Rc::new(init_code);
-            runtime = Runtime::new(code.clone(), Rc::new(Vec::new()), context, &config);
-            self.handler_mut().debug_execute(&mut runtime, address, code, true)
-        } else {
-            runtime = Runtime::new(Rc::new(init_code), Rc::new(Vec::new()), context, &config);
-            self.execute(&mut runtime)
-        };
-        // log::debug!(target: "evm", "Create execution using address {}: {:?}", address, reason);
-
-        match reason {
-            ExitReason::Succeed(s) => {
-                let out = runtime.machine().return_value();
-
-                // As of EIP-3541 code starting with 0xef cannot be deployed
-                if let Err(e) = check_first_byte(self.config(), &out) {
-                    self.state_mut().metadata_mut().gasometer_mut().fail();
-                    self.fill_trace(&trace, false, None, pre_index);
-                    let _ = self.stack_executor_mut().exit_substate(StackExitKind::Failed);
-                    return Capture::Exit((e.into(), None, Vec::new()))
-                }
-
-                if let Some(limit) = self.config().create_contract_limit {
-                    if out.len() > limit {
-                        self.state_mut().metadata_mut().gasometer_mut().fail();
-                        self.fill_trace(&trace, false, None, pre_index);
-                        let _ = self.stack_executor_mut().exit_substate(StackExitKind::Failed);
-                        return Capture::Exit((
-                            ExitError::CreateContractLimit.into(),
-                            None,
-                            Vec::new(),
-                        ))
-                    }
-                }
-
-                match self.state_mut().metadata_mut().gasometer_mut().record_deposit(out.len()) {
-                    Ok(()) => {
-                        self.fill_trace(&trace, true, Some(out.clone()), pre_index);
-                        let e = self.stack_executor_mut().exit_substate(StackExitKind::Succeeded);
-                        self.state_mut().set_code(address, out);
-                        // this may overwrite the trace and thats okay
-                        try_or_fail!(e);
-                        Capture::Exit((ExitReason::Succeed(s), Some(address), Vec::new()))
-                    }
-                    Err(e) => {
-                        self.fill_trace(&trace, false, None, pre_index);
-                        let _ = self.stack_executor_mut().exit_substate(StackExitKind::Failed);
-                        Capture::Exit((ExitReason::Error(e), None, Vec::new()))
-                    }
-                }
-            }
-            ExitReason::Error(e) => {
-                self.state_mut().metadata_mut().gasometer_mut().fail();
-                self.fill_trace(&trace, false, None, pre_index);
-                let _ = self.stack_executor_mut().exit_substate(StackExitKind::Failed);
-                Capture::Exit((ExitReason::Error(e), None, Vec::new()))
-            }
-            ExitReason::Revert(e) => {
-                self.fill_trace(&trace, false, Some(runtime.machine().return_value()), pre_index);
-                let _ = self.stack_executor_mut().exit_substate(StackExitKind::Reverted);
-                Capture::Exit((ExitReason::Revert(e), None, runtime.machine().return_value()))
-            }
-            ExitReason::Fatal(e) => {
-                self.state_mut().metadata_mut().gasometer_mut().fail();
-                self.fill_trace(&trace, false, None, pre_index);
-                let _ = self.stack_executor_mut().exit_substate(StackExitKind::Failed);
-                Capture::Exit((ExitReason::Fatal(e), None, Vec::new()))
-            }
-        }
+        create_inner!(self, caller, scheme, value, init_code, target_gas, take_l64)
     }
 
     // NB: This function is copy-pasted from upstream's call_inner
@@ -578,155 +627,17 @@ where
         take_stipend: bool,
         context: Context,
     ) -> Capture<(ExitReason, Vec<u8>), Infallible> {
-        let pre_index = self.state().trace_index;
-        let trace = self.start_trace(
+        call_inner!(
+            self,
             code_address,
-            input.clone(),
-            transfer.as_ref().map(|x| x.value).unwrap_or_default(),
-            false,
-        );
-
-        macro_rules! try_or_fail {
-            ( $e:expr ) => {
-                match $e {
-                    Ok(v) => v,
-                    Err(e) => {
-                        self.fill_trace(&trace, false, None, pre_index);
-                        return Capture::Exit((e.into(), Vec::new()))
-                    }
-                }
-            };
-        }
-
-        fn l64(gas: u64) -> u64 {
-            gas - gas / 64
-        }
-
-        let after_gas = if take_l64 && self.config().call_l64_after_gas {
-            if self.config().estimate {
-                let initial_after_gas = self.state().metadata().gasometer().gas();
-                let diff = initial_after_gas - l64(initial_after_gas);
-                try_or_fail!(self.state_mut().metadata_mut().gasometer_mut().record_cost(diff));
-                self.state().metadata().gasometer().gas()
-            } else {
-                l64(self.state().metadata().gasometer().gas())
-            }
-        } else {
-            self.state().metadata().gasometer().gas()
-        };
-
-        let target_gas = target_gas.unwrap_or(after_gas);
-        let mut gas_limit = std::cmp::min(target_gas, after_gas);
-
-        try_or_fail!(self.state_mut().metadata_mut().gasometer_mut().record_cost(gas_limit));
-
-        if let Some(transfer) = transfer.as_ref() {
-            if take_stipend && transfer.value != U256::zero() {
-                gas_limit = gas_limit.saturating_add(self.config().call_stipend);
-            }
-        }
-
-        let code = self.code(code_address);
-        self.stack_executor_mut().enter_substate(gas_limit, is_static);
-        self.state_mut().touch(context.address);
-
-        if let Some(depth) = self.state().metadata().depth() {
-            if depth > self.config().call_stack_limit {
-                self.fill_trace(&trace, false, None, pre_index);
-                let _ = self.stack_executor_mut().exit_substate(StackExitKind::Reverted);
-                return Capture::Exit((ExitError::CallTooDeep.into(), Vec::new()))
-            }
-        }
-
-        if let Some(transfer) = transfer {
-            match self.state_mut().transfer(transfer) {
-                Ok(()) => (),
-                Err(e) => {
-                    self.fill_trace(&trace, false, None, pre_index);
-                    let _ = self.stack_executor_mut().exit_substate(StackExitKind::Reverted);
-                    return Capture::Exit((ExitReason::Error(e), Vec::new()))
-                }
-            }
-        }
-
-        if let Some(result) = self.stack_executor().precompiles().execute(
-            code_address,
-            &input,
-            Some(gas_limit),
-            &context,
+            transfer,
+            input,
+            target_gas,
             is_static,
-        ) {
-            return match result {
-                Ok(PrecompileOutput { exit_status, output, cost, logs }) => {
-                    for Log { address, topics, data } in logs {
-                        match self.log(address, topics, data) {
-                            Ok(_) => continue,
-                            Err(error) => {
-                                self.fill_trace(&trace, false, Some(output.clone()), pre_index);
-                                return Capture::Exit((ExitReason::Error(error), output))
-                            }
-                        }
-                    }
-
-                    let _ = self.state_mut().metadata_mut().gasometer_mut().record_cost(cost);
-                    self.fill_trace(&trace, true, Some(output.clone()), pre_index);
-                    let _ = self.stack_executor_mut().exit_substate(StackExitKind::Succeeded);
-                    Capture::Exit((ExitReason::Succeed(exit_status), output))
-                }
-                Err(e) => {
-                    let e = match e {
-                        PrecompileFailure::Error { exit_status } => ExitReason::Error(exit_status),
-                        PrecompileFailure::Revert { exit_status, .. } => {
-                            ExitReason::Revert(exit_status)
-                        }
-                        PrecompileFailure::Fatal { exit_status } => ExitReason::Fatal(exit_status),
-                    };
-                    self.fill_trace(&trace, false, None, pre_index);
-                    let _ = self.stack_executor_mut().exit_substate(StackExitKind::Failed);
-                    Capture::Exit((e, Vec::new()))
-                }
-            }
-        }
-
-        // each cfg is about 200 bytes, is this a lot to clone? why does this error
-        // not manifest upstream?
-        let config = self.config().clone();
-        let mut runtime;
-        let reason = if self.state().debug_enabled {
-            let code = Rc::new(code);
-            runtime = Runtime::new(code.clone(), Rc::new(input), context, &config);
-            self.handler_mut().debug_execute(&mut runtime, code_address, code, false)
-        } else {
-            runtime = Runtime::new(Rc::new(code), Rc::new(input), context, &config);
-            self.execute(&mut runtime)
-        };
-
-        // // log::debug!(target: "evm", "Call execution using address {}: {:?}", code_address,
-        // reason);
-
-        match reason {
-            ExitReason::Succeed(s) => {
-                self.fill_trace(&trace, true, Some(runtime.machine().return_value()), pre_index);
-                let _ = self.stack_executor_mut().exit_substate(StackExitKind::Succeeded);
-                Capture::Exit((ExitReason::Succeed(s), runtime.machine().return_value()))
-            }
-            ExitReason::Error(e) => {
-                self.fill_trace(&trace, false, Some(runtime.machine().return_value()), pre_index);
-                let _ = self.stack_executor_mut().exit_substate(StackExitKind::Failed);
-                Capture::Exit((ExitReason::Error(e), Vec::new()))
-            }
-            ExitReason::Revert(e) => {
-                self.fill_trace(&trace, false, Some(runtime.machine().return_value()), pre_index);
-                let _ = self.stack_executor_mut().exit_substate(StackExitKind::Reverted);
-                Capture::Exit((ExitReason::Revert(e), runtime.machine().return_value()))
-            }
-            ExitReason::Fatal(e) => {
-                self.fill_trace(&trace, false, Some(runtime.machine().return_value()), pre_index);
-                self.state_mut().metadata_mut().gasometer_mut().fail();
-                let _ = self.stack_executor_mut().exit_substate(StackExitKind::Failed);
-                Capture::Exit((ExitReason::Fatal(e), Vec::new()))
-            }
-        }
+            take_l64,
+            take_stipend,
+            context
+        )
     }
 }
 
@@ -736,7 +647,6 @@ where
     ExecHandler: ExecutionHandler<'a, 'b, Back, Precom, MemoryStackStateOwned<'a, Back>>,
     Back: Backend,
     Precom: PrecompileSet,
-    // State: StackState<'a>,
 {
     type CreateInterrupt = Infallible;
     type CreateFeedback = Infallible;
