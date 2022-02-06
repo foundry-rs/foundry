@@ -57,7 +57,7 @@ use ethers::{
     prelude::artifacts::{CompactBytecode, CompactDeployedBytecode},
     solc::cache::SolFilesCache,
 };
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf};
 
 /// Common trait for all cli commands
 pub trait Cmd: clap::Parser + Sized {
@@ -88,9 +88,28 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
     } else if output.is_unchanged() {
         println!("no files changed, compilation skipped.");
     } else {
+        let mut contracts = BTreeMap::new();
+        for (_, name, _, version) in
+            output.clone().output().contracts.contracts_with_files_and_version()
+        {
+            contracts
+                .entry(version.to_string())
+                .or_insert(Vec::<String>::new())
+                .push(name.to_string());
+        }
+
+        println!("compiled contracts:");
+        for (key, value) in contracts.clone().into_iter() {
+            println!("compiler version: {}", key);
+            for name in value {
+                println!("  - {}", name);
+            }
+        }
+
         println!("{}", output);
         println!("success.");
     }
+
     Ok(output)
 }
 
