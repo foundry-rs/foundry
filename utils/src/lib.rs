@@ -4,7 +4,7 @@ use ethers_core::{
     abi::{
         self, parse_abi,
         token::{LenientTokenizer, StrictTokenizer, Tokenizer},
-        Abi, AbiParser, Event, Function, Param, ParamType, Token,
+        Abi, AbiParser, Event, EventParam, Function, Param, ParamType, Token,
     },
     types::*,
 };
@@ -472,6 +472,37 @@ pub async fn fourbyte_possible_sigs(calldata: &str, id: Option<String>) -> Resul
     }
 }
 
+/// Fetches a event signature given the 32 byte topic using 4byte.directory
+pub async fn fourbyte_event(topic: &str) -> Result<Vec<(String, i32)>> {
+    #[derive(Deserialize)]
+    struct Decoded {
+        text_signature: String,
+        id: i32,
+    }
+
+    #[derive(Deserialize)]
+    struct ApiResponse {
+        results: Vec<Decoded>,
+    }
+
+    let topic = &topic.strip_prefix("0x").unwrap_or(topic);
+    if topic.len() < 64 {
+        return Err(eyre::eyre!("Invalid topic"))
+    }
+    let topic = &topic[..8];
+
+    let url =
+        format!("https://www.4byte.directory/api/v1/event-signatures/?hex_signature={}", topic);
+    let res = reqwest::get(url).await?;
+    let api_response = res.json::<ApiResponse>().await?;
+
+    Ok(api_response
+        .results
+        .into_iter()
+        .map(|d| (d.text_signature, d.id))
+        .collect::<Vec<(String, i32)>>())
+}
+
 pub fn abi_decode(sig: &str, calldata: &str, input: bool) -> Result<Vec<Token>> {
     let func = IntoFunction::into(sig);
     let calldata = calldata.strip_prefix("0x").unwrap_or(calldata);
@@ -583,7 +614,9 @@ fn capitalize(s: &str) -> String {
 // Returns the function parameter formatted as a string, as well as inserts into the provided
 // `structs` set in order to create type definitions for any Abi Encoder v2 structs.
 fn format_param(param: &Param, structs: &mut HashSet<String>) -> String {
-    // check if it requires a memory tag
+    let kind = get_param_type(&param.kind, &param.name, param.internal_type.as_deref(), structs);
+
+    // add `memory` if required (not needed for events, only for functions)
     let is_memory = matches!(
         param.kind,
         ParamType::Array(_) |
@@ -592,11 +625,37 @@ fn format_param(param: &Param, structs: &mut HashSet<String>) -> String {
             ParamType::FixedArray(_, _) |
             ParamType::Tuple(_),
     );
+    let kind = if is_memory { format!("{} memory", kind) } else { kind };
 
-    let (kind, v2_struct) = match param.kind {
+    if param.name.is_empty() {
+        kind
+    } else {
+        format!("{} {}", kind, param.name)
+    }
+}
+
+fn format_event_params(param: &EventParam, structs: &mut HashSet<String>) -> String {
+    let kind = get_param_type(&param.kind, &param.name, None, structs);
+
+    if param.name.is_empty() {
+        kind
+    } else if param.indexed {
+        format!("{} indexed {}", kind, param.name)
+    } else {
+        format!("{} {}", kind, param.name)
+    }
+}
+
+fn get_param_type(
+    kind: &ParamType,
+    name: &str,
+    internal_type: Option<&str>,
+    structs: &mut HashSet<String>,
+) -> String {
+    let (kind, v2_struct) = match kind {
         // We need to do some extra work to parse ABI Encoder V2 types.
         ParamType::Tuple(ref args) => {
-            let name = param.internal_type.clone().unwrap_or_else(|| capitalize(&param.name));
+            let name = internal_type.map(|x| x.to_owned()).unwrap_or_else(|| capitalize(name));
             let name = if name.contains('.') {
                 name.split('.').nth(1).expect("could not get struct name").to_owned()
             } else {
@@ -618,22 +677,15 @@ fn format_param(param: &Param, structs: &mut HashSet<String>) -> String {
             (name, Some(v2_struct))
         }
         // If not, just get the string of the param kind.
-        _ => (param.kind.to_string(), None),
+        _ => (kind.to_string(), None),
     };
-
-    // add `memory` if required
-    let kind = if is_memory { format!("{} memory", kind) } else { kind };
 
     // if there was a v2 struct, push it for later usage
     if let Some(v2_struct) = v2_struct {
         structs.insert(v2_struct);
     }
 
-    if param.name.is_empty() {
-        kind
-    } else {
-        format!("{} {}", kind, param.name)
-    }
+    kind
 }
 
 /// This function takes a contract [`Abi`] and a name and proceeds to generate a Solidity
@@ -648,12 +700,28 @@ fn format_param(param: &Param, structs: &mut HashSet<String>) -> String {
 /// * Kudos to https://github.com/maxme/abi2solidity for the algorithm
 pub fn abi_to_solidity(contract_abi: &Abi, mut contract_name: &str) -> Result<String> {
     let functions_iterator = contract_abi.functions();
+    let events_iterator = contract_abi.events();
     if contract_name.trim().is_empty() {
         contract_name = "Interface";
     };
 
     // instantiate an array of all ABI Encoder v2 structs
     let mut structs = HashSet::new();
+
+    let events = events_iterator
+        .map(|event| {
+            let inputs = event
+                .inputs
+                .iter()
+                .map(|param| format_event_params(param, &mut structs))
+                .collect::<Vec<String>>()
+                .join(", ");
+
+            let event_final = format!("event {}({})", event.name, inputs);
+            format!("{};", event_final)
+        })
+        .collect::<Vec<_>>()
+        .join("\n    ");
 
     let functions = functions_iterator
         .map(|function| {
@@ -691,24 +759,48 @@ pub fn abi_to_solidity(contract_abi: &Abi, mut contract_name: &str) -> Result<St
         .join("\n    ");
 
     Ok(if structs.is_empty() {
-        format!(
-            r#"interface {} {{
+        match events.is_empty() {
+            true => format!(
+                r#"interface {} {{
     {}
 }}
 "#,
-            contract_name, functions
-        )
-    } else {
-        let structs = structs.into_iter().collect::<Vec<_>>().join("\n    ");
-        format!(
-            r#"interface {} {{
+                contract_name, functions
+            ),
+            false => format!(
+                r#"interface {} {{
     {}
 
     {}
 }}
 "#,
-            contract_name, structs, functions
-        )
+                contract_name, events, functions
+            ),
+        }
+    } else {
+        let structs = structs.into_iter().collect::<Vec<_>>().join("\n    ");
+        match events.is_empty() {
+            true => format!(
+                r#"interface {} {{
+    {}
+
+    {}
+}}
+"#,
+                contract_name, structs, functions
+            ),
+            false => format!(
+                r#"interface {} {{
+    {}
+
+    {}
+
+    {}
+}}
+"#,
+                contract_name, events, structs, functions
+            ),
+        }
     })
 }
 
@@ -883,6 +975,22 @@ mod tests {
 
         let sigs = fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", Some("145".to_string())).await.unwrap();
         assert_eq!(sigs[0], "transfer(address,uint256)".to_string());
+    }
+
+    #[tokio::test]
+    async fn test_fourbyte_event() {
+        let sigs =
+            fourbyte_event("0x7e1db2a1cd12f0506ecd806dba508035b290666b84b096a87af2fd2a1516ede6")
+                .await
+                .unwrap();
+        assert_eq!(sigs[0].0, "updateAuthority(address,uint8)".to_string());
+        assert_eq!(sigs[0].1, 79573);
+
+        let sigs =
+            fourbyte_event("0xb7009613e63fb13fd59a2fa4c206a992c1f090a44e5d530be255aa17fed0b3dd")
+                .await
+                .unwrap();
+        assert_eq!(sigs[0].0, "canCall(address,address,bytes4)".to_string());
     }
 
     #[test]

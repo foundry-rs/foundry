@@ -8,7 +8,7 @@ use ethers_core::{
         Abi, AbiParser, Token,
     },
     types::{transaction::eip2718::TypedTransaction, Chain, *},
-    utils::{self, keccak256},
+    utils::{self, keccak256, parse_units},
 };
 
 use ethers_etherscan::Client;
@@ -718,6 +718,24 @@ impl SimpleCast {
         Ok(ascii)
     }
 
+    /// Converts fixed point number into specified number of decimals
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    /// use ethers_core::types::U256;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(Cast::from_fix(0, "10")?, 10.into());
+    ///     assert_eq!(Cast::from_fix(1, "1.0")?, 10.into());
+    ///     assert_eq!(Cast::from_fix(2, "0.10")?, 10.into());
+    ///     assert_eq!(Cast::from_fix(3, "0.010")?, 10.into());
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn from_fix(decimals: u32, value: &str) -> Result<U256> {
+        Ok(parse_units(value, decimals).unwrap())
+    }
+
     /// Converts hex input to decimal
     ///
     /// ```
@@ -899,6 +917,44 @@ impl SimpleCast {
     pub fn to_uint256(value: &str) -> Result<String> {
         let num_u256 = U256::from_str_radix(value, 10)?;
         let num_hex = format!("{:x}", num_u256);
+        Ok(format!("0x{}{}", "0".repeat(64 - num_hex.len()), num_hex))
+    }
+
+    /// Converts a number into int256 hex string with 0x prefix
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(Cast::to_int256("0")?, "0x0000000000000000000000000000000000000000000000000000000000000000");
+    ///     assert_eq!(Cast::to_int256("100")?, "0x0000000000000000000000000000000000000000000000000000000000000064");
+    ///     assert_eq!(Cast::to_int256("-100")?, "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff9c");
+    ///     assert_eq!(Cast::to_int256("192038293923")?, "0x0000000000000000000000000000000000000000000000000000002cb65fd1a3");
+    ///     assert_eq!(Cast::to_int256("-192038293923")?, "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffd349a02e5d");
+    ///     assert_eq!(
+    ///         Cast::to_int256("57896044618658097711785492504343953926634992332820282019728792003956564819967")?,
+    ///         "0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    ///     );
+    ///     assert_eq!(
+    ///         Cast::to_int256("-57896044618658097711785492504343953926634992332820282019728792003956564819968")?,
+    ///         "0x8000000000000000000000000000000000000000000000000000000000000000"
+    ///     );
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn to_int256(value: &str) -> Result<String> {
+        let (sign, value) = match value.as_bytes().get(0) {
+            Some(b'+') => (Sign::Positive, &value[1..]),
+            Some(b'-') => (Sign::Negative, &value[1..]),
+            _ => (Sign::Positive, value),
+        };
+
+        let mut num = U256::from_str_radix(value, 10)?;
+        if matches!(sign, Sign::Negative) {
+            num = (!num).overflowing_add(U256::one()).0;
+        }
+        let num_hex = format!("{:x}", num);
         Ok(format!("0x{}{}", "0".repeat(64 - num_hex.len()), num_hex))
     }
 
@@ -1136,6 +1192,32 @@ impl SimpleCast {
         }
 
         Ok(code)
+    }
+    /// Prints the slot number for the specified mapping type and input data
+    /// Uses abi_encode to pad the data to 32 bytes.
+    /// For value types v, slot number of v is keccak256(concat(h(v) , p)) where h is the padding
+    /// function and p is slot number of the mapping.
+    /// ```
+    /// # use cast::SimpleCast as Cast;
+    ///
+    /// # fn main() -> eyre::Result<()> {
+    ///    
+    ///    assert_eq!(Cast::index("address", "uint256" ,"0xD0074F4E6490ae3f888d1d4f7E3E43326bD3f0f5" ,"2").unwrap().as_str(),"0x9525a448a9000053a4d151336329d6563b7e80b24f8e628e95527f218e8ab5fb");
+    ///    assert_eq!(Cast::index("uint256", "uint256" ,"42" ,"6").unwrap().as_str(),"0xfc808b0f31a1e6b9cf25ff6289feae9b51017b392cc8e25620a94a38dcdafcc1");
+    /// #    Ok(())
+    /// # }
+    /// ```
+
+    pub fn index(
+        from_type: &str,
+        to_type: &str,
+        from_value: &str,
+        slot_number: &str,
+    ) -> Result<String> {
+        let sig = format!("x({},{})", from_type, to_type);
+        let encoded = Self::abi_encode(&sig, &[from_value, slot_number])?;
+        let location: String = Self::keccak(&encoded)?;
+        Ok(location)
     }
 }
 

@@ -97,11 +97,10 @@ else
   REPO_PATH="${FOUNDRY_DIR}/${FOUNDRYUP_REPO}"
   
   if [ -d $REPO_PATH ]; then
-    # If the repo path exists move to it git pull and checkout the branch.
+    # If the repo path exists move to it and do a force checkout, discarding any local changes
     cd $REPO_PATH
-    git pull
-    git checkout ${FOUNDRYUP_BRANCH}
-    git pull
+    git fetch
+    git reset --hard origin/${FOUNDRYUP_BRANCH}
   else
     # Repo path did not exist, grab the author from the repo, make a directory in .foundry, cd to it and clone.
     IFS="/" read -ra AUTHOR <<< "$FOUNDRYUP_REPO"

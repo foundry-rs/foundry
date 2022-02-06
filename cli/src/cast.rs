@@ -90,6 +90,10 @@ async fn main() -> eyre::Result<()> {
             let val = unwrap_or_stdin(hexdata)?;
             println!("{}", SimpleCast::ascii(&val)?);
         }
+        Subcommands::FromFix { decimals, value } => {
+            let val = unwrap_or_stdin(value)?;
+            println!("{}", SimpleCast::from_fix(unwrap_or_stdin(decimals)? as u32, &val)?);
+        }
         Subcommands::ToBytes32 { bytes } => {
             let val = unwrap_or_stdin(bytes)?;
             println!("{}", SimpleCast::bytes32(&val)?);
@@ -108,6 +112,10 @@ async fn main() -> eyre::Result<()> {
         Subcommands::ToUint256 { value } => {
             let val = unwrap_or_stdin(value)?;
             println!("{}", SimpleCast::to_uint256(&val)?);
+        }
+        Subcommands::ToInt256 { value } => {
+            let val = unwrap_or_stdin(value)?;
+            println!("{}", SimpleCast::to_int256(&val)?);
         }
         Subcommands::ToUnit { value, unit } => {
             let val = unwrap_or_stdin(value)?;
@@ -315,6 +323,10 @@ async fn main() -> eyre::Result<()> {
         Subcommands::AbiEncode { sig, args } => {
             println!("{}", SimpleCast::abi_encode(&sig, &args)?);
         }
+        Subcommands::Index { from_type, to_type, from_value, slot_number } => {
+            let encoded = SimpleCast::index(&from_type, &to_type, &from_value, &slot_number)?;
+            println!("{}", encoded);
+        }
         Subcommands::FourByte { selector } => {
             let sigs = foundry_utils::fourbyte(&selector).await?;
             sigs.iter().for_each(|sig| println!("{}", sig.0));
@@ -340,6 +352,10 @@ async fn main() -> eyre::Result<()> {
             let tokens = foundry_utils::format_tokens(&tokens);
 
             tokens.for_each(|t| println!("{}", t));
+        }
+        Subcommands::FourByteEvent { topic } => {
+            let sigs = foundry_utils::fourbyte_event(&topic).await?;
+            sigs.iter().for_each(|sig| println!("{}", sig.0));
         }
         Subcommands::Age { block, rpc_url } => {
             let provider = Provider::try_from(rpc_url)?;
