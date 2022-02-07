@@ -61,9 +61,20 @@ impl MultiContractRunnerBuilder {
         // This is just the contracts compiled, but we need to merge this with the read cached
         // artifacts
         let contracts = output
-            .into_artifacts()
-            .map(|(n, c)| (n, c.into_contract_bytecode()))
+            .into_artifacts_with_files()
+            .map(|(f, n, c)| (f, n, c.into_contract_bytecode()))
+            .collect::<Vec<(String, String, CompactContractBytecode)>>();
+
+        let mut source_paths = contracts
+            .iter()
+            .map(|(f, n, c)| (n.clone(), f.clone()))
+            .collect::<BTreeMap<String, String>>();
+
+        let contracts = contracts
+            .into_iter()
+            .map(|(f, n, c)| (n, c))
             .collect::<BTreeMap<String, CompactContractBytecode>>();
+
         let mut known_contracts: BTreeMap<String, (Abi, Vec<u8>)> = Default::default();
 
         // create a mapping of name => (abi, deployment code, Vec<library deployment code>)
@@ -129,6 +140,7 @@ impl MultiContractRunnerBuilder {
             sender: self.sender,
             fuzzer: self.fuzzer,
             execution_info,
+            source_paths,
         })
     }
 
@@ -177,6 +189,8 @@ pub struct MultiContractRunner {
     fuzzer: Option<TestRunner>,
     /// The address which will be used as the `from` field in all EVM calls
     sender: Option<Address>,
+    /// A map of contract names to absolute source file paths
+    source_paths: BTreeMap<String, String>,
 }
 
 impl MultiContractRunner {
@@ -189,9 +203,11 @@ impl MultiContractRunner {
 
         let vicinity = self.evm_opts.vicinity()?;
         let backend = self.evm_opts.backend(&vicinity)?;
+        let source_paths = self.source_paths.clone();
 
         let results = contracts
             .par_iter()
+            .filter(|(name, _)| filter.matches_path(source_paths.get(*name).unwrap()))
             .filter(|(name, _)| filter.matches_contract(name))
             .map(|(name, (abi, deploy_code, libs))| {
                 // unavoidable duplication here?
