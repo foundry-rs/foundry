@@ -7,6 +7,7 @@ use ethers_solc::{
     error::SolcError,
     remappings::{Remapping, RemappingError},
 };
+use figment::value::Value;
 
 /// Loads the config for the current project workspace
 pub fn load_config() -> Config {
@@ -121,4 +122,23 @@ pub fn parse_libraries(
             .insert(lib.to_string(), addr.to_string());
     }
     Ok(libraries)
+}
+
+/// Converts the `val` into a `figment::Value::Array`
+///
+/// The values should be separated by commas, surrounding brackets are also supported `[a,b,c]`
+pub fn to_array_value(val: &str) -> Result<Value, figment::Error> {
+    let value: Value = match Value::from(val) {
+        Value::String(_, val) => val
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .split(',')
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>()
+            .into(),
+        Value::Empty(_, _) => Vec::<Value>::new().into(),
+        val @ Value::Array(_, _) => val,
+        _ => return Err(format!("Invalid value `{}`, expected an array", val).into()),
+    };
+    Ok(value)
 }

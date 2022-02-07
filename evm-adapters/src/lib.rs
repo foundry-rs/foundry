@@ -107,7 +107,9 @@ pub trait Evm<State> {
         let func = func.into();
         let (retdata, status, gas, logs) = self.call_unchecked(from, to, &func, args, value)?;
         if Self::is_fail(&status) {
-            let reason = foundry_utils::decode_revert(retdata.as_ref(), abi).unwrap_or_default();
+            // try to decode the revert reason, else default to the revert status error.
+            let reason = foundry_utils::decode_revert(retdata.as_ref(), abi)
+                .unwrap_or_else(|_| format!("{:?}", status));
             Err(EvmError::Execution { reason, gas_used: gas, logs })
         } else {
             let retdata = decode_function_data(&func, retdata, false)?;
