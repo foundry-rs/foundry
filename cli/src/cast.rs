@@ -202,6 +202,7 @@ async fn main() -> eyre::Result<()> {
             value,
             nonce,
             legacy,
+            confirmations,
         } => {
             let provider = Provider::try_from(eth.rpc_url()?)?;
             let chain_id = Cast::new(&provider).chain_id().await?;
@@ -223,6 +224,7 @@ async fn main() -> eyre::Result<()> {
                             eth.etherscan_api_key,
                             cast_async,
                             legacy,
+                            confirmations,
                         )
                         .await?;
                     }
@@ -240,6 +242,7 @@ async fn main() -> eyre::Result<()> {
                             eth.etherscan_api_key,
                             cast_async,
                             legacy,
+                            confirmations,
                         )
                         .await?;
                     }
@@ -257,6 +260,7 @@ async fn main() -> eyre::Result<()> {
                             eth.etherscan_api_key,
                             cast_async,
                             legacy,
+                            confirmations,
                         )
                         .await?;
                     }
@@ -276,6 +280,7 @@ async fn main() -> eyre::Result<()> {
                     eth.etherscan_api_key,
                     cast_async,
                     legacy,
+                    confirmations,
                 )
                 .await?;
             }
@@ -649,6 +654,7 @@ async fn cast_send<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>
     etherscan_api_key: Option<String>,
     cast_async: bool,
     legacy: bool,
+    confs: usize,
 ) -> eyre::Result<()>
 where
     M::Error: 'static,
@@ -666,8 +672,8 @@ where
     if cast_async {
         println!("{}", tx_hash);
     } else {
-        let receipt = pending_tx.await?.ok_or_else(|| eyre::eyre!("tx {} not found", tx_hash))?;
-        println!("{}", serde_json::json!(receipt));
+        let receipt = cast.receipt(tx_hash.to_string(), None, confs, false, true).await?;
+        println!("{}", receipt);
     }
 
     Ok(())
