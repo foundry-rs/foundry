@@ -15,7 +15,7 @@ use std::{convert::Infallible, rc::Rc};
 use crate::{
     call_tracing::CallTrace,
     sputnik::{
-        common::{ExecutionHandler, ExecutionHandlerWrapper},
+        common::{ExecutionHandler, ExecutionHandlerWrapper, RuntimeExecutionHandler},
         script::{handler::fs::FsManager, FORGE_SCRIPT_ADDRESS},
         utils::evm_error,
     },
@@ -27,6 +27,17 @@ pub type ScriptStackState<'config, Backend> = MemoryStackStateOwned<'config, Bac
 
 pub type ScriptStackExecutor<'a, 'b, B, P> =
     ScriptHandler<StackExecutor<'a, 'b, ScriptStackState<'a, B>, P>>;
+
+impl<'a, 'b, Back: Backend, Pre: PrecompileSet + 'b> ScriptStackExecutor<'a, 'b, Back, Pre> {
+    /// This allows has to turn this mutable ref into a type that implements `sputnik::Handler` to
+    /// execute runtime operations
+    fn as_handler<'handler>(
+        &'handler mut self,
+    ) -> RuntimeExecutionHandler<'handler, 'a, 'b, Back, Pre, ScriptStackState<'a, Back>, Self, Back>
+    {
+        RuntimeExecutionHandler::new(self)
+    }
+}
 
 /// The wrapper type that takes the `ScriptStackExecutor` and implements all `SputnikExecutor`
 /// functions
