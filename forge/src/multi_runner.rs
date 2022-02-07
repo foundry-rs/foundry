@@ -263,7 +263,7 @@ impl MultiContractRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::{Filter, EVM_OPTS};
+    use crate::test_helpers::{filter::Filter, EVM_OPTS};
     use ethers::solc::ProjectPathsConfig;
     use std::path::PathBuf;
 
@@ -288,7 +288,7 @@ mod tests {
 
     fn test_multi_runner() {
         let mut runner = runner();
-        let results = runner.test(&Filter::new(".*", ".*")).unwrap();
+        let results = runner.test(&Filter::with_all_pass()).unwrap();
 
         // 9 contracts being built
         assert_eq!(results.keys().len(), 9);
@@ -303,7 +303,8 @@ mod tests {
         }
 
         // can also filter
-        let only_gm = runner.test(&Filter::new("testGm.*", ".*")).unwrap();
+        let filter = Filter::new("testGm.*", ".*", ".*");
+        let only_gm = runner.test(&filter).unwrap();
         assert_eq!(only_gm.len(), 1);
 
         assert_eq!(only_gm["GmTest.json:GmTest"].len(), 1);
@@ -312,7 +313,7 @@ mod tests {
 
     fn test_abstract_contract() {
         let mut runner = runner();
-        let results = runner.test(&Filter::new(".*", ".*")).unwrap();
+        let results = runner.test(&Filter::with_all_pass()).unwrap();
         assert!(results.get("Tests.json:Tests").is_none());
         assert!(results.get("ATests.json:ATests").is_some());
         assert!(results.get("BTests.json:BTests").is_some());
@@ -325,7 +326,7 @@ mod tests {
         #[test]
         fn test_sputnik_debug_logs() {
             let mut runner = runner();
-            let results = runner.test(&Filter::new(".*", ".*")).unwrap();
+            let results = runner.test(&Filter::with_all_pass()).unwrap();
 
             let reasons = results["DebugLogsTest.json:DebugLogsTest"]
                 .iter()
