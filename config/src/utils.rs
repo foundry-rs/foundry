@@ -132,7 +132,7 @@ pub fn to_array_value(val: &str) -> Result<Value, figment::Error> {
         Value::String(_, val) => val
             .trim_start_matches('[')
             .trim_end_matches(']')
-            .split(']')
+            .split(',')
             .map(|s| s.to_string())
             .collect::<Vec<_>>()
             .into(),
