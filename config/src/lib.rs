@@ -611,10 +611,12 @@ impl From<Config> for Figment {
             .merge(ForcedSnakeCaseData(
                 Toml::file(Env::var_or("FOUNDRY_CONFIG", Config::FILE_NAME)).nested(),
             ))
-            .merge(Env::prefixed("DAPP_").ignore(&["REMAPPINGS"]).global())
+            .merge(Env::prefixed("DAPP_").ignore(&["REMAPPINGS", "LIBRARIES"]).global())
             .merge(Env::prefixed("DAPP_TEST_").global())
             .merge(DappEnvCompatProvider)
-            .merge(Env::prefixed("FOUNDRY_").ignore(&["PROFILE", "REMAPPINGS"]).global())
+            .merge(
+                Env::prefixed("FOUNDRY_").ignore(&["PROFILE", "REMAPPINGS", "LIBRARIES"]).global(),
+            )
             .select(profile.clone());
 
         // we try to merge remappings after we've merged all other providers, this prevents
@@ -843,6 +845,11 @@ impl Provider for DappEnvCompatProvider {
                 .into())
             }
             dict.insert("optimizer".to_string(), (val == 1).into());
+        }
+
+        // libraries in env vars either as `[..]` or single string separated by comma
+        if let Ok(val) = env::var("DAPP_LIBRARIES").or_else(|_| env::var("FOUNDRY_LIBRARIES")) {
+            dict.insert("libraries".to_string(), utils::to_array_value(&val)?);
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
@@ -1368,6 +1375,38 @@ mod tests {
             assert_eq!(config.fork_block_number, Some(100));
             assert_eq!(config.optimizer_runs, 999);
             assert!(!config.optimizer);
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn can_parse_libraries() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env(
+                "DAPP_LIBRARIES",
+                "[src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6]",
+            );
+            let config = Config::load();
+            assert_eq!(
+                config.libraries,
+                vec!["src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6"
+                    .to_string()]
+            );
+            jail.set_env(
+                "DAPP_LIBRARIES",
+                "src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6,src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6",
+            );
+            let config = Config::load();
+            assert_eq!(
+                config.libraries,
+                vec![
+                    "src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6"
+                        .to_string(),
+                    "src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6"
+                        .to_string()
+                ]
+            );
 
             Ok(())
         });
