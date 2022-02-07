@@ -22,7 +22,7 @@ pub struct Filter {
     #[clap(
         long = "match",
         short = 'm',
-        help = "only run test methods matching regex (deprecated, see --match-test, --match-contract)"
+        help = "only run test methods matching regex (deprecated, see --match-test)"
     )]
     pattern: Option<regex::Regex>,
 
@@ -57,6 +57,22 @@ pub struct Filter {
         conflicts_with = "pattern"
     )]
     contract_pattern_inverse: Option<regex::Regex>,
+
+    #[clap(
+        long = "match-path",
+        alias = "mp",
+        help = "only run test methods in source files at path matching regex",
+        conflicts_with = "pattern"
+    )]
+    path_pattern: Option<regex::Regex>,
+
+    #[clap(
+        long = "no-match-path",
+        alias = "nmp",
+        help = "only run test methods in source files at path not matching regex",
+        conflicts_with = "pattern"
+    )]
+    path_pattern_inverse: Option<regex::Regex>,
 }
 
 impl TestFilter for Filter {
@@ -86,8 +102,17 @@ impl TestFilter for Filter {
         ok
     }
 
-    fn matches_path(&self, path: impl AsRef<Path>) -> bool {
-        unimplemented!()
+    fn matches_path(&self, path: impl AsRef<str>) -> bool {
+        let mut ok = true;
+        if let Some(re) = &self.path_pattern {
+            ok &= re.is_match(path.as_ref());
+            println!("{:?} {:?} {:?}", re, path.as_ref(), ok);
+        }
+        if let Some(re) = &self.path_pattern_inverse {
+            ok &= !re.is_match(path.as_ref());
+            println!("{:?} {:?} {:?}", re, path.as_ref(), ok);
+        }
+        ok
     }
 }
 
