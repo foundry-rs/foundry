@@ -241,6 +241,13 @@ pub enum Subcommands {
             help = "use legacy transactions instead of EIP1559 ones. this is auto-enabled for common networks without EIP1559"
         )]
         legacy: bool,
+        #[clap(
+            short,
+            long,
+            help = "the number of confirmations until the receipt is fetched",
+            default_value = "1"
+        )]
+        confirmations: usize,
     },
     #[clap(name = "publish")]
     #[clap(about = "Publish a raw transaction to the network")]
