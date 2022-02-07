@@ -71,15 +71,13 @@ ethers::contract::abigen!(
     ]"#,
 );
 
-
 #[cfg(test)]
 mod tests {
-    use crate::sputnik::script::helpers::script_vm;
     use super::*;
+    use crate::sputnik::script::helpers::script_vm;
 
     #[test]
     fn can_create_file() {
         let mut evm = script_vm();
-
     }
 }
