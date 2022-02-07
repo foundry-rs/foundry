@@ -1,11 +1,24 @@
 //! Filesystem manipulation operations for solidity.
 
 use crate::sputnik::script::handler::ScriptStackExecutor;
-use sputnik::{backend::Backend, executor::stack::PrecompileSet};
-use std::{collections::HashMap, fs::File};
+use ethers_core::types::H160;
+use sputnik::{backend::Backend, executor::stack::PrecompileSet, Capture, ExitReason, ExitSucceed};
+use std::{collections::HashMap, convert::Infallible, fs::File};
 
 impl<'a, 'b, Back: Backend, Pre: PrecompileSet + 'b> ScriptStackExecutor<'a, 'b, Back, Pre> {
-    fn on_fs_call(&mut self) {}
+    pub(crate) fn on_fs_call(
+        &mut self,
+        call: ForgeFsCalls,
+        caller: H160,
+    ) -> Capture<(ExitReason, Vec<u8>), Infallible> {
+        let mut res = Vec::new();
+        match call {
+            ForgeFsCalls::Create(path) => {}
+            ForgeFsCalls::Write(call) => {}
+        }
+
+        Capture::Exit((ExitReason::Succeed(ExitSucceed::Stopped), res))
+    }
 }
 
 /// Manages the state of the solidity `Fs` lib

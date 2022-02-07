@@ -4,6 +4,7 @@ pub mod fs;
 use fs::ForgeFsCalls;
 
 use crate::sputnik::cheatcodes::memory_stackstate_owned::MemoryStackStateOwned;
+use ethers::abi::AbiDecode;
 use sputnik::{
     backend::Backend,
     executor::stack::{PrecompileSet, StackExecutor},
@@ -15,7 +16,8 @@ use crate::{
     call_tracing::CallTrace,
     sputnik::{
         common::ExecutionHandler,
-        script::{fs::FsManager, FORGE_SCRIPT_ADDRESS},
+        script::{handler::fs::FsManager, FORGE_SCRIPT_ADDRESS},
+        utils::evm_error,
     },
 };
 use ethers::types::Address;
@@ -89,9 +91,10 @@ where
         context: Context,
     ) -> Capture<(ExitReason, Vec<u8>), Infallible> {
         if code_address == *FORGE_SCRIPT_ADDRESS {
-            // if let Ok(fs_call) =
-
-            todo!()
+            if let Ok(call) = ForgeFsCalls::decode(&input) {
+                return self.on_fs_call(call, context.caller)
+            }
+            return evm_error("failed to decode forge script call")
         } else {
             self.stack_executor_mut().call(
                 code_address,
@@ -108,5 +111,6 @@ where
 /// Tracks the state of the script that's currently being executed
 #[derive(Debug, Default)]
 pub struct ScriptState {
+    /// manages the `fs` related state
     fs: FsManager,
 }
