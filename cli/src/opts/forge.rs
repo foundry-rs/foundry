@@ -6,6 +6,7 @@ use std::{path::PathBuf, str::FromStr};
 use crate::cmd::{
     bind::BindArgs, build::BuildArgs, config, create::CreateArgs, flatten, init::InitArgs,
     install::InstallArgs, remappings::RemappingArgs, run::RunArgs, snapshot, test,
+    verify::VerifyArgs,
 };
 use serde::Serialize;
 
@@ -62,14 +63,7 @@ pub enum Subcommands {
     #[clap(
         about = "verify your smart contracts source code on Etherscan. Requires `ETHERSCAN_API_KEY` to be set."
     )]
-    VerifyContract {
-        #[clap(help = "contract source info `<path>:<contractname>`")]
-        contract: FullContractInfo,
-        #[clap(help = "the address of the contract to verify.")]
-        address: Address,
-        #[clap(help = "constructor args calldata arguments.")]
-        constructor_args: Vec<String>,
-    },
+    VerifyContract(VerifyArgs),
 
     #[clap(alias = "c", about = "deploy a compiled contract")]
     Create(CreateArgs),
