@@ -10,13 +10,13 @@ impl<'a, 'b, Back: Backend, Pre: PrecompileSet + 'b> ScriptStackExecutor<'a, 'b,
     pub(crate) fn on_fs_call(
         &mut self,
         call: ForgeFsCalls,
-        caller: H160,
+        _caller: H160,
     ) -> Capture<(ExitReason, Vec<u8>), Infallible> {
-        let mut res = Vec::new();
+        let res = Vec::new();
         println!("received fs call: {:?}", call);
         match call {
-            ForgeFsCalls::Create(path) => {}
-            ForgeFsCalls::Write(call) => {}
+            ForgeFsCalls::Create(_path) => {}
+            ForgeFsCalls::Write(_call) => {}
         }
 
         Capture::Exit((ExitReason::Succeed(ExitSucceed::Stopped), res))

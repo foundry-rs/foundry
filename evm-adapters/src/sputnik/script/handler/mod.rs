@@ -111,7 +111,7 @@ where
             if let Ok(call) = ForgeFsCalls::decode(&input) {
                 return self.on_fs_call(call, context.caller)
             }
-            return evm_error("failed to decode forge script call")
+            evm_error("failed to decode forge script call")
         } else {
             self.stack_executor_mut().call(
                 code_address,

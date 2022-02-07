@@ -7,7 +7,7 @@ use crate::{
             memory_stackstate_owned::MemoryStackStateOwned,
         },
         script::handler::{
-            ScriptExecutionHandler, ScriptHandler, ScriptStackExecutor, ScriptStackState,
+            ScriptExecutionHandler, ScriptHandler, ScriptStackState,
         },
         Executor,
     },
@@ -69,14 +69,13 @@ impl<'a, 'b, B: Backend, P: PrecompileSet + 'b>
 #[cfg(any(test, feature = "sputnik-helpers"))]
 pub mod helpers {
     use super::*;
-    use ethers::types::H160;
-    use sputnik::backend::{MemoryBackend, MemoryVicinity};
+    
+    use sputnik::backend::{MemoryBackend};
     use std::collections::BTreeMap;
 
     use crate::sputnik::{
-        cheatcodes::cheatcode_handler::{CheatcodeExecutionHandler, CheatcodeStackState},
-        helpers::{new_backend, new_vicinity, VICINITY},
-        script::handler::{ScriptStackExecutor, ScriptStackState},
+        helpers::{new_backend, VICINITY},
+        script::handler::{ScriptStackState},
         Executor, PrecompileFn, PRECOMPILES_MAP,
     };
     use once_cell::sync::Lazy;
