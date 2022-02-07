@@ -291,7 +291,7 @@ async fn main() -> eyre::Result<()> {
             } else {
                 let receipt =
                     pending_tx.await?.ok_or_else(|| eyre::eyre!("tx {} not found", tx_hash))?;
-                println!("Receipt: {:?}", receipt);
+                println!("{}", serde_json::json!(receipt));
             }
         }
         Subcommands::Estimate { eth, to, sig, args, value } => {
@@ -667,7 +667,7 @@ where
         println!("{}", tx_hash);
     } else {
         let receipt = pending_tx.await?.ok_or_else(|| eyre::eyre!("tx {} not found", tx_hash))?;
-        println!("Receipt: {:?}", receipt);
+        println!("{}", serde_json::json!(receipt));
     }
 
     Ok(())
