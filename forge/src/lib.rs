@@ -89,7 +89,7 @@ pub mod test_helpers {
             }
 
             fn matches_path(&self, path: impl AsRef<str>) -> bool {
-                self.contract_regex.is_match(path.as_ref())
+                self.path_regex.is_match(path.as_ref())
             }
         }
     }
