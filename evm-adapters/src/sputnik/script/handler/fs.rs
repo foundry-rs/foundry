@@ -124,7 +124,7 @@ contract Demo {{
 
         let compiled = project.compile().unwrap();
         let output = compiled.output();
-        let contract = output.find("Demo").expect("could not find contract").clone();
+        let contract = output.find("Demo").expect("could not find contract");
 
         let (addr, _, _, _) =
             evm.deploy(Address::zero(), contract.bytecode().unwrap().clone(), 0u64.into()).unwrap();
