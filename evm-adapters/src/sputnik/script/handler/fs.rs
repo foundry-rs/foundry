@@ -73,11 +73,67 @@ ethers::contract::abigen!(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::sputnik::script::helpers::script_vm;
+    use crate::{sputnik::script::helpers::script_vm, Evm};
+    use ethers_core::types::Address;
+    use ethers_solc::{project_util::TempProject, ProjectPathsConfig};
+    use std::path::PathBuf;
+
+    fn new_project() -> TempProject {
+        let script_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("script-lib");
+        TempProject::new(
+            ProjectPathsConfig::builder()
+                .remapping(format!("forge-core/={}/", script_dir.display()).parse().unwrap())
+                .lib(script_dir),
+        )
+        .unwrap()
+    }
 
     #[test]
     fn can_create_file() {
         let mut evm = script_vm();
+
+        let project = new_project();
+
+        let outfile = project.paths().artifacts.join("output.txt");
+        let content = "hello world!";
+
+        project
+            .add_source(
+                "Demo",
+                format!(
+                    r##"
+pragma solidity >=0.8.0 <0.9.0;
+pragma experimental ABIEncoderV2;
+
+import "forge-core/Fs.sol";
+
+
+contract Demo {{
+      Fs constant fs = Fs(FORGE_SCRIPT_ADDRESS);
+
+      function run() external {{
+        File memory file = fs.create("{}");
+        fs.write(file, "{}");
+      }}
+}}"##,
+                    outfile.display(),
+                    content
+                ),
+            )
+            .unwrap();
+
+        let compiled = project.compile().unwrap();
+        let output = compiled.output();
+        let contract = output.find("Demo").expect("could not find contract").clone();
+
+        let (addr, _, _, _) =
+            evm.deploy(Address::zero(), contract.bytecode().unwrap().clone(), 0u64.into()).unwrap();
+
+        let (_, reason, _, _) = evm
+            .call::<(), _, _>(Address::zero(), addr, "run()", (), 0u64.into(), contract.abi)
+            .unwrap();
+
+        assert!(reason.is_succeed());
+        assert_eq!(std::fs::read_to_string(outfile).unwrap(), content);
     }
 }

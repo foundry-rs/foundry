@@ -1410,6 +1410,7 @@ dependencies = [
  "comfy-table",
  "ethers",
  "ethers-core",
+ "ethers-solc",
  "evm",
  "eyre",
  "foundry-utils",
