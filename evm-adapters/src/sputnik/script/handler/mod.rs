@@ -28,7 +28,7 @@ pub type ScriptStackState<'config, Backend> = MemoryStackStateOwned<'config, Bac
 pub type ScriptStackExecutor<'a, 'b, B, P> =
     ScriptHandler<StackExecutor<'a, 'b, ScriptStackState<'a, B>, P>>;
 
-/// The wrapper type that takes the `CheatcodeStackExecutor` and implements all `SputnikExecutor`
+/// The wrapper type that takes the `ScriptStackExecutor` and implements all `SputnikExecutor`
 /// functions
 pub type ScriptExecutionHandler<'a, 'b, Back, Pre> = ExecutionHandlerWrapper<
     'a,
@@ -39,6 +39,7 @@ pub type ScriptExecutionHandler<'a, 'b, Back, Pre> = ExecutionHandlerWrapper<
     ScriptStackExecutor<'a, 'b, Back, Pre>,
 >;
 
+#[derive(Debug)]
 pub struct ScriptHandler<H> {
     handler: H,
     state: ScriptState,

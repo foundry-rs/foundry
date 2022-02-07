@@ -6,9 +6,7 @@ use crate::{
             cheatcode_handler::{CHEATCODE_ADDRESS, CONSOLE_ADDRESS},
             memory_stackstate_owned::MemoryStackStateOwned,
         },
-        script::handler::{
-            ScriptExecutionHandler, ScriptHandler, ScriptStackState,
-        },
+        script::handler::{ScriptExecutionHandler, ScriptHandler, ScriptStackState},
         Executor,
     },
     Evm,
@@ -69,13 +67,13 @@ impl<'a, 'b, B: Backend, P: PrecompileSet + 'b>
 #[cfg(any(test, feature = "sputnik-helpers"))]
 pub mod helpers {
     use super::*;
-    
-    use sputnik::backend::{MemoryBackend};
+
+    use sputnik::backend::MemoryBackend;
     use std::collections::BTreeMap;
 
     use crate::sputnik::{
         helpers::{new_backend, VICINITY},
-        script::handler::{ScriptStackState},
+        script::handler::ScriptStackState,
         Executor, PrecompileFn, PRECOMPILES_MAP,
     };
     use once_cell::sync::Lazy;
@@ -94,7 +92,7 @@ pub mod helpers {
 
     /// Instantiates a Sputnik EVM with enabled cheatcodes + FFI and a simple non-forking in memory
     /// backend and tracing disabled
-    pub fn script_vm<'a>() -> SputnikScriptVM<'a, MemoryBackend<'a>> {
+    pub fn script_vm() -> SputnikScriptVM<'static, MemoryBackend<'static>> {
         let backend = new_backend(&*VICINITY, Default::default());
         Executor::script_executor(backend, GAS_LIMIT, &*CFG, &*PRECOMPILES_MAP, false, false)
     }

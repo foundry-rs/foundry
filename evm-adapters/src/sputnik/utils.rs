@@ -9,6 +9,27 @@ use ethers_core::{
 use sputnik::{backend::Log, Capture, ExitReason, ExitRevert, ExitSucceed};
 use std::{convert::Infallible, str::FromStr};
 
+/// The response type of sputnik `Handler::call`
+pub type EvmCallResponse = Capture<(ExitReason, Vec<u8>), Infallible>;
+
+pub fn succeed_stopped(res: Vec<u8>) -> EvmCallResponse {
+    Capture::Exit((ExitReason::Succeed(ExitSucceed::Stopped), res))
+}
+
+/// A helper function that accepts takes a closure which should return the encoded data for
+/// `EvmCallResponse`
+///
+/// If the closure returns an Error instead, this returns a revert with the error as string message
+pub fn try_respond<F>(f: F) -> EvmCallResponse
+where
+    F: FnOnce() -> eyre::Result<Vec<u8>>,
+{
+    match f() {
+        Ok(res) => succeed_stopped(res),
+        Err(err) => evm_error(&err.to_string()),
+    }
+}
+
 /// For certain cheatcodes, we may internally change the status of the call, i.e. in
 /// `expectRevert`. Solidity will see a successful call and attempt to abi.decode for the called
 /// function. Therefore, we need to populate the return with dummy bytes such that the decode
@@ -81,7 +102,7 @@ impl ExpectRevertReturn {
 }
 
 // helper for creating an exit type
-pub fn evm_error(retdata: &str) -> Capture<(ExitReason, Vec<u8>), Infallible> {
+pub fn evm_error(retdata: &str) -> EvmCallResponse {
     Capture::Exit((
         ExitReason::Revert(ExitRevert::Reverted),
         ethers::abi::encode(&[Token::String(retdata.to_string())]),
