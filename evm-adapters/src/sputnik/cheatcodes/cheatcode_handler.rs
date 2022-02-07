@@ -66,13 +66,13 @@ pub type CheatcodeStackExecutor<'a, 'b, B, P> =
 
 /// The wrapper type that takes the `CheatcodeStackExecutor` and implements all `SputnikExecutor`
 /// functions
-pub type CheatcodeExecutionHandler<'a, 'b, Back, Precom> = ExecutionHandlerWrapper<
+pub type CheatcodeExecutionHandler<'a, 'b, Back, Pre> = ExecutionHandlerWrapper<
     'a,
     'b,
     Back,
-    Precom,
+    Pre,
     CheatcodeStackState<'a, Back>,
-    CheatcodeStackExecutor<'a, 'b, Back, Precom>,
+    CheatcodeStackExecutor<'a, 'b, Back, Pre>,
 >;
 
 /// Hooks on live EVM execution and forwards everything else to a Sputnik [`Handler`].

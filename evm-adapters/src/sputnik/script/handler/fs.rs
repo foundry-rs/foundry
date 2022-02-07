@@ -6,12 +6,14 @@ use sputnik::{backend::Backend, executor::stack::PrecompileSet, Capture, ExitRea
 use std::{collections::HashMap, convert::Infallible, fs::File};
 
 impl<'a, 'b, Back: Backend, Pre: PrecompileSet + 'b> ScriptStackExecutor<'a, 'b, Back, Pre> {
+    /// The callback invoked if a `fs` related call was made
     pub(crate) fn on_fs_call(
         &mut self,
         call: ForgeFsCalls,
         caller: H160,
     ) -> Capture<(ExitReason, Vec<u8>), Infallible> {
         let mut res = Vec::new();
+        println!("received fs call: {:?}", call);
         match call {
             ForgeFsCalls::Create(path) => {}
             ForgeFsCalls::Write(call) => {}

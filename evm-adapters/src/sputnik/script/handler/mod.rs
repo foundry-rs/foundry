@@ -15,7 +15,7 @@ use std::{convert::Infallible, rc::Rc};
 use crate::{
     call_tracing::CallTrace,
     sputnik::{
-        common::ExecutionHandler,
+        common::{ExecutionHandler, ExecutionHandlerWrapper},
         script::{handler::fs::FsManager, FORGE_SCRIPT_ADDRESS},
         utils::evm_error,
     },
@@ -28,9 +28,26 @@ pub type ScriptStackState<'config, Backend> = MemoryStackStateOwned<'config, Bac
 pub type ScriptStackExecutor<'a, 'b, B, P> =
     ScriptHandler<StackExecutor<'a, 'b, ScriptStackState<'a, B>, P>>;
 
+/// The wrapper type that takes the `CheatcodeStackExecutor` and implements all `SputnikExecutor`
+/// functions
+pub type ScriptExecutionHandler<'a, 'b, Back, Pre> = ExecutionHandlerWrapper<
+    'a,
+    'b,
+    Back,
+    Pre,
+    ScriptStackState<'a, Back>,
+    ScriptStackExecutor<'a, 'b, Back, Pre>,
+>;
+
 pub struct ScriptHandler<H> {
     handler: H,
     state: ScriptState,
+}
+
+impl<H> ScriptHandler<H> {
+    pub fn new(handler: H) -> Self {
+        Self { handler, state: Default::default() }
+    }
 }
 
 impl<'a, 'b, Back, Precom: 'b> ExecutionHandler<'a, 'b, Back, Precom, ScriptStackState<'a, Back>>
