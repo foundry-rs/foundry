@@ -1150,7 +1150,7 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#100f1212025179d8e466f6b3feb7f588d57dcd89"
+source = "git+https://github.com/gakonst/ethers-rs#36c3adeec93533f5c3aa617cc4208d353390e00f"
 dependencies = [
  "ethers-addressbook",
  "ethers-contract",
@@ -1165,7 +1165,7 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "0.1.0"
-source = "git+https://github.com/gakonst/ethers-rs#100f1212025179d8e466f6b3feb7f588d57dcd89"
+source = "git+https://github.com/gakonst/ethers-rs#36c3adeec93533f5c3aa617cc4208d353390e00f"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -1176,7 +1176,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#100f1212025179d8e466f6b3feb7f588d57dcd89"
+source = "git+https://github.com/gakonst/ethers-rs#36c3adeec93533f5c3aa617cc4208d353390e00f"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1194,7 +1194,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#100f1212025179d8e466f6b3feb7f588d57dcd89"
+source = "git+https://github.com/gakonst/ethers-rs#36c3adeec93533f5c3aa617cc4208d353390e00f"
 dependencies = [
  "Inflector",
  "cfg-if 1.0.0",
@@ -1217,7 +1217,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#100f1212025179d8e466f6b3feb7f588d57dcd89"
+source = "git+https://github.com/gakonst/ethers-rs#36c3adeec93533f5c3aa617cc4208d353390e00f"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -1231,7 +1231,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#100f1212025179d8e466f6b3feb7f588d57dcd89"
+source = "git+https://github.com/gakonst/ethers-rs#36c3adeec93533f5c3aa617cc4208d353390e00f"
 dependencies = [
  "arrayvec 0.7.2",
  "bytes",
@@ -1259,7 +1259,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "0.2.0"
-source = "git+https://github.com/gakonst/ethers-rs#100f1212025179d8e466f6b3feb7f588d57dcd89"
+source = "git+https://github.com/gakonst/ethers-rs#36c3adeec93533f5c3aa617cc4208d353390e00f"
 dependencies = [
  "ethers-core",
  "ethers-solc",
@@ -1273,7 +1273,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#100f1212025179d8e466f6b3feb7f588d57dcd89"
+source = "git+https://github.com/gakonst/ethers-rs#36c3adeec93533f5c3aa617cc4208d353390e00f"
 dependencies = [
  "async-trait",
  "ethers-contract",
@@ -1296,7 +1296,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#100f1212025179d8e466f6b3feb7f588d57dcd89"
+source = "git+https://github.com/gakonst/ethers-rs#36c3adeec93533f5c3aa617cc4208d353390e00f"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -1328,7 +1328,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#100f1212025179d8e466f6b3feb7f588d57dcd89"
+source = "git+https://github.com/gakonst/ethers-rs#36c3adeec93533f5c3aa617cc4208d353390e00f"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1351,7 +1351,7 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "0.2.0"
-source = "git+https://github.com/gakonst/ethers-rs#100f1212025179d8e466f6b3feb7f588d57dcd89"
+source = "git+https://github.com/gakonst/ethers-rs#36c3adeec93533f5c3aa617cc4208d353390e00f"
 dependencies = [
  "colored",
  "dunce",
@@ -3488,9 +3488,9 @@ dependencies = [
 
 [[package]]
 name = "semver"
-version = "1.0.4"
+version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "568a8e6258aa33c13358f81fd834adb854c6f7c9468520910a9b1e8fac068012"
+checksum = "0486718e92ec9a68fbed73bb5ef687d71103b142595b406835649bebd33f72c7"
 dependencies = [
  "serde",
 ]
