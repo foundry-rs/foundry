@@ -135,7 +135,7 @@ forgetest_init!(can_override_config, |prj: TestProject, mut cmd: TestCommand| {
     assert_eq!(foundry_toml, file);
 
     let config = forge_utils::load_config();
-    let profile = Config::load();
+    let profile = Config::load_with_root(prj.root());
     assert_eq!(config, profile.clone().sanitized());
 
     // ensure remappings contain test
@@ -154,7 +154,6 @@ forgetest_init!(can_override_config, |prj: TestProject, mut cmd: TestCommand| {
     // remappings work
     let remappings_txt = prj.create_file("remappings.txt", "ds-test/=lib/ds-test/from-file/");
     let config = forge_utils::load_config();
-    println!("{:?}", config.remappings);
     assert_eq!(
         format!("ds-test/={}/", prj.root().join("lib/ds-test/from-file").display()),
         Remapping::from(config.remappings[0].clone()).to_string()

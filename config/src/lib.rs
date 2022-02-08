@@ -22,7 +22,7 @@ use ethers_solc::{
     remappings::{RelativeRemapping, Remapping},
     EvmVersion, Project, ProjectPathsConfig, SolcConfig,
 };
-use figment::providers::Data;
+use figment::{providers::Data, value::Value};
 use inflector::Inflector;
 
 // Macros useful for creating a figment.
@@ -166,11 +166,11 @@ pub struct Config {
     // "#
     pub solc_settings: Option<String>,
     /// The root path where the config detection started from, `Config::with_root`
-    ///
-    /// **Note:** This field is never serialized nor deserialized. This is merely used to provided
-    /// additional context.
     #[doc(hidden)]
-    #[serde(skip)]
+    //  We're skipping serialization here, so it won't be included in the [`Config::to_string()`]
+    // representation, but will be deserialized from the `Figment` so that forge commands can
+    // override it.
+    #[serde(rename = "root", default, skip_serializing)]
     pub __root: RootPath,
     /// PRIVATE: This structure may grow, As such, constructing this structure should
     /// _always_ be done using a public constructor or update syntax:
@@ -637,7 +637,8 @@ impl From<Config> for Figment {
 }
 
 /// A helper wrapper around the root path used during Config detection
-#[derive(Debug, PartialEq, Eq, Hash, Clone, PartialOrd, Ord)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, PartialOrd, Ord, Deserialize, Serialize)]
+#[serde(transparent)]
 pub struct RootPath(pub PathBuf);
 
 impl Default for RootPath {
@@ -676,7 +677,11 @@ impl Provider for Config {
 
     #[track_caller]
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
-        Serialized::defaults(self).data()
+        let mut data = Serialized::defaults(self).data()?;
+        if let Some(entry) = data.get_mut(&self.profile) {
+            entry.insert("root".to_string(), Value::serialize(self.__root.clone())?);
+        }
+        Ok(data)
     }
 
     fn profile(&self) -> Option<Profile> {
@@ -1461,6 +1466,7 @@ mod tests {
     fn can_use_impl_figment_macro() {
         #[derive(Default, Serialize)]
         struct MyArgs {
+            #[serde(skip_serializing_if = "Option::is_none")]
             root: Option<PathBuf>,
         }
         impl_figment_convert!(MyArgs);
