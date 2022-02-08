@@ -197,9 +197,13 @@ impl Provider for BuildArgs {
             dict.insert("libs".to_string(), libs.into());
         }
 
+        #[cfg(not(target_arch = "aarch64"))]
         if self.no_auto_detect {
             dict.insert("auto_detect_solc".to_string(), false.into());
         }
+
+        #[cfg(target_arch = "aarch64")]
+        dict.insert("auto_detect_solc".to_string(), false.into());
 
         if self.force {
             dict.insert("force".to_string(), self.force.into());
