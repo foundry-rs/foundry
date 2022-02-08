@@ -8,8 +8,8 @@ use sputnik::{backend::Backend, Config};
 
 use ethers::{
     abi::{Abi, Event, Function},
-    prelude::{ArtifactOutput, ArtifactId, artifacts::CompactContractBytecode},
-    solc::{Project, Artifact},
+    prelude::{artifacts::CompactContractBytecode, ArtifactId, ArtifactOutput},
+    solc::{Artifact, Project},
     types::{Address, H256, U256},
 };
 

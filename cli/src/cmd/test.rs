@@ -12,12 +12,8 @@ use evm_adapters::{
 };
 use forge::{MultiContractRunnerBuilder, TestFilter};
 use foundry_config::{figment::Figment, Config};
-use std::{
-    path::Path,
-    collections::BTreeMap,
-    str::FromStr,
-};
 use regex::Regex;
+use std::{collections::BTreeMap, path::Path, str::FromStr};
 
 #[derive(Debug, Clone, Parser)]
 pub struct Filter {

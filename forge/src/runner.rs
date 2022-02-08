@@ -629,8 +629,7 @@ mod tests {
             cfg.failure_persistence = None;
             let fuzzer = TestRunner::new(cfg);
             let filter = Filter::new("testGreeting", ".*", ".*");
-            let results =
-                runner.run_tests(&filter, Some(fuzzer), None).unwrap();
+            let results = runner.run_tests(&filter, Some(fuzzer), None).unwrap();
             assert!(results["testGreeting()"].success);
             assert!(results["testGreeting(string)"].success);
             assert!(results["testGreeting(string,string)"].success);
@@ -647,8 +646,7 @@ mod tests {
             cfg.failure_persistence = None;
             let fuzzer = TestRunner::new(cfg);
             let filter = Filter::new("testFuzz.*", ".*", ".*");
-            let results =
-                runner.run_tests(&filter, Some(fuzzer), None).unwrap();
+            let results = runner.run_tests(&filter, Some(fuzzer), None).unwrap();
             for (_, res) in results {
                 assert!(!res.success);
                 assert!(res.counterexample.is_some());
