@@ -1,5 +1,5 @@
 //! Simple in-memory cache backend for use with forking providers
-use std::{cell::RefCell, collections::BTreeMap};
+use std::{cell::RefCell, collections::BTreeMap, path::PathBuf};
 
 use ethers::{
     providers::Middleware,
@@ -24,9 +24,6 @@ pub struct ForkMemoryBackend<B, M> {
     /// The internal backend
     pub backend: B,
     /// cache state
-    // TODO: Actually cache values in memory.
-    // TODO: This should probably be abstracted away into something that efficiently
-    // also caches at disk etc.
     pub cache: RefCell<BTreeMap<H160, MemoryAccount>>,
     /// The block to fetch data from.
     // This is an `Option` so that we can have less code churn in the functions below
@@ -35,6 +32,17 @@ pub struct ForkMemoryBackend<B, M> {
     pin_block_meta: Block<TxHash>,
     /// The chain id of the forked chain
     chain_id: U256,
+    /// The cache file to store any state.
+    /// - Some(Some("path")) -> it gets stored at "path"
+    /// - Some(None) -> it gets stored at ~/.foundry/cache/{pin_block}.json
+    /// - None -> it does not get stored
+    cache_file: Option<Option<PathBuf>>,
+}
+
+impl<B, M> Drop for ForkMemoryBackend<B, M> {
+    fn drop(&mut self) {
+        super::dump(self.cache_file.as_ref(), self.pin_block, &self.cache.borrow());
+    }
 }
 
 impl<B: Backend, M: Middleware> ForkMemoryBackend<B, M>
@@ -45,9 +53,14 @@ where
         provider: M,
         backend: B,
         pin_block: Option<u64>,
-        init_cache: BTreeMap<H160, MemoryAccount>,
+        mut init_cache: BTreeMap<H160, MemoryAccount>,
+        cache_file: Option<Option<PathBuf>>,
     ) -> Self {
         let provider = BlockingProvider::new(provider);
+
+        if let Ok(cache) = super::load_cache(cache_file.as_ref(), pin_block.map(Into::into)) {
+            init_cache.extend(cache);
+        }
 
         // get the remaining block metadata
         let (block, chain_id) =
@@ -60,6 +73,7 @@ where
             pin_block: pin_block.map(Into::into),
             pin_block_meta: block,
             chain_id,
+            cache_file,
         }
     }
 }
