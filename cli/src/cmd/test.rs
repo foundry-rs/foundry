@@ -15,7 +15,9 @@ use foundry_config::{figment::Figment, Config};
 use std::{
     path::Path,
     collections::BTreeMap,
+    str::FromStr,
 };
+use regex::Regex;
 
 #[derive(Debug, Clone, Parser)]
 pub struct Filter {
@@ -61,7 +63,7 @@ pub struct Filter {
     #[clap(
         long = "match-path",
         alias = "mp",
-        help = "only run test methods in source files at path matching regex",
+        help = "only run test methods in source files at path matching regex. Requires absolute path",
         conflicts_with = "pattern"
     )]
     path_pattern: Option<regex::Regex>,
@@ -69,7 +71,7 @@ pub struct Filter {
     #[clap(
         long = "no-match-path",
         alias = "nmp",
-        help = "only run test methods in source files at path not matching regex",
+        help = "only run test methods in source files at path not matching regex. Requires absolute path",
         conflicts_with = "pattern"
     )]
     path_pattern_inverse: Option<regex::Regex>,
@@ -105,12 +107,12 @@ impl TestFilter for Filter {
     fn matches_path(&self, path: impl AsRef<str>) -> bool {
         let mut ok = true;
         if let Some(re) = &self.path_pattern {
+            let re = Regex::from_str(&format!("^{}", re.as_str())).unwrap();
             ok &= re.is_match(path.as_ref());
-            println!("{:?} {:?} {:?}", re, path.as_ref(), ok);
         }
         if let Some(re) = &self.path_pattern_inverse {
+            let re = Regex::from_str(&format!("^{}", re.as_str())).unwrap();
             ok &= !re.is_match(path.as_ref());
-            println!("{:?} {:?} {:?}", re, path.as_ref(), ok);
         }
         ok
     }
