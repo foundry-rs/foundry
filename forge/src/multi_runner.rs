@@ -62,9 +62,9 @@ impl MultiContractRunnerBuilder {
             .map(|(i, c)| (i, c.into_contract_bytecode()))
             .collect::<Vec<(ArtifactId, CompactContractBytecode)>>();
 
-        let mut source_paths = contracts
+        let source_paths = contracts
             .iter()
-            .map(|(i, c)| (i.slug(), i.source.to_string_lossy().into()))
+            .map(|(i, _)| (i.slug(), i.source.to_string_lossy().into()))
             .collect::<BTreeMap<String, String>>();
 
         let contracts = contracts

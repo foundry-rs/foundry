@@ -4,8 +4,6 @@ pub use runner::{ContractRunner, TestKind, TestKindGas, TestResult};
 mod multi_runner;
 pub use multi_runner::{MultiContractRunner, MultiContractRunnerBuilder};
 
-use std::path::Path;
-
 pub trait TestFilter {
     fn matches_test(&self, test_name: impl AsRef<str>) -> bool;
     fn matches_contract(&self, contract_name: impl AsRef<str>) -> bool;
