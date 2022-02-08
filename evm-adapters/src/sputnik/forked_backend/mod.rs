@@ -28,7 +28,7 @@ pub fn dump(
     }
     .as_u64();
 
-    let res = match path {
+    let _res = match path {
         Some(Some(path)) => dump_cache(&path, cache),
         Some(None) => {
             let path = dirs_next::home_dir()
@@ -38,10 +38,6 @@ pub fn dump(
         }
         None => Ok(()),
     };
-
-    if let Err(err) = res {
-        tracing::error!("could not store fork cache to file. err: {}", err);
-    }
 }
 
 fn dump_cache(path: &PathBuf, cache: &BTreeMap<H160, MemoryAccount>) -> Result<(), ForkError> {

@@ -240,7 +240,7 @@ mod tests {
         let blk = Some(13292465);
         let vicinity = rt.block_on(vicinity(&provider, None, blk, None)).unwrap();
         let backend = new_backend(&vicinity, Default::default());
-        let backend = ForkMemoryBackend::new(provider, backend, blk, Default::default());
+        let backend = ForkMemoryBackend::new(provider, backend, blk, Default::default(), None);
 
         let precompiles = PRECOMPILES_MAP.clone();
         let mut evm = Executor::new(12_000_000, &cfg, &backend, &precompiles);

@@ -261,7 +261,7 @@ mod tests {
         )
         .unwrap();
         let vicinity = G_VICINITY.clone();
-        let backend = SharedBackend::new(Arc::new(provider), cache.clone(), vicinity, None);
+        let backend = SharedBackend::new(Arc::new(provider), cache.clone(), vicinity, None, None);
         GlobalBackend { cache, backend }
     });
 

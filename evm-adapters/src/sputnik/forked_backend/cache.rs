@@ -553,7 +553,7 @@ mod tests {
         let vicinity = rt.block_on(vicinity(&provider, None, None, None)).unwrap();
         let cache = new_shared_cache(MemCache::default());
 
-        let backend = SharedBackend::new(Arc::new(provider), cache.clone(), vicinity, None);
+        let backend = SharedBackend::new(Arc::new(provider), cache.clone(), vicinity, None, None);
 
         let idx = H256::from_low_u64_be(0u64);
         let value = backend.storage(address, idx);
