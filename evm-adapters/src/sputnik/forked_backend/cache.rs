@@ -14,6 +14,7 @@ use futures::{
 use parking_lot::RwLock;
 use std::{
     collections::{hash_map::Entry, BTreeMap, HashMap},
+    path::PathBuf,
     pin::Pin,
     sync::{
         mpsc::{channel as oneshot_channel, Sender as OneshotSender},
@@ -92,6 +93,19 @@ struct BackendHandler<M: Middleware> {
     /// The block to fetch data from.
     // This is an `Option` so that we can have less code churn in the functions below
     block_id: Option<BlockId>,
+    /// The cache file to store any state.
+    /// - Some(Some("path")) -> it gets stored at "path"
+    /// - Some(None) -> it gets stored at ~/.foundry/cache/{pin_block}.json
+    /// - None -> it does not get stored
+    cache_file: Option<Option<PathBuf>>,
+}
+
+// On drop, dump the state to the cache file
+impl<M: Middleware> Drop for BackendHandler<M> {
+    fn drop(&mut self) {
+        let cache = self.cache.read();
+        super::dump(self.cache_file.as_ref(), self.block_id, &cache);
+    }
 }
 
 impl<M> BackendHandler<M>
@@ -103,7 +117,16 @@ where
         cache: SharedCache<MemCache>,
         rx: Receiver<BackendRequest>,
         block_id: Option<BlockId>,
+        cache_file: Option<Option<PathBuf>>,
     ) -> Self {
+        // load the cache
+        {
+            let mut cache_mut = cache.write();
+            if let Ok(loaded_cache) = super::load_cache(cache_file.as_ref(), block_id) {
+                cache_mut.extend(loaded_cache);
+            }
+        }
+
         Self {
             provider,
             cache,
@@ -112,6 +135,7 @@ where
             storage_requests: Default::default(),
             incoming: rx.fuse(),
             block_id,
+            cache_file,
         }
     }
 
@@ -378,12 +402,13 @@ impl SharedBackend {
         cache: SharedCache<MemCache>,
         vicinity: MemoryVicinity,
         pin_block: Option<BlockId>,
+        cache_file: Option<Option<PathBuf>>,
     ) -> Self
     where
         M: Middleware + Unpin + 'static + Clone,
     {
         let (tx, rx) = channel(1);
-        let handler = BackendHandler::new(provider, cache, rx, pin_block);
+        let handler = BackendHandler::new(provider, cache, rx, pin_block, cache_file);
         // spawn the provider handler to background
         let rt = RuntimeOrHandle::new();
         std::thread::spawn(move || match rt {
