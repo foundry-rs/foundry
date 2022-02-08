@@ -197,7 +197,18 @@ impl Provider for BuildArgs {
             dict.insert("libs".to_string(), libs.into());
         }
 
+        #[cfg(not(target_arch = "aarch64"))]
         if self.no_auto_detect {
+            dict.insert("auto_detect_solc".to_string(), false.into());
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            if !self.no_auto_detect {
+                println!("Solidity compiler autodetection is disabled on ARM.");
+                println!("You can track progress on ARM support in https://github.com/gakonst/foundry/issues/525");
+                println!("To silence this warning use --no-auto-detect");
+            }
             dict.insert("auto_detect_solc".to_string(), false.into());
         }
 
