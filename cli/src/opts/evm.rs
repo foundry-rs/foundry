@@ -1,4 +1,6 @@
 //! cli arguments for configuring the evm settings
+use std::path::PathBuf;
+
 use clap::Parser;
 use ethers::types::{Address, U256};
 use evm_adapters::evm_opts::EvmType;
@@ -56,6 +58,10 @@ pub struct EvmArgs {
     #[clap(help = "pins the block number for the state fork", long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_block_number: Option<u64>,
+
+    #[clap(help = "the fork cache file path", long)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_file: Option<Option<PathBuf>>,
 
     #[clap(help = "the initial balance of each deployed test contract", long)]
     #[serde(skip_serializing_if = "Option::is_none")]

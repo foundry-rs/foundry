@@ -129,6 +129,8 @@ pub struct Config {
     pub block_number: u64,
     /// pins the block number for the state fork
     pub fork_block_number: Option<u64>,
+    /// pins the block number for the state fork
+    pub cache_file: Option<Option<PathBuf>>,
     /// the chainid opcode value
     pub chain_id: Option<Chain>,
     /// Block gas limit
@@ -716,6 +718,8 @@ impl Default for Config {
             initial_balance: U256::from(0xffffffffffffffffffffffffu128),
             block_number: 0,
             fork_block_number: None,
+            // default the cache to ~/.foundry/cache
+            cache_file: Some(None),
             chain_id: None,
             // toml-rs can't handle larger number because integers are stored signed
             // https://github.com/alexcrichton/toml-rs/issues/256
