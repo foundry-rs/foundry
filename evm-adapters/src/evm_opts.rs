@@ -1,6 +1,6 @@
 use ethers::types::{Address, U256};
 use serde::{Deserialize, Serialize};
-use std::str::FromStr;
+use std::{path::PathBuf, str::FromStr};
 
 #[cfg(feature = "sputnik")]
 use sputnik::backend::MemoryVicinity;
@@ -51,6 +51,9 @@ pub struct EvmOpts {
 
     /// pins the block number for the state fork
     pub fork_block_number: Option<u64>,
+
+    /// the forking cache
+    pub cache_file: Option<Option<PathBuf>>,
 
     /// the initial balance of each deployed test contract
     pub initial_balance: U256,
@@ -111,6 +114,7 @@ mod sputnik_helpers {
                     cache,
                     vicinity.clone(),
                     self.fork_block_number.map(Into::into),
+                    self.cache_file.clone(),
                 );
                 BackendKind::Shared(backend)
             } else {
