@@ -1,5 +1,4 @@
 use crate::{runner::TestResult, ContractRunner, TestFilter};
-use ethers::prelude::artifacts::CompactContractBytecode;
 use evm_adapters::{
     evm_opts::{BackendKind, EvmOpts},
     sputnik::cheatcodes::{CONSOLE_ABI, HEVMCONSOLE_ABI, HEVM_ABI},
@@ -7,12 +6,10 @@ use evm_adapters::{
 use foundry_utils::PostLinkInput;
 use sputnik::{backend::Backend, Config};
 
-use ethers::solc::Artifact;
-
 use ethers::{
     abi::{Abi, Event, Function},
-    prelude::ArtifactOutput,
-    solc::Project,
+    prelude::{ArtifactOutput, ArtifactId, artifacts::CompactContractBytecode},
+    solc::{Project, Artifact},
     types::{Address, H256, U256},
 };
 
@@ -61,18 +58,18 @@ impl MultiContractRunnerBuilder {
         // This is just the contracts compiled, but we need to merge this with the read cached
         // artifacts
         let contracts = output
-            .into_artifacts_with_files()
-            .map(|(f, n, c)| (f, n, c.into_contract_bytecode()))
-            .collect::<Vec<(String, String, CompactContractBytecode)>>();
+            .into_artifacts()
+            .map(|(i, c)| (i, c.into_contract_bytecode()))
+            .collect::<Vec<(ArtifactId, CompactContractBytecode)>>();
 
         let mut source_paths = contracts
             .iter()
-            .map(|(f, n, c)| (n.clone(), f.clone()))
+            .map(|(i, c)| (i.slug(), i.source.to_string_lossy().into()))
             .collect::<BTreeMap<String, String>>();
 
         let contracts = contracts
             .into_iter()
-            .map(|(f, n, c)| (n, c))
+            .map(|(i, c)| (i.slug(), c))
             .collect::<BTreeMap<String, CompactContractBytecode>>();
 
         let mut known_contracts: BTreeMap<String, (Abi, Vec<u8>)> = Default::default();

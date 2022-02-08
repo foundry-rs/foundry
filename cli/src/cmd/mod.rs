@@ -152,16 +152,8 @@ fn get_artifact_from_name(
     let mut has_found_contract = false;
     let mut contract_artifact = None;
 
-    for (name, artifact) in compiled.into_artifacts() {
-        // if the contract name
-        let mut split = name.split(':');
-        let mut artifact_contract_name =
-            split.next().ok_or_else(|| eyre::Error::msg("no contract name provided"))?;
-        if let Some(new_name) = split.next() {
-            artifact_contract_name = new_name;
-        };
-
-        if artifact_contract_name == contract.name {
+    for (artifact_id, artifact) in compiled.into_artifacts() {
+        if artifact_id.name == contract.name {
             if has_found_contract {
                 eyre::bail!("contract with duplicate name. pass path")
             }
