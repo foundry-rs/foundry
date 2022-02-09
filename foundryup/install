@@ -21,10 +21,25 @@ while [[ $1 ]]; do
     -r|--repo)        shift; FOUNDRYUP_REPO=$1;;
     -b|--branch)      shift; FOUNDRYUP_BRANCH=$1;;
     -v|--version)     shift; FOUNDRYUP_VERSION=$1;;
+    -h|--help)        FOUNDRYUP_HELP="1";;
 
     *) printf "foundryup: internal error: %q\\n" "$1"; exit 1
   esac; shift
 done
+
+if [[ "$FOUNDRYUP_HELP" == "1" ]]; then
+    echo "Update or revert to a specific Foundry branch with ease.
+
+USAGE:
+    foundryup <OPTIONS>
+
+OPTIONS:
+    -h, --help      Print help information
+    -v, --version   Install a specific version
+    -b, --branch    Install a specific branch
+    -r, --repo      Install a forks main branch"
+    exit 0
+fi
 
 FOUNDRYUP_REPO=${FOUNDRYUP_REPO-gakonst/foundry}
 
