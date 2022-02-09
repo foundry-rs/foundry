@@ -42,6 +42,10 @@ pub struct VerifyArgs {
 
 /// Run the verify command to submit the contract's source code for verification on etherscan
 pub async fn run(args: &VerifyArgs) -> eyre::Result<()> {
+    if args.etherscan_key == "" {
+        eyre::bail!("Etherscan API key is required");
+    }
+
     let project = args.opts.project()?;
     let contract = project
         .flatten(&project.root().join(&args.contract))
