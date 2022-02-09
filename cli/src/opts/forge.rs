@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand, ValueHint};
 
-use ethers::{solc::EvmVersion, types::Address};
+use ethers::solc::EvmVersion;
 use std::{path::PathBuf, str::FromStr};
 
 use crate::cmd::{

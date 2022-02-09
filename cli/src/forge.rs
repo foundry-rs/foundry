@@ -5,7 +5,7 @@ mod utils;
 use crate::cmd::Cmd;
 
 use ethers::solc::{Project, ProjectPathsConfig};
-use opts::forge::{Dependency, FullContractInfo, Opts, Subcommands};
+use opts::forge::{Dependency, Opts, Subcommands};
 use std::process::Command;
 
 use clap::{IntoApp, Parser};

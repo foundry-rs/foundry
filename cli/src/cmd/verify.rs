@@ -1,6 +1,6 @@
 //! Verify contract source on etherscan
 
-use crate::{cmd::build::BuildArgs, opts::forge::FullContractInfo};
+use crate::cmd::build::BuildArgs;
 use clap::Parser;
 use ethers::{
     abi::Address,
@@ -10,16 +10,13 @@ use ethers::{
 /// Command to list remappings
 #[derive(Debug, Clone, Parser)]
 pub struct VerifyArgs {
-    #[structopt(flatten)]
-    opts: BuildArgs,
-
     #[structopt(help = "the target contract address")]
     address: Address,
 
-    #[clap(help = "contract source info `<path>:<contractname>`")]
-    contract: FullContractInfo,
+    #[clap(help = "the target contract path")]
+    contract: String,
 
-    #[structopt(help = "the encoded constructor arguments calldata")]
+    #[structopt(long, help = "the encoded constructor arguments calldata")]
     args: Option<String>,
 
     #[structopt(long, help = "the compiler version used during build")]
@@ -38,13 +35,16 @@ pub struct VerifyArgs {
 
     #[structopt(help = "your etherscan api key", env = "ETHERSCAN_API_KEY")]
     etherscan_key: String,
+
+    #[structopt(flatten)]
+    opts: BuildArgs,
 }
 
 /// Run the verify command to submit the contract's source code for verification on etherscan
 pub async fn run(args: &VerifyArgs) -> eyre::Result<()> {
     let project = args.opts.project()?;
     let contract = project
-        .flatten(&project.root().join(&args.contract.path))
+        .flatten(&project.root().join(&args.contract))
         .map_err(|err| eyre::eyre!("Failed to flatten contract: {}", err))?;
 
     let etherscan = Client::new(args.chain_id.try_into()?, &args.etherscan_key)
