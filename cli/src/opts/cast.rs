@@ -298,15 +298,15 @@ pub enum Subcommands {
         input: bool,
     },
     #[clap(name = "abi-encode")]
-    #[clap(
-        override_help = "ABI encodes the given arguments with the function signature, excluidng the selector"
-    )]
+    #[clap(about = "ABI encodes the given arguments with the function signature")]
     AbiEncode {
         #[clap(help = "the function signature")]
         sig: String,
         #[clap(help = "the list of function arguments")]
         #[clap(allow_hyphen_values = true)]
         args: Vec<String>,
+        #[clap(long, short, help = "include the 4byte function selector")]
+        with_selector: Option<bool>,
     },
     #[clap(name = "index")]
     #[clap(

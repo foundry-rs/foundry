@@ -868,16 +868,23 @@ impl SimpleCast {
     /// # fn main() -> eyre::Result<()> {
     ///     assert_eq!(
     ///         "0x0000000000000000000000000000000000000000000000000000000000000001",
-    ///         Cast::abi_encode("f(uint a)", &["1"]).unwrap().as_str()
+    ///         Cast::abi_encode("f(uint a)", &["1"], Some(false)).unwrap().as_str()
     ///     );
     /// #    Ok(())
     /// # }
     /// ```
-    pub fn abi_encode(sig: &str, args: &[impl AsRef<str>]) -> Result<String> {
+    pub fn abi_encode(
+        sig: &str,
+        args: &[impl AsRef<str>],
+        with_selector: Option<bool>,
+    ) -> Result<String> {
         let func = AbiParser::default().parse_function(sig.as_ref())?;
         let calldata = encode_args(&func, args)?.to_hex::<String>();
-        let encoded = &calldata[8..];
-        Ok(format!("0x{}", encoded))
+
+        match with_selector {
+            Some(_) => Ok(format!("0x{}", &calldata)),
+            None => Ok(format!("0x{}", &calldata[8..])),
+        }
     }
 
     /// Converts decimal input to hex
@@ -1215,7 +1222,7 @@ impl SimpleCast {
         slot_number: &str,
     ) -> Result<String> {
         let sig = format!("x({},{})", from_type, to_type);
-        let encoded = Self::abi_encode(&sig, &[from_value, slot_number])?;
+        let encoded = Self::abi_encode(&sig, &[from_value, slot_number], Some(false))?;
         let location: String = Self::keccak(&encoded)?;
         Ok(location)
     }

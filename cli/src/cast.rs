@@ -325,8 +325,8 @@ async fn main() -> eyre::Result<()> {
             let tokens = foundry_utils::format_tokens(&tokens);
             tokens.for_each(|t| println!("{}", t));
         }
-        Subcommands::AbiEncode { sig, args } => {
-            println!("{}", SimpleCast::abi_encode(&sig, &args)?);
+        Subcommands::AbiEncode { sig, args, with_selector } => {
+            println!("{}", SimpleCast::abi_encode(&sig, &args, with_selector)?);
         }
         Subcommands::Index { from_type, to_type, from_value, slot_number } => {
             let encoded = SimpleCast::index(&from_type, &to_type, &from_value, &slot_number)?;
