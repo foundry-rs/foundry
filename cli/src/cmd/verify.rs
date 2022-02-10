@@ -76,8 +76,8 @@ pub async fn run(
 
     let contract = VerifyContract::new(address, source, compiler_version)
         .constructor_arguments(constructor_args)
-        .optimization(metadata.settings.optimizer.enabled.unwrap_or_default())
-        .runs(metadata.settings.optimizer.runs.unwrap_or_default() as u32);
+        .optimization(metadata.settings.inner.optimizer.enabled.unwrap_or_default())
+        .runs(metadata.settings.inner.optimizer.runs.unwrap_or_default() as u32);
 
     let resp = etherscan
         .submit_contract_verification(&contract)
