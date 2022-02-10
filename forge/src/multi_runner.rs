@@ -285,7 +285,7 @@ mod tests {
 
     fn test_multi_runner() {
         let mut runner = runner();
-        let results = runner.test(&Filter::with_all_pass()).unwrap();
+        let results = runner.test(&Filter::matches_all()).unwrap();
 
         // 9 contracts being built
         assert_eq!(results.keys().len(), 9);
@@ -310,7 +310,7 @@ mod tests {
 
     fn test_abstract_contract() {
         let mut runner = runner();
-        let results = runner.test(&Filter::with_all_pass()).unwrap();
+        let results = runner.test(&Filter::matches_all()).unwrap();
         assert!(results.get("Tests.json:Tests").is_none());
         assert!(results.get("ATests.json:ATests").is_some());
         assert!(results.get("BTests.json:BTests").is_some());
@@ -323,7 +323,7 @@ mod tests {
         #[test]
         fn test_sputnik_debug_logs() {
             let mut runner = runner();
-            let results = runner.test(&Filter::with_all_pass()).unwrap();
+            let results = runner.test(&Filter::matches_all()).unwrap();
 
             let reasons = results["DebugLogsTest.json:DebugLogsTest"]
                 .iter()

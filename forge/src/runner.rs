@@ -713,7 +713,7 @@ mod tests {
         let mut libs = vec![];
         let runner = sputnik::runner(compiled.abi.as_ref().unwrap(), code, &mut libs);
 
-        let res = runner.run_tests(&Filter::with_all_pass(), None, None).unwrap();
+        let res = runner.run_tests(&Filter::matches_all(), None, None).unwrap();
         assert!(!res.is_empty());
         assert!(res.iter().all(|(_, result)| result.success));
     }

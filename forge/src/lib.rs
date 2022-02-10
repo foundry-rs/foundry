@@ -68,7 +68,7 @@ pub mod test_helpers {
                 }
             }
 
-            pub fn with_all_pass() -> Self {
+            pub fn matches_all() -> Self {
                 Filter {
                     test_regex: Regex::new(".*").unwrap(),
                     contract_regex: Regex::new(".*").unwrap(),
