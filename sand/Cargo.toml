@@ -1,0 +1,10 @@
+[package]
+name = "foundry-sand"
+version = "0.1.0"
+edition = "2021"
+description = """
+starknet tooling for foundry
+"""
+
+[dependencies]
+starknet = { git = "https://github.com/xJonathanLEI/starknet-rs" }
