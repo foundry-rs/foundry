@@ -14,6 +14,7 @@ use ethers_core::{
 use ethers_etherscan::Client;
 use ethers_providers::{Middleware, PendingTransaction};
 use eyre::{Context, Result};
+use futures::future::join_all;
 use rustc_hex::{FromHexIter, ToHex};
 use std::str::FromStr;
 
@@ -271,13 +272,28 @@ where
         };
 
         let func = if let Some((sig, args)) = args {
+            let args = join_all(args.iter().map(|arg| async {
+                if arg.contains(".eth") {
+                    let val = format!(
+                        "0x{}",
+                        hex::encode(self.provider.resolve_name(arg).await?.as_bytes())
+                    );
+                    Ok(val)
+                } else {
+                    Ok(arg.to_string())
+                }
+            }))
+            .await
+            .into_iter()
+            .collect::<Result<Vec<String>>>()?;
+
             let func = if sig.contains('(') {
                 get_func(sig)?
             } else {
                 get_func_etherscan(
                     sig,
                     to,
-                    args.clone(),
+                    &args,
                     chain,
                     etherscan_api_key.expect("Must set ETHERSCAN_API_KEY"),
                 )
