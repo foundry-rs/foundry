@@ -1604,6 +1604,7 @@ dependencies = [
  "foundry-utils",
  "glob",
  "hex",
+ "lazy_static",
  "locate-cargo-manifest",
  "once_cell",
  "pretty_assertions",
