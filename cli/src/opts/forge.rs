@@ -46,7 +46,7 @@ pub enum Subcommands {
 
     #[clap(
         alias = "i",
-        about = "installs one or more dependencies as git submodules (will install existing dependencies if no arguments are provided"
+        about = "installs one or more dependencies as git submodules (will install existing dependencies if no arguments are provided)"
     )]
     Install(InstallArgs),
 
@@ -103,10 +103,10 @@ pub enum Subcommands {
     Flatten(flatten::FlattenArgs),
 }
 
-/// A set of solc compiler settings that can be set via command line arguments, which are intended
-/// to be merged into an existing `foundry_config::Config`.
-///
-/// See also [`BuildArgs`]
+// A set of solc compiler settings that can be set via command line arguments, which are intended
+// to be merged into an existing `foundry_config::Config`.
+//
+// See also [`BuildArgs`]
 #[derive(Default, Debug, Clone, Parser, Serialize)]
 pub struct CompilerArgs {
     #[clap(help = "choose the evm version", long)]
