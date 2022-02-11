@@ -155,7 +155,7 @@ async fn main() -> eyre::Result<()> {
                 "{}",
                 Cast::new(provider)
                     .call(
-                        eth.sender().await,
+                        eth.from.unwrap_or(Address::zero()),
                         address,
                         (&sig, args),
                         eth.chain,
