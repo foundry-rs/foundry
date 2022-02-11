@@ -25,5 +25,10 @@ serde_json = { version = "1.0.67", default-features = false }
 tokio = { version = "1.12.0", features = ["rt-multi-thread", "macros"] }
 rlp = "0.5.1"
 
+
+[dev-dependencies]
+ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["solc-full"] }
+
+
 [features]
 test = ["tracing-subscriber"]
