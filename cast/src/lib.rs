@@ -273,7 +273,7 @@ where
 
         let func = if let Some((sig, args)) = args {
             let args = join_all(args.iter().map(|arg| async {
-                if arg.contains(".eth") {
+                if arg.ends_with(".eth") {
                     let val = format!(
                         "0x{}",
                         hex::encode(self.provider.resolve_name(arg).await?.as_bytes())
