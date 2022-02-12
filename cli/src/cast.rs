@@ -155,7 +155,7 @@ async fn main() -> eyre::Result<()> {
                 "{}",
                 Cast::new(provider)
                     .call(
-                        eth.sender().await,
+                        eth.from.unwrap_or(Address::zero()),
                         address,
                         (&sig, args),
                         eth.chain,
@@ -670,9 +670,9 @@ where
     let tx_hash = *pending_tx;
 
     if cast_async {
-        println!("{}", tx_hash);
+        println!("{:#x}", tx_hash);
     } else {
-        let receipt = cast.receipt(tx_hash.to_string(), None, confs, false, true).await?;
+        let receipt = cast.receipt(format!("{:#x}", tx_hash), None, confs, false, true).await?;
         println!("{}", receipt);
     }
 

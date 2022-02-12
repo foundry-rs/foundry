@@ -152,9 +152,11 @@ pub fn remove_extra_costs(gas: U256, calldata: &[u8]) -> U256 {
     for i in calldata {
         if *i != 0 {
             // TODO: Check if EVM pre-eip2028 and charge 64
+            // GTXDATANONZERO = 16
             calldata_cost += 16
         } else {
-            calldata_cost += 8;
+            // GTXDATAZERO = 4
+            calldata_cost += 4;
         }
     }
     gas.saturating_sub(calldata_cost.into()).saturating_sub(BASE_TX_COST.into())
