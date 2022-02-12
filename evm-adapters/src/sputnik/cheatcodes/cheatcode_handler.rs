@@ -878,6 +878,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 self.add_debug(CheatOp::ASSUME);
                 if !inner.0 {
                     res = ASSUME_MAGIC_RETURN_CODE.into();
+                    return Capture::Exit((ExitReason::Revert(ExitRevert::Reverted), res))
                 }
             }
         };
