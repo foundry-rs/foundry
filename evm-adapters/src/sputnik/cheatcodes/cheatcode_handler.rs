@@ -610,6 +610,8 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
             HEVMCalls::Roll(inner) => {
                 self.add_debug(CheatOp::ROLL);
                 self.state_mut().backend.cheats.block_number = Some(inner.0);
+                // insert a random block hash for the specified block number
+                self.state_mut().backend.cheats.block_hashes.insert(inner.0, H256::random());
             }
             HEVMCalls::Fee(inner) => {
                 self.add_debug(CheatOp::FEE);
