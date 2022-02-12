@@ -89,7 +89,10 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
 
                 // When assume cheat code is triggered return a special string "FOUNDRY::ASSUME"
                 if returndata.as_ref() == ASSUME_MAGIC_RETURN_CODE {
-                    return Err(TestCaseError::Reject("ASSUME".into()))
+                    let _ = return_reason.borrow_mut().insert(reason);
+                    let err = "ASSUME: Too many global rejects";
+                    let _ = revert_reason.borrow_mut().insert(err.to_string());
+                    return Err(TestCaseError::Reject(err.into()))
                 }
 
                 // We must check success before resetting the state, otherwise resetting the state
