@@ -1,6 +1,6 @@
 // Taken from:
 // https://github.com/dapphub/dapptools/blob/e41b6cd9119bbd494aba1236838b859f2136696b/src/dapp-tests/pass/cheatCodes.sol
-pragma solidity ^0.8.4;
+pragma solidity ^0.8.10;
 pragma experimental ABIEncoderV2;
 
 import "./DsTest.sol";
@@ -115,6 +115,21 @@ contract CheatCodes is DSTest {
         uint pre = block.number;
         hevm.roll(block.number + jump);
         require(block.number == pre + jump, "roll failed");
+        require(blockhash(block.number) != 0x0);
+    }
+
+    function testRollHash() public {
+        require(blockhash(block.number) == 0x0);
+        hevm.roll(5);
+        bytes32 hash = blockhash(5);
+        require(hash != 0x0);
+
+        hevm.roll(10);
+        require(blockhash(10) != 0x0);
+
+        // rolling back to 5 maintains the same hash
+        hevm.roll(5);
+        require(blockhash(5) == hash);
     }
 
     function testFailRoll(uint32 jump) public {
@@ -226,7 +241,7 @@ contract CheatCodes is DSTest {
 
         address new_sender = address(1337);
         hevm.deal(new_sender, 10 ether);
-        
+
         hevm.prank(new_sender);
         prank.payableBar{value: 1 ether}(new_sender);
         assertEq(new_sender.balance, 9 ether);
@@ -489,7 +504,7 @@ contract CheatCodes is DSTest {
             abi.encode(11)
         );
 
-        assertEq(target.add(5, 5), 11); 
+        assertEq(target.add(5, 5), 11);
         assertEq(target.add(6, 4), 10);
     }
 
@@ -503,7 +518,7 @@ contract CheatCodes is DSTest {
         );
 
         assertEq(target.numberA(), 1);
-        assertEq(target.numberB(), 10); 
+        assertEq(target.numberB(), 10);
 
         hevm.clearMockedCalls();
 
