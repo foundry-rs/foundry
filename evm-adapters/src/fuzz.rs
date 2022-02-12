@@ -86,10 +86,10 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
                 let (returndata, reason, gas, _) = evm
                     .call_raw(self.sender, address, calldata.clone(), 0.into(), false)
                     .expect("could not make raw evm call");
-                
+
                 // When assume cheat code is triggered return a special string "FOUNDRY::ASSUME"
                 if returndata.as_ref() == ASSUME_MAGIC_RETURN_CODE {
-                    return Err(TestCaseError::Reject("ASSUME".into()));
+                    return Err(TestCaseError::Reject("ASSUME".into()))
                 }
 
                 // We must check success before resetting the state, otherwise resetting the state

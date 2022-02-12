@@ -6,8 +6,7 @@ use super::{
 use crate::{
     call_tracing::{CallTrace, CallTraceArena, LogCallOrder},
     sputnik::{cheatcodes::memory_stackstate_owned::ExpectedEmit, Executor, SputnikExecutor},
-    Evm,
-    ASSUME_MAGIC_RETURN_CODE
+    Evm, ASSUME_MAGIC_RETURN_CODE,
 };
 use std::collections::BTreeMap;
 
