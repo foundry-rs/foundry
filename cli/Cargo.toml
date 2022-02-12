@@ -43,7 +43,6 @@ tracing = "0.1.26"
 hex = "0.4.3"
 rayon = "1.5"
 serde = "1.0.133"
-lazy_static = "1.4.0"
 
 ## EVM Implementations
 # evm = { version = "0.30.1" }

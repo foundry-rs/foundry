@@ -9,8 +9,11 @@ use crate::cmd::{
 };
 use serde::Serialize;
 
+use once_cell::sync::Lazy;
 use regex::Regex;
-use lazy_static::lazy_static;
+
+static GH_REPO_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new("[A-Za-z\\d-]+/[A-Za-z\\d_.-]+").unwrap());
 
 #[derive(Debug, Parser)]
 #[clap(name = "forge", version = crate::utils::VERSION_MESSAGE)]
@@ -209,10 +212,6 @@ impl FromStr for Dependency {
         } else if dependency.starts_with(GITHUB) {
             format!("https://{}", dependency)
         } else {
-            lazy_static! {
-                static ref GH_REPO_REGEX: Regex = Regex::new("[A-Za-z\\d-]+/[A-Za-z\\d_.-]+").unwrap();
-            }
-
             if !GH_REPO_REGEX.is_match(dependency) {
                 eyre::bail!("invalid github repository name `{}`", dependency);
             }
