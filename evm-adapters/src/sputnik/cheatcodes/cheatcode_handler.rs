@@ -103,7 +103,6 @@ pub static DUMMY_OUTPUT: [u8; 320] = [0u8; 320];
 pub struct CheatcodeHandler<H> {
     handler: H,
     enable_ffi: bool,
-    enable_trace: bool,
     console_logs: Vec<String>,
 }
 
@@ -240,7 +239,9 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
             context,
         ) {
             Capture::Exit((s, v)) => {
-                self.state_mut().increment_call_index();
+                if self.state().trace_enabled {
+                    self.state_mut().increment_call_index();
+                }
 
                 // check if all expected calls were made
                 if let Some((address, expecteds)) =
@@ -300,7 +301,9 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
             false,
         ) {
             Capture::Exit((s, _, _)) => {
-                self.state_mut().increment_call_index();
+                if self.state().trace_enabled {
+                    self.state_mut().increment_call_index();
+                }
                 s
             }
             Capture::Trap(_) => {
@@ -369,12 +372,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet>
 
         // create the executor and wrap it with the cheatcode handler
         let executor = StackExecutor::new_with_precompiles(state, config, precompiles);
-        let executor = CheatcodeHandler {
-            handler: executor,
-            enable_ffi,
-            enable_trace,
-            console_logs: Vec::new(),
-        };
+        let executor = CheatcodeHandler { handler: executor, enable_ffi, console_logs: Vec::new() };
 
         let mut evm = Executor::from_executor(executor, gas_limit);
 
@@ -1091,7 +1089,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         transfer: U256,
         creation: bool,
     ) -> Option<CallTrace> {
-        if self.enable_trace {
+        if self.state().trace_enabled {
             let mut trace: CallTrace = CallTrace {
                 // depth only starts tracking at first child substate and is 0. so add 1 when depth
                 // is some.
