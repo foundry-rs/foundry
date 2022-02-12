@@ -9,6 +9,12 @@ use crate::cmd::{
 };
 use serde::Serialize;
 
+use once_cell::sync::Lazy;
+use regex::Regex;
+
+static GH_REPO_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new("[A-Za-z\\d-]+/[A-Za-z\\d_.-]+").unwrap());
+
 #[derive(Debug, Parser)]
 #[clap(name = "forge", version = crate::utils::VERSION_MESSAGE)]
 pub struct Opts {
@@ -206,6 +212,9 @@ impl FromStr for Dependency {
         } else if dependency.starts_with(GITHUB) {
             format!("https://{}", dependency)
         } else {
+            if !GH_REPO_REGEX.is_match(dependency) {
+                eyre::bail!("invalid github repository name `{}`", dependency);
+            }
             format!("https://{}/{}", GITHUB, dependency)
         };
 
@@ -250,5 +259,11 @@ mod tests {
             assert_eq!(dep.tag, expected_tag.map(ToString::to_string));
             assert_eq!(dep.name, "lootloose");
         });
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_invalid_github_repo_dependency() {
+        Dependency::from_str("solmate").unwrap();
     }
 }
