@@ -30,6 +30,8 @@ use foundry_utils::IntoFunction;
 use eyre::Result;
 use once_cell::sync::Lazy;
 
+pub const ASSUME_MAGIC_RETURN_CODE: &[u8] = "FOUNDRY::ASSUME".as_bytes();
+
 /// The account that we use to fund all the deployed contracts
 pub static FAUCET_ACCOUNT: Lazy<Address> =
     Lazy::new(|| Address::from_slice(&ethers::utils::keccak256("turbodapp faucet")[12..]));

@@ -7,6 +7,7 @@ use crate::{
     call_tracing::{CallTrace, CallTraceArena, LogCallOrder},
     sputnik::{cheatcodes::memory_stackstate_owned::ExpectedEmit, Executor, SputnikExecutor},
     Evm,
+    ASSUME_MAGIC_RETURN_CODE
 };
 use std::collections::BTreeMap;
 
@@ -42,6 +43,8 @@ use crate::sputnik::cheatcodes::{
 use once_cell::sync::Lazy;
 
 use ethers::abi::Tokenize;
+
+
 
 // This is now getting us the right hash? Also tried [..20]
 // Lazy::new(|| Address::from_slice(&keccak256("hevm cheat code")[12..]));
@@ -873,6 +876,12 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 let label = inner.1;
 
                 self.state_mut().labels.insert(address, label);
+            }
+            HEVMCalls::Assume(inner) => {
+                self.add_debug(CheatOp::ASSUME);
+                if !inner.0 {
+                    res = ASSUME_MAGIC_RETURN_CODE.into();
+                }
             }
         };
 
