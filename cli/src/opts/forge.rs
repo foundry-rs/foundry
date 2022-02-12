@@ -20,25 +20,25 @@ pub struct Opts {
 #[clap(about = "Build, test, fuzz, formally verify, debug & deploy solidity contracts.")]
 #[allow(clippy::large_enum_variant)]
 pub enum Subcommands {
-    #[clap(about = "test your smart contracts")]
+    #[clap(about = "Test your smart contracts")]
     #[clap(alias = "t")]
     Test(test::TestArgs),
 
-    #[clap(about = "generate rust bindings for your smart contracts")]
+    #[clap(about = "Generate rust bindings for your smart contracts")]
     Bind(BindArgs),
 
-    #[clap(about = "build your smart contracts")]
+    #[clap(about = "Build your smart contracts")]
     #[clap(alias = "b")]
     Build(BuildArgs),
 
-    #[clap(about = "run a single smart contract as a script")]
+    #[clap(about = "Run a single smart contract as a script")]
     #[clap(alias = "r")]
     Run(RunArgs),
 
-    #[clap(alias = "u", about = "fetches all upstream lib changes")]
+    #[clap(alias = "u", about = "Fetches all upstream lib changes")]
     Update {
         #[clap(
-            help = "the submodule name of the library you want to update (will update all if none is provided)",
+            help = "The submodule name of the library you want to update (will update all if none is provided)",
             value_hint = ValueHint::DirPath
         )]
         lib: Option<PathBuf>,
@@ -46,60 +46,60 @@ pub enum Subcommands {
 
     #[clap(
         alias = "i",
-        about = "installs one or more dependencies as git submodules (will install existing dependencies if no arguments are provided"
+        about = "Installs one or more dependencies as git submodules (will install existing dependencies if no arguments are provided"
     )]
     Install(InstallArgs),
 
-    #[clap(alias = "rm", about = "removes one or more dependencies from git submodules")]
+    #[clap(alias = "rm", about = "Removes one or more dependencies from git submodules")]
     Remove {
-        #[clap(help = "the submodule name of the library you want to remove")]
+        #[clap(help = "The submodule name of the library you want to remove")]
         dependencies: Vec<Dependency>,
     },
 
-    #[clap(about = "prints the automatically inferred remappings for this repository")]
+    #[clap(about = "Prints the automatically inferred remappings for this repository")]
     Remappings(RemappingArgs),
 
     #[clap(
-        about = "verify your smart contracts source code on Etherscan. Requires `ETHERSCAN_API_KEY` to be set."
+        about = "Verify your smart contracts source code on Etherscan. Requires `ETHERSCAN_API_KEY` to be set."
     )]
     VerifyContract {
-        #[clap(help = "contract source info `<path>:<contractname>`")]
+        #[clap(help = "Contract source info `<path>:<contractname>`")]
         contract: FullContractInfo,
-        #[clap(help = "the address of the contract to verify.")]
+        #[clap(help = "The address of the contract to verify.")]
         address: Address,
-        #[clap(help = "constructor args calldata arguments.")]
+        #[clap(help = "Constructor args calldata arguments.")]
         constructor_args: Vec<String>,
     },
 
-    #[clap(alias = "c", about = "deploy a compiled contract")]
+    #[clap(alias = "c", about = "Deploy a compiled contract")]
     Create(CreateArgs),
 
-    #[clap(alias = "i", about = "initializes a new forge sample project")]
+    #[clap(alias = "i", about = "Initializes a new forge sample project")]
     Init(InitArgs),
 
-    #[clap(about = "generate shell completions script")]
+    #[clap(about = "Generate shell completions script")]
     Completions {
         #[clap(arg_enum)]
         shell: clap_complete::Shell,
     },
 
-    #[clap(about = "removes the build artifacts and cache directories")]
+    #[clap(about = "Removes the build artifacts and cache directories")]
     Clean {
         #[clap(
-            help = "the project's root path, default being the current working directory",
+            help = "The project's root path, default being the current working directory",
             long,
             value_hint = ValueHint::DirPath
         )]
         root: Option<PathBuf>,
     },
 
-    #[clap(about = "creates a snapshot of each test's gas usage")]
+    #[clap(about = "Creates a snapshot of each test's gas usage")]
     Snapshot(snapshot::SnapshotArgs),
 
-    #[clap(about = "shows the currently set config values")]
+    #[clap(about = "Shows the currently set config values")]
     Config(config::ConfigArgs),
 
-    #[clap(about = "concats a file with all of its imports")]
+    #[clap(about = "Concats a file with all of its imports")]
     Flatten(flatten::FlattenArgs),
 }
 
@@ -109,21 +109,21 @@ pub enum Subcommands {
 /// See also [`BuildArgs`]
 #[derive(Default, Debug, Clone, Parser, Serialize)]
 pub struct CompilerArgs {
-    #[clap(help = "choose the evm version", long)]
+    #[clap(help = "Choose the evm version", long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub evm_version: Option<EvmVersion>,
 
-    #[clap(help = "activate the solidity optimizer", long)]
+    #[clap(help = "Activate the solidity optimizer", long)]
     // skipped because, optimize is opt-in
     #[serde(skip)]
     pub optimize: bool,
 
-    #[clap(help = "optimizer parameter runs", long)]
+    #[clap(help = "Optimizer parameter runs", long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub optimize_runs: Option<usize>,
 
     #[clap(
-        help = "extra output types [evm.assembly, ewasm, ir, irOptimized] eg: `--extra-output evm.assembly`",
+        help = "Extra output types [evm.assembly, ewasm, ir, irOptimized] eg: `--extra-output evm.assembly`",
         long
     )]
     #[serde(skip_serializing_if = "Option::is_none")]
