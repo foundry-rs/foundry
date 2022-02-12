@@ -23,6 +23,7 @@ use crate::{call_tracing::CallTraceArena, sputnik::cheatcodes::debugger::DebugAr
 
 pub use sputnik as sputnik_evm;
 use sputnik_evm::executor::stack::PrecompileSet;
+use std::collections::HashSet;
 
 /// Given an ethers provider and a block, it proceeds to construct a [`MemoryVicinity`] from
 /// the live chain data returned by the provider.
@@ -111,6 +112,8 @@ pub trait SputnikExecutor<S> {
     /// Clears all logs in the current EVM instance, so that subsequent calls to
     /// `logs` do not print duplicate logs on shared EVM instances.
     fn clear_logs(&mut self);
+
+    fn flatten_state(&self) -> HashSet<[u8; 32]>;
 }
 
 // The implementation for the base Stack Executor just forwards to the internal methods.
@@ -199,6 +202,10 @@ impl<'a, 'b, S: StackState<'a>, P: PrecompileSet> SputnikExecutor<S>
     }
 
     fn clear_logs(&mut self) {}
+
+    fn flatten_state(&self) -> HashSet<[u8; 32]> {
+        HashSet::new()
+    }
 }
 
 use std::borrow::Cow;

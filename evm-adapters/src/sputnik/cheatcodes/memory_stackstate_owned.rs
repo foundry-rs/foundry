@@ -1,17 +1,20 @@
 use sputnik::{
-    backend::{Backend, Basic},
+    backend::{Apply, Backend, Basic},
     executor::stack::{MemoryStackSubstate, StackState, StackSubstateMetadata},
     ExitError, Transfer,
 };
 
-use crate::{call_tracing::CallTraceArena, sputnik::cheatcodes::debugger::DebugArena};
-
+use crate::{call_tracing::CallTraceArena, sputnik::cheatcodes::debugger::DebugArena, FuzzState};
 use ethers::{
     abi::RawLog,
     types::{H160, H256, U256},
 };
 
-use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
+use std::{
+    cell::RefCell,
+    collections::{BTreeMap, HashSet},
+    rc::Rc,
+};
 
 #[derive(Clone, Default)]
 pub struct RecordAccess {
@@ -147,6 +150,47 @@ impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
             debug_instruction_pointers: (BTreeMap::new(), BTreeMap::new()),
             labels: BTreeMap::new(),
         }
+    }
+}
+
+impl<'config, B: Backend> FuzzState for MemoryStackStateOwned<'config, B> {
+    fn flatten_state(&self) -> HashSet<[u8; 32]> {
+        let mut flattened: HashSet<[u8; 32]> = HashSet::new();
+        let (applies, logs) = self.substate.clone().deconstruct(&self.backend);
+        for apply in applies {
+            if let Apply::Modify { address, basic, storage, ..} = apply {
+                let old_basic = self.basic(address);
+                flattened.insert(H256::from(address).into());
+                // we keep bytes as little endian
+                let mut h = H256::default();
+                old_basic.balance.to_little_endian(h.as_mut());
+                flattened.insert(h.0);
+                let mut h = H256::default();
+                old_basic.nonce.to_little_endian(h.as_mut());
+                flattened.insert(h.0);
+                let mut h = H256::default();
+                basic.balance.to_little_endian(h.as_mut());
+                flattened.insert(h.0);
+                let mut h = H256::default();
+                basic.nonce.to_little_endian(h.as_mut());
+                flattened.insert(h.0);
+                storage.into_iter().for_each(|(slot, store)| {
+                    flattened.insert(self.storage(address, slot).0);
+                    flattened.insert(slot.0);
+                    flattened.insert(store.0);
+                });
+            }
+        }
+        for log in logs {
+            flattened.insert(H256::from(log.address).into());
+            log.topics.iter().for_each(|topic| {
+                flattened.insert(topic.0);
+            });
+            log.data.chunks(32).for_each(|chunk| {
+                flattened.insert(H256::from_slice(chunk).into());
+            });
+        }
+        flattened
     }
 }
 

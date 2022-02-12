@@ -8,7 +8,7 @@ use crate::{
     sputnik::{cheatcodes::memory_stackstate_owned::ExpectedEmit, Executor, SputnikExecutor},
     Evm,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use std::{fs::File, io::Read, path::Path};
 
@@ -34,14 +34,16 @@ use ethers::{
 
 use std::{convert::Infallible, str::FromStr};
 
-use crate::sputnik::cheatcodes::{
-    debugger::{CheatOp, DebugArena, DebugNode, DebugStep, OpCode},
-    memory_stackstate_owned::Prank,
-    patch_hardhat_console_log_selector,
+use crate::{
+    sputnik::cheatcodes::{
+        debugger::{CheatOp, DebugArena, DebugNode, DebugStep, OpCode},
+        memory_stackstate_owned::Prank,
+        patch_hardhat_console_log_selector,
+    },
+    FuzzState,
 };
-use once_cell::sync::Lazy;
-
 use ethers::abi::Tokenize;
+use once_cell::sync::Lazy;
 
 // This is now getting us the right hash? Also tried [..20]
 // Lazy::new(|| Address::from_slice(&keccak256("hevm cheat code")[12..]));
@@ -338,6 +340,10 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> SputnikExecutor<CheatcodeStackState<'
     fn logs(&self) -> Vec<String> {
         let logs = self.state().substate.logs().to_vec();
         logs.into_iter().filter_map(convert_log).chain(self.console_logs.clone()).collect()
+    }
+
+    fn flatten_state(&self) -> HashSet<[u8; 32]> {
+        self.state().flatten_state()
     }
 }
 

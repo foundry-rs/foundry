@@ -7,6 +7,7 @@ use crate::sputnik::cheatcodes::debugger::DebugArena;
 
 mod blocking_provider;
 use crate::call_tracing::CallTraceArena;
+use std::collections::HashSet;
 
 pub use blocking_provider::BlockingProvider;
 
@@ -222,6 +223,12 @@ pub trait Evm<State> {
 
     // TODO: Should we add a "deploy contract" function as well, or should we assume that
     // the EVM is instantiated with a DB that includes any needed contracts?
+
+    fn flatten_state(&self) -> HashSet<[u8; 32]>;
+}
+
+pub trait FuzzState {
+    fn flatten_state(&self) -> HashSet<[u8; 32]>;
 }
 
 // Test helpers which are generic over EVM implementation

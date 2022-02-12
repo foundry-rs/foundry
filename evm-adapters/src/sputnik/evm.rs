@@ -1,4 +1,4 @@
-use crate::{call_tracing::CallTraceArena, Evm, FAUCET_ACCOUNT};
+use crate::{call_tracing::CallTraceArena, Evm, FuzzState, FAUCET_ACCOUNT};
 use ethers::types::{Address, Bytes, U256};
 
 use crate::sputnik::cheatcodes::debugger::DebugArena;
@@ -10,7 +10,10 @@ use sputnik::{
     },
     Config, CreateScheme, ExitReason, ExitRevert, Transfer,
 };
-use std::{collections::BTreeMap, marker::PhantomData};
+use std::{
+    collections::{BTreeMap, HashSet},
+    marker::PhantomData,
+};
 
 use eyre::Result;
 
@@ -60,7 +63,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet>
 impl<'a, S, E> Evm<S> for Executor<S, E>
 where
     E: SputnikExecutor<S>,
-    S: StackState<'a>,
+    S: StackState<'a> + FuzzState,
 {
     type ReturnReason = ExitReason;
 
@@ -205,6 +208,10 @@ where
         self.executor.clear_logs();
 
         Ok((retdata.into(), status, gas.as_u64(), logs))
+    }
+
+    fn flatten_state(&self) -> HashSet<[u8; 32]> {
+        self.executor.flatten_state()
     }
 }
 

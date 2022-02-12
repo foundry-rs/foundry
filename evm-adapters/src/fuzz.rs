@@ -6,7 +6,9 @@ use ethers::{
 };
 use std::{
     cell::{RefCell, RefMut},
+    collections::HashSet,
     marker::PhantomData,
+    rc::Rc,
 };
 
 pub use proptest::test_runner::Config as FuzzConfig;
@@ -62,13 +64,20 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
         // fuzz test run.
         S: Clone,
     {
-        let strat = fuzz_calldata(func);
+        let strat = (60u32, fuzz_state_calldata(func, None));
 
         // Snapshot the state before the test starts running
         let pre_test_state = self.evm.borrow().state().clone();
 
+        let flattened_state = Rc::new(RefCell::new(self.evm.borrow().flatten_state()));
+
+        // let select = proptest::sample::select(flattened_state.clone());
+        let state_strat = (40u32, fuzz_state_calldata(func, Some(flattened_state.clone())));
+
         // stores the consumed gas and calldata of every successful fuzz call
         let fuzz_cases: RefCell<Vec<FuzzCase>> = RefCell::new(Default::default());
+
+        let combined_strat = proptest::strategy::Union::new_weighted(vec![strat, state_strat]);
 
         // stores the latest reason of a test call, this will hold the return reason of failed test
         // case if the runner failed
@@ -78,7 +87,7 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
         let mut runner = self.runner.clone();
         tracing::debug!(func = ?func.name, should_fail, "fuzzing");
         let test_error = runner
-            .run(&strat, |calldata| {
+            .run(&combined_strat, |calldata| {
                 let mut evm = self.evm.borrow_mut();
                 // Before each test, we must reset to the initial state
                 evm.reset(pre_test_state.clone());
@@ -111,6 +120,12 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
                         Err(e) => e.to_string(),
                     }
                 );
+
+                {
+                    let new_flattened = evm.flatten_state();
+                    let mut t = flattened_state.borrow_mut();
+                    (*t).extend(new_flattened);
+                }
 
                 // push test case to the case set
                 fuzz_cases.borrow_mut().push(FuzzCase { calldata, gas });
@@ -222,10 +237,19 @@ pub struct FuzzCase {
 
 /// Given a function, it returns a proptest strategy which generates valid abi-encoded calldata
 /// for that function's input types.
-pub fn fuzz_calldata(func: &Function) -> impl Strategy<Value = Bytes> + '_ {
+pub fn fuzz_state_calldata<'a>(
+    func: &'a Function,
+    state: Option<Rc<RefCell<HashSet<[u8; 32]>>>>,
+) -> impl Strategy<Value = Bytes> + '_ {
     // We need to compose all the strategies generated for each parameter in all
     // possible combinations
-    let strats = func.inputs.iter().map(|input| fuzz_param(&input.kind)).collect::<Vec<_>>();
+    // let strategy = proptest::sample::select(state.clone().into_iter().collect::<Vec<[u8;
+    // 32]>>());
+    let strats = func
+        .inputs
+        .iter()
+        .map(|input| fuzz_param_with_input(&input.kind, state.clone()))
+        .collect::<Vec<_>>();
 
     strats.prop_map(move |tokens| {
         tracing::trace!(input = ?tokens);
@@ -236,65 +260,176 @@ pub fn fuzz_calldata(func: &Function) -> impl Strategy<Value = Bytes> + '_ {
 /// The max length of arrays we fuzz for is 256.
 const MAX_ARRAY_LEN: usize = 256;
 
-/// Given an ethabi parameter type, returns a proptest strategy for generating values for that
-/// datatype. Works with ABI Encoder v2 tuples.
-fn fuzz_param(param: &ParamType) -> impl Strategy<Value = Token> {
-    match param {
-        ParamType::Address => {
-            // The key to making this work is the `boxed()` call which type erases everything
-            // https://altsysrq.github.io/proptest-book/proptest/tutorial/transforming-strategies.html
-            any::<[u8; 20]>().prop_map(|x| Address::from_slice(&x).into_token()).boxed()
-        }
-        ParamType::Bytes => any::<Vec<u8>>().prop_map(|x| Bytes::from(x).into_token()).boxed(),
-        // For ints and uints we sample from a U256, then wrap it to the correct size with a
-        // modulo operation. Note that this introduces modulo bias, but it can be removed with
-        // rejection sampling if it's determined the bias is too severe. Rejection sampling may
-        // slow down tests as it resamples bad values, so may want to benchmark the performance
-        // hit and weigh that against the current bias before implementing
-        ParamType::Int(n) => match n / 8 {
-            32 => any::<[u8; 32]>()
-                .prop_map(move |x| I256::from_raw(U256::from(&x)).into_token())
-                .boxed(),
-            y @ 1..=31 => any::<[u8; 32]>()
-                .prop_map(move |x| {
-                    // Generate a uintN in the correct range, then shift it to the range of intN
-                    // by subtracting 2^(N-1)
-                    let uint = U256::from(&x) % U256::from(2).pow(U256::from(y * 8));
-                    let max_int_plus1 = U256::from(2).pow(U256::from(y * 8 - 1));
-                    let num = I256::from_raw(uint.overflowing_sub(max_int_plus1).0);
-                    num.into_token()
+fn fuzz_param_with_input(
+    param: &ParamType,
+    state: Option<Rc<RefCell<HashSet<[u8; 32]>>>>,
+) -> impl Strategy<Value = Token> {
+    use proptest::prelude::*;
+    if let Some(state) = state {
+        let selectors = any::<prop::sample::Selector>();
+        match param {
+            ParamType::Address => {
+                selectors
+                    .prop_map(move |selector| {
+                        let x = *selector.select(&*state.borrow());
+                        Address::from_slice(&x[..]).into_token()
+                    })
+                    .boxed()
+                // The key to making this work is the `boxed()` call which type erases everything
+                // https://altsysrq.github.io/proptest-book/proptest/tutorial/transforming-strategies.html
+                // state.prop_map(|x| ).boxed()
+            }
+            ParamType::Bytes => selectors
+                .prop_map(move |selector| {
+                    let x = *selector.select(&*state.borrow());
+                    Bytes::from(x).into_token()
                 })
                 .boxed(),
-            _ => panic!("unsupported solidity type int{}", n),
-        },
-        ParamType::Uint(n) => match n / 8 {
-            32 => any::<[u8; 32]>().prop_map(move |x| U256::from(&x).into_token()).boxed(),
-            y @ 1..=31 => any::<[u8; 32]>()
-                .prop_map(move |x| {
-                    (U256::from(&x) % (U256::from(2).pow(U256::from(y * 8)))).into_token()
+            // For ints and uints we sample from a U256, then wrap it to the correct size with a
+            // modulo operation. Note that this introduces modulo bias, but it can be removed with
+            // rejection sampling if it's determined the bias is too severe. Rejection sampling may
+            // slow down tests as it resamples bad values, so may want to benchmark the performance
+            // hit and weigh that against the current bias before implementing
+            ParamType::Int(n) => match n / 8 {
+                32 => selectors
+                    .prop_map(move |selector| {
+                        let x = *selector.select(&*state.borrow());
+                        I256::from_raw(U256::from(x)).into_token()
+                    })
+                    .boxed(),
+                y @ 1..=31 => selectors
+                    .prop_map(move |selector| {
+                        let x = *selector.select(&*state.borrow());
+                        // Generate a uintN in the correct range, then shift it to the range of intN
+                        // by subtracting 2^(N-1)
+                        let uint = U256::from(x) % U256::from(2).pow(U256::from(y * 8));
+                        let max_int_plus1 = U256::from(2).pow(U256::from(y * 8 - 1));
+                        let num = I256::from_raw(uint.overflowing_sub(max_int_plus1).0);
+                        num.into_token()
+                    })
+                    .boxed(),
+                _ => panic!("unsupported solidity type int{}", n),
+            },
+            ParamType::Uint(n) => match n / 8 {
+                32 => selectors
+                    .prop_map(move |selector| {
+                        let x = *selector.select(&*state.borrow());
+                        U256::from(x).into_token()
+                    })
+                    .boxed(),
+                y @ 1..=31 => selectors
+                    .prop_map(move |selector| {
+                        let x = *selector.select(&*state.borrow());
+                        (U256::from(x) % (U256::from(2).pow(U256::from(y * 8)))).into_token()
+                    })
+                    .boxed(),
+                _ => panic!("unsupported solidity type uint{}", n),
+            },
+            ParamType::Bool => selectors
+                .prop_map(move |selector| {
+                    let x = *selector.select(&*state.borrow());
+                    Token::Bool(x[31] == 1)
                 })
                 .boxed(),
-            _ => panic!("unsupported solidity type uint{}", n),
-        },
-        ParamType::Bool => any::<bool>().prop_map(|x| x.into_token()).boxed(),
-        ParamType::String => any::<Vec<u8>>()
-            .prop_map(|x| Token::String(unsafe { std::str::from_utf8_unchecked(&x).to_string() }))
-            .boxed(),
-        ParamType::Array(param) => proptest::collection::vec(fuzz_param(param), 0..MAX_ARRAY_LEN)
+            ParamType::String => selectors
+                .prop_map(move |selector| {
+                    let x = *selector.select(&*state.borrow());
+                    Token::String(unsafe { std::str::from_utf8_unchecked(&x).to_string() })
+                })
+                .boxed(),
+            ParamType::Array(param) => proptest::collection::vec(
+                fuzz_param_with_input(param, Some(state)),
+                0..MAX_ARRAY_LEN,
+            )
             .prop_map(Token::Array)
             .boxed(),
-        ParamType::FixedBytes(size) => (0..*size as u64)
-            .map(|_| any::<u8>())
-            .collect::<Vec<_>>()
-            .prop_map(Token::FixedBytes)
-            .boxed(),
-        ParamType::FixedArray(param, size) => (0..*size as u64)
-            .map(|_| fuzz_param(param).prop_map(|param| param.into_token()))
-            .collect::<Vec<_>>()
-            .prop_map(Token::FixedArray)
-            .boxed(),
-        ParamType::Tuple(params) => {
-            params.iter().map(fuzz_param).collect::<Vec<_>>().prop_map(Token::Tuple).boxed()
+            ParamType::FixedBytes(ref _size) => selectors
+                .prop_map(move |selector| {
+                    let x = *selector.select(&*state.borrow());
+                    // TODO: figure out if size is actually needed here?
+                    Token::FixedBytes(x.to_vec())
+                })
+                .boxed(),
+            ParamType::FixedArray(param, size) => (0..*size as u64)
+                .map(|_| {
+                    fuzz_param_with_input(param, Some(state.clone()))
+                        .prop_map(|param| param.into_token())
+                })
+                .collect::<Vec<_>>()
+                .prop_map(Token::FixedArray)
+                .boxed(),
+            ParamType::Tuple(params) => params
+                .iter()
+                .map(|p| fuzz_param_with_input(p, Some(state.clone())))
+                .collect::<Vec<_>>()
+                .prop_map(Token::Tuple)
+                .boxed(),
+        }
+    } else {
+        match param {
+            ParamType::Address => {
+                // The key to making this work is the `boxed()` call which type erases everything
+                // https://altsysrq.github.io/proptest-book/proptest/tutorial/transforming-strategies.html
+                any::<[u8; 20]>().prop_map(|x| Address::from_slice(&x).into_token()).boxed()
+            }
+            ParamType::Bytes => any::<Vec<u8>>().prop_map(|x| Bytes::from(x).into_token()).boxed(),
+            // For ints and uints we sample from a U256, then wrap it to the correct size with a
+            // modulo operation. Note that this introduces modulo bias, but it can be removed with
+            // rejection sampling if it's determined the bias is too severe. Rejection sampling may
+            // slow down tests as it resamples bad values, so may want to benchmark the performance
+            // hit and weigh that against the current bias before implementing
+            ParamType::Int(n) => match n / 8 {
+                32 => any::<[u8; 32]>()
+                    .prop_map(move |x| I256::from_raw(U256::from(&x)).into_token())
+                    .boxed(),
+                y @ 1..=31 => any::<[u8; 32]>()
+                    .prop_map(move |x| {
+                        // Generate a uintN in the correct range, then shift it to the range of intN
+                        // by subtracting 2^(N-1)
+                        let uint = U256::from(&x) % U256::from(2).pow(U256::from(y * 8));
+                        let max_int_plus1 = U256::from(2).pow(U256::from(y * 8 - 1));
+                        let num = I256::from_raw(uint.overflowing_sub(max_int_plus1).0);
+                        num.into_token()
+                    })
+                    .boxed(),
+                _ => panic!("unsupported solidity type int{}", n),
+            },
+            ParamType::Uint(n) => match n / 8 {
+                32 => any::<[u8; 32]>().prop_map(move |x| U256::from(&x).into_token()).boxed(),
+                y @ 1..=31 => any::<[u8; 32]>()
+                    .prop_map(move |x| {
+                        (U256::from(&x) % (U256::from(2).pow(U256::from(y * 8)))).into_token()
+                    })
+                    .boxed(),
+                _ => panic!("unsupported solidity type uint{}", n),
+            },
+            ParamType::Bool => any::<bool>().prop_map(|x| x.into_token()).boxed(),
+            ParamType::String => any::<Vec<u8>>()
+                .prop_map(|x| {
+                    Token::String(unsafe { std::str::from_utf8_unchecked(&x).to_string() })
+                })
+                .boxed(),
+            ParamType::Array(param) => {
+                proptest::collection::vec(fuzz_param_with_input(param, None), 0..MAX_ARRAY_LEN)
+                    .prop_map(Token::Array)
+                    .boxed()
+            }
+            ParamType::FixedBytes(size) => (0..*size as u64)
+                .map(|_| any::<u8>())
+                .collect::<Vec<_>>()
+                .prop_map(Token::FixedBytes)
+                .boxed(),
+            ParamType::FixedArray(param, size) => (0..*size as u64)
+                .map(|_| fuzz_param_with_input(param, None).prop_map(|param| param.into_token()))
+                .collect::<Vec<_>>()
+                .prop_map(Token::FixedArray)
+                .boxed(),
+            ParamType::Tuple(params) => params
+                .iter()
+                .map(|p| fuzz_param_with_input(p, None))
+                .collect::<Vec<_>>()
+                .prop_map(Token::Tuple)
+                .boxed(),
         }
     }
 }
