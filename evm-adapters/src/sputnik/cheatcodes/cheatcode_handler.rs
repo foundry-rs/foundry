@@ -44,8 +44,6 @@ use once_cell::sync::Lazy;
 
 use ethers::abi::Tokenize;
 
-
-
 // This is now getting us the right hash? Also tried [..20]
 // Lazy::new(|| Address::from_slice(&keccak256("hevm cheat code")[12..]));
 /// Address where the Vm cheatcodes contract lives

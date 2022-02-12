@@ -18,8 +18,6 @@ use super::SputnikExecutor;
 
 pub type MemoryState = BTreeMap<Address, MemoryAccount>;
 
-pub const ASSUME_MAGIC_RETURN_CODE: &str = "FOUNDRY::ASSUME";
-
 // TODO: Check if we can implement this as the base layer of an ethers-provider
 // Middleware stack instead of doing RPC calls.
 /// Wrapper around Sputnik Executors which implements the [`Evm`] trait.
