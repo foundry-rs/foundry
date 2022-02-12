@@ -402,6 +402,22 @@ pub enum Subcommands {
         )]
         block: Option<BlockId>,
     },
+    #[clap(name = "proof", about = "Generate a storage proof for a given slot")]
+    Proof {
+        #[clap(help = "the contract address", parse(try_from_str = parse_name_or_address))]
+        address: NameOrAddress,
+        #[clap(help = "the storage slot numbers (hex or number)", parse(try_from_str = parse_slot))]
+        slots: Vec<H256>,
+        #[clap(short, long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+        #[clap(
+            long,
+            short,
+            help = "the block you want to query, can also be earliest/latest/pending",
+            parse(try_from_str = parse_block_id)
+        )]
+        block: Option<BlockId>,
+    },
     #[clap(name = "nonce")]
     #[clap(about = "Prints the number of transactions sent from <address>")]
     Nonce {
