@@ -29,6 +29,9 @@ pub struct Cheatcodes {
     pub accounts: HashMap<Address, MemoryAccount>,
     /// The overriden tx.origin
     pub origin: Option<Address>,
+    /// The overridden block hashes, whenever `roll` gets
+    /// called.
+    pub block_hashes: HashMap<U256, H256>,
 }
 
 /// Extension trait over [`Backend`] which provides additional methods for interacting with the
