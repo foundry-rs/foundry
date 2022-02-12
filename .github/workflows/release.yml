@@ -72,11 +72,15 @@ jobs:
           # The OS is used for the runner
           # The platform is a generic platform name
           # The target is used by Cargo
-          # The arch is either 386 or amd64
+          # The arch is either 386, arm64 or amd64
           - os: ubuntu-latest
             platform: linux
             target: x86_64-unknown-linux-gnu
             arch: amd64
+          - os: ubuntu-latest
+            platform: linux
+            target: aarch64-unknown-linux-gnu
+            arch: arm64
           - os: macos-latest
             platform: darwin
             target: x86_64-apple-darwin
@@ -112,6 +116,13 @@ jobs:
           echo "SDKROOT=$(xcrun -sdk macosx --show-sdk-path)" >> $GITHUB_ENV
           echo "MACOSX_DEPLOYMENT_TARGET=$(xcrun -sdk macosx --show-sdk-platform-version)" >> $GITHUB_ENV
 
+      - name: Linux ARM setup
+        if: ${{ matrix.job.target == 'aarch64-unknown-linux-gnu' }}
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+
       - name: Build binaries
         env:
           RUSTFLAGS: -C link-args=-s
@@ -146,7 +157,7 @@ jobs:
 
       - name: Build man page
         id: man
-        if: ${{ matrix.job.platform == 'linux' }}
+        if: ${{ matrix.job.target == 'x86_64-unknown-linux-gnu' }}
         env:
           PLATFORM_NAME: ${{ matrix.job.platform }}
           TARGET: ${{ matrix.job.target }}
