@@ -68,7 +68,7 @@ impl ValueTree for UintValueTree {
 }
 
 /// Value tree for unsigned ints (up to uint256).
-/// The strategy combine 3 different strategies, each assigned a specific weight:
+/// The strategy combines 3 different strategies, each assigned a specific weight:
 /// 1. Generate purely random value in a range. This will first choose bit size uniformly (up `bits`
 /// param). Then generate a value for this bit size.
 /// 2. Generate a random value around the edges (+/- 3 around 0 and max possible value)
