@@ -10,33 +10,29 @@ use ethers::{
 /// Command to list remappings
 #[derive(Debug, Clone, Parser)]
 pub struct VerifyArgs {
-    #[structopt(help = "the target contract address")]
+    #[clap(help = "the target contract address")]
     address: Address,
 
     #[clap(help = "the target contract path")]
     contract: String,
 
-    #[structopt(long, help = "the encoded constructor arguments calldata")]
+    #[clap(long, help = "the encoded constructor arguments calldata")]
     args: Option<String>,
 
-    #[structopt(long, help = "the compiler version used during build")]
+    #[clap(long, help = "the compiler version used during build")]
     compiler_version: String,
 
-    #[structopt(long, help = "the number of optimization runs used")]
+    #[clap(long, help = "the number of optimization runs used")]
     num_of_optimizations: Option<u32>,
 
     // TODO: Allow choosing network using the provider or chainid as string
-    #[structopt(
-        long,
-        help = "the chain id of the network you are verifying for",
-        default_value = "1"
-    )]
+    #[clap(long, help = "the chain id of the network you are verifying for", default_value = "1")]
     chain_id: u64,
 
-    #[structopt(help = "your etherscan api key", env = "ETHERSCAN_API_KEY")]
+    #[clap(help = "your etherscan api key", env = "ETHERSCAN_API_KEY")]
     etherscan_key: String,
 
-    #[structopt(flatten)]
+    #[clap(flatten)]
     opts: BuildArgs,
 }
 

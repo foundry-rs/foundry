@@ -336,7 +336,7 @@ pub fn get_func(sig: &str) -> Result<Function> {
 pub async fn get_func_etherscan(
     function_name: &str,
     contract: Address,
-    args: Vec<String>,
+    args: &[String],
     chain: Chain,
     etherscan_api_key: String,
 ) -> Result<Function> {
@@ -354,7 +354,7 @@ pub async fn get_func_etherscan(
     let funcs = abi.functions.get(function_name).unwrap_or(&empty);
 
     for func in funcs {
-        let res = encode_args(func, &args);
+        let res = encode_args(func, args);
         if res.is_ok() {
             return Ok(func.clone())
         }

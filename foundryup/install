@@ -43,7 +43,7 @@ fi
 
 FOUNDRYUP_REPO=${FOUNDRYUP_REPO-gakonst/foundry}
 
-if [[ "$FOUNDRYUP_REPO" == "gakonst/foundry" && -z "$FOUNDRYUP_BRANCH" ]]; then 
+if [[ "$FOUNDRYUP_REPO" == "gakonst/foundry" && -z "$FOUNDRYUP_BRANCH" ]]; then
   FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION-nightly}
   FOUNDRYUP_TAG=$FOUNDRYUP_VERSION
 
@@ -72,7 +72,7 @@ if [[ "$FOUNDRYUP_REPO" == "gakonst/foundry" && -z "$FOUNDRYUP_BRANCH" ]]; then
       ;;
     *)
       echo "foundryup: unsupported platform: $PLATFORM"
-      exit 1  
+      exit 1
       ;;
   esac
 
@@ -83,13 +83,13 @@ if [[ "$FOUNDRYUP_REPO" == "gakonst/foundry" && -z "$FOUNDRYUP_BRANCH" ]]; then
       ARCHITECTURE="arm64" # Rosetta.
     else
       ARCHITECTURE="amd64" # Intel.
-    fi 
-  elif [ "${ARCHITECTURE}" = "arm64" ]; then
+    fi
+  elif [ "${ARCHITECTURE}" = "arm64" ] ||[ "${ARCHITECTURE}" = "aarch64" ] ; then
     ARCHITECTURE="arm64" # Arm.
   else
     ARCHITECTURE="amd64" # Amd.
   fi
-  
+
   # Compute the URL of the release tarball in the Foundry repository.
   RELEASE_URL="https://github.com/${FOUNDRYUP_REPO}/releases/download/${FOUNDRYUP_TAG}/"
   BIN_TARBALL_URL="${RELEASE_URL}foundry_${FOUNDRYUP_VERSION}_${PLATFORM}_${ARCHITECTURE}.tar.gz"
@@ -100,9 +100,9 @@ if [[ "$FOUNDRYUP_REPO" == "gakonst/foundry" && -z "$FOUNDRYUP_BRANCH" ]]; then
   # Download the man tarball and unpack it into the .foundry man directory.
   curl -L $MAN_TARBALL_URL | tar -xvzC $FOUNDRY_MAN_DIR
   echo foundryup: done!
-else 
+else
   FOUNDRYUP_BRANCH=${FOUNDRYUP_BRANCH-master}
-  
+
   if ! command -v cargo &> /dev/null ; then
     # Error if cargo is not already installed.
     echo "foundryup: cargo is not installed. Please install it first."
@@ -110,7 +110,7 @@ else
   fi
 
   REPO_PATH="${FOUNDRY_DIR}/${FOUNDRYUP_REPO}"
-  
+
   if [ -d $REPO_PATH ]; then
     # If the repo path exists move to it and do a force checkout, discarding any local changes
     cd $REPO_PATH
@@ -125,7 +125,7 @@ else
     cd $REPO_PATH
     git checkout ${FOUNDRYUP_BRANCH}
   fi
-  
+
   # Build the repo and install it locally to the .foundry bin directory.
   # --root appends /bin to the directory it is given, so we pass FOUNDRY_DIR.
   cargo install --path ./cli --bins --locked --force --root $FOUNDRY_DIR
