@@ -3843,6 +3843,7 @@ dependencies = [
 [[package]]
 name = "starknet"
 version = "0.1.0"
+source = "git+https://github.com/xJonathanLEI/starknet-rs#8436e39f5afdfd0f681a840bc61a2bd958cb694f"
 dependencies = [
  "starknet-accounts",
  "starknet-contract",
@@ -3854,6 +3855,7 @@ dependencies = [
 [[package]]
 name = "starknet-accounts"
 version = "0.1.0"
+source = "git+https://github.com/xJonathanLEI/starknet-rs#8436e39f5afdfd0f681a840bc61a2bd958cb694f"
 dependencies = [
  "async-trait",
  "starknet-core",
@@ -3865,6 +3867,7 @@ dependencies = [
 [[package]]
 name = "starknet-contract"
 version = "0.1.0"
+source = "git+https://github.com/xJonathanLEI/starknet-rs#8436e39f5afdfd0f681a840bc61a2bd958cb694f"
 dependencies = [
  "flate2",
  "rand",
@@ -3878,6 +3881,7 @@ dependencies = [
 [[package]]
 name = "starknet-core"
 version = "0.1.0"
+source = "git+https://github.com/xJonathanLEI/starknet-rs#8436e39f5afdfd0f681a840bc61a2bd958cb694f"
 dependencies = [
  "base64 0.13.0",
  "ethereum-types",
@@ -3891,6 +3895,7 @@ dependencies = [
 [[package]]
 name = "starknet-crypto"
 version = "0.1.0"
+source = "git+https://github.com/xJonathanLEI/starknet-rs#8436e39f5afdfd0f681a840bc61a2bd958cb694f"
 dependencies = [
  "bitvec 0.20.4",
  "crypto-bigint",
@@ -3908,6 +3913,7 @@ dependencies = [
 [[package]]
 name = "starknet-providers"
 version = "0.1.0"
+source = "git+https://github.com/xJonathanLEI/starknet-rs#8436e39f5afdfd0f681a840bc61a2bd958cb694f"
 dependencies = [
  "async-trait",
  "reqwest",
@@ -3921,6 +3927,7 @@ dependencies = [
 [[package]]
 name = "starknet-signers"
 version = "0.1.0"
+source = "git+https://github.com/xJonathanLEI/starknet-rs#8436e39f5afdfd0f681a840bc61a2bd958cb694f"
 dependencies = [
  "async-trait",
  "starknet-core",
