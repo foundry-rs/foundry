@@ -1,7 +1,7 @@
 //! Represents a cairo/starknet workspace.
 
 use crate::{cmd::StarknetCompile, config::ProjectPathsConfig, error::Result};
-use starknet::core::types::ContractCode;
+use starknet::contract::artifact::Artifact;
 use std::path::PathBuf;
 
 #[derive(Debug)]
@@ -29,13 +29,13 @@ impl Project {
     /// Convenience function to call `ProjectBuilder::default()`
     /// ```rust
     /// use foundry_sand::Project;
-    /// let project = Project::builder().build().unwrap();
+    /// let project = Project::builder().build();
     /// ```
     pub fn builder() -> ProjectBuilder {
         ProjectBuilder::default()
     }
 
-    pub fn compile(&self) -> Result<Vec<ContractCode>> {
+    pub fn compile(&self) -> Result<Vec<Artifact>> {
         self.compiler.compile_dir(self.sources_path())
     }
 }

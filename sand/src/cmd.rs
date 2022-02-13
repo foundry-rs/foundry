@@ -5,7 +5,7 @@ use crate::{
     utils,
 };
 use semver::Version;
-use starknet::core::types::ContractCode;
+use starknet::contract::artifact::Artifact;
 use std::{
     fmt,
     io::BufRead,
@@ -13,6 +13,8 @@ use std::{
     process::{Command, Output, Stdio},
     str::FromStr,
 };
+
+const STARKNET_COMPILE_PATH: &str = "STARKNET_COMPILE_PATH";
 
 /// The Compiler target
 ///
@@ -102,31 +104,27 @@ impl StarknetCompile {
 
     /// returns the import paths as concatenated by ":".
     fn import_paths_arg(&self) -> Option<String> {
-        if !self.import_paths.is_empty() {
-            Some(
-                self.import_paths
-                    .iter()
-                    .map(|p| format!("{}", p.display()))
-                    .collect::<Vec<_>>()
-                    .join(":"),
-            )
-        } else {
-            None
-        }
+        (!self.import_paths.is_empty()).then(|| {
+            self.import_paths
+                .iter()
+                .map(|p| format!("{}", p.display()))
+                .collect::<Vec<_>>()
+                .join(":")
+        })
     }
 
-    pub fn compile_dir(&self, contracts_dir: impl AsRef<Path>) -> Result<Vec<ContractCode>> {
+    pub fn compile_dir(&self, contracts_dir: impl AsRef<Path>) -> Result<Vec<Artifact>> {
         self.compile_all(utils::cairo_files(contracts_dir))
     }
 
     pub fn compile_all(
         &self,
         files: impl IntoIterator<Item = impl AsRef<Path>>,
-    ) -> Result<Vec<ContractCode>> {
+    ) -> Result<Vec<Artifact>> {
         files.into_iter().map(|file| self.compile_contract(file)).collect()
     }
 
-    pub fn compile_contract(&self, file: impl AsRef<Path>) -> Result<ContractCode> {
+    pub fn compile_contract(&self, file: impl AsRef<Path>) -> Result<Artifact> {
         let mut cmd = Command::new(&self.bin);
         if let Some(cairo_path) = self.import_paths_arg() {
             cmd.arg("--cairo-path").arg(cairo_path);
@@ -142,6 +140,9 @@ impl StarknetCompile {
                 .wait_with_output()
                 .map_err(|err| SandError::io(err, &self.bin))?,
         )?;
+
+        let val: serde_json::Value = serde_json::from_slice(&output).unwrap();
+        std::fs::write("out.json", serde_json::to_string_pretty(&val).unwrap()).unwrap();
 
         Ok(serde_json::from_slice(&output)?)
     }
@@ -163,7 +164,7 @@ impl StarknetCompile {
 
 impl Default for StarknetCompile {
     fn default() -> Self {
-        if let Ok(starknet_compile) = std::env::var("STARKNET_COMPILE_PATH") {
+        if let Ok(starknet_compile) = std::env::var(STARKNET_COMPILE_PATH) {
             return StarknetCompile::new(starknet_compile)
         }
         StarknetCompile::new(Target::Starknet.bin_name())
@@ -200,5 +201,39 @@ impl fmt::Display for StarknetCompile {
             write!(f, "--cairo-path {}", cairo_path)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_data() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test-data")
+    }
+
+    /// Run the closure only if the `STARKNET_COMPILE_PATH` env var is set
+    fn run_if_set<F>(f: F)
+    where
+        F: FnOnce(StarknetCompile),
+    {
+        if let Ok(compile_path) = std::env::var(STARKNET_COMPILE_PATH) {
+            f(StarknetCompile::new(compile_path))
+        }
+    }
+
+    #[test]
+    fn can_compile() {
+        run_if_set(|compiler| {
+            let contract = test_data().join("contract.cairo");
+            let _ = compiler.compile_contract(contract).unwrap();
+        })
+    }
+
+    #[test]
+    fn can_detect_version() {
+        run_if_set(|compiler| {
+            let _version = compiler.version().unwrap();
+        })
     }
 }
