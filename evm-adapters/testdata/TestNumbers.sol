@@ -7,7 +7,7 @@ contract TestNumbers is DSTest {
         assertTrue(true);
     }
 
-    function testNegative(uint256 val) public {
+    function testNegativeHalf(uint256 val) public {
         assertTrue(val < 2 ** 128 - 1);
     }
 
@@ -19,8 +19,12 @@ contract TestNumbers is DSTest {
         assertTrue(val != 2);
     }
 
-    function testNegativeMaxMinus2(uint256 val) public {
+    function testNegative2Max(uint256 val) public {
         assertTrue(val != type(uint256).max - 2);
+    }
+
+    function testNegativeMax(uint256 val) public {
+        assertTrue(val != type(uint256).max);
     }
 
     function testEquality(uint256 x, uint256 y) public {
