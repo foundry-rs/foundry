@@ -84,6 +84,7 @@ impl StarknetCompile {
         self
     }
 
+    /// returns the import paths as concatenated by ":".
     fn import_paths_arg(&self) -> Option<String> {
         if !self.import_paths.is_empty() {
             Some(
@@ -114,19 +115,35 @@ impl StarknetCompile {
         todo!()
     }
 
-    pub fn compile_dir(&self, contracts_dir: impl AsRef<Path>) -> Result<Vec<()>> {
+    pub fn compile_dir(&self, contracts_dir: impl AsRef<Path>) -> Result<Vec<ContractCode>> {
         self.compile_all(utils::cairo_files(contracts_dir))
     }
 
     pub fn compile_all(
         &self,
-        _files: impl IntoIterator<Item = impl AsRef<Path>>,
-    ) -> Result<Vec<()>> {
-        todo!()
+        files: impl IntoIterator<Item = impl AsRef<Path>>,
+    ) -> Result<Vec<ContractCode>> {
+        files.into_iter().map(|file| self.compile_contract(file)).collect()
     }
 
-    pub fn compile_contract(&self, _file: impl AsRef<Path>) -> Result<ContractCode> {
-        todo!()
+    pub fn compile_contract(&self, file: impl AsRef<Path>) -> Result<ContractCode> {
+        let mut cmd = Command::new(&self.bin);
+        if let Some(cairo_path) = self.import_paths_arg() {
+            cmd.arg("--cairo-path").arg(cairo_path);
+        }
+        cmd.arg(file.as_ref());
+
+        let output = successful_output(
+            cmd.stdin(Stdio::piped())
+                .stderr(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()
+                .map_err(|err| SandError::io(err, &self.bin))?
+                .wait_with_output()
+                .map_err(|err| SandError::io(err, &self.bin))?,
+        )?;
+
+        Ok(serde_json::from_slice(&output)?)
     }
 
     /// Returns the version from the configured `solc`
@@ -150,6 +167,14 @@ impl Default for StarknetCompile {
             return StarknetCompile::new(starknet_compile)
         }
         StarknetCompile::new(Target::Starknet.bin_name())
+    }
+}
+
+fn successful_output(output: Output) -> Result<Vec<u8>> {
+    if output.status.success() {
+        Ok(output.stdout)
+    } else {
+        Err(SandError::CompilerError(String::from_utf8_lossy(&output.stderr).to_string()))
     }
 }
 
@@ -177,5 +202,3 @@ impl fmt::Display for StarknetCompile {
         Ok(())
     }
 }
-
-pub fn compile_contract() {}

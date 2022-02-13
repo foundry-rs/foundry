@@ -15,8 +15,13 @@ pub enum SandError {
     /// General purpose message
     #[error("{0}")]
     Message(String),
+    #[error("{0}")]
+    CompilerError(String),
     #[error(transparent)]
     SemverError(#[from] semver::Error),
+    /// Deserialization error
+    #[error(transparent)]
+    SerdeJson(#[from] serde_json::Error),
 }
 
 impl SandError {
