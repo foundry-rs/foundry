@@ -93,9 +93,9 @@ impl UintStrategy {
     fn generate_edge_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
         let rng = runner.rng();
         let is_min = rng.gen_bool(0.5);
-        let offset = U256::from(rng.gen_range(0..self.bits));
-        let anchor = if is_min { U256::from(0u8) } else { U256::from(1u8) << U256::from(self.bits) };
-        let start = if is_min { offset } else { anchor - offset };
+        let offset = U256::from(rng.gen_range(0..3));
+        let max = if self.bits < 256 {U256::from(1u8) << U256::from(self.bits) - 1} else {U256::MAX};
+        let start = if is_min { offset } else { max - offset };
         Ok(UintValueTree::new(start, true))
     }
 
@@ -117,7 +117,13 @@ impl UintStrategy {
             x if (x >= 128) && (x < 256) => higher = higher & ((1u128 << (x - 128)) - 1),
             _ => {},
         };
-        let start: U256 = Into::<U256>::into(higher) >> Into::<U256>::into(128u8) + Into::<U256>::into(lower);        
+        let mut inner: [u64; 4] = [0; 4];
+        let mask64 = (1 << 65) - 1;
+        inner[0] = (lower & mask64) as u64;
+        inner[1] = (lower >> 64) as u64;
+        inner[2] = (higher & mask64) as u64;
+        inner[3] = (higher >> 64) as u64;
+        let start: U256 = U256(inner);
         Ok(UintValueTree::new(start, false))
     }
 }
