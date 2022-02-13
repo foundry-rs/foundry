@@ -137,10 +137,11 @@ impl CreateArgs {
             deployer
         };
 
-        let deployed_contract = deployer.send().await?;
+        let (deployed_contract, receipt) = deployer.send_with_receipt().await?;
 
         println!("Deployer: {:?}", deployer_address);
         println!("Deployed to: {:?}", deployed_contract.address());
+        println!("Transaction hash: {:?}", receipt.transaction_hash);
 
         Ok(())
     }
