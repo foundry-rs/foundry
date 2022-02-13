@@ -272,20 +272,7 @@ where
         };
 
         let func = if let Some((sig, args)) = args {
-            let args = join_all(args.iter().map(|arg| async {
-                if arg.ends_with(".eth") {
-                    let val = format!(
-                        "0x{}",
-                        hex::encode(self.provider.resolve_name(arg).await?.as_bytes())
-                    );
-                    Ok(val)
-                } else {
-                    Ok(arg.to_string())
-                }
-            }))
-            .await
-            .into_iter()
-            .collect::<Result<Vec<String>>>()?;
+            let args = resolve_name_args(&args, &self.provider).await;
 
             let func = if sig.contains('(') {
                 get_func(sig)?
@@ -1239,6 +1226,21 @@ impl SimpleCast {
 
 fn strip_0x(s: &str) -> &str {
     s.strip_prefix("0x").unwrap_or(s)
+}
+
+async fn resolve_name_args<M: Middleware>(args: &[String], provider: &M) -> Vec<String> {
+    join_all(args.iter().map(|arg| async {
+        if arg.contains('.') {
+            let addr = provider.resolve_name(arg).await;
+            match addr {
+                Ok(addr) => format!("0x{}", hex::encode(addr.as_bytes())),
+                Err(_) => arg.to_string(),
+            }
+        } else {
+            arg.to_string()
+        }
+    }))
+    .await
 }
 
 #[cfg(test)]
