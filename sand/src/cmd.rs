@@ -56,6 +56,22 @@ impl StarknetCompile {
         Self { bin: bin.into(), import_paths: Default::default() }
     }
 
+    /// Bindings for [cairo-lang-docker](https://github.com/Shard-Labs/cairo-cli-docker)
+    ///
+    /// Compared to [`StarknetCompile::docker_unchecked()`] this also checks that docker daemon is
+    /// running
+    pub fn docker() -> Result<Self> {
+        todo!()
+    }
+
+    pub fn docker_unchecked() -> Self {
+        todo!()
+    }
+
+    pub fn docker_tag(_tag: impl AsRef<str>) -> Self {
+        todo!()
+    }
+
     pub fn get_import_paths(&self) -> &Vec<PathBuf> {
         &self.import_paths
     }
@@ -97,22 +113,6 @@ impl StarknetCompile {
         } else {
             None
         }
-    }
-
-    /// Bindings for [cairo-lang-docker](https://github.com/Shard-Labs/cairo-cli-docker)
-    ///
-    /// Compared to [`StarknetCompile::docker_unchecked()`] this also checks that docker daemon is
-    /// running
-    pub fn docker() -> Result<Self> {
-        todo!()
-    }
-
-    pub fn docker_unchecked() -> Self {
-        todo!()
-    }
-
-    pub fn docker_tag(_tag: impl AsRef<str>) -> Self {
-        todo!()
     }
 
     pub fn compile_dir(&self, contracts_dir: impl AsRef<Path>) -> Result<Vec<ContractCode>> {
