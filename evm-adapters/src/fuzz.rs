@@ -124,6 +124,7 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
                 revert_reason: revert_reason.into_inner().expect("Revert error string must be set"),
             });
 
+        self.evm.borrow_mut().reset(pre_test_state);
         FuzzTestResult { cases: FuzzedCases::new(fuzz_cases.into_inner()), test_error }
     }
 }
