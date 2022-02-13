@@ -72,28 +72,20 @@ pub struct UintStrategy {
 }
 
 impl UintStrategy {
-    pub fn new(bits: usize) -> Self {
+    pub fn new(bits: usize, fixtures: Vec<U256>) -> Self {
         Self {
             bits,
-            fixtures: Vec::new(),
+            fixtures,
             edge_weight: 10usize,
             fixtures_weight: 40usize,
             random_weight: 50usize,
         }
     }
 
-    fn fixtures(&self) -> &[U256] {
-        &self.fixtures
-    }
-
-    fn set_fixtures(&mut self, fixtures: Vec<U256>) {
-        self.fixtures = fixtures
-    }
-
     fn generate_edge_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
         let rng = runner.rng();
         let is_min = rng.gen_bool(0.5);
-        let offset = U256::from(rng.gen_range(0..3));
+        let offset = U256::from(rng.gen_range(0..4));
         let max = if self.bits < 256 {U256::from(1u8) << U256::from(self.bits) - 1} else {U256::MAX};
         let start = if is_min { offset } else { max - offset };
         Ok(UintValueTree::new(start, true))
@@ -113,7 +105,10 @@ impl UintStrategy {
         let mut higher: u128 = rng.gen_range(0..=u128::MAX);
         let mut lower: u128 = rng.gen_range(0..=u128::MAX);
         match bits {
-            x if x < 128 => lower = lower & ((1u128 << x) - 1),
+            x if x < 128 => {
+                lower = lower & ((1u128 << x) - 1);
+                higher = 0;
+            },
             x if (x >= 128) && (x < 256) => higher = higher & ((1u128 << (x - 128)) - 1),
             _ => {},
         };
