@@ -201,7 +201,7 @@ impl<'a, B: Backend> ContractRunner<'a, B> {
 impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
     /// Creates a new EVM and deploys the test contract inside the runner
     /// from the sending account.
-    pub fn new_sputnik_evm(&'a self) -> eyre::Result<(Address, TestSputnikVM<'a, B>, Vec<String>)> {
+    pub fn new_sputnik_evm(&'a self, force_tracing: bool) -> eyre::Result<(Address, TestSputnikVM<'a, B>, Vec<String>)> {
         // create the EVM, clone the backend.
         let mut executor = Executor::new_with_cheatcodes(
             self.backend.clone(),
@@ -209,7 +209,7 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
             self.evm_cfg,
             &*PRECOMPILES_MAP,
             self.evm_opts.ffi,
-            self.evm_opts.verbosity > 2,
+            self.evm_opts.verbosity > 2 || force_tracing,
             self.evm_opts.debug,
         );
 
@@ -295,7 +295,7 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
         let should_fail = func.name.starts_with("testFail");
         tracing::debug!(func = ?func.signature(), should_fail, "unit-testing");
 
-        let (address, mut evm, init_logs) = self.new_sputnik_evm()?;
+        let (address, mut evm, init_logs) = self.new_sputnik_evm(false)?;
 
         let errors_abi = self.execution_info.as_ref().map(|(_, _, errors)| errors);
         let errors_abi = if let Some(ref abi) = errors_abi { abi } else { self.contract };
@@ -399,6 +399,158 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
         })
     }
 
+    #[tracing::instrument(name = "invariant-test", skip_all, fields(name = %func.signature()))]
+    pub fn run_invariant_test(
+        &self,
+        func: &Function,
+        setup: bool,
+        runner: TestRunner,
+        known_contracts: Option<&BTreeMap<String, (Abi, Vec<u8>)>>,
+    ) -> Result<TestResult> {
+        // do not trace in fuzztests, as it's a big performance hit
+        let start = Instant::now();
+        let should_fail = func.name.starts_with("testFail");
+        tracing::debug!(func = ?func.signature(), should_fail, "invariant-fuzzing");
+
+        let (address, mut evm, init_logs) = self.new_sputnik_evm(true)?;
+
+        let mut traces: Option<Vec<CallTraceArena>> = Some(Vec::new());
+        let mut identified_contracts: Option<BTreeMap<Address, (String, Abi)>> = Some(BTreeMap::new());
+
+        for trace in evm.traces().iter() {
+            if let Some(ref mut ident) = identified_contracts {
+                trace.update_identified(
+                    0,
+                    known_contracts.expect("traces enabled but no identified_contracts"),
+                    ident,
+                    &evm,
+                );
+            }
+        }
+        
+        // clear out the deployment trace
+        evm.reset_traces();
+
+        // call the setup function in each test to reset the test's state.
+        if setup {
+            tracing::trace!("setting up");
+            match evm.setup(address) {
+                Ok((_reason, _setup_logs)) => {}
+                Err(e) => {
+                    // if tracing is enabled, just return it as a failed test
+                    // otherwise abort
+                    if evm.tracing_enabled() {
+                        self.update_traces(
+                            &mut traces,
+                            &mut identified_contracts,
+                            known_contracts,
+                            setup,
+                            &mut evm,
+                        );
+                    }
+                    return Ok(TestResult {
+                        success: false,
+                        reason: Some("Setup failed: ".to_string() + &e.to_string()),
+                        gas_used: 0,
+                        counterexample: None,
+                        logs: vec![],
+                        kind: TestKind::Fuzz(FuzzedCases::new(vec![])),
+                        traces,
+                        identified_contracts,
+                        debug_calls: if evm.state().debug_enabled {
+                            Some(evm.debug_calls())
+                        } else {
+                            None
+                        },
+                        labeled_addresses: evm.state().labels.clone(),
+                    })
+                }
+            }
+        }
+
+        for trace in evm.traces().iter() {
+            if let Some(ref mut ident) = identified_contracts {
+                trace.update_identified(
+                    0,
+                    known_contracts.expect("traces enabled but no identified_contracts"),
+                    ident,
+                    &evm,
+                );
+            }
+        }
+
+        let mut logs = init_logs;
+
+        let prev = evm.set_tracing_enabled(false);
+
+        // instantiate the fuzzed evm in line
+        let evm = FuzzedExecutor::new(&mut evm, runner, self.sender);
+        let FuzzTestResult { cases, test_error } =
+            evm.fuzz(func, address, should_fail, Some(self.contract));
+
+        let evm = evm.into_inner();
+        if let Some(ref error) = test_error {
+            // we want traces for a failed fuzz
+            if let TestError::Fail(_reason, bytes) = &error.test_error {
+                if prev {
+                    let _ = evm.set_tracing_enabled(true);
+                }
+                let (_retdata, status, _gas, execution_logs) =
+                    evm.call_raw(self.sender, address, bytes.clone(), 0.into(), false)?;
+                if is_fail(evm, status) {
+                    logs.extend(execution_logs);
+                    // add reverted logs
+                    logs.extend(evm.all_logs());
+                } else {
+                    logs.extend(execution_logs);
+                }
+                self.update_traces(
+                    &mut traces,
+                    &mut identified_contracts,
+                    known_contracts,
+                    setup,
+                    evm,
+                );
+            }
+        }
+
+        let success = test_error.is_none();
+        let mut counterexample = None;
+        let mut reason = None;
+        if let Some(err) = test_error {
+            match err.test_error {
+                TestError::Fail(_, value) => {
+                    // skip the function selector when decoding
+                    let args = func.decode_input(&value.as_ref()[4..])?;
+                    let counter = CounterExample { calldata: value.clone(), args };
+                    counterexample = Some(counter);
+                    tracing::info!("Found minimal failing case: {}", hex::encode(&value));
+                }
+                result => panic!("Unexpected test result: {:?}", result),
+            }
+            if !err.revert_reason.is_empty() {
+                reason = Some(err.revert_reason);
+            }
+        }
+
+        let duration = Instant::now().duration_since(start);
+        tracing::debug!(?duration, %success);
+
+        // from that call?
+        Ok(TestResult {
+            success,
+            reason,
+            gas_used: cases.median_gas(),
+            counterexample,
+            logs,
+            kind: TestKind::Fuzz(cases),
+            traces,
+            identified_contracts,
+            debug_calls: if evm.state().debug_enabled { Some(evm.debug_calls()) } else { None },
+            labeled_addresses: evm.state().labels.clone(),
+        })
+    }
+
     #[tracing::instrument(name = "fuzz-test", skip_all, fields(name = %func.signature()))]
     pub fn run_fuzz_test(
         &self,
@@ -412,7 +564,7 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
         let should_fail = func.name.starts_with("testFail");
         tracing::debug!(func = ?func.signature(), should_fail, "fuzzing");
 
-        let (address, mut evm, init_logs) = self.new_sputnik_evm()?;
+        let (address, mut evm, init_logs) = self.new_sputnik_evm(false)?;
 
         let mut traces: Option<Vec<CallTraceArena>> = None;
         let mut identified_contracts: Option<BTreeMap<Address, (String, Abi)>> = None;
