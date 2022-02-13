@@ -101,6 +101,13 @@ pub struct Config {
     pub solc_version: Option<Version>,
     /// whether to autodetect the solc compiler version to use
     pub auto_detect_solc: bool,
+    /// Offline mode, if set, network access (downloading solc) is disallowed.
+    ///
+    /// Relationship with `auto_detect_solc`:
+    ///    - if `auto_detect_solc = true` and `offline = true`, the required solc version(s) will
+    ///      be auto detected but if the solc version is not installed, it will _not_ try to
+    ///      install it
+    pub offline: bool,
     /// Whether to activate optimizer
     pub optimizer: bool,
     /// Sets the optimizer runs
@@ -357,6 +364,7 @@ impl Config {
             .solc_config(SolcConfig::builder().settings(self.solc_settings()?).build())
             .ignore_error_codes(self.ignored_error_codes.clone())
             .set_auto_detect(self.auto_detect_solc)
+            .set_offline(self.offline)
             .set_cached(cached)
             .set_no_artifacts(no_artifacts)
             .build()?;
@@ -704,6 +712,7 @@ impl Default for Config {
             gas_reports: vec!["*".to_string()],
             solc_version: None,
             auto_detect_solc: true,
+            offline: false,
             optimizer: true,
             optimizer_runs: 200,
             optimizer_details: None,

@@ -29,7 +29,11 @@ impl<B: Backend> Backend for CheatcodeBackend<B> {
     }
 
     fn block_hash(&self, number: U256) -> H256 {
-        self.backend.block_hash(number)
+        self.cheats
+            .block_hashes
+            .get(&number)
+            .cloned()
+            .unwrap_or_else(|| self.backend.block_hash(number))
     }
 
     fn block_number(&self) -> U256 {

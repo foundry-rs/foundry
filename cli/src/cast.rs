@@ -155,7 +155,7 @@ async fn main() -> eyre::Result<()> {
                 "{}",
                 Cast::new(provider)
                     .call(
-                        eth.sender().await,
+                        eth.from.unwrap_or(Address::zero()),
                         address,
                         (&sig, args),
                         eth.chain,
@@ -465,6 +465,11 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(rpc_url)?;
             let value = provider.get_storage_at(address, slot, block).await?;
             println!("{:?}", value);
+        }
+        Subcommands::Proof { address, slots, rpc_url, block } => {
+            let provider = Provider::try_from(rpc_url)?;
+            let value = provider.get_proof(address, slots, block).await?;
+            println!("{}", serde_json::to_string(&value)?);
         }
         Subcommands::Receipt { hash, field, to_json, rpc_url, cast_async, confirmations } => {
             let provider = Provider::try_from(rpc_url)?;
