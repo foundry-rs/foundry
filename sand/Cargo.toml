@@ -8,3 +8,6 @@ starknet tooling for foundry
 
 [dependencies]
 starknet = { git = "https://github.com/xJonathanLEI/starknet-rs" }
+thiserror = "1.0.30"
+tracing = "0.1.30"
+ethers-solc = { git = "https://github.com/gakonst/ethers-rs", default-features = false }

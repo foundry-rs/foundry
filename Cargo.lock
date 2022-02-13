@@ -1713,7 +1713,10 @@ dependencies = [
 name = "foundry-sand"
 version = "0.1.0"
 dependencies = [
+ "ethers-solc",
  "starknet",
+ "thiserror",
+ "tracing",
 ]
 
 [[package]]
