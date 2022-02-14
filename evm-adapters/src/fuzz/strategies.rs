@@ -45,7 +45,7 @@ impl ValueTree for UintValueTree {
     type Value = U256;
 
     fn current(&self) -> Self::Value {
-        return self.curr
+        self.curr
     }
 
     fn simplify(&mut self) -> bool {
@@ -109,7 +109,7 @@ impl UintStrategy {
         let is_min = rng.gen_bool(0.5);
         let offset = U256::from(rng.gen_range(0..4));
         let max =
-            if self.bits < 256 { U256::from(1u8) << U256::from(self.bits) - 1 } else { U256::MAX };
+            if self.bits < 256 { (U256::from(1u8) << U256::from(self.bits)) - 1 } else { U256::MAX };
         let start = if is_min { offset } else { max - offset };
 
         // For edge cases doesn't make sense to simplify values => fixed tree
@@ -118,7 +118,7 @@ impl UintStrategy {
 
     fn generate_fixtures_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
         // generate edge cases if there's no fixtures
-        if self.fixtures.len() == 0 {
+        if self.fixtures.is_empty() {
             return self.generate_edge_tree(runner)
         }
         let idx = runner.rng().gen_range(0..self.fixtures.len());
@@ -139,10 +139,10 @@ impl UintStrategy {
         // cut 2 randoms according to bits size
         match bits {
             x if x < 128 => {
-                lower = lower & ((1u128 << x) - 1);
+                lower &= (1u128 << x) - 1;
                 higher = 0;
             }
-            x if (x >= 128) && (x < 256) => higher = higher & ((1u128 << (x - 128)) - 1),
+            x if (128..256).contains(&x) => higher &= (1u128 << (x - 128)) - 1,
             _ => {}
         };
 
