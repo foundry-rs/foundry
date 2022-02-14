@@ -4,8 +4,8 @@ use ethers::{solc::EvmVersion, types::Address};
 use std::{path::PathBuf, str::FromStr};
 
 use crate::cmd::{
-    bind::BindArgs, build::BuildArgs, config, create::CreateArgs, flatten, fmt::FmtArgs,
-    init::InitArgs, install::InstallArgs, remappings::RemappingArgs, run::RunArgs, snapshot, test,
+    bind::BindArgs, build::BuildArgs, config, create::CreateArgs, flatten, init::InitArgs,
+    install::InstallArgs, remappings::RemappingArgs, run::RunArgs, snapshot, test,
 };
 use serde::Serialize;
 

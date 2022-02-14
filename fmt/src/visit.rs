@@ -148,6 +148,17 @@ pub trait Visitor {
         Ok(())
     }
 
+    fn visit_error(&mut self, error: &mut ErrorDefinition) -> VResult {
+        if !error.doc.is_empty() {
+            self.visit_doc_comments(&mut error.doc)?;
+            self.visit_newline()?;
+        }
+        self.visit_source(error.loc)?;
+        self.visit_stray_semicolon()?;
+
+        Ok(())
+    }
+
     fn visit_event_parameter(&mut self, param: &mut EventParameter) -> VResult {
         self.visit_source(param.loc)?;
 
@@ -215,6 +226,7 @@ impl Visitable for SourceUnitPart {
             SourceUnitPart::EnumDefinition(enumeration) => v.visit_enum(enumeration),
             SourceUnitPart::StructDefinition(structure) => v.visit_struct(structure),
             SourceUnitPart::EventDefinition(event) => v.visit_event(event),
+            SourceUnitPart::ErrorDefinition(error) => v.visit_error(error),
             SourceUnitPart::FunctionDefinition(function) => v.visit_function(function),
             SourceUnitPart::VariableDefinition(variable) => v.visit_var_def(variable),
             SourceUnitPart::StraySemicolon(_) => v.visit_stray_semicolon(),
@@ -237,6 +249,7 @@ impl Visitable for ContractPart {
         match self {
             ContractPart::StructDefinition(structure) => v.visit_struct(structure),
             ContractPart::EventDefinition(event) => v.visit_event(event),
+            ContractPart::ErrorDefinition(error) => v.visit_error(error),
             ContractPart::EnumDefinition(enumeration) => v.visit_enum(enumeration),
             ContractPart::VariableDefinition(variable) => v.visit_var_def(variable),
             ContractPart::FunctionDefinition(function) => v.visit_function(function),

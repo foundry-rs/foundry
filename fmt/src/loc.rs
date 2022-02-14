@@ -22,6 +22,7 @@ impl LineOfCode for SourceUnitPart {
             SourceUnitPart::EnumDefinition(enumeration) => enumeration.loc,
             SourceUnitPart::StructDefinition(structure) => structure.loc,
             SourceUnitPart::EventDefinition(event) => event.loc,
+            SourceUnitPart::ErrorDefinition(error) => error.loc,
             SourceUnitPart::FunctionDefinition(function) => function.loc,
             SourceUnitPart::VariableDefinition(variable) => variable.loc,
         }
@@ -33,6 +34,7 @@ impl LineOfCode for ContractPart {
         match self {
             ContractPart::StructDefinition(structure) => structure.loc,
             ContractPart::EventDefinition(event) => event.loc,
+            ContractPart::ErrorDefinition(error) => error.loc,
             ContractPart::EnumDefinition(enumeration) => enumeration.loc,
             ContractPart::VariableDefinition(variable) => variable.loc,
             ContractPart::FunctionDefinition(function) => function.loc(),
