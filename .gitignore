@@ -2,3 +2,5 @@
 /target
 out/
 out.json
+
+fmt/testdata/*

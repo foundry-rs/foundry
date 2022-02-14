@@ -107,6 +107,8 @@ pub enum Subcommands {
 
     #[clap(about = "Concats a file with all of its imports")]
     Flatten(flatten::FlattenArgs),
+    // #[clap(about = "formats Solidity source files")]
+    // Fmt(FmtArgs),
 }
 
 // A set of solc compiler settings that can be set via command line arguments, which are intended

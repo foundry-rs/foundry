@@ -673,7 +673,9 @@ dependencies = [
  "encode_unicode",
  "libc",
  "once_cell",
+ "regex",
  "terminal_size",
+ "unicode-width",
  "winapi",
 ]
 
@@ -1576,6 +1578,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "forge-fmt"
+version = "0.1.0"
+dependencies = [
+ "indent_write",
+ "pretty_assertions",
+ "semver",
+ "solang-parser",
+]
+
+[[package]]
 name = "form_urlencoded"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1594,12 +1606,14 @@ dependencies = [
  "clap",
  "clap_complete",
  "color-eyre",
+ "console 0.15.0",
  "dunce",
  "ethers",
  "evm",
  "evm-adapters",
  "eyre",
  "forge",
+ "forge-fmt",
  "foundry-cli-test-utils",
  "foundry-config",
  "foundry-utils",
@@ -1616,12 +1630,15 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
+ "similar",
+ "solang-parser",
  "tokio",
  "toml",
  "tracing",
  "tracing-subscriber 0.2.25",
  "ui",
  "vergen",
+ "walkdir",
 ]
 
 [[package]]
@@ -2093,6 +2110,12 @@ dependencies = [
  "quote",
  "syn",
 ]
+
+[[package]]
+name = "indent_write"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0cfe9645a18782869361d9c8732246be7b410ad4e919d3609ebabdac00ba12c3"
 
 [[package]]
 name = "indenter"
@@ -3697,6 +3720,12 @@ dependencies = [
  "digest 0.9.0",
  "rand_core",
 ]
+
+[[package]]
+name = "similar"
+version = "2.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e24979f63a11545f5f2c60141afe249d4f19f84581ea2138065e400941d83d3"
 
 [[package]]
 name = "siphasher"
