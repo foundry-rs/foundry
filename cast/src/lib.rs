@@ -276,6 +276,9 @@ where
 
             let func = if sig.contains('(') {
                 get_func(sig)?
+            } else if sig.starts_with("0x") {
+                // if only calldata is provided, returning a dummy function
+                get_func("x()")?
             } else {
                 get_func_etherscan(
                     sig,
@@ -286,7 +289,13 @@ where
                 )
                 .await?
             };
-            let data = encode_args(&func, &args)?;
+
+            let data = if sig.starts_with("0x") {
+                hex::decode(strip_0x(sig))?
+            } else {
+                encode_args(&func, &args)?
+            };
+
             tx.set_data(data.into());
             Some(func)
         } else {
