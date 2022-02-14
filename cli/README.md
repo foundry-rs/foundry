@@ -389,6 +389,7 @@ SUBCOMMANDS:
                              `--calldata-decode`
     --calldata-decode        Decode ABI-encoded hex input data. Use `--abi-decode` to decode output data
     --from-utf8              convert text data into hexdata
+    --from-fix               convert fixed point into specified number of decimals
     --from-wei               convert wei into an ETH amount
     --max-int                maximum i256 value
     --max-uint               maximum u256 value
@@ -407,9 +408,11 @@ SUBCOMMANDS:
                                    - absolute path to file
                                    - @tag, where $TAG is defined in environment variables
     --to-uint256             convert a number into uint256 hex string with 0x prefix
+    --to-int256              convert a number into int256 hex string with 0x prefix
     --to-wei                 convert an ETH amount into wei
     4byte                    Fetches function signatures given the selector from 4byte.directory
     4byte-decode             Decodes transaction calldata by fetching the signature using 4byte.directory
+    4byte-event              Takes a 32 byte topic and prints the response from querying 4byte.directory for that topic
     abi-encode
     age                      Prints the timestamp of a block
     balance                  Print the balance of <account> in wei
@@ -425,6 +428,7 @@ SUBCOMMANDS:
     completions              generate shell completions script
     estimate                 Estimate the gas cost of a transaction from <from> to <to> with <data>
     gas-price                Prints current gas price of target chain
+    index                    Get storage slot of value from mapping type, mapping slot number and input value
     help                     Print this message or the help of the given subcommand(s)
     keccak                   Keccak-256 hashes arbitrary data
     lookup-address           Returns the name the provided address resolves to

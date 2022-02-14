@@ -44,26 +44,26 @@ impl<'a> From<&'a BuildArgs> for Config {
     }
 }
 
-/// All `forge build` related arguments
-///
-/// CLI arguments take the highest precedence in the Config/Figment hierarchy.
-/// In order to override them in the foundry `Config` they need to be merged into an existing
-/// `figment::Provider`, like `foundry_config::Config` is.
-///
-/// # Example
-///
-/// ```ignore
-/// use foundry_config::Config;
-/// # fn t(args: BuildArgs) {
-/// let config = Config::from(&args);
-/// # }
-/// ```
-///
-/// `BuildArgs` implements `figment::Provider` in which all config related fields are serialized and
-/// then merged into an existing `Config`, effectively overwriting them.
-///
-/// Some arguments are marked as `#[serde(skip)]` and require manual processing in
-/// `figment::Provider` implementation
+// All `forge build` related arguments
+//
+// CLI arguments take the highest precedence in the Config/Figment hierarchy.
+// In order to override them in the foundry `Config` they need to be merged into an existing
+// `figment::Provider`, like `foundry_config::Config` is.
+//
+// # Example
+//
+// ```ignore
+// use foundry_config::Config;
+// # fn t(args: BuildArgs) {
+// let config = Config::from(&args);
+// # }
+// ```
+//
+// `BuildArgs` implements `figment::Provider` in which all config related fields are serialized and
+// then merged into an existing `Config`, effectively overwriting them.
+//
+// Some arguments are marked as `#[serde(skip)]` and require manual processing in
+// `figment::Provider` implementation
 #[derive(Debug, Clone, Parser, Serialize)]
 pub struct BuildArgs {
     #[clap(
@@ -123,6 +123,13 @@ pub struct BuildArgs {
     )]
     #[serde(skip)]
     pub no_auto_detect: bool,
+
+    #[clap(
+        help = "if set to true, runs without accessing the network (missing solc versions will not be installed)",
+        long
+    )]
+    #[serde(skip)]
+    pub offline: bool,
 
     #[clap(
         help = "force recompilation of the project, deletes the cache and artifacts folders",
@@ -199,6 +206,10 @@ impl Provider for BuildArgs {
 
         if self.no_auto_detect {
             dict.insert("auto_detect_solc".to_string(), false.into());
+        }
+
+        if self.offline {
+            dict.insert("offline".to_string(), true.into());
         }
 
         if self.force {

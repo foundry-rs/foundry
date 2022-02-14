@@ -17,12 +17,12 @@ use serde::{Deserialize, Serialize};
 
 use ethers_core::types::{Address, U256};
 use ethers_solc::{
-    artifacts::{Optimizer, Settings},
+    artifacts::{Optimizer, OptimizerDetails, Settings},
     error::SolcError,
     remappings::{RelativeRemapping, Remapping},
     EvmVersion, Project, ProjectPathsConfig, SolcConfig,
 };
-use figment::providers::Data;
+use figment::{providers::Data, value::Value};
 use inflector::Inflector;
 
 // Macros useful for creating a figment.
@@ -101,10 +101,21 @@ pub struct Config {
     pub solc_version: Option<Version>,
     /// whether to autodetect the solc compiler version to use
     pub auto_detect_solc: bool,
+    /// Offline mode, if set, network access (downloading solc) is disallowed.
+    ///
+    /// Relationship with `auto_detect_solc`:
+    ///    - if `auto_detect_solc = true` and `offline = true`, the required solc version(s) will
+    ///      be auto detected but if the solc version is not installed, it will _not_ try to
+    ///      install it
+    pub offline: bool,
     /// Whether to activate optimizer
     pub optimizer: bool,
     /// Sets the optimizer runs
     pub optimizer_runs: usize,
+    /// Switch optimizer components on or off in detail.
+    /// The "enabled" switch above provides two defaults which can be
+    /// tweaked here. If "details" is given, "enabled" can be omitted.
+    pub optimizer_details: Option<OptimizerDetails>,
     /// verbosity to use
     pub verbosity: u8,
     /// url of the rpc server that should be used for any rpc calls
@@ -162,11 +173,11 @@ pub struct Config {
     // "#
     pub solc_settings: Option<String>,
     /// The root path where the config detection started from, `Config::with_root`
-    ///
-    /// **Note:** This field is never serialized nor deserialized. This is merely used to provided
-    /// additional context.
     #[doc(hidden)]
-    #[serde(skip)]
+    //  We're skipping serialization here, so it won't be included in the [`Config::to_string()`]
+    // representation, but will be deserialized from the `Figment` so that forge commands can
+    // override it.
+    #[serde(rename = "root", default, skip_serializing)]
     pub __root: RootPath,
     /// PRIVATE: This structure may grow, As such, constructing this structure should
     /// _always_ be done using a public constructor or update syntax:
@@ -349,10 +360,11 @@ impl Config {
         let project = Project::builder()
             .paths(self.project_paths())
             .allowed_path(&self.__root.0)
-            .allowed_paths(self.libraries.clone())
+            .allowed_paths(&self.libs)
             .solc_config(SolcConfig::builder().settings(self.solc_settings()?).build())
             .ignore_error_codes(self.ignored_error_codes.clone())
             .set_auto_detect(self.auto_detect_solc)
+            .set_offline(self.offline)
             .set_cached(cached)
             .set_no_artifacts(no_artifacts)
             .build()?;
@@ -387,7 +399,11 @@ impl Config {
 
     /// Returns the `Optimizer` based on the configured settings
     pub fn optimizer(&self) -> Optimizer {
-        Optimizer { enabled: Some(self.optimizer), runs: Some(self.optimizer_runs) }
+        Optimizer {
+            enabled: Some(self.optimizer),
+            runs: Some(self.optimizer_runs),
+            details: self.optimizer_details.clone(),
+        }
     }
 
     pub fn output_selection(&self) -> BTreeMap<String, BTreeMap<String, Vec<String>>> {
@@ -406,7 +422,7 @@ impl Config {
 
     /// Returns the configured `solc` `Settings` that includes:
     ///   - all libraries
-    ///   - the optimizer
+    ///   - the optimizer (including details, if configured)
     ///   - evm version
     pub fn solc_settings(&self) -> Result<Settings, SolcError> {
         let libraries = parse_libraries(&self.libraries)?;
@@ -533,7 +549,9 @@ impl Config {
     /// # ...
     /// ```
     pub fn to_string_pretty(&self) -> Result<String, toml::ser::Error> {
-        let s = toml::to_string_pretty(self)?;
+        // serializing to value first to prevent `ValueAfterTable` errors
+        let value = toml::Value::try_from(self)?;
+        let s = toml::to_string_pretty(&value)?;
         Ok(format!(
             r#"[{}]
 {}"#,
@@ -601,10 +619,12 @@ impl From<Config> for Figment {
             .merge(ForcedSnakeCaseData(
                 Toml::file(Env::var_or("FOUNDRY_CONFIG", Config::FILE_NAME)).nested(),
             ))
-            .merge(Env::prefixed("DAPP_").ignore(&["REMAPPINGS"]).global())
+            .merge(Env::prefixed("DAPP_").ignore(&["REMAPPINGS", "LIBRARIES"]).global())
             .merge(Env::prefixed("DAPP_TEST_").global())
             .merge(DappEnvCompatProvider)
-            .merge(Env::prefixed("FOUNDRY_").ignore(&["PROFILE", "REMAPPINGS"]).global())
+            .merge(
+                Env::prefixed("FOUNDRY_").ignore(&["PROFILE", "REMAPPINGS", "LIBRARIES"]).global(),
+            )
             .select(profile.clone());
 
         // we try to merge remappings after we've merged all other providers, this prevents
@@ -625,7 +645,8 @@ impl From<Config> for Figment {
 }
 
 /// A helper wrapper around the root path used during Config detection
-#[derive(Debug, PartialEq, Eq, Hash, Clone, PartialOrd, Ord)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, PartialOrd, Ord, Deserialize, Serialize)]
+#[serde(transparent)]
 pub struct RootPath(pub PathBuf);
 
 impl Default for RootPath {
@@ -664,7 +685,11 @@ impl Provider for Config {
 
     #[track_caller]
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
-        Serialized::defaults(self).data()
+        let mut data = Serialized::defaults(self).data()?;
+        if let Some(entry) = data.get_mut(&self.profile) {
+            entry.insert("root".to_string(), Value::serialize(self.__root.clone())?);
+        }
+        Ok(data)
     }
 
     fn profile(&self) -> Option<Profile> {
@@ -687,8 +712,10 @@ impl Default for Config {
             gas_reports: vec!["*".to_string()],
             solc_version: None,
             auto_detect_solc: true,
+            offline: false,
             optimizer: true,
             optimizer_runs: 200,
+            optimizer_details: None,
             extra_output: None,
             solc_settings: None,
             fuzz_runs: 256,
@@ -832,6 +859,11 @@ impl Provider for DappEnvCompatProvider {
                 .into())
             }
             dict.insert("optimizer".to_string(), (val == 1).into());
+        }
+
+        // libraries in env vars either as `[..]` or single string separated by comma
+        if let Ok(val) = env::var("DAPP_LIBRARIES").or_else(|_| env::var("FOUNDRY_LIBRARIES")) {
+            dict.insert("libraries".to_string(), utils::to_array_value(&val)?);
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
@@ -1030,6 +1062,7 @@ fn canonic(path: impl Into<PathBuf>) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    use ethers_solc::artifacts::YulDetails;
     use figment::error::Kind::InvalidType;
     use std::str::FromStr;
 
@@ -1362,6 +1395,38 @@ mod tests {
     }
 
     #[test]
+    fn can_parse_libraries() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env(
+                "DAPP_LIBRARIES",
+                "[src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6]",
+            );
+            let config = Config::load();
+            assert_eq!(
+                config.libraries,
+                vec!["src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6"
+                    .to_string()]
+            );
+            jail.set_env(
+                "DAPP_LIBRARIES",
+                "src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6,src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6",
+            );
+            let config = Config::load();
+            assert_eq!(
+                config.libraries,
+                vec![
+                    "src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6"
+                        .to_string(),
+                    "src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6"
+                        .to_string()
+                ]
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
     fn config_roundtrip() {
         figment::Jail::expect_with(|jail| {
             let default = Config::default();
@@ -1378,15 +1443,39 @@ mod tests {
             let other = Config::load();
             assert_eq!(default, other);
 
-            // println!("{}", default.to_string_pretty().unwrap());
             Ok(())
         });
+    }
+
+    // a test to print the config, mainly used to update the example config in the README
+    #[test]
+    #[ignore]
+    fn print_config() {
+        let config = Config {
+            optimizer_details: Some(OptimizerDetails {
+                peephole: None,
+                inliner: None,
+                jumpdest_remover: None,
+                order_literals: None,
+                deduplicate: None,
+                cse: None,
+                constant_optimizer: Some(true),
+                yul: Some(true),
+                yul_details: Some(YulDetails {
+                    stack_allocation: None,
+                    optimizer_steps: Some("dhfoDgvulfnTUtnIf".to_string()),
+                }),
+            }),
+            ..Default::default()
+        };
+        println!("{}", config.to_string_pretty().unwrap());
     }
 
     #[test]
     fn can_use_impl_figment_macro() {
         #[derive(Default, Serialize)]
         struct MyArgs {
+            #[serde(skip_serializing_if = "Option::is_none")]
             root: Option<PathBuf>,
         }
         impl_figment_convert!(MyArgs);

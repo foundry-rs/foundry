@@ -10,7 +10,7 @@
 - [x] `--calldata-decode`
 - [x] `--from-ascii` (with `--from-utf8` alias)
 - [ ] `--from-bin`
-- [ ] `--from-fix`
+- [x] `--from-fix`
 - [x] `--from-wei`
 - [x] `--max-int`
 - [x] `--max-uint`
@@ -22,12 +22,12 @@
 - [x] `--to-fix`
 - [x] `--to-hex`
 - [x] `--to-hexdata`
-- [ ] `--to-int256`
+- [x] `--to-int256`
 - [x] `--to-uint256`
 - [x] `--to-wei`
 - [x] `4byte`
 - [x] `4byte-decode`
-- [ ] `4byte-event`
+- [x] `4byte-event`
 - [x] `abi-encode`
 - [x] `age`
 - [x] `balance`
@@ -46,7 +46,7 @@
 - [x] `etherscan-source`
 - [ ] `events`
 - [x] `gas-price`
-- [ ] `index`
+- [x] `index`
 - [x] `keccak`
 - [ ] `logs`
 - [x] `lookup-address`

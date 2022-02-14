@@ -90,6 +90,10 @@ async fn main() -> eyre::Result<()> {
             let val = unwrap_or_stdin(hexdata)?;
             println!("{}", SimpleCast::ascii(&val)?);
         }
+        Subcommands::FromFix { decimals, value } => {
+            let val = unwrap_or_stdin(value)?;
+            println!("{}", SimpleCast::from_fix(unwrap_or_stdin(decimals)? as u32, &val)?);
+        }
         Subcommands::ToBytes32 { bytes } => {
             let val = unwrap_or_stdin(bytes)?;
             println!("{}", SimpleCast::bytes32(&val)?);
@@ -108,6 +112,10 @@ async fn main() -> eyre::Result<()> {
         Subcommands::ToUint256 { value } => {
             let val = unwrap_or_stdin(value)?;
             println!("{}", SimpleCast::to_uint256(&val)?);
+        }
+        Subcommands::ToInt256 { value } => {
+            let val = unwrap_or_stdin(value)?;
+            println!("{}", SimpleCast::to_int256(&val)?);
         }
         Subcommands::ToUnit { value, unit } => {
             let val = unwrap_or_stdin(value)?;
@@ -147,7 +155,7 @@ async fn main() -> eyre::Result<()> {
                 "{}",
                 Cast::new(provider)
                     .call(
-                        eth.sender().await,
+                        eth.from.unwrap_or(Address::zero()),
                         address,
                         (&sig, args),
                         eth.chain,
@@ -183,7 +191,19 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(&provider).transaction(hash, field, to_json).await?)
         }
-        Subcommands::SendTx { eth, to, sig, cast_async, args, gas, value, nonce, legacy } => {
+        Subcommands::SendTx {
+            eth,
+            to,
+            sig,
+            cast_async,
+            args,
+            gas,
+            gas_price,
+            value,
+            nonce,
+            legacy,
+            confirmations,
+        } => {
             let provider = Provider::try_from(eth.rpc_url()?)?;
             let chain_id = Cast::new(&provider).chain_id().await?;
             let sig = sig.unwrap_or_default();
@@ -197,12 +217,14 @@ async fn main() -> eyre::Result<()> {
                             to,
                             (sig, args),
                             gas,
+                            gas_price,
                             value,
                             nonce,
                             eth.chain,
                             eth.etherscan_api_key,
                             cast_async,
                             legacy,
+                            confirmations,
                         )
                         .await?;
                     }
@@ -213,12 +235,14 @@ async fn main() -> eyre::Result<()> {
                             to,
                             (sig, args),
                             gas,
+                            gas_price,
                             value,
                             nonce,
                             eth.chain,
                             eth.etherscan_api_key,
                             cast_async,
                             legacy,
+                            confirmations,
                         )
                         .await?;
                     }
@@ -229,12 +253,14 @@ async fn main() -> eyre::Result<()> {
                             to,
                             (sig, args),
                             gas,
+                            gas_price,
                             value,
                             nonce,
                             eth.chain,
                             eth.etherscan_api_key,
                             cast_async,
                             legacy,
+                            confirmations,
                         )
                         .await?;
                     }
@@ -247,12 +273,14 @@ async fn main() -> eyre::Result<()> {
                     to,
                     (sig, args),
                     gas,
+                    gas_price,
                     value,
                     nonce,
                     eth.chain,
                     eth.etherscan_api_key,
                     cast_async,
                     legacy,
+                    confirmations,
                 )
                 .await?;
             }
@@ -268,7 +296,7 @@ async fn main() -> eyre::Result<()> {
             } else {
                 let receipt =
                     pending_tx.await?.ok_or_else(|| eyre::eyre!("tx {} not found", tx_hash))?;
-                println!("Receipt: {:?}", receipt);
+                println!("{}", serde_json::json!(receipt));
             }
         }
         Subcommands::Estimate { eth, to, sig, args, value } => {
@@ -300,6 +328,10 @@ async fn main() -> eyre::Result<()> {
         Subcommands::AbiEncode { sig, args } => {
             println!("{}", SimpleCast::abi_encode(&sig, &args)?);
         }
+        Subcommands::Index { from_type, to_type, from_value, slot_number } => {
+            let encoded = SimpleCast::index(&from_type, &to_type, &from_value, &slot_number)?;
+            println!("{}", encoded);
+        }
         Subcommands::FourByte { selector } => {
             let sigs = foundry_utils::fourbyte(&selector).await?;
             sigs.iter().for_each(|sig| println!("{}", sig.0));
@@ -325,6 +357,10 @@ async fn main() -> eyre::Result<()> {
             let tokens = foundry_utils::format_tokens(&tokens);
 
             tokens.for_each(|t| println!("{}", t));
+        }
+        Subcommands::FourByteEvent { topic } => {
+            let sigs = foundry_utils::fourbyte_event(&topic).await?;
+            sigs.iter().for_each(|sig| println!("{}", sig.0));
         }
         Subcommands::Age { block, rpc_url } => {
             let provider = Provider::try_from(rpc_url)?;
@@ -429,6 +465,11 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(rpc_url)?;
             let value = provider.get_storage_at(address, slot, block).await?;
             println!("{:?}", value);
+        }
+        Subcommands::Proof { address, slots, rpc_url, block } => {
+            let provider = Provider::try_from(rpc_url)?;
+            let value = provider.get_proof(address, slots, block).await?;
+            println!("{}", serde_json::to_string(&value)?);
         }
         Subcommands::Receipt { hash, field, to_json, rpc_url, cast_async, confirmations } => {
             let provider = Provider::try_from(rpc_url)?;
@@ -611,12 +652,14 @@ async fn cast_send<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>
     to: T,
     args: (String, Vec<String>),
     gas: Option<U256>,
+    gas_price: Option<U256>,
     value: Option<U256>,
     nonce: Option<U256>,
     chain: Chain,
     etherscan_api_key: Option<String>,
     cast_async: bool,
     legacy: bool,
+    confs: usize,
 ) -> eyre::Result<()>
 where
     M::Error: 'static,
@@ -626,15 +669,16 @@ where
     let sig = args.0;
     let params = args.1;
     let params = if !sig.is_empty() { Some((&sig[..], params)) } else { None };
-    let pending_tx =
-        cast.send(from, to, params, gas, value, nonce, chain, etherscan_api_key, legacy).await?;
+    let pending_tx = cast
+        .send(from, to, params, gas, gas_price, value, nonce, chain, etherscan_api_key, legacy)
+        .await?;
     let tx_hash = *pending_tx;
 
     if cast_async {
-        println!("{}", tx_hash);
+        println!("{:#x}", tx_hash);
     } else {
-        let receipt = pending_tx.await?.ok_or_else(|| eyre::eyre!("tx {} not found", tx_hash))?;
-        println!("Receipt: {:?}", receipt);
+        let receipt = cast.receipt(format!("{:#x}", tx_hash), None, confs, false, true).await?;
+        println!("{}", receipt);
     }
 
     Ok(())
