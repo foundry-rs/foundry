@@ -225,6 +225,8 @@ pub enum Subcommands {
             default_value = "1"
         )]
         confirmations: usize,
+        #[clap(long = "json", short = 'j')]
+        to_json: bool,
     },
     #[clap(name = "publish")]
     #[clap(about = "Publish a raw transaction to the network")]
