@@ -203,6 +203,7 @@ async fn main() -> eyre::Result<()> {
             nonce,
             legacy,
             confirmations,
+            to_json,
         } => {
             let provider = Provider::try_from(eth.rpc_url()?)?;
             let chain_id = Cast::new(&provider).chain_id().await?;
@@ -225,6 +226,7 @@ async fn main() -> eyre::Result<()> {
                             cast_async,
                             legacy,
                             confirmations,
+                            to_json,
                         )
                         .await?;
                     }
@@ -243,6 +245,7 @@ async fn main() -> eyre::Result<()> {
                             cast_async,
                             legacy,
                             confirmations,
+                            to_json,
                         )
                         .await?;
                     }
@@ -261,6 +264,7 @@ async fn main() -> eyre::Result<()> {
                             cast_async,
                             legacy,
                             confirmations,
+                            to_json,
                         )
                         .await?;
                     }
@@ -281,6 +285,7 @@ async fn main() -> eyre::Result<()> {
                     cast_async,
                     legacy,
                     confirmations,
+                    to_json,
                 )
                 .await?;
             }
@@ -660,6 +665,7 @@ async fn cast_send<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>
     cast_async: bool,
     legacy: bool,
     confs: usize,
+    to_json: bool,
 ) -> eyre::Result<()>
 where
     M::Error: 'static,
@@ -677,7 +683,7 @@ where
     if cast_async {
         println!("{:#x}", tx_hash);
     } else {
-        let receipt = cast.receipt(format!("{:#x}", tx_hash), None, confs, false, true).await?;
+        let receipt = cast.receipt(format!("{:#x}", tx_hash), None, confs, false, to_json).await?;
         println!("{}", receipt);
     }
 
