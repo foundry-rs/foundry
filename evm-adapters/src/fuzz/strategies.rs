@@ -108,8 +108,11 @@ impl UintStrategy {
         // Choose if we want values around 0 or max
         let is_min = rng.gen_bool(0.5);
         let offset = U256::from(rng.gen_range(0..4));
-        let max =
-            if self.bits < 256 { (U256::from(1u8) << U256::from(self.bits)) - 1 } else { U256::MAX };
+        let max = if self.bits < 256 {
+            (U256::from(1u8) << U256::from(self.bits)) - 1
+        } else {
+            U256::MAX
+        };
         let start = if is_min { offset } else { max - offset };
 
         // For edge cases doesn't make sense to simplify values => fixed tree
