@@ -497,6 +497,9 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
         let mut reason = None;
         if let Some(err) = test_error {
             match err.test_error {
+                TestError::Abort(r) if r == "Too many global rejects".into() => {
+                    reason = Some(r.message().to_string());
+                }
                 TestError::Fail(_, value) => {
                     // skip the function selector when decoding
                     let args = func.decode_input(&value.as_ref()[4..])?;
