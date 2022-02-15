@@ -125,8 +125,7 @@ impl UintStrategy {
         }
         let idx = runner.rng().gen_range(0..self.fixtures.len());
 
-        // For fixtures doesn't make sense to simplify values => fixed tree
-        Ok(UintValueTree::new(self.fixtures[idx], true))
+        Ok(UintValueTree::new(self.fixtures[idx], false))
     }
 
     fn generate_random_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
