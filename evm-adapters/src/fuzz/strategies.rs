@@ -21,7 +21,7 @@ pub struct UintValueTree {
 
 impl UintValueTree {
     /// Create a new tree
-    /// #Arguments
+    /// # Arguments
     /// * `start` - Starting value for the tree
     /// * `fixed` - If `true` the tree would only contain one element and won't be simplified.
     fn new(start: U256, fixed: bool) -> Self {
