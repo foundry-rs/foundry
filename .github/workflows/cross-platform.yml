@@ -23,6 +23,9 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v2
 
+      - name: Clone testdata for fmt tests
+        run: make fmt-testdata
+
       - name: Install prerequisites
         shell: bash
         run: |
