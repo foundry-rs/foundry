@@ -115,8 +115,7 @@ impl UintStrategy {
         };
         let start = if is_min { offset } else { max - offset };
 
-        // For edge cases doesn't make sense to simplify values => fixed tree
-        Ok(UintValueTree::new(start, true))
+        Ok(UintValueTree::new(start, false))
     }
 
     fn generate_fixtures_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
