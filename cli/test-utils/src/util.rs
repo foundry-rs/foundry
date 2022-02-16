@@ -1,8 +1,4 @@
-use ethers_solc::{
-    cache::SolFilesCache,
-    project_util::{copy_dir, TempProject},
-    ArtifactOutput, MinimalCombinedArtifacts, PathStyle, ProjectPathsConfig,
-};
+use ethers_solc::{cache::SolFilesCache, project_util::{copy_dir, TempProject}, ArtifactOutput, PathStyle, ProjectPathsConfig, ConfigurableArtifacts};
 use foundry_config::Config;
 use once_cell::sync::Lazy;
 use std::{
@@ -75,7 +71,7 @@ pub fn setup_project(test: TestProject) -> (TestProject, TestCommand) {
 ///
 /// Test projects are created from a global atomic counter to avoid duplicates.
 #[derive(Clone, Debug)]
-pub struct TestProject<T: ArtifactOutput = MinimalCombinedArtifacts> {
+pub struct TestProject<T: ArtifactOutput = ConfigurableArtifacts> {
     /// The directory in which this test executable is running.
     root: PathBuf,
     /// The project in which the test should run.
