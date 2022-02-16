@@ -2,7 +2,6 @@ use crate::cmd::Cmd;
 
 use clap::{Parser, ValueHint};
 use ethers::contract::MultiAbigen;
-use eyre::WrapErr;
 use foundry_config::{
     figment::{
         self,
@@ -143,28 +142,12 @@ impl BindArgs {
         }
         Ok(())
     }
-
-    /// Check the following
-    /// - that a Cargo.toml exists for the foundry project
-    /// -
-    fn check_preconditions(&self) -> eyre::Result<()> {
-        locate_cargo_manifest::locate_manifest().wrap_err(
-            r#"
-                Could not locate a Cargo manifest file.
-                Hint: `forge bind` is currently only usable within an existing crate or workspace. Navigate to an existing cargo project, or start a new cargo project with `cargo init`.
-                "#,
-        )?;
-
-        Ok(())
-    }
 }
 
 impl Cmd for BindArgs {
     type Output = ();
 
     fn run(self) -> eyre::Result<Self::Output> {
-        self.check_preconditions()?;
-
         if !self.overwrite && self.bindings_exist() {
             println!("Bindings found. Checking for consistency.");
             return self.check_existing_bindings()
