@@ -130,6 +130,8 @@ impl Cmd for TestArgs {
         let cfg = proptest::test_runner::Config {
             failure_persistence: None,
             cases: config.fuzz_runs,
+            max_local_rejects: config.fuzz_max_local_rejects,
+            max_global_rejects: config.fuzz_max_global_rejects,
             ..Default::default()
         };
         let fuzzer = proptest::test_runner::TestRunner::new(cfg);

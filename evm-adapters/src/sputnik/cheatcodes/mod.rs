@@ -76,6 +76,7 @@ ethers::contract::abigen!(
             expectCall(address,bytes)
             getCode(string)
             label(address,string)
+            assume(bool)
     ]"#,
 );
 pub use hevm_mod::{HEVMCalls, HEVM_ABI};
