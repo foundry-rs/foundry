@@ -267,6 +267,11 @@ impl TestCommand {
         self
     }
 
+    /// Resets the command
+    pub fn fuse(&mut self)  -> &mut TestCommand {
+        self.set_cmd(self.project.bin())
+    }
+
     /// Sets the current working directory
     pub fn set_current_dir(&mut self, p: impl AsRef<Path>) {
         drop(self.current_dir_lock.take());
