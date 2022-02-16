@@ -507,7 +507,8 @@ async fn main() -> eyre::Result<()> {
                 match path {
                     Some(path) => {
                         let password = read_secret(password, unsafe_password)?;
-                        let (key, uuid) = LocalWallet::new_keystore(&path, &mut rng, password)?;
+                        let (key, uuid) =
+                            LocalWallet::new_keystore(&path, &mut rng, password, None)?;
                         let address = SimpleCast::checksum_address(&key.address())?;
                         let filepath = format!(
                             "{}/{}",

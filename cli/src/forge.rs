@@ -5,7 +5,7 @@ mod utils;
 use crate::cmd::Cmd;
 
 use ethers::solc::{self, report::BasicStdoutReporter, Project, ProjectPathsConfig};
-use opts::forge::{Dependency, FullContractInfo, Opts, Subcommands};
+use opts::forge::{Dependency, Opts, Subcommands};
 use std::process::Command;
 
 use clap::{IntoApp, Parser};
@@ -31,10 +31,13 @@ fn main() -> eyre::Result<()> {
         Subcommands::Run(cmd) => {
             cmd.run()?;
         }
-        Subcommands::VerifyContract { contract, address, constructor_args } => {
-            let FullContractInfo { path, name } = contract;
+        Subcommands::VerifyContract(args) => {
             let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
-            rt.block_on(cmd::verify::run(path, name, address, constructor_args))?;
+            rt.block_on(cmd::verify::run_verify(&args))?;
+        }
+        Subcommands::VerifyCheck(args) => {
+            let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
+            rt.block_on(cmd::verify::run_verify_check(&args))?;
         }
         Subcommands::Create(cmd) => {
             cmd.run()?;

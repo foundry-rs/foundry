@@ -1,110 +1,135 @@
 //! Verify contract source on etherscan
 
-use crate::utils;
-use cast::SimpleCast;
+use crate::{cmd::build::BuildArgs, opts::forge::ContractInfo};
+use clap::Parser;
 use ethers::{
-    abi::{Address, Function, FunctionExt},
-    core::types::Chain,
+    abi::Address,
     etherscan::{contract::VerifyContract, Client},
-    prelude::Provider,
-    providers::Middleware,
 };
-use eyre::ContextCompat;
-use std::convert::TryFrom;
+
+/// Verification arguments
+#[derive(Debug, Clone, Parser)]
+pub struct VerifyArgs {
+    #[clap(help = "the target contract address")]
+    address: Address,
+
+    #[clap(help = "the contract source info `<path>:<contractname>`")]
+    contract: ContractInfo,
+
+    #[clap(long, help = "the encoded constructor arguments")]
+    constructor_args: Option<String>,
+
+    #[clap(long, help = "the compiler version used during build")]
+    compiler_version: String,
+
+    #[clap(long, help = "the number of optimization runs used")]
+    num_of_optimizations: Option<u32>,
+
+    // TODO: Allow choosing network using the provider or chainid as string
+    #[clap(long, help = "the chain id of the network you are verifying for", default_value = "1")]
+    chain_id: u64,
+
+    #[clap(help = "your etherscan api key", env = "ETHERSCAN_API_KEY")]
+    etherscan_key: String,
+
+    #[clap(flatten)]
+    opts: BuildArgs,
+}
+
+/// Check verification status arguments
+#[derive(Debug, Clone, Parser)]
+pub struct VerifyCheckArgs {
+    #[clap(help = "the verification guid")]
+    guid: String,
+
+    // TODO: Allow choosing network using the provider or chainid as string
+    #[clap(long, help = "the chain id of the network you are verifying for", default_value = "1")]
+    chain_id: u64,
+
+    #[clap(help = "your etherscan api key", env = "ETHERSCAN_API_KEY")]
+    etherscan_key: String,
+}
 
 /// Run the verify command to submit the contract's source code for verification on etherscan
-pub async fn run(
-    path: String,
-    name: String,
-    address: Address,
-    args: Vec<String>,
-) -> eyre::Result<()> {
-    let etherscan_api_key = foundry_utils::etherscan_api_key()?;
-    let rpc_url = utils::rpc_url();
-    let provider = Provider::try_from(rpc_url)?;
-    let chain = provider
-        .get_chainid()
-        .await
-        .map_err(|err| {
-            eyre::eyre!(
-                r#"Please make sure that you are running a local Ethereum node:
-        For example, try running either `parity' or `geth --rpc'.
-        You could also try connecting to an external Ethereum node:
-        For example, try `export ETH_RPC_URL=https://mainnet.infura.io'.
-        If you have an Infura API key, add it to the end of the URL.
-
-        Error: {}"#,
-                err
-            )
-        })?
-        .as_u64();
-
-    let contract = utils::find_dapp_json_contract(&path, &name)?;
-    std::fs::write("meta.json", serde_json::to_string_pretty(&contract).unwrap()).unwrap();
-    let metadata = contract.metadata.wrap_err("No compiler version found")?;
-    let compiler_version = format!("v{}", metadata.compiler.version);
-    let mut constructor_args = None;
-    if let Some(constructor) = contract.abi.unwrap().constructor {
-        // convert constructor into function
-        #[allow(deprecated)]
-        let fun = Function {
-            name: "constructor".to_string(),
-            inputs: constructor.inputs,
-            outputs: vec![],
-            constant: None,
-            state_mutability: Default::default(),
-        };
-
-        constructor_args = Some(SimpleCast::calldata(fun.abi_signature(), &args)?);
-    } else if !args.is_empty() {
-        eyre::bail!("No constructor found but contract arguments provided")
+pub async fn run_verify(args: &VerifyArgs) -> eyre::Result<()> {
+    if args.contract.path.is_none() {
+        eyre::bail!("Contract info must be provided in the format <path>:<name>")
     }
 
-    let chain = match chain {
-        1 => Chain::Mainnet,
-        3 => Chain::Ropsten,
-        4 => Chain::Rinkeby,
-        5 => Chain::Goerli,
-        42 => Chain::Kovan,
-        100 => Chain::XDai,
-        _ => eyre::bail!("unexpected chain {}", chain),
-    };
-    let etherscan = Client::new(chain, etherscan_api_key)
+    let project = args.opts.project()?;
+    let contract = project
+        .flatten(&project.root().join(args.contract.path.as_ref().unwrap()))
+        .map_err(|err| eyre::eyre!("Failed to flatten contract: {}", err))?;
+
+    let etherscan = Client::new(args.chain_id.try_into()?, &args.etherscan_key)
         .map_err(|err| eyre::eyre!("Failed to create etherscan client: {}", err))?;
 
-    let source = std::fs::read_to_string(&path)?;
+    let mut verify_args = VerifyContract::new(
+        args.address,
+        args.contract.name.clone(),
+        contract,
+        args.compiler_version.clone(),
+    )
+    .constructor_arguments(args.constructor_args.clone());
 
-    let contract = VerifyContract::new(address, source, compiler_version)
-        .constructor_arguments(constructor_args)
-        .optimization(metadata.settings.inner.optimizer.enabled.unwrap_or_default())
-        .runs(metadata.settings.inner.optimizer.runs.unwrap_or_default() as u32);
+    if let Some(optimizations) = args.num_of_optimizations {
+        verify_args = verify_args.optimization(true).runs(optimizations);
+    } else {
+        verify_args = verify_args.optimization(false);
+    }
 
     let resp = etherscan
-        .submit_contract_verification(&contract)
+        .submit_contract_verification(&verify_args)
         .await
         .map_err(|err| eyre::eyre!("Failed to submit contract verification: {}", err))?;
 
     if resp.status == "0" {
         if resp.message == "Contract source code already verified" {
             println!("Contract source code already verified.");
-            Ok(())
-        } else {
-            eyre::bail!(
-                "Encountered an error verifying this contract:\nResponse: `{}`\nDetails: `{}`",
-                resp.message,
-                resp.result
-            );
+            return Ok(())
         }
-    } else {
-        println!(
-            r#"Submitted contract for verification:
-            Response: `{}`
-            GUID: `{}`
-            url: {}#code"#,
+
+        eyre::bail!(
+            "Encountered an error verifying this contract:\nResponse: `{}`\nDetails: `{}`",
             resp.message,
-            resp.result,
-            etherscan.address_url(address)
+            resp.result
         );
-        Ok(())
     }
+
+    println!(
+        r#"Submitted contract for verification:
+                Response: `{}`
+                GUID: `{}`
+                url: {}#code"#,
+        resp.message,
+        resp.result,
+        etherscan.address_url(args.address)
+    );
+    Ok(())
+}
+
+pub async fn run_verify_check(args: &VerifyCheckArgs) -> eyre::Result<()> {
+    let etherscan = Client::new(args.chain_id.try_into()?, &args.etherscan_key)
+        .map_err(|err| eyre::eyre!("Failed to create etherscan client: {}", err))?;
+
+    let resp = etherscan
+        .check_contract_verification_status(args.guid.clone())
+        .await
+        .map_err(|err| eyre::eyre!("Failed to request verification status: {}", err))?;
+
+    if resp.status == "0" {
+        if resp.result == "Pending in queue" {
+            println!("Verification is pending...");
+            return Ok(())
+        }
+
+        eyre::bail!(
+            "Contract verification failed:\nResponse: `{}`\nDetails: `{}`",
+            resp.message,
+            resp.result
+        );
+    }
+
+    println!("Contract successfully verified.");
+    Ok(())
 }
