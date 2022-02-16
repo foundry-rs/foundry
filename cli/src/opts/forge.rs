@@ -4,9 +4,17 @@ use ethers::solc::EvmVersion;
 use std::{path::PathBuf, str::FromStr};
 
 use crate::cmd::{
-    bind::BindArgs, build::BuildArgs, config, create::CreateArgs, flatten, init::InitArgs,
-    install::InstallArgs, remappings::RemappingArgs, run::RunArgs, snapshot, test,
-    verify::VerifyArgs,
+    bind::BindArgs,
+    build::BuildArgs,
+    config,
+    create::CreateArgs,
+    flatten,
+    init::InitArgs,
+    install::InstallArgs,
+    remappings::RemappingArgs,
+    run::RunArgs,
+    snapshot, test,
+    verify::{VerifyArgs, VerifyCheckArgs},
 };
 use serde::Serialize;
 
@@ -70,6 +78,11 @@ pub enum Subcommands {
         about = "Verify your smart contracts source code on Etherscan. Requires `ETHERSCAN_API_KEY` to be set."
     )]
     VerifyContract(VerifyArgs),
+
+    #[clap(
+        about = "Check verification status on Etherscan. Requires `ETHERSCAN_API_KEY` to be set."
+    )]
+    VerifyCheck(VerifyCheckArgs),
 
     #[clap(alias = "c", about = "Deploy a compiled contract")]
     Create(CreateArgs),
