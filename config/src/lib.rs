@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use ethers_core::types::{Address, U256};
 use ethers_solc::{
-    artifacts::{Optimizer, OptimizerDetails, Settings},
+    artifacts::{output_selection::ContractOutputSelection, Optimizer, OptimizerDetails, Settings},
     error::SolcError,
     remappings::{RelativeRemapping, Remapping},
     EvmVersion, Project, ProjectPathsConfig, SolcConfig,
@@ -154,24 +154,31 @@ pub struct Config {
     pub block_gas_limit: Option<u64>,
     /// Pass extra output types
     pub extra_output: Option<Vec<String>>,
-    /// Settings to pass to the `solc` compiler input
-    // TODO consider making this more structured https://stackoverflow.com/questions/48998034/does-toml-support-nested-arrays-of-objects-tables
-    // TODO this needs to work as extension to the defaults:
+    /// Additional output selection for all contracts
+    /// such as "ir", "devodc", "storageLayout", etc.
+    /// See [Solc Compiler Api](https://docs.soliditylang.org/en/latest/using-the-compiler.html#compiler-api)
+    ///
+    /// The following values are always set because they're required by `forge`
     //{
-    //   "*": {
-    //     "": [
-    //       "ast"
-    //     ],
-    //     "*": [
+    //   "*": [
     //       "abi",
     //       "evm.bytecode",
     //       "evm.deployedBytecode",
     //       "evm.methodIdentifiers"
     //     ]
-    //   }
     // }
     // "#
-    pub solc_settings: Option<String>,
+    #[serde(default)]
+    pub extra_output_components: Vec<ContractOutputSelection>,
+    /// If set to `true`, a separate `metadata.json` will be emitted for every contract.
+    /// See [Contract Metadata](https://docs.soliditylang.org/en/latest/metadata.html)
+    ///
+    /// The difference between `extra_output_components = ["metadata"]` and
+    /// `extra_output_components_files = ["metadata]` is that the former will include the
+    /// contract's metadata in the contract's json artifact, whereas the latter will emit the
+    /// output selection as separate files.
+    #[serde(default)]
+    pub extra_output_components_files: Vec<ContractOutputSelection>,
     /// The maximum number of local test case rejections allowed
     /// by proptest, to be encountered during usage of `vm.assume`
     /// cheatcode.
@@ -725,7 +732,8 @@ impl Default for Config {
             optimizer_runs: 200,
             optimizer_details: None,
             extra_output: None,
-            solc_settings: None,
+            extra_output_components: Default::default(),
+            extra_output_components_files: Default::default(),
             fuzz_runs: 256,
             fuzz_max_local_rejects: 1024,
             fuzz_max_global_rejects: 65536,
