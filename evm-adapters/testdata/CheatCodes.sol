@@ -434,6 +434,25 @@ contract CheatCodes is DSTest {
         emitter.t();
     }
 
+    // Test should fail because the data is different
+    function testFailExpectEmitWithCall1() public {
+        ExpectEmit emitter = new ExpectEmit();
+        hevm.deal(address(this), 1 ether);
+        hevm.expectEmit(true,true,false,true);
+        emit Transfer(address(this), address(1338), 1 gwei);
+        emitter.t4(payable(address(1337)), 100 gwei);
+    }
+
+
+    // Test should fail because, t5 doesn't emit
+    function testFailExpectEmitWithCall2() public {
+        ExpectEmit emitter = new ExpectEmit();
+        hevm.deal(address(this), 1 ether);
+        hevm.expectEmit(true,true,false,true);
+        emit Transfer(address(this), address(1338), 100 gwei);
+        emitter.t5(payable(address(1337)), 100 gwei);
+    }
+
     // Test should fail if nothing is called
     // after expectRevert
     function testFailExpectRevert3() public {
@@ -806,6 +825,15 @@ contract ExpectEmit {
     function t3() public {
         emit Transfer(msg.sender, address(1337), 1337);
         emit Transfer(msg.sender, address(1337), 1337);
+    }
+
+    function t4(address payable to, uint256 amount) public {
+        (bool success, ) = to.call{value: amount, gas: 30_000}(new bytes(0));
+        emit Transfer(msg.sender, address(1337), 100 gwei);
+    }
+
+    function t5(address payable to, uint256 amount) public {
+        (bool success, ) = to.call{value: amount, gas: 30_000}(new bytes(0));
     }
 }
 

@@ -1602,7 +1602,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
                 return evm_error("Log != expected log")
             } else {
                 // empty out expected_emits after successfully capturing all of them
-                self.state_mut().expected_emits = Vec::new();
+                self.state_mut().expected_emits.retain(|expected| !expected.found);
             }
 
             self.expected_revert(ExpectRevertReturn::Call(res), expected_revert).into_call_inner()
