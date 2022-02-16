@@ -1,4 +1,8 @@
-use ethers_solc::{cache::SolFilesCache, project_util::{copy_dir, TempProject}, ArtifactOutput, PathStyle, ProjectPathsConfig, ConfigurableArtifacts};
+use ethers_solc::{
+    cache::SolFilesCache,
+    project_util::{copy_dir, TempProject},
+    ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig,
+};
 use foundry_config::Config;
 use once_cell::sync::Lazy;
 use std::{

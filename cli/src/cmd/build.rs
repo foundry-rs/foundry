@@ -1,6 +1,6 @@
 //! build command
 
-use ethers::solc::{ConfigurableArtifacts, Project, ProjectCompileOutput};
+use ethers::solc::{Project, ProjectCompileOutput};
 use std::path::PathBuf;
 
 use crate::{cmd::Cmd, opts::forge::CompilerArgs};
@@ -152,7 +152,7 @@ pub struct BuildArgs {
 }
 
 impl Cmd for BuildArgs {
-    type Output = ProjectCompileOutput<ConfigurableArtifacts>;
+    type Output = ProjectCompileOutput;
     fn run(self) -> eyre::Result<Self::Output> {
         let project = self.project()?;
         super::compile(&project)
@@ -221,12 +221,12 @@ impl Provider for BuildArgs {
         }
 
         if let Some(ref extra) = self.compiler.extra_output {
-            let selection: Vec<_> = extra.into_iter().map(|s| s.to_string()).collect();
+            let selection: Vec<_> = extra.iter().map(|s| s.to_string()).collect();
             dict.insert("extra_output".to_string(), selection.into());
         }
 
         if let Some(ref extra) = self.compiler.extra_output_files {
-            let selection: Vec<_> = extra.into_iter().map(|s| s.to_string()).collect();
+            let selection: Vec<_> = extra.iter().map(|s| s.to_string()).collect();
             dict.insert("extra_output_files".to_string(), selection.into());
         }
 
