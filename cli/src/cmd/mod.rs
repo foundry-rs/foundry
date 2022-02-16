@@ -69,12 +69,12 @@ pub trait Cmd: clap::Parser + Sized {
 }
 
 use ethers::solc::{
-    artifacts::CompactContractBytecode, MinimalCombinedArtifacts, Project, ProjectCompileOutput,
+    artifacts::CompactContractBytecode, ConfigurableArtifacts, Project, ProjectCompileOutput,
 };
 
 /// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
 /// compilation was successful or if there was a cache hit.
-pub fn compile(project: &Project) -> eyre::Result<ProjectCompileOutput<MinimalCombinedArtifacts>> {
+pub fn compile(project: &Project) -> eyre::Result<ProjectCompileOutput<ConfigurableArtifacts>> {
     if !project.paths.sources.exists() {
         eyre::bail!(
             r#"no contracts to compile, contracts folder "{}" does not exist.
@@ -101,9 +101,9 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
 
 /// Manually compile a project with added sources
 pub fn manual_compile(
-    project: &Project<MinimalCombinedArtifacts>,
+    project: &Project,
     added_sources: Vec<PathBuf>,
-) -> eyre::Result<ProjectCompileOutput<MinimalCombinedArtifacts>> {
+) -> eyre::Result<ProjectCompileOutput<ConfigurableArtifacts>> {
     let mut sources = project.paths.read_input_files()?;
     sources.extend(Source::read_all_files(added_sources)?);
     println!("compiling...");
@@ -135,7 +135,7 @@ pub fn manual_compile(
 /// Runtime Bytecode of the given contract.
 pub fn read_artifact(
     project: &Project,
-    compiled: ProjectCompileOutput<MinimalCombinedArtifacts>,
+    compiled: ProjectCompileOutput<ConfigurableArtifacts>,
     contract: ContractInfo,
 ) -> eyre::Result<(Abi, CompactBytecode, CompactDeployedBytecode)> {
     Ok(match contract.path {
@@ -149,7 +149,7 @@ pub fn read_artifact(
 // contract name?
 fn get_artifact_from_name(
     contract: ContractInfo,
-    compiled: ProjectCompileOutput<MinimalCombinedArtifacts>,
+    compiled: ProjectCompileOutput<ConfigurableArtifacts>,
 ) -> eyre::Result<(Abi, CompactBytecode, CompactDeployedBytecode)> {
     let mut has_found_contract = false;
     let mut contract_artifact = None;
