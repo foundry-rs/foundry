@@ -1,7 +1,6 @@
 //! foundry configuration.
 use std::{
     borrow::Cow,
-    collections::BTreeMap,
     path::{Path, PathBuf},
 };
 
@@ -20,7 +19,7 @@ use ethers_solc::{
     artifacts::{output_selection::ContractOutputSelection, Optimizer, OptimizerDetails, Settings},
     error::SolcError,
     remappings::{RelativeRemapping, Remapping},
-    EvmVersion, Project, ProjectPathsConfig, SolcConfig,
+    ConfigurableArtifacts, EvmVersion, Project, ProjectPathsConfig, SolcConfig,
 };
 use figment::{providers::Data, value::Value};
 use inflector::Inflector;
@@ -152,8 +151,6 @@ pub struct Config {
     pub block_difficulty: u64,
     /// the `block.gaslimit` value during EVM execution
     pub block_gas_limit: Option<u64>,
-    /// Pass extra output types
-    pub extra_output: Option<Vec<String>>,
     /// Additional output selection for all contracts
     /// such as "ir", "devodc", "storageLayout", etc.
     /// See [Solc Compiler Api](https://docs.soliditylang.org/en/latest/using-the-compiler.html#compiler-api)
@@ -169,16 +166,16 @@ pub struct Config {
     // }
     // "#
     #[serde(default)]
-    pub extra_output_components: Vec<ContractOutputSelection>,
+    pub extra_output: Vec<ContractOutputSelection>,
     /// If set to `true`, a separate `metadata.json` will be emitted for every contract.
     /// See [Contract Metadata](https://docs.soliditylang.org/en/latest/metadata.html)
     ///
-    /// The difference between `extra_output_components = ["metadata"]` and
-    /// `extra_output_components_files = ["metadata]` is that the former will include the
+    /// The difference between `extra_output = ["metadata"]` and
+    /// `extra_output_files = ["metadata]` is that the former will include the
     /// contract's metadata in the contract's json artifact, whereas the latter will emit the
     /// output selection as separate files.
     #[serde(default)]
-    pub extra_output_components_files: Vec<ContractOutputSelection>,
+    pub extra_output_files: Vec<ContractOutputSelection>,
     /// The maximum number of local test case rejections allowed
     /// by proptest, to be encountered during usage of `vm.assume`
     /// cheatcode.
@@ -373,6 +370,7 @@ impl Config {
 
     fn create_project(&self, cached: bool, no_artifacts: bool) -> Result<Project, SolcError> {
         let project = Project::builder()
+            .artifacts(self.configured_artifacts_handler())
             .paths(self.project_paths())
             .allowed_path(&self.__root.0)
             .allowed_paths(&self.libs)
@@ -421,18 +419,10 @@ impl Config {
         }
     }
 
-    pub fn output_selection(&self) -> BTreeMap<String, BTreeMap<String, Vec<String>>> {
-        let mut output_selection = Settings::default_output_selection();
-
-        if let Some(extras) = &self.extra_output {
-            output_selection.entry("*".to_string()).and_modify(|e1| {
-                e1.entry("*".to_string()).and_modify(|e2| {
-                    e2.extend_from_slice(extras.as_slice());
-                });
-            });
-        }
-
-        output_selection
+    /// returns the [`ethers_solc::ConfigurableArtifacts`] for this config, that includes the
+    /// `extra_output` fields
+    pub fn configured_artifacts_handler(&self) -> ConfigurableArtifacts {
+        ConfigurableArtifacts::new(self.extra_output.clone(), self.extra_output_files.clone())
     }
 
     /// Returns the configured `solc` `Settings` that includes:
@@ -442,16 +432,17 @@ impl Config {
     pub fn solc_settings(&self) -> Result<Settings, SolcError> {
         let libraries = parse_libraries(&self.libraries)?;
         let optimizer = self.optimizer();
-        let output_selection = self.output_selection();
 
-        Ok((Settings {
+        let settings = Settings {
             optimizer,
             evm_version: Some(self.evm_version),
             libraries,
-            output_selection,
             ..Default::default()
-        })
-        .with_ast())
+        }
+        .with_extra_output(self.configured_artifacts_handler().output_selection())
+        .with_ast();
+
+        Ok(settings)
     }
 
     /// Returns the default figment
@@ -731,9 +722,8 @@ impl Default for Config {
             optimizer: true,
             optimizer_runs: 200,
             optimizer_details: None,
-            extra_output: None,
-            extra_output_components: Default::default(),
-            extra_output_components_files: Default::default(),
+            extra_output: Default::default(),
+            extra_output_files: Default::default(),
             fuzz_runs: 256,
             fuzz_max_local_rejects: 1024,
             fuzz_max_global_rejects: 65536,
@@ -1293,6 +1283,30 @@ mod tests {
                     ..Config::default()
                 }
             );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_output_selection() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                extra_output = ["metadata", "ir-optimized"]
+                extra_output_files = ["metadata"]
+            "#,
+            )?;
+
+            let config = Config::load();
+
+            assert_eq!(
+                config.extra_output,
+                vec![ContractOutputSelection::Metadata, ContractOutputSelection::IrOptimized]
+            );
+            assert_eq!(config.extra_output_files, vec![ContractOutputSelection::Metadata]);
 
             Ok(())
         });
