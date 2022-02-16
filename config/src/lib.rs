@@ -172,6 +172,14 @@ pub struct Config {
     // }
     // "#
     pub solc_settings: Option<String>,
+    /// The maximum number of local test case rejections allowed
+    /// by proptest, to be encountered during usage of `vm.assume`
+    /// cheatcode.
+    pub fuzz_max_local_rejects: u32,
+    /// The maximum number of global test case rejections allowed
+    /// by proptest, to be encountered during usage of `vm.assume`
+    /// cheatcode.
+    pub fuzz_max_global_rejects: u32,
     /// The root path where the config detection started from, `Config::with_root`
     #[doc(hidden)]
     //  We're skipping serialization here, so it won't be included in the [`Config::to_string()`]
@@ -719,6 +727,8 @@ impl Default for Config {
             extra_output: None,
             solc_settings: None,
             fuzz_runs: 256,
+            fuzz_max_local_rejects: 1024,
+            fuzz_max_global_rejects: 65536,
             ffi: false,
             sender: "00a329c0648769A73afAc7F9381E08FB43dBEA72".parse().unwrap(),
             tx_origin: "00a329c0648769A73afAc7F9381E08FB43dBEA72".parse().unwrap(),

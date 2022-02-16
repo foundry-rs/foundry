@@ -1,5 +1,5 @@
 //! Fuzzing support abstracted over the [`Evm`](crate::Evm) used
-use crate::Evm;
+use crate::{Evm, ASSUME_MAGIC_RETURN_CODE};
 use ethers::{
     abi::{Abi, Function, ParamType, Token, Tokenizable},
     types::{Address, Bytes, I256, U256},
@@ -9,12 +9,14 @@ use std::{
     marker::PhantomData,
 };
 
-pub use proptest::test_runner::Config as FuzzConfig;
+pub use proptest::test_runner::{Config as FuzzConfig, Reason};
 use proptest::{
     prelude::*,
     test_runner::{TestError, TestRunner},
 };
 use serde::{Deserialize, Serialize};
+
+mod strategies;
 
 /// Wrapper around any [`Evm`](crate::Evm) implementor which provides fuzzing support using [`proptest`](https://docs.rs/proptest/1.0.0/proptest/).
 ///
@@ -86,6 +88,14 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
                 let (returndata, reason, gas, _) = evm
                     .call_raw(self.sender, address, calldata.clone(), 0.into(), false)
                     .expect("could not make raw evm call");
+
+                // When assume cheat code is triggered return a special string "FOUNDRY::ASSUME"
+                if returndata.as_ref() == ASSUME_MAGIC_RETURN_CODE {
+                    let _ = return_reason.borrow_mut().insert(reason);
+                    let err = "ASSUME: Too many rejects";
+                    let _ = revert_reason.borrow_mut().insert(err.to_string());
+                    return Err(TestCaseError::Reject(err.into()))
+                }
 
                 // We must check success before resetting the state, otherwise resetting the state
                 // will also reset the `failed` state variable back to false.
@@ -268,15 +278,9 @@ fn fuzz_param(param: &ParamType) -> impl Strategy<Value = Token> {
                 .boxed(),
             _ => panic!("unsupported solidity type int{}", n),
         },
-        ParamType::Uint(n) => match n / 8 {
-            32 => any::<[u8; 32]>().prop_map(move |x| U256::from(&x).into_token()).boxed(),
-            y @ 1..=31 => any::<[u8; 32]>()
-                .prop_map(move |x| {
-                    (U256::from(&x) % (U256::from(2).pow(U256::from(y * 8)))).into_token()
-                })
-                .boxed(),
-            _ => panic!("unsupported solidity type uint{}", n),
-        },
+        ParamType::Uint(n) => {
+            strategies::UintStrategy::new(*n, vec![]).prop_map(|x| x.into_token()).boxed()
+        }
         ParamType::Bool => any::<bool>().prop_map(|x| x.into_token()).boxed(),
         ParamType::String => any::<Vec<u8>>()
             .prop_map(|x| Token::String(unsafe { std::str::from_utf8_unchecked(&x).to_string() }))

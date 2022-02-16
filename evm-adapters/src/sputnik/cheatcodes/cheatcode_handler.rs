@@ -6,7 +6,7 @@ use super::{
 use crate::{
     call_tracing::{CallTrace, CallTraceArena, LogCallOrder},
     sputnik::{cheatcodes::memory_stackstate_owned::ExpectedEmit, Executor, SputnikExecutor},
-    Evm,
+    Evm, ASSUME_MAGIC_RETURN_CODE,
 };
 use std::collections::BTreeMap;
 
@@ -879,6 +879,13 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 let label = inner.1;
 
                 self.state_mut().labels.insert(address, label);
+            }
+            HEVMCalls::Assume(inner) => {
+                self.add_debug(CheatOp::ASSUME);
+                if !inner.0 {
+                    res = ASSUME_MAGIC_RETURN_CODE.into();
+                    return Capture::Exit((ExitReason::Revert(ExitRevert::Reverted), res))
+                }
             }
         };
 

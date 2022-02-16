@@ -156,7 +156,7 @@ contract CheatCodes is DSTest {
     //     test_store_load_concrete(x);
     // }
 
-    function test_sign_addr_digest(uint sk, bytes32 digest) public {
+    function test_sign_addr_digest(uint248 sk, bytes32 digest) public {
         if (sk == 0) return; // invalid key
 
         (uint8 v, bytes32 r, bytes32 s) = hevm.sign(sk, digest);
@@ -166,7 +166,7 @@ contract CheatCodes is DSTest {
         assertEq(actual, expected);
     }
 
-    function test_sign_addr_message(uint sk, bytes memory message) public {
+    function test_sign_addr_message(uint248 sk, bytes memory message) public {
         test_sign_addr_digest(sk, keccak256(message));
     }
 
