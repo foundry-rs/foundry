@@ -506,9 +506,13 @@ async fn main() -> eyre::Result<()> {
             let last_block_num = provider.get_block_number().await?;
             let cast_provider = Cast::new(provider);
             let ts_block = cast_provider.timestamp(last_block_num).await?;
+            let ts_block1 = cast_provider.timestamp(1).await?;
             let block_num = if ts_block.lt(&ts_target) {
                 // If the most recent block's timestamp is below the target, return it
                 last_block_num
+            } else if ts_block1.gt(&ts_target) {
+                // If the target timestamp is below block 1's timestamp, return that
+                U64::from(1)
             } else {
                 // Otherwise, find the block that is closest to the timestamp
                 let mut low_block = U64::from(1); // block 0 has a timestamp of 0: https://github.com/ethereum/go-ethereum/issues/17042#issuecomment-559414137
