@@ -167,7 +167,8 @@ pub struct Config {
     // "#
     #[serde(default)]
     pub extra_output: Vec<ContractOutputSelection>,
-    /// If set to `true`, a separate `metadata.json` will be emitted for every contract.
+    /// If set , a separate `json` file will be emitted for every contract depending on the selection,
+    /// eg. `extra_output_files = ["metadata"]` will create a `metadata.json` for each contract in the project.
     /// See [Contract Metadata](https://docs.soliditylang.org/en/latest/metadata.html)
     ///
     /// The difference between `extra_output = ["metadata"]` and
