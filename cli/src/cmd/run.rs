@@ -7,7 +7,7 @@ use foundry_utils::IntoFunction;
 use std::{collections::BTreeMap, path::PathBuf};
 use ui::{TUIExitReason, Tui, Ui};
 
-use ethers::solc::{MinimalCombinedArtifacts, Project};
+use ethers::solc::Project;
 
 use crate::opts::evm::EvmArgs;
 use ansi_term::Colour;
@@ -264,7 +264,7 @@ struct ExtraLinkingInfo<'a> {
 }
 
 pub struct BuildOutput {
-    pub project: Project<MinimalCombinedArtifacts>,
+    pub project: Project,
     pub contract: CompactContractBytecode,
     pub highlevel_known_contracts: BTreeMap<String, ContractBytecodeSome>,
     pub sources: BTreeMap<u32, String>,

@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand, ValueHint};
 
-use ethers::solc::EvmVersion;
+use ethers::solc::{artifacts::output_selection::ContractOutputSelection, EvmVersion};
 use std::{path::PathBuf, str::FromStr};
 
 use crate::cmd::{
@@ -138,11 +138,18 @@ pub struct CompilerArgs {
     pub optimize_runs: Option<usize>,
 
     #[clap(
-        help = "Extra output types [evm.assembly, ewasm, ir, irOptimized] eg: `--extra-output evm.assembly`",
+        help = "Extra output types to include in the contract's json artifact [evm.assembly, ewasm, ir, irOptimized, metadata] eg: `--extra-output evm.assembly`",
         long
     )]
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub extra_output: Option<Vec<String>>,
+    pub extra_output: Option<Vec<ContractOutputSelection>>,
+
+    #[clap(
+        help = "Extra output types to write to a separate file [metadata, ir, irOptimized, ewasm] eg: `--extra-output-files metadata`",
+        long
+    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extra_output_files: Option<Vec<ContractOutputSelection>>,
 }
 
 /// Represents the common dapp argument pattern for `<path>:<contractname>` where `<path>:` is
