@@ -153,6 +153,8 @@ which implements the following methods:
   
 - `function expectEmit(bool,bool,bool,bool) external`: Expects the next emitted event. Params check topic 1, topic 2, topic 3 and data are the same.
 
+- `function getCode(string calldata) external returns (bytes memory)`: Fetches bytecode from a contract artifact. The parameter can either be in the form `ContractFile.sol` (if the filename and contract name are the same), `ContractFile.sol:ContractName`, or `./path/to/artifact.json`.
+
 The below example uses the `warp` cheatcode to override the timestamp & `expectRevert` to expect a specific revert string:
 
 ```solidity
@@ -271,7 +273,7 @@ interface Hevm {
     // Expect a call to an address with the specified calldata.
     // Calldata can either be strict or a partial match
     function expectCall(address,bytes calldata) external;
-
+    // Fetches the contract bytecode from its artifact file
     function getCode(string calldata) external returns (bytes memory);
 }
 ```
