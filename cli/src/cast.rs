@@ -15,7 +15,7 @@ use ethers::{
     },
     providers::{Middleware, Provider},
     signers::{LocalWallet, Signer},
-    types::{Address, Chain, NameOrAddress, Signature, U256},
+    types::{Address, Chain, NameOrAddress, Signature, U256, U64},
 };
 use opts::{
     cast::{Opts, Subcommands, WalletSubcommands},
@@ -499,6 +499,56 @@ async fn main() -> eyre::Result<()> {
             let contract = BaseContract::from(parse_abi(&[&sig]).unwrap());
             let selector = contract.abi().functions().last().unwrap().short_signature();
             println!("0x{}", hex::encode(selector));
+        }
+        Subcommands::FindBlock { timestamp, rpc_url } => {
+            let ts_target = U256::from(timestamp);
+            let provider = Provider::try_from(rpc_url)?;
+            let last_block_num = provider.get_block_number().await?;
+            let cast_provider = Cast::new(provider);
+            let ts_block = cast_provider.timestamp(last_block_num).await?;
+            let block_num = match ts_block.lt(&ts_target) {
+                // If the most recent block's timestamp is below the target, return it
+                true => last_block_num,
+                // Otherwise, find the block that is closest to the timestamp
+                false => {
+                    let mut low_block = U64::from(1); // block 0 has a timestamp of 0: https://github.com/ethereum/go-ethereum/issues/17042#issuecomment-559414137
+                    let mut high_block = last_block_num;
+                    let mut matching_block: Option<U64> = None;
+                    while high_block.gt(&low_block) && matching_block.is_none() {
+                        // Get timestamp of middle block (this approach approach to avoids overflow)
+                        let high_minus_low_over_2 = high_block
+                            .checked_sub(low_block)
+                            .unwrap()
+                            .checked_div(U64::from(2))
+                            .unwrap();
+                        let mid_block = high_block.checked_sub(high_minus_low_over_2).unwrap();
+                        let ts_mid_block = cast_provider.timestamp(mid_block).await?;
+
+                        // Check if we've found a match or should keep searching
+                        if ts_mid_block.eq(&ts_target) {
+                            matching_block = Some(mid_block)
+                        } else if high_block.checked_sub(low_block).unwrap().eq(&U64::from(1)) {
+                            // The target timestamp is in between these blocks. This rounds to the
+                            // highest block if timestamp is equidistant between blocks
+                            let ts_high = cast_provider.timestamp(high_block).await?;
+                            let ts_low = cast_provider.timestamp(low_block).await?;
+                            let high_diff = ts_high.checked_sub(ts_target).unwrap();
+                            let low_diff = ts_target.checked_sub(ts_low).unwrap();
+                            let is_low = low_diff.lt(&high_diff);
+                            matching_block = if is_low { Some(low_block) } else { Some(high_block) }
+                        } else if ts_mid_block.lt(&ts_target) {
+                            low_block = mid_block;
+                        } else {
+                            high_block = mid_block;
+                        }
+                    }
+                    if matching_block.is_none() {
+                        matching_block = Some(low_block);
+                    }
+                    matching_block.unwrap()
+                }
+            };
+            println!("{}", block_num);
         }
         Subcommands::Wallet { command } => match command {
             WalletSubcommands::New { path, password, unsafe_password } => {

@@ -405,6 +405,10 @@ where
         Ok(datetime.format("%a %b %e %H:%M:%S %Y").to_string())
     }
 
+    pub async fn timestamp<T: Into<BlockId>>(&self, block: T) -> Result<U256> {
+        Ok(Cast::block_field_as_num(self, block, String::from("timestamp")).await?)
+    }
+
     pub async fn chain(&self) -> Result<&str> {
         let genesis_hash = Cast::block(
             self,
@@ -1219,7 +1223,6 @@ impl SimpleCast {
     /// #    Ok(())
     /// # }
     /// ```
-
     pub fn index(
         from_type: &str,
         to_type: &str,
