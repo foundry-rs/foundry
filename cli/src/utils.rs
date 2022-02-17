@@ -19,13 +19,14 @@ const LOCAL_RPC_URL: &str = "http://127.0.0.1:8545";
 pub const DAPP_JSON: &str = "./out/dapp.sol.json";
 
 /// The version message for the current program, like
+/// |--CARGO---| |-----BUILD_TIME------| |---GIT_SHA_SHORT--|
 /// `forge 0.1.0 (f01b232bc 2022-01-22T23:28:39.493201+00:00)`
 pub(crate) const VERSION_MESSAGE: &str = concat!(
     env!("CARGO_PKG_VERSION"),
     " (",
-    env!("VERGEN_GIT_SHA_SHORT"),
-    " ",
     env!("VERGEN_BUILD_TIMESTAMP"),
+    " ",
+    env!("VERGEN_GIT_SHA_SHORT"),
     ")"
 );
 
