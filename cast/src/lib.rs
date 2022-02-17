@@ -406,7 +406,7 @@ where
     }
 
     pub async fn timestamp<T: Into<BlockId>>(&self, block: T) -> Result<U256> {
-        Ok(Cast::block_field_as_num(self, block, String::from("timestamp")).await?)
+        Ok(Cast::block_field_as_num(self, block, "timestamp".to_string()).await?)
     }
 
     pub async fn chain(&self) -> Result<&str> {

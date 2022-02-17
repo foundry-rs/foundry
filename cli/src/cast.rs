@@ -37,6 +37,7 @@ use clap_complete::generate;
 
 use crate::utils::read_secret;
 use eyre::WrapErr;
+use futures::join;
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
@@ -505,12 +506,15 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(rpc_url)?;
             let last_block_num = provider.get_block_number().await?;
             let cast_provider = Cast::new(provider);
-            let ts_block = cast_provider.timestamp(last_block_num).await?;
-            let ts_block1 = cast_provider.timestamp(1).await?;
-            let block_num = if ts_block.lt(&ts_target) {
+
+            let res = join!(cast_provider.timestamp(last_block_num), cast_provider.timestamp(1));
+            let ts_block_latest = res.0.unwrap();
+            let ts_block_1 = res.1.unwrap();
+
+            let block_num = if ts_block_latest.lt(&ts_target) {
                 // If the most recent block's timestamp is below the target, return it
                 last_block_num
-            } else if ts_block1.gt(&ts_target) {
+            } else if ts_block_1.gt(&ts_target) {
                 // If the target timestamp is below block 1's timestamp, return that
                 U64::from(1)
             } else {
@@ -522,6 +526,7 @@ async fn main() -> eyre::Result<()> {
                     // Get timestamp of middle block (this approach approach to avoids overflow)
                     let high_minus_low_over_2 = high_block
                         .checked_sub(low_block)
+                        .ok_or_else(|| eyre::eyre!("unexpected underflow"))
                         .unwrap()
                         .checked_div(U64::from(2))
                         .unwrap();
@@ -534,8 +539,12 @@ async fn main() -> eyre::Result<()> {
                     } else if high_block.checked_sub(low_block).unwrap().eq(&U64::from(1)) {
                         // The target timestamp is in between these blocks. This rounds to the
                         // highest block if timestamp is equidistant between blocks
-                        let ts_high = cast_provider.timestamp(high_block).await?;
-                        let ts_low = cast_provider.timestamp(low_block).await?;
+                        let res = join!(
+                            cast_provider.timestamp(high_block),
+                            cast_provider.timestamp(low_block)
+                        );
+                        let ts_high = res.0.unwrap();
+                        let ts_low = res.1.unwrap();
                         let high_diff = ts_high.checked_sub(ts_target).unwrap();
                         let low_diff = ts_target.checked_sub(ts_low).unwrap();
                         let is_low = low_diff.lt(&high_diff);
@@ -546,10 +555,7 @@ async fn main() -> eyre::Result<()> {
                         high_block = mid_block;
                     }
                 }
-                if matching_block.is_none() {
-                    matching_block = Some(low_block);
-                }
-                matching_block.unwrap()
+                matching_block.unwrap_or(low_block)
             };
             println!("{}", block_num);
         }

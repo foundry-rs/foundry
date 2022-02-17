@@ -1618,6 +1618,7 @@ dependencies = [
  "foundry-cli-test-utils",
  "foundry-config",
  "foundry-utils",
+ "futures",
  "glob",
  "hex",
  "locate-cargo-manifest",
