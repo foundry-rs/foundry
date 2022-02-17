@@ -268,7 +268,7 @@ impl TestCommand {
     }
 
     /// Resets the command
-    pub fn fuse(&mut self)  -> &mut TestCommand {
+    pub fn fuse(&mut self) -> &mut TestCommand {
         self.set_cmd(self.project.bin())
     }
 
