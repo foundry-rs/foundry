@@ -413,6 +413,7 @@ SUBCOMMANDS:
     4byte                    Fetches function signatures given the selector from 4byte.directory
     4byte-decode             Decodes transaction calldata by fetching the signature using 4byte.directory
     4byte-event              Takes a 32 byte topic and prints the response from querying 4byte.directory for that topic
+    pretty-calldata          Pretty prints calldata, if available gets signature from 4byte.directory
     abi-encode
     age                      Prints the timestamp of a block
     balance                  Print the balance of <account> in wei

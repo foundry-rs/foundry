@@ -15,6 +15,7 @@ use serde::Deserialize;
 use std::{
     collections::{BTreeMap, HashSet},
     env::VarError,
+    fmt,
 };
 
 use tokio::runtime::{Handle, Runtime};
@@ -45,6 +46,42 @@ impl RuntimeOrHandle {
             RuntimeOrHandle::Runtime(runtime) => runtime.block_on(f),
             RuntimeOrHandle::Handle(handle) => tokio::task::block_in_place(|| handle.block_on(f)),
         }
+    }
+}
+
+pub enum SelectorOrSig {
+    Selector(String),
+    Sig(Vec<String>),
+}
+
+pub struct PossibleSigs {
+    method: SelectorOrSig,
+    data: Vec<String>,
+}
+impl PossibleSigs {
+    fn new() -> Self {
+        PossibleSigs { method: SelectorOrSig::Selector("0x00000000".to_string()), data: vec![] }
+    }
+}
+impl fmt::Display for PossibleSigs {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.method {
+            SelectorOrSig::Selector(selector) => {
+                writeln!(f, "\n Method: {}", selector)?;
+            }
+            SelectorOrSig::Sig(sigs) => {
+                writeln!(f, "\n Possible methods:")?;
+                for sig in sigs {
+                    writeln!(f, " - {}", sig)?;
+                }
+            }
+        }
+
+        writeln!(f, " ------------")?;
+        for (i, row) in self.data.iter().enumerate() {
+            writeln!(f, " [{}]: {}", i, row)?;
+        }
+        Ok(())
     }
 }
 
@@ -503,6 +540,47 @@ pub async fn fourbyte_event(topic: &str) -> Result<Vec<(String, i32)>> {
         .into_iter()
         .map(|d| (d.text_signature, d.id))
         .collect::<Vec<(String, i32)>>())
+}
+
+/// Pretty print calldata and if available, fetch possible function signatures
+///
+/// ```no_run
+/// 
+/// use foundry_utils::pretty_calldata;
+///
+/// # async fn foo() -> eyre::Result<()> {
+///   let pretty_data = pretty_calldata("0x70a08231000000000000000000000000d0074f4e6490ae3f888d1d4f7e3e43326bd3f0f5".to_string()).await?;
+///   println!("{}",pretty_data);
+/// # Ok(())
+/// # }
+/// ```
+
+pub async fn pretty_calldata(calldata: String) -> Result<PossibleSigs> {
+    let mut possible_info = PossibleSigs::new();
+    let calldata = calldata.strip_prefix("0x").unwrap();
+
+    let selector =
+        calldata.get(..8).ok_or_else(|| eyre::eyre!("calldata cannot be less that 4 bytes"))?;
+
+    let sigs: Vec<String> = fourbyte(selector).await?.into_iter().map(|sig| sig.0).collect();
+    let (_, data) = calldata.split_at(8);
+
+    if data.len() % 64 != 0 {
+        eprintln!("\nInvalid calldata size");
+        std::process::exit(0)
+    }
+
+    let row_length = data.len() / 64;
+
+    for row in 0..row_length {
+        possible_info.data.push(data[64 * row..64 * (row + 1)].to_string());
+    }
+    if sigs.is_empty() {
+        possible_info.method = SelectorOrSig::Selector(selector.to_string());
+    } else {
+        possible_info.method = SelectorOrSig::Sig(sigs);
+    }
+    Ok(possible_info)
 }
 
 pub fn abi_decode(sig: &str, calldata: &str, input: bool) -> Result<Vec<Token>> {
