@@ -12,14 +12,15 @@ use evm_adapters::{
 };
 use forge::{MultiContractRunnerBuilder, TestFilter};
 use foundry_config::{figment::Figment, Config};
-use std::collections::BTreeMap;
+use regex::Regex;
+use std::{collections::BTreeMap, str::FromStr};
 
 #[derive(Debug, Clone, Parser)]
 pub struct Filter {
     #[clap(
         long = "match",
         short = 'm',
-        help = "only run test methods matching regex (deprecated, see --match-test, --match-contract)"
+        help = "only run test methods matching regex (deprecated, see --match-test)"
     )]
     pattern: Option<regex::Regex>,
 
@@ -54,11 +55,28 @@ pub struct Filter {
         conflicts_with = "pattern"
     )]
     contract_pattern_inverse: Option<regex::Regex>,
+
+    #[clap(
+        long = "match-path",
+        alias = "mp",
+        help = "only run test methods in source files at path matching regex. Requires absolute path",
+        conflicts_with = "pattern"
+    )]
+    path_pattern: Option<regex::Regex>,
+
+    #[clap(
+        long = "no-match-path",
+        alias = "nmp",
+        help = "only run test methods in source files at path not matching regex. Requires absolute path",
+        conflicts_with = "pattern"
+    )]
+    path_pattern_inverse: Option<regex::Regex>,
 }
 
 impl TestFilter for Filter {
-    fn matches_test(&self, test_name: &str) -> bool {
+    fn matches_test(&self, test_name: impl AsRef<str>) -> bool {
         let mut ok = true;
+        let test_name = test_name.as_ref();
         // Handle the deprecated option match
         if let Some(re) = &self.pattern {
             ok &= re.is_match(test_name);
@@ -72,13 +90,28 @@ impl TestFilter for Filter {
         ok
     }
 
-    fn matches_contract(&self, contract_name: &str) -> bool {
+    fn matches_contract(&self, contract_name: impl AsRef<str>) -> bool {
         let mut ok = true;
+        let contract_name = contract_name.as_ref();
         if let Some(re) = &self.contract_pattern {
             ok &= re.is_match(contract_name);
         }
         if let Some(re) = &self.contract_pattern_inverse {
             ok &= !re.is_match(contract_name);
+        }
+        ok
+    }
+
+    fn matches_path(&self, path: impl AsRef<str>) -> bool {
+        let mut ok = true;
+        let path = path.as_ref();
+        if let Some(re) = &self.path_pattern {
+            let re = Regex::from_str(&format!("^{}", re.as_str())).unwrap();
+            ok &= re.is_match(path);
+        }
+        if let Some(re) = &self.path_pattern_inverse {
+            let re = Regex::from_str(&format!("^{}", re.as_str())).unwrap();
+            ok &= !re.is_match(path);
         }
         ok
     }
