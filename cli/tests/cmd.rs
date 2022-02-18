@@ -259,7 +259,7 @@ forgetest_init!(can_emit_extra_output, |prj: TestProject, mut cmd: TestCommand| 
     cmd.assert_non_empty_stdout();
 
     let metadata_path = prj.paths().artifacts.join("Contract.sol/Contract.metadata.json");
-    let artifact: Metadata = ethers::solc::utils::read_json_file(metadata_path).unwrap();
+    let _artifact: Metadata = ethers::solc::utils::read_json_file(metadata_path).unwrap();
 });
 
 // test against a local checkout, useful to debug with local ethers-rs patch
