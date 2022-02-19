@@ -13,7 +13,7 @@ use crate::cmd::{
     install::InstallArgs,
     remappings::RemappingArgs,
     run::RunArgs,
-    snapshot, test,
+    snapshot, test, tree,
     verify::{VerifyArgs, VerifyCheckArgs},
 };
 use serde::Serialize;
@@ -116,6 +116,8 @@ pub enum Subcommands {
     Flatten(flatten::FlattenArgs),
     // #[clap(about = "formats Solidity source files")]
     // Fmt(FmtArgs),
+    #[clap(about = "Display a tree visualization of the project's dependency graph")]
+    Tree(tree::TreeArgs),
 }
 
 // A set of solc compiler settings that can be set via command line arguments, which are intended
