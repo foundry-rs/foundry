@@ -471,8 +471,8 @@ pub enum Subcommands {
         about = "Prints the block number closes to the provided timestamp"
     )]
     FindBlock {
-        #[clap(help = "The timestamp to search for")]
-        timestamp: u128,
+        #[clap(help = "The UNIX timestamp to search for (in seconds)")]
+        timestamp: u64,
         #[clap(long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
