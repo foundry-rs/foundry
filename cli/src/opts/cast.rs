@@ -329,7 +329,7 @@ pub enum Subcommands {
         #[clap(help = "Hex encoded calldata")]
         calldata: String,
         #[clap(long, short, help = "Skip the 4byte directory lookup.")]
-        offline: bool
+        offline: bool,
     },
 
     #[clap(name = "age")]

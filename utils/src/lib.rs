@@ -546,7 +546,7 @@ pub async fn fourbyte_event(topic: &str) -> Result<Vec<(String, i32)>> {
 /// Pretty print calldata and if available, fetch possible function signatures
 ///
 /// ```no_run
-///
+/// 
 /// use foundry_utils::pretty_calldata;
 ///
 /// # async fn foo() -> eyre::Result<()> {
