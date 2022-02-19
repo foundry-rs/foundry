@@ -373,7 +373,7 @@ async fn main() -> eyre::Result<()> {
                 eprintln!("Expected calldata hex string, received \"{}\"", calldata);
                 std::process::exit(0)
             }
-            let pretty_data = foundry_utils::pretty_calldata(calldata).await?;
+            let pretty_data = foundry_utils::pretty_calldata(&calldata).await?;
             println!("{}", pretty_data);
         }
         Subcommands::Age { block, rpc_url } => {

@@ -555,9 +555,9 @@ pub async fn fourbyte_event(topic: &str) -> Result<Vec<(String, i32)>> {
 /// # }
 /// ```
 
-pub async fn pretty_calldata(calldata: String) -> Result<PossibleSigs> {
+pub async fn pretty_calldata(calldata: impl AsRef<str>) -> Result<PossibleSigs> {
     let mut possible_info = PossibleSigs::new();
-    let calldata = calldata.strip_prefix("0x").unwrap();
+    let calldata = calldata.as_ref().trim_start_matches("0x");
 
     let selector =
         calldata.get(..8).ok_or_else(|| eyre::eyre!("calldata cannot be less that 4 bytes"))?;
@@ -566,8 +566,7 @@ pub async fn pretty_calldata(calldata: String) -> Result<PossibleSigs> {
     let (_, data) = calldata.split_at(8);
 
     if data.len() % 64 != 0 {
-        eprintln!("\nInvalid calldata size");
-        std::process::exit(0)
+        eyre::bail!("\nInvalid calldata size")
     }
 
     let row_length = data.len() / 64;
