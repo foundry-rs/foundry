@@ -323,6 +323,15 @@ pub enum Subcommands {
         #[clap(help = "the 32 byte topic")]
         topic: String,
     },
+    #[clap(name = "pretty-calldata")]
+    #[clap(about = "Pretty prints calldata, if available gets signature from 4byte.directory")]
+    PrettyCalldata {
+        #[clap(help = "Hex encoded calldata")]
+        calldata: String,
+        #[clap(long, short, help = "Skip the 4byte directory lookup.")]
+        offline: bool,
+    },
+
     #[clap(name = "age")]
     #[clap(about = "Prints the timestamp of a block")]
     Age {

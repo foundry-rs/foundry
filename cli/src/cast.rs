@@ -367,6 +367,15 @@ async fn main() -> eyre::Result<()> {
             let sigs = foundry_utils::fourbyte_event(&topic).await?;
             sigs.iter().for_each(|sig| println!("{}", sig.0));
         }
+
+        Subcommands::PrettyCalldata { calldata, offline } => {
+            if !calldata.starts_with("0x") {
+                eprintln!("Expected calldata hex string, received \"{}\"", calldata);
+                std::process::exit(0)
+            }
+            let pretty_data = foundry_utils::pretty_calldata(&calldata, offline).await?;
+            println!("{}", pretty_data);
+        }
         Subcommands::Age { block, rpc_url } => {
             let provider = Provider::try_from(rpc_url)?;
             println!(
