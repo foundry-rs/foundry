@@ -50,7 +50,7 @@ where
     /// Makes a read-only call to the specified address
     ///
     /// ```no_run
-    /// 
+    ///
     /// use cast::Cast;
     /// use ethers_core::types::{Address, Chain};
     /// use ethers_providers::{Provider, Http};
@@ -403,6 +403,10 @@ where
             Cast::block_field_as_num(self, block, String::from("timestamp")).await?.to_string();
         let datetime = NaiveDateTime::from_timestamp(timestamp_str.parse::<i64>().unwrap(), 0);
         Ok(datetime.format("%a %b %e %H:%M:%S %Y").to_string())
+    }
+
+    pub async fn timestamp<T: Into<BlockId>>(&self, block: T) -> Result<U256> {
+        Cast::block_field_as_num(self, block, "timestamp".to_string()).await
     }
 
     pub async fn chain(&self) -> Result<&str> {
@@ -1213,13 +1217,12 @@ impl SimpleCast {
     /// # use cast::SimpleCast as Cast;
     ///
     /// # fn main() -> eyre::Result<()> {
-    ///    
+    ///
     ///    assert_eq!(Cast::index("address", "uint256" ,"0xD0074F4E6490ae3f888d1d4f7E3E43326bD3f0f5" ,"2").unwrap().as_str(),"0x9525a448a9000053a4d151336329d6563b7e80b24f8e628e95527f218e8ab5fb");
     ///    assert_eq!(Cast::index("uint256", "uint256" ,"42" ,"6").unwrap().as_str(),"0xfc808b0f31a1e6b9cf25ff6289feae9b51017b392cc8e25620a94a38dcdafcc1");
     /// #    Ok(())
     /// # }
     /// ```
-
     pub fn index(
         from_type: &str,
         to_type: &str,

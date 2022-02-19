@@ -475,6 +475,16 @@ pub enum Subcommands {
         #[clap(help = "The human-readable function signature, e.g. 'transfer(address,uint256)'")]
         sig: String,
     },
+    #[clap(
+        name = "find-block",
+        about = "Prints the block number closes to the provided timestamp"
+    )]
+    FindBlock {
+        #[clap(help = "The UNIX timestamp to search for (in seconds)")]
+        timestamp: u64,
+        #[clap(long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+    },
     #[clap(about = "Generate shell completions script")]
     Completions {
         #[clap(arg_enum)]

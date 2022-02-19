@@ -44,6 +44,7 @@ tracing = "0.1.26"
 hex = "0.4.3"
 rayon = "1.5.1"
 serde = "1.0.133"
+futures = "0.3.17"
 
 ## EVM Implementations
 # evm = { version = "0.30.1" }
