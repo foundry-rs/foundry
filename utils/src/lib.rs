@@ -460,7 +460,17 @@ pub async fn fourbyte(selector: &str) -> Result<Vec<(String, i32)>> {
 
     let url = format!("https://www.4byte.directory/api/v1/signatures/?hex_signature={}", selector);
     let res = reqwest::get(url).await?;
-    let api_response = res.json::<ApiResponse>().await?;
+    let res = res.text().await?;
+    let api_response = match serde_json::from_str::<ApiResponse>(&res) {
+        Ok(inner) => inner,
+        Err(err) => {
+            eyre::bail!("Could not decode response:\n {}.\nError: {}", res, err)
+        }
+    };
+
+    if api_response.results.is_empty() {
+        eyre::bail!("no selector found for provided signature")
+    }
 
     Ok(api_response
         .results
