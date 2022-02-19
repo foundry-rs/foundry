@@ -79,7 +79,8 @@ impl fmt::Display for PossibleSigs {
 
         writeln!(f, " ------------")?;
         for (i, row) in self.data.iter().enumerate() {
-            writeln!(f, " [{}]: {}", i, row)?;
+            let pad = if i < 10 { "  " } else { " " };
+            writeln!(f, " [{}]:{}{}", i, pad, row)?;
         }
         Ok(())
     }
@@ -565,7 +566,7 @@ pub async fn pretty_calldata(calldata: impl AsRef<str>, offline: bool) -> Result
     let sigs = if offline {
         vec![]
     } else {
-        fourbyte(selector).await?.into_iter().map(|sig| sig.0).collect();
+        fourbyte(selector).await?.into_iter().map(|sig| sig.0).collect()
     };
     let (_, data) = calldata.split_at(8);
 
