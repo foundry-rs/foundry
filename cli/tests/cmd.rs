@@ -262,6 +262,60 @@ forgetest_init!(can_emit_extra_output, |prj: TestProject, mut cmd: TestCommand| 
     let _artifact: Metadata = ethers::solc::utils::read_json_file(metadata_path).unwrap();
 });
 
+// tests that direct import paths are handled correctly
+forgetest!(can_handle_direct_imports_into_src, |prj: TestProject, mut cmd: TestCommand| {
+    prj.inner()
+        .add_source(
+            "Foo",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+import {FooLib} from "src/FooLib.sol";
+struct Bar {
+    uint8 x;
+}
+contract Foo {
+    mapping(uint256 => Bar) bars;
+    function checker(uint256 id) external {
+        Bar memory b = bars[id];
+        FooLib.check(b);
+    }
+    function checker2() external {
+        FooLib.check2(this);
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    prj.inner()
+        .add_source(
+            "FooLib",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+import {Foo, Bar} from "src/Foo.sol";
+library FooLib {
+    function check(Bar memory b) public {}
+    function check2(Foo f) public {}
+}
+   "#,
+        )
+        .unwrap();
+
+    cmd.arg("build");
+
+    assert_eq!(
+        "compiling...
+Compiling 2 files with 0.8.10
+Compilation finished successfully
+Compiler run successful
+success.
+",
+        cmd.stdout_lossy()
+    );
+});
+
 // test against a local checkout, useful to debug with local ethers-rs patch
 forgetest_ignore!(can_compile_local_spells, |_: TestProject, mut cmd: TestCommand| {
     let current_dir = std::env::current_dir().unwrap();
