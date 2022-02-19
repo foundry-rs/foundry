@@ -328,6 +328,8 @@ pub enum Subcommands {
     PrettyCalldata {
         #[clap(help = "Hex encoded calldata")]
         calldata: String,
+        #[clap(long, short, help = "Skip the 4byte directory lookup.")]
+        offline: bool
     },
 
     #[clap(name = "age")]

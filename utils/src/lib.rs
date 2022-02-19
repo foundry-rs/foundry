@@ -545,7 +545,7 @@ pub async fn fourbyte_event(topic: &str) -> Result<Vec<(String, i32)>> {
 /// Pretty print calldata and if available, fetch possible function signatures
 ///
 /// ```no_run
-/// 
+///
 /// use foundry_utils::pretty_calldata;
 ///
 /// # async fn foo() -> eyre::Result<()> {
@@ -555,14 +555,18 @@ pub async fn fourbyte_event(topic: &str) -> Result<Vec<(String, i32)>> {
 /// # }
 /// ```
 
-pub async fn pretty_calldata(calldata: impl AsRef<str>) -> Result<PossibleSigs> {
+pub async fn pretty_calldata(calldata: impl AsRef<str>, offline: bool) -> Result<PossibleSigs> {
     let mut possible_info = PossibleSigs::new();
     let calldata = calldata.as_ref().trim_start_matches("0x");
 
     let selector =
         calldata.get(..8).ok_or_else(|| eyre::eyre!("calldata cannot be less that 4 bytes"))?;
 
-    let sigs: Vec<String> = fourbyte(selector).await?.into_iter().map(|sig| sig.0).collect();
+    let sigs = if offline {
+        vec![]
+    } else {
+        fourbyte(selector).await?.into_iter().map(|sig| sig.0).collect();
+    };
     let (_, data) = calldata.split_at(8);
 
     if data.len() % 64 != 0 {
