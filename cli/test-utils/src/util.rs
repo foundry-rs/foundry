@@ -337,6 +337,11 @@ impl TestCommand {
         }
     }
 
+    /// Returns the `stdout` of the output as `String`.
+    pub fn stdout_lossy(&mut self) -> String {
+        String::from_utf8_lossy(&self.output().stdout).to_string()
+    }
+
     /// Gets the output of a command. If the command failed, then this panics.
     pub fn output(&mut self) -> process::Output {
         let output = self.cmd.output().unwrap();

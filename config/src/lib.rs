@@ -407,8 +407,41 @@ impl Config {
             .sources(&self.src)
             .artifacts(&self.out)
             .libs(self.libs.clone())
-            .remappings(self.remappings.iter().map(|m| m.clone().into()))
+            .remappings(self.get_all_remappings())
             .build_with_root(&self.__root.0)
+    }
+
+    /// Returns all configured [`Remappings`]
+    ///
+    /// **Note:** this will add an additional `<src>/=<src path>` remapping here so imports that
+    /// look like `import {Foo} from "src/Foo.sol";` are properly resolved.
+    ///
+    /// This is due the fact that `solc`'s VFS resolves [direct imports](https://docs.soliditylang.org/en/develop/path-resolution.html#direct-imports) that start with the source directory's name.
+    ///
+    /// So that
+    ///
+    /// ```solidity
+    /// import "./math/math.sol";
+    /// import "contracts/tokens/token.sol";
+    /// ```
+    ///
+    /// in `contracts/contract.sol` are resolved to
+    ///
+    /// ```text
+    /// contracts/tokens/token.sol
+    /// contracts/math/math.sol
+    /// ```
+    pub fn get_all_remappings(&self) -> Vec<Remapping> {
+        let mut remappings: Vec<_> = self.remappings.iter().map(|m| m.clone().into()).collect();
+        if let Some(src_dir_name) =
+            self.src.file_name().and_then(|s| s.to_str()).filter(|s| !s.is_empty())
+        {
+            remappings.push(Remapping {
+                name: format!("{}/", src_dir_name),
+                path: format!("{}", self.src.display()),
+            });
+        }
+        remappings
     }
 
     /// Returns the `Optimizer` based on the configured settings
@@ -1214,6 +1247,17 @@ mod tests {
                     Remapping::from_str("ds-test/=lib/ds-test/src/").unwrap().into(),
                     Remapping::from_str("env-lib/=lib/env-lib/").unwrap().into(),
                     Remapping::from_str("other/=lib/other/").unwrap().into(),
+                ],
+            );
+
+            // contains additional remapping to the source dir
+            assert_eq!(
+                config.get_all_remappings(),
+                vec![
+                    Remapping::from_str("ds-test/=lib/ds-test/src/").unwrap(),
+                    Remapping::from_str("env-lib/=lib/env-lib/").unwrap(),
+                    Remapping::from_str("other/=lib/other/").unwrap(),
+                    Remapping::from_str("some-source/=some-source").unwrap(),
                 ],
             );
 
