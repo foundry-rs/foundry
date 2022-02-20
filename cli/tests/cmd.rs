@@ -338,7 +338,6 @@ contract Demo {
 
     cmd.arg("run").arg(script);
     let output = cmd.stdout_lossy();
-
     assert_eq!(
         format!(
             "compiling...
