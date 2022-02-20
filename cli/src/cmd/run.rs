@@ -247,7 +247,7 @@ impl Cmd for RunArgs {
             }
 
             println!("Gas Used: {}", result.gas_used);
-            println!("== Logs == ");
+            println!("== Logs ==");
             result.logs.iter().for_each(|log| println!("{}", log));
         }
 
