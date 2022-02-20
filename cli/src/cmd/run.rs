@@ -1,4 +1,4 @@
-use crate::cmd::{build::BuildArgs, compile, manual_compile, Cmd};
+use crate::cmd::{build::BuildArgs, compile_files, Cmd};
 use clap::{Parser, ValueHint};
 use evm_adapters::sputnik::cheatcodes::{CONSOLE_ABI, HEVMCONSOLE_ABI, HEVM_ABI};
 
@@ -247,7 +247,7 @@ impl Cmd for RunArgs {
             }
 
             println!("Gas Used: {}", result.gas_used);
-            println!("== Logs == ");
+            println!("== Logs ==");
             result.logs.iter().for_each(|log| println!("{}", log));
         }
 
@@ -275,32 +275,8 @@ impl RunArgs {
     /// Compiles the file with auto-detection and compiler params.
     pub fn build(&self, config: Config, evm_opts: &EvmOpts) -> eyre::Result<BuildOutput> {
         let target_contract = dunce::canonicalize(&self.path)?;
-        let (project, output) = if let Ok(mut project) = config.project() {
-            // TODO: caching causes no output until https://github.com/gakonst/ethers-rs/issues/727
-            // is fixed
-            project.cached = false;
-            project.no_artifacts = true;
-
-            // target contract may not be in the compilation path, add it and manually compile
-            match manual_compile(&project, vec![target_contract]) {
-                Ok(output) => (project, output),
-                Err(e) => {
-                    println!("No extra contracts compiled {:?}", e);
-                    let mut target_project = config.ephemeral_no_artifacts_project()?;
-                    target_project.cached = false;
-                    target_project.no_artifacts = true;
-                    let res = compile(&target_project)?;
-                    (target_project, res)
-                }
-            }
-        } else {
-            let mut target_project = config.ephemeral_no_artifacts_project()?;
-            target_project.cached = false;
-            target_project.no_artifacts = true;
-            let res = compile(&target_project)?;
-            (target_project, res)
-        };
-        println!("success.");
+        let project = config.ephemeral_no_artifacts_project()?;
+        let output = compile_files(&project, vec![target_contract])?;
 
         let (sources, all_contracts) = output.output().split();
 

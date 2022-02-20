@@ -54,11 +54,8 @@ pub mod verify;
 use crate::opts::forge::ContractInfo;
 use ethers::{
     abi::Abi,
-    prelude::{
-        artifacts::{CompactBytecode, CompactDeployedBytecode},
-        Graph,
-    },
-    solc::{artifacts::Source, cache::SolFilesCache},
+    prelude::artifacts::{CompactBytecode, CompactDeployedBytecode},
+    solc::cache::SolFilesCache,
 };
 use std::path::PathBuf;
 
@@ -97,35 +94,14 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
     Ok(output)
 }
 
-/// Manually compile a project with added sources
-pub fn manual_compile(
-    project: &Project,
-    added_sources: Vec<PathBuf>,
-) -> eyre::Result<ProjectCompileOutput> {
-    let mut sources = project.paths.read_input_files()?;
-    sources.extend(Source::read_all_files(added_sources)?);
+/// Compile a set of files not necessarily included in the `project`'s source dir
+pub fn compile_files(project: &Project, files: Vec<PathBuf>) -> eyre::Result<ProjectCompileOutput> {
     println!("compiling...");
-    if project.auto_detect {
-        tracing::trace!("using solc auto detection to compile sources");
-        let output = project.svm_compile(sources)?;
-        if output.has_compiler_errors() {
-            // return the diagnostics error back to the user.
-            eyre::bail!(output.to_string())
-        }
-        return Ok(output)
-    }
-
-    let mut solc = project.solc.clone();
-    if !project.allowed_lib_paths.is_empty() {
-        solc = solc.arg("--allow-paths").arg(project.allowed_lib_paths.to_string());
-    }
-
-    let (sources, _) = Graph::resolve_sources(&project.paths, sources)?.into_sources();
-    let output = project.compile_with_version(&solc, sources)?;
+    let output = project.compile_files(files)?;
     if output.has_compiler_errors() {
-        // return the diagnostics error back to the user.
         eyre::bail!(output.to_string())
     }
+    println!("success.");
     Ok(output)
 }
 

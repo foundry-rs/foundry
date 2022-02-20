@@ -1,4 +1,5 @@
 //! Contains various tests for checking forge's commands
+use ansi_term::Colour;
 use ethers::solc::{artifacts::Metadata, ConfigurableContractArtifact};
 use evm_adapters::evm_opts::{EvmOpts, EvmType};
 use foundry_cli_test_utils::{
@@ -313,6 +314,44 @@ Compiler run successful
 success.
 ",
         cmd.stdout_lossy()
+    );
+});
+
+// tests that the `run` command works correctly
+forgetest!(can_execute_run_command, |prj: TestProject, mut cmd: TestCommand| {
+    let script = prj
+        .inner()
+        .add_source(
+            "Foo",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+contract Demo {
+    event log_string(string);
+    function run() external {
+        emit log_string("script ran");
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    cmd.arg("run").arg(script);
+    let output = cmd.stdout_lossy();
+    assert_eq!(
+        format!(
+            "compiling...
+Compiling 1 files with 0.8.10
+Compilation finished successfully
+success.
+{}
+Gas Used: 1751
+== Logs ==
+script ran
+",
+            Colour::Green.paint("Script ran successfully.")
+        ),
+        output
     );
 });
 
