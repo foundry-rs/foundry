@@ -79,12 +79,19 @@ pub(crate) fn install(
 
 /// installs the dependency as an ordinary folder instead of a submodule
 fn install_as_folder(dep: &Dependency, libs: &Path) -> eyre::Result<()> {
-    Command::new("git")
+    let result = Command::new("git")
         .args(&["clone", &dep.url, &dep.name])
         .current_dir(&libs)
         .stdout(Stdio::piped())
         .spawn()?
-        .wait()?;
+        .wait();
+
+    // exiting if the repo doesn't exist
+    if let Ok(status) = result {
+        if status.code() == Some(128) {
+            eyre::bail!("Repo: \"{}\" not found!", &dep.url);
+        }
+    }
 
     if let Some(ref tag) = dep.tag {
         Command::new("git")
@@ -105,13 +112,20 @@ fn install_as_folder(dep: &Dependency, libs: &Path) -> eyre::Result<()> {
 /// installs the dependency as new submodule
 fn install_as_submodule(dep: &Dependency, libs: &Path, no_commit: bool) -> eyre::Result<()> {
     // install the dep
-    Command::new("git")
+    let result = Command::new("git")
         .args(&["submodule", "add", &dep.url, &dep.name])
         .current_dir(&libs)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?
-        .wait()?;
+        .wait();
+
+    // exiting if the repo doesn't exist
+    if let Ok(status) = result {
+        if status.code() == Some(128) {
+            eyre::bail!("Repo: \"{}\" not found!", &dep.url);
+        }
+    }
     // call update on it
     Command::new("git")
         .args(&["submodule", "update", "--init", "--recursive", &dep.name])

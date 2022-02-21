@@ -262,7 +262,7 @@ pub enum Subcommands {
             help = "the function signature you want to decode, in the format `<name>(<in-types>)(<out-types>)`"
         )]
         sig: String,
-        #[clap(help = "the encoded calladata, in hex format")]
+        #[clap(help = "the encoded calldata, in hex format")]
         calldata: String,
     },
     #[clap(name = "--abi-decode")]
@@ -274,7 +274,7 @@ pub enum Subcommands {
             help = "the function signature you want to decode, in the format `<name>(<in-types>)(<out-types>)`"
         )]
         sig: String,
-        #[clap(help = "the encoded calladata, in hex format")]
+        #[clap(help = "the encoded calldata, in hex format")]
         calldata: String,
         #[clap(long, short, help = "the encoded output, in hex format")]
         input: bool,
