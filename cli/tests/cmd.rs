@@ -263,6 +263,34 @@ forgetest_init!(can_emit_extra_output, |prj: TestProject, mut cmd: TestCommand| 
     let _artifact: Metadata = ethers::solc::utils::read_json_file(metadata_path).unwrap();
 });
 
+forgetest!(can_set_solc_explicitly, |prj: TestProject, mut cmd: TestCommand| {
+    prj.inner()
+        .add_source(
+            "Foo",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity >0.8.9;
+contract Greeter {}
+   "#,
+        )
+        .unwrap();
+
+    // explicitly set to run with 0.8.10
+    let config = Config { solc_version: Some("0.8.10".parse().unwrap()), ..Default::default() };
+    prj.write_config(config);
+
+    cmd.arg("build");
+
+    assert!(cmd.stdout_lossy().ends_with(
+        "compiling...
+Compiling 1 files with 0.8.10
+Compilation finished successfully
+Compiler run successful
+success.
+",
+    ));
+});
+
 // tests that direct import paths are handled correctly
 forgetest!(can_handle_direct_imports_into_src, |prj: TestProject, mut cmd: TestCommand| {
     prj.inner()

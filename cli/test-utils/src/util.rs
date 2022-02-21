@@ -111,9 +111,20 @@ impl TestProject {
         self.inner().paths()
     }
 
+    /// Returns the path to the project's `foundry.toml` file
+    pub fn config_path(&self) -> PathBuf {
+        self.root().join(Config::FILE_NAME)
+    }
+
+    /// Writes the given config as toml to `foundry.toml`
+    pub fn write_config(&self, config: Config) {
+        let file = self.config_path();
+        pretty_err(&file, fs::write(&file, config.to_string_pretty().unwrap()));
+    }
+
     /// Asserts that the `<root>/foundry.toml` file exits
     pub fn assert_config_exists(&self) {
-        assert!(self.root().join(Config::FILE_NAME).exists());
+        assert!(self.config_path().exists());
     }
 
     /// Creates all project dirs and ensure they were created

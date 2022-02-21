@@ -19,7 +19,7 @@ use ethers_solc::{
     artifacts::{output_selection::ContractOutputSelection, Optimizer, OptimizerDetails, Settings},
     error::SolcError,
     remappings::{RelativeRemapping, Remapping},
-    ConfigurableArtifacts, EvmVersion, Project, ProjectPathsConfig, SolcConfig,
+    ConfigurableArtifacts, EvmVersion, Project, ProjectPathsConfig, Solc, SolcConfig,
 };
 use figment::{providers::Data, value::Value};
 use inflector::Inflector;
@@ -370,14 +370,14 @@ impl Config {
     }
 
     fn create_project(&self, cached: bool, no_artifacts: bool) -> Result<Project, SolcError> {
-        let project = Project::builder()
+        let mut project = Project::builder()
             .artifacts(self.configured_artifacts_handler())
             .paths(self.project_paths())
             .allowed_path(&self.__root.0)
             .allowed_paths(&self.libs)
             .solc_config(SolcConfig::builder().settings(self.solc_settings()?).build())
             .ignore_error_codes(self.ignored_error_codes.clone())
-            .set_auto_detect(self.auto_detect_solc)
+            .set_auto_detect(self.is_auto_detect())
             .set_offline(self.offline)
             .set_cached(cached)
             .set_no_artifacts(no_artifacts)
@@ -387,7 +387,37 @@ impl Config {
             project.cleanup()?;
         }
 
+        if let Some(solc) = self.ensure_solc_version()? {
+            project.solc = solc;
+        }
+
         Ok(project)
+    }
+
+    /// Ensures that the configured version is installed if explicitly set
+    fn ensure_solc_version(&self) -> Result<Option<Solc>, SolcError> {
+        if let Some(ref version) = self.solc_version {
+            let v = version.to_string();
+            let mut solc = Solc::find_svm_installed_version(&v)?;
+            if solc.is_none() {
+                Solc::blocking_install(version)?;
+                solc = Solc::find_svm_installed_version(&v)?;
+            }
+            Ok(solc)
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Returns whether the compiler version should be auto-detected
+    ///
+    /// Returns `false` if `solc_version` is explicitly set, otherwise returns the value of
+    /// `auto_detect_solc`
+    pub fn is_auto_detect(&self) -> bool {
+        if self.solc_version.is_some() {
+            return false
+        }
+        self.auto_detect_solc
     }
 
     /// Returns the `ProjectPathsConfig`  sub set of the config.
