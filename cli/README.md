@@ -395,7 +395,7 @@ SUBCOMMANDS:
     --max-uint               maximum u256 value
     --min-int                minimum i256 value
     --to-ascii               convert hex data to text data
-    --to-bytes32             left-pads a hex bytes string to 32 bytes)
+    --to-bytes32             right-pads a hex bytes string to 32 bytes
     --to-checksum-address    convert an address to a checksummed format (EIP-55)
     --to-dec                 convert hex value into decimal number
     --to-fix                 convert integers into fixed point with specified decimals
