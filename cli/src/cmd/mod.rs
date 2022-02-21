@@ -46,7 +46,8 @@ pub mod fmt;
 pub mod init;
 pub mod install;
 pub mod remappings;
-pub mod run;
+// TODO: Re-enable when ported
+//pub mod run;
 pub mod snapshot;
 pub mod test;
 pub mod verify;
@@ -112,7 +113,7 @@ pub fn manual_compile(
             // return the diagnostics error back to the user.
             eyre::bail!(output.to_string())
         }
-        return Ok(output)
+        return Ok(output);
     }
 
     let mut solc = project.solc.clone();

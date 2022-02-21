@@ -28,9 +28,10 @@ fn main() -> eyre::Result<()> {
         Subcommands::Build(cmd) => {
             cmd.run()?;
         }
-        Subcommands::Run(cmd) => {
-            cmd.run()?;
-        }
+        // TODO: Re-enable when ported
+        //Subcommands::Run(cmd) => {
+        //    cmd.run()?;
+        //}
         Subcommands::VerifyContract(args) => {
             let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
             rt.block_on(cmd::verify::run_verify(&args))?;
