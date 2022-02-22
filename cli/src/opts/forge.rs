@@ -13,7 +13,6 @@ use crate::cmd::{
     inspect,
     install::InstallArgs,
     remappings::RemappingArgs,
-    run::RunArgs,
     snapshot, test, tree,
     verify::{VerifyArgs, VerifyCheckArgs},
 };
@@ -47,10 +46,10 @@ pub enum Subcommands {
     #[clap(alias = "b")]
     Build(BuildArgs),
 
-    #[clap(about = "Run a single smart contract as a script")]
-    #[clap(alias = "r")]
-    Run(RunArgs),
-
+    // TODO: Re-enable when ported
+    //#[clap(about = "Run a single smart contract as a script")]
+    //#[clap(alias = "r")]
+    //Run(RunArgs),
     #[clap(alias = "u", about = "Fetches all upstream lib changes")]
     Update {
         #[clap(

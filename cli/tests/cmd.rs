@@ -1,7 +1,7 @@
 //! Contains various tests for checking forge's commands
 use ansi_term::Colour;
 use ethers::solc::{artifacts::Metadata, ConfigurableContractArtifact};
-use evm_adapters::evm_opts::{EvmOpts, EvmType};
+use forge::executor::opts::EvmOpts;
 use foundry_cli_test_utils::{
     ethers_solc::{remappings::Remapping, PathStyle},
     forgetest, forgetest_ignore, forgetest_init, pretty_eq,
@@ -11,11 +11,7 @@ use foundry_config::{
     parse_with_profile, BasicConfig, Config, OptimizerDetails, SolidityErrorCode,
 };
 use pretty_assertions::assert_eq;
-use std::{
-    env::{self},
-    fs,
-    str::FromStr,
-};
+use std::{env, fs, str::FromStr};
 
 // import forge utils as mod
 #[allow(unused)]
@@ -245,9 +241,7 @@ forgetest_init!(can_get_evm_opts, |prj: TestProject, mut cmd: TestCommand| {
     assert!(config.ffi);
 
     cmd.set_env("FOUNDRY_ETH_RPC_URL", url);
-    let figment = Config::figment_with_root(prj.root())
-        .merge(("evm_type", EvmType::Sputnik))
-        .merge(("debug", false));
+    let figment = Config::figment_with_root(prj.root()).merge(("debug", false));
     let evm_opts: EvmOpts = figment.extract().unwrap();
     assert_eq!(evm_opts.fork_url, Some(url.to_string()));
 });
