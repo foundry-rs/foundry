@@ -11,8 +11,7 @@ use revm::{
     db::Database, opcode, CallContext, CreateScheme, EVMData, Gas, Inspector, Machine, Return,
     Transfer,
 };
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
 /// An inspector that collects logs during execution.
 ///
@@ -84,11 +83,11 @@ where
 
     fn step(&mut self, machine: &mut Machine, _: &mut EVMData<'_, DB>, _is_static: bool) -> Return {
         match machine.contract.code[machine.program_counter()] {
-            opcode::LOG0 => self.log(&machine, 0),
-            opcode::LOG1 => self.log(&machine, 1),
-            opcode::LOG2 => self.log(&machine, 2),
-            opcode::LOG3 => self.log(&machine, 3),
-            opcode::LOG4 => self.log(&machine, 4),
+            opcode::LOG0 => self.log(machine, 0),
+            opcode::LOG1 => self.log(machine, 1),
+            opcode::LOG2 => self.log(machine, 2),
+            opcode::LOG3 => self.log(machine, 3),
+            opcode::LOG4 => self.log(machine, 4),
             _ => (),
         }
 

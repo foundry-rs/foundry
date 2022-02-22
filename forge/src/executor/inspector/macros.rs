@@ -18,7 +18,7 @@ macro_rules! try_or_return {
 macro_rules! as_usize_or_return {
     ($v:expr) => {
         if $v.0[1] != 0 || $v.0[2] != 0 || $v.0[3] != 0 {
-            return;
+            return
         } else {
             $v.0[0] as usize
         }

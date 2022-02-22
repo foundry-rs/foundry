@@ -17,11 +17,13 @@ pub trait TestFilter {
 
 #[cfg(test)]
 pub mod test_helpers {
-    use super::executor::{
-        opts::{Env, EvmOpts},
-        Executor, ExecutorBuilder,
+    use super::{
+        executor::{
+            opts::{Env, EvmOpts},
+            Executor, ExecutorBuilder,
+        },
+        *,
     };
-    use super::*;
     use ethers::{
         prelude::Lazy,
         solc::{AggregatedCompilerOutput, Project, ProjectPathsConfig},

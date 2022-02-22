@@ -291,7 +291,7 @@ fn test<A: ArtifactOutput + 'static>(
     // TODO: Re-enable when ported
     //let mut gas_report = GasReport::new(gas_reports.1);
 
-    let (funcs, events, errors) = runner.execution_info;
+    //let (funcs, events, errors) = runner.execution_info;
     if json {
         let res = serde_json::to_string(&results)?;
         println!("{}", res);
@@ -326,7 +326,7 @@ fn test<A: ArtifactOutput + 'static>(
 
                     // We only decode logs from Hardhat and DS-style console events
                     let console_logs: Vec<String> =
-                        result.logs.iter().filter_map(|log| decode_console_log(&log)).collect();
+                        result.logs.iter().filter_map(decode_console_log).collect();
 
                     if !console_logs.is_empty() {
                         println!("Logs:");

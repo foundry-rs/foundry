@@ -2,6 +2,7 @@ use revm::{db::EmptyDB, Env, SpecId};
 
 use super::Executor;
 
+#[derive(Default)]
 pub struct ExecutorBuilder {
     /// Whether or not cheatcodes are enabled
     cheatcodes: bool,

@@ -30,14 +30,12 @@ use ethers::{
 use eyre::Result;
 use foundry_utils::IntoFunction;
 use hashbrown::HashMap;
-use inspector::ExecutorState;
-use inspector::LogCollector;
+use inspector::{ExecutorState, LogCollector};
 use revm::{
     db::{DatabaseCommit, DatabaseRef, EmptyDB},
     return_ok, Account, CreateScheme, Env, Return, TransactOut, TransactTo, TxEnv, EVM,
 };
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
 #[derive(thiserror::Error, Debug)]
 pub enum EvmError {
@@ -321,10 +319,7 @@ where
         state_changeset: HashMap<Address, Account>,
         should_fail: bool,
     ) -> bool {
-        let mut success = match status {
-            return_ok!() => true,
-            _ => false,
-        };
+        let mut success = matches!(status, return_ok!());
 
         // Construct a new VM with the state changeset
         let mut db = CacheDB::new(EmptyDB());

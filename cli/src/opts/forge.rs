@@ -12,10 +12,7 @@ use crate::cmd::{
     init::InitArgs,
     install::InstallArgs,
     remappings::RemappingArgs,
-    // TODO: Re-enable when ported
-    //run::RunArgs,
-    snapshot,
-    test,
+    snapshot, test,
     verify::{VerifyArgs, VerifyCheckArgs},
 };
 use serde::Serialize;

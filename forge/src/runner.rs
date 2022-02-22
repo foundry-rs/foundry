@@ -146,9 +146,9 @@ impl TestKind {
 type MaybeExecutionInfo<'a> =
     Option<(&'a BTreeMap<[u8; 4], Function>, &'a BTreeMap<H256, Event>, &'a Abi)>;
 
-// TODO: Get rid of known contracts, execution info and so on once we rewrite tracing, since we are moving all the
-// decoding/display logic to the CLI. Traces and logs returned from the runner (and consequently
-// the multi runner) are in a raw (but digestible) format.
+// TODO: Get rid of known contracts, execution info and so on once we rewrite tracing, since we are
+// moving all the decoding/display logic to the CLI. Traces and logs returned from the runner (and
+// consequently the multi runner) are in a raw (but digestible) format.
 pub struct ContractRunner<'a, DB: DatabaseRef> {
     /// The executor used by the runner.
     pub executor: Executor<DB>,
@@ -272,7 +272,7 @@ impl<'a, DB: DatabaseRef + Clone + Send + Sync> ContractRunner<'a, DB> {
                 })
                 .collect::<BTreeMap<_, _>>();
 
-            return Ok(test_results);
+            return Ok(test_results)
         }
 
         // Run all unit tests
@@ -314,7 +314,7 @@ impl<'a, DB: DatabaseRef + Clone + Send + Sync> ContractRunner<'a, DB> {
     pub fn run_test(
         &self,
         func: &Function,
-        known_contracts: Option<&BTreeMap<String, (Abi, Vec<u8>)>>,
+        _known_contracts: Option<&BTreeMap<String, (Abi, Vec<u8>)>>,
         address: Address,
         mut logs: Vec<RawLog>,
     ) -> Result<TestResult> {
@@ -329,7 +329,7 @@ impl<'a, DB: DatabaseRef + Clone + Send + Sync> ContractRunner<'a, DB> {
         let errors_abi = self.execution_info.as_ref().map(|(_, _, errors)| errors);
         let errors_abi = if let Some(ref abi) = errors_abi { abi } else { self.contract };
 
-        let mut identified_contracts: Option<BTreeMap<Address, (String, Abi)>> = None;
+        let identified_contracts: Option<BTreeMap<Address, (String, Abi)>> = None;
 
         let (status, reason, gas_used, logs, state_changeset) = match self
             .executor
@@ -354,7 +354,7 @@ impl<'a, DB: DatabaseRef + Clone + Send + Sync> ContractRunner<'a, DB> {
                 }
                 err => {
                     tracing::error!(?err);
-                    return Err(err.into());
+                    return Err(err.into())
                 }
             },
         };
