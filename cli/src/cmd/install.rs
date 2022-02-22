@@ -5,6 +5,7 @@ use crate::{cmd::Cmd, opts::forge::Dependency, utils::p_println};
 use ansi_term::Colour;
 use clap::{Parser, ValueHint};
 use foundry_config::find_project_root_path;
+
 use std::{
     path::Path,
     process::{Command, Stdio},
@@ -79,18 +80,22 @@ pub(crate) fn install(
 
 /// installs the dependency as an ordinary folder instead of a submodule
 fn install_as_folder(dep: &Dependency, libs: &Path) -> eyre::Result<()> {
-    let result = Command::new("git")
+    let status = Command::new("git")
         .args(&["clone", &dep.url, &dep.name])
         .current_dir(&libs)
         .stdout(Stdio::piped())
-        .spawn()?
-        .wait();
+        .status()?
+        .exit_ok()
+        .map_err(|e| {
+            let code = e.code().unwrap();
+            match code {
+                128 => format!("Repo \"{}\" does not exist!", &dep.url),
+                _ => format!("Exited with error code:{}", code),
+            }
+        });
 
-    // exiting if the repo doesn't exist
-    if let Ok(status) = result {
-        if status.code() == Some(128) {
-            eyre::bail!("Repo: \"{}\" not found!", &dep.url);
-        }
+    if let Err(err) = status {
+        eyre::bail!("{}", err)
     }
 
     if let Some(ref tag) = dep.tag {
@@ -112,20 +117,25 @@ fn install_as_folder(dep: &Dependency, libs: &Path) -> eyre::Result<()> {
 /// installs the dependency as new submodule
 fn install_as_submodule(dep: &Dependency, libs: &Path, no_commit: bool) -> eyre::Result<()> {
     // install the dep
-    let result = Command::new("git")
+    let status = Command::new("git")
         .args(&["submodule", "add", &dep.url, &dep.name])
         .current_dir(&libs)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()?
-        .wait();
+        .status()?
+        .exit_ok()
+        .map_err(|e| {
+            let code = e.code().unwrap();
+            match code {
+                128 => format!("Repo \"{}\" does not exist!", &dep.url),
+                _ => format!("Exited with error code:{}", code),
+            }
+        });
 
-    // exiting if the repo doesn't exist
-    if let Ok(status) = result {
-        if status.code() == Some(128) {
-            eyre::bail!("Repo: \"{}\" not found!", &dep.url);
-        }
+    if let Err(err) = status {
+        eyre::bail!("{}", err)
     }
+
     // call update on it
     Command::new("git")
         .args(&["submodule", "update", "--init", "--recursive", &dep.name])
