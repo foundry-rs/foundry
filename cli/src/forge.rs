@@ -36,9 +36,10 @@ fn main() -> eyre::Result<()> {
                 cmd.run()?;
             }
         }
-        Subcommands::Run(cmd) => {
-            cmd.run()?;
-        }
+        // TODO: Re-enable when ported
+        //Subcommands::Run(cmd) => {
+        //    cmd.run()?;
+        //}
         Subcommands::VerifyContract(args) => {
             utils::block_on(cmd::verify::run_verify(&args))?;
         }

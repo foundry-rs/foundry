@@ -7,9 +7,6 @@ use crate::{
 use ansi_term::Colour;
 use clap::{AppSettings, Parser};
 use ethers::solc::{ArtifactOutput, Project};
-use evm_adapters::{
-    call_tracing::ExecutionInfo, evm_opts::EvmOpts, gas_report::GasReport, sputnik::helpers::vm,
-};
 use forge::{MultiContractRunnerBuilder, TestFilter, TestResult};
 use foundry_config::{figment::Figment, Config};
 use regex::Regex;
@@ -335,11 +332,12 @@ fn test<A: ArtifactOutput + 'static>(
         println!("{}", res);
         Ok(TestOutcome::new(results, allow_failure))
     } else {
-        // Dapptools-style printing of test results
-        let mut gas_report = GasReport::new(gas_reports.1);
+        // TODO: Re-enable when ported
+        //let mut gas_report = GasReport::new(gas_reports.1);
         let (tx, rx) = channel::<(String, BTreeMap<String, TestResult>)>();
         let known_contracts = runner.known_contracts.clone();
-        let execution_info = runner.execution_info.clone();
+        // TODO: Re-enable when ported
+        //let execution_info = runner.execution_info.clone();
 
         let handle = thread::spawn(move || {
             while let Ok((contract_name, tests)) = rx.recv() {
@@ -360,7 +358,8 @@ fn test<A: ArtifactOutput + 'static>(
                             println!("  {}", log);
                         }
                     }
-                    if verbosity > 2 {
+                    // TODO: Re-enable this when traces are ported
+                    /*if verbosity > 2 {
                         if let (Some(traces), Some(identified_contracts)) =
                             (&result.traces, &result.identified_contracts)
                         {
@@ -415,7 +414,7 @@ fn test<A: ArtifactOutput + 'static>(
                                 }
                             }
                         }
-                    }
+                    }*/
                     if add_newline {
                         println!();
                     }
@@ -427,7 +426,8 @@ fn test<A: ArtifactOutput + 'static>(
 
         handle.join().unwrap();
 
-        if gas_reporting {
+        // TODO: Re-enable when ported
+        /*if gas_reporting {
             for tests in results.values() {
                 for result in tests.values() {
                     if let (Some(traces), Some(identified_contracts)) =
@@ -439,7 +439,7 @@ fn test<A: ArtifactOutput + 'static>(
             }
             gas_report.finalize();
             println!("{}", gas_report);
-        }
+        }*/
         Ok(TestOutcome::new(results, allow_failure))
     }
 }
