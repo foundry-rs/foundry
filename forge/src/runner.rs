@@ -248,31 +248,23 @@ impl<'a, DB: DatabaseRef + Clone + Send + Sync> ContractRunner<'a, DB> {
 
         let (addr, init_logs, setup_failed, reason) = self.deploy(needs_setup)?;
         if setup_failed {
-            // The setup failed, so we mark all the pending test cases as failed
-            let test_results = unit_tests
-                .iter()
-                .chain(fuzz_tests.iter())
-                .map(|func| {
-                    let is_unit_test = func.inputs.is_empty();
-                    (
-                        func.signature(),
-                        TestResult {
-                            success: false,
-                            reason: reason.clone(),
-                            gas_used: 0,
-                            counterexample: None,
-                            logs: init_logs.clone(),
-                            kind: if is_unit_test { TestKind::Standard(0) } else { TestKind::Fuzz },
-                            traces: None,
-                            identified_contracts: None,
-                            debug_calls: None,
-                            labeled_addresses: Default::default(),
-                        },
-                    )
-                })
-                .collect::<BTreeMap<_, _>>();
-
-            return Ok(test_results)
+            // The setup failed, so we return a single test result for `setUp`
+            return Ok([(
+                "setUp()".to_string(),
+                TestResult {
+                    success: false,
+                    reason,
+                    gas_used: 0,
+                    counterexample: None,
+                    logs: init_logs,
+                    kind: TestKind::Standard(0),
+                    traces: None,
+                    identified_contracts: None,
+                    debug_calls: None,
+                    labeled_addresses: Default::default(),
+                },
+            )]
+            .into())
         }
 
         // Run all unit tests
