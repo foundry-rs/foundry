@@ -7,7 +7,7 @@ use proptest::{
 use ethers::types::U256;
 
 /// Value tree for unsigned ints (up to uint256).
-/// This is very similar to proptest::BinarySearch
+/// This is very similar to [proptest::BinarySearch]
 pub struct UintValueTree {
     /// Lower base
     lo: U256,

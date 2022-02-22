@@ -77,8 +77,6 @@ where
                     return Err(TestCaseError::Reject(err.into()));
                 }*/
 
-                // We must check success before resetting the state, otherwise resetting the state
-                // will also reset the `failed` state variable back to false.
                 let success = self.executor.is_success(
                     address,
                     status,
@@ -106,9 +104,8 @@ where
                     }
                 );
 
-                // push test case to the case set
+                // Push test case to the case set
                 fuzz_cases.borrow_mut().push(FuzzCase { calldata, gas });
-
                 Ok(())
             })
             .err()
@@ -214,7 +211,7 @@ impl FuzzedCases {
 pub struct FuzzCase {
     /// The calldata used for this fuzz test
     pub calldata: Bytes,
-    // Consumed gas
+    /// Consumed gas
     pub gas: u64,
 }
 
