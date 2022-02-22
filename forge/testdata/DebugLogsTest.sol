@@ -1,6 +1,6 @@
 pragma solidity 0.8.0;
 
-import "../../evm-adapters/testdata/DsTest.sol";
+import "./DsTest.sol";
 
 contract DebugLogsTest is DSTest {
     constructor() public {
