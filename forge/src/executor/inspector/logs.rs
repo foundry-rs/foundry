@@ -25,7 +25,7 @@ impl LogCollector {
         Self { state }
     }
 
-    fn log(&mut self, machine: &Machine, n: u8) {
+    fn log(&self, machine: &Machine, n: u8) {
         let (offset, len) =
             (try_or_return!(machine.stack().peek(0)), try_or_return!(machine.stack().peek(1)));
         let data = if len.is_zero() {
@@ -45,7 +45,7 @@ impl LogCollector {
         self.state.borrow_mut().logs.push(RawLog { topics, data });
     }
 
-    fn hardhat_log(&mut self, input: Vec<u8>) -> (Return, Bytes) {
+    fn hardhat_log(&self, input: Vec<u8>) -> (Return, Bytes) {
         // Patch the Hardhat-style selectors
         let input = patch_hardhat_console_selector(input.to_vec());
         let decoded = match HardhatConsoleCalls::decode(&input) {
@@ -59,13 +59,7 @@ impl LogCollector {
         };
 
         // Convert it to a DS-style `emit log(string)` event
-        self.state.borrow_mut().logs.push(RawLog {
-            topics: vec![H256::from_slice(
-                &hex::decode("41304facd9323d75b11bcdd609cb38effffdb05710f7caf0e9b16c6d9d709f50")
-                    .unwrap(),
-            )],
-            data: ethers::abi::encode(&[Token::String(decoded.to_string())]),
-        });
+        self.state.borrow_mut().logs.push(convert_hh_log_to_event(decoded));
 
         (Return::Continue, Bytes::new())
     }
@@ -159,4 +153,17 @@ where
     }
 
     fn selfdestruct(&mut self) {}
+}
+
+/// Converts a call to Hardhat's `console.log` to a DSTest `log(string)` event.
+fn convert_hh_log_to_event(call: HardhatConsoleCalls) -> RawLog {
+    RawLog {
+        // This is topic 0 of DSTest's `log(string)`
+        topics: vec![H256::from_slice(
+            &hex::decode("41304facd9323d75b11bcdd609cb38effffdb05710f7caf0e9b16c6d9d709f50")
+                .unwrap(),
+        )],
+        // Convert the parameters of the call to their string representation for the log
+        data: ethers::abi::encode(&[Token::String(call.to_string())]),
+    }
 }
