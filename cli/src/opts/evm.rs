@@ -1,7 +1,6 @@
 //! cli arguments for configuring the evm settings
 use clap::Parser;
 use ethers::types::{Address, U256};
-use evm_adapters::evm_opts::EvmType;
 use foundry_config::{
     figment::{
         self,
@@ -27,7 +26,7 @@ use serde::Serialize;
 //
 // ```ignore
 // use foundry_config::Config;
-// use evm_adapter::EvmOpts;
+// use forge::executor::opts::EvmOpts;
 // # fn t(args: EvmArgs) {
 // let figment = Config::figment_with_root(".").merge(args);
 // let opts = figment.extract::<EvmOpts>().unwrap()
@@ -39,14 +38,6 @@ pub struct EvmArgs {
     #[clap(flatten)]
     #[serde(flatten)]
     pub env: EnvArgs,
-
-    #[clap(
-        long,
-        short,
-        help = "the EVM type you want to use (e.g. sputnik)",
-        default_value = "sputnik"
-    )]
-    pub evm_type: EvmType,
 
     #[clap(help = "fetch state over a remote instead of starting from empty state", long, short)]
     #[clap(alias = "rpc-url")]
@@ -153,5 +144,4 @@ pub struct EnvArgs {
     #[clap(help = "the block.gaslimit value during EVM execution", long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_gas_limit: Option<u64>,
-    // TODO: Add configuration option for base fee.
 }

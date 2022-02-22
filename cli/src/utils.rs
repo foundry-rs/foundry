@@ -1,9 +1,8 @@
 use std::{future::Future, path::Path, str::FromStr, time::Duration};
 
 use ethers::{solc::EvmVersion, types::U256};
-#[cfg(feature = "sputnik-evm")]
-use sputnik::Config;
 
+use forge::executor::SpecId;
 // reexport all `foundry_config::utils`
 #[doc(hidden)]
 pub use foundry_config::utils::*;
@@ -58,12 +57,11 @@ pub fn subscriber() {
         .init();
 }
 
-#[cfg(feature = "sputnik-evm")]
-pub fn sputnik_cfg(evm: &EvmVersion) -> Config {
+pub fn evm_spec(evm: &EvmVersion) -> SpecId {
     match evm {
-        EvmVersion::Istanbul => Config::istanbul(),
-        EvmVersion::Berlin => Config::berlin(),
-        EvmVersion::London => Config::london(),
+        EvmVersion::Istanbul => SpecId::ISTANBUL,
+        EvmVersion::Berlin => SpecId::BERLIN,
+        EvmVersion::London => SpecId::LONDON,
         _ => panic!("Unsupported EVM version"),
     }
 }
