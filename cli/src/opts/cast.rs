@@ -53,7 +53,7 @@ pub enum Subcommands {
         value: Option<String>,
     },
     #[clap(name = "--to-bytes32")]
-    #[clap(about = "Left-pads a hex bytes string to 32 bytes")]
+    #[clap(about = "Right-pads a hex bytes string to 32 bytes")]
     ToBytes32 { bytes: Option<String> },
     #[clap(name = "--to-dec")]
     #[clap(about = "Convert hex value into decimal number")]
