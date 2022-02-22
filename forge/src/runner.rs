@@ -454,10 +454,9 @@ impl<'a, DB: DatabaseRef + Clone + Send + Sync> ContractRunner<'a, DB> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::test_helpers::{test_executor, Filter, COMPILED, EVM_OPTS};
-    use ethers::solc::artifacts::CompactContractRef;
 
+    use super::*;
     use proptest::test_runner::Config as FuzzConfig;
     use revm::db::EmptyDB;
 
@@ -477,8 +476,7 @@ mod tests {
         )
     }
 
-    // TODO: Port these tests when implementing fuzzing
-    /*#[test]
+    #[test]
     fn test_function_overriding() {
         let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
 
@@ -519,15 +517,16 @@ mod tests {
         let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
         let (_, code, _) = compiled.into_parts_or_default();
         let mut libs = vec![];
-        let runner = runner(compiled.abi.as_ref().unwrap(), code, &mut libs);
+        let mut runner = runner(compiled.abi.as_ref().unwrap(), code, &mut libs);
 
         let mut cfg = FuzzConfig::default();
         cfg.failure_persistence = None;
         let fuzzer = TestRunner::new(cfg);
-        let func = get_func("testStringFuzz(string)").unwrap();
-        let res = runner.run_fuzz_test(&func, true, fuzzer, None).unwrap();
-        assert!(res.success);
-        assert!(res.counterexample.is_none());
+        let res =
+            runner.run_tests(&Filter::new("testStringFuzz.*", ".*"), Some(fuzzer), None).unwrap();
+        assert_eq!(res.len(), 1);
+        assert!(res["testStringFuzz(string)"].success);
+        assert!(res["testStringFuzz(string)"].counterexample.is_none());
     }
 
     #[test]
@@ -535,13 +534,16 @@ mod tests {
         let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
         let (_, code, _) = compiled.into_parts_or_default();
         let mut libs = vec![];
-        let runner = runner(compiled.abi.as_ref().unwrap(), code, &mut libs);
+        let mut runner = runner(compiled.abi.as_ref().unwrap(), code, &mut libs);
 
         let mut cfg = FuzzConfig::default();
         cfg.failure_persistence = None;
         let fuzzer = TestRunner::new(cfg);
-        let func = get_func("function testShrinking(uint256 x, uint256 y) public").unwrap();
-        let res = runner.run_fuzz_test(&func, fuzzer, None, Vec::new()).unwrap();
+        let res =
+            runner.run_tests(&Filter::new("testShrinking.*", ".*"), Some(fuzzer), None).unwrap();
+        assert_eq!(res.len(), 1);
+
+        let res = res["testShrinking(uint256,uint256)"].clone();
         assert!(!res.success);
 
         // get the counterexample with shrinking enabled by default
@@ -557,7 +559,11 @@ mod tests {
         // we reduce the shrinking iters and observe a larger result
         cfg.max_shrink_iters = 5;
         let fuzzer = TestRunner::new(cfg);
-        let res = runner.run_fuzz_test(&func, fuzzer, None, Vec::new()).unwrap();
+        let res =
+            runner.run_tests(&Filter::new("testShrinking.*", ".*"), Some(fuzzer), None).unwrap();
+        assert_eq!(res.len(), 1);
+
+        let res = res["testShrinking(uint256,uint256)"].clone();
         assert!(!res.success);
 
         // get the non-shrunk result
@@ -566,15 +572,5 @@ mod tests {
             counterexample.args.into_iter().map(|x| x.into_uint().unwrap()).collect::<Vec<_>>();
         let product_without_shrinking = args[0].saturating_mul(args[1]);
         assert!(product_without_shrinking > product_with_shrinking.into());
-    }*/
-
-    pub fn test_runner(compiled: CompactContractRef) {
-        let (_, code, _) = compiled.into_parts_or_default();
-        let mut libs = vec![];
-        let mut runner = runner(compiled.abi.as_ref().unwrap(), code, &mut libs);
-        let res = runner.run_tests(&Filter::new(".*", ".*"), None, None).unwrap();
-
-        assert!(!res.is_empty());
-        assert!(res.iter().all(|(_, result)| result.success));
     }
 }

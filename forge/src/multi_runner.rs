@@ -40,8 +40,7 @@ impl MultiContractRunnerBuilder {
     /// against that evm
     pub fn build<A>(self, project: Project<A>, evm_opts: EvmOpts) -> Result<MultiContractRunner>
     where
-        // TODO: Can we remove the static? It's due to the `into_artifacts()` call below
-        A: ArtifactOutput + 'static,
+        A: ArtifactOutput,
     {
         println!("compiling...");
         let output = project.compile()?;
@@ -234,45 +233,37 @@ mod tests {
     use super::*;
     use crate::test_helpers::{Filter, EVM_OPTS};
     use ethers::solc::ProjectPathsConfig;
-    use std::path::PathBuf;
-
     use std::collections::HashMap;
+
     fn project() -> Project {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata");
+        let paths =
+            ProjectPathsConfig::builder().root("testdata").sources("testdata").build().unwrap();
 
-        let paths = ProjectPathsConfig::builder().root(&root).sources(&root).build().unwrap();
-
-        Project::builder()
-            // need to explicitly allow a path outside the project
-            .allowed_path(root.join("../../evm-adapters/testdata"))
-            .paths(paths)
-            .ephemeral()
-            .no_artifacts()
-            .build()
-            .unwrap()
+        Project::builder().paths(paths).ephemeral().no_artifacts().build().unwrap()
     }
 
     fn runner() -> MultiContractRunner {
         MultiContractRunnerBuilder::default().build(project(), EVM_OPTS.clone()).unwrap()
     }
 
-    // TODO: This test is currently ignored since it tries to run fuzz tests as well, which we have
-    // not implemented yet. We should re-enable when we have that capability.
     #[test]
-    #[ignore]
     fn test_multi_runner() {
         let mut runner = runner();
         let results = runner.test(&Filter::new(".*", ".*")).unwrap();
 
         // 9 contracts being built
-        assert_eq!(results.keys().len(), 9);
+        assert_eq!(results.keys().len(), 11);
         for (key, contract_tests) in results {
-            // for a bad setup, we dont want a successful test
-            if key == "SetupTest.json:SetupTest" {
-                assert!(contract_tests.iter().all(|(_, result)| !result.success));
-            } else {
-                assert_ne!(contract_tests.keys().len(), 0);
-                assert!(contract_tests.iter().all(|(_, result)| result.success));
+            match key.as_str() {
+                // Tests that should revert
+                "SetupTest.json:SetupTest" | "FuzzTests.json:FuzzTests" => {
+                    assert!(contract_tests.iter().all(|(_, result)| !result.success))
+                }
+                // The rest should pass
+                _ => {
+                    assert_ne!(contract_tests.keys().len(), 0);
+                    assert!(contract_tests.iter().all(|(k, result)| { result.success }))
+                }
             }
         }
 
