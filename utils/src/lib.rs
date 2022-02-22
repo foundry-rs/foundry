@@ -553,7 +553,7 @@ pub async fn fourbyte_event(topic: &str) -> Result<Vec<(String, i32)>> {
 /// use foundry_utils::pretty_calldata;
 ///
 /// # async fn foo() -> eyre::Result<()> {
-///   let pretty_data = pretty_calldata("0x70a08231000000000000000000000000d0074f4e6490ae3f888d1d4f7e3e43326bd3f0f5".to_string()).await?;
+///   let pretty_data = pretty_calldata("0x70a08231000000000000000000000000d0074f4e6490ae3f888d1d4f7e3e43326bd3f0f5".to_string(), false).await?;
 ///   println!("{}",pretty_data);
 /// # Ok(())
 /// # }
