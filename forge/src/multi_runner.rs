@@ -1,5 +1,5 @@
 use crate::{
-    executor::{opts::EvmOpts, Executor, ExecutorBuilder, SpecId},
+    executor::{abi::CONSOLE_ABI, opts::EvmOpts, Executor, ExecutorBuilder, SpecId},
     runner::TestResult,
     ContractRunner, TestFilter,
 };
@@ -112,8 +112,7 @@ impl MultiContractRunnerBuilder {
 
         // TODO Add forge specific contracts
         //known_contracts.insert("VM".to_string(), (HEVM_ABI.clone(), Vec::new()));
-        //known_contracts.insert("VM_CONSOLE".to_string(), (HEVMCONSOLE_ABI.clone(), Vec::new()));
-        //known_contracts.insert("CONSOLE".to_string(), (CONSOLE_ABI.clone(), Vec::new()));
+        //known_contracts.insert("VM_CONSOLE".to_string(), (CONSOLE_ABI.clone(), Vec::new()));
 
         let execution_info = foundry_utils::flatten_known_contracts(&known_contracts);
         Ok(MultiContractRunner {

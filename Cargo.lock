@@ -1395,6 +1395,7 @@ dependencies = [
  "glob",
  "hashbrown 0.12.0",
  "hex",
+ "once_cell",
  "proptest",
  "rayon",
  "regex",

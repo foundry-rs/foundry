@@ -1,8 +1,11 @@
 use super::ExecutorState;
+use crate::executor::{
+    patch_hardhat_console_selector, HardhatConsoleCalls, HARDHAT_CONSOLE_ADDRESS,
+};
 use bytes::Bytes;
 use ethers::{
-    abi::RawLog,
-    types::{H160, H256, U256},
+    abi::{AbiDecode, RawLog, Token},
+    types::{Address, H256, U256},
 };
 use revm::{
     db::Database, opcode, CallContext, CreateScheme, EVMData, Gas, Inspector, Machine, Return,
@@ -42,6 +45,31 @@ impl LogCollector {
 
         self.state.borrow_mut().logs.push(RawLog { topics, data });
     }
+
+    fn hardhat_log(&mut self, input: Vec<u8>) -> (Return, Bytes) {
+        // Patch the Hardhat-style selectors
+        let input = patch_hardhat_console_selector(input.to_vec());
+        let decoded = match HardhatConsoleCalls::decode(&input) {
+            Ok(inner) => inner,
+            Err(err) => {
+                return (
+                    Return::Revert,
+                    ethers::abi::encode(&[Token::String(err.to_string())]).into(),
+                )
+            }
+        };
+
+        // Convert it to a DS-style `emit log(string)` event
+        self.state.borrow_mut().logs.push(RawLog {
+            topics: vec![H256::from_slice(
+                &hex::decode("41304facd9323d75b11bcdd609cb38effffdb05710f7caf0e9b16c6d9d709f50")
+                    .unwrap(),
+            )],
+            data: ethers::abi::encode(&[Token::String(decoded.to_string())]),
+        });
+
+        (Return::Continue, Bytes::new())
+    }
 }
 
 impl<DB> Inspector<DB> for LogCollector
@@ -73,21 +101,26 @@ where
 
     fn call(
         &mut self,
-        _data: &mut EVMData<'_, DB>,
-        _call: H160,
-        _context: &CallContext,
-        _transfer: &Transfer,
-        _input: &Bytes,
-        _gas_limit: u64,
-        _is_static: bool,
+        _: &mut EVMData<'_, DB>,
+        to: Address,
+        _: &CallContext,
+        _: &Transfer,
+        input: &Bytes,
+        _: u64,
+        _: bool,
     ) -> (Return, Gas, Bytes) {
-        (Return::Continue, Gas::new(0), Bytes::new())
+        if to == *HARDHAT_CONSOLE_ADDRESS {
+            let (status, reason) = self.hardhat_log(input.to_vec());
+            (status, Gas::new(0), reason)
+        } else {
+            (Return::Continue, Gas::new(0), Bytes::new())
+        }
     }
 
     fn call_end(
         &mut self,
         _: &mut EVMData<'_, DB>,
-        _: H160,
+        _: Address,
         _: &CallContext,
         _: &Transfer,
         _: &Bytes,
@@ -102,24 +135,24 @@ where
     fn create(
         &mut self,
         _: &mut EVMData<'_, DB>,
-        _: H160,
+        _: Address,
         _: &CreateScheme,
         _: U256,
         _: &Bytes,
         _: u64,
-    ) -> (Return, Option<H160>, Gas, Bytes) {
+    ) -> (Return, Option<Address>, Gas, Bytes) {
         (Return::Continue, None, Gas::new(0), Bytes::new())
     }
 
     fn create_end(
         &mut self,
         _: &mut EVMData<'_, DB>,
-        _: H160,
+        _: Address,
         _: &CreateScheme,
         _: U256,
         _: &Bytes,
         _: Return,
-        _: Option<H160>,
+        _: Option<Address>,
         _: u64,
         _: u64,
         _: &Bytes,

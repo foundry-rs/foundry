@@ -146,6 +146,9 @@ impl TestKind {
 type MaybeExecutionInfo<'a> =
     Option<(&'a BTreeMap<[u8; 4], Function>, &'a BTreeMap<H256, Event>, &'a Abi)>;
 
+// TODO: Get rid of known contracts, execution info and so on once we rewrite tracing, since we are moving all the
+// decoding/display logic to the CLI. Traces and logs returned from the runner (and consequently
+// the multi runner) are in a raw (but digestible) format.
 pub struct ContractRunner<'a, DB: DatabaseRef> {
     /// The executor used by the runner.
     pub executor: Executor<DB>,

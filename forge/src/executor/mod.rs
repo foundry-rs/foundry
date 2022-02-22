@@ -1,17 +1,25 @@
+/// ABIs used internally in the executor
+pub mod abi;
+pub use abi::{
+    patch_hardhat_console_selector, HardhatConsoleCalls, CONSOLE_ABI, HARDHAT_CONSOLE_ABI,
+    HARDHAT_CONSOLE_ADDRESS,
+};
+
+/// Executor configuration
 pub mod opts;
 
+/// Executor databases
 pub mod db;
-use std::cell::RefCell;
-
 pub use db::CacheDB;
 
+/// Executor inspectors
 pub mod inspector;
 
+/// Executor builder
 pub mod builder;
-use hashbrown::HashMap;
-
 pub use builder::ExecutorBuilder;
 
+/// Executor EVM spec identifiers
 pub use revm::SpecId;
 
 use bytes::Bytes;
@@ -21,12 +29,14 @@ use ethers::{
 };
 use eyre::Result;
 use foundry_utils::IntoFunction;
+use hashbrown::HashMap;
 use inspector::ExecutorState;
 use inspector::LogCollector;
 use revm::{
     db::{DatabaseCommit, DatabaseRef, EmptyDB},
-    return_ok, Account, CreateScheme, Env, Log, Return, TransactOut, TransactTo, TxEnv, EVM,
+    return_ok, Account, CreateScheme, Env, Return, TransactOut, TransactTo, TxEnv, EVM,
 };
+use std::cell::RefCell;
 use std::rc::Rc;
 
 #[derive(thiserror::Error, Debug)]
