@@ -6,11 +6,12 @@ use crate::{
 };
 use ansi_term::Colour;
 use clap::{AppSettings, Parser};
-use ethers::solc::{ArtifactOutput, ProjectCompileOutput};
-use evm_adapters::{
-    call_tracing::ExecutionInfo, evm_opts::EvmOpts, gas_report::GasReport, sputnik::helpers::vm,
+use ethers::{
+    abi::RawLog,
+    contract::EthLogDecode,
+    solc::{ArtifactOutput, ProjectCompileOutput},
 };
-use forge::{MultiContractRunnerBuilder, TestFilter, TestResult};
+use forge::{executor::opts::EvmOpts, MultiContractRunnerBuilder, TestFilter, TestResult};
 use foundry_config::{figment::Figment, Config};
 use regex::Regex;
 use std::{collections::BTreeMap, str::FromStr, sync::mpsc::channel, thread};
@@ -186,13 +187,11 @@ impl Cmd for TestArgs {
         let output = super::compile(&project, false, false)?;
 
         // prepare the test builder
-        let mut evm_cfg = crate::utils::sputnik_cfg(&config.evm_version);
-        evm_cfg.create_contract_limit = None;
-
+        let mut evm_spec = crate::utils::evm_spec(&config.evm_version);
         let builder = MultiContractRunnerBuilder::default()
             .fuzzer(fuzzer)
             .initial_balance(evm_opts.initial_balance)
-            .evm_cfg(evm_cfg)
+            .evm_spec(evm_spec)
             .sender(evm_opts.sender);
 
         test(
@@ -336,11 +335,12 @@ fn test<A: ArtifactOutput + 'static>(
         println!("{}", res);
         Ok(TestOutcome::new(results, allow_failure))
     } else {
-        // Dapptools-style printing of test results
-        let mut gas_report = GasReport::new(gas_reports.1);
+        // TODO: Re-enable when ported
+        //let mut gas_report = GasReport::new(gas_reports.1);
         let (tx, rx) = channel::<(String, BTreeMap<String, TestResult>)>();
         let known_contracts = runner.known_contracts.clone();
-        let execution_info = runner.execution_info.clone();
+        // TODO: Re-enable when ported
+        //let execution_info = runner.execution_info.clone();
 
         let handle = thread::spawn(move || {
             while let Ok((contract_name, tests)) = rx.recv() {
@@ -355,13 +355,19 @@ fn test<A: ArtifactOutput + 'static>(
                     // output does not look like 1 big block.
                     let mut add_newline = false;
                     if verbosity > 1 && !result.logs.is_empty() {
-                        add_newline = true;
-                        println!("Logs:");
-                        for log in &result.logs {
-                            println!("  {}", log);
+                        // We only decode logs from Hardhat and DS-style console events
+                        let console_logs: Vec<String> =
+                            result.logs.iter().filter_map(decode_console_log).collect();
+
+                        if !console_logs.is_empty() {
+                            println!("Logs:");
+                            for log in console_logs {
+                                println!("  {}", log);
+                            }
                         }
                     }
-                    if verbosity > 2 {
+                    // TODO: Re-enable this when traces are ported
+                    /*if verbosity > 2 {
                         if let (Some(traces), Some(identified_contracts)) =
                             (&result.traces, &result.identified_contracts)
                         {
@@ -416,7 +422,7 @@ fn test<A: ArtifactOutput + 'static>(
                                 }
                             }
                         }
-                    }
+                    }*/
                     if add_newline {
                         println!();
                     }
@@ -428,7 +434,8 @@ fn test<A: ArtifactOutput + 'static>(
 
         handle.join().unwrap();
 
-        if gas_reporting {
+        // TODO: Re-enable when ported
+        /*if gas_reporting {
             for tests in results.values() {
                 for result in tests.values() {
                     if let (Some(traces), Some(identified_contracts)) =
@@ -440,7 +447,45 @@ fn test<A: ArtifactOutput + 'static>(
             }
             gas_report.finalize();
             println!("{}", gas_report);
-        }
+        }*/
         Ok(TestOutcome::new(results, allow_failure))
     }
+}
+
+fn decode_console_log(log: &RawLog) -> Option<String> {
+    use forge::abi::ConsoleEvents::{self, *};
+
+    let decoded = match ConsoleEvents::decode_log(log).ok()? {
+        LogsFilter(inner) => format!("{}", inner.0),
+        LogBytesFilter(inner) => format!("{}", inner.0),
+        LogNamedAddressFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
+        LogNamedBytes32Filter(inner) => {
+            format!("{}: 0x{}", inner.key, hex::encode(inner.val))
+        }
+        LogNamedDecimalIntFilter(inner) => {
+            let (sign, val) = inner.val.into_sign_and_abs();
+            format!(
+                "{}: {}{}",
+                inner.key,
+                sign,
+                ethers::utils::format_units(val, inner.decimals.as_u32()).unwrap()
+            )
+        }
+        LogNamedDecimalUintFilter(inner) => {
+            format!(
+                "{}: {}",
+                inner.key,
+                ethers::utils::format_units(inner.val, inner.decimals.as_u32()).unwrap()
+            )
+        }
+        LogNamedIntFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
+        LogNamedUintFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
+        LogNamedBytesFilter(inner) => {
+            format!("{}: 0x{}", inner.key, hex::encode(inner.val))
+        }
+        LogNamedStringFilter(inner) => format!("{}: {}", inner.key, inner.val),
+
+        e => e.to_string(),
+    };
+    Some(decoded)
 }
