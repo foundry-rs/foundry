@@ -3162,7 +3162,7 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "1.2.0"
-source = "git+https://github.com/onbjerg/revm?branch=onbjerg/machine-exports#9e9254f8700356495de423e71e5ccc0ed94fb2f4"
+source = "git+https://github.com/bluealloy/revm?branch=main#739b348ca5112b06e2b71f7f03fbacc115bc43c0"
 dependencies = [
  "arrayref",
  "auto_impl",
@@ -3179,7 +3179,7 @@ dependencies = [
 [[package]]
 name = "revm_precompiles"
 version = "0.4.0"
-source = "git+https://github.com/onbjerg/revm?branch=onbjerg/machine-exports#9e9254f8700356495de423e71e5ccc0ed94fb2f4"
+source = "git+https://github.com/bluealloy/revm?branch=main#739b348ca5112b06e2b71f7f03fbacc115bc43c0"
 dependencies = [
  "bytes",
  "num 0.4.0",
