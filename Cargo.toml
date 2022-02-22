@@ -1,6 +1,5 @@
 [workspace]
 members = [
-    "evm-adapters",
     "utils",
     "cast",
     "forge",

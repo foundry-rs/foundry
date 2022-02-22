@@ -6,11 +6,12 @@ use crate::{
 };
 use ansi_term::Colour;
 use clap::{AppSettings, Parser};
-use ethers::solc::{ArtifactOutput, Project};
-use evm_adapters::{
-    call_tracing::ExecutionInfo, evm_opts::EvmOpts, gas_report::GasReport, sputnik::helpers::vm,
+use ethers::{
+    abi::RawLog,
+    contract::EthLogDecode,
+    solc::{ArtifactOutput, Project},
 };
-use forge::{MultiContractRunnerBuilder, TestFilter};
+use forge::{executor::opts::EvmOpts, MultiContractRunnerBuilder, TestFilter};
 use foundry_config::{figment::Figment, Config};
 use std::collections::BTreeMap;
 
@@ -140,13 +141,11 @@ impl Cmd for TestArgs {
         let project = config.project()?;
 
         // prepare the test builder
-        let mut evm_cfg = crate::utils::sputnik_cfg(&config.evm_version);
-        evm_cfg.create_contract_limit = None;
-
+        let evm_spec = crate::utils::evm_spec(&config.evm_version);
         let builder = MultiContractRunnerBuilder::default()
             .fuzzer(fuzzer)
             .initial_balance(evm_opts.initial_balance)
-            .evm_cfg(evm_cfg)
+            .evm_spec(evm_spec)
             .sender(evm_opts.sender);
 
         test(
@@ -267,6 +266,7 @@ fn short_test_result(name: &str, result: &forge::TestResult) {
 }
 
 /// Runs all the tests
+// TODO: We should consider a test reporter abstraction to de-clutter this function
 fn test<A: ArtifactOutput + 'static>(
     builder: MultiContractRunnerBuilder,
     project: Project<A>,
@@ -288,9 +288,10 @@ fn test<A: ArtifactOutput + 'static>(
 
     let results = runner.test(&filter)?;
 
-    let mut gas_report = GasReport::new(gas_reports.1);
+    // TODO: Re-enable when ported
+    //let mut gas_report = GasReport::new(gas_reports.1);
 
-    let (funcs, events, errors) = runner.execution_info;
+    //let (funcs, events, errors) = runner.execution_info;
     if json {
         let res = serde_json::to_string(&results)?;
         println!("{}", res);
@@ -306,29 +307,37 @@ fn test<A: ArtifactOutput + 'static>(
             }
 
             for (name, result) in tests {
-                // build up gas report
-                if gas_reporting {
-                    if let (Some(traces), Some(identified_contracts)) =
-                        (&result.traces, &result.identified_contracts)
-                    {
-                        gas_report.analyze(traces, identified_contracts);
-                    }
-                }
+                // TODO: build up gas report
+                //if gas_reporting {
+                //    if let (Some(traces), Some(identified_contracts)) =
+                //        (&result.traces, &result.identified_contracts)
+                //    {
+                //        gas_report.analyze(traces, identified_contracts);
+                //    }
+                //}
 
                 short_test_result(name, result);
 
                 // adds a linebreak only if there were any traces or logs, so that the
                 // output does not look like 1 big block.
                 let mut add_newline = false;
-                if verbosity > 1 && !result.logs.is_empty() {
+                if verbosity > 1 {
                     add_newline = true;
-                    println!("Logs:");
-                    for log in &result.logs {
-                        println!("  {}", log);
+
+                    // We only decode logs from Hardhat and DS-style console events
+                    let console_logs: Vec<String> =
+                        result.logs.iter().filter_map(decode_console_log).collect();
+
+                    if !console_logs.is_empty() {
+                        println!("Logs:");
+                        for log in console_logs {
+                            println!("  {}", log);
+                        }
                     }
                 }
 
-                if verbosity > 2 {
+                // TODO: Re-enable this portion when traces are ported
+                /*if verbosity > 2 {
                     if let (Some(traces), Some(identified_contracts)) =
                         (&result.traces, &result.identified_contracts)
                     {
@@ -383,7 +392,7 @@ fn test<A: ArtifactOutput + 'static>(
                             }
                         }
                     }
-                }
+                }*/
 
                 if add_newline {
                     println!();
@@ -392,10 +401,49 @@ fn test<A: ArtifactOutput + 'static>(
         }
     }
 
-    if gas_reporting {
+    // TODO: Re-enable when gas reports are ported
+    /*if gas_reporting {
         gas_report.finalize();
         println!("{}", gas_report);
-    }
+    }*/
 
     Ok(TestOutcome::new(results, allow_failure))
+}
+
+fn decode_console_log(log: &RawLog) -> Option<String> {
+    use forge::abi::ConsoleEvents::{self, *};
+
+    let decoded = match ConsoleEvents::decode_log(log).ok()? {
+        LogsFilter(inner) => format!("{}", inner.0),
+        LogBytesFilter(inner) => format!("{}", inner.0),
+        LogNamedAddressFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
+        LogNamedBytes32Filter(inner) => {
+            format!("{}: 0x{}", inner.key, hex::encode(inner.val))
+        }
+        LogNamedDecimalIntFilter(inner) => {
+            let (sign, val) = inner.val.into_sign_and_abs();
+            format!(
+                "{}: {}{}",
+                inner.key,
+                sign,
+                ethers::utils::format_units(val, inner.decimals.as_u32()).unwrap()
+            )
+        }
+        LogNamedDecimalUintFilter(inner) => {
+            format!(
+                "{}: {}",
+                inner.key,
+                ethers::utils::format_units(inner.val, inner.decimals.as_u32()).unwrap()
+            )
+        }
+        LogNamedIntFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
+        LogNamedUintFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
+        LogNamedBytesFilter(inner) => {
+            format!("{}: 0x{}", inner.key, hex::encode(inner.val))
+        }
+        LogNamedStringFilter(inner) => format!("{}: {}", inner.key, inner.val),
+
+        e => e.to_string(),
+    };
+    Some(decoded)
 }
