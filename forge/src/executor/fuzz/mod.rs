@@ -1,19 +1,17 @@
 mod strategies;
 
-// TODO
+// TODO Port when we have cheatcodes again
 //use crate::{Evm, ASSUME_MAGIC_RETURN_CODE};
 use crate::executor::{Executor, RawCallResult};
 use ethers::{
-    abi::{Abi, Function, ParamType, Token, Tokenizable},
-    types::{Address, Bytes, I256, U256},
+    abi::{Abi, Function},
+    types::{Address, Bytes},
 };
 use revm::{db::DatabaseRef, Return};
+use strategies::fuzz_calldata;
 
 pub use proptest::test_runner::{Config as FuzzConfig, Reason};
-use proptest::{
-    prelude::*,
-    test_runner::{TestError, TestRunner},
-};
+use proptest::test_runner::{TestError, TestRunner};
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 
@@ -190,18 +188,22 @@ impl FuzzedCases {
         (self.cases.iter().map(|c| c.gas as u128).sum::<u128>() / self.cases.len() as u128) as u64
     }
 
+    /// Returns the case with the highest gas usage
     pub fn highest(&self) -> Option<&FuzzCase> {
         self.cases.last()
     }
 
+    /// Returns the case with the lowest gas usage
     pub fn lowest(&self) -> Option<&FuzzCase> {
         self.cases.first()
     }
 
+    /// Returns the highest amount of gas spent on a fuzz case
     pub fn highest_gas(&self) -> u64 {
         self.highest().map(|c| c.gas).unwrap_or_default()
     }
 
+    /// Returns the lowest amount of gas spent on a fuzz case
     pub fn lowest_gas(&self) -> u64 {
         self.lowest().map(|c| c.gas).unwrap_or_default()
     }
@@ -214,79 +216,6 @@ pub struct FuzzCase {
     pub calldata: Bytes,
     // Consumed gas
     pub gas: u64,
-}
-
-/// Given a function, it returns a proptest strategy which generates valid abi-encoded calldata
-/// for that function's input types.
-pub fn fuzz_calldata(func: &Function) -> impl Strategy<Value = Bytes> + '_ {
-    // We need to compose all the strategies generated for each parameter in all
-    // possible combinations
-    let strats = func.inputs.iter().map(|input| fuzz_param(&input.kind)).collect::<Vec<_>>();
-
-    strats.prop_map(move |tokens| {
-        tracing::trace!(input = ?tokens);
-        func.encode_input(&tokens).unwrap().into()
-    })
-}
-
-/// The max length of arrays we fuzz for is 256.
-const MAX_ARRAY_LEN: usize = 256;
-
-/// Given an ethabi parameter type, returns a proptest strategy for generating values for that
-/// datatype. Works with ABI Encoder v2 tuples.
-fn fuzz_param(param: &ParamType) -> impl Strategy<Value = Token> {
-    match param {
-        ParamType::Address => {
-            // The key to making this work is the `boxed()` call which type erases everything
-            // https://altsysrq.github.io/proptest-book/proptest/tutorial/transforming-strategies.html
-            any::<[u8; 20]>().prop_map(|x| Address::from_slice(&x).into_token()).boxed()
-        }
-        ParamType::Bytes => any::<Vec<u8>>().prop_map(|x| Bytes::from(x).into_token()).boxed(),
-        // For ints and uints we sample from a U256, then wrap it to the correct size with a
-        // modulo operation. Note that this introduces modulo bias, but it can be removed with
-        // rejection sampling if it's determined the bias is too severe. Rejection sampling may
-        // slow down tests as it resamples bad values, so may want to benchmark the performance
-        // hit and weigh that against the current bias before implementing
-        ParamType::Int(n) => match n / 8 {
-            32 => any::<[u8; 32]>()
-                .prop_map(move |x| I256::from_raw(U256::from(&x)).into_token())
-                .boxed(),
-            y @ 1..=31 => any::<[u8; 32]>()
-                .prop_map(move |x| {
-                    // Generate a uintN in the correct range, then shift it to the range of intN
-                    // by subtracting 2^(N-1)
-                    let uint = U256::from(&x) % U256::from(2).pow(U256::from(y * 8));
-                    let max_int_plus1 = U256::from(2).pow(U256::from(y * 8 - 1));
-                    let num = I256::from_raw(uint.overflowing_sub(max_int_plus1).0);
-                    num.into_token()
-                })
-                .boxed(),
-            _ => panic!("unsupported solidity type int{}", n),
-        },
-        ParamType::Uint(n) => {
-            strategies::UintStrategy::new(*n, vec![]).prop_map(|x| x.into_token()).boxed()
-        }
-        ParamType::Bool => any::<bool>().prop_map(|x| x.into_token()).boxed(),
-        ParamType::String => any::<Vec<u8>>()
-            .prop_map(|x| Token::String(unsafe { std::str::from_utf8_unchecked(&x).to_string() }))
-            .boxed(),
-        ParamType::Array(param) => proptest::collection::vec(fuzz_param(param), 0..MAX_ARRAY_LEN)
-            .prop_map(Token::Array)
-            .boxed(),
-        ParamType::FixedBytes(size) => (0..*size as u64)
-            .map(|_| any::<u8>())
-            .collect::<Vec<_>>()
-            .prop_map(Token::FixedBytes)
-            .boxed(),
-        ParamType::FixedArray(param, size) => (0..*size as u64)
-            .map(|_| fuzz_param(param).prop_map(|param| param.into_token()))
-            .collect::<Vec<_>>()
-            .prop_map(Token::FixedArray)
-            .boxed(),
-        ParamType::Tuple(params) => {
-            params.iter().map(fuzz_param).collect::<Vec<_>>().prop_map(Token::Tuple).boxed()
-        }
-    }
 }
 
 #[cfg(test)]
