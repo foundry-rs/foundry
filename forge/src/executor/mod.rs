@@ -8,10 +8,6 @@ pub use abi::{
 /// Executor configuration
 pub mod opts;
 
-/// Executor databases
-pub mod db;
-pub use db::CacheDB;
-
 /// Executor inspectors
 pub mod inspector;
 
@@ -35,7 +31,7 @@ use foundry_utils::IntoFunction;
 use hashbrown::HashMap;
 use inspector::{ExecutorState, LogCollector};
 use revm::{
-    db::{DatabaseCommit, DatabaseRef, EmptyDB},
+    db::{CacheDB, DatabaseCommit, DatabaseRef, EmptyDB},
     return_ok, Account, CreateScheme, Env, Return, TransactOut, TransactTo, TxEnv, EVM,
 };
 use std::{cell::RefCell, rc::Rc};
