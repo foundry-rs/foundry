@@ -17,6 +17,8 @@ pub trait TestFilter {
 
 #[cfg(test)]
 pub mod test_helpers {
+    use crate::executor::fuzz::FuzzedExecutor;
+
     use super::{
         executor::{
             opts::{Env, EvmOpts},
@@ -27,10 +29,10 @@ pub mod test_helpers {
     use ethers::{
         prelude::Lazy,
         solc::{AggregatedCompilerOutput, Project, ProjectPathsConfig},
-        types::U256,
+        types::{Address, U256},
     };
     use regex::Regex;
-    use revm::db::EmptyDB;
+    use revm::db::{DatabaseRef, EmptyDB};
 
     pub static COMPILED: Lazy<AggregatedCompilerOutput> = Lazy::new(|| {
         let paths =
@@ -47,6 +49,14 @@ pub mod test_helpers {
 
     pub fn test_executor() -> Executor<EmptyDB> {
         ExecutorBuilder::new().with_cheatcodes(false).with_config((*EVM_OPTS).env.evm_env()).build()
+    }
+
+    pub fn fuzz_executor<'a, DB: DatabaseRef>(
+        executor: &'a Executor<DB>,
+    ) -> FuzzedExecutor<'a, DB> {
+        let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
+
+        FuzzedExecutor::new(executor, proptest::test_runner::TestRunner::new(cfg), Address::zero())
     }
 
     pub struct Filter {

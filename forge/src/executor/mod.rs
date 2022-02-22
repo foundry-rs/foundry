@@ -19,6 +19,9 @@ pub mod inspector;
 pub mod builder;
 pub use builder::ExecutorBuilder;
 
+/// Fuzzing wrapper for executors
+pub mod fuzz;
+
 /// Executor EVM spec identifiers
 pub use revm::SpecId;
 

@@ -1,5 +1,8 @@
 use crate::{
-    executor::{CallResult, EvmError, Executor},
+    executor::{
+        fuzz::{FuzzError, FuzzTestResult, FuzzedCases, FuzzedExecutor},
+        CallResult, EvmError, Executor, RawCallResult,
+    },
     TestFilter,
 };
 use rayon::iter::ParallelIterator;
@@ -13,7 +16,7 @@ use ethers::{
 use eyre::Result;
 use std::{collections::BTreeMap, fmt, time::Instant};
 
-use proptest::test_runner::TestRunner;
+use proptest::test_runner::{TestError, TestRunner};
 use rayon::iter::IntoParallelRefIterator;
 use serde::{Deserialize, Serialize};
 
@@ -84,7 +87,7 @@ pub struct TestResult {
 impl TestResult {
     /// Returns `true` if this is the result of a fuzz test
     pub fn is_fuzz(&self) -> bool {
-        matches!(self.kind, TestKind::Fuzz)
+        matches!(self.kind, TestKind::Fuzz(_))
     }
 }
 
@@ -113,7 +116,7 @@ impl TestKindGas {
     pub fn gas(&self) -> u64 {
         match self {
             TestKindGas::Standard(gas) => *gas,
-            // we use the median for comparisons
+            // We use the median for comparisons
             TestKindGas::Fuzz { median, .. } => *median,
         }
     }
@@ -127,9 +130,7 @@ pub enum TestKind {
     /// Holds the consumed gas
     Standard(u64),
     /// A solidity fuzz test, that stores all test cases
-    // TODO
-    //Fuzz(FuzzedCases),
-    Fuzz,
+    Fuzz(FuzzedCases),
 }
 
 impl TestKind {
@@ -137,7 +138,11 @@ impl TestKind {
     pub fn gas_used(&self) -> TestKindGas {
         match self {
             TestKind::Standard(gas) => TestKindGas::Standard(*gas),
-            TestKind::Fuzz => TestKindGas::Fuzz { runs: 0, median: 0, mean: 0 },
+            TestKind::Fuzz(fuzzed) => TestKindGas::Fuzz {
+                runs: fuzzed.cases().len(),
+                median: fuzzed.median_gas(),
+                mean: fuzzed.mean_gas(),
+            },
         }
     }
 }
@@ -311,10 +316,8 @@ impl<'a, DB: DatabaseRef + Clone + Send + Sync> ContractRunner<'a, DB> {
         mut logs: Vec<RawLog>,
     ) -> Result<TestResult> {
         let start = Instant::now();
-        // the expected result depends on the function name
-        // DAppTools' ds-test will not revert inside its `assertEq`-like functions
-        // which allows to test multiple assertions in 1 test function while also
-        // preserving logs.
+        // The expected result depends on the function name.
+        // TODO: Dedupe (`TestDescriptor`?)
         let should_fail = func.name.starts_with("testFail");
         tracing::debug!(func = ?func.signature(), should_fail, "unit-testing");
 
@@ -351,6 +354,9 @@ impl<'a, DB: DatabaseRef + Clone + Send + Sync> ContractRunner<'a, DB> {
             },
         };
 
+        // DSTest will not revert inside its `assertEq`-like functions
+        // which allows to test multiple assertions in 1 test function while also
+        // preserving logs - instead it sets `failed` to `true` which we must check.
         let success = self.executor.is_success(
             address,
             status,
@@ -378,20 +384,68 @@ impl<'a, DB: DatabaseRef + Clone + Send + Sync> ContractRunner<'a, DB> {
     pub fn run_fuzz_test(
         &self,
         func: &Function,
-        _runner: TestRunner,
+        runner: TestRunner,
         _known_contracts: Option<&BTreeMap<String, (Abi, Vec<u8>)>>,
-        _address: Address,
-        _init_logs: Vec<RawLog>,
+        address: Address,
+        mut logs: Vec<RawLog>,
     ) -> Result<TestResult> {
+        // We do not trace in fuzz tests as it is a big performance hit
+        let start = Instant::now();
+        // TODO: Dedupe (`TestDescriptor`?)
+        let should_fail = func.name.starts_with("testFail");
+
+        let identified_contracts: Option<BTreeMap<Address, (String, Abi)>> = None;
+
+        // Wrap the executor in a fuzzed version
+        // TODO: When tracing is ported, we should disable it here.
+        let executor = FuzzedExecutor::new(&self.executor, runner, self.sender);
+        let FuzzTestResult { cases, test_error } =
+            executor.fuzz(func, address, should_fail, Some(self.contract));
+
+        // Rerun the failed fuzz case to get more information like traces and logs
+        if let Some(FuzzError { test_error: TestError::Fail(_, ref calldata), .. }) = test_error {
+            // TODO: When tracing is ported, we should re-enable it here to get traces.
+            let RawCallResult { logs: execution_logs, .. } =
+                self.executor.call_raw(self.sender, address, calldata.0.clone(), 0.into())?;
+            logs.extend(execution_logs);
+        }
+
+        let (success, counterexample, reason) = match test_error {
+            Some(err) => {
+                let (counterexample, reason) = match err.test_error {
+                    TestError::Abort(r) if r == "Too many global rejects".into() => {
+                        (None, Some(r.message().to_string()))
+                    }
+                    TestError::Fail(_, calldata) => {
+                        // Skip the function selector when decoding
+                        let args = func.decode_input(&calldata.as_ref()[4..])?;
+
+                        (Some(CounterExample { calldata, args }), None)
+                    }
+                    e => panic!("Unexpected test error: {:?}", e),
+                };
+
+                if !err.revert_reason.is_empty() {
+                    (false, counterexample, Some(err.revert_reason))
+                } else {
+                    (false, counterexample, reason)
+                }
+            }
+            _ => (true, None, None),
+        };
+
+        let duration = Instant::now().duration_since(start);
+        tracing::debug!(?duration, %success);
+
         Ok(TestResult {
-            success: false,
-            reason: Some("Fuzz tests not implemented".to_string()),
-            gas_used: 0,
-            counterexample: None,
-            logs: vec![],
-            kind: TestKind::Fuzz,
+            success,
+            reason,
+            gas_used: cases.median_gas(),
+            counterexample,
+            logs,
+            kind: TestKind::Fuzz(cases),
             traces: Default::default(),
-            identified_contracts: Default::default(),
+            identified_contracts,
             debug_calls: None,
             labeled_addresses: Default::default(),
         })
