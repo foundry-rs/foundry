@@ -1,7 +1,11 @@
 pub mod opts;
 
 pub mod db;
+use std::cell::RefCell;
+
 pub use db::CacheDB;
+
+pub mod inspector;
 
 pub mod builder;
 use hashbrown::HashMap;
@@ -17,10 +21,13 @@ use ethers::{
 };
 use eyre::Result;
 use foundry_utils::IntoFunction;
+use inspector::ExecutorState;
+use inspector::LogCollector;
 use revm::{
     db::{DatabaseCommit, DatabaseRef, EmptyDB},
     return_ok, Account, CreateScheme, Env, Log, Return, TransactOut, TransactTo, TxEnv, EVM,
 };
+use std::rc::Rc;
 
 #[derive(thiserror::Error, Debug)]
 pub enum EvmError {
@@ -88,6 +95,10 @@ pub struct Executor<DB: DatabaseRef> {
     // we need to set `evm.env`.
     db: CacheDB<DB>,
     env: Env,
+    // TODO: Here we are going to store information about the enabled inspectors, or just the
+    // meta-inspector.
+    // NOTE: It is important that the inspector gets a new state every time.
+    //inspector: LogCollector,
 }
 
 impl<DB> Executor<DB>
@@ -178,14 +189,16 @@ where
         };
         evm.database(&mut self.db);
 
-        // TODO: This should be an `inspect_commit`
-        let (status, out, gas, logs) = evm.transact_commit();
+        // Run the call
+        let state = Rc::new(RefCell::new(ExecutorState::new()));
+        let (status, out, gas, _) = evm.inspect_commit(LogCollector::new(state.clone()));
         let result = match out {
             TransactOut::Call(data) => data,
             _ => Bytes::default(),
         };
+        let state = Rc::try_unwrap(state).expect("no inspector should be alive").into_inner();
 
-        Ok(RawCallResult { status, result, gas, logs: convert_logs(logs), state_changeset: None })
+        Ok(RawCallResult { status, result, gas, logs: state.logs, state_changeset: None })
     }
 
     /// Performs a call to an account on the current state of the VM.
@@ -238,18 +251,21 @@ where
         };
         evm.database(&self.db);
 
-        // TODO: This should be an `inspect_commit`
-        let (status, out, gas, state_changeset, logs) = evm.transact_ref();
+        // Run the call
+        let state = Rc::new(RefCell::new(ExecutorState::new()));
+        let (status, out, gas, state_changeset, _) =
+            evm.inspect_ref(LogCollector::new(state.clone()));
         let result = match out {
             TransactOut::Call(data) => data,
             _ => Bytes::default(),
         };
+        let state = Rc::try_unwrap(state).expect("no inspector should be alive").into_inner();
 
         Ok(RawCallResult {
             status,
             result,
             gas,
-            logs: convert_logs(logs),
+            logs: state.logs,
             state_changeset: Some(state_changeset),
         })
     }
@@ -273,7 +289,8 @@ where
         };
         evm.database(&mut self.db);
 
-        let (ret, out, gas, logs) = evm.transact_commit();
+        let state = Rc::new(RefCell::new(ExecutorState::new()));
+        let (status, out, gas, _) = evm.inspect_commit(LogCollector::new(state.clone()));
         let addr = match out {
             TransactOut::Create(_, Some(addr)) => addr,
             // TODO: We should have better error handling logic in the test runner
@@ -281,8 +298,9 @@ where
             TransactOut::Create(_, None) => eyre::bail!("deployment failed"),
             _ => unreachable!(),
         };
+        let state = Rc::try_unwrap(state).expect("no inspector should be alive").into_inner();
 
-        Ok((addr, ret, gas, convert_logs(logs)))
+        Ok((addr, status, gas, state.logs))
     }
 
     /// Check if a call to a test contract was successful
@@ -322,9 +340,4 @@ where
 
         should_fail ^ success
     }
-}
-
-/// Converts REVM logs to ethabi logs
-fn convert_logs(logs: Vec<Log>) -> Vec<RawLog> {
-    logs.into_iter().map(|log| RawLog { topics: log.topics, data: log.data.to_vec() }).collect()
 }

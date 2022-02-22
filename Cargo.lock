@@ -3161,7 +3161,7 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "1.2.0"
-source = "git+https://github.com/onbjerg/revm?branch=onbjerg/filth-export#0216174d7a3d3ca848f2751c687781f1bdab4662"
+source = "git+https://github.com/onbjerg/revm?branch=onbjerg/machine-exports#9e9254f8700356495de423e71e5ccc0ed94fb2f4"
 dependencies = [
  "arrayref",
  "auto_impl",
@@ -3178,7 +3178,7 @@ dependencies = [
 [[package]]
 name = "revm_precompiles"
 version = "0.4.0"
-source = "git+https://github.com/onbjerg/revm?branch=onbjerg/filth-export#0216174d7a3d3ca848f2751c687781f1bdab4662"
+source = "git+https://github.com/onbjerg/revm?branch=onbjerg/machine-exports#9e9254f8700356495de423e71e5ccc0ed94fb2f4"
 dependencies = [
  "bytes",
  "num 0.4.0",

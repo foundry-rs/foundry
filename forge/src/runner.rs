@@ -212,7 +212,7 @@ impl<'a, DB: DatabaseRef + Clone + Send + Sync> ContractRunner<'a, DB> {
         if setup {
             tracing::trace!("setting up");
             let (setup_failed, setup_logs, reason) = match self.executor.setup(addr) {
-                Ok((_, setup_logs)) => (false, setup_logs, None),
+                Ok((_, logs)) => (false, logs, None),
                 Err(EvmError::Execution { logs, reason, .. }) => {
                     (true, logs, Some(format!("Setup failed: {}", reason)))
                 }

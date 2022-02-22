@@ -25,7 +25,7 @@ rlp = "0.5.1"
 
 bytes = "1.1.0"
 thiserror = "1.0.29"
-revm = { package = "revm", git = "https://github.com/onbjerg/revm", branch = "onbjerg/filth-export" }
+revm = { package = "revm", git = "https://github.com/onbjerg/revm", branch = "onbjerg/machine-exports" }
 hashbrown = "0.12"
 
 [dev-dependencies]
