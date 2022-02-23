@@ -86,22 +86,22 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
     if output.has_compiler_errors() {
         eyre::bail!(output.to_string())
     } else if output.is_unchanged() {
-        println!("No files changed, compilation skipped.");
+        println!("No files changed, compilation skipped");
     } else {
         println!("{}", output);
-        println!("Success.");
+        println!("Success");
     }
     Ok(output)
 }
 
 /// Compile a set of files not necessarily included in the `project`'s source dir
 pub fn compile_files(project: &Project, files: Vec<PathBuf>) -> eyre::Result<ProjectCompileOutput> {
-    println!("compiling...");
+    println!("Compiling...");
     let output = project.compile_files(files)?;
     if output.has_compiler_errors() {
         eyre::bail!(output.to_string())
     }
-    println!("success.");
+    println!("Success");
     Ok(output)
 }
 
