@@ -124,6 +124,14 @@ where
         self.db.insert_cache(address, account);
     }
 
+    /// Set the nonce of an account.
+    pub fn set_nonce(&mut self, address: Address, nonce: u64) {
+        let mut account = self.db.basic(address);
+        account.nonce = nonce;
+
+        self.db.insert_cache(address, account);
+    }
+
     /// Calls the `setUp()` function on a contract.
     pub fn setup(
         &mut self,
