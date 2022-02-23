@@ -333,6 +333,7 @@ fn test<A: ArtifactOutput + 'static>(
         let known_contracts = runner.known_contracts.clone();
         let index = Arc::new(Mutex::new(0));
         let results = runner.test_stream(&filter, |contract_name, tests| {
+            // This mutex syncs stdout per contract, do not remove even if the newline below is
             let mut index = index.lock().unwrap();
             if *index > 0 {
                 println!()
