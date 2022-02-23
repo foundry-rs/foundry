@@ -8,16 +8,15 @@ pub use abi::{
 /// Executor configuration
 pub mod opts;
 
-/// Executor databases
-pub mod db;
-pub use db::CacheDB;
-
 /// Executor inspectors
 pub mod inspector;
 
 /// Executor builder
 pub mod builder;
 pub use builder::ExecutorBuilder;
+
+/// Fuzzing wrapper for executors
+pub mod fuzz;
 
 /// Executor EVM spec identifiers
 pub use revm::SpecId;
@@ -30,12 +29,11 @@ use ethers::{
 use eyre::Result;
 use foundry_utils::IntoFunction;
 use hashbrown::HashMap;
-use inspector::{ExecutorState, LogCollector};
+use inspector::LogCollector;
 use revm::{
-    db::{DatabaseCommit, DatabaseRef, EmptyDB},
+    db::{CacheDB, DatabaseCommit, DatabaseRef, EmptyDB},
     return_ok, Account, CreateScheme, Env, Return, TransactOut, TransactTo, TxEnv, EVM,
 };
-use std::{cell::RefCell, rc::Rc};
 
 #[derive(thiserror::Error, Debug)]
 pub enum EvmError {
@@ -125,6 +123,14 @@ where
         self.db.insert_cache(address, account);
     }
 
+    /// Set the nonce of an account.
+    pub fn set_nonce(&mut self, address: Address, nonce: u64) {
+        let mut account = self.db.basic(address);
+        account.nonce = nonce;
+
+        self.db.insert_cache(address, account);
+    }
+
     /// Calls the `setUp()` function on a contract.
     pub fn setup(
         &mut self,
@@ -187,26 +193,18 @@ where
         value: U256,
     ) -> Result<RawCallResult> {
         let mut evm = EVM::new();
-        evm.env = self.env.clone();
-        evm.env.tx = TxEnv {
-            caller: from,
-            transact_to: TransactTo::Call(to),
-            data: calldata,
-            value,
-            ..Default::default()
-        };
+        evm.env = self.build_env(from, TransactTo::Call(to), calldata, value);
         evm.database(&mut self.db);
 
         // Run the call
-        let state = Rc::new(RefCell::new(ExecutorState::new()));
-        let (status, out, gas, _) = evm.inspect_commit(LogCollector::new(state.clone()));
+        let mut inspector = LogCollector::new();
+        let (status, out, gas, _) = evm.inspect_commit(&mut inspector);
         let result = match out {
             TransactOut::Call(data) => data,
             _ => Bytes::default(),
         };
-        let state = Rc::try_unwrap(state).expect("no inspector should be alive").into_inner();
 
-        Ok(RawCallResult { status, result, gas, logs: state.logs, state_changeset: None })
+        Ok(RawCallResult { status, result, gas, logs: inspector.logs, state_changeset: None })
     }
 
     /// Performs a call to an account on the current state of the VM.
@@ -249,31 +247,22 @@ where
         value: U256,
     ) -> Result<RawCallResult> {
         let mut evm = EVM::new();
-        evm.env = self.env.clone();
-        evm.env.tx = TxEnv {
-            caller: from,
-            transact_to: TransactTo::Call(to),
-            data: calldata,
-            value,
-            ..Default::default()
-        };
+        evm.env = self.build_env(from, TransactTo::Call(to), calldata, value);
         evm.database(&self.db);
 
         // Run the call
-        let state = Rc::new(RefCell::new(ExecutorState::new()));
-        let (status, out, gas, state_changeset, _) =
-            evm.inspect_ref(LogCollector::new(state.clone()));
+        let mut inspector = LogCollector::new();
+        let (status, out, gas, state_changeset, _) = evm.inspect_ref(&mut inspector);
         let result = match out {
             TransactOut::Call(data) => data,
             _ => Bytes::default(),
         };
-        let state = Rc::try_unwrap(state).expect("no inspector should be alive").into_inner();
 
         Ok(RawCallResult {
             status,
             result,
             gas,
-            logs: state.logs,
+            logs: inspector.logs,
             state_changeset: Some(state_changeset),
         })
     }
@@ -286,29 +275,19 @@ where
         value: U256,
     ) -> Result<(Address, Return, u64, Vec<RawLog>)> {
         let mut evm = EVM::new();
-
-        evm.env = self.env.clone();
-        evm.env.tx = TxEnv {
-            caller: from,
-            transact_to: TransactTo::Create(CreateScheme::Create),
-            data: code,
-            value,
-            ..Default::default()
-        };
+        evm.env = self.build_env(from, TransactTo::Create(CreateScheme::Create), code, value);
         evm.database(&mut self.db);
 
-        let state = Rc::new(RefCell::new(ExecutorState::new()));
-        let (status, out, gas, _) = evm.inspect_commit(LogCollector::new(state.clone()));
+        let mut inspector = LogCollector::new();
+        let (status, out, gas, _) = evm.inspect_commit(&mut inspector);
         let addr = match out {
             TransactOut::Create(_, Some(addr)) => addr,
             // TODO: We should have better error handling logic in the test runner
             // regarding deployments in general
-            TransactOut::Create(_, None) => eyre::bail!("deployment failed"),
-            _ => unreachable!(),
+            _ => eyre::bail!("deployment failed: {:?}", status),
         };
-        let state = Rc::try_unwrap(state).expect("no inspector should be alive").into_inner();
 
-        Ok((addr, status, gas, state.logs))
+        Ok((addr, status, gas, inspector.logs))
     }
 
     /// Check if a call to a test contract was successful
@@ -344,5 +323,13 @@ where
         }
 
         should_fail ^ success
+    }
+
+    fn build_env(&self, caller: Address, transact_to: TransactTo, data: Bytes, value: U256) -> Env {
+        Env {
+            cfg: self.env.cfg.clone(),
+            block: self.env.block.clone(),
+            tx: TxEnv { caller, transact_to, data, value, ..self.env.tx.clone() },
+        }
     }
 }

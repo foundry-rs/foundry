@@ -193,10 +193,12 @@ impl MultiContractRunner {
             .par_iter()
             .filter(|(name, _)| filter.matches_path(source_paths.get(*name).unwrap()))
             .filter(|(name, _)| filter.matches_contract(name))
+            .filter(|(_, (abi, _, _))| abi.functions().any(|func| filter.matches_test(&func.name)))
             .map(|(name, (abi, deploy_code, libs))| {
                 // TODO: Fork mode and "vicinity"
                 let executor = ExecutorBuilder::new()
                     .with_cheatcodes(self.evm_opts.ffi)
+                    .with_config(self.evm_opts.env.evm_env())
                     .with_spec(self.evm_spec)
                     .build();
                 let result =
