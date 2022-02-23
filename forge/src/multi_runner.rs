@@ -166,6 +166,8 @@ impl MultiContractRunnerBuilder {
     }
 }
 
+pub type TestResultStreamFn = Box<dyn Fn(String, BTreeMap<String, TestResult>) + Sync + Send>;
+
 /// A multi contract runner receives a set of contracts deployed in an EVM instance and proceeds
 /// to run all test functions in these contracts.
 pub struct MultiContractRunner {
@@ -191,10 +193,10 @@ pub struct MultiContractRunner {
 }
 
 impl MultiContractRunner {
-    pub fn test_stream(
+    pub fn test(
         &mut self,
         filter: &(impl TestFilter + Send + Sync),
-        stream_result: impl Fn(String, BTreeMap<String, TestResult>) + Sync,
+        stream_result: Option<TestResultStreamFn>,
     ) -> Result<BTreeMap<String, BTreeMap<String, TestResult>>> {
         let contracts = std::mem::take(&mut self.contracts);
         let vicinity = self.evm_opts.vicinity()?;
@@ -222,46 +224,14 @@ impl MultiContractRunner {
                 |(name, result)| if result.is_empty() { None } else { Some((name, result)) },
             )
             .map(|(name, result)| {
-                stream_result(name.clone(), result.clone());
+                if let Some(stream_result) = stream_result.as_ref() {
+                    stream_result(name.clone(), result.clone());
+                }
                 (name, result)
             })
             .collect::<BTreeMap<_, _>>();
 
         self.contracts = contracts;
-        Ok(results)
-    }
-
-    pub fn test(
-        &mut self,
-        filter: &(impl TestFilter + Send + Sync),
-    ) -> Result<BTreeMap<String, BTreeMap<String, TestResult>>> {
-        let contracts = std::mem::take(&mut self.contracts);
-        let vicinity = self.evm_opts.vicinity()?;
-        let backend = self.evm_opts.backend(&vicinity)?;
-        let source_paths = self.source_paths.clone();
-
-        let results = contracts
-            .par_iter()
-            .filter(|(name, _)| filter.matches_path(source_paths.get(*name).unwrap()))
-            .filter(|(name, _)| filter.matches_contract(name))
-            .map(|(name, (abi, deploy_code, libs))| {
-                // unavoidable duplication here?
-                let result = match backend {
-                    BackendKind::Simple(ref backend) => {
-                        self.run_tests(name, abi, backend, deploy_code.clone(), libs, filter)?
-                    }
-                    BackendKind::Shared(ref backend) => {
-                        self.run_tests(name, abi, backend, deploy_code.clone(), libs, filter)?
-                    }
-                };
-                Ok((name.clone(), result))
-            })
-            .filter_map(|x: Result<_>| x.ok())
-            .filter_map(|(name, res)| if res.is_empty() { None } else { Some((name, res)) })
-            .collect::<BTreeMap<_, _>>();
-
-        self.contracts = contracts;
-
         Ok(results)
     }
 
