@@ -79,7 +79,11 @@ impl Env {
                 spec_id: SpecId::LONDON,
                 perf_all_precompiles_have_balance: false,
             },
-            tx: TxEnv { gas_price: self.gas_price.into(), ..Default::default() },
+            tx: TxEnv {
+                gas_price: self.gas_price.into(),
+                gas_limit: self.block_gas_limit.unwrap_or(self.gas_limit),
+                ..Default::default()
+            },
         }
     }
 }
