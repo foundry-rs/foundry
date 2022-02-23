@@ -13,7 +13,7 @@ use evm_adapters::{
 use forge::{MultiContractRunnerBuilder, TestFilter};
 use foundry_config::{figment::Figment, Config};
 use regex::Regex;
-use std::{collections::BTreeMap, str::FromStr};
+use std::{collections::BTreeMap, str::FromStr, sync::{Arc, Mutex}};
 
 #[derive(Debug, Clone, Parser)]
 pub struct Filter {
@@ -309,47 +309,38 @@ fn test<A: ArtifactOutput + 'static>(
     allow_failure: bool,
     gas_reports: (bool, Vec<String>),
 ) -> eyre::Result<TestOutcome> {
+
     let verbosity = evm_opts.verbosity;
     let gas_reporting = gas_reports.0;
-
     if gas_reporting && evm_opts.verbosity < 3 {
         // force evm to do tracing, but dont hit the verbosity print path
         evm_opts.verbosity = 3;
     }
-
     let mut runner = builder.build(project, evm_opts)?;
 
-    let results = runner.test(&filter)?;
-
-    let mut gas_report = GasReport::new(gas_reports.1);
-
-    let (funcs, events, errors) = runner.execution_info;
     if json {
-        let res = serde_json::to_string(&results)?;
+        let results = runner.test(&filter)?;
+        let res = serde_json::to_string(&results)?; // TODO: Make this work normally
         println!("{}", res);
+        Ok(TestOutcome::new(results, allow_failure))
     } else {
         // Dapptools-style printing of test results
-        for (i, (contract_name, tests)) in results.iter().enumerate() {
-            if i > 0 {
+        let mut gas_report = GasReport::new(gas_reports.1);
+        let execution_info = runner.execution_info.clone();
+        let known_contracts = runner.known_contracts.clone();
+        let index = Arc::new(Mutex::new(0));
+        let results = runner.test_stream(&filter, |contract_name, tests| {
+            let mut index = index.lock().unwrap();
+            if *index > 0 {
                 println!()
             }
+            *index += 1;
             if !tests.is_empty() {
                 let term = if tests.len() > 1 { "tests" } else { "test" };
                 println!("Running {} {} for {}", tests.len(), term, contract_name);
             }
-
             for (name, result) in tests {
-                // build up gas report
-                if gas_reporting {
-                    if let (Some(traces), Some(identified_contracts)) =
-                        (&result.traces, &result.identified_contracts)
-                    {
-                        gas_report.analyze(traces, identified_contracts);
-                    }
-                }
-
-                short_test_result(name, result);
-
+                short_test_result(&name, &result);
                 // adds a linebreak only if there were any traces or logs, so that the
                 // output does not look like 1 big block.
                 let mut add_newline = false;
@@ -360,33 +351,29 @@ fn test<A: ArtifactOutput + 'static>(
                         println!("  {}", log);
                     }
                 }
-
                 if verbosity > 2 {
                     if let (Some(traces), Some(identified_contracts)) =
-                        (&result.traces, &result.identified_contracts)
-                    {
+                    (&result.traces, &result.identified_contracts) {
                         if !result.success && verbosity == 3 || verbosity > 3 {
                             // add a new line if any logs were printed & to separate them from
                             // the traces to be printed
                             if !result.logs.is_empty() {
                                 println!();
                             }
-
                             let mut ident = identified_contracts.clone();
                             let mut exec_info = ExecutionInfo::new(
-                                &runner.known_contracts,
+                                &known_contracts,
                                 &mut ident,
                                 &result.labeled_addresses,
-                                &funcs,
-                                &events,
-                                &errors,
+                                &execution_info.0,
+                                &execution_info.1,
+                                &execution_info.2,
                             );
                             let vm = vm();
                             let mut trace_string = "".to_string();
                             if verbosity > 4 || !result.success {
                                 add_newline = true;
                                 println!("Traces:");
-
                                 // print setup calls as well
                                 traces.iter().for_each(|trace| {
                                     trace.construct_trace_string(
@@ -417,18 +404,24 @@ fn test<A: ArtifactOutput + 'static>(
                         }
                     }
                 }
-
                 if add_newline {
                     println!();
                 }
             }
+        })?;
+
+        if gas_reporting {
+            for (_, tests) in results.iter() {
+                for (_, result) in tests {
+                    if let (Some(traces), Some(identified_contracts)) =
+                    (&result.traces, &result.identified_contracts) {
+                        gas_report.analyze(traces, identified_contracts);
+                    }
+                }
+            }
+            gas_report.finalize();
+            println!("{}", gas_report);
         }
+        Ok(TestOutcome::new(results, allow_failure))
     }
-
-    if gas_reporting {
-        gas_report.finalize();
-        println!("{}", gas_report);
-    }
-
-    Ok(TestOutcome::new(results, allow_failure))
 }

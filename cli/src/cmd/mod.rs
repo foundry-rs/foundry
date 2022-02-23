@@ -81,15 +81,15 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
         );
     }
 
-    println!("compiling...");
+    println!("Compiling...");
     let output = project.compile()?;
     if output.has_compiler_errors() {
         eyre::bail!(output.to_string())
     } else if output.is_unchanged() {
-        println!("no files changed, compilation skipped.");
+        println!("No files changed, compilation skipped.");
     } else {
         println!("{}", output);
-        println!("success.");
+        println!("Success.");
     }
     Ok(output)
 }

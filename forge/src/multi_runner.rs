@@ -17,7 +17,10 @@ use proptest::test_runner::TestRunner;
 
 use eyre::Result;
 use rayon::prelude::*;
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    marker::Sync,
+};
 
 /// Builder used for instantiating the multi-contract runner
 #[derive(Debug, Default)]
@@ -44,15 +47,15 @@ impl MultiContractRunnerBuilder {
         // TODO: Can we remove the static? It's due to the `into_artifacts()` call below
         A: ArtifactOutput + 'static,
     {
-        println!("compiling...");
+        println!("Compiling...");
         let output = project.compile()?;
         if output.has_compiler_errors() {
             // return the diagnostics error back to the user.
             eyre::bail!(output.to_string())
         } else if output.is_unchanged() {
-            println!("no files changed, compilation skipped.");
+            println!("No files changed, compilation skipped");
         } else {
-            println!("success.");
+            println!("Success");
         }
 
         // This is just the contracts compiled, but we need to merge this with the read cached
@@ -191,13 +194,49 @@ pub struct MultiContractRunner {
 }
 
 impl MultiContractRunner {
+    pub fn test_stream(
+        &mut self,
+        filter: &(impl TestFilter + Send + Sync),
+        stream_result: impl Fn(String, BTreeMap<String, TestResult>) -> () + Sync,
+    ) -> Result<BTreeMap<String, BTreeMap<String, TestResult>>> {
+        let contracts = std::mem::take(&mut self.contracts);
+        let vicinity = self.evm_opts.vicinity()?;
+        let backend = self.evm_opts.backend(&vicinity)?;
+        let source_paths = self.source_paths.clone();
+
+        let results = contracts
+            .par_iter()
+            .filter(|(name, _)| filter.matches_path(source_paths.get(*name).unwrap()))
+            .filter(|(name, _)| filter.matches_contract(name))
+            .map(|(name, (abi, deploy_code, libs))| {
+                // unavoidable duplication here?
+                let result = match backend {
+                    BackendKind::Simple(ref backend) => {
+                        self.run_tests(name, abi, backend, deploy_code.clone(), libs, filter)?
+                    }
+                    BackendKind::Shared(ref backend) => {
+                        self.run_tests(name, abi, backend, deploy_code.clone(), libs, filter)?
+                    }
+                };
+                Ok((name.clone(), result))
+            })
+            .filter_map(|x: Result<_>| x.ok())
+            .filter_map(|(name, result)| if result.is_empty() { None } else { Some((name, result)) })
+            .map(|(name, result)| {
+                stream_result(name.clone(), result.clone());
+                (name.clone(), result)
+            })
+            .collect::<BTreeMap<_, _>>();
+
+        self.contracts = contracts;
+        Ok(results)
+    }
+
     pub fn test(
         &mut self,
         filter: &(impl TestFilter + Send + Sync),
     ) -> Result<BTreeMap<String, BTreeMap<String, TestResult>>> {
-        // TODO: Convert to iterator, ideally parallel one?
         let contracts = std::mem::take(&mut self.contracts);
-
         let vicinity = self.evm_opts.vicinity()?;
         let backend = self.evm_opts.backend(&vicinity)?;
         let source_paths = self.source_paths.clone();
