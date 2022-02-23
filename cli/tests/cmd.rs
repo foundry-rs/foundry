@@ -7,7 +7,7 @@ use foundry_cli_test_utils::{
     forgetest, forgetest_ignore, forgetest_init, pretty_eq,
     util::{pretty_err, read_string, TestCommand, TestProject},
 };
-use foundry_config::{parse_with_profile, BasicConfig, Config};
+use foundry_config::{parse_with_profile, BasicConfig, Config, OptimizerDetails};
 use pretty_assertions::assert_eq;
 use std::{
     env::{self},
@@ -343,6 +343,50 @@ success.
 ",
         cmd.stdout_lossy()
     );
+});
+
+// test to ensure yul optimizer can be set as intended
+forgetest!(can_set_yul_optimizer, |prj: TestProject, mut cmd: TestCommand| {
+    prj.inner()
+        .add_source(
+            "Foo",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+contract Foo {
+    function bar() public pure {
+       assembly {
+            let result_start := msize()
+       }
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    cmd.arg("build");
+
+    assert!(
+        cmd.stderr_lossy().contains(
+"The msize instruction cannot be used when the Yul optimizer is activated because it can change its semantics. Either disable the Yul optimizer or do not use the instruction."
+        )
+    );
+
+    // disable yul optimizer explicitly
+    let config = Config {
+        optimizer_details: Some(OptimizerDetails { yul: Some(false), ..Default::default() }),
+        ..Default::default()
+    };
+    prj.write_config(config);
+
+    assert!(cmd.stdout_lossy().ends_with(
+        "compiling...
+Compiling 1 files with 0.8.10
+Compilation finished successfully
+Compiler run successful
+success.
+",
+    ));
 });
 
 // tests that the `run` command works correctly

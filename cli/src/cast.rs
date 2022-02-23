@@ -594,7 +594,7 @@ async fn main() -> eyre::Result<()> {
                     None => {
                         let wallet = LocalWallet::new(&mut rng);
                         println!(
-                            "Successfully created new keypair.\nAddress: {}.\nPrivate Key: {}.",
+                            "Successfully created new keypair.\nAddress: {}\nPrivate Key: {}",
                             SimpleCast::checksum_address(&wallet.address())?,
                             hex::encode(wallet.signer().to_bytes()),
                         );
@@ -634,7 +634,7 @@ async fn main() -> eyre::Result<()> {
                     .expect("failed to generate vanity wallet");
 
                 println!(
-                    "Successfully created new keypair in {} seconds.\nAddress: {}.\nPrivate Key: {}.",
+                    "Successfully created new keypair in {} seconds.\nAddress: {}\nPrivate Key: {}",
                     timer.elapsed().as_secs(),
                     SimpleCast::checksum_address(&wallet.address())?,
                     hex::encode(wallet.signer().to_bytes()),

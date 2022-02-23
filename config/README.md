@@ -99,12 +99,16 @@ Optimizer components can be tweaked with the `OptimizerDetails` object:
 
 See [Compiler Input Description `settings.optimizer.details`](https://docs.soliditylang.org/en/latest/using-the-compiler.html#compiler-input-and-output-json-description)
 
+The `optimizer_details` (`optimizerDetails` also works) settings must be prefixed with the profile they correspond to: `[default.optimizer_details]`
+belongs to the `[default]` profile
+
 ```toml
-[optimizer_details]
+[default.optimizer_details]
 constantOptimizer = true
 yul = true
-
-[optimizer_details.yulDetails]
+# this sets the `yulDetails` of the `optimizer_details` for the `default` profile
+[default.optimizer_details.yulDetails]
+stackAllocation = true
 optimizerSteps = 'dhfoDgvulfnTUtnIf'
 ```
 
