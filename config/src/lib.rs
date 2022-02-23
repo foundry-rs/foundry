@@ -1583,7 +1583,6 @@ mod tests {
             "#,
             )?;
             let loaded = Config::load();
-
             assert_eq!(
                 loaded.optimizer_details,
                 Some(OptimizerDetails {

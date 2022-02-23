@@ -99,7 +99,7 @@ Optimizer components can be tweaked with the `OptimizerDetails` object:
 
 See [Compiler Input Description `settings.optimizer.details`](https://docs.soliditylang.org/en/latest/using-the-compiler.html#compiler-input-and-output-json-description)
 
-The `optimizer_details` settings must be prefixed with the profile they correspond to: `[default.optimizer_details]`
+The `optimizer_details` (`optimizerDetails` also works) settings must be prefixed with the profile they correspond to: `[default.optimizer_details]`
 belongs to the `[default]` profile
 
 ```toml
