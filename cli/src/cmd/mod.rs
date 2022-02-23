@@ -59,7 +59,6 @@ use ethers::{
 };
 use std::{collections::BTreeMap, path::PathBuf};
 
-
 /// Common trait for all cli commands
 pub trait Cmd: clap::Parser + Sized {
     type Output;
@@ -72,7 +71,11 @@ use foundry_utils::to_table;
 
 /// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
 /// compilation was successful or if there was a cache hit.
-pub fn compile(project: &Project, print_names: bool, print_sizes: bool) -> eyre::Result<ProjectCompileOutput> {
+pub fn compile(
+    project: &Project,
+    print_names: bool,
+    print_sizes: bool,
+) -> eyre::Result<ProjectCompileOutput> {
     if !project.paths.sources.exists() {
         eyre::bail!(
             r#"no contracts to compile, contracts folder "{}" does not exist.
@@ -95,7 +98,10 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
             let compiled_contracts = output.compiled_contracts_by_compiler_version();
             println!("compiled contracts:");
             for (version, contracts) in compiled_contracts.into_iter() {
-                println!("  compiler version: {}.{}.{}", version.major, version.minor, version.patch);
+                println!(
+                    "  compiler version: {}.{}.{}",
+                    version.major, version.minor, version.patch
+                );
                 for (name, _) in contracts {
                     println!("    - {}", name.to_string());
                 }
@@ -124,7 +130,6 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
             println!("-----------------------------");
             println!("{}", to_table(json));
         }
-
 
         println!("{}", output);
         println!("success.");

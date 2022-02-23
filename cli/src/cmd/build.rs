@@ -113,16 +113,10 @@ pub struct BuildArgs {
     #[serde(flatten)]
     pub compiler: CompilerArgs,
 
-    #[clap(
-        help = "print compiled contract names",
-        long = "names",
-    )]
+    #[clap(help = "print compiled contract names", long = "names")]
     pub names: bool,
 
-    #[clap(
-        help = "print compiled contract sizes",
-        long = "sizes",
-    )]
+    #[clap(help = "print compiled contract sizes", long = "sizes")]
     pub sizes: bool,
 
     #[clap(help = "ignore warnings with specific error codes", long)]
