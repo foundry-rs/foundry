@@ -1,4 +1,3 @@
-use super::ExecutorState;
 use crate::executor::{
     patch_hardhat_console_selector, HardhatConsoleCalls, HARDHAT_CONSOLE_ADDRESS,
 };
@@ -11,21 +10,21 @@ use revm::{
     db::Database, opcode, CallContext, CreateScheme, EVMData, Gas, Inspector, Machine, Return,
     Transfer,
 };
-use std::{cell::RefCell, rc::Rc};
 
 /// An inspector that collects logs during execution.
 ///
 /// The inspector collects logs from the LOG opcodes as well as Hardhat-style logs.
+#[derive(Debug)]
 pub struct LogCollector {
-    state: Rc<RefCell<ExecutorState>>,
+    pub logs: Vec<RawLog>,
 }
 
 impl LogCollector {
-    pub fn new(state: Rc<RefCell<ExecutorState>>) -> Self {
-        Self { state }
+    pub fn new() -> Self {
+        Self { logs: Vec::new() }
     }
 
-    fn log(&self, machine: &Machine, n: u8) {
+    fn log(&mut self, machine: &Machine, n: u8) {
         let (offset, len) =
             (try_or_return!(machine.stack().peek(0)), try_or_return!(machine.stack().peek(1)));
         let data = if len.is_zero() {
@@ -42,10 +41,10 @@ impl LogCollector {
             topics.push(topic);
         }
 
-        self.state.borrow_mut().logs.push(RawLog { topics, data });
+        self.logs.push(RawLog { topics, data });
     }
 
-    fn hardhat_log(&self, input: Vec<u8>) -> (Return, Bytes) {
+    fn hardhat_log(&mut self, input: Vec<u8>) -> (Return, Bytes) {
         // Patch the Hardhat-style selectors
         let input = patch_hardhat_console_selector(input.to_vec());
         let decoded = match HardhatConsoleCalls::decode(&input) {
@@ -59,7 +58,7 @@ impl LogCollector {
         };
 
         // Convert it to a DS-style `emit log(string)` event
-        self.state.borrow_mut().logs.push(convert_hh_log_to_event(decoded));
+        self.logs.push(convert_hh_log_to_event(decoded));
 
         (Return::Continue, Bytes::new())
     }

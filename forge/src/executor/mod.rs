@@ -29,12 +29,11 @@ use ethers::{
 use eyre::Result;
 use foundry_utils::IntoFunction;
 use hashbrown::HashMap;
-use inspector::{ExecutorState, LogCollector};
+use inspector::LogCollector;
 use revm::{
     db::{CacheDB, DatabaseCommit, DatabaseRef, EmptyDB},
     return_ok, Account, CreateScheme, Env, Return, TransactOut, TransactTo, TxEnv, EVM,
 };
-use std::{cell::RefCell, rc::Rc};
 
 #[derive(thiserror::Error, Debug)]
 pub enum EvmError {
@@ -198,15 +197,14 @@ where
         evm.database(&mut self.db);
 
         // Run the call
-        let state = Rc::new(RefCell::new(ExecutorState::new()));
-        let (status, out, gas, _) = evm.inspect_commit(LogCollector::new(state.clone()));
+        let mut inspector = LogCollector::new();
+        let (status, out, gas, _) = evm.inspect_commit(&mut inspector);
         let result = match out {
             TransactOut::Call(data) => data,
             _ => Bytes::default(),
         };
-        let state = Rc::try_unwrap(state).expect("no inspector should be alive").into_inner();
 
-        Ok(RawCallResult { status, result, gas, logs: state.logs, state_changeset: None })
+        Ok(RawCallResult { status, result, gas, logs: inspector.logs, state_changeset: None })
     }
 
     /// Performs a call to an account on the current state of the VM.
@@ -253,20 +251,18 @@ where
         evm.database(&self.db);
 
         // Run the call
-        let state = Rc::new(RefCell::new(ExecutorState::new()));
-        let (status, out, gas, state_changeset, _) =
-            evm.inspect_ref(LogCollector::new(state.clone()));
+        let mut inspector = LogCollector::new();
+        let (status, out, gas, state_changeset, _) = evm.inspect_ref(&mut inspector);
         let result = match out {
             TransactOut::Call(data) => data,
             _ => Bytes::default(),
         };
-        let state = Rc::try_unwrap(state).expect("no inspector should be alive").into_inner();
 
         Ok(RawCallResult {
             status,
             result,
             gas,
-            logs: state.logs,
+            logs: inspector.logs,
             state_changeset: Some(state_changeset),
         })
     }
@@ -282,17 +278,16 @@ where
         evm.env = self.build_env(from, TransactTo::Create(CreateScheme::Create), code, value);
         evm.database(&mut self.db);
 
-        let state = Rc::new(RefCell::new(ExecutorState::new()));
-        let (status, out, gas, _) = evm.inspect_commit(LogCollector::new(state.clone()));
+        let mut inspector = LogCollector::new();
+        let (status, out, gas, _) = evm.inspect_commit(&mut inspector);
         let addr = match out {
             TransactOut::Create(_, Some(addr)) => addr,
             // TODO: We should have better error handling logic in the test runner
             // regarding deployments in general
             _ => eyre::bail!("deployment failed: {:?}", status),
         };
-        let state = Rc::try_unwrap(state).expect("no inspector should be alive").into_inner();
 
-        Ok((addr, status, gas, state.logs))
+        Ok((addr, status, gas, inspector.logs))
     }
 
     /// Check if a call to a test contract was successful
