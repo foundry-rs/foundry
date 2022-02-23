@@ -186,6 +186,10 @@ pub struct Config {
     /// by proptest, to be encountered during usage of `vm.assume`
     /// cheatcode.
     pub fuzz_max_global_rejects: u32,
+    /// Print the names of the compiled contracts
+    pub names: bool,
+    /// Print the sizes of the compiled contracts
+    pub sizes: bool,
     /// The root path where the config detection started from, `Config::with_root`
     #[doc(hidden)]
     //  We're skipping serialization here, so it won't be included in the [`Config::to_string()`]
@@ -800,6 +804,8 @@ impl Default for Config {
             optimizer_details: None,
             extra_output: Default::default(),
             extra_output_files: Default::default(),
+            names: false,
+            sizes: false,
             fuzz_runs: 256,
             fuzz_max_local_rejects: 1024,
             fuzz_max_global_rejects: 65536,
