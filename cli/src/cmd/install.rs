@@ -1,5 +1,5 @@
 //! Create command
-use std::path::PathBuf;
+use std::{path::PathBuf, str};
 
 use crate::{cmd::Cmd, opts::forge::Dependency, utils::p_println};
 use ansi_term::Colour;
@@ -80,22 +80,21 @@ pub(crate) fn install(
 
 /// installs the dependency as an ordinary folder instead of a submodule
 fn install_as_folder(dep: &Dependency, libs: &Path) -> eyre::Result<()> {
-    let status = Command::new("git")
+    let output = Command::new("git")
         .args(&["clone", &dep.url, &dep.name])
         .current_dir(&libs)
         .stdout(Stdio::piped())
-        .status()?
-        .exit_ok()
-        .map_err(|e| {
-            let code = e.code().unwrap();
-            match code {
-                128 => format!("Repo \"{}\" does not exist!", &dep.url),
-                _ => format!("Exited with error code:{}", code),
-            }
-        });
+        .output()?;
 
-    if let Err(err) = status {
-        eyre::bail!("{}", err)
+    let stderr = str::from_utf8(&output.stderr).unwrap();
+
+    if stderr.contains("remote: Repository not found") {
+        eyre::bail!("Repo: \"{}\" not found!", &dep.url)
+    } else if stderr.contains("already exists and is not an empty directory") {
+        eyre::bail!(
+            "Destination path \"{}\" already exists and is not an empty directory.",
+            &dep.name
+        )
     }
 
     if let Some(ref tag) = dep.tag {
@@ -117,23 +116,22 @@ fn install_as_folder(dep: &Dependency, libs: &Path) -> eyre::Result<()> {
 /// installs the dependency as new submodule
 fn install_as_submodule(dep: &Dependency, libs: &Path, no_commit: bool) -> eyre::Result<()> {
     // install the dep
-    let status = Command::new("git")
+    let output = Command::new("git")
         .args(&["submodule", "add", &dep.url, &dep.name])
         .current_dir(&libs)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .status()?
-        .exit_ok()
-        .map_err(|e| {
-            let code = e.code().unwrap();
-            match code {
-                128 => format!("Repo \"{}\" does not exist!", &dep.url),
-                _ => format!("Exited with error code:{}", code),
-            }
-        });
+        .output()?;
 
-    if let Err(err) = status {
-        eyre::bail!("{}", err)
+    let stderr = str::from_utf8(&output.stderr).unwrap();
+
+    if stderr.contains("remote: Repository not found") {
+        eyre::bail!("Repo: \"{}\" not found!", &dep.url)
+    } else if stderr.contains("already exists in the index") {
+        eyre::bail!(
+            "\"lib/{}\" already exists in the index, you can update it using forge update.",
+            &dep.name
+        )
     }
 
     // call update on it

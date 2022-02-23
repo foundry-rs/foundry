@@ -1,4 +1,3 @@
-#![feature(exit_status_error)]
 pub mod cmd;
 mod opts;
 mod utils;
