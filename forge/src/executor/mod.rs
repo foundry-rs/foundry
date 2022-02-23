@@ -194,15 +194,7 @@ where
         value: U256,
     ) -> Result<RawCallResult> {
         let mut evm = EVM::new();
-        evm.env.cfg = self.env.cfg.clone();
-        evm.env.block = self.env.block.clone();
-        evm.env.tx = TxEnv {
-            caller: from,
-            transact_to: TransactTo::Call(to),
-            data: calldata,
-            value,
-            ..self.env.tx.clone()
-        };
+        evm.env = self.build_env(from, TransactTo::Call(to), calldata, value);
         evm.database(&mut self.db);
 
         // Run the call
@@ -257,15 +249,7 @@ where
         value: U256,
     ) -> Result<RawCallResult> {
         let mut evm = EVM::new();
-        evm.env.cfg = self.env.cfg.clone();
-        evm.env.block = self.env.block.clone();
-        evm.env.tx = TxEnv {
-            caller: from,
-            transact_to: TransactTo::Call(to),
-            data: calldata,
-            value,
-            ..self.env.tx.clone()
-        };
+        evm.env = self.build_env(from, TransactTo::Call(to), calldata, value);
         evm.database(&self.db);
 
         // Run the call
@@ -295,15 +279,7 @@ where
         value: U256,
     ) -> Result<(Address, Return, u64, Vec<RawLog>)> {
         let mut evm = EVM::new();
-        evm.env.cfg = self.env.cfg.clone();
-        evm.env.block = self.env.block.clone();
-        evm.env.tx = TxEnv {
-            caller: from,
-            transact_to: TransactTo::Create(CreateScheme::Create),
-            data: code,
-            value,
-            ..self.env.tx.clone()
-        };
+        evm.env = self.build_env(from, TransactTo::Create(CreateScheme::Create), code, value);
         evm.database(&mut self.db);
 
         let state = Rc::new(RefCell::new(ExecutorState::new()));
@@ -352,5 +328,13 @@ where
         }
 
         should_fail ^ success
+    }
+
+    fn build_env(&self, caller: Address, transact_to: TransactTo, data: Bytes, value: U256) -> Env {
+        Env {
+            cfg: self.env.cfg.clone(),
+            block: self.env.block.clone(),
+            tx: TxEnv { caller, transact_to, data, value, ..self.env.tx.clone() },
+        }
     }
 }

@@ -202,15 +202,15 @@ impl<'a, DB: DatabaseRef + Clone + Send + Sync> ContractRunner<'a, DB> {
     /// Deploys the test contract inside the runner from the sending account, and optionally runs
     /// the `setUp` function on the test contract.
     pub fn deploy(&mut self, setup: bool) -> Result<(Address, Vec<RawLog>, bool, Option<String>)> {
+        // We set the nonce of the deployer accounts to 1 to get the same addresses as DappTools
+        self.executor.set_nonce(self.sender, 1);
+
         // Deploy libraries
         self.predeploy_libs.iter().for_each(|code| {
             self.executor
                 .deploy(Address::zero(), code.0.clone(), 0u32.into())
                 .expect("couldn't deploy library");
         });
-
-        // We set the nonce of the deployer accounts to 1 to get the same addresses as DappTools
-        self.executor.set_nonce(self.sender, 1);
 
         // Deploy an instance of the contract
         let (addr, _, _, mut logs) = self
