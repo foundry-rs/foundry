@@ -187,6 +187,7 @@ impl MultiContractRunner {
                 // TODO: Fork mode and "vicinity"
                 let executor = ExecutorBuilder::new()
                     .with_cheatcodes(self.evm_opts.ffi)
+                    .with_config(self.evm_opts.env.evm_env())
                     .with_spec(self.evm_spec)
                     .build();
                 let result =
