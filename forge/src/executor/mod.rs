@@ -194,13 +194,14 @@ where
         value: U256,
     ) -> Result<RawCallResult> {
         let mut evm = EVM::new();
-        evm.env = self.env.clone();
+        evm.env.cfg = self.env.cfg.clone();
+        evm.env.block = self.env.block.clone();
         evm.env.tx = TxEnv {
             caller: from,
             transact_to: TransactTo::Call(to),
             data: calldata,
             value,
-            ..Default::default()
+            ..self.env.tx.clone()
         };
         evm.database(&mut self.db);
 
@@ -256,13 +257,14 @@ where
         value: U256,
     ) -> Result<RawCallResult> {
         let mut evm = EVM::new();
-        evm.env = self.env.clone();
+        evm.env.cfg = self.env.cfg.clone();
+        evm.env.block = self.env.block.clone();
         evm.env.tx = TxEnv {
             caller: from,
             transact_to: TransactTo::Call(to),
             data: calldata,
             value,
-            ..Default::default()
+            ..self.env.tx.clone()
         };
         evm.database(&self.db);
 
@@ -293,14 +295,14 @@ where
         value: U256,
     ) -> Result<(Address, Return, u64, Vec<RawLog>)> {
         let mut evm = EVM::new();
-
-        evm.env = self.env.clone();
+        evm.env.cfg = self.env.cfg.clone();
+        evm.env.block = self.env.block.clone();
         evm.env.tx = TxEnv {
             caller: from,
             transact_to: TransactTo::Create(CreateScheme::Create),
             data: code,
             value,
-            ..Default::default()
+            ..self.env.tx.clone()
         };
         evm.database(&mut self.db);
 
@@ -310,8 +312,7 @@ where
             TransactOut::Create(_, Some(addr)) => addr,
             // TODO: We should have better error handling logic in the test runner
             // regarding deployments in general
-            TransactOut::Create(_, None) => eyre::bail!("deployment failed"),
-            _ => unreachable!(),
+            _ => eyre::bail!("deployment failed: {:?}", status),
         };
         let state = Rc::try_unwrap(state).expect("no inspector should be alive").into_inner();
 
