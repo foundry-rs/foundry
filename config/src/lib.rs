@@ -625,7 +625,7 @@ impl Config {
         let mut s = toml::to_string_pretty(&value)?;
 
         if self.optimizer_details.is_some() {
-            // this is a hack to make nested tables work because this is dynamic based on the config
+            // this is a hack to make nested tables work because this requires the config's profile
             s = s
                 .replace("[optimizer_details]", &format!("[{}.optimizer_details]", self.profile))
                 .replace(
