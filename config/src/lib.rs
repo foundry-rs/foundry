@@ -507,8 +507,6 @@ impl Config {
         .with_extra_output(self.configured_artifacts_handler().output_selection())
         .with_ast();
 
-        println!("{}", serde_json::to_string_pretty(&settings).unwrap());
-
         Ok(settings)
     }
 
