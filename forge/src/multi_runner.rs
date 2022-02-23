@@ -40,8 +40,7 @@ impl MultiContractRunnerBuilder {
     /// against that evm
     pub fn build<A>(self, project: Project<A>, evm_opts: EvmOpts) -> Result<MultiContractRunner>
     where
-        // TODO: Can we remove the static? It's due to the `into_artifacts()` call below
-        A: ArtifactOutput + 'static,
+        A: ArtifactOutput,
     {
         println!("Compiling...");
         let output = project.compile()?;
@@ -96,13 +95,13 @@ impl MultiContractRunnerBuilder {
                     if let Some(b) = contract.bytecode.expect("No bytecode").object.into_bytes() {
                         b
                     } else {
-                        return Ok(());
+                        return Ok(())
                     };
 
                 let abi = contract.abi.expect("We should have an abi by now");
                 // if its a test, add it to deployable contracts
-                if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true)
-                    && abi.functions().any(|func| func.name.starts_with("test"))
+                if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) &&
+                    abi.functions().any(|func| func.name.starts_with("test"))
                 {
                     deployable_contracts
                         .insert(fname.clone(), (abi.clone(), bytecode, dependencies.to_vec()));
@@ -201,10 +200,12 @@ impl MultiContractRunner {
             .par_iter()
             .filter(|(name, _)| filter.matches_path(source_paths.get(*name).unwrap()))
             .filter(|(name, _)| filter.matches_contract(name))
+            .filter(|(_, (abi, _, _))| abi.functions().any(|func| filter.matches_test(&func.name)))
             .map(|(name, (abi, deploy_code, libs))| {
                 // TODO: Fork mode and "vicinity"
                 let executor = ExecutorBuilder::new()
                     .with_cheatcodes(self.evm_opts.ffi)
+                    .with_config(self.evm_opts.env.evm_env())
                     .with_spec(self.evm_spec)
                     .build();
                 let result =

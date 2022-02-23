@@ -1,5 +1,8 @@
 use crate::{
-    executor::{CallResult, EvmError, Executor},
+    executor::{
+        fuzz::{FuzzError, FuzzTestResult, FuzzedCases, FuzzedExecutor},
+        CallResult, EvmError, Executor, RawCallResult,
+    },
     TestFilter,
 };
 use rayon::iter::ParallelIterator;
@@ -13,7 +16,7 @@ use ethers::{
 use eyre::Result;
 use std::{collections::BTreeMap, fmt, time::Instant};
 
-use proptest::test_runner::TestRunner;
+use proptest::test_runner::{TestError, TestRunner};
 use rayon::iter::IntoParallelRefIterator;
 use serde::{Deserialize, Serialize};
 
@@ -84,7 +87,7 @@ pub struct TestResult {
 impl TestResult {
     /// Returns `true` if this is the result of a fuzz test
     pub fn is_fuzz(&self) -> bool {
-        matches!(self.kind, TestKind::Fuzz)
+        matches!(self.kind, TestKind::Fuzz(_))
     }
 }
 
@@ -113,7 +116,7 @@ impl TestKindGas {
     pub fn gas(&self) -> u64 {
         match self {
             TestKindGas::Standard(gas) => *gas,
-            // we use the median for comparisons
+            // We use the median for comparisons
             TestKindGas::Fuzz { median, .. } => *median,
         }
     }
@@ -127,9 +130,7 @@ pub enum TestKind {
     /// Holds the consumed gas
     Standard(u64),
     /// A solidity fuzz test, that stores all test cases
-    // TODO
-    //Fuzz(FuzzedCases),
-    Fuzz,
+    Fuzz(FuzzedCases),
 }
 
 impl TestKind {
@@ -137,7 +138,11 @@ impl TestKind {
     pub fn gas_used(&self) -> TestKindGas {
         match self {
             TestKind::Standard(gas) => TestKindGas::Standard(*gas),
-            TestKind::Fuzz => TestKindGas::Fuzz { runs: 0, median: 0, mean: 0 },
+            TestKind::Fuzz(fuzzed) => TestKindGas::Fuzz {
+                runs: fuzzed.cases().len(),
+                median: fuzzed.median_gas(),
+                mean: fuzzed.mean_gas(),
+            },
         }
     }
 }
@@ -197,10 +202,13 @@ impl<'a, DB: DatabaseRef + Clone + Send + Sync> ContractRunner<'a, DB> {
     /// Deploys the test contract inside the runner from the sending account, and optionally runs
     /// the `setUp` function on the test contract.
     pub fn deploy(&mut self, setup: bool) -> Result<(Address, Vec<RawLog>, bool, Option<String>)> {
+        // We set the nonce of the deployer accounts to 1 to get the same addresses as DappTools
+        self.executor.set_nonce(self.sender, 1);
+
         // Deploy libraries
         self.predeploy_libs.iter().for_each(|code| {
             self.executor
-                .deploy(self.sender, code.0.clone(), 0u32.into())
+                .deploy(Address::zero(), code.0.clone(), 0u32.into())
                 .expect("couldn't deploy library");
         });
 
@@ -264,7 +272,7 @@ impl<'a, DB: DatabaseRef + Clone + Send + Sync> ContractRunner<'a, DB> {
                     labeled_addresses: Default::default(),
                 },
             )]
-            .into());
+            .into())
         }
 
         // Run all unit tests
@@ -311,10 +319,8 @@ impl<'a, DB: DatabaseRef + Clone + Send + Sync> ContractRunner<'a, DB> {
         mut logs: Vec<RawLog>,
     ) -> Result<TestResult> {
         let start = Instant::now();
-        // the expected result depends on the function name
-        // DAppTools' ds-test will not revert inside its `assertEq`-like functions
-        // which allows to test multiple assertions in 1 test function while also
-        // preserving logs.
+        // The expected result depends on the function name.
+        // TODO: Dedupe (`TestDescriptor`?)
         let should_fail = func.name.starts_with("testFail");
         tracing::debug!(func = ?func.signature(), should_fail, "unit-testing");
 
@@ -346,11 +352,14 @@ impl<'a, DB: DatabaseRef + Clone + Send + Sync> ContractRunner<'a, DB> {
                 }
                 err => {
                     tracing::error!(?err);
-                    return Err(err.into());
+                    return Err(err.into())
                 }
             },
         };
 
+        // DSTest will not revert inside its `assertEq`-like functions
+        // which allows to test multiple assertions in 1 test function while also
+        // preserving logs - instead it sets `failed` to `true` which we must check.
         let success = self.executor.is_success(
             address,
             status,
@@ -378,20 +387,68 @@ impl<'a, DB: DatabaseRef + Clone + Send + Sync> ContractRunner<'a, DB> {
     pub fn run_fuzz_test(
         &self,
         func: &Function,
-        _runner: TestRunner,
+        runner: TestRunner,
         _known_contracts: Option<&BTreeMap<String, (Abi, Vec<u8>)>>,
-        _address: Address,
-        _init_logs: Vec<RawLog>,
+        address: Address,
+        mut logs: Vec<RawLog>,
     ) -> Result<TestResult> {
+        // We do not trace in fuzz tests as it is a big performance hit
+        let start = Instant::now();
+        // TODO: Dedupe (`TestDescriptor`?)
+        let should_fail = func.name.starts_with("testFail");
+
+        let identified_contracts: Option<BTreeMap<Address, (String, Abi)>> = None;
+
+        // Wrap the executor in a fuzzed version
+        // TODO: When tracing is ported, we should disable it here.
+        let executor = FuzzedExecutor::new(&self.executor, runner, self.sender);
+        let FuzzTestResult { cases, test_error } =
+            executor.fuzz(func, address, should_fail, Some(self.contract));
+
+        // Rerun the failed fuzz case to get more information like traces and logs
+        if let Some(FuzzError { test_error: TestError::Fail(_, ref calldata), .. }) = test_error {
+            // TODO: When tracing is ported, we should re-enable it here to get traces.
+            let RawCallResult { logs: execution_logs, .. } =
+                self.executor.call_raw(self.sender, address, calldata.0.clone(), 0.into())?;
+            logs.extend(execution_logs);
+        }
+
+        let (success, counterexample, reason) = match test_error {
+            Some(err) => {
+                let (counterexample, reason) = match err.test_error {
+                    TestError::Abort(r) if r == "Too many global rejects".into() => {
+                        (None, Some(r.message().to_string()))
+                    }
+                    TestError::Fail(_, calldata) => {
+                        // Skip the function selector when decoding
+                        let args = func.decode_input(&calldata.as_ref()[4..])?;
+
+                        (Some(CounterExample { calldata, args }), None)
+                    }
+                    e => panic!("Unexpected test error: {:?}", e),
+                };
+
+                if !err.revert_reason.is_empty() {
+                    (false, counterexample, Some(err.revert_reason))
+                } else {
+                    (false, counterexample, reason)
+                }
+            }
+            _ => (true, None, None),
+        };
+
+        let duration = Instant::now().duration_since(start);
+        tracing::debug!(?duration, %success);
+
         Ok(TestResult {
-            success: false,
-            reason: Some("Fuzz tests not implemented".to_string()),
-            gas_used: 0,
-            counterexample: None,
-            logs: vec![],
-            kind: TestKind::Fuzz,
+            success,
+            reason,
+            gas_used: cases.median_gas(),
+            counterexample,
+            logs,
+            kind: TestKind::Fuzz(cases),
             traces: Default::default(),
-            identified_contracts: Default::default(),
+            identified_contracts,
             debug_calls: None,
             labeled_addresses: Default::default(),
         })
@@ -402,8 +459,6 @@ impl<'a, DB: DatabaseRef + Clone + Send + Sync> ContractRunner<'a, DB> {
 mod tests {
     use super::*;
     use crate::test_helpers::{filter::Filter, test_executor, COMPILED, EVM_OPTS};
-    use ethers::solc::artifacts::CompactContractRef;
-
     use proptest::test_runner::Config as FuzzConfig;
     use revm::db::EmptyDB;
 
@@ -423,64 +478,78 @@ mod tests {
         )
     }
 
-    // TODO: Port these tests when implementing fuzzing
-    /*#[test]
+    #[test]
     fn test_function_overriding() {
         let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
+
         let (_, code, _) = compiled.into_parts_or_default();
         let mut libs = vec![];
         let mut runner = runner(compiled.abi.as_ref().unwrap(), code, &mut libs);
+
         let mut cfg = FuzzConfig::default();
         cfg.failure_persistence = None;
         let fuzzer = TestRunner::new(cfg);
         let results =
-            runner.run_tests(&Filter::new("testGreeting", ".*"), Some(fuzzer), None).unwrap();
+            runner.run_tests(&Filter::new("testGreeting", ".*", ".*"), Some(fuzzer), None).unwrap();
         assert!(results["testGreeting()"].success);
         assert!(results["testGreeting(string)"].success);
         assert!(results["testGreeting(string,string)"].success);
     }
+
     #[test]
     fn test_fuzzing_counterexamples() {
         let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
         let (_, code, _) = compiled.into_parts_or_default();
         let mut libs = vec![];
         let mut runner = runner(compiled.abi.as_ref().unwrap(), code, &mut libs);
+
         let mut cfg = FuzzConfig::default();
         cfg.failure_persistence = None;
         let fuzzer = TestRunner::new(cfg);
         let results =
-            runner.run_tests(&Filter::new("testFuzz.*", ".*"), Some(fuzzer), None).unwrap();
+            runner.run_tests(&Filter::new("testFuzz.*", ".*", ".*"), Some(fuzzer), None).unwrap();
         for (_, res) in results {
             assert!(!res.success);
             assert!(res.counterexample.is_some());
         }
     }
+
     #[test]
     fn test_fuzzing_ok() {
         let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
         let (_, code, _) = compiled.into_parts_or_default();
         let mut libs = vec![];
-        let runner = runner(compiled.abi.as_ref().unwrap(), code, &mut libs);
+        let mut runner = runner(compiled.abi.as_ref().unwrap(), code, &mut libs);
+
         let mut cfg = FuzzConfig::default();
         cfg.failure_persistence = None;
         let fuzzer = TestRunner::new(cfg);
-        let func = get_func("testStringFuzz(string)").unwrap();
-        let res = runner.run_fuzz_test(&func, true, fuzzer, None).unwrap();
-        assert!(res.success);
-        assert!(res.counterexample.is_none());
+        let res = runner
+            .run_tests(&Filter::new("testStringFuzz.*", ".*", ".*"), Some(fuzzer), None)
+            .unwrap();
+        assert_eq!(res.len(), 1);
+        assert!(res["testStringFuzz(string)"].success);
+        assert!(res["testStringFuzz(string)"].counterexample.is_none());
     }
+
     #[test]
     fn test_fuzz_shrinking() {
         let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
         let (_, code, _) = compiled.into_parts_or_default();
         let mut libs = vec![];
-        let runner = runner(compiled.abi.as_ref().unwrap(), code, &mut libs);
+        let mut runner = runner(compiled.abi.as_ref().unwrap(), code, &mut libs);
+
         let mut cfg = FuzzConfig::default();
         cfg.failure_persistence = None;
         let fuzzer = TestRunner::new(cfg);
-        let func = get_func("function testShrinking(uint256 x, uint256 y) public").unwrap();
-        let res = runner.run_fuzz_test(&func, fuzzer, None, Vec::new()).unwrap();
+        let res = runner
+            .run_tests(&Filter::new("testShrinking.*", ".*", ".*"), Some(fuzzer), None)
+            .unwrap();
+        assert_eq!(res.len(), 1);
+
+        let res = res["testShrinking(uint256,uint256)"].clone();
         assert!(!res.success);
+
         // get the counterexample with shrinking enabled by default
         let counterexample = res.counterexample.unwrap();
         let product_with_shrinking: u64 =
@@ -488,28 +557,25 @@ mod tests {
                 // enough to fit in a u64, whereas as seen below, that's not possible without
                 // shrinking
                 counterexample.args.into_iter().map(|x| x.into_uint().unwrap().as_u64()).product();
+
         let mut cfg = FuzzConfig::default();
         cfg.failure_persistence = None;
         // we reduce the shrinking iters and observe a larger result
         cfg.max_shrink_iters = 5;
         let fuzzer = TestRunner::new(cfg);
-        let res = runner.run_fuzz_test(&func, fuzzer, None, Vec::new()).unwrap();
+        let res = runner
+            .run_tests(&Filter::new("testShrinking.*", ".*", ".*"), Some(fuzzer), None)
+            .unwrap();
+        assert_eq!(res.len(), 1);
+
+        let res = res["testShrinking(uint256,uint256)"].clone();
         assert!(!res.success);
+
         // get the non-shrunk result
         let counterexample = res.counterexample.unwrap();
         let args =
             counterexample.args.into_iter().map(|x| x.into_uint().unwrap()).collect::<Vec<_>>();
         let product_without_shrinking = args[0].saturating_mul(args[1]);
         assert!(product_without_shrinking > product_with_shrinking.into());
-    }*/
-
-    pub fn test_runner(compiled: CompactContractRef) {
-        let (_, code, _) = compiled.into_parts_or_default();
-        let mut libs = vec![];
-        let mut runner = runner(compiled.abi.as_ref().unwrap(), code, &mut libs);
-        let res = runner.run_tests(&Filter::new(".*", ".*", ".*"), None, None).unwrap();
-
-        assert!(!res.is_empty());
-        assert!(res.iter().all(|(_, result)| result.success));
     }
 }
