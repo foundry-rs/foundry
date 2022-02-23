@@ -182,6 +182,7 @@ impl MultiContractRunner {
             .contracts
             .par_iter()
             .filter(|(name, _)| filter.matches_contract(name))
+            .filter(|(_, (abi, _, _))| abi.functions().any(|func| filter.matches_test(&func.name)))
             .map(|(name, (abi, deploy_code, libs))| {
                 // TODO: Fork mode and "vicinity"
                 let executor = ExecutorBuilder::new()
@@ -262,7 +263,7 @@ mod tests {
                 // The rest should pass
                 _ => {
                     assert_ne!(contract_tests.keys().len(), 0);
-                    assert!(contract_tests.iter().all(|(k, result)| { result.success }))
+                    assert!(contract_tests.iter().all(|(_, result)| { result.success }))
                 }
             }
         }
