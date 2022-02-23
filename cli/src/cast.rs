@@ -61,7 +61,7 @@ async fn main() -> eyre::Result<()> {
         Subcommands::FromBin {} => {
             let hex: String = io::stdin()
                 .bytes()
-                .map(|x| format!("{:x}", x.expect("invalid binary data")))
+                .map(|x| format!("{:02x}", x.expect("invalid binary data")))
                 .collect();
             println!("0x{}", hex);
         }
