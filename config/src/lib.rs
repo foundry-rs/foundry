@@ -15,8 +15,9 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 
 use ethers_core::types::{Address, U256};
+pub use ethers_solc::artifacts::OptimizerDetails;
 use ethers_solc::{
-    artifacts::{output_selection::ContractOutputSelection, Optimizer, OptimizerDetails, Settings},
+    artifacts::{output_selection::ContractOutputSelection, Optimizer, Settings},
     error::SolcError,
     remappings::{RelativeRemapping, Remapping},
     ConfigurableArtifacts, EvmVersion, Project, ProjectPathsConfig, Solc, SolcConfig,
@@ -621,7 +622,18 @@ impl Config {
     pub fn to_string_pretty(&self) -> Result<String, toml::ser::Error> {
         // serializing to value first to prevent `ValueAfterTable` errors
         let value = toml::Value::try_from(self)?;
-        let s = toml::to_string_pretty(&value)?;
+        let mut s = toml::to_string_pretty(&value)?;
+
+        if self.optimizer_details.is_some() {
+            // this is a hack to make nested tables work because this requires the config's profile
+            s = s
+                .replace("[optimizer_details]", &format!("[{}.optimizer_details]", self.profile))
+                .replace(
+                    "[optimizer_details.yulDetails]",
+                    &format!("[{}.optimizer_details.yulDetails]", self.profile),
+                );
+        }
+
         Ok(format!(
             r#"[{}]
 {}"#,
@@ -1549,6 +1561,45 @@ mod tests {
             jail.create_file("foundry.toml", &default.to_string_pretty().unwrap())?;
             let other = Config::load();
             assert_eq!(default, other);
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_optimizer_settings_basic() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                optimizer = true
+
+                [default.optimizer_details]
+                yul = false
+
+                [default.optimizer_details.yulDetails]
+                stackAllocation = true
+            "#,
+            )?;
+            let loaded = Config::load();
+            assert_eq!(
+                loaded.optimizer_details,
+                Some(OptimizerDetails {
+                    yul: Some(false),
+                    yul_details: Some(YulDetails {
+                        stack_allocation: Some(true),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                })
+            );
+
+            let s = loaded.to_string_pretty().unwrap();
+            jail.create_file("foundry.toml", &s)?;
+
+            let reloaded = Config::load();
+            assert_eq!(loaded, reloaded);
 
             Ok(())
         });
