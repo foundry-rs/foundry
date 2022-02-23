@@ -194,7 +194,7 @@ impl MultiContractRunner {
     pub fn test_stream(
         &mut self,
         filter: &(impl TestFilter + Send + Sync),
-        stream_result: impl Fn(String, BTreeMap<String, TestResult>) -> () + Sync,
+        stream_result: impl Fn(String, BTreeMap<String, TestResult>) + Sync,
     ) -> Result<BTreeMap<String, BTreeMap<String, TestResult>>> {
         let contracts = std::mem::take(&mut self.contracts);
         let vicinity = self.evm_opts.vicinity()?;
@@ -223,7 +223,7 @@ impl MultiContractRunner {
             )
             .map(|(name, result)| {
                 stream_result(name.clone(), result.clone());
-                (name.clone(), result)
+                (name, result)
             })
             .collect::<BTreeMap<_, _>>();
 

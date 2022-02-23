@@ -415,8 +415,8 @@ fn test<A: ArtifactOutput + 'static>(
         })?;
 
         if gas_reporting {
-            for (_, tests) in results.iter() {
-                for (_, result) in tests {
+            for tests in results.values() {
+                for result in tests.values() {
                     if let (Some(traces), Some(identified_contracts)) =
                         (&result.traces, &result.identified_contracts)
                     {
