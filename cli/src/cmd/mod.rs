@@ -103,7 +103,7 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
                     version.major, version.minor, version.patch
                 );
                 for (name, _) in contracts {
-                    println!("    - {}", name.to_string());
+                    println!("    - {}", name);
                 }
             }
         }
