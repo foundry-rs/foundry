@@ -13,7 +13,11 @@ use evm_adapters::{
 use forge::{MultiContractRunnerBuilder, TestFilter};
 use foundry_config::{figment::Figment, Config};
 use regex::Regex;
-use std::{collections::BTreeMap, str::FromStr, sync::{Arc, Mutex}};
+use std::{
+    collections::BTreeMap,
+    str::FromStr,
+    sync::{Arc, Mutex},
+};
 
 #[derive(Debug, Clone, Parser)]
 pub struct Filter {
@@ -309,7 +313,6 @@ fn test<A: ArtifactOutput + 'static>(
     allow_failure: bool,
     gas_reports: (bool, Vec<String>),
 ) -> eyre::Result<TestOutcome> {
-
     let verbosity = evm_opts.verbosity;
     let gas_reporting = gas_reports.0;
     if gas_reporting && evm_opts.verbosity < 3 {
@@ -353,7 +356,8 @@ fn test<A: ArtifactOutput + 'static>(
                 }
                 if verbosity > 2 {
                     if let (Some(traces), Some(identified_contracts)) =
-                    (&result.traces, &result.identified_contracts) {
+                        (&result.traces, &result.identified_contracts)
+                    {
                         if !result.success && verbosity == 3 || verbosity > 3 {
                             // add a new line if any logs were printed & to separate them from
                             // the traces to be printed
@@ -414,7 +418,8 @@ fn test<A: ArtifactOutput + 'static>(
             for (_, tests) in results.iter() {
                 for (_, result) in tests {
                     if let (Some(traces), Some(identified_contracts)) =
-                    (&result.traces, &result.identified_contracts) {
+                        (&result.traces, &result.identified_contracts)
+                    {
                         gas_report.analyze(traces, identified_contracts);
                     }
                 }

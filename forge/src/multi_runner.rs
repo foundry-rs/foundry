@@ -17,10 +17,7 @@ use proptest::test_runner::TestRunner;
 
 use eyre::Result;
 use rayon::prelude::*;
-use std::{
-    collections::BTreeMap,
-    marker::Sync,
-};
+use std::{collections::BTreeMap, marker::Sync};
 
 /// Builder used for instantiating the multi-contract runner
 #[derive(Debug, Default)]
@@ -221,7 +218,9 @@ impl MultiContractRunner {
                 Ok((name.clone(), result))
             })
             .filter_map(|x: Result<_>| x.ok())
-            .filter_map(|(name, result)| if result.is_empty() { None } else { Some((name, result)) })
+            .filter_map(
+                |(name, result)| if result.is_empty() { None } else { Some((name, result)) },
+            )
             .map(|(name, result)| {
                 stream_result(name.clone(), result.clone());
                 (name.clone(), result)
