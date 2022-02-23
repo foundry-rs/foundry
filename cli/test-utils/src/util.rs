@@ -348,6 +348,12 @@ impl TestCommand {
         }
     }
 
+    /// Returns the `stderr` of the output as `String`.
+    pub fn stderr_lossy(&mut self) -> String {
+        let output = self.cmd.output().unwrap();
+        String::from_utf8_lossy(&output.stderr).to_string()
+    }
+
     /// Returns the `stdout` of the output as `String`.
     pub fn stdout_lossy(&mut self) -> String {
         String::from_utf8_lossy(&self.output().stdout).to_string()
