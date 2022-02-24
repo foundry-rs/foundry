@@ -142,6 +142,7 @@ fn get_artifact_from_name(
         Some(artifact) => (
             artifact
                 .abi
+                .map(Into::into)
                 .ok_or_else(|| eyre::Error::msg(format!("abi not found for {}", contract.name)))?,
             artifact.bytecode.ok_or_else(|| {
                 eyre::Error::msg(format!("bytecode not found for {}", contract.name))
