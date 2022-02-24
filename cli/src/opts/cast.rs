@@ -101,9 +101,7 @@ pub enum Subcommands {
         unit: Option<String>,
     },
     #[clap(name = "accounts")]
-    #[clap(
-        about = "Print information about accounts"
-    )]
+    #[clap(about = "Print information about accounts")]
     Accounts {
         #[clap(long, env = "ETH_RPC_URL")]
         rpc_url: String,

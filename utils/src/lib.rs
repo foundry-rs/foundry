@@ -1,14 +1,13 @@
 #![doc = include_str!("../README.md")]
 use coins_bip32::path::DerivationPath;
 use ethers_addressbook::contract;
-use ethers_core::types::Address;
 use ethers_core::{
     abi::{
         self, parse_abi,
         token::{LenientTokenizer, StrictTokenizer, Tokenizer},
         Abi, AbiParser, Event, EventParam, Function, Param, ParamType, Token,
     },
-    types::*,
+    types::{Address, *},
 };
 use ethers_etherscan::Client;
 use ethers_signers::{HDPath, Ledger};
