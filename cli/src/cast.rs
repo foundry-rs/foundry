@@ -3,7 +3,6 @@ pub mod cmd;
 mod utils;
 
 use cast::{Cast, SimpleCast};
-
 mod opts;
 use cast::InterfacePath;
 use ethers::{
@@ -26,7 +25,7 @@ use regex::RegexSet;
 use rustc_hex::ToHex;
 use std::{
     convert::TryFrom,
-    io::{self, Write},
+    io::{self, Read, Write},
     path::Path,
     str::FromStr,
     time::Instant,
@@ -62,6 +61,14 @@ async fn main() -> eyre::Result<()> {
             let val = unwrap_or_stdin(decimal)?;
             println!("{}", SimpleCast::hex(U256::from_dec_str(&val)?));
         }
+        Subcommands::FromBin {} => {
+            let hex: String = io::stdin()
+                .bytes()
+                .map(|x| format!("{:02x}", x.expect("invalid binary data")))
+                .collect();
+            println!("0x{}", hex);
+        }
+
         Subcommands::ToHexdata { input } => {
             let val = unwrap_or_stdin(input)?;
             let output = match val {
