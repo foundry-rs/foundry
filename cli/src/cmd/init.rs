@@ -121,8 +121,26 @@ impl Cmd for InitArgs {
 
             if !offline {
                 let opts = DependencyInstallOpts { no_git, no_commit, quiet };
-                Dependency::from_str("https://github.com/dapphub/ds-test")
-                    .and_then(|dependency| install(&root, vec![dependency], opts))?;
+                let is_git = Command::new("git")
+                    .args(&["rev-parse", "--is-inside-work-tree"])
+                    .current_dir(&root)
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .spawn()?
+                    .wait()?;
+
+                match is_git.success() {
+                    true => {
+                        if Path::new(&root.join("lib/ds-test")).exists() {
+                            println!("\"lib/ds-test\" already exists, skipping install....");
+                            install(&root, vec![], opts)?;
+                        } else {
+                            Dependency::from_str("https://github.com/dapphub/ds-test")
+                                .and_then(|dependency| install(&root, vec![dependency], opts))?;
+                        }
+                    }
+                    false => eyre::bail!("Current working directory is not a git repo!"),
+                }
             }
         }
 
