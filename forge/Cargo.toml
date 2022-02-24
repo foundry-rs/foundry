@@ -10,10 +10,9 @@ license = "MIT OR Apache-2.0"
 foundry-utils = { path = "./../utils" }
 evm-adapters = { path = "./../evm-adapters", features = ["sputnik", "sputnik-helpers"] }
 
-# ethers = { version = "0.5.2" }
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["solc-full"] }
 eyre = "0.6.5"
-semver = "1.0.4"
+semver = "1.0.5"
 serde_json = "1.0.67"
 serde = "1.0.130"
 regex = { version = "1.5.4", default-features = false }
@@ -25,12 +24,11 @@ tracing = "0.1.26"
 tracing-subscriber = "0.2.20"
 proptest = "1.0.0"
 rayon = "1.5"
+rlp = "0.5.1"
 
 # load sputnik for parallel evm usage
 sputnik = { package = "evm", git = "https://github.com/rust-blockchain/evm" }
-# For now we ignore evmodin in Forge.
-# evmodin = { git = "https://github.com/vorot93/evmodin" }
 
 [dev-dependencies]
-evmodin = { git = "https://github.com/vorot93/evmodin", features = ["util"] }
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["solc-full", "solc-tests"] }
+foundry-utils = { path = "./../utils", features = ["test"] }

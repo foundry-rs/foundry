@@ -1,6 +1,6 @@
 // Taken from:
 // https://github.com/dapphub/dapptools/blob/e41b6cd9119bbd494aba1236838b859f2136696b/src/dapp-tests/pass/cheatCodes.sol
-pragma solidity ^0.8.4;
+pragma solidity ^0.8.10;
 pragma experimental ABIEncoderV2;
 
 import "./DsTest.sol";
@@ -57,8 +57,12 @@ interface Hevm {
     // Expect a call to an address with the specified calldata.
     // Calldata can either be strict or a partial match
     function expectCall(address,bytes calldata) external;
-
+    // Gets the code from an artifact file. Takes in the relative path to the json file
     function getCode(string calldata) external returns (bytes memory);
+    // Labels an address in call traces
+    function label(address, string calldata) external;
+    // If the condition is false, discard this run's fuzz inputs and generate new ones
+    function assume(bool) external;
 }
 
 contract HasStorage {
@@ -113,6 +117,21 @@ contract CheatCodes is DSTest {
         uint pre = block.number;
         hevm.roll(block.number + jump);
         require(block.number == pre + jump, "roll failed");
+        require(blockhash(block.number) != 0x0);
+    }
+
+    function testRollHash() public {
+        require(blockhash(block.number) == 0x0);
+        hevm.roll(5);
+        bytes32 hash = blockhash(5);
+        require(hash != 0x0);
+
+        hevm.roll(10);
+        require(blockhash(10) != 0x0);
+
+        // rolling back to 5 maintains the same hash
+        hevm.roll(5);
+        require(blockhash(5) == hash);
     }
 
     function testFailRoll(uint32 jump) public {
@@ -139,7 +158,7 @@ contract CheatCodes is DSTest {
     //     test_store_load_concrete(x);
     // }
 
-    function test_sign_addr_digest(uint sk, bytes32 digest) public {
+    function test_sign_addr_digest(uint248 sk, bytes32 digest) public {
         if (sk == 0) return; // invalid key
 
         (uint8 v, bytes32 r, bytes32 s) = hevm.sign(sk, digest);
@@ -149,7 +168,7 @@ contract CheatCodes is DSTest {
         assertEq(actual, expected);
     }
 
-    function test_sign_addr_message(uint sk, bytes memory message) public {
+    function test_sign_addr_message(uint248 sk, bytes memory message) public {
         test_sign_addr_digest(sk, keccak256(message));
     }
 
@@ -224,7 +243,7 @@ contract CheatCodes is DSTest {
 
         address new_sender = address(1337);
         hevm.deal(new_sender, 10 ether);
-        
+
         hevm.prank(new_sender);
         prank.payableBar{value: 1 ether}(new_sender);
         assertEq(new_sender.balance, 9 ether);
@@ -364,6 +383,13 @@ contract CheatCodes is DSTest {
         emitter.t();
     }
 
+    function testFailDanglingExpectEmit() public {
+        ExpectEmit emitter = new ExpectEmit();
+        // check topic 1, topic 2, and data are the same as the following emitted event
+        hevm.expectEmit(true,true,false,true);
+        emit Transfer(address(this), address(1337), 1337);
+    }
+
     function testExpectEmitMultiple() public {
         ExpectEmit emitter = new ExpectEmit();
         hevm.expectEmit(true,true,false,true);
@@ -406,6 +432,25 @@ contract CheatCodes is DSTest {
         hevm.expectEmit(true,true,false,true);
         emit Transfer(address(this), address(1338), 1337);
         emitter.t();
+    }
+
+    // Test should fail because the data is different
+    function testFailExpectEmitWithCall1() public {
+        ExpectEmit emitter = new ExpectEmit();
+        hevm.deal(address(this), 1 ether);
+        hevm.expectEmit(true,true,false,true);
+        emit Transfer(address(this), address(1338), 1 gwei);
+        emitter.t4(payable(address(1337)), 100 gwei);
+    }
+
+
+    // Test should fail because, t5 doesn't emit
+    function testFailExpectEmitWithCall2() public {
+        ExpectEmit emitter = new ExpectEmit();
+        hevm.deal(address(this), 1 ether);
+        hevm.expectEmit(true,true,false,true);
+        emit Transfer(address(this), address(1338), 100 gwei);
+        emitter.t5(payable(address(1337)), 100 gwei);
     }
 
     // Test should fail if nothing is called
@@ -480,7 +525,7 @@ contract CheatCodes is DSTest {
             abi.encode(11)
         );
 
-        assertEq(target.add(5, 5), 11); 
+        assertEq(target.add(5, 5), 11);
         assertEq(target.add(6, 4), 10);
     }
 
@@ -494,7 +539,7 @@ contract CheatCodes is DSTest {
         );
 
         assertEq(target.numberA(), 1);
-        assertEq(target.numberB(), 10); 
+        assertEq(target.numberB(), 10);
 
         hevm.clearMockedCalls();
 
@@ -578,6 +623,18 @@ contract CheatCodes is DSTest {
         );
     }
 
+    function testLabel() public {
+        address bob = address(1337);
+        hevm.label(bob, "bob");
+        bob.call{value: 100}("");
+    }
+
+    function testLabelInputReturn() public {
+        Label labeled = new Label();
+        hevm.label(address(labeled), "MyCustomLabel");
+        labeled.withInput(address(labeled));
+    }
+
     function getCode(address who) internal returns (bytes memory o_code) {
         assembly {
             // retrieve the size of the code, this needs assembly
@@ -592,6 +649,12 @@ contract CheatCodes is DSTest {
             // actually retrieve the code, this needs assembly
             extcodecopy(who, add(o_code, 0x20), 0, size)
         }
+    }
+}
+
+contract Label {
+    function withInput(address labeled) public pure returns (address) {
+        return labeled;
     }
 }
 
@@ -762,6 +825,15 @@ contract ExpectEmit {
     function t3() public {
         emit Transfer(msg.sender, address(1337), 1337);
         emit Transfer(msg.sender, address(1337), 1337);
+    }
+
+    function t4(address payable to, uint256 amount) public {
+        (bool success, ) = to.call{value: amount, gas: 30_000}(new bytes(0));
+        emit Transfer(msg.sender, address(1337), 100 gwei);
+    }
+
+    function t5(address payable to, uint256 amount) public {
+        (bool success, ) = to.call{value: amount, gas: 30_000}(new bytes(0));
     }
 }
 

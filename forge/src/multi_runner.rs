@@ -3,14 +3,13 @@ use evm_adapters::{
     evm_opts::{BackendKind, EvmOpts},
     sputnik::cheatcodes::{CONSOLE_ABI, HEVMCONSOLE_ABI, HEVM_ABI},
 };
+use foundry_utils::PostLinkInput;
 use sputnik::{backend::Backend, Config};
-
-use ethers::solc::Artifact;
 
 use ethers::{
     abi::{Abi, Event, Function},
-    prelude::ArtifactOutput,
-    solc::Project,
+    prelude::{artifacts::CompactContractBytecode, ArtifactId, ArtifactOutput},
+    solc::{Artifact, Project},
     types::{Address, H256, U256},
 };
 
@@ -34,6 +33,9 @@ pub struct MultiContractRunnerBuilder {
     pub evm_cfg: Option<Config>,
 }
 
+pub type DeployableContracts =
+    BTreeMap<String, (Abi, ethers::prelude::Bytes, Vec<ethers::prelude::Bytes>)>;
+
 impl MultiContractRunnerBuilder {
     /// Given an EVM, proceeds to return a runner which is able to execute all tests
     /// against that evm
@@ -55,32 +57,70 @@ impl MultiContractRunnerBuilder {
 
         // This is just the contracts compiled, but we need to merge this with the read cached
         // artifacts
-        let contracts = output.into_artifacts();
+        let contracts = output
+            .into_artifacts()
+            .map(|(i, c)| (i, c.into_contract_bytecode()))
+            .collect::<Vec<(ArtifactId, CompactContractBytecode)>>();
+
+        let source_paths = contracts
+            .iter()
+            .map(|(i, _)| (i.slug(), i.source.to_string_lossy().into()))
+            .collect::<BTreeMap<String, String>>();
+
+        let contracts = contracts
+            .into_iter()
+            .map(|(i, c)| (i.slug(), c))
+            .collect::<BTreeMap<String, CompactContractBytecode>>();
+
         let mut known_contracts: BTreeMap<String, (Abi, Vec<u8>)> = Default::default();
-        let mut deployable_contracts: BTreeMap<String, (Abi, ethers::prelude::Bytes)> =
-            Default::default();
 
-        for (fname, contract) in contracts {
-            let (maybe_abi, maybe_deploy_bytes, maybe_runtime_bytes) = contract.into_parts();
-            if let (Some(abi), Some(bytecode)) = (maybe_abi, maybe_deploy_bytes) {
-                // skip deployment of abstract contracts
-                if bytecode.as_ref().is_empty() {
-                    continue
-                }
+        // create a mapping of name => (abi, deployment code, Vec<library deployment code>)
+        let mut deployable_contracts = DeployableContracts::default();
 
+        foundry_utils::link(
+            &contracts,
+            &mut known_contracts,
+            evm_opts.sender,
+            &mut deployable_contracts,
+            |file, key| (format!("{}.json:{}", key, key), file, key),
+            |post_link_input| {
+                let PostLinkInput {
+                    contract,
+                    known_contracts,
+                    fname,
+                    extra: deployable_contracts,
+                    dependencies,
+                } = post_link_input;
+
+                // get bytes
+                let bytecode =
+                    if let Some(b) = contract.bytecode.expect("No bytecode").object.into_bytes() {
+                        b
+                    } else {
+                        return Ok(())
+                    };
+
+                let abi = contract.abi.expect("We should have an abi by now");
+                // if its a test, add it to deployable contracts
                 if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) &&
                     abi.functions().any(|func| func.name.starts_with("test"))
                 {
-                    deployable_contracts.insert(fname.clone(), (abi.clone(), bytecode.clone()));
+                    deployable_contracts
+                        .insert(fname.clone(), (abi.clone(), bytecode, dependencies.to_vec()));
                 }
 
                 let split = fname.split(':').collect::<Vec<&str>>();
                 let contract_name = if split.len() > 1 { split[1] } else { split[0] };
-                if let Some(runtime_code) = maybe_runtime_bytes {
-                    known_contracts.insert(contract_name.to_string(), (abi, runtime_code.to_vec()));
-                }
-            }
-        }
+                contract
+                    .deployed_bytecode
+                    .and_then(|d_bcode| d_bcode.bytecode)
+                    .and_then(|bcode| bcode.object.into_bytes())
+                    .and_then(|bytes| {
+                        known_contracts.insert(contract_name.to_string(), (abi, bytes.to_vec()))
+                    });
+                Ok(())
+            },
+        )?;
 
         // add forge+sputnik specific contracts
         known_contracts.insert("VM".to_string(), (HEVM_ABI.clone(), Vec::new()));
@@ -97,6 +137,7 @@ impl MultiContractRunnerBuilder {
             sender: self.sender,
             fuzzer: self.fuzzer,
             execution_info,
+            source_paths,
         })
     }
 
@@ -128,8 +169,9 @@ impl MultiContractRunnerBuilder {
 /// A multi contract runner receives a set of contracts deployed in an EVM instance and proceeds
 /// to run all test functions in these contracts.
 pub struct MultiContractRunner {
-    /// Mapping of contract name to Abi and creation bytecode
-    pub contracts: BTreeMap<String, (Abi, ethers::prelude::Bytes)>,
+    /// Mapping of contract name to Abi, creation bytecode and library bytecode which
+    /// needs to be deployed & linked against
+    pub contracts: BTreeMap<String, (Abi, ethers::prelude::Bytes, Vec<ethers::prelude::Bytes>)>,
     /// Compiled contracts by name that have an Abi and runtime bytecode
     pub known_contracts: BTreeMap<String, (Abi, Vec<u8>)>,
     /// Identified contracts by test
@@ -144,6 +186,8 @@ pub struct MultiContractRunner {
     fuzzer: Option<TestRunner>,
     /// The address which will be used as the `from` field in all EVM calls
     sender: Option<Address>,
+    /// A map of contract names to absolute source file paths
+    source_paths: BTreeMap<String, String>,
 }
 
 impl MultiContractRunner {
@@ -156,18 +200,20 @@ impl MultiContractRunner {
 
         let vicinity = self.evm_opts.vicinity()?;
         let backend = self.evm_opts.backend(&vicinity)?;
+        let source_paths = self.source_paths.clone();
 
         let results = contracts
             .par_iter()
+            .filter(|(name, _)| filter.matches_path(source_paths.get(*name).unwrap()))
             .filter(|(name, _)| filter.matches_contract(name))
-            .map(|(name, (abi, deploy_code))| {
+            .map(|(name, (abi, deploy_code, libs))| {
                 // unavoidable duplication here?
                 let result = match backend {
                     BackendKind::Simple(ref backend) => {
-                        self.run_tests(name, abi, backend, deploy_code.clone(), filter)?
+                        self.run_tests(name, abi, backend, deploy_code.clone(), libs, filter)?
                     }
                     BackendKind::Shared(ref backend) => {
-                        self.run_tests(name, abi, backend, deploy_code.clone(), filter)?
+                        self.run_tests(name, abi, backend, deploy_code.clone(), libs, filter)?
                     }
                 };
                 Ok((name.clone(), result))
@@ -194,6 +240,7 @@ impl MultiContractRunner {
         contract: &Abi,
         backend: &B,
         deploy_code: ethers::prelude::Bytes,
+        libs: &[ethers::prelude::Bytes],
         filter: &impl TestFilter,
     ) -> Result<BTreeMap<String, TestResult>> {
         let runner = ContractRunner::new(
@@ -204,6 +251,7 @@ impl MultiContractRunner {
             deploy_code,
             self.sender,
             Some((&self.execution_info.0, &self.execution_info.1, &self.execution_info.2)),
+            libs,
         );
         runner.run_tests(filter, self.fuzzer.clone(), Some(&self.known_contracts))
     }
@@ -212,7 +260,7 @@ impl MultiContractRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::{Filter, EVM_OPTS};
+    use crate::test_helpers::{filter::Filter, EVM_OPTS};
     use ethers::solc::ProjectPathsConfig;
     use std::path::PathBuf;
 
@@ -222,8 +270,7 @@ mod tests {
         let paths = ProjectPathsConfig::builder().root(&root).sources(&root).build().unwrap();
 
         Project::builder()
-            // need to add the ilb path here. would it be better placed in the ProjectPathsConfig
-            // instead? what is the `libs` modifier useful for then? linked libraries?
+            // need to explicitly allow a path outside the project
             .allowed_path(root.join("../../evm-adapters/testdata"))
             .paths(paths)
             .ephemeral()
@@ -238,10 +285,10 @@ mod tests {
 
     fn test_multi_runner() {
         let mut runner = runner();
-        let results = runner.test(&Filter::new(".*", ".*")).unwrap();
+        let results = runner.test(&Filter::matches_all()).unwrap();
 
-        // 8 contracts being built
-        assert_eq!(results.keys().len(), 8);
+        // 9 contracts being built
+        assert_eq!(results.keys().len(), 9);
         for (key, contract_tests) in results {
             // for a bad setup, we dont want a successful test
             if key == "SetupTest.json:SetupTest" {
@@ -253,7 +300,8 @@ mod tests {
         }
 
         // can also filter
-        let only_gm = runner.test(&Filter::new("testGm.*", ".*")).unwrap();
+        let filter = Filter::new("testGm.*", ".*", ".*");
+        let only_gm = runner.test(&filter).unwrap();
         assert_eq!(only_gm.len(), 1);
 
         assert_eq!(only_gm["GmTest.json:GmTest"].len(), 1);
@@ -262,7 +310,7 @@ mod tests {
 
     fn test_abstract_contract() {
         let mut runner = runner();
-        let results = runner.test(&Filter::new(".*", ".*")).unwrap();
+        let results = runner.test(&Filter::matches_all()).unwrap();
         assert!(results.get("Tests.json:Tests").is_none());
         assert!(results.get("ATests.json:ATests").is_some());
         assert!(results.get("BTests.json:BTests").is_some());
@@ -275,7 +323,7 @@ mod tests {
         #[test]
         fn test_sputnik_debug_logs() {
             let mut runner = runner();
-            let results = runner.test(&Filter::new(".*", ".*")).unwrap();
+            let results = runner.test(&Filter::matches_all()).unwrap();
 
             let reasons = results["DebugLogsTest.json:DebugLogsTest"]
                 .iter()

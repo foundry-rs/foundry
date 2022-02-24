@@ -1,7 +1,7 @@
 use ethers_solc::{
     cache::SolFilesCache,
     project_util::{copy_dir, TempProject},
-    ArtifactOutput, MinimalCombinedArtifacts, PathStyle, ProjectPathsConfig,
+    ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig,
 };
 use foundry_config::Config;
 use once_cell::sync::Lazy;
@@ -75,7 +75,7 @@ pub fn setup_project(test: TestProject) -> (TestProject, TestCommand) {
 ///
 /// Test projects are created from a global atomic counter to avoid duplicates.
 #[derive(Clone, Debug)]
-pub struct TestProject<T: ArtifactOutput = MinimalCombinedArtifacts> {
+pub struct TestProject<T: ArtifactOutput = ConfigurableArtifacts> {
     /// The directory in which this test executable is running.
     root: PathBuf,
     /// The project in which the test should run.
@@ -111,9 +111,20 @@ impl TestProject {
         self.inner().paths()
     }
 
+    /// Returns the path to the project's `foundry.toml` file
+    pub fn config_path(&self) -> PathBuf {
+        self.root().join(Config::FILE_NAME)
+    }
+
+    /// Writes the given config as toml to `foundry.toml`
+    pub fn write_config(&self, config: Config) {
+        let file = self.config_path();
+        pretty_err(&file, fs::write(&file, config.to_string_pretty().unwrap()));
+    }
+
     /// Asserts that the `<root>/foundry.toml` file exits
     pub fn assert_config_exists(&self) {
-        assert!(self.root().join(Config::FILE_NAME).exists());
+        assert!(self.config_path().exists());
     }
 
     /// Creates all project dirs and ensure they were created
@@ -267,6 +278,11 @@ impl TestCommand {
         self
     }
 
+    /// Resets the command
+    pub fn fuse(&mut self) -> &mut TestCommand {
+        self.set_cmd(self.project.bin())
+    }
+
     /// Sets the current working directory
     pub fn set_current_dir(&mut self, p: impl AsRef<Path>) {
         drop(self.current_dir_lock.take());
@@ -330,6 +346,17 @@ impl TestCommand {
                 panic!("could not convert from string: {:?}\n\n{}", err, stdout);
             }
         }
+    }
+
+    /// Returns the `stderr` of the output as `String`.
+    pub fn stderr_lossy(&mut self) -> String {
+        let output = self.cmd.output().unwrap();
+        String::from_utf8_lossy(&output.stderr).to_string()
+    }
+
+    /// Returns the `stdout` of the output as `String`.
+    pub fn stdout_lossy(&mut self) -> String {
+        String::from_utf8_lossy(&self.output().stdout).to_string()
     }
 
     /// Gets the output of a command. If the command failed, then this panics.

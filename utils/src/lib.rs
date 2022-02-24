@@ -4,17 +4,150 @@ use ethers_core::{
     abi::{
         self, parse_abi,
         token::{LenientTokenizer, StrictTokenizer, Tokenizer},
-        Abi, AbiParser, Event, Function, Param, ParamType, Token,
+        Abi, AbiParser, Event, EventParam, Function, Param, ParamType, Token,
     },
     types::*,
 };
 use ethers_etherscan::Client;
+use ethers_solc::artifacts::{BytecodeObject, CompactBytecode, CompactContractBytecode};
 use eyre::{Result, WrapErr};
 use serde::Deserialize;
 use std::{
     collections::{BTreeMap, HashSet},
     env::VarError,
+    fmt,
 };
+
+use tokio::runtime::{Handle, Runtime};
+
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug)]
+pub enum RuntimeOrHandle {
+    Runtime(Runtime),
+    Handle(Handle),
+}
+
+impl Default for RuntimeOrHandle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl RuntimeOrHandle {
+    pub fn new() -> RuntimeOrHandle {
+        match Handle::try_current() {
+            Ok(handle) => RuntimeOrHandle::Handle(handle),
+            Err(_) => RuntimeOrHandle::Runtime(Runtime::new().expect("Failed to start runtime")),
+        }
+    }
+
+    pub fn block_on<F: std::future::Future>(&self, f: F) -> F::Output {
+        match &self {
+            RuntimeOrHandle::Runtime(runtime) => runtime.block_on(f),
+            RuntimeOrHandle::Handle(handle) => tokio::task::block_in_place(|| handle.block_on(f)),
+        }
+    }
+}
+
+pub enum SelectorOrSig {
+    Selector(String),
+    Sig(Vec<String>),
+}
+
+pub struct PossibleSigs {
+    method: SelectorOrSig,
+    data: Vec<String>,
+}
+impl PossibleSigs {
+    fn new() -> Self {
+        PossibleSigs { method: SelectorOrSig::Selector("0x00000000".to_string()), data: vec![] }
+    }
+}
+impl fmt::Display for PossibleSigs {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.method {
+            SelectorOrSig::Selector(selector) => {
+                writeln!(f, "\n Method: {}", selector)?;
+            }
+            SelectorOrSig::Sig(sigs) => {
+                writeln!(f, "\n Possible methods:")?;
+                for sig in sigs {
+                    writeln!(f, " - {}", sig)?;
+                }
+            }
+        }
+
+        writeln!(f, " ------------")?;
+        for (i, row) in self.data.iter().enumerate() {
+            let pad = if i < 10 { "  " } else { " " };
+            writeln!(f, " [{}]:{}{}", i, pad, row)?;
+        }
+        Ok(())
+    }
+}
+
+/// Recursively links bytecode given a target contract artifact name, the bytecode(s) to be linked,
+/// a mapping of contract artifact name to bytecode, a dependency mapping, a mutable list that
+/// will be filled with the predeploy libraries, initial nonce, and the sender.
+pub fn recurse_link<'a>(
+    // target name
+    target: String,
+    // to-be-modified/linked bytecode
+    target_bytecode: (&'a mut CompactBytecode, &'a mut CompactBytecode),
+    // Contracts
+    contracts: &'a BTreeMap<String, CompactContractBytecode>,
+    // fname => Vec<(fname, file, key)>
+    dependency_tree: &'a BTreeMap<String, Vec<(String, String, String)>>,
+    // library deployment vector
+    deployment: &'a mut Vec<ethers_core::types::Bytes>,
+    // nonce to start at
+    init_nonce: U256,
+    // sender
+    sender: Address,
+) {
+    // check if we have dependencies
+    if let Some(dependencies) = dependency_tree.get(&target) {
+        // for each dependency, try to link
+        dependencies.iter().for_each(|(next_target, file, key)| {
+            // get the dependency
+            let contract = contracts.get(next_target).expect("No target contract").clone();
+            let mut next_target_bytecode = contract.bytecode.expect("No target bytecode");
+            let mut next_target_runtime_bytecode = contract
+                .deployed_bytecode
+                .expect("No target runtime bytecode")
+                .bytecode
+                .expect("No target runtime");
+
+            // make sure dependency is fully linked
+            if let Some(deps) = dependency_tree.get(&target) {
+                if !deps.is_empty() {
+                    // actually link the nested dependencies to this dependency
+                    recurse_link(
+                        next_target.to_string(),
+                        (&mut next_target_bytecode, &mut next_target_runtime_bytecode),
+                        contracts,
+                        dependency_tree,
+                        deployment,
+                        init_nonce,
+                        sender,
+                    );
+                }
+            }
+
+            // calculate the address for linking this dependency
+            let addr =
+                ethers_core::utils::get_contract_address(sender, init_nonce + deployment.len());
+
+            // link the dependency to the target
+            target_bytecode.0.link(file.clone(), key.clone(), addr);
+            target_bytecode.1.link(file, key, addr);
+
+            // push the dependency into the library deployment vector
+            deployment
+                .push(next_target_bytecode.object.into_bytes().expect("Bytecode should be linked"));
+        });
+    }
+}
 
 const BASE_TX_COST: u64 = 21000;
 
@@ -57,9 +190,11 @@ pub fn remove_extra_costs(gas: U256, calldata: &[u8]) -> U256 {
     for i in calldata {
         if *i != 0 {
             // TODO: Check if EVM pre-eip2028 and charge 64
+            // GTXDATANONZERO = 16
             calldata_cost += 16
         } else {
-            calldata_cost += 8;
+            // GTXDATAZERO = 4
+            calldata_cost += 4;
         }
     }
     gas.saturating_sub(calldata_cost.into()).saturating_sub(BASE_TX_COST.into())
@@ -239,7 +374,7 @@ pub fn get_func(sig: &str) -> Result<Function> {
 pub async fn get_func_etherscan(
     function_name: &str,
     contract: Address,
-    args: Vec<String>,
+    args: &[String],
     chain: Chain,
     etherscan_api_key: String,
 ) -> Result<Function> {
@@ -257,7 +392,7 @@ pub async fn get_func_etherscan(
     let funcs = abi.functions.get(function_name).unwrap_or(&empty);
 
     for func in funcs {
-        let res = encode_args(func, &args);
+        let res = encode_args(func, args);
         if res.is_ok() {
             return Ok(func.clone())
         }
@@ -274,13 +409,6 @@ pub fn parse_tokens<'a, I: IntoIterator<Item = (&'a ParamType, &'a str)>>(
     params
         .into_iter()
         .map(|(param, value)| {
-            let value = match param {
-                // allow addresses and bytes to be passed with "0x"
-                ParamType::Address => value.strip_prefix("0x").unwrap_or(value),
-                ParamType::Bytes => value.strip_prefix("0x").unwrap_or(value),
-                ParamType::FixedBytes(_size) => value.strip_prefix("0x").unwrap_or(value),
-                _ => value,
-            };
             if lenient {
                 LenientTokenizer::tokenize(param, value)
             } else {
@@ -325,7 +453,17 @@ pub async fn fourbyte(selector: &str) -> Result<Vec<(String, i32)>> {
 
     let url = format!("https://www.4byte.directory/api/v1/signatures/?hex_signature={}", selector);
     let res = reqwest::get(url).await?;
-    let api_response = res.json::<ApiResponse>().await?;
+    let res = res.text().await?;
+    let api_response = match serde_json::from_str::<ApiResponse>(&res) {
+        Ok(inner) => inner,
+        Err(err) => {
+            eyre::bail!("Could not decode response:\n {}.\nError: {}", res, err)
+        }
+    };
+
+    if api_response.results.is_empty() {
+        eyre::bail!("no selector found for provided signature")
+    }
 
     Ok(api_response
         .results
@@ -375,6 +513,81 @@ pub async fn fourbyte_possible_sigs(calldata: &str, id: Option<String>) -> Resul
                 .collect::<Vec<String>>())
         }
     }
+}
+
+/// Fetches a event signature given the 32 byte topic using 4byte.directory
+pub async fn fourbyte_event(topic: &str) -> Result<Vec<(String, i32)>> {
+    #[derive(Deserialize)]
+    struct Decoded {
+        text_signature: String,
+        id: i32,
+    }
+
+    #[derive(Deserialize)]
+    struct ApiResponse {
+        results: Vec<Decoded>,
+    }
+
+    let topic = &topic.strip_prefix("0x").unwrap_or(topic);
+    if topic.len() < 64 {
+        return Err(eyre::eyre!("Invalid topic"))
+    }
+    let topic = &topic[..8];
+
+    let url =
+        format!("https://www.4byte.directory/api/v1/event-signatures/?hex_signature={}", topic);
+    let res = reqwest::get(url).await?;
+    let api_response = res.json::<ApiResponse>().await?;
+
+    Ok(api_response
+        .results
+        .into_iter()
+        .map(|d| (d.text_signature, d.id))
+        .collect::<Vec<(String, i32)>>())
+}
+
+/// Pretty print calldata and if available, fetch possible function signatures
+///
+/// ```no_run
+/// 
+/// use foundry_utils::pretty_calldata;
+///
+/// # async fn foo() -> eyre::Result<()> {
+///   let pretty_data = pretty_calldata("0x70a08231000000000000000000000000d0074f4e6490ae3f888d1d4f7e3e43326bd3f0f5".to_string(), false).await?;
+///   println!("{}",pretty_data);
+/// # Ok(())
+/// # }
+/// ```
+
+pub async fn pretty_calldata(calldata: impl AsRef<str>, offline: bool) -> Result<PossibleSigs> {
+    let mut possible_info = PossibleSigs::new();
+    let calldata = calldata.as_ref().trim_start_matches("0x");
+
+    let selector =
+        calldata.get(..8).ok_or_else(|| eyre::eyre!("calldata cannot be less that 4 bytes"))?;
+
+    let sigs = if offline {
+        vec![]
+    } else {
+        fourbyte(selector).await?.into_iter().map(|sig| sig.0).collect()
+    };
+    let (_, data) = calldata.split_at(8);
+
+    if data.len() % 64 != 0 {
+        eyre::bail!("\nInvalid calldata size")
+    }
+
+    let row_length = data.len() / 64;
+
+    for row in 0..row_length {
+        possible_info.data.push(data[64 * row..64 * (row + 1)].to_string());
+    }
+    if sigs.is_empty() {
+        possible_info.method = SelectorOrSig::Selector(selector.to_string());
+    } else {
+        possible_info.method = SelectorOrSig::Sig(sigs);
+    }
+    Ok(possible_info)
 }
 
 pub fn abi_decode(sig: &str, calldata: &str, input: bool) -> Result<Vec<Token>> {
@@ -488,7 +701,9 @@ fn capitalize(s: &str) -> String {
 // Returns the function parameter formatted as a string, as well as inserts into the provided
 // `structs` set in order to create type definitions for any Abi Encoder v2 structs.
 fn format_param(param: &Param, structs: &mut HashSet<String>) -> String {
-    // check if it requires a memory tag
+    let kind = get_param_type(&param.kind, &param.name, param.internal_type.as_deref(), structs);
+
+    // add `memory` if required (not needed for events, only for functions)
     let is_memory = matches!(
         param.kind,
         ParamType::Array(_) |
@@ -497,11 +712,37 @@ fn format_param(param: &Param, structs: &mut HashSet<String>) -> String {
             ParamType::FixedArray(_, _) |
             ParamType::Tuple(_),
     );
+    let kind = if is_memory { format!("{} memory", kind) } else { kind };
 
-    let (kind, v2_struct) = match param.kind {
+    if param.name.is_empty() {
+        kind
+    } else {
+        format!("{} {}", kind, param.name)
+    }
+}
+
+fn format_event_params(param: &EventParam, structs: &mut HashSet<String>) -> String {
+    let kind = get_param_type(&param.kind, &param.name, None, structs);
+
+    if param.name.is_empty() {
+        kind
+    } else if param.indexed {
+        format!("{} indexed {}", kind, param.name)
+    } else {
+        format!("{} {}", kind, param.name)
+    }
+}
+
+fn get_param_type(
+    kind: &ParamType,
+    name: &str,
+    internal_type: Option<&str>,
+    structs: &mut HashSet<String>,
+) -> String {
+    let (kind, v2_struct) = match kind {
         // We need to do some extra work to parse ABI Encoder V2 types.
         ParamType::Tuple(ref args) => {
-            let name = param.internal_type.clone().unwrap_or_else(|| capitalize(&param.name));
+            let name = internal_type.map(|x| x.to_owned()).unwrap_or_else(|| capitalize(name));
             let name = if name.contains('.') {
                 name.split('.').nth(1).expect("could not get struct name").to_owned()
             } else {
@@ -523,22 +764,15 @@ fn format_param(param: &Param, structs: &mut HashSet<String>) -> String {
             (name, Some(v2_struct))
         }
         // If not, just get the string of the param kind.
-        _ => (param.kind.to_string(), None),
+        _ => (kind.to_string(), None),
     };
-
-    // add `memory` if required
-    let kind = if is_memory { format!("{} memory", kind) } else { kind };
 
     // if there was a v2 struct, push it for later usage
     if let Some(v2_struct) = v2_struct {
         structs.insert(v2_struct);
     }
 
-    if param.name.is_empty() {
-        kind
-    } else {
-        format!("{} {}", kind, param.name)
-    }
+    kind
 }
 
 /// This function takes a contract [`Abi`] and a name and proceeds to generate a Solidity
@@ -553,12 +787,28 @@ fn format_param(param: &Param, structs: &mut HashSet<String>) -> String {
 /// * Kudos to https://github.com/maxme/abi2solidity for the algorithm
 pub fn abi_to_solidity(contract_abi: &Abi, mut contract_name: &str) -> Result<String> {
     let functions_iterator = contract_abi.functions();
+    let events_iterator = contract_abi.events();
     if contract_name.trim().is_empty() {
         contract_name = "Interface";
     };
 
     // instantiate an array of all ABI Encoder v2 structs
     let mut structs = HashSet::new();
+
+    let events = events_iterator
+        .map(|event| {
+            let inputs = event
+                .inputs
+                .iter()
+                .map(|param| format_event_params(param, &mut structs))
+                .collect::<Vec<String>>()
+                .join(", ");
+
+            let event_final = format!("event {}({})", event.name, inputs);
+            format!("{};", event_final)
+        })
+        .collect::<Vec<_>>()
+        .join("\n    ");
 
     let functions = functions_iterator
         .map(|function| {
@@ -596,31 +846,258 @@ pub fn abi_to_solidity(contract_abi: &Abi, mut contract_name: &str) -> Result<St
         .join("\n    ");
 
     Ok(if structs.is_empty() {
-        format!(
-            r#"interface {} {{
+        match events.is_empty() {
+            true => format!(
+                r#"interface {} {{
     {}
 }}
 "#,
-            contract_name, functions
-        )
-    } else {
-        let structs = structs.into_iter().collect::<Vec<_>>().join("\n    ");
-        format!(
-            r#"interface {} {{
+                contract_name, functions
+            ),
+            false => format!(
+                r#"interface {} {{
     {}
 
     {}
 }}
 "#,
-            contract_name, structs, functions
-        )
+                contract_name, events, functions
+            ),
+        }
+    } else {
+        let structs = structs.into_iter().collect::<Vec<_>>().join("\n    ");
+        match events.is_empty() {
+            true => format!(
+                r#"interface {} {{
+    {}
+
+    {}
+}}
+"#,
+                contract_name, structs, functions
+            ),
+            false => format!(
+                r#"interface {} {{
+    {}
+
+    {}
+
+    {}
+}}
+"#,
+                contract_name, events, structs, functions
+            ),
+        }
     })
+}
+
+#[derive(Debug)]
+pub struct PostLinkInput<'a, T, U> {
+    pub contract: CompactContractBytecode,
+    pub known_contracts: &'a mut BTreeMap<String, T>,
+    pub fname: String,
+    pub extra: &'a mut U,
+    pub dependencies: Vec<ethers_core::types::Bytes>,
+}
+
+pub fn link<T, U>(
+    contracts: &BTreeMap<String, CompactContractBytecode>,
+    known_contracts: &mut BTreeMap<String, T>,
+    sender: Address,
+    extra: &mut U,
+    link_key_construction: impl Fn(String, String) -> (String, String, String),
+    post_link: impl Fn(PostLinkInput<T, U>) -> eyre::Result<()>,
+) -> eyre::Result<()> {
+    // we dont use mainnet state for evm_opts.sender so this will always be 1
+    // I am leaving this here so that in the future if this needs to change,
+    // its easy to find.
+    let nonce = U256::one();
+
+    // create a mapping of fname => Vec<(fname, file, key)>,
+    let link_tree: BTreeMap<String, Vec<(String, String, String)>> = contracts
+        .iter()
+        .map(|(fname, contract)| {
+            (
+                fname.to_string(),
+                contract
+                    .all_link_references()
+                    .iter()
+                    .flat_map(|(file, link)| {
+                        link.keys()
+                            .map(|key| link_key_construction(file.to_string(), key.to_string()))
+                    })
+                    .collect::<Vec<(String, String, String)>>(),
+            )
+        })
+        .collect();
+
+    for fname in contracts.keys() {
+        let (abi, maybe_deployment_bytes, maybe_runtime) = if let Some(c) = contracts.get(fname) {
+            (c.abi.as_ref(), c.bytecode.as_ref(), c.deployed_bytecode.as_ref())
+        } else {
+            (None, None, None)
+        };
+        if let (Some(abi), Some(bytecode), Some(runtime)) =
+            (abi, maybe_deployment_bytes, maybe_runtime)
+        {
+            // we are going to mutate, but library contract addresses may change based on
+            // the test so we clone
+            let mut target_bytecode = bytecode.clone();
+            let mut rt = runtime.clone();
+            let mut target_bytecode_runtime = rt.bytecode.expect("No target runtime").clone();
+
+            // instantiate a vector that gets filled with library deployment bytecode
+            let mut dependencies = vec![];
+
+            match bytecode.object {
+                BytecodeObject::Unlinked(_) => {
+                    // link needed
+                    recurse_link(
+                        fname.to_string(),
+                        (&mut target_bytecode, &mut target_bytecode_runtime),
+                        contracts,
+                        &link_tree,
+                        &mut dependencies,
+                        nonce,
+                        sender,
+                    );
+                }
+                BytecodeObject::Bytecode(ref bytes) => {
+                    if bytes.as_ref().is_empty() {
+                        // abstract, skip
+                        continue
+                    }
+                }
+            }
+
+            rt.bytecode = Some(target_bytecode_runtime);
+            let tc = CompactContractBytecode {
+                abi: Some(abi.clone()),
+                bytecode: Some(target_bytecode),
+                deployed_bytecode: Some(rt),
+            };
+
+            let post_link_input = PostLinkInput {
+                contract: tc,
+                known_contracts,
+                fname: fname.to_string(),
+                extra,
+                dependencies,
+            };
+
+            post_link(post_link_input)?;
+        }
+    }
+    Ok(())
+}
+
+/// Enables tracing
+#[cfg(any(feature = "test"))]
+pub fn init_tracing_subscriber() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init()
+        .ok();
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethers_core::abi::Abi;
+    use ethers::{
+        abi::Abi,
+        solc::{artifacts::CompactContractBytecode, Project, ProjectPathsConfig},
+        types::{Address, Bytes},
+    };
+    use std::path::PathBuf;
+
+    #[test]
+    #[ignore] // TODO: This needs to be re-enabled one it's fixed in ethers-solc.
+    fn test_linking() {
+        let lib_test_json_lib_test = "6101d1610053600b82828239805160001a607314610046577f4e487b7100000000000000000000000000000000000000000000000000000000600052600060045260246000fd5b30600052607381538281f3fe73000000000000000000000000000000000000000030146080604052600436106100355760003560e01c806314ba3f121461003a575b600080fd5b610054600480360381019061004f91906100bb565b61006a565b60405161006191906100f7565b60405180910390f35b60006064826100799190610141565b9050919050565b600080fd5b6000819050919050565b61009881610085565b81146100a357600080fd5b50565b6000813590506100b58161008f565b92915050565b6000602082840312156100d1576100d0610080565b5b60006100df848285016100a6565b91505092915050565b6100f181610085565b82525050565b600060208201905061010c60008301846100e8565b92915050565b7f4e487b7100000000000000000000000000000000000000000000000000000000600052601160045260246000fd5b600061014c82610085565b915061015783610085565b9250817fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff04831182151516156101905761018f610112565b5b82820290509291505056fea264697066735822122089bbb5614fb9e62f207b40682b397b25f2000c514857bf7959055b0d9b5dcfbf64736f6c634300080b0033";
+        let lib_test_nested_json_lib_test_nested = "610266610053600b82828239805160001a607314610046577f4e487b7100000000000000000000000000000000000000000000000000000000600052600060045260246000fd5b30600052607381538281f3fe73000000000000000000000000000000000000000030146080604052600436106100355760003560e01c80639acc23361461003a575b600080fd5b610054600480360381019061004f9190610116565b61006a565b604051610061919061015c565b60405180910390f35b60007347e9fbef8c83a1714f1951f142132e6e90f5fa5d6314ba3f1260656040518263ffffffff1660e01b81526004016100a491906101bc565b602060405180830381865af41580156100c1573d6000803e3d6000fd5b505050506040513d601f19601f820116820180604052508101906100e59190610203565b9050919050565b600080fd5b600381106100fe57600080fd5b50565b600081359050610110816100f1565b92915050565b60006020828403121561012c5761012b6100ec565b5b600061013a84828501610101565b91505092915050565b6000819050919050565b61015681610143565b82525050565b6000602082019050610171600083018461014d565b92915050565b6000819050919050565b6000819050919050565b60006101a66101a161019c84610177565b610181565b610143565b9050919050565b6101b68161018b565b82525050565b60006020820190506101d160008301846101ad565b92915050565b6101e081610143565b81146101eb57600080fd5b50565b6000815190506101fd816101d7565b92915050565b600060208284031215610219576102186100ec565b5b6000610227848285016101ee565b9150509291505056fea26469706673582212204d96467c5d42f97ecaa460cca5137364d61ae850ee0be7c2d9c5ffb045bf8dc364736f6c634300080b0033";
+        let contract_names = [
+            "DsTestMini.json:DsTestMini",
+            "LibLinkingTest.json:LibLinkingTest",
+            "LibTest.json:LibTest",
+            "LibTestNested.json:LibTestNested",
+            "Main.json:Main",
+        ];
+
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/linking");
+        let paths = ProjectPathsConfig::builder().root(&root).sources(&root).build().unwrap();
+
+        let project = Project::builder().paths(paths).ephemeral().no_artifacts().build().unwrap();
+
+        let output = project.compile().unwrap();
+        let contracts = output
+            .into_artifacts()
+            .map(|(i, c)| (i.slug(), c.into_contract_bytecode()))
+            .collect::<BTreeMap<String, CompactContractBytecode>>();
+
+        let mut known_contracts: BTreeMap<String, (Abi, Vec<u8>)> = Default::default();
+        let mut deployable_contracts: BTreeMap<String, (Abi, Bytes, Vec<Bytes>)> =
+            Default::default();
+
+        assert_eq!(&contracts.keys().collect::<Vec<&String>>()[..], &contract_names[..]);
+
+        link(
+            &contracts,
+            &mut known_contracts,
+            Address::default(),
+            &mut deployable_contracts,
+            |file, key| (format!("{}.json:{}", key, key), file, key),
+            |post_link_input| {
+                match post_link_input.fname.as_str() {
+                    "DsTestMini.json:DsTestMini" => {
+                        assert_eq!(post_link_input.dependencies.len(), 0);
+                    }
+                    "LibLinkingTest.json:LibLinkingTest" => {
+                        assert_eq!(post_link_input.dependencies.len(), 3);
+                        assert_eq!(
+                            hex::encode(post_link_input.dependencies[0].clone()),
+                            lib_test_json_lib_test
+                        );
+                        assert_eq!(
+                            hex::encode(post_link_input.dependencies[1].clone()),
+                            lib_test_json_lib_test
+                        );
+                        assert_eq!(
+                            hex::encode(post_link_input.dependencies[2].clone()),
+                            lib_test_nested_json_lib_test_nested
+                        );
+                    }
+                    "LibTest.json:LibTest" => {
+                        assert_eq!(post_link_input.dependencies.len(), 0);
+                    }
+                    "LibTestNested.json:LibTestNested" => {
+                        assert_eq!(post_link_input.dependencies.len(), 1);
+                        assert_eq!(
+                            hex::encode(post_link_input.dependencies[0].clone()),
+                            lib_test_json_lib_test
+                        );
+                    }
+                    "Main.json:Main" => {
+                        assert_eq!(post_link_input.dependencies.len(), 3);
+                        assert_eq!(
+                            hex::encode(post_link_input.dependencies[0].clone()),
+                            lib_test_json_lib_test
+                        );
+                        assert_eq!(
+                            hex::encode(post_link_input.dependencies[1].clone()),
+                            lib_test_json_lib_test
+                        );
+                        assert_eq!(
+                            hex::encode(post_link_input.dependencies[2].clone()),
+                            lib_test_nested_json_lib_test_nested
+                        );
+                    }
+                    _ => assert!(false),
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
+    }
 
     #[test]
     fn test_resolve_addr() {
@@ -681,7 +1158,25 @@ mod tests {
         let sigs = fourbyte_possible_sigs("0xa9059cbb0000000000000000000000000a2ac0c368dc8ec680a0c98c907656bd970675950000000000000000000000000000000000000000000000000000000767954a79", Some("145".to_string())).await.unwrap();
         assert_eq!(sigs[0], "transfer(address,uint256)".to_string());
     }
+
+    #[tokio::test]
+    async fn test_fourbyte_event() {
+        let sigs =
+            fourbyte_event("0x7e1db2a1cd12f0506ecd806dba508035b290666b84b096a87af2fd2a1516ede6")
+                .await
+                .unwrap();
+        assert_eq!(sigs[0].0, "updateAuthority(address,uint8)".to_string());
+        assert_eq!(sigs[0].1, 79573);
+
+        let sigs =
+            fourbyte_event("0xb7009613e63fb13fd59a2fa4c206a992c1f090a44e5d530be255aa17fed0b3dd")
+                .await
+                .unwrap();
+        assert_eq!(sigs[0].0, "canCall(address,address,bytes4)".to_string());
+    }
+
     #[test]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn abi2solidity() {
         let contract_abi: Abi =
             serde_json::from_slice(&std::fs::read("testdata/interfaceTestABI.json").unwrap())

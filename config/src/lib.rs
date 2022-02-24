@@ -15,13 +15,14 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 
 use ethers_core::types::{Address, U256};
+pub use ethers_solc::artifacts::OptimizerDetails;
 use ethers_solc::{
-    artifacts::{Optimizer, Settings},
+    artifacts::{output_selection::ContractOutputSelection, Optimizer, Settings},
     error::SolcError,
     remappings::{RelativeRemapping, Remapping},
-    EvmVersion, Project, ProjectPathsConfig, SolcConfig,
+    ConfigurableArtifacts, EvmVersion, Project, ProjectPathsConfig, Solc, SolcConfig,
 };
-use figment::providers::Data;
+use figment::{providers::Data, value::Value};
 use inflector::Inflector;
 
 // Macros useful for creating a figment.
@@ -91,6 +92,8 @@ pub struct Config {
     /// evm version to use
     #[serde(with = "from_str_lowercase")]
     pub evm_version: EvmVersion,
+    /// list of contracts to report gas of
+    pub gas_reports: Vec<String>,
     /// Concrete solc version to use if any.
     ///
     /// This takes precedence over `auto_detect_solc`, if a version is set then this overrides
@@ -98,10 +101,21 @@ pub struct Config {
     pub solc_version: Option<Version>,
     /// whether to autodetect the solc compiler version to use
     pub auto_detect_solc: bool,
+    /// Offline mode, if set, network access (downloading solc) is disallowed.
+    ///
+    /// Relationship with `auto_detect_solc`:
+    ///    - if `auto_detect_solc = true` and `offline = true`, the required solc version(s) will
+    ///      be auto detected but if the solc version is not installed, it will _not_ try to
+    ///      install it
+    pub offline: bool,
     /// Whether to activate optimizer
     pub optimizer: bool,
     /// Sets the optimizer runs
     pub optimizer_runs: usize,
+    /// Switch optimizer components on or off in detail.
+    /// The "enabled" switch above provides two defaults which can be
+    /// tweaked here. If "details" is given, "enabled" can be omitted.
+    pub optimizer_details: Option<OptimizerDetails>,
     /// verbosity to use
     pub verbosity: u8,
     /// url of the rpc server that should be used for any rpc calls
@@ -138,30 +152,46 @@ pub struct Config {
     pub block_difficulty: u64,
     /// the `block.gaslimit` value during EVM execution
     pub block_gas_limit: Option<u64>,
-    /// Settings to pass to the `solc` compiler input
-    // TODO consider making this more structured https://stackoverflow.com/questions/48998034/does-toml-support-nested-arrays-of-objects-tables
-    // TODO this needs to work as extension to the defaults:
+    /// Additional output selection for all contracts
+    /// such as "ir", "devodc", "storageLayout", etc.
+    /// See [Solc Compiler Api](https://docs.soliditylang.org/en/latest/using-the-compiler.html#compiler-api)
+    ///
+    /// The following values are always set because they're required by `forge`
     //{
-    //   "*": {
-    //     "": [
-    //       "ast"
-    //     ],
-    //     "*": [
+    //   "*": [
     //       "abi",
     //       "evm.bytecode",
     //       "evm.deployedBytecode",
     //       "evm.methodIdentifiers"
     //     ]
-    //   }
     // }
     // "#
-    pub solc_settings: Option<String>,
-    /// The root path where the config detection started from, `Config::with_root`
+    #[serde(default)]
+    pub extra_output: Vec<ContractOutputSelection>,
+    /// If set , a separate `json` file will be emitted for every contract depending on the
+    /// selection, eg. `extra_output_files = ["metadata"]` will create a `metadata.json` for
+    /// each contract in the project. See [Contract Metadata](https://docs.soliditylang.org/en/latest/metadata.html)
     ///
-    /// **Note:** This field is never serialized nor deserialized. This is merely used to provided
-    /// additional context.
+    /// The difference between `extra_output = ["metadata"]` and
+    /// `extra_output_files = ["metadata]` is that the former will include the
+    /// contract's metadata in the contract's json artifact, whereas the latter will emit the
+    /// output selection as separate files.
+    #[serde(default)]
+    pub extra_output_files: Vec<ContractOutputSelection>,
+    /// The maximum number of local test case rejections allowed
+    /// by proptest, to be encountered during usage of `vm.assume`
+    /// cheatcode.
+    pub fuzz_max_local_rejects: u32,
+    /// The maximum number of global test case rejections allowed
+    /// by proptest, to be encountered during usage of `vm.assume`
+    /// cheatcode.
+    pub fuzz_max_global_rejects: u32,
+    /// The root path where the config detection started from, `Config::with_root`
     #[doc(hidden)]
-    #[serde(skip)]
+    //  We're skipping serialization here, so it won't be included in the [`Config::to_string()`]
+    // representation, but will be deserialized from the `Figment` so that forge commands can
+    // override it.
+    #[serde(rename = "root", default, skip_serializing)]
     pub __root: RootPath,
     /// PRIVATE: This structure may grow, As such, constructing this structure should
     /// _always_ be done using a public constructor or update syntax:
@@ -188,6 +218,9 @@ impl Config {
 
     /// File name of config toml file
     pub const FILE_NAME: &'static str = "foundry.toml";
+
+    /// The name of the directory foundry reserves for itself under the user's home directory: `~`
+    pub const FOUNDRY_DIR_NAME: &'static str = ".foundry";
 
     /// Returns the current `Config`
     ///
@@ -338,13 +371,15 @@ impl Config {
     }
 
     fn create_project(&self, cached: bool, no_artifacts: bool) -> Result<Project, SolcError> {
-        let project = Project::builder()
+        let mut project = Project::builder()
+            .artifacts(self.configured_artifacts_handler())
             .paths(self.project_paths())
             .allowed_path(&self.__root.0)
-            .allowed_paths(self.libraries.clone())
+            .allowed_paths(&self.libs)
             .solc_config(SolcConfig::builder().settings(self.solc_settings()?).build())
             .ignore_error_codes(self.ignored_error_codes.clone())
-            .set_auto_detect(self.auto_detect_solc)
+            .set_auto_detect(self.is_auto_detect())
+            .set_offline(self.offline)
             .set_cached(cached)
             .set_no_artifacts(no_artifacts)
             .build()?;
@@ -353,7 +388,37 @@ impl Config {
             project.cleanup()?;
         }
 
+        if let Some(solc) = self.ensure_solc_version()? {
+            project.solc = solc;
+        }
+
         Ok(project)
+    }
+
+    /// Ensures that the configured version is installed if explicitly set
+    fn ensure_solc_version(&self) -> Result<Option<Solc>, SolcError> {
+        if let Some(ref version) = self.solc_version {
+            let v = version.to_string();
+            let mut solc = Solc::find_svm_installed_version(&v)?;
+            if solc.is_none() {
+                Solc::blocking_install(version)?;
+                solc = Solc::find_svm_installed_version(&v)?;
+            }
+            Ok(solc)
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Returns whether the compiler version should be auto-detected
+    ///
+    /// Returns `false` if `solc_version` is explicitly set, otherwise returns the value of
+    /// `auto_detect_solc`
+    pub fn is_auto_detect(&self) -> bool {
+        if self.solc_version.is_some() {
+            return false
+        }
+        self.auto_detect_solc
     }
 
     /// Returns the `ProjectPathsConfig`  sub set of the config.
@@ -373,28 +438,76 @@ impl Config {
             .sources(&self.src)
             .artifacts(&self.out)
             .libs(self.libs.clone())
-            .remappings(self.remappings.iter().map(|m| m.clone().into()))
+            .remappings(self.get_all_remappings())
             .build_with_root(&self.__root.0)
+    }
+
+    /// Returns all configured [`Remappings`]
+    ///
+    /// **Note:** this will add an additional `<src>/=<src path>` remapping here so imports that
+    /// look like `import {Foo} from "src/Foo.sol";` are properly resolved.
+    ///
+    /// This is due the fact that `solc`'s VFS resolves [direct imports](https://docs.soliditylang.org/en/develop/path-resolution.html#direct-imports) that start with the source directory's name.
+    ///
+    /// So that
+    ///
+    /// ```solidity
+    /// import "./math/math.sol";
+    /// import "contracts/tokens/token.sol";
+    /// ```
+    ///
+    /// in `contracts/contract.sol` are resolved to
+    ///
+    /// ```text
+    /// contracts/tokens/token.sol
+    /// contracts/math/math.sol
+    /// ```
+    pub fn get_all_remappings(&self) -> Vec<Remapping> {
+        let mut remappings: Vec<_> = self.remappings.iter().map(|m| m.clone().into()).collect();
+        if let Some(src_dir_name) =
+            self.src.file_name().and_then(|s| s.to_str()).filter(|s| !s.is_empty())
+        {
+            remappings.push(Remapping {
+                name: format!("{}/", src_dir_name),
+                path: format!("{}", self.src.display()),
+            });
+        }
+        remappings
     }
 
     /// Returns the `Optimizer` based on the configured settings
     pub fn optimizer(&self) -> Optimizer {
-        Optimizer { enabled: Some(self.optimizer), runs: Some(self.optimizer_runs) }
+        Optimizer {
+            enabled: Some(self.optimizer),
+            runs: Some(self.optimizer_runs),
+            details: self.optimizer_details.clone(),
+        }
+    }
+
+    /// returns the [`ethers_solc::ConfigurableArtifacts`] for this config, that includes the
+    /// `extra_output` fields
+    pub fn configured_artifacts_handler(&self) -> ConfigurableArtifacts {
+        ConfigurableArtifacts::new(self.extra_output.clone(), self.extra_output_files.clone())
     }
 
     /// Returns the configured `solc` `Settings` that includes:
     ///   - all libraries
-    ///   - the optimizer
+    ///   - the optimizer (including details, if configured)
     ///   - evm version
     pub fn solc_settings(&self) -> Result<Settings, SolcError> {
         let libraries = parse_libraries(&self.libraries)?;
         let optimizer = self.optimizer();
-        Ok(Settings {
+
+        let settings = Settings {
             optimizer,
             evm_version: Some(self.evm_version),
             libraries,
             ..Default::default()
-        })
+        }
+        .with_extra_output(self.configured_artifacts_handler().output_selection())
+        .with_ast();
+
+        Ok(settings)
     }
 
     /// Returns the default figment
@@ -507,7 +620,20 @@ impl Config {
     /// # ...
     /// ```
     pub fn to_string_pretty(&self) -> Result<String, toml::ser::Error> {
-        let s = toml::to_string_pretty(self)?;
+        // serializing to value first to prevent `ValueAfterTable` errors
+        let value = toml::Value::try_from(self)?;
+        let mut s = toml::to_string_pretty(&value)?;
+
+        if self.optimizer_details.is_some() {
+            // this is a hack to make nested tables work because this requires the config's profile
+            s = s
+                .replace("[optimizer_details]", &format!("[{}.optimizer_details]", self.profile))
+                .replace(
+                    "[optimizer_details.yulDetails]",
+                    &format!("[{}.optimizer_details.yulDetails]", self.profile),
+                );
+        }
+
         Ok(format!(
             r#"[{}]
 {}"#,
@@ -522,9 +648,22 @@ impl Config {
         Profile::from_env_or("FOUNDRY_PROFILE", Config::DEFAULT_PROFILE)
     }
 
+    /// Returns the path to foundry's global toml file that's stored at `~/.foundry/foundry.toml`
+    pub fn foundry_dir_toml() -> Option<PathBuf> {
+        Self::foundry_dir().map(|p| p.join(Config::FILE_NAME))
+    }
+
+    /// Returns the path to foundry's config dir `~/.foundry/`
+    pub fn foundry_dir() -> Option<PathBuf> {
+        dirs_next::home_dir().map(|p| p.join(Config::FOUNDRY_DIR_NAME))
+    }
+
     /// Returns the path to the `foundry.toml` file, the file is searched for in
     /// the current working directory and all parent directories until the root,
     /// and the first hit is used.
+    ///
+    /// If this search comes up empty, then it checks if a global `foundry.toml` exists at
+    /// `~/.foundry/foundry.tol`, see [`Self::foundry_dir_toml()`]
     pub fn find_config_file() -> Option<PathBuf> {
         fn find(path: &Path) -> Option<PathBuf> {
             if path.is_absolute() {
@@ -544,21 +683,30 @@ impl Config {
             }
         }
         find(Env::var_or("FOUNDRY_CONFIG", Config::FILE_NAME).as_ref())
+            .or_else(|| Self::foundry_dir_toml().filter(|p| p.exists()))
     }
 }
 
 impl From<Config> for Figment {
     fn from(c: Config) -> Figment {
         let profile = Config::selected_profile();
-        let figment = Figment::default()
-            .merge(DappHardhatDirProvider(&c.__root.0))
+        let mut figment = Figment::default().merge(DappHardhatDirProvider(&c.__root.0));
+
+        // check global foundry.toml file
+        if let Some(global_toml) = Config::foundry_dir_toml().filter(|p| p.exists()) {
+            figment = figment.merge(ForcedSnakeCaseData(Toml::file(global_toml).nested()))
+        }
+
+        figment = figment
             .merge(ForcedSnakeCaseData(
                 Toml::file(Env::var_or("FOUNDRY_CONFIG", Config::FILE_NAME)).nested(),
             ))
-            .merge(Env::prefixed("DAPP_").ignore(&["REMAPPINGS"]).global())
+            .merge(Env::prefixed("DAPP_").ignore(&["REMAPPINGS", "LIBRARIES"]).global())
             .merge(Env::prefixed("DAPP_TEST_").global())
             .merge(DappEnvCompatProvider)
-            .merge(Env::prefixed("FOUNDRY_").ignore(&["PROFILE", "REMAPPINGS"]).global())
+            .merge(
+                Env::prefixed("FOUNDRY_").ignore(&["PROFILE", "REMAPPINGS", "LIBRARIES"]).global(),
+            )
             .select(profile.clone());
 
         // we try to merge remappings after we've merged all other providers, this prevents
@@ -579,7 +727,8 @@ impl From<Config> for Figment {
 }
 
 /// A helper wrapper around the root path used during Config detection
-#[derive(Debug, PartialEq, Eq, Hash, Clone, PartialOrd, Ord)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, PartialOrd, Ord, Deserialize, Serialize)]
+#[serde(transparent)]
 pub struct RootPath(pub PathBuf);
 
 impl Default for RootPath {
@@ -618,7 +767,11 @@ impl Provider for Config {
 
     #[track_caller]
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
-        Serialized::defaults(self).data()
+        let mut data = Serialized::defaults(self).data()?;
+        if let Some(entry) = data.get_mut(&self.profile) {
+            entry.insert("root".to_string(), Value::serialize(self.__root.clone())?);
+        }
+        Ok(data)
     }
 
     fn profile(&self) -> Option<Profile> {
@@ -638,12 +791,18 @@ impl Default for Config {
             cache: true,
             force: false,
             evm_version: Default::default(),
+            gas_reports: vec!["*".to_string()],
             solc_version: None,
             auto_detect_solc: true,
+            offline: false,
             optimizer: true,
             optimizer_runs: 200,
-            solc_settings: None,
+            optimizer_details: None,
+            extra_output: Default::default(),
+            extra_output_files: Default::default(),
             fuzz_runs: 256,
+            fuzz_max_local_rejects: 1024,
+            fuzz_max_global_rejects: 65536,
             ffi: false,
             sender: "00a329c0648769A73afAc7F9381E08FB43dBEA72".parse().unwrap(),
             tx_origin: "00a329c0648769A73afAc7F9381E08FB43dBEA72".parse().unwrap(),
@@ -755,6 +914,11 @@ impl Provider for DappEnvCompatProvider {
                 "fork_block_number".to_string(),
                 val.parse::<u64>().map_err(figment::Error::custom)?.into(),
             );
+        } else if let Ok(val) = env::var("DAPP_TEST_NUMBER") {
+            dict.insert(
+                "fork_block_number".to_string(),
+                val.parse::<u64>().map_err(figment::Error::custom)?.into(),
+            );
         }
         if let Ok(val) = env::var("DAPP_TEST_TIMESTAMP") {
             dict.insert(
@@ -779,6 +943,11 @@ impl Provider for DappEnvCompatProvider {
                 .into())
             }
             dict.insert("optimizer".to_string(), (val == 1).into());
+        }
+
+        // libraries in env vars either as `[..]` or single string separated by comma
+        if let Ok(val) = env::var("DAPP_LIBRARIES").or_else(|_| env::var("FOUNDRY_LIBRARIES")) {
+            dict.insert("libraries".to_string(), utils::to_array_value(&val)?);
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
@@ -977,6 +1146,7 @@ fn canonic(path: impl Into<PathBuf>) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    use ethers_solc::artifacts::YulDetails;
     use figment::error::Kind::InvalidType;
     use std::str::FromStr;
 
@@ -1122,6 +1292,17 @@ mod tests {
                 ],
             );
 
+            // contains additional remapping to the source dir
+            assert_eq!(
+                config.get_all_remappings(),
+                vec![
+                    Remapping::from_str("ds-test/=lib/ds-test/src/").unwrap(),
+                    Remapping::from_str("env-lib/=lib/env-lib/").unwrap(),
+                    Remapping::from_str("other/=lib/other/").unwrap(),
+                    Remapping::from_str("some-source/=some-source").unwrap(),
+                ],
+            );
+
             Ok(())
         });
     }
@@ -1189,6 +1370,30 @@ mod tests {
                     ..Config::default()
                 }
             );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_output_selection() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                extra_output = ["metadata", "ir-optimized"]
+                extra_output_files = ["metadata"]
+            "#,
+            )?;
+
+            let config = Config::load();
+
+            assert_eq!(
+                config.extra_output,
+                vec![ContractOutputSelection::Metadata, ContractOutputSelection::IrOptimized]
+            );
+            assert_eq!(config.extra_output_files, vec![ContractOutputSelection::Metadata]);
 
             Ok(())
         });
@@ -1309,6 +1514,38 @@ mod tests {
     }
 
     #[test]
+    fn can_parse_libraries() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env(
+                "DAPP_LIBRARIES",
+                "[src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6]",
+            );
+            let config = Config::load();
+            assert_eq!(
+                config.libraries,
+                vec!["src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6"
+                    .to_string()]
+            );
+            jail.set_env(
+                "DAPP_LIBRARIES",
+                "src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6,src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6",
+            );
+            let config = Config::load();
+            assert_eq!(
+                config.libraries,
+                vec![
+                    "src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6"
+                        .to_string(),
+                    "src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6"
+                        .to_string()
+                ]
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
     fn config_roundtrip() {
         figment::Jail::expect_with(|jail| {
             let default = Config::default();
@@ -1325,15 +1562,78 @@ mod tests {
             let other = Config::load();
             assert_eq!(default, other);
 
-            // println!("{}", default.to_string_pretty().unwrap());
             Ok(())
         });
+    }
+
+    #[test]
+    fn test_optimizer_settings_basic() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                optimizer = true
+
+                [default.optimizer_details]
+                yul = false
+
+                [default.optimizer_details.yulDetails]
+                stackAllocation = true
+            "#,
+            )?;
+            let loaded = Config::load();
+            assert_eq!(
+                loaded.optimizer_details,
+                Some(OptimizerDetails {
+                    yul: Some(false),
+                    yul_details: Some(YulDetails {
+                        stack_allocation: Some(true),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                })
+            );
+
+            let s = loaded.to_string_pretty().unwrap();
+            jail.create_file("foundry.toml", &s)?;
+
+            let reloaded = Config::load();
+            assert_eq!(loaded, reloaded);
+
+            Ok(())
+        });
+    }
+
+    // a test to print the config, mainly used to update the example config in the README
+    #[test]
+    #[ignore]
+    fn print_config() {
+        let config = Config {
+            optimizer_details: Some(OptimizerDetails {
+                peephole: None,
+                inliner: None,
+                jumpdest_remover: None,
+                order_literals: None,
+                deduplicate: None,
+                cse: None,
+                constant_optimizer: Some(true),
+                yul: Some(true),
+                yul_details: Some(YulDetails {
+                    stack_allocation: None,
+                    optimizer_steps: Some("dhfoDgvulfnTUtnIf".to_string()),
+                }),
+            }),
+            ..Default::default()
+        };
+        println!("{}", config.to_string_pretty().unwrap());
     }
 
     #[test]
     fn can_use_impl_figment_macro() {
         #[derive(Default, Serialize)]
         struct MyArgs {
+            #[serde(skip_serializing_if = "Option::is_none")]
             root: Option<PathBuf>,
         }
         impl_figment_convert!(MyArgs);

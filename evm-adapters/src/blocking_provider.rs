@@ -3,23 +3,7 @@ use ethers::{
     providers::Middleware,
     types::{Address, Block, BlockId, Bytes, TxHash, H256, U256, U64},
 };
-use tokio::runtime::{Handle, Runtime};
-
-#[allow(clippy::large_enum_variant)]
-#[derive(Debug)]
-pub enum RuntimeOrHandle {
-    Runtime(Runtime),
-    Handle(Handle),
-}
-
-impl RuntimeOrHandle {
-    pub fn new() -> RuntimeOrHandle {
-        match Handle::try_current() {
-            Ok(handle) => RuntimeOrHandle::Handle(handle),
-            Err(_) => RuntimeOrHandle::Runtime(Runtime::new().expect("Failed to start runtime")),
-        }
-    }
-}
+use foundry_utils::RuntimeOrHandle;
 
 #[derive(Debug)]
 /// Blocking wrapper around an Ethers middleware, for use in synchronous contexts
@@ -46,10 +30,7 @@ where
 
     /// Receives a future and runs it to completion.
     fn block_on<F: std::future::Future>(&self, f: F) -> F::Output {
-        match &self.runtime {
-            RuntimeOrHandle::Runtime(runtime) => runtime.block_on(f),
-            RuntimeOrHandle::Handle(handle) => tokio::task::block_in_place(|| handle.block_on(f)),
-        }
+        self.runtime.block_on(f)
     }
 
     /// Gets the specified block as well as the chain id concurrently.

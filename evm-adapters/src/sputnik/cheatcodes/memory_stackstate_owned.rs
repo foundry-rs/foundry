@@ -77,6 +77,8 @@ pub struct MemoryStackStateOwned<'config, B> {
     pub debug_steps: Vec<DebugArena>,
     /// Instruction pointers that maps an address to a mapping of pc to ic
     pub debug_instruction_pointers: Dip,
+    /// Labels for an address in call traces
+    pub labels: BTreeMap<H160, String>,
 }
 
 impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
@@ -143,6 +145,7 @@ impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
             debug_enabled,
             debug_steps: vec![Default::default()],
             debug_instruction_pointers: (BTreeMap::new(), BTreeMap::new()),
+            labels: BTreeMap::new(),
         }
     }
 }

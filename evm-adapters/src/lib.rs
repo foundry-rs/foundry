@@ -5,10 +5,6 @@ pub mod sputnik;
 #[cfg(feature = "sputnik")]
 use crate::sputnik::cheatcodes::debugger::DebugArena;
 
-/// Abstraction over [evmodin](https://github.com/rust-blockchain/evm)
-#[cfg(feature = "evmodin")]
-pub mod evmodin;
-
 mod blocking_provider;
 use crate::call_tracing::CallTraceArena;
 
@@ -17,6 +13,8 @@ pub use blocking_provider::BlockingProvider;
 pub mod fuzz;
 
 pub mod call_tracing;
+
+pub mod gas_report;
 
 /// Helpers for easily constructing EVM objects.
 pub mod evm_opts;
@@ -31,6 +29,8 @@ use foundry_utils::IntoFunction;
 
 use eyre::Result;
 use once_cell::sync::Lazy;
+
+pub const ASSUME_MAGIC_RETURN_CODE: &[u8] = "FOUNDRY::ASSUME".as_bytes();
 
 /// The account that we use to fund all the deployed contracts
 pub static FAUCET_ACCOUNT: Lazy<Address> =
@@ -109,7 +109,9 @@ pub trait Evm<State> {
         let func = func.into();
         let (retdata, status, gas, logs) = self.call_unchecked(from, to, &func, args, value)?;
         if Self::is_fail(&status) {
-            let reason = foundry_utils::decode_revert(retdata.as_ref(), abi).unwrap_or_default();
+            // try to decode the revert reason, else default to the revert status error.
+            let reason = foundry_utils::decode_revert(retdata.as_ref(), abi)
+                .unwrap_or_else(|_| format!("{:?}", status));
             Err(EvmError::Execution { reason, gas_used: gas, logs })
         } else {
             let retdata = decode_function_data(&func, retdata, false)?;
@@ -230,10 +232,12 @@ mod test_helpers {
     use super::*;
     use ethers::{
         prelude::Lazy,
-        solc::{artifacts::CompactContractRef, CompilerOutput, Project, ProjectPathsConfig},
+        solc::{
+            artifacts::CompactContractRef, AggregatedCompilerOutput, Project, ProjectPathsConfig,
+        },
     };
 
-    pub static COMPILED: Lazy<CompilerOutput> = Lazy::new(|| {
+    pub static COMPILED: Lazy<AggregatedCompilerOutput> = Lazy::new(|| {
         let paths =
             ProjectPathsConfig::builder().root("testdata").sources("testdata").build().unwrap();
         let project = Project::builder().paths(paths).ephemeral().no_artifacts().build().unwrap();

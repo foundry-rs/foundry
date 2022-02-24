@@ -4,8 +4,8 @@ mod utils;
 
 use crate::cmd::Cmd;
 
-use ethers::solc::{Project, ProjectPathsConfig};
-use opts::forge::{Dependency, FullContractInfo, Opts, Subcommands};
+use ethers::solc::{self, report::BasicStdoutReporter, Project, ProjectPathsConfig};
+use opts::forge::{Dependency, Opts, Subcommands};
 use std::process::Command;
 
 use clap::{IntoApp, Parser};
@@ -14,6 +14,7 @@ use clap_complete::generate;
 fn main() -> eyre::Result<()> {
     color_eyre::install()?;
     utils::subscriber();
+    solc::report::init(BasicStdoutReporter::default());
 
     let opts = Opts::parse();
     match opts.sub {
@@ -21,16 +22,22 @@ fn main() -> eyre::Result<()> {
             let outcome = cmd.run()?;
             outcome.ensure_ok()?;
         }
+        Subcommands::Bind(cmd) => {
+            cmd.run()?;
+        }
         Subcommands::Build(cmd) => {
             cmd.run()?;
         }
         Subcommands::Run(cmd) => {
             cmd.run()?;
         }
-        Subcommands::VerifyContract { contract, address, constructor_args } => {
-            let FullContractInfo { path, name } = contract;
+        Subcommands::VerifyContract(args) => {
             let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
-            rt.block_on(cmd::verify::run(path, name, address, constructor_args))?;
+            rt.block_on(cmd::verify::run_verify(&args))?;
+        }
+        Subcommands::VerifyCheck(args) => {
+            let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
+            rt.block_on(cmd::verify::run_verify_check(&args))?;
         }
         Subcommands::Create(cmd) => {
             cmd.run()?;
@@ -72,6 +79,9 @@ fn main() -> eyre::Result<()> {
         Subcommands::Snapshot(cmd) => {
             cmd.run()?;
         }
+        // Subcommands::Fmt(cmd) => {
+        //     cmd.run()?;
+        // }
         Subcommands::Config(cmd) => {
             cmd.run()?;
         }
@@ -112,9 +122,6 @@ fn remove(root: impl AsRef<std::path::Path>, dependencies: Vec<Dependency>) -> e
             .current_dir(&root)
             .spawn()?
             .wait()?;
-
-        // tell git to discard the removal of the submodule
-        Command::new("git").args(&["checkout", "--", "."]).current_dir(&root).spawn()?.wait()?;
 
         Ok(())
     })

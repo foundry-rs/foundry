@@ -37,10 +37,12 @@
 //! let config: Config = From::from(&args);
 //! ```
 
+pub mod bind;
 pub mod build;
 pub mod config;
 pub mod create;
 pub mod flatten;
+pub mod fmt;
 pub mod init;
 pub mod install;
 pub mod remappings;
@@ -52,14 +54,8 @@ pub mod verify;
 use crate::opts::forge::ContractInfo;
 use ethers::{
     abi::Abi,
-    prelude::{
-        artifacts::{CompactBytecode, CompactDeployedBytecode},
-        Graph,
-    },
-    solc::{
-        artifacts::{Source, Sources},
-        cache::SolFilesCache,
-    },
+    prelude::artifacts::{CompactBytecode, CompactDeployedBytecode},
+    solc::cache::SolFilesCache,
 };
 use std::path::PathBuf;
 
@@ -69,12 +65,11 @@ pub trait Cmd: clap::Parser + Sized {
     fn run(self) -> eyre::Result<Self::Output>;
 }
 
-use ethers::solc::{MinimalCombinedArtifacts, Project, ProjectCompileOutput};
+use ethers::solc::{artifacts::CompactContractBytecode, Project, ProjectCompileOutput};
 
 /// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
 /// compilation was successful or if there was a cache hit.
-// TODO: Move this to ethers-solc.
-pub fn compile(project: &Project) -> eyre::Result<ProjectCompileOutput<MinimalCombinedArtifacts>> {
+pub fn compile(project: &Project) -> eyre::Result<ProjectCompileOutput> {
     if !project.paths.sources.exists() {
         eyre::bail!(
             r#"no contracts to compile, contracts folder "{}" does not exist.
@@ -93,40 +88,20 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
     } else if output.is_unchanged() {
         println!("no files changed, compilation skipped.");
     } else {
+        println!("{}", output);
         println!("success.");
     }
     Ok(output)
 }
 
-/// Manually compile a project with added sources
-pub fn manual_compile(
-    project: &Project<MinimalCombinedArtifacts>,
-    added_sources: Vec<PathBuf>,
-) -> eyre::Result<ProjectCompileOutput<MinimalCombinedArtifacts>> {
-    let mut sources = project.paths.read_input_files()?;
-    sources.extend(Source::read_all_files(added_sources)?);
+/// Compile a set of files not necessarily included in the `project`'s source dir
+pub fn compile_files(project: &Project, files: Vec<PathBuf>) -> eyre::Result<ProjectCompileOutput> {
     println!("compiling...");
-    if project.auto_detect {
-        tracing::trace!("using solc auto detection to compile sources");
-        let output = project.svm_compile(sources)?;
-        if output.has_compiler_errors() {
-            // return the diagnostics error back to the user.
-            eyre::bail!(output.to_string())
-        }
-        return Ok(output)
-    }
-
-    let mut solc = project.solc.clone();
-    if !project.allowed_lib_paths.is_empty() {
-        solc = solc.arg("--allow-paths").arg(project.allowed_lib_paths.to_string());
-    }
-
-    let sources = Graph::resolve_sources(&project.paths, sources)?.into_sources();
-    let output = project.compile_with_version(&solc, sources)?;
+    let output = project.compile_files(files)?;
     if output.has_compiler_errors() {
-        // return the diagnostics error back to the user.
         eyre::bail!(output.to_string())
     }
+    println!("success.");
     Ok(output)
 }
 
@@ -134,7 +109,7 @@ pub fn manual_compile(
 /// Runtime Bytecode of the given contract.
 pub fn read_artifact(
     project: &Project,
-    compiled: ProjectCompileOutput<MinimalCombinedArtifacts>,
+    compiled: ProjectCompileOutput,
     contract: ContractInfo,
 ) -> eyre::Result<(Abi, CompactBytecode, CompactDeployedBytecode)> {
     Ok(match contract.path {
@@ -148,21 +123,13 @@ pub fn read_artifact(
 // contract name?
 fn get_artifact_from_name(
     contract: ContractInfo,
-    compiled: ProjectCompileOutput<MinimalCombinedArtifacts>,
+    compiled: ProjectCompileOutput,
 ) -> eyre::Result<(Abi, CompactBytecode, CompactDeployedBytecode)> {
     let mut has_found_contract = false;
     let mut contract_artifact = None;
 
-    for (name, artifact) in compiled.into_artifacts() {
-        // if the contract name
-        let mut split = name.split(':');
-        let mut artifact_contract_name =
-            split.next().ok_or_else(|| eyre::Error::msg("no contract name provided"))?;
-        if let Some(new_name) = split.next() {
-            artifact_contract_name = new_name;
-        };
-
-        if artifact_contract_name == contract.name {
+    for (artifact_id, artifact) in compiled.into_artifacts() {
+        if artifact_id.name == contract.name {
             if has_found_contract {
                 eyre::bail!("contract with duplicate name. pass path")
             }
@@ -175,6 +142,7 @@ fn get_artifact_from_name(
         Some(artifact) => (
             artifact
                 .abi
+                .map(Into::into)
                 .ok_or_else(|| eyre::Error::msg(format!("abi not found for {}", contract.name)))?,
             artifact.bytecode.ok_or_else(|| {
                 eyre::Error::msg(format!("bytecode not found for {}", contract.name))
@@ -190,41 +158,28 @@ fn get_artifact_from_name(
 }
 
 /// Find using src/ContractSource.sol:ContractName
-// TODO: Is there a better / more ergonomic way to get the artifacts given a project and a
-// path?
 fn get_artifact_from_path(
     project: &Project,
-    path: String,
-    name: String,
+    contract_path: String,
+    contract_name: String,
 ) -> eyre::Result<(Abi, CompactBytecode, CompactDeployedBytecode)> {
     // Get sources from the requested location
-    let abs_path = dunce::canonicalize(PathBuf::from(path))?;
-    let mut sources = Sources::new();
-    sources.insert(abs_path.clone(), Source::read(&abs_path)?);
+    let abs_path = dunce::canonicalize(PathBuf::from(contract_path))?;
 
-    // Get artifact from the contract name and sources
-    let mut config = SolFilesCache::builder().insert_files(sources.clone(), None)?;
-    config.files.entry(abs_path).and_modify(|f| f.artifacts = vec![name.clone()]);
+    let cache = SolFilesCache::read_joined(&project.paths)?;
 
-    let artifacts = config
-        .read_artifacts::<MinimalCombinedArtifacts>(project.artifacts_path())?
-        .into_values()
-        .collect::<Vec<_>>();
-
-    if artifacts.is_empty() {
-        eyre::bail!("could not find artifact")
-    } else if artifacts.len() > 1 {
-        eyre::bail!("duplicate contract name in the same source file")
-    }
-    let artifact = artifacts[0].clone();
+    // Read the artifact from disk
+    let artifact: CompactContractBytecode = cache.read_artifact(abs_path, &contract_name)?;
 
     Ok((
-        artifact.abi.ok_or_else(|| eyre::Error::msg(format!("abi not found for {}", name)))?,
+        artifact
+            .abi
+            .ok_or_else(|| eyre::Error::msg(format!("abi not found for {}", contract_name)))?,
         artifact
             .bytecode
-            .ok_or_else(|| eyre::Error::msg(format!("bytecode not found for {}", name)))?,
+            .ok_or_else(|| eyre::Error::msg(format!("bytecode not found for {}", contract_name)))?,
         artifact
             .deployed_bytecode
-            .ok_or_else(|| eyre::Error::msg(format!("bytecode not found for {}", name)))?,
+            .ok_or_else(|| eyre::Error::msg(format!("bytecode not found for {}", contract_name)))?,
     ))
 }

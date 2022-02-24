@@ -20,6 +20,7 @@
 /// use foundry_config::figment::value::*;
 /// #[derive(Default, Serialize)]
 /// struct MyArgs {
+///     #[serde(skip_serializing_if = "Option::is_none")]
 ///     root: Option<PathBuf>,
 /// }
 /// impl_figment_convert!(MyArgs);

@@ -367,6 +367,25 @@ mod tests {
     use ethers::utils::id;
     use sputnik::{ExitReason, ExitRevert, ExitSucceed};
 
+    // can bubble up sputnik errors
+    #[test]
+    fn test_oog() {
+        let mut evm = vm();
+        let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
+        let (addr, _, _, _) =
+            evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
+
+        evm.gas_limit = 0;
+        let err = evm
+            .call::<(), _, _>(Address::zero(), addr, "testGreeting()", (), 0.into(), None)
+            .unwrap_err();
+        let (reason, _) = match err {
+            crate::EvmError::Execution { reason, gas_used, .. } => (reason, gas_used),
+            _ => panic!("unexpected error variant"),
+        };
+        assert_eq!(reason, "Error(OutOfGas)");
+    }
+
     #[test]
     fn sputnik_can_call_vm_directly() {
         let evm = vm();

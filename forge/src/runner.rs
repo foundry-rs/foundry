@@ -75,6 +75,9 @@ pub struct TestResult {
     /// Debug Steps
     #[serde(skip)]
     pub debug_calls: Option<Vec<DebugArena>>,
+
+    /// Labeled addresses
+    pub labeled_addresses: BTreeMap<Address, String>,
 }
 
 impl TestResult {
@@ -164,9 +167,12 @@ pub struct ContractRunner<'a, B> {
 
     /// Contract execution info, (functions, events, errors)
     pub execution_info: MaybeExecutionInfo<'a>,
+    /// library contracts to be deployed before this contract
+    pub predeploy_libs: &'a [ethers::prelude::Bytes],
 }
 
 impl<'a, B: Backend> ContractRunner<'a, B> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         evm_opts: &'a EvmOpts,
         evm_cfg: &'a Config,
@@ -175,6 +181,7 @@ impl<'a, B: Backend> ContractRunner<'a, B> {
         code: ethers::prelude::Bytes,
         sender: Option<Address>,
         execution_info: MaybeExecutionInfo<'a>,
+        predeploy_libs: &'a [ethers::prelude::Bytes],
     ) -> Self {
         Self {
             evm_opts,
@@ -184,6 +191,7 @@ impl<'a, B: Backend> ContractRunner<'a, B> {
             code,
             sender: sender.unwrap_or_default(),
             execution_info,
+            predeploy_libs,
         }
     }
 }
@@ -204,6 +212,12 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
             self.evm_opts.verbosity > 2,
             self.evm_opts.debug,
         );
+
+        self.predeploy_libs.iter().for_each(|code| {
+            executor
+                .deploy(self.sender, code.clone(), 0u32.into())
+                .expect("couldn't deploy library");
+        });
 
         // deploy an instance of the contract inside the runner in the EVM
         let (addr, _, _, logs) =
@@ -326,6 +340,7 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
                         } else {
                             None
                         },
+                        labeled_addresses: evm.state().labels.clone(),
                     })
                 }
             };
@@ -380,6 +395,7 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
             traces,
             identified_contracts,
             debug_calls: if evm.state().debug_enabled { Some(evm.debug_calls()) } else { None },
+            labeled_addresses: evm.state().labels.clone(),
         })
     }
 
@@ -435,6 +451,7 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
                         } else {
                             None
                         },
+                        labeled_addresses: evm.state().labels.clone(),
                     })
                 }
             }
@@ -480,6 +497,9 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
         let mut reason = None;
         if let Some(err) = test_error {
             match err.test_error {
+                TestError::Abort(r) if r == "Too many global rejects".into() => {
+                    reason = Some(r.message().to_string());
+                }
                 TestError::Fail(_, value) => {
                     // skip the function selector when decoding
                     let args = func.decode_input(&value.as_ref()[4..])?;
@@ -508,6 +528,7 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
             traces,
             identified_contracts,
             debug_calls: if evm.state().debug_enabled { Some(evm.debug_calls()) } else { None },
+            labeled_addresses: evm.state().labels.clone(),
         })
     }
 
@@ -571,7 +592,7 @@ fn revert<S: Clone, E: Evm<S> + evm_adapters::Evm<S, ReturnReason = T>, T>(_evm:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::{Filter, BACKEND, COMPILED, EVM_OPTS};
+    use crate::test_helpers::{filter::Filter, BACKEND, COMPILED, EVM_OPTS};
     use ethers::solc::artifacts::CompactContractRef;
 
     mod sputnik {
@@ -585,8 +606,9 @@ mod tests {
         pub fn runner<'a>(
             abi: &'a Abi,
             code: ethers::prelude::Bytes,
+            libs: &'a mut Vec<ethers::prelude::Bytes>,
         ) -> ContractRunner<'a, MemoryBackend<'a>> {
-            ContractRunner::new(&*EVM_OPTS, &*CFG_NO_LMT, &*BACKEND, abi, code, None, None)
+            ContractRunner::new(&*EVM_OPTS, &*CFG_NO_LMT, &*BACKEND, abi, code, None, None, libs)
         }
 
         #[test]
@@ -600,13 +622,14 @@ mod tests {
             let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
 
             let (_, code, _) = compiled.into_parts_or_default();
-            let runner = runner(compiled.abi.as_ref().unwrap(), code);
+            let mut libs = vec![];
+            let runner = runner(compiled.abi.as_ref().unwrap(), code, &mut libs);
 
             let mut cfg = FuzzConfig::default();
             cfg.failure_persistence = None;
             let fuzzer = TestRunner::new(cfg);
-            let results =
-                runner.run_tests(&Filter::new("testGreeting", ".*"), Some(fuzzer), None).unwrap();
+            let filter = Filter::new("testGreeting", ".*", ".*");
+            let results = runner.run_tests(&filter, Some(fuzzer), None).unwrap();
             assert!(results["testGreeting()"].success);
             assert!(results["testGreeting(string)"].success);
             assert!(results["testGreeting(string,string)"].success);
@@ -616,13 +639,14 @@ mod tests {
         fn test_fuzzing_counterexamples() {
             let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
             let (_, code, _) = compiled.into_parts_or_default();
-            let runner = runner(compiled.abi.as_ref().unwrap(), code);
+            let mut libs = vec![];
+            let runner = runner(compiled.abi.as_ref().unwrap(), code, &mut libs);
 
             let mut cfg = FuzzConfig::default();
             cfg.failure_persistence = None;
             let fuzzer = TestRunner::new(cfg);
-            let results =
-                runner.run_tests(&Filter::new("testFuzz.*", ".*"), Some(fuzzer), None).unwrap();
+            let filter = Filter::new("testFuzz.*", ".*", ".*");
+            let results = runner.run_tests(&filter, Some(fuzzer), None).unwrap();
             for (_, res) in results {
                 assert!(!res.success);
                 assert!(res.counterexample.is_some());
@@ -633,7 +657,8 @@ mod tests {
         fn test_fuzzing_ok() {
             let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
             let (_, code, _) = compiled.into_parts_or_default();
-            let runner = runner(compiled.abi.as_ref().unwrap(), code);
+            let mut libs = vec![];
+            let runner = runner(compiled.abi.as_ref().unwrap(), code, &mut libs);
 
             let mut cfg = FuzzConfig::default();
             cfg.failure_persistence = None;
@@ -648,7 +673,8 @@ mod tests {
         fn test_fuzz_shrinking() {
             let compiled = COMPILED.find("GreeterTest").expect("could not find contract");
             let (_, code, _) = compiled.into_parts_or_default();
-            let runner = runner(compiled.abi.as_ref().unwrap(), code);
+            let mut libs = vec![];
+            let runner = runner(compiled.abi.as_ref().unwrap(), code, &mut libs);
 
             let mut cfg = FuzzConfig::default();
             cfg.failure_persistence = None;
@@ -684,9 +710,10 @@ mod tests {
 
     pub fn test_runner(compiled: CompactContractRef) {
         let (_, code, _) = compiled.into_parts_or_default();
-        let runner = sputnik::runner(compiled.abi.as_ref().unwrap(), code);
+        let mut libs = vec![];
+        let runner = sputnik::runner(compiled.abi.as_ref().unwrap(), code, &mut libs);
 
-        let res = runner.run_tests(&Filter::new(".*", ".*"), None, None).unwrap();
+        let res = runner.run_tests(&Filter::matches_all(), None, None).unwrap();
         assert!(!res.is_empty());
         assert!(res.iter().all(|(_, result)| result.success));
     }

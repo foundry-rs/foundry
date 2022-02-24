@@ -8,12 +8,13 @@ use ethers_core::{
         Abi, AbiParser, Token,
     },
     types::{transaction::eip2718::TypedTransaction, Chain, *},
-    utils::{self, keccak256},
+    utils::{self, keccak256, parse_units},
 };
 
 use ethers_etherscan::Client;
 use ethers_providers::{Middleware, PendingTransaction};
 use eyre::{Context, Result};
+use futures::future::join_all;
 use rustc_hex::{FromHexIter, ToHex};
 use std::str::FromStr;
 
@@ -61,7 +62,7 @@ where
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let sig = "function greeting(uint256 i) public returns (string)";
     /// let args = vec!["5".to_owned()];
-    /// let data = cast.call(Address::zero(), to, (sig, args), Chain::Mainnet, None).await?;
+    /// let data = cast.call(Address::zero(), to, (sig, args), Chain::Mainnet, None, None).await?;
     /// println!("{}", data);
     /// # Ok(())
     /// # }
@@ -73,10 +74,12 @@ where
         args: (&str, Vec<String>),
         chain: Chain,
         etherscan_api_key: Option<String>,
+        block: Option<BlockId>,
     ) -> Result<String> {
-        let (tx, func) =
-            self.build_tx(from, to, Some(args), None, None, None, chain, etherscan_api_key).await?;
-        let res = self.provider.call(&tx, None).await?;
+        let (tx, func) = self
+            .build_tx(from, to, Some(args), None, None, None, None, chain, etherscan_api_key, false)
+            .await?;
+        let res = self.provider.call(&tx, block).await?;
 
         // decode args into tokens
         let func = func.expect("no valid function signature was provided.");
@@ -133,7 +136,7 @@ where
     /// let gas = U256::from_str("200000").unwrap();
     /// let value = U256::from_str("1").unwrap();
     /// let nonce = U256::from_str("1").unwrap();
-    /// let data = cast.send(from, to, Some((sig, args)), Some(gas), Some(value), Some(nonce), Chain::Mainnet, None).await?;
+    /// let data = cast.send(from, to, Some((sig, args)), Some(gas), None, Some(value), Some(nonce), Chain::Mainnet, None, false).await?;
     /// println!("{}", *data);
     /// # Ok(())
     /// # }
@@ -145,13 +148,27 @@ where
         to: T,
         args: Option<(&str, Vec<String>)>,
         gas: Option<U256>,
+        gas_price: Option<U256>,
         value: Option<U256>,
         nonce: Option<U256>,
         chain: Chain,
         etherscan_api_key: Option<String>,
+        legacy: bool,
     ) -> Result<PendingTransaction<'_, M::Provider>> {
-        let (tx, _) =
-            self.build_tx(from, to, args, gas, value, nonce, chain, etherscan_api_key).await?;
+        let (tx, _) = self
+            .build_tx(
+                from,
+                to,
+                args,
+                gas,
+                gas_price,
+                value,
+                nonce,
+                chain,
+                etherscan_api_key,
+                legacy,
+            )
+            .await?;
         let res = self.provider.send_transaction(tx, None).await?;
 
         Ok::<_, eyre::Error>(res)
@@ -212,8 +229,9 @@ where
         chain: Chain,
         etherscan_api_key: Option<String>,
     ) -> Result<U256> {
-        let (tx, _) =
-            self.build_tx(from, to, args, None, value, None, chain, etherscan_api_key).await?;
+        let (tx, _) = self
+            .build_tx(from, to, args, None, None, value, None, chain, etherscan_api_key, false)
+            .await?;
         let res = self.provider.estimate_gas(&tx).await?;
 
         Ok::<_, eyre::Error>(res)
@@ -226,10 +244,12 @@ where
         to: T,
         args: Option<(&str, Vec<String>)>,
         gas: Option<U256>,
+        gas_price: Option<U256>,
         value: Option<U256>,
         nonce: Option<U256>,
         chain: Chain,
         etherscan_api_key: Option<String>,
+        legacy: bool,
     ) -> Result<(TypedTransaction, Option<ethers_core::abi::Function>)> {
         let from = match from.into() {
             NameOrAddress::Name(ref ens_name) => self.provider.resolve_name(ens_name).await?,
@@ -245,26 +265,37 @@ where
         };
 
         // make the call
-        let mut tx: TypedTransaction = if chain.is_legacy() {
+        let mut tx: TypedTransaction = if chain.is_legacy() || legacy {
             TransactionRequest::new().from(from).to(to).into()
         } else {
             Eip1559TransactionRequest::new().from(from).to(to).into()
         };
 
         let func = if let Some((sig, args)) = args {
+            let args = resolve_name_args(&args, &self.provider).await;
+
             let func = if sig.contains('(') {
                 get_func(sig)?
+            } else if sig.starts_with("0x") {
+                // if only calldata is provided, returning a dummy function
+                get_func("x()")?
             } else {
                 get_func_etherscan(
                     sig,
                     to,
-                    args.clone(),
+                    &args,
                     chain,
                     etherscan_api_key.expect("Must set ETHERSCAN_API_KEY"),
                 )
                 .await?
             };
-            let data = encode_args(&func, &args)?;
+
+            let data = if sig.starts_with("0x") {
+                hex::decode(strip_0x(sig))?
+            } else {
+                encode_args(&func, &args)?
+            };
+
             tx.set_data(data.into());
             Some(func)
         } else {
@@ -273,6 +304,10 @@ where
 
         if let Some(gas) = gas {
             tx.set_gas(gas);
+        }
+
+        if let Some(gas_price) = gas_price {
+            tx.set_gas_price(gas_price)
         }
 
         if let Some(value) = value {
@@ -360,7 +395,7 @@ where
     }
 
     pub async fn base_fee<T: Into<BlockId>>(&self, block: T) -> Result<U256> {
-        Ok(Cast::block_field_as_num(self, block, String::from("baseFeePerGas")).await?)
+        Cast::block_field_as_num(self, block, String::from("baseFeePerGas")).await
     }
 
     pub async fn age<T: Into<BlockId>>(&self, block: T) -> Result<String> {
@@ -368,6 +403,10 @@ where
             Cast::block_field_as_num(self, block, String::from("timestamp")).await?.to_string();
         let datetime = NaiveDateTime::from_timestamp(timestamp_str.parse::<i64>().unwrap(), 0);
         Ok(datetime.format("%a %b %e %H:%M:%S %Y").to_string())
+    }
+
+    pub async fn timestamp<T: Into<BlockId>>(&self, block: T) -> Result<U256> {
+        Cast::block_field_as_num(self, block, "timestamp".to_string()).await
     }
 
     pub async fn chain(&self) -> Result<&str> {
@@ -522,6 +561,66 @@ where
             if to_json { serde_json::to_string(&transaction)? } else { to_table(transaction) };
         Ok(transaction)
     }
+
+    /// ```no_run
+    /// use cast::Cast;
+    /// use ethers_providers::{Provider, Http};
+    /// use std::convert::TryFrom;
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
+    /// let cast = Cast::new(provider);
+    /// let tx_hash = "0xf8d1713ea15a81482958fb7ddf884baee8d3bcc478c5f2f604e008dc788ee4fc";
+    /// let receipt = cast.receipt(tx_hash.to_string(), None, 1, false, false).await?;
+    /// println!("{}", receipt);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn receipt(
+        &self,
+        tx_hash: String,
+        field: Option<String>,
+        confs: usize,
+        cast_async: bool,
+        to_json: bool,
+    ) -> Result<String> {
+        let tx_hash = H256::from_str(&tx_hash)?;
+
+        // try to get the receipt
+        let receipt = self.provider.get_transaction_receipt(tx_hash).await?;
+
+        // if the async flag is provided, immediately exit if no tx is found,
+        // otherwise try to poll for it
+        let receipt = if cast_async {
+            match receipt {
+                Some(inner) => inner,
+                None => return Ok("receipt not found".to_string()),
+            }
+        } else {
+            match receipt {
+                Some(inner) => inner,
+                None => {
+                    let tx = PendingTransaction::new(tx_hash, self.provider.provider());
+                    match tx.confirmations(confs).await? {
+                        Some(inner) => inner,
+                        None => return Ok("receipt not found when polling pending tx. was the transaction dropped from the mempool?".to_string())
+                    }
+                }
+            }
+        };
+
+        let receipt = if let Some(ref field) = field {
+            serde_json::to_value(&receipt)?
+                .get(field)
+                .cloned()
+                .ok_or_else(|| eyre::eyre!("field {} not found", field))?
+        } else {
+            serde_json::to_value(&receipt)?
+        };
+
+        let receipt = if to_json { serde_json::to_string(&receipt)? } else { to_table(receipt) };
+        Ok(receipt)
+    }
 }
 
 pub struct InterfaceSource {
@@ -633,6 +732,24 @@ impl SimpleCast {
             ascii.push(letter.unwrap() as char);
         }
         Ok(ascii)
+    }
+
+    /// Converts fixed point number into specified number of decimals
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    /// use ethers_core::types::U256;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(Cast::from_fix(0, "10")?, 10.into());
+    ///     assert_eq!(Cast::from_fix(1, "1.0")?, 10.into());
+    ///     assert_eq!(Cast::from_fix(2, "0.10")?, 10.into());
+    ///     assert_eq!(Cast::from_fix(3, "0.010")?, 10.into());
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn from_fix(decimals: u32, value: &str) -> Result<U256> {
+        Ok(parse_units(value, decimals).unwrap())
     }
 
     /// Converts hex input to decimal
@@ -819,6 +936,44 @@ impl SimpleCast {
         Ok(format!("0x{}{}", "0".repeat(64 - num_hex.len()), num_hex))
     }
 
+    /// Converts a number into int256 hex string with 0x prefix
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(Cast::to_int256("0")?, "0x0000000000000000000000000000000000000000000000000000000000000000");
+    ///     assert_eq!(Cast::to_int256("100")?, "0x0000000000000000000000000000000000000000000000000000000000000064");
+    ///     assert_eq!(Cast::to_int256("-100")?, "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff9c");
+    ///     assert_eq!(Cast::to_int256("192038293923")?, "0x0000000000000000000000000000000000000000000000000000002cb65fd1a3");
+    ///     assert_eq!(Cast::to_int256("-192038293923")?, "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffd349a02e5d");
+    ///     assert_eq!(
+    ///         Cast::to_int256("57896044618658097711785492504343953926634992332820282019728792003956564819967")?,
+    ///         "0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    ///     );
+    ///     assert_eq!(
+    ///         Cast::to_int256("-57896044618658097711785492504343953926634992332820282019728792003956564819968")?,
+    ///         "0x8000000000000000000000000000000000000000000000000000000000000000"
+    ///     );
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn to_int256(value: &str) -> Result<String> {
+        let (sign, value) = match value.as_bytes().get(0) {
+            Some(b'+') => (Sign::Positive, &value[1..]),
+            Some(b'-') => (Sign::Negative, &value[1..]),
+            _ => (Sign::Positive, value),
+        };
+
+        let mut num = U256::from_str_radix(value, 10)?;
+        if matches!(sign, Sign::Negative) {
+            num = (!num).overflowing_add(U256::one()).0;
+        }
+        let num_hex = format!("{:x}", num);
+        Ok(format!("0x{}{}", "0".repeat(64 - num_hex.len()), num_hex))
+    }
+
     /// Converts an eth amount into a specified unit
     ///
     /// ```
@@ -950,12 +1105,20 @@ impl SimpleCast {
     /// fn main() -> eyre::Result<()> {
     ///     assert_eq!(Cast::keccak("foo")?, "0x41b1a0649752af1b28b3dc29a1556eee781e4a4c3a1f7f53f90fa834de098c4d");
     ///     assert_eq!(Cast::keccak("123abc")?, "0xb1f1c74a1ba56f07a892ea1110a39349d40f66ca01d245e704621033cb7046a4");
+    ///     assert_eq!(Cast::keccak("0x12")?, "0x5fa2358263196dbbf23d1ca7a509451f7a2f64c15837bfbb81298b1e3e24e4fa");
+    ///     assert_eq!(Cast::keccak("12")?, "0x7f8b6b088b6d74c2852fc86c796dca07b44eed6fb3daf5e6b59f7c364db14528");
     ///
     ///     Ok(())
     /// }
     /// ```
     pub fn keccak(data: &str) -> Result<String> {
-        let hash: String = keccak256(data.as_bytes()).to_hex();
+        let hash: String = match data.as_bytes() {
+            // If has a 0x prefix, read it as hexdata.
+            // If has no 0x prefix, read it as text
+            [b'0', b'x', rest @ ..] => keccak256(hex::decode(rest)?).to_hex(),
+            _ => keccak256(data).to_hex(),
+        };
+
         Ok(format!("0x{}", hash))
     }
 
@@ -1046,10 +1209,50 @@ impl SimpleCast {
 
         Ok(code)
     }
+    /// Prints the slot number for the specified mapping type and input data
+    /// Uses abi_encode to pad the data to 32 bytes.
+    /// For value types v, slot number of v is keccak256(concat(h(v) , p)) where h is the padding
+    /// function and p is slot number of the mapping.
+    /// ```
+    /// # use cast::SimpleCast as Cast;
+    ///
+    /// # fn main() -> eyre::Result<()> {
+    ///
+    ///    assert_eq!(Cast::index("address", "uint256" ,"0xD0074F4E6490ae3f888d1d4f7E3E43326bD3f0f5" ,"2").unwrap().as_str(),"0x9525a448a9000053a4d151336329d6563b7e80b24f8e628e95527f218e8ab5fb");
+    ///    assert_eq!(Cast::index("uint256", "uint256" ,"42" ,"6").unwrap().as_str(),"0xfc808b0f31a1e6b9cf25ff6289feae9b51017b392cc8e25620a94a38dcdafcc1");
+    /// #    Ok(())
+    /// # }
+    /// ```
+    pub fn index(
+        from_type: &str,
+        to_type: &str,
+        from_value: &str,
+        slot_number: &str,
+    ) -> Result<String> {
+        let sig = format!("x({},{})", from_type, to_type);
+        let encoded = Self::abi_encode(&sig, &[from_value, slot_number])?;
+        let location: String = Self::keccak(&encoded)?;
+        Ok(location)
+    }
 }
 
 fn strip_0x(s: &str) -> &str {
     s.strip_prefix("0x").unwrap_or(s)
+}
+
+async fn resolve_name_args<M: Middleware>(args: &[String], provider: &M) -> Vec<String> {
+    join_all(args.iter().map(|arg| async {
+        if arg.contains('.') {
+            let addr = provider.resolve_name(arg).await;
+            match addr {
+                Ok(addr) => format!("0x{}", hex::encode(addr.as_bytes())),
+                Err(_) => arg.to_string(),
+            }
+        } else {
+            arg.to_string()
+        }
+    }))
+    .await
 }
 
 #[cfg(test)]

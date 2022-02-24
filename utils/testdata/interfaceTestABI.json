@@ -1,44 +1,64 @@
 [
   {
-    "constant": false,
+    "anonymous": false,
     "inputs": [
       {
+        "indexed": false,
+        "internalType": "address",
+        "name": "x",
+        "type": "address"
+      }
+    ],
+    "name": "Foo",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "x",
+        "type": "address"
+      }
+    ],
+    "name": "Bar",
+    "type": "event"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint8",
         "name": "n",
         "type": "uint8"
       },
       {
+        "internalType": "address",
         "name": "x",
         "type": "address"
       }
     ],
     "name": "guess",
     "outputs": [],
-    "payable": true,
     "stateMutability": "payable",
     "type": "function"
   },
   {
-    "constant": true,
     "inputs": [],
     "name": "isComplete",
     "outputs": [
       {
+        "internalType": "bool",
         "name": "example",
         "type": "bool"
       },
       {
+        "internalType": "string",
         "name": "",
         "type": "string"
       }
     ],
-    "payable": false,
     "stateMutability": "view",
     "type": "function"
-  },
-  {
-    "inputs": [],
-    "payable": true,
-    "stateMutability": "payable",
-    "type": "constructor"
   }
 ]

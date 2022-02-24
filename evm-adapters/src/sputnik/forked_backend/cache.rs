@@ -21,7 +21,7 @@ use std::{
     },
 };
 
-use crate::blocking_provider::RuntimeOrHandle;
+use foundry_utils::RuntimeOrHandle;
 
 /// A basic in memory cache (address -> Account)
 pub type MemCache = BTreeMap<H160, MemoryAccount>;
