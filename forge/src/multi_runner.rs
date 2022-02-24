@@ -17,7 +17,7 @@ use proptest::test_runner::TestRunner;
 
 use eyre::Result;
 use rayon::prelude::*;
-use std::{collections::BTreeMap, marker::Sync};
+use std::{collections::BTreeMap, marker::Sync, sync::mpsc::Sender};
 
 /// Builder used for instantiating the multi-contract runner
 #[derive(Debug, Default)]
@@ -166,8 +166,6 @@ impl MultiContractRunnerBuilder {
     }
 }
 
-pub type TestResultStreamFn = Box<dyn Fn(String, BTreeMap<String, TestResult>) + Sync + Send>;
-
 /// A multi contract runner receives a set of contracts deployed in an EVM instance and proceeds
 /// to run all test functions in these contracts.
 pub struct MultiContractRunner {
@@ -196,7 +194,7 @@ impl MultiContractRunner {
     pub fn test(
         &mut self,
         filter: &(impl TestFilter + Send + Sync),
-        stream_result: Option<TestResultStreamFn>,
+        stream_result: Option<Sender<(String, BTreeMap<String, TestResult>)>>,
     ) -> Result<BTreeMap<String, BTreeMap<String, TestResult>>> {
         let contracts = std::mem::take(&mut self.contracts);
         let vicinity = self.evm_opts.vicinity()?;
@@ -223,9 +221,9 @@ impl MultiContractRunner {
             .filter_map(
                 |(name, result)| if result.is_empty() { None } else { Some((name, result)) },
             )
-            .map(|(name, result)| {
+            .map_with(stream_result, |stream_result, (name, result)| {
                 if let Some(stream_result) = stream_result.as_ref() {
-                    stream_result(name.clone(), result.clone());
+                    stream_result.send((name.clone(), result.clone())).unwrap();
                 }
                 (name, result)
             })

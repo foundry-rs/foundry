@@ -2,7 +2,7 @@ mod runner;
 pub use runner::{ContractRunner, TestKind, TestKindGas, TestResult};
 
 mod multi_runner;
-pub use multi_runner::{MultiContractRunner, MultiContractRunnerBuilder, TestResultStreamFn};
+pub use multi_runner::{MultiContractRunner, MultiContractRunnerBuilder};
 
 pub trait TestFilter {
     fn matches_test(&self, test_name: impl AsRef<str>) -> bool;
