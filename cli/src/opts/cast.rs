@@ -30,7 +30,7 @@ pub enum Subcommands {
     ToHex { decimal: Option<String> },
     #[clap(name = "--from-bin")]
     #[clap(about = "Convert binary data into hex data")]
-    FromBin {},
+    FromBin,
     #[clap(name = "--to-hexdata")]
     #[clap(about = r#"[<hex>|</path>|<@tag>]
     Output lowercase, 0x-prefixed hex, converting from the
