@@ -281,7 +281,7 @@ pub enum Subcommands {
     },
     #[clap(name = "abi-encode")]
     #[clap(
-        about = "ABI encodes the given arguments with the function signature, excluidng the selector"
+        about = "ABI encodes the given arguments with the function signature, excluding the selector"
     )]
     AbiEncode {
         #[clap(help = "the function signature")]
