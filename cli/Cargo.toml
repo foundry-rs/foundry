@@ -64,6 +64,7 @@ foundry-utils = { path = "./../utils", features = ["test"] }
 foundry-cli-test-utils = { path = "./test-utils" }
 pretty_assertions = "1.0.0"
 toml = "0.5"
+criterion = "0.3.5"
 
 [features]
 default = ["sputnik-evm", "rustls"]
@@ -88,3 +89,8 @@ doc = false
 name = "forge"
 path = "src/forge.rs"
 doc = false
+
+[[bench]]
+name = "forge-test"
+path = "bench/forge-test.rs"
+harness = false

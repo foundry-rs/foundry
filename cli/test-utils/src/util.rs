@@ -267,6 +267,10 @@ pub struct TestCommand {
 }
 
 impl TestCommand {
+    pub fn project(&self) -> &TestProject {
+        &self.project
+    }
+
     /// Returns a mutable reference to the underlying command.
     pub fn cmd(&mut self) -> &mut Command {
         &mut self.cmd
