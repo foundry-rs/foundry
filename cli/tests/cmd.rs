@@ -282,11 +282,11 @@ contract Greeter {}
     cmd.arg("build");
 
     assert!(cmd.stdout_lossy().ends_with(
-        "compiling...
+        "Compiling...
 Compiling 1 files with 0.8.10
 Compilation finished successfully
 Compiler run successful
-success.
+Success
 ",
     ));
 });
@@ -335,11 +335,11 @@ library FooLib {
     cmd.arg("build");
 
     assert_eq!(
-        "compiling...
+        "Compiling...
 Compiling 2 files with 0.8.10
 Compilation finished successfully
 Compiler run successful
-success.
+Success
 ",
         cmd.stdout_lossy()
     );
@@ -380,11 +380,11 @@ contract Foo {
     prj.write_config(config);
 
     assert!(cmd.stdout_lossy().ends_with(
-        "compiling...
+        "Compiling...
 Compiling 1 files with 0.8.10
 Compilation finished successfully
 Compiler run successful
-success.
+Success
 ",
     ));
 });
@@ -412,10 +412,10 @@ contract Demo {
     let output = cmd.stdout_lossy();
     assert_eq!(
         format!(
-            "compiling...
+            "Compiling...
 Compiling 1 files with 0.8.10
 Compilation finished successfully
-success.
+Success
 {}
 Gas Used: 1751
 == Logs ==
