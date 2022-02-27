@@ -97,6 +97,7 @@ pub struct WatchArgs {
         short = 'w',
         long = "watch",
         value_name = "path",
+        min_values = 0,
         multiple_values = true,
         multiple_occurrences = false
     )]
