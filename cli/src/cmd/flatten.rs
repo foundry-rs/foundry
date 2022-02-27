@@ -79,6 +79,7 @@ impl Cmd for FlattenArgs {
             force: false,
             hardhat,
             libraries: vec![],
+            watch: Default::default(),
         };
 
         let config = Config::from(&build_args);

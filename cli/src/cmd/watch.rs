@@ -6,7 +6,7 @@ use watchexec::{
     action::{Action, Outcome, PreSpawn},
     command::Shell,
     config::{InitConfig, RuntimeConfig},
-    event::ProcessEnd,
+    event::{Event, ProcessEnd},
     handler::SyncFnHandler,
     paths::summarise_events_to_env,
     signal::source::MainSignal,
@@ -15,17 +15,22 @@ use watchexec::{
 
 use crate::utils;
 
-pub fn watch(args: &WatchArgs) -> eyre::Result<()> {
+pub async fn watch(args: &WatchArgs) -> eyre::Result<()> {
     let init = init()?;
     let runtime = runtime(args)?;
     // runtime.filterer(filterer::new(&args).await?);
 
     let wx = Watchexec::new(init, runtime)?;
 
+    // start immediately
+    wx.send_event(Event::default()).await?;
+
+    wx.main().await??;
+
     Ok(())
 }
 
-#[derive(Debug, Clone, Parser)]
+#[derive(Debug, Clone, Parser, Default)]
 pub struct WatchArgs {
     /// File updates debounce delay
     ///
@@ -72,7 +77,7 @@ pub struct WatchArgs {
         // forbid_empty_values = true,
         // min_values = 1
     )]
-    pub watch: Vec<PathBuf>,
+    pub watch: Option<Vec<PathBuf>>,
 }
 
 /// Returns the Initialisation configuration for [`Watchexec`].
@@ -90,7 +95,7 @@ pub fn init() -> eyre::Result<InitConfig> {
 pub fn runtime(args: &WatchArgs) -> eyre::Result<RuntimeConfig> {
     let mut config = RuntimeConfig::default();
 
-    config.pathset(&args.watch);
+    config.pathset(args.watch.clone().unwrap_or_default());
 
     if let Some(delay) = &args.delay {
         config.action_throttle(utils::parse_delay(delay)?);

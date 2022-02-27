@@ -32,12 +32,10 @@ fn main() -> eyre::Result<()> {
             cmd.run()?;
         }
         Subcommands::VerifyContract(args) => {
-            let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
-            rt.block_on(cmd::verify::run_verify(&args))?;
+            utils::block_on(cmd::verify::run_verify(&args))?;
         }
         Subcommands::VerifyCheck(args) => {
-            let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
-            rt.block_on(cmd::verify::run_verify_check(&args))?;
+            utils::block_on(cmd::verify::run_verify_check(&args))?;
         }
         Subcommands::Create(cmd) => {
             cmd.run()?;

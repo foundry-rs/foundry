@@ -1,4 +1,4 @@
-use std::{str::FromStr, time::Duration};
+use std::{future::Future, str::FromStr, time::Duration};
 
 use ethers::{solc::EvmVersion, types::U256};
 #[cfg(feature = "sputnik-evm")]
@@ -75,6 +75,7 @@ pub fn parse_u256(s: &str) -> eyre::Result<U256> {
     Ok(if s.starts_with("0x") { U256::from_str(s)? } else { U256::from_dec_str(s)? })
 }
 
+/// Parses a `Duration` from a &str
 pub fn parse_delay(delay: &str) -> eyre::Result<Duration> {
     let delay = if delay.ends_with("ms") {
         let d: u64 = delay.trim_end_matches("ms").parse()?;
@@ -89,6 +90,13 @@ pub fn parse_delay(delay: &str) -> eyre::Result<Duration> {
         Duration::from_millis(delay as u64)
     };
     Ok(delay)
+}
+
+/// Runs the `future` in a new [`tokio::runtime::Runtime`]
+#[allow(unused)]
+pub fn block_on<F: Future>(future: F) -> F::Output {
+    let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
+    rt.block_on(future)
 }
 
 /// Conditionally print a message

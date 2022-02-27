@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use crate::{cmd::Cmd, opts::forge::CompilerArgs};
 
+use crate::cmd::watch::WatchArgs;
 use clap::{Parser, ValueHint};
 use ethers::solc::remappings::Remapping;
 use foundry_config::{
@@ -149,6 +150,10 @@ pub struct BuildArgs {
 
     #[clap(help = "add linked libraries", long, env = "DAPP_LIBRARIES")]
     pub libraries: Vec<String>,
+
+    #[clap(flatten)]
+    #[serde(skip)]
+    pub watch: WatchArgs,
 }
 
 impl Cmd for BuildArgs {
@@ -168,6 +173,11 @@ impl BuildArgs {
     pub fn project(&self) -> eyre::Result<Project> {
         let config: Config = self.into();
         Ok(config.project()?)
+    }
+
+    /// Returns whether `BuildArgs` was configured with `--watch`
+    pub fn is_watch(&self) -> bool {
+        self.watch.watch.is_some()
     }
 
     /// Returns the remappings to add to the config
