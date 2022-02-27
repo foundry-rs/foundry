@@ -26,7 +26,11 @@ fn main() -> eyre::Result<()> {
             cmd.run()?;
         }
         Subcommands::Build(cmd) => {
-            cmd.run()?;
+            if cmd.is_watch() {
+                utils::block_on(crate::cmd::watch::watch_build(cmd))?;
+            } else {
+                cmd.run()?;
+            }
         }
         Subcommands::Run(cmd) => {
             cmd.run()?;
