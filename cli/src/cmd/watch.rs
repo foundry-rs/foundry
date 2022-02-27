@@ -119,8 +119,7 @@ pub fn init() -> eyre::Result<InitConfig> {
 pub fn runtime(args: &WatchArgs) -> eyre::Result<RuntimeConfig> {
     let mut config = RuntimeConfig::default();
 
-    // config.pathset(args.watch.clone().unwrap_or_default());
-    config.pathset(vec!["/Users/Matthias/git/rust/foundry/cli"]);
+    config.pathset(args.watch.clone().unwrap_or_default());
 
     if let Some(delay) = &args.delay {
         config.action_throttle(utils::parse_delay(delay)?);
@@ -223,8 +222,6 @@ pub fn runtime(args: &WatchArgs) -> eyre::Result<RuntimeConfig> {
 
         fut
     });
-
-    config.command(["ls"]);
 
     config.on_pre_spawn(move |prespawn: PreSpawn| async move {
         let envs = summarise_events_to_env(prespawn.events.iter());
