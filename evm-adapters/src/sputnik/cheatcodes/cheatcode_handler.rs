@@ -569,6 +569,16 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
         Ok(())
     }
 
+    fn spoof(
+        &mut self,
+        single_call: bool,
+        msg_sender: Address,
+        caller: Address,
+        origin: Option<Address>,
+    ) -> Result<(), Capture<(ExitReason, Vec<u8>), Infallible>> {
+        return self.prank(single_call, msg_sender, caller, origin);
+    }
+
     fn expect_revert(
         &mut self,
         inner: Vec<u8>,
@@ -756,6 +766,13 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 self.add_debug(CheatOp::PRANK);
                 let caller = inner.0;
                 if let Err(err) = self.prank(true, msg_sender, caller, None) {
+                    return err
+                }
+            }
+            HEVMCalls::Spoof(inner) => {
+                self.add_debug(CheatOp::SPOOF);
+                let caller = inner.0;
+                if let Err(err) = self.spoof(true, msg_sender, caller, None) {
                     return err
                 }
             }

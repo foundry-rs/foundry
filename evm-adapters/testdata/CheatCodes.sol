@@ -24,6 +24,8 @@ interface Hevm {
     function ffi(string[] calldata) external returns (bytes memory);
     // Sets the *next* call's msg.sender to be the input address
     function prank(address) external;
+    // Semantic alias of prank(). Sets the *next* call's msg.sender to be the input address
+    function spoof(address) external;
     // Sets all subsequent calls' msg.sender to be the input address until `stopPrank` is called
     function startPrank(address) external;
     // Sets the *next* call's msg.sender to be the input address, and the tx.origin to be the second input

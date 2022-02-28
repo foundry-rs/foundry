@@ -60,6 +60,7 @@ ethers::contract::abigen!(
             addr(uint256)(address)
             sign(uint256,bytes32)(uint8,bytes32,bytes32)
             prank(address)
+            spoof(address)
             startPrank(address)
             prank(address,address)
             startPrank(address,address)
