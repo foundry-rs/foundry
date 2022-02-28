@@ -18,6 +18,7 @@ use foundry_config::{
     find_project_root_path, remappings_from_env_var, Config,
 };
 use serde::Serialize;
+use watchexec::config::{InitConfig, RuntimeConfig};
 
 // Loads project's figment and merges the build cli arguments into it
 impl<'a> From<&'a BuildArgs> for Figment {
@@ -178,6 +179,25 @@ impl BuildArgs {
     /// Returns whether `BuildArgs` was configured with `--watch`
     pub fn is_watch(&self) -> bool {
         self.watch.watch.is_some()
+    }
+
+    /// Returns the [`watchexec::InitConfig`] and [`watchexec::RuntimeConfig`] necessary to
+    /// bootstrap a new [`watchexe::Watchexec`] loop.
+    pub(crate) fn watchexec_config(&self) -> eyre::Result<(InitConfig, RuntimeConfig)> {
+        use crate::cmd::watch;
+        let init = watch::init()?;
+        let mut runtime = watch::runtime(&self.watch)?;
+
+        // contains all the arguments `--watch p1, p2, p3`
+        let has_paths =
+            self.watch.watch.as_ref().map(|paths| !paths.is_empty()).unwrap_or_default();
+
+        if !has_paths {
+            // listen for changes in the project's src dir
+            let config = Config::from(self);
+            runtime.pathset(Some(config.src));
+        }
+        Ok((init, runtime))
     }
 
     /// Returns the remappings to add to the config

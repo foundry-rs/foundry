@@ -1,9 +1,9 @@
 //! Watch mode support
 
-use crate::cmd::build::BuildArgs;
+use crate::cmd::{build::BuildArgs, test::TestArgs};
 use clap::Parser;
-use foundry_config::Config;
-use std::{convert::Infallible, path::PathBuf};
+use regex::Regex;
+use std::{convert::Infallible, ffi::OsStr, path::PathBuf, str::FromStr, sync::Arc};
 use watchexec::{
     action::{Action, Outcome, PreSpawn},
     command::Shell,
@@ -19,38 +19,103 @@ use crate::utils;
 
 /// Executes a [`Watchexec`] that listens for changes in the project's src dir and reruns `forge
 /// build`
+pub async fn watch_build(args: BuildArgs) -> eyre::Result<()> {
+    let (init, mut runtime) = args.watchexec_config()?;
+    let cmd = cmd_args(args.watch.watch.as_ref().map(|paths| paths.len()).unwrap_or_default());
+    runtime.command(cmd.clone());
 
-// TODO in order to support this dynamically in forge test (change the command to run based on
-// changed paths) we need to create an additional channel, observe the `Action` send a message to
-// the channel rx and reconfigure the RuntimeConfig.
-pub async fn watch_build(mut args: BuildArgs) -> eyre::Result<()> {
-    let init = init()?;
-    let mut runtime = runtime(&args.watch)?;
+    let wx = Watchexec::new(init, runtime.clone())?;
+    on_action(args.watch, runtime, Arc::clone(&wx), cmd, (), |_| {});
 
-    // contains all the arguments `--watch p1, p2, p3`
-    let paths = args.watch.watch.take().unwrap_or_default();
-
-    if paths.is_empty() {
-        // listen for changes in the project's src dir
-        let config = Config::from(&args);
-        runtime.pathset(Some(config.src));
-    }
-
-    // all the forge arguments including path to forge bin
-    let mut cmd_args: Vec<_> = std::env::args().collect();
-
-    // need to remove the `--watch` flag from the args for the Watchexec command
-    if let Some(pos) = cmd_args.iter().position(|arg| arg == "--watch" || arg == "-w") {
-        cmd_args.drain(pos..=(pos + paths.len()));
-    }
-    runtime.command(cmd_args);
-
-    let wx = Watchexec::new(init, runtime)?;
-    // start immediately
+    // start executing the command immediately
     wx.send_event(Event::default()).await?;
     wx.main().await??;
 
     Ok(())
+}
+
+/// Executes a [`Watchexec`] that listens for changes in the project's src dir and reruns `forge
+/// test`
+pub async fn watch_test(args: TestArgs) -> eyre::Result<()> {
+    let (init, mut runtime) = args.build_args().watchexec_config()?;
+    let cmd = cmd_args(
+        args.build_args().watch.watch.as_ref().map(|paths| paths.len()).unwrap_or_default(),
+    );
+    runtime.command(cmd.clone());
+    let wx = Watchexec::new(init, runtime.clone())?;
+
+    // marker to check whether we can safely override the command
+    let has_conflicting_pattern_args =
+        args.filter().pattern.is_some() || args.filter().test_pattern.is_some();
+    on_action(
+        args.build_args().watch.clone(),
+        runtime,
+        Arc::clone(&wx),
+        cmd,
+        has_conflicting_pattern_args,
+        on_test,
+    );
+
+    // start executing the command immediately
+    wx.send_event(Event::default()).await?;
+    wx.main().await??;
+
+    Ok(())
+}
+
+/// The `on_action` hook for `forge test --watch`
+fn on_test(action: OnActionState<bool>) {
+    let OnActionState { args, runtime, action, wx, cmd, other } = action;
+    let has_conflicting_pattern_args = other;
+    if has_conflicting_pattern_args {
+        // can't set conflicting arguments
+        return
+    }
+
+    let mut cmd = cmd.clone();
+    // get changed files and update command accordingly
+    let sol_files: Vec<_> = action
+        .events
+        .iter()
+        .flat_map(|e| e.paths())
+        .filter(|(path, _)| path.extension() == Some(&OsStr::new("sol")))
+        .filter_map(|(path, _)| path.to_str())
+        .collect();
+
+    if sol_files.is_empty() {
+        return
+    }
+
+    // replace `--match-path` | `-mp` argument
+    if let Some(pos) = cmd.iter().position(|arg| arg == "--match-path" || arg == "-mp") {
+        // --match-path requires 1 argument
+        cmd.drain(pos..=(pos + 1));
+    }
+
+    // append `--match-path` regex
+    let re_str = format!("({})", sol_files.join("|"));
+    if let Ok(re) = Regex::from_str(&re_str) {
+        let mut new_cmd = cmd.clone();
+        new_cmd.push("--match-path".to_string());
+        new_cmd.push(re.to_string());
+        // reconfigure the executor with a new runtime
+        let mut config = runtime.clone();
+        config.command(new_cmd);
+        // re-register the action
+        on_action(args.clone(), config, wx, cmd, has_conflicting_pattern_args, on_test);
+    } else {
+        eprintln!("failed to parse new regex {}", re_str);
+    }
+}
+
+/// Returns the env args without the `--watch` flag from the args for the Watchexec command
+fn cmd_args(num: usize) -> Vec<String> {
+    // all the forge arguments including path to forge bin
+    let mut cmd_args: Vec<_> = std::env::args().collect();
+    if let Some(pos) = cmd_args.iter().position(|arg| arg == "--watch" || arg == "-w") {
+        cmd_args.drain(pos..=(pos + num));
+    }
+    cmd_args
 }
 
 #[derive(Debug, Clone, Parser, Default)]
@@ -115,34 +180,37 @@ pub fn init() -> eyre::Result<InitConfig> {
     Ok(config)
 }
 
-/// Returns the Runtime configuration for [`Watchexec`].
-pub fn runtime(args: &WatchArgs) -> eyre::Result<RuntimeConfig> {
-    let mut config = RuntimeConfig::default();
+/// Contains all necessary context to reconfigure a [`Watchexec`] on the fly
+struct OnActionState<'a, T: Clone> {
+    args: &'a WatchArgs,
+    runtime: &'a RuntimeConfig,
+    action: &'a Action,
+    cmd: &'a Vec<String>,
+    wx: Arc<Watchexec>,
+    // additional context to inject
+    other: T,
+}
 
-    config.pathset(args.watch.clone().unwrap_or_default());
-
-    if let Some(delay) = &args.delay {
-        config.action_throttle(utils::parse_delay(delay)?);
-    }
-
-    config.command_shell(if let Some(s) = &args.shell {
-        if s.eq_ignore_ascii_case("powershell") {
-            Shell::Powershell
-        } else if s.eq_ignore_ascii_case("none") {
-            Shell::None
-        } else if s.eq_ignore_ascii_case("cmd") {
-            cmd_shell(s.into())
-        } else {
-            Shell::Unix(s.into())
-        }
-    } else {
-        default_shell()
-    });
-
+/// Registers the `on_action` hook on the `RuntimeConfig` currently in use in the `Watchexec`
+///
+/// **Note** this is a bit weird since we're installing the hook on the config that's already used
+/// in `Watchexec` but necessary if we want to have access to it in order to
+/// [`Watchexec::reconfigure`]
+fn on_action<F, T>(
+    args: WatchArgs,
+    mut config: RuntimeConfig,
+    wx: Arc<Watchexec>,
+    cmd: Vec<String>,
+    other: T,
+    f: F,
+) where
+    F: for<'a> Fn(OnActionState<'a, T>) + Send + 'static,
+    T: Clone + Send + 'static,
+{
     let on_busy = if args.no_restart { "do-nothing" } else { "restart" };
-
     let print_events = args.why;
-
+    let runtime = config.clone();
+    let w = Arc::clone(&wx);
     config.on_action(move |action: Action| {
         let fut = async { Ok::<(), Infallible>(()) };
         if print_events {
@@ -204,7 +272,15 @@ pub fn runtime(args: &WatchArgs) -> eyre::Result<RuntimeConfig> {
             }
         }
 
-        // TODO make this configurable
+        f(OnActionState {
+            args: &args,
+            runtime: &runtime,
+            action: &action,
+            wx: w.clone(),
+            cmd: &cmd,
+            other: other.clone(),
+        });
+
         let clear = true;
         let when_running = match (clear, on_busy) {
             (_, "do-nothing") => Outcome::DoNothing,
@@ -221,6 +297,33 @@ pub fn runtime(args: &WatchArgs) -> eyre::Result<RuntimeConfig> {
         action.outcome(Outcome::if_running(when_running, when_idle));
 
         fut
+    });
+
+    let _ = wx.reconfigure(config);
+}
+
+/// Returns the Runtime configuration for [`Watchexec`].
+pub fn runtime(args: &WatchArgs) -> eyre::Result<RuntimeConfig> {
+    let mut config = RuntimeConfig::default();
+
+    config.pathset(args.watch.clone().unwrap_or_default());
+
+    if let Some(delay) = &args.delay {
+        config.action_throttle(utils::parse_delay(delay)?);
+    }
+
+    config.command_shell(if let Some(s) = &args.shell {
+        if s.eq_ignore_ascii_case("powershell") {
+            Shell::Powershell
+        } else if s.eq_ignore_ascii_case("none") {
+            Shell::None
+        } else if s.eq_ignore_ascii_case("cmd") {
+            cmd_shell(s.into())
+        } else {
+            Shell::Unix(s.into())
+        }
+    } else {
+        default_shell()
     });
 
     config.on_pre_spawn(move |prespawn: PreSpawn| async move {

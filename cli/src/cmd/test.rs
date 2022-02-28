@@ -22,7 +22,7 @@ pub struct Filter {
         short = 'm',
         help = "only run test methods matching regex (deprecated, see --match-test)"
     )]
-    pattern: Option<regex::Regex>,
+    pub pattern: Option<regex::Regex>,
 
     #[clap(
         long = "match-test",
@@ -30,7 +30,7 @@ pub struct Filter {
         help = "only run test methods matching regex",
         conflicts_with = "pattern"
     )]
-    test_pattern: Option<regex::Regex>,
+    pub test_pattern: Option<regex::Regex>,
 
     #[clap(
         long = "no-match-test",
@@ -38,7 +38,7 @@ pub struct Filter {
         help = "only run test methods not matching regex",
         conflicts_with = "pattern"
     )]
-    test_pattern_inverse: Option<regex::Regex>,
+    pub test_pattern_inverse: Option<regex::Regex>,
 
     #[clap(
         long = "match-contract",
@@ -46,7 +46,7 @@ pub struct Filter {
         help = "only run test methods in contracts matching regex",
         conflicts_with = "pattern"
     )]
-    contract_pattern: Option<regex::Regex>,
+    pub contract_pattern: Option<regex::Regex>,
 
     #[clap(
         long = "no-match-contract",
@@ -62,7 +62,7 @@ pub struct Filter {
         help = "only run test methods in source files at path matching regex. Requires absolute path",
         conflicts_with = "pattern"
     )]
-    path_pattern: Option<regex::Regex>,
+    pub path_pattern: Option<regex::Regex>,
 
     #[clap(
         long = "no-match-path",
@@ -70,7 +70,7 @@ pub struct Filter {
         help = "only run test methods in source files at path not matching regex. Requires absolute path",
         conflicts_with = "pattern"
     )]
-    path_pattern_inverse: Option<regex::Regex>,
+    pub path_pattern_inverse: Option<regex::Regex>,
 }
 
 impl TestFilter for Filter {
@@ -145,6 +145,18 @@ pub struct TestArgs {
         env = "FORGE_ALLOW_FAILURE"
     )]
     allow_failure: bool,
+}
+
+impl TestArgs {
+    /// Returns the flattened [`BuildArgs`]
+    pub fn build_args(&self) -> &BuildArgs {
+        &self.opts
+    }
+
+    /// Returns the flattened [`Filter`] arguments
+    pub fn filter(&self) -> &Filter {
+        &self.filter
+    }
 }
 
 impl Cmd for TestArgs {
