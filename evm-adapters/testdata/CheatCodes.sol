@@ -221,6 +221,15 @@ contract CheatCodes is DSTest {
         prank.bar(address(this));
     }
 
+    function testSpoof() public {
+        Prank prank = new Prank();
+        address new_sender = address(1337);
+        address sender = msg.sender;
+        hevm.spoof(new_sender);
+        prank.bar(new_sender);
+        prank.bar(address(this));
+    }
+
     function testPrankConstructor() public {
         address new_sender = address(1337);
         hevm.prank(new_sender);
