@@ -170,7 +170,7 @@ impl FromStr for ContractInfo {
         let name = iter.next().unwrap().to_string();
         let path = iter.next().map(str::to_string);
 
-        if name.ends_with(".sol") || name.contains("/") {
+        if name.ends_with(".sol") || name.contains('/') {
             return Err(eyre::eyre!(
                 "contract source info format must be `<path>:<contractname>` or `<contractname>`"
             ))
