@@ -78,7 +78,7 @@ fn on_test(action: OnActionState<bool>) {
         .events
         .iter()
         .flat_map(|e| e.paths())
-        .filter(|(path, _)| path.extension() == Some(&OsStr::new("sol")))
+        .filter(|(path, _)| path.extension() == Some(OsStr::new("sol")))
         .filter_map(|(path, _)| path.to_str())
         .collect();
 
