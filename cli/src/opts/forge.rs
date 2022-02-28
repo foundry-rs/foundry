@@ -169,6 +169,13 @@ impl FromStr for ContractInfo {
         let mut iter = s.rsplit(':');
         let name = iter.next().unwrap().to_string();
         let path = iter.next().map(str::to_string);
+
+        if name.ends_with(".sol") || name.contains('/') {
+            return Err(eyre::eyre!(
+                "contract source info format must be `<path>:<contractname>` or `<contractname>`"
+            ))
+        }
+
         Ok(Self { path, name })
     }
 }
@@ -281,5 +288,31 @@ mod tests {
     #[should_panic]
     fn test_invalid_github_repo_dependency() {
         Dependency::from_str("solmate").unwrap();
+    }
+
+    #[test]
+    fn parses_contract_info() {
+        [
+            (
+                "src/contracts/Contracts.sol:Contract",
+                Some("src/contracts/Contracts.sol"),
+                "Contract",
+            ),
+            ("Contract", None, "Contract"),
+        ]
+        .iter()
+        .for_each(|(input, expected_path, expected_name)| {
+            let contract = ContractInfo::from_str(input).unwrap();
+            assert_eq!(contract.path, expected_path.map(ToString::to_string));
+            assert_eq!(contract.name, expected_name.to_string());
+        });
+    }
+
+    #[test]
+    fn contract_info_should_reject_without_name() {
+        ["src/contracts/", "src/contracts/Contracts.sol"].iter().for_each(|input| {
+            let contract = ContractInfo::from_str(input);
+            assert!(contract.is_err())
+        });
     }
 }
