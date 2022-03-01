@@ -54,7 +54,7 @@ In order to fix this, you must install `libusb` like so:
 brew install libusb 
 ```
 
-### Old `GLIBC` error when running `forge` from default `foundryup`:
+### Out of date `GLIBC` error when running `forge` from default `foundryup` install:
 
 If you run into an error resembling the following when using `foundryup`:
 
