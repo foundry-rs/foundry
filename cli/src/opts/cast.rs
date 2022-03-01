@@ -523,6 +523,11 @@ pub enum WalletSubcommands {
         starts_with: Option<String>,
         #[clap(long, help = "Suffix for vanity address")]
         ends_with: Option<String>,
+        #[clap(
+            long,
+            help = "Generate a vanity contract address created by the generated account with specified nonce"
+        )]
+        nonce: Option<u64>, /* 2^64-1 is max possible nonce per https://eips.ethereum.org/EIPS/eip-2681 */
     },
     #[clap(name = "address", about = "Convert a private key to an address")]
     Address {

@@ -15,6 +15,7 @@ use ethers::{
     providers::{Middleware, Provider},
     signers::{LocalWallet, Signer},
     types::{Address, Chain, NameOrAddress, Signature, U256, U64},
+    utils::get_contract_address,
 };
 use opts::{
     cast::{Opts, Subcommands, WalletSubcommands},
@@ -608,7 +609,7 @@ async fn main() -> eyre::Result<()> {
                     }
                 }
             }
-            WalletSubcommands::Vanity { starts_with, ends_with } => {
+            WalletSubcommands::Vanity { starts_with, ends_with, nonce } => {
                 let mut regexs = vec![];
                 if let Some(prefix) = starts_with {
                     let pad_width = prefix.len() + prefix.len() % 2;
@@ -629,20 +630,31 @@ async fn main() -> eyre::Result<()> {
                 );
 
                 let regex = RegexSet::new(regexs)?;
+                let match_contract = nonce.is_some();
 
                 println!("Starting to generate vanity address...");
                 let timer = Instant::now();
                 let wallet = std::iter::repeat_with(move || LocalWallet::new(&mut thread_rng()))
                     .par_bridge()
                     .find_any(|wallet| {
-                        let addr = hex::encode(wallet.address().to_fixed_bytes());
+                        let addr = if match_contract {
+                            // looking for contract address created by wallet with CREATE + nonce
+                            let contract_addr =
+                                get_contract_address(wallet.address(), nonce.unwrap());
+                            hex::encode(contract_addr.to_fixed_bytes())
+                        } else {
+                            // looking for wallet address
+                            hex::encode(wallet.address().to_fixed_bytes())
+                        };
                         regex.matches(&addr).into_iter().count() == regex.patterns().len()
                     })
                     .expect("failed to generate vanity wallet");
 
                 println!(
-                    "Successfully created new keypair in {} seconds.\nAddress: {}\nPrivate Key: {}",
+                    "Successfully found vanity address in {} seconds.{}{}\nAddress: {}\nPrivate Key: 0x{}",
                     timer.elapsed().as_secs(),
+                    if match_contract {"\nContract address: "} else {""},
+                    if match_contract {SimpleCast::checksum_address(&get_contract_address(wallet.address(), nonce.unwrap()))?} else {"".to_string()},
                     SimpleCast::checksum_address(&wallet.address())?,
                     hex::encode(wallet.signer().to_bytes()),
                 );
