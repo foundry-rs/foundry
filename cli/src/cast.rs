@@ -654,7 +654,7 @@ async fn main() -> eyre::Result<()> {
                     "Successfully found vanity address in {} seconds.{}{}\nAddress: {}\nPrivate Key: 0x{}",
                     timer.elapsed().as_secs(),
                     if match_contract {"\nContract address: "} else {""},
-                    if match_contract {SimpleCast::checksum_address(&Address::from(get_contract_address(wallet.address(), nonce.unwrap())))?} else {"".to_string()},
+                    if match_contract {SimpleCast::checksum_address(&get_contract_address(wallet.address(), nonce.unwrap()))?} else {"".to_string()},
                     SimpleCast::checksum_address(&wallet.address())?,
                     hex::encode(wallet.signer().to_bytes()),
                 );
