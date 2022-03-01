@@ -108,6 +108,10 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
             }
         }
         if print_sizes {
+            // add extra newline if names were already printed
+            if print_names {
+                println!();
+            }
             let compiled_contracts = output.compiled_contracts_by_compiler_version();
             let mut sizes = BTreeMap::new();
             for (_, contracts) in compiled_contracts.into_iter() {
