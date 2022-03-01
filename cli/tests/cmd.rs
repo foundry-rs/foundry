@@ -284,9 +284,39 @@ contract Greeter {}
     assert!(cmd.stdout_lossy().ends_with(
         "Compiling...
 Compiling 1 files with 0.8.10
-Compilation finished successfully
 Compiler run successful
-Success
+",
+    ));
+});
+
+forgetest!(can_print_warnings, |prj: TestProject, mut cmd: TestCommand| {
+    prj.inner()
+        .add_source(
+            "Foo",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity >0.8.9;
+contract Greeter {
+    function foo(uint256 a) public {
+        uint256 x = 1;
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    // explicitly set to run with 0.8.10
+    let config = Config { solc_version: Some("0.8.10".parse().unwrap()), ..Default::default() };
+    prj.write_config(config);
+
+    cmd.arg("build");
+
+    let output = cmd.stdout_lossy();
+    assert!(output.contains(
+        "Compiling...
+Compiling 1 files with 0.8.10
+Compiler run successful (with warnings)
+Warning: Unused function parameter. Remove or comment out the variable name to silence this warning.
 ",
     ));
 });
@@ -337,9 +367,7 @@ library FooLib {
     assert_eq!(
         "Compiling...
 Compiling 2 files with 0.8.10
-Compilation finished successfully
 Compiler run successful
-Success
 ",
         cmd.stdout_lossy()
     );
@@ -382,9 +410,7 @@ contract Foo {
     assert!(cmd.stdout_lossy().ends_with(
         "Compiling...
 Compiling 1 files with 0.8.10
-Compilation finished successfully
 Compiler run successful
-Success
 ",
     ));
 });
@@ -414,8 +440,7 @@ contract Demo {
         format!(
             "Compiling...
 Compiling 1 files with 0.8.10
-Compilation finished successfully
-Success
+Compiler run successful
 {}
 Gas Used: 1751
 == Logs ==
