@@ -57,7 +57,7 @@ use ethers::{
     prelude::artifacts::{CompactBytecode, CompactDeployedBytecode},
     solc::cache::SolFilesCache,
 };
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf};
 
 /// Common trait for all cli commands
 pub trait Cmd: clap::Parser + Sized {
@@ -67,9 +67,15 @@ pub trait Cmd: clap::Parser + Sized {
 
 use ethers::solc::{artifacts::CompactContractBytecode, Project, ProjectCompileOutput};
 
+use foundry_utils::to_table;
+
 /// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
 /// compilation was successful or if there was a cache hit.
-pub fn compile(project: &Project) -> eyre::Result<ProjectCompileOutput> {
+pub fn compile(
+    project: &Project,
+    print_names: bool,
+    print_sizes: bool,
+) -> eyre::Result<ProjectCompileOutput> {
     if !project.paths.sources.exists() {
         eyre::bail!(
             r#"no contracts to compile, contracts folder "{}" does not exist.
@@ -88,9 +94,51 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
     } else if output.is_unchanged() {
         println!("No files changed, compilation skipped");
     } else {
+        if print_names {
+            let compiled_contracts = output.compiled_contracts_by_compiler_version();
+            println!("compiled contracts:");
+            for (version, contracts) in compiled_contracts.into_iter() {
+                println!(
+                    "  compiler version: {}.{}.{}",
+                    version.major, version.minor, version.patch
+                );
+                for (name, _) in contracts {
+                    println!("    - {}", name);
+                }
+            }
+        }
+        if print_sizes {
+            // add extra newline if names were already printed
+            if print_names {
+                println!();
+            }
+            let compiled_contracts = output.compiled_contracts_by_compiler_version();
+            let mut sizes = BTreeMap::new();
+            for (_, contracts) in compiled_contracts.into_iter() {
+                for (name, contract) in contracts {
+                    let bytecode: CompactContractBytecode = contract.into();
+                    let size = if let Some(code) = bytecode.bytecode {
+                        if let Some(object) = code.object.as_bytes() {
+                            object.to_vec().len()
+                        } else {
+                            0
+                        }
+                    } else {
+                        0
+                    };
+                    sizes.insert(name, size);
+                }
+            }
+            let json = serde_json::to_value(&sizes)?;
+            println!("name             size (bytes)");
+            println!("-----------------------------");
+            println!("{}", to_table(json));
+        }
+
         println!("{}", output);
         println!("Success");
     }
+
     Ok(output)
 }
 

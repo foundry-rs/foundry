@@ -113,6 +113,12 @@ pub struct BuildArgs {
     #[serde(flatten)]
     pub compiler: CompilerArgs,
 
+    #[clap(help = "print compiled contract names", long = "names")]
+    pub names: bool,
+
+    #[clap(help = "print compiled contract sizes", long = "sizes")]
+    pub sizes: bool,
+
     #[clap(help = "ignore warnings with specific error codes", long)]
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub ignored_error_codes: Vec<u64>,
@@ -155,7 +161,7 @@ impl Cmd for BuildArgs {
     type Output = ProjectCompileOutput;
     fn run(self) -> eyre::Result<Self::Output> {
         let project = self.project()?;
-        super::compile(&project)
+        super::compile(&project, self.names, self.sizes)
     }
 }
 

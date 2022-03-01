@@ -60,7 +60,7 @@ impl Cmd for CreateArgs {
     fn run(self) -> Result<Self::Output> {
         // Find Project & Compile
         let project = self.opts.project()?;
-        let compiled = super::compile(&project)?;
+        let compiled = super::compile(&project, self.opts.names, self.opts.sizes)?;
 
         // Get ABI and BIN
         let (abi, bin, _) = super::read_artifact(&project, compiled, self.contract.clone())?;

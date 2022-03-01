@@ -73,6 +73,8 @@ impl Cmd for FlattenArgs {
             lib_paths,
             out_path: None,
             compiler: Default::default(),
+            names: false,
+            sizes: false,
             ignored_error_codes: vec![],
             no_auto_detect: false,
             offline: false,
