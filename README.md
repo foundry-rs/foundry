@@ -54,6 +54,25 @@ In order to fix this, you must install `libusb` like so:
 brew install libusb 
 ```
 
+### Out of date `GLIBC` error when running `forge` from default `foundryup` install:
+
+If you run into an error resembling the following when using `foundryup`:
+
+```
+forge: /lib/x86_64-linux-gnu/libc.so.6: version 'GLIBC_2.29' not found (required by forge)
+```
+
+There are 2 workarounds:
+
+1. Build from source using the following command:
+
+```
+foundryup -b master
+```
+
+2. For a solution using Docker, refer to this article: 
+https://kobzol.github.io/rust/ci/2021/05/07/building-rust-binaries-in-ci-that-work-with-older-glibc.html#solution
+
 ## Forge
 
 More documentation can be found in the [forge package](./forge/README.md) and in the [CLI README](./cli/README.md).
