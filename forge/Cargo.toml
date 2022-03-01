@@ -27,7 +27,7 @@ rayon = "1.5"
 rlp = "0.5.1"
 
 # load sputnik for parallel evm usage
-sputnik = { package = "evm", git = "https://github.com/rust-blockchain/evm" }
+sputnik = { package = "evm", default-features = false, git = "https://github.com/rust-blockchain/evm", features = ["std"] }
 
 [dev-dependencies]
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["solc-full", "solc-tests"] }
