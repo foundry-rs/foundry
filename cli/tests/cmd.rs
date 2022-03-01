@@ -284,9 +284,7 @@ contract Greeter {}
     assert!(cmd.stdout_lossy().ends_with(
         "Compiling...
 Compiling 1 files with 0.8.10
-Compilation finished successfully
 Compiler run successful
-Success
 ",
     ));
 });
@@ -337,9 +335,7 @@ library FooLib {
     assert_eq!(
         "Compiling...
 Compiling 2 files with 0.8.10
-Compilation finished successfully
 Compiler run successful
-Success
 ",
         cmd.stdout_lossy()
     );
@@ -382,9 +378,7 @@ contract Foo {
     assert!(cmd.stdout_lossy().ends_with(
         "Compiling...
 Compiling 1 files with 0.8.10
-Compilation finished successfully
 Compiler run successful
-Success
 ",
     ));
 });

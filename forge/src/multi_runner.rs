@@ -52,7 +52,7 @@ impl MultiContractRunnerBuilder {
         } else if output.is_unchanged() {
             println!("No files changed, compilation skipped");
         } else {
-            println!("Success");
+            println!("{}", output);
         }
 
         // This is just the contracts compiled, but we need to merge this with the read cached

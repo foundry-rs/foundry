@@ -94,9 +94,12 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
     } else if output.is_unchanged() {
         println!("No files changed, compilation skipped");
     } else {
+        // print the compiler output / warnings
+        println!("{}", output);
+
+        // print any sizes or names
         if print_names {
             let compiled_contracts = output.compiled_contracts_by_compiler_version();
-            println!("compiled contracts:");
             for (version, contracts) in compiled_contracts.into_iter() {
                 println!(
                     "  compiler version: {}.{}.{}",
@@ -134,9 +137,6 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
             println!("-----------------------------");
             println!("{}", to_table(json));
         }
-
-        println!("{}", output);
-        println!("Success");
     }
 
     Ok(output)
@@ -149,7 +149,7 @@ pub fn compile_files(project: &Project, files: Vec<PathBuf>) -> eyre::Result<Pro
     if output.has_compiler_errors() {
         eyre::bail!(output.to_string())
     }
-    println!("Success");
+    println!("{}", output);
     Ok(output)
 }
 
