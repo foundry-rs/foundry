@@ -340,7 +340,7 @@ pub struct SharedBackend<DB> {
     inner: SharedBackendInner<DB>,
 }
 
-impl<DB: Database> SharedBackend {
+impl<DB: Database> SharedBackend<DB> {
     /// Spawns a new `BackendHandler` on a background thread that listens for requests from any
     /// `SharedBackend`. Missing values get inserted in the `cache`.
     ///
@@ -363,14 +363,7 @@ impl<DB: Database> SharedBackend {
             RuntimeOrHandle::Handle(handle) => handle.block_on(handler),
         });
 
-        Self { inner: SharedBackendInner { vicinity: Arc::new(vicinity), backend: tx } }
-    }
-
-    fn do_get_exists(&self, address: H160) -> eyre::Result<bool> {
-        let (sender, rx) = oneshot_channel();
-        let req = BackendRequest::Exists(address, sender);
-        self.inner.backend.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
-        Ok(rx.recv()?)
+        Self { inner: SharedBackendInner { db, backend: tx } }
     }
 
     fn do_get_basic(&self, address: H160) -> eyre::Result<AccountInfo> {
@@ -380,14 +373,7 @@ impl<DB: Database> SharedBackend {
         Ok(rx.recv()?)
     }
 
-    fn do_get_code(&self, address: H160) -> eyre::Result<Vec<u8>> {
-        let (sender, rx) = oneshot_channel();
-        let req = BackendRequest::Code(address, sender);
-        self.inner.backend.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
-        Ok(rx.recv()?)
-    }
-
-    fn do_get_storage(&self, address: H160, index: H256) -> eyre::Result<H256> {
+    fn do_get_storage(&self, address: H160, index: U256) -> eyre::Result<U256> {
         let (sender, rx) = oneshot_channel();
         let req = BackendRequest::Storage(address, index, sender);
         self.inner.backend.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
@@ -395,77 +381,33 @@ impl<DB: Database> SharedBackend {
     }
 }
 
-impl Backend for SharedBackend {
-    fn block_hash(&self, number: U256) -> H256 {
-        if number >= self.inner.vicinity.block_number ||
-            self.inner.vicinity.block_number - number - U256::one() >=
-                U256::from(self.inner.vicinity.block_hashes.len())
-        {
-            H256::default()
-        } else {
-            let index = (self.inner.vicinity.block_number - number - U256::one()).as_usize();
-            self.inner.vicinity.block_hashes[index]
-        }
-    }
-    fn block_number(&self) -> U256 {
-        self.inner.vicinity.block_number
-    }
-    fn block_coinbase(&self) -> H160 {
-        self.inner.vicinity.block_coinbase
-    }
-    fn block_timestamp(&self) -> U256 {
-        self.inner.vicinity.block_timestamp
-    }
-    fn block_difficulty(&self) -> U256 {
-        self.inner.vicinity.block_difficulty
-    }
-    fn block_gas_limit(&self) -> U256 {
-        self.inner.vicinity.block_gas_limit
-    }
-    fn block_base_fee_per_gas(&self) -> U256 {
-        self.inner.vicinity.block_base_fee_per_gas
+impl<DB: Database> Database for SharedBackend<DB> {
+    fn block_hash(&mut self, number: U256) -> H256 {
+        self.inner.db.block_hash(number)
     }
 
-    fn chain_id(&self) -> U256 {
-        self.inner.vicinity.chain_id
-    }
-
-    fn exists(&self, address: H160) -> bool {
-        self.do_get_exists(address).unwrap_or_else(|_| {
-            tracing::trace!("Failed to send/recv `exists` for {}", address);
-            Default::default()
-        })
-    }
-
-    fn basic(&self, address: H160) -> Basic {
+    fn basic(&mut self, address: H160) -> AccountInfo {
         self.do_get_basic(address).unwrap_or_else(|_| {
             tracing::trace!("Failed to send/recv `basic` for {}", address);
             Default::default()
         })
     }
 
-    fn code(&self, address: H160) -> Vec<u8> {
-        self.do_get_code(address).unwrap_or_else(|_| {
-            tracing::trace!("Failed to send/recv `code` for {}", address);
-            Default::default()
-        })
+    fn code_by_hash(&mut self, _address: H256) -> bytes::Bytes {
+        panic!("Should not be called. Code is already loaded.")
     }
 
-    fn storage(&self, address: H160, index: TxHash) -> TxHash {
+    fn storage(&mut self, address: H160, index: U256) -> U256 {
         self.do_get_storage(address, index).unwrap_or_else(|_| {
             tracing::trace!("Failed to send/recv `storage` for {} at {}", address, index);
             Default::default()
         })
     }
-
-    fn original_storage(&self, address: H160, index: TxHash) -> Option<TxHash> {
-        Some(self.storage(address, index))
-    }
 }
 
 #[derive(Debug, Clone)]
-struct SharedBackendInner {
-    vicinity: Arc<MemoryVicinity>,
+struct SharedBackendInner<DB> {
+    db: DB,
     backend: Sender<BackendRequest>,
 }
 
