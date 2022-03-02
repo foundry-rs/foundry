@@ -45,9 +45,9 @@ pub async fn watch_test(args: TestArgs) -> eyre::Result<()> {
     let wx = Watchexec::new(init, runtime.clone())?;
 
     // marker to check whether we can safely override the command
-    let has_conflicting_pattern_args =
-        args.filter().pattern.is_some() || args.filter().test_pattern.is_some();
-    || args.filter().path_pattern.is_some();
+    let has_conflicting_pattern_args = args.filter().pattern.is_some() ||
+        args.filter().test_pattern.is_some() ||
+        args.filter().path_pattern.is_some();
 
     on_action(
         args.build_args().watch.clone(),
@@ -159,7 +159,7 @@ pub struct WatchArgs {
 pub fn init() -> eyre::Result<InitConfig> {
     let mut config = InitConfig::default();
     config.on_error(SyncFnHandler::from(|data| -> std::result::Result<(), Infallible> {
-        eprintln!("[[{:?}]]", data);
+        tracing::trace!("[[{:?}]]", data);
         Ok(())
     }));
 
@@ -251,6 +251,7 @@ fn on_action<F, T>(
             other: other.clone(),
         });
 
+        // mattsse: could be made into flag to never clear the shell
         let clear = true;
         let when_running = match (clear, on_busy) {
             (_, "do-nothing") => Outcome::DoNothing,
