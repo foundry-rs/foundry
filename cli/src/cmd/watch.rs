@@ -199,12 +199,7 @@ fn on_action<F, T>(
         let signals: Vec<MainSignal> = action.events.iter().flat_map(|e| e.signals()).collect();
         let has_paths = action.events.iter().flat_map(|e| e.paths()).next().is_some();
 
-        if signals.contains(&MainSignal::Terminate) {
-            action.outcome(Outcome::both(Outcome::Stop, Outcome::Exit));
-            return fut
-        }
-
-        if signals.contains(&MainSignal::Interrupt) {
+        if signals.contains(&MainSignal::Terminate) || signals.contains(&MainSignal::Interrupt) {
             action.outcome(Outcome::both(Outcome::Stop, Outcome::Exit));
             return fut
         }
@@ -222,27 +217,23 @@ fn on_action<F, T>(
 
             let completion = action.events.iter().flat_map(|e| e.completions()).next();
             if let Some(status) = completion {
-                let (msg, printit) = match status {
+                match status {
                     Some(ProcessEnd::ExitError(code)) => {
-                        (format!("Command exited with {}", code), true)
+                        tracing::trace!("Command exited with {}", code)
                     }
                     Some(ProcessEnd::ExitSignal(sig)) => {
-                        (format!("Command killed by {:?}", sig), true)
+                        tracing::trace!("Command killed by {:?}", sig)
                     }
                     Some(ProcessEnd::ExitStop(sig)) => {
-                        (format!("Command stopped by {:?}", sig), true)
+                        tracing::trace!("Command stopped by {:?}", sig)
                     }
-                    Some(ProcessEnd::Continued) => ("Command continued".to_string(), true),
+                    Some(ProcessEnd::Continued) => tracing::trace!("Command continued"),
                     Some(ProcessEnd::Exception(ex)) => {
-                        (format!("Command ended by exception {:#x}", ex), true)
+                        tracing::trace!("Command ended by exception {:#x}", ex)
                     }
-                    Some(ProcessEnd::Success) => ("Command was successful".to_string(), false),
-                    None => ("Command completed".to_string(), false),
+                    Some(ProcessEnd::Success) => tracing::trace!("Command was successful"),
+                    None => tracing::trace!("Command completed"),
                 };
-
-                if printit {
-                    eprintln!("[[{}]]", msg);
-                }
 
                 action.outcome(Outcome::DoNothing);
                 return fut
