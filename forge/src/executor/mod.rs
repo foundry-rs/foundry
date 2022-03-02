@@ -13,6 +13,9 @@ pub mod opts;
 /// Executor inspectors
 pub mod inspector;
 
+/// Forking provider
+pub mod fork;
+
 /// Executor builder
 pub mod builder;
 pub use builder::ExecutorBuilder;
