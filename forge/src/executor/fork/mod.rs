@@ -353,16 +353,16 @@ where
 /// instead of sending another one. So that after the provider returns the response all listeners
 /// (`A` and `B`) get notified.
 #[derive(Debug, Clone)]
-pub struct SharedBackend<DB> {
-    inner: SharedBackendInner<DB>,
+pub struct SharedBackend {
+    backend: Sender<BackendRequest>,
 }
 
-impl<DB: Database> SharedBackend<DB> {
+impl SharedBackend {
     /// Spawns a new `BackendHandler` on a background thread that listens for requests from any
     /// `SharedBackend`. Missing values get inserted in the `cache`.
     ///
     /// NOTE: this should be called with `Arc<Provider>`
-    pub fn new<M>(provider: M, cache: SharedMemCache, db: DB, pin_block: Option<BlockId>) -> Self
+    pub fn new<M>(provider: M, cache: SharedMemCache, pin_block: Option<BlockId>) -> Self
     where
         M: Middleware + Unpin + 'static + Clone,
     {
@@ -375,32 +375,32 @@ impl<DB: Database> SharedBackend<DB> {
             RuntimeOrHandle::Handle(handle) => handle.block_on(handler),
         });
 
-        Self { inner: SharedBackendInner { db, backend: tx } }
+        Self { backend: tx }
     }
 
     fn do_get_basic(&self, address: H160) -> eyre::Result<AccountInfo> {
         let (sender, rx) = oneshot_channel();
         let req = BackendRequest::Basic(address, sender);
-        self.inner.backend.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
+        self.backend.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
         Ok(rx.recv()?)
     }
 
     fn do_get_storage(&self, address: H160, index: U256) -> eyre::Result<U256> {
         let (sender, rx) = oneshot_channel();
         let req = BackendRequest::Storage(address, index, sender);
-        self.inner.backend.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
+        self.backend.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
         Ok(rx.recv()?)
     }
 
     fn do_get_block_hash(&self, number: u64) -> eyre::Result<H256> {
         let (sender, rx) = oneshot_channel();
         let req = BackendRequest::BlockHash(number, sender);
-        self.inner.backend.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
+        self.backend.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
         Ok(rx.recv()?)
     }
 }
 
-impl<DB: Database> Database for SharedBackend<DB> {
+impl Database for SharedBackend {
     fn block_hash(&mut self, number: U256) -> H256 {
         if number > U256::from(u64::MAX) {
             return KECCAK_EMPTY
@@ -431,12 +431,6 @@ impl<DB: Database> Database for SharedBackend<DB> {
     }
 }
 
-#[derive(Debug, Clone)]
-struct SharedBackendInner<DB> {
-    db: DB,
-    backend: Sender<BackendRequest>,
-}
-
 #[cfg(test)]
 mod tests {
     use ethers::{
@@ -457,9 +451,7 @@ mod tests {
         let address: Address = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();
 
         let cache = SharedMemCache::default();
-        let db = revm::InMemoryDB::default();
-
-        let mut backend = SharedBackend::new(Arc::new(provider), cache.clone(), db, None);
+        let mut backend = SharedBackend::new(Arc::new(provider), cache.clone(), None);
 
         let idx = U256::from(0u64);
         let value = backend.storage(address, idx);
@@ -482,5 +474,10 @@ mod tests {
         handle.join().unwrap();
         let mem_acc = cache.read().get(&address).unwrap().clone();
         assert_eq!(mem_acc.1.len() as u64, max_slots);
+
+        let num = 10;
+        let hash = backend.block_hash(num);
+        let mem_hash = cache.read().get(&num).unwrap().clone();
+        assert_eq!(hash, mem_hash);
     }
 }
