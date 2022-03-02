@@ -54,14 +54,21 @@ pub(crate) fn install(
     dependencies: Vec<Dependency>,
     opts: DependencyInstallOpts,
 ) -> eyre::Result<()> {
+    let root = root.as_ref();
+    let libs = root.join("lib");
+
     if dependencies.is_empty() {
         let mut cmd = Command::new("git");
-        cmd.args(&["submodule", "update", "--init", "--recursive"]);
+        cmd.args(&[
+            "submodule",
+            "update",
+            "--init",
+            "--recursive",
+            libs.display().to_string().as_str(),
+        ]);
         cmd.spawn()?.wait()?;
     }
 
-    let root = root.as_ref();
-    let libs = root.join("lib");
     std::fs::create_dir_all(&libs)?;
 
     for dep in dependencies {
