@@ -3,7 +3,8 @@ use revm::{db::Database, AccountInfo, KECCAK_EMPTY};
 
 use ethers::{
     providers::Middleware,
-    types::{Address, BlockId, Bytes, H160, H256, U256}, utils::keccak256,
+    types::{Address, BlockId, Bytes, H160, H256, U256},
+    utils::keccak256,
 };
 use futures::{
     channel::mpsc::{channel, Receiver, Sender},
