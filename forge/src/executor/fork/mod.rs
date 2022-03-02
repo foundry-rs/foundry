@@ -2,6 +2,7 @@
 use revm::{db::Database, AccountInfo, KECCAK_EMPTY};
 
 use ethers::{
+    core::abi::ethereum_types::BigEndianHash,
     providers::Middleware,
     types::{Address, BlockId, Bytes, H160, H256, U256},
     utils::keccak256,
@@ -180,10 +181,9 @@ where
                 let block_id = self.block_id;
                 let fut = Box::pin(async move {
                     // serialize & deserialize back to U256
-                    let idx_req = H256::zero(); // TODO, convert U256 to H256
-                    let _storage = provider.get_storage_at(address, idx_req, block_id).await;
-                    // TODO: convert H256 to U256
-                    let storage = Ok(U256::zero()); // TODO;
+                    let idx_req = H256::from_uint(&idx);
+                    let storage = provider.get_storage_at(address, idx_req, block_id).await;
+                    let storage = storage.map(|storage| storage.into_uint());
                     (storage, address, idx)
                 });
                 self.pending_requests.push(ProviderRequest::Storage(fut));
@@ -252,7 +252,6 @@ where
                             (None, KECCAK_EMPTY)
                         };
 
-                        // TODO: Is the storage stuff here still required?
                         let (listeners, storage) =
                             pin.account_requests.remove(&addr).unwrap_or_default();
                         let acc = AccountInfo { nonce: nonce.as_u64(), balance, code, code_hash };
@@ -268,7 +267,6 @@ where
                         continue
                     }
                 }
-                // TODO: How should we handle Storage now that it's on a separate place?
                 ProviderRequest::Storage(fut) => {
                     if let Poll::Ready((resp, addr, idx)) = fut.poll_unpin(cx) {
                         let value = resp.unwrap_or_else(|_| {
