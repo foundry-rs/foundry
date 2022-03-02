@@ -457,11 +457,18 @@ mod tests {
         let value = backend.storage(address, idx);
         let account = backend.basic(address);
 
-        let mem_acc = cache.read().get(&address).unwrap().clone();
-        assert_eq!(account.balance, mem_acc.0.balance);
-        assert_eq!(account.nonce, mem_acc.0.nonce);
-        assert_eq!(mem_acc.1.len(), 1);
-        assert_eq!(mem_acc.1.get(&idx).copied().unwrap(), value);
+        let mem_acc = cache.accounts.read().get(&address).unwrap().clone();
+        assert_eq!(account.balance, mem_acc.balance);
+        assert_eq!(account.nonce, mem_acc.nonce);
+        let slots = cache.storage.read().get(&address).unwrap().clone();
+        assert_eq!(slots.len(), 1);
+        assert_eq!(slots.get(&idx).copied().unwrap(), value);
+
+
+        let num = U256::from(10u64);
+        let hash = backend.block_hash(num);
+        let mem_hash = cache.block_hashes.read().get(&num.as_u64()).unwrap().clone();
+        assert_eq!(hash, mem_hash);
 
         let mut backend = backend.clone();
         let max_slots = 5;
@@ -472,12 +479,7 @@ mod tests {
             }
         });
         handle.join().unwrap();
-        let mem_acc = cache.read().get(&address).unwrap().clone();
-        assert_eq!(mem_acc.1.len() as u64, max_slots);
-
-        let num = 10;
-        let hash = backend.block_hash(num);
-        let mem_hash = cache.read().get(&num).unwrap().clone();
-        assert_eq!(hash, mem_hash);
+        let slots = cache.storage.read().get(&address).unwrap().clone();
+        assert_eq!(slots.len() as u64, max_slots);
     }
 }
