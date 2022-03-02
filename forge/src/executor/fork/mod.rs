@@ -413,13 +413,11 @@ struct SharedBackendInner<DB> {
 
 #[cfg(test)]
 mod tests {
-    use crate::sputnik::vicinity;
     use ethers::{
         providers::{Http, Provider},
         types::Address,
     };
     use std::convert::TryFrom;
-    use tokio::runtime::Runtime;
 
     use super::*;
 
@@ -432,31 +430,31 @@ mod tests {
         // some rng contract from etherscan
         let address: Address = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();
 
-        let rt = Runtime::new().unwrap();
-        let vicinity = rt.block_on(vicinity(&provider, None, None, None)).unwrap();
         let cache = new_shared_cache(MemCache::default());
+        let db = revm::InMemoryDB::default();
 
-        let backend = SharedBackend::new(Arc::new(provider), cache.clone(), vicinity, None);
+        let mut backend = SharedBackend::new(Arc::new(provider), cache.clone(), db, None);
 
-        let idx = H256::from_low_u64_be(0u64);
+        let idx = U256::from(0u64);
         let value = backend.storage(address, idx);
         let account = backend.basic(address);
 
         let mem_acc = cache.read().get(&address).unwrap().clone();
-        assert_eq!(account.balance, mem_acc.balance);
-        assert_eq!(account.nonce, mem_acc.nonce,);
-        assert_eq!(mem_acc.storage.len(), 1);
-        assert_eq!(mem_acc.storage.get(&idx).copied().unwrap(), value);
+        assert_eq!(account.balance, mem_acc.0.balance);
+        assert_eq!(account.nonce, mem_acc.0.nonce);
+        assert_eq!(mem_acc.1.len(), 1);
+        assert_eq!(mem_acc.1.get(&idx).copied().unwrap(), value);
 
-        let backend = backend;
+        let mut backend = backend.clone();
         let max_slots = 5;
         let handle = std::thread::spawn(move || {
             for i in 1..max_slots {
-                let idx = H256::from_low_u64_be(i);
+                let idx = U256::from(i);
                 let _ = backend.storage(address, idx);
             }
         });
         handle.join().unwrap();
         let mem_acc = cache.read().get(&address).unwrap().clone();
-        assert_eq!(mem_acc.storage.len() as u64, max_slots);
+        assert_eq!(mem_acc.1.len() as u64, max_slots);
     }
+}
