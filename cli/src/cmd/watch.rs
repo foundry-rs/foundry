@@ -139,10 +139,6 @@ pub struct WatchArgs {
     #[clap(long = "no-restart")]
     pub no_restart: bool,
 
-    /// Show paths that changed
-    #[clap(long = "why")]
-    pub why: bool,
-
     /// Watch specific file(s) or folder(s)
     ///
     /// By default, the project's source dir is watched
@@ -196,17 +192,10 @@ fn on_action<F, T>(
     T: Clone + Send + 'static,
 {
     let on_busy = if args.no_restart { "do-nothing" } else { "restart" };
-    let print_events = args.why;
     let runtime = config.clone();
     let w = Arc::clone(&wx);
     config.on_action(move |action: Action| {
         let fut = async { Ok::<(), Infallible>(()) };
-        if print_events {
-            for (n, event) in action.events.iter().enumerate() {
-                eprintln!("[EVENT {}] {}", n, event);
-            }
-        }
-
         let signals: Vec<MainSignal> = action.events.iter().flat_map(|e| e.signals()).collect();
         let has_paths = action.events.iter().flat_map(|e| e.paths()).next().is_some();
 
