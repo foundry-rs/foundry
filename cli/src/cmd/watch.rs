@@ -135,18 +135,6 @@ pub struct WatchArgs {
     #[clap(short = 'd', long = "delay", forbid_empty_values = true)]
     pub delay: Option<String>,
 
-    /// Shell to use for the command, or `none` for direct execution
-    #[cfg_attr(
-        windows,
-        doc = "Defaults to Powershell. Examples: --use-shell=cmd, --use-shell=gitbash.exe"
-    )]
-    #[cfg_attr(
-        not(windows),
-        doc = "Defaults to $SHELL. Examples: --use-shell=sh, --use-shell=fish"
-    )]
-    #[clap(long = "use-shell", value_name = "shell")]
-    pub shell: Option<String>,
-
     /// Don’t restart command while it’s still running
     #[clap(long = "no-restart")]
     pub no_restart: bool,
@@ -312,19 +300,7 @@ pub fn runtime(args: &WatchArgs) -> eyre::Result<RuntimeConfig> {
         config.action_throttle(utils::parse_delay(delay)?);
     }
 
-    config.command_shell(if let Some(s) = &args.shell {
-        if s.eq_ignore_ascii_case("powershell") {
-            Shell::Powershell
-        } else if s.eq_ignore_ascii_case("none") {
-            Shell::None
-        } else if s.eq_ignore_ascii_case("cmd") {
-            cmd_shell(s.into())
-        } else {
-            Shell::Unix(s.into())
-        }
-    } else {
-        default_shell()
-    });
+    config.command_shell(default_shell());
 
     config.on_pre_spawn(move |prespawn: PreSpawn| async move {
         let envs = summarise_events_to_env(prespawn.events.iter());
@@ -348,15 +324,4 @@ fn default_shell() -> Shell {
 #[cfg(not(windows))]
 fn default_shell() -> Shell {
     Shell::default()
-}
-
-// because Shell::Cmd is only on windows
-#[cfg(windows)]
-fn cmd_shell(_: String) -> Shell {
-    Shell::Cmd
-}
-
-#[cfg(not(windows))]
-fn cmd_shell(s: String) -> Shell {
-    Shell::Unix(s)
 }
