@@ -34,6 +34,10 @@ First run the command below to get `foundryup`, the Foundry toolchain installer:
 curl -L https://foundry.paradigm.xyz | bash
 ```
 
+If you do not want to use the redirect, feel free to manually download the
+foundryup installation script from
+[here](https://raw.githubusercontent.com/gakonst/foundry/master/foundryup/install).
+
 Then, in a new terminal session or after reloading your `PATH`, run it to get
 the latest `forge` and `cast` binaries:
 
@@ -43,6 +47,24 @@ foundryup
 
 Advanced ways to use `foundryup`, and other documentation, can be found in the
 [foundryup package](./foundryup/README.md). Happy forging!
+
+### Installing from source
+
+For people that want to install from source, you can do so like below:
+
+```
+git clone https://github.com/gakonst/foundry
+cd foundry
+cargo build --release
+# copy the binaries under `./target/release/{forge, cast}` to your $PATH.
+```
+
+Or via `cargo install https://github.com/gakonst/foundry --locked`
+
+### Releases
+
+You can manually download nightly releases
+[here](https://github.com/gakonst/foundry/releases).
 
 ## Forge
 
