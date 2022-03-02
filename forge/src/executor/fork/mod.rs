@@ -1,9 +1,9 @@
 //! Smart caching and deduplication of requests when using a forking provider
-use sputnik::backend::{Backend, Basic, MemoryAccount, MemoryVicinity};
+use revm::{db::Database, AccountInfo, KECCAK_EMPTY};
 
 use ethers::{
     providers::Middleware,
-    types::{Address, BlockId, Bytes, TxHash, H160, H256, U256},
+    types::{Address, BlockId, Bytes, TxHash, H160, H256, U256}, utils::keccak256,
 };
 use futures::{
     channel::mpsc::{channel, Receiver, Sender},
@@ -23,8 +23,8 @@ use std::{
 
 use foundry_utils::RuntimeOrHandle;
 
-/// A basic in memory cache (address -> Account)
-pub type MemCache = BTreeMap<H160, MemoryAccount>;
+/// A basic in memory cache (address -> AccountInfo + Storage)
+pub type MemCache = BTreeMap<H160, (AccountInfo, BTreeMap<U256, U256>)>;
 
 /// A state cache that can be shared across threads
 ///
@@ -45,7 +45,7 @@ pub fn new_shared_cache<T>(cache: T) -> SharedCache<T> {
 
 type AccountFuture<Err> =
     Pin<Box<dyn Future<Output = (Result<(U256, U256, Bytes), Err>, Address)> + Send>>;
-type StorageFuture<Err> = Pin<Box<dyn Future<Output = (Result<H256, Err>, Address, H256)> + Send>>;
+type StorageFuture<Err> = Pin<Box<dyn Future<Output = (Result<U256, Err>, Address, U256)> + Send>>;
 
 /// Request variants that are executed by the provider
 enum ProviderRequest<Err> {
@@ -56,17 +56,15 @@ enum ProviderRequest<Err> {
 /// The Request type the Backend listens for
 #[derive(Debug)]
 enum BackendRequest {
-    Basic(Address, OneshotSender<Basic>),
-    Exists(Address, OneshotSender<bool>),
-    Code(Address, OneshotSender<Vec<u8>>),
-    Storage(Address, H256, OneshotSender<H256>),
+    Basic(Address, OneshotSender<AccountInfo>),
+    CodeHash(Address, OneshotSender<H256>),
+    Storage(Address, U256, OneshotSender<U256>),
 }
 
 /// Various types of senders waiting for an answer related to get_account request
 enum AccountListener {
-    Exists(OneshotSender<bool>),
-    Basic(OneshotSender<Basic>),
-    Code(OneshotSender<Vec<u8>>),
+    Basic(OneshotSender<AccountInfo>),
+    CodeHash(OneshotSender<H256>),
 }
 
 /// Handles an internal provider and listens for requests.
@@ -84,9 +82,9 @@ struct BackendHandler<M: Middleware> {
     /// We also store the `get_storage_at` responses until the initial account info is fetched.
     /// The reason for that is because of the simple `address -> Account` model of the cache, so we
     /// only create a new entry for an address of basic info (balance, nonce, code) was fetched.
-    account_requests: HashMap<Address, (Vec<AccountListener>, BTreeMap<H256, H256>)>,
+    account_requests: HashMap<Address, (Vec<AccountListener>, BTreeMap<U256, U256>)>,
     /// Listeners that wait for a `get_storage_at` response
-    storage_requests: HashMap<(Address, H256), Vec<OneshotSender<H256>>>,
+    storage_requests: HashMap<(Address, U256), Vec<OneshotSender<U256>>>,
     /// Incoming commands.
     incoming: Fuse<Receiver<BackendRequest>>,
     /// The block to fetch data from.
@@ -125,50 +123,31 @@ where
         match req {
             BackendRequest::Basic(addr, sender) => {
                 let lock = self.cache.read();
-                let basic =
-                    lock.get(&addr).map(|acc| Basic { nonce: acc.nonce, balance: acc.balance });
+                let basic = lock.get(&addr).cloned();
                 // release the lock
                 drop(lock);
                 if let Some(basic) = basic {
-                    let _ = sender.send(basic);
+                    let _ = sender.send(basic.0);
                 } else {
                     self.request_account(addr, AccountListener::Basic(sender));
                 }
             }
-            BackendRequest::Code(addr, sender) => {
+            BackendRequest::CodeHash(addr, sender) => {
                 let lock = self.cache.read();
-                let code = lock.get(&addr).map(|acc| acc.code.clone());
+                let code_hash = lock.get(&addr).map(|acc| acc.0.code_hash);
                 // release the lock
                 drop(lock);
-                if let Some(basic) = code {
-                    let _ = sender.send(basic);
+                if let Some(code_hash) = code_hash {
+                    let _ = sender.send(code_hash);
                 } else {
-                    self.request_account(addr, AccountListener::Code(sender));
-                }
-            }
-            BackendRequest::Exists(addr, sender) => {
-                let lock = self.cache.read();
-                let acc = lock.get(&addr);
-                let has_account = acc.is_some();
-                let exists = acc
-                    .map(|acc| {
-                        !acc.balance.is_zero() || !acc.nonce.is_zero() || !acc.code.is_empty()
-                    })
-                    .unwrap_or_default();
-                // release the lock
-                drop(lock);
-
-                if has_account {
-                    let _ = sender.send(exists);
-                } else {
-                    self.request_account(addr, AccountListener::Exists(sender));
+                    self.request_account(addr, AccountListener::CodeHash(sender));
                 }
             }
             BackendRequest::Storage(addr, idx, sender) => {
                 let lock = self.cache.read();
                 let acc = lock.get(&addr);
                 let has_account = acc.is_some();
-                let value = acc.and_then(|acc| acc.storage.get(&idx).copied());
+                let value = acc.and_then(|acc| acc.1.get(&idx).copied());
                 // release the lock
                 drop(lock);
 
@@ -200,8 +179,8 @@ where
     fn request_account_storage(
         &mut self,
         address: Address,
-        idx: H256,
-        listener: OneshotSender<H256>,
+        idx: U256,
+        listener: OneshotSender<U256>,
     ) {
         match self.storage_requests.entry((address, idx)) {
             Entry::Occupied(mut entry) => {
@@ -212,7 +191,11 @@ where
                 let provider = self.provider.clone();
                 let block_id = self.block_id;
                 let fut = Box::pin(async move {
-                    let storage = provider.get_storage_at(address, idx, block_id).await;
+                    // serialize & deserialize back to U256
+                    let idx_req = H256::zero(); // TODO, convert U256 to H256
+                    let _storage = provider.get_storage_at(address, idx_req, block_id).await;
+                    // TODO: convert H256 to U256
+                    let storage = Ok(U256::zero()); // TODO;
                     (storage, address, idx)
                 });
                 self.pending_requests.push(ProviderRequest::Storage(fut));
@@ -268,34 +251,39 @@ where
             match &mut request {
                 ProviderRequest::Account(fut) => {
                     if let Poll::Ready((resp, addr)) = fut.poll_unpin(cx) {
+                        // get the response
                         let (balance, nonce, code) = resp.unwrap_or_else(|_| {
                             tracing::trace!("Failed to get account for {}", addr);
                             Default::default()
                         });
-                        let code = code.to_vec();
+
+                        // conver it to revm-style types
+                        let (code, code_hash) = if !code.0.is_empty() {
+                            (Some(code.0.clone()), keccak256(&code).into())
+                        } else {
+                            (None, KECCAK_EMPTY)
+                        };
+
+                        // TODO: Is the storage stuff here still required?
                         let (listeners, storage) =
                             pin.account_requests.remove(&addr).unwrap_or_default();
-                        let acc = MemoryAccount { nonce, balance, code: code.clone(), storage };
-                        pin.cache.write().insert(addr, acc);
+                        let acc = AccountInfo { nonce: nonce.as_u64(), balance, code, code_hash };
+                        pin.cache.write().insert(addr, (acc.clone(), storage));
                         // notify all listeners
                         for listener in listeners {
                             match listener {
-                                AccountListener::Exists(sender) => {
-                                    let exists =
-                                        !balance.is_zero() || !nonce.is_zero() || !code.is_empty();
-                                    let _ = sender.send(exists);
-                                }
                                 AccountListener::Basic(sender) => {
-                                    let _ = sender.send(Basic { nonce, balance });
+                                    let _ = sender.send(acc.clone());
                                 }
-                                AccountListener::Code(sender) => {
-                                    let _ = sender.send(code.clone());
+                                AccountListener::CodeHash(sender) => {
+                                    let _ = sender.send(acc.code_hash);
                                 }
                             }
                         }
                         continue
                     }
                 }
+                // TODO: How should we handle Storage now that it's on a separate place?
                 ProviderRequest::Storage(fut) => {
                     if let Poll::Ready((resp, addr, idx)) = fut.poll_unpin(cx) {
                         let value = resp.unwrap_or_else(|_| {
@@ -303,7 +291,7 @@ where
                             Default::default()
                         });
                         if let Some(acc) = pin.cache.write().get_mut(&addr) {
-                            acc.storage.insert(idx, value);
+                            acc.1.insert(idx, value);
                         } else {
                             // the account not fetched yet, we either add this value to the storage
                             // buffer of the request in progress or start the `get_account` request
@@ -364,11 +352,11 @@ where
 /// instead of sending another one. So that after the provider returns the response all listeners
 /// (`A` and `B`) get notified.
 #[derive(Debug, Clone)]
-pub struct SharedBackend {
-    inner: SharedBackendInner,
+pub struct SharedBackend<DB> {
+    inner: SharedBackendInner<DB>,
 }
 
-impl SharedBackend {
+impl<DB: Database> SharedBackend {
     /// Spawns a new `BackendHandler` on a background thread that listens for requests from any
     /// `SharedBackend`. Missing values get inserted in the `cache`.
     ///
@@ -376,7 +364,7 @@ impl SharedBackend {
     pub fn new<M>(
         provider: M,
         cache: SharedCache<MemCache>,
-        vicinity: MemoryVicinity,
+        db: DB,
         pin_block: Option<BlockId>,
     ) -> Self
     where
@@ -401,7 +389,7 @@ impl SharedBackend {
         Ok(rx.recv()?)
     }
 
-    fn do_get_basic(&self, address: H160) -> eyre::Result<Basic> {
+    fn do_get_basic(&self, address: H160) -> eyre::Result<AccountInfo> {
         let (sender, rx) = oneshot_channel();
         let req = BackendRequest::Basic(address, sender);
         self.inner.backend.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
@@ -424,12 +412,6 @@ impl SharedBackend {
 }
 
 impl Backend for SharedBackend {
-    fn gas_price(&self) -> U256 {
-        self.inner.vicinity.gas_price
-    }
-    fn origin(&self) -> H160 {
-        self.inner.vicinity.origin
-    }
     fn block_hash(&self, number: U256) -> H256 {
         if number >= self.inner.vicinity.block_number ||
             self.inner.vicinity.block_number - number - U256::one() >=
