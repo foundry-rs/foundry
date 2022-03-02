@@ -47,6 +47,8 @@ pub async fn watch_test(args: TestArgs) -> eyre::Result<()> {
     // marker to check whether we can safely override the command
     let has_conflicting_pattern_args =
         args.filter().pattern.is_some() || args.filter().test_pattern.is_some();
+    || args.filter().path_pattern.is_some();
+
     on_action(
         args.build_args().watch.clone(),
         runtime,
