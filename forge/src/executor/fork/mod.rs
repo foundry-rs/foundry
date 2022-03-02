@@ -25,24 +25,15 @@ use std::{
 
 use foundry_utils::RuntimeOrHandle;
 
-/// A basic in memory cache (address -> AccountInfo + Storage)
-pub type MemCache = BTreeMap<H160, (AccountInfo, BTreeMap<U256, U256>)>;
+type StorageInfo = BTreeMap<U256, U256>;
 
-/// A state cache that can be shared across threads
-///
-/// This can can be used as global state cache.
-pub type SharedCache<T> = Arc<RwLock<T>>;
-
-/// Create a new shareable state cache.
-///
-/// # Example
-///
-/// ```rust
-/// use evm_adapters::sputnik::{MemCache,new_shared_cache};
-/// let cache = new_shared_cache(MemCache::default());
-/// ```
-pub fn new_shared_cache<T>(cache: T) -> SharedCache<T> {
-    Arc::new(RwLock::new(cache))
+// TODO: Add disk flushing on Drop.
+/// In Memory cache containing all fetched accounts and storage slots
+/// and their values from RPC.
+#[derive(Clone, Debug, Default)]
+pub struct SharedMemCache {
+    pub accounts: Arc<RwLock<BTreeMap<H160, AccountInfo>>>,
+    pub storage: Arc<RwLock<BTreeMap<H160, StorageInfo>>>,
 }
 
 type AccountFuture<Err> =
@@ -62,11 +53,6 @@ enum BackendRequest {
     Storage(Address, U256, OneshotSender<U256>),
 }
 
-/// Various types of senders waiting for an answer related to get_account request
-enum AccountListener {
-    Basic(OneshotSender<AccountInfo>),
-}
-
 /// Handles an internal provider and listens for requests.
 ///
 /// This handler will remain active as long as it is reachable (request channel still open) and
@@ -75,16 +61,15 @@ enum AccountListener {
 struct BackendHandler<M: Middleware> {
     provider: M,
     /// Stores the state.
-    cache: SharedCache<MemCache>,
+    cache: SharedMemCache,
     /// Requests currently in progress
     pending_requests: Vec<ProviderRequest<M::Error>>,
     /// Listeners that wait for a `get_account` related response
-    /// We also store the `get_storage_at` responses until the initial account info is fetched.
-    /// The reason for that is because of the simple `address -> Account` model of the cache, so we
-    /// only create a new entry for an address of basic info (balance, nonce, code) was fetched.
-    account_requests: HashMap<Address, (Vec<AccountListener>, BTreeMap<U256, U256>)>,
+    account_requests: HashMap<Address, Vec<OneshotSender<AccountInfo>>>,
     /// Listeners that wait for a `get_storage_at` response
     storage_requests: HashMap<(Address, U256), Vec<OneshotSender<U256>>>,
+    // /// Listeners that wait for a `get_block` response
+    // block_requests: HashMap<U256, Vec<OneshotSender<H256>>>,
     /// Incoming commands.
     incoming: Fuse<Receiver<BackendRequest>>,
     /// The block to fetch data from.
@@ -98,7 +83,7 @@ where
 {
     fn new(
         provider: M,
-        cache: SharedCache<MemCache>,
+        cache: SharedMemCache,
         rx: Receiver<BackendRequest>,
         block_id: Option<BlockId>,
     ) -> Self {
@@ -122,43 +107,29 @@ where
     fn on_request(&mut self, req: BackendRequest) {
         match req {
             BackendRequest::Basic(addr, sender) => {
-                let lock = self.cache.read();
+                let lock = self.cache.accounts.read();
                 let basic = lock.get(&addr).cloned();
                 // release the lock
                 drop(lock);
                 if let Some(basic) = basic {
-                    let _ = sender.send(basic.0);
+                    let _ = sender.send(basic);
                 } else {
-                    self.request_account(addr, AccountListener::Basic(sender));
+                    self.request_account(addr, sender);
                 }
             }
             BackendRequest::Storage(addr, idx, sender) => {
-                let lock = self.cache.read();
+                let lock = self.cache.storage.read();
                 let acc = lock.get(&addr);
-                let has_account = acc.is_some();
-                let value = acc.and_then(|acc| acc.1.get(&idx).copied());
+                let value = acc.and_then(|acc| acc.get(&idx).copied());
                 // release the lock
                 drop(lock);
 
-                if has_account {
-                    // account is already stored in the cache
-                    if let Some(value) = value {
-                        let _ = sender.send(value);
-                    } else {
-                        // account present but not storage -> fetch storage
-                        self.request_account_storage(addr, idx, sender);
-                    }
+                // account is already stored in the cache
+                if let Some(value) = value {
+                    let _ = sender.send(value);
                 } else {
-                    // account is still missing in the cache
-                    // check if already fetched but not in cache yet
-                    if let Some(value) =
-                        self.account_requests.get(&addr).and_then(|(_, s)| s.get(&idx).copied())
-                    {
-                        let _ = sender.send(value);
-                    } else {
-                        // fetch storage via provider
-                        self.request_account_storage(addr, idx, sender);
-                    }
+                    // account present but not storage -> fetch storage
+                    self.request_account_storage(addr, idx, sender);
                 }
             }
         }
@@ -206,13 +177,13 @@ where
     }
 
     /// process a request for an account
-    fn request_account(&mut self, address: Address, listener: AccountListener) {
+    fn request_account(&mut self, address: Address, listener: OneshotSender<AccountInfo>) {
         match self.account_requests.entry(address) {
             Entry::Occupied(mut entry) => {
-                entry.get_mut().0.push(listener);
+                entry.get_mut().push(listener);
             }
             Entry::Vacant(entry) => {
-                entry.insert((vec![listener], Default::default()));
+                entry.insert(vec![]);
                 self.pending_requests.push(self.get_account_req(address));
             }
         }
@@ -252,17 +223,15 @@ where
                             (None, KECCAK_EMPTY)
                         };
 
-                        let (listeners, storage) =
-                            pin.account_requests.remove(&addr).unwrap_or_default();
+                        // update the cache
                         let acc = AccountInfo { nonce: nonce.as_u64(), balance, code, code_hash };
-                        pin.cache.write().insert(addr, (acc.clone(), storage));
+                        pin.cache.accounts.write().insert(addr, acc.clone());
+
                         // notify all listeners
-                        for listener in listeners {
-                            match listener {
-                                AccountListener::Basic(sender) => {
-                                    let _ = sender.send(acc.clone());
-                                }
-                            }
+                        if let Some(listeners) = pin.account_requests.remove(&addr) {
+                            listeners.into_iter().for_each(|l| {
+                                let _ = l.send(acc.clone());
+                            })
                         }
                         continue
                     }
@@ -273,23 +242,10 @@ where
                             tracing::trace!("Failed to get storage for {} at {}", addr, idx);
                             Default::default()
                         });
-                        if let Some(acc) = pin.cache.write().get_mut(&addr) {
-                            acc.1.insert(idx, value);
-                        } else {
-                            // the account not fetched yet, we either add this value to the storage
-                            // buffer of the request in progress or start the `get_account` request
-                            match pin.account_requests.entry(addr) {
-                                Entry::Occupied(mut entry) => {
-                                    entry.get_mut().1.insert(idx, value);
-                                }
-                                Entry::Vacant(entry) => {
-                                    let mut storage = BTreeMap::new();
-                                    storage.insert(idx, value);
-                                    entry.insert((vec![], storage));
-                                    pin.pending_requests.push(pin.get_account_req(addr));
-                                }
-                            }
-                        }
+
+                        // update the cache
+                        pin.cache.storage.write().entry(addr).or_default().insert(idx, value);
+
                         // notify all listeners
                         if let Some(listeners) = pin.storage_requests.remove(&(addr, idx)) {
                             listeners.into_iter().for_each(|l| {
@@ -303,6 +259,7 @@ where
             // not ready, insert and poll again
             pin.pending_requests.push(request);
         }
+
         // the handler is finished if the request channel was closed and all requests are processed
         if pin.incoming.is_done() && pin.pending_requests.is_empty() {
             Poll::Ready(())
@@ -346,7 +303,7 @@ impl<DB: Database> SharedBackend<DB> {
     /// NOTE: this should be called with `Arc<Provider>`
     pub fn new<M>(
         provider: M,
-        cache: SharedCache<MemCache>,
+        cache: SharedMemCache,
         db: DB,
         pin_block: Option<BlockId>,
     ) -> Self
@@ -382,7 +339,7 @@ impl<DB: Database> SharedBackend<DB> {
 
 impl<DB: Database> Database for SharedBackend<DB> {
     fn block_hash(&mut self, number: U256) -> H256 {
-        self.inner.db.block_hash(number)
+        unimplemented!()
     }
 
     fn basic(&mut self, address: H160) -> AccountInfo {
@@ -429,7 +386,7 @@ mod tests {
         // some rng contract from etherscan
         let address: Address = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();
 
-        let cache = new_shared_cache(MemCache::default());
+        let cache = SharedMemCache::default();
         let db = revm::InMemoryDB::default();
 
         let mut backend = SharedBackend::new(Arc::new(provider), cache.clone(), db, None);
