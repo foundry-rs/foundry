@@ -3,7 +3,7 @@ use revm::{db::Database, AccountInfo, KECCAK_EMPTY};
 
 use ethers::{
     providers::Middleware,
-    types::{Address, BlockId, Bytes, TxHash, H160, H256, U256}, utils::keccak256,
+    types::{Address, BlockId, Bytes, H160, H256, U256}, utils::keccak256,
 };
 use futures::{
     channel::mpsc::{channel, Receiver, Sender},
@@ -57,14 +57,12 @@ enum ProviderRequest<Err> {
 #[derive(Debug)]
 enum BackendRequest {
     Basic(Address, OneshotSender<AccountInfo>),
-    CodeHash(Address, OneshotSender<H256>),
     Storage(Address, U256, OneshotSender<U256>),
 }
 
 /// Various types of senders waiting for an answer related to get_account request
 enum AccountListener {
     Basic(OneshotSender<AccountInfo>),
-    CodeHash(OneshotSender<H256>),
 }
 
 /// Handles an internal provider and listens for requests.
@@ -130,17 +128,6 @@ where
                     let _ = sender.send(basic.0);
                 } else {
                     self.request_account(addr, AccountListener::Basic(sender));
-                }
-            }
-            BackendRequest::CodeHash(addr, sender) => {
-                let lock = self.cache.read();
-                let code_hash = lock.get(&addr).map(|acc| acc.0.code_hash);
-                // release the lock
-                drop(lock);
-                if let Some(code_hash) = code_hash {
-                    let _ = sender.send(code_hash);
-                } else {
-                    self.request_account(addr, AccountListener::CodeHash(sender));
                 }
             }
             BackendRequest::Storage(addr, idx, sender) => {
@@ -274,9 +261,6 @@ where
                             match listener {
                                 AccountListener::Basic(sender) => {
                                     let _ = sender.send(acc.clone());
-                                }
-                                AccountListener::CodeHash(sender) => {
-                                    let _ = sender.send(acc.code_hash);
                                 }
                             }
                         }
