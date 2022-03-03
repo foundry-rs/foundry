@@ -1,5 +1,5 @@
 //! Smart caching and deduplication of requests when using a forking provider
-use revm::{db::Database, AccountInfo, KECCAK_EMPTY};
+use revm::{db::DatabaseRef, AccountInfo, KECCAK_EMPTY};
 
 use ethers::{
     core::abi::ethereum_types::BigEndianHash,
@@ -400,8 +400,8 @@ impl SharedBackend {
     }
 }
 
-impl Database for SharedBackend {
-    fn block_hash(&mut self, number: U256) -> H256 {
+impl DatabaseRef for SharedBackend {
+    fn block_hash(&self, number: U256) -> H256 {
         if number > U256::from(u64::MAX) {
             return KECCAK_EMPTY
         }
@@ -412,18 +412,18 @@ impl Database for SharedBackend {
         })
     }
 
-    fn basic(&mut self, address: H160) -> AccountInfo {
+    fn basic(&self, address: H160) -> AccountInfo {
         self.do_get_basic(address).unwrap_or_else(|_| {
             tracing::trace!("Failed to send/recv `basic` for {}", address);
             Default::default()
         })
     }
 
-    fn code_by_hash(&mut self, _address: H256) -> bytes::Bytes {
+    fn code_by_hash(&self, _address: H256) -> bytes::Bytes {
         panic!("Should not be called. Code is already loaded.")
     }
 
-    fn storage(&mut self, address: H160, index: U256) -> U256 {
+    fn storage(&self, address: H160, index: U256) -> U256 {
         self.do_get_storage(address, index).unwrap_or_else(|_| {
             tracing::trace!("Failed to send/recv `storage` for {} at {}", address, index);
             Default::default()
@@ -463,7 +463,6 @@ mod tests {
         let slots = cache.storage.read().get(&address).unwrap().clone();
         assert_eq!(slots.len(), 1);
         assert_eq!(slots.get(&idx).copied().unwrap(), value);
-
 
         let num = U256::from(10u64);
         let hash = backend.block_hash(num);

@@ -198,7 +198,7 @@ impl<'a, DB: DatabaseRef> ContractRunner<'a, DB> {
     }
 }
 
-impl<'a, DB: DatabaseRef + Clone + Send + Sync> ContractRunner<'a, DB> {
+impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
     /// Deploys the test contract inside the runner from the sending account, and optionally runs
     /// the `setUp` function on the test contract.
     pub fn deploy(&mut self, setup: bool) -> Result<(Address, Vec<RawLog>, bool, Option<String>)> {

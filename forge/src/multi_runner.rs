@@ -234,7 +234,7 @@ impl MultiContractRunner {
         err,
         fields(name = %_name)
     )]
-    fn run_tests<DB: DatabaseRef + Clone + Send + Sync>(
+    fn run_tests<DB: DatabaseRef + Send + Sync>(
         &self,
         _name: &str,
         contract: &Abi,
