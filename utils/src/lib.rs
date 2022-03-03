@@ -462,7 +462,7 @@ pub async fn fourbyte(selector: &str) -> Result<Vec<(String, i32)>> {
     };
 
     if api_response.results.is_empty() {
-        eyre::bail!("no selector found for provided signature")
+        eyre::bail!("no signature found for provided function selector")
     }
 
     Ok(api_response
