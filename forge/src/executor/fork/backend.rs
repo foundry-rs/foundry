@@ -200,7 +200,7 @@ where
                 entry.get_mut().push(listener);
             }
             Entry::Vacant(entry) => {
-                entry.insert(vec![]);
+                entry.insert(vec![listener]);
                 self.pending_requests.push(self.get_account_req(address));
             }
         }
@@ -213,7 +213,7 @@ where
                 entry.get_mut().push(listener);
             }
             Entry::Vacant(entry) => {
-                entry.insert(vec![]);
+                entry.insert(vec![listener]);
                 let provider = self.provider.clone();
                 let fut = Box::pin(async move {
                     let res = provider.get_block(number).await;
@@ -451,7 +451,7 @@ mod tests {
         let address: Address = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();
 
         let cache = SharedMemCache::default();
-        let mut backend = SharedBackend::new(Arc::new(provider), cache.clone(), None);
+        let backend = SharedBackend::new(Arc::new(provider), cache.clone(), None);
 
         let idx = U256::from(0u64);
         let value = backend.storage(address, idx);
@@ -469,7 +469,7 @@ mod tests {
         let mem_hash = cache.block_hashes.read().get(&num.as_u64()).unwrap().clone();
         assert_eq!(hash, mem_hash);
 
-        let mut backend = backend.clone();
+        let backend = backend.clone();
         let max_slots = 5;
         let handle = std::thread::spawn(move || {
             for i in 1..max_slots {

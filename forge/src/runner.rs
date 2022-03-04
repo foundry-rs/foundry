@@ -272,7 +272,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                     labeled_addresses: Default::default(),
                 },
             )]
-            .into())
+            .into());
         }
 
         // Run all unit tests
@@ -352,7 +352,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                 }
                 err => {
                     tracing::error!(?err);
-                    return Err(err.into())
+                    return Err(err.into());
                 }
             },
         };
@@ -458,15 +458,17 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::{filter::Filter, test_executor, COMPILED, EVM_OPTS};
+    use crate::{
+        executor::builder::Backend,
+        test_helpers::{filter::Filter, test_executor, COMPILED, EVM_OPTS},
+    };
     use proptest::test_runner::Config as FuzzConfig;
-    use revm::db::EmptyDB;
 
     pub fn runner<'a>(
         abi: &'a Abi,
         code: ethers::prelude::Bytes,
         libs: &'a mut Vec<ethers::prelude::Bytes>,
-    ) -> ContractRunner<'a, EmptyDB> {
+    ) -> ContractRunner<'a, Backend> {
         ContractRunner::new(
             test_executor(),
             abi,
