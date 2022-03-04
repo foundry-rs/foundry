@@ -46,6 +46,9 @@ pub struct Cheatcodes {
 
     /// Mocked calls
     pub mocked_calls: BTreeMap<Address, BTreeMap<Bytes, Bytes>>,
+
+    /// Expected calls
+    pub expected_calls: BTreeMap<Address, Vec<Bytes>>,
 }
 
 impl Cheatcodes {
@@ -57,6 +60,7 @@ impl Cheatcodes {
             expected_revert: None,
             accesses: None,
             mocked_calls: BTreeMap::new(),
+            expected_calls: BTreeMap::new(),
         }
     }
 
@@ -95,6 +99,15 @@ where
                 Err(err) => (Return::Revert, Gas::new(0), err),
             }
         } else {
+            // Handle expected calls
+            if let Some(expecteds) = self.expected_calls.get_mut(&call.contract) {
+                if let Some(found_match) = expecteds.iter().position(|expected| {
+                    expected.len() <= call.input.len() && expected == &call.input[..expected.len()]
+                }) {
+                    expecteds.remove(found_match);
+                }
+            }
+
             // Handle mocked calls
             if let Some(mocks) = self.mocked_calls.get(&call.contract) {
                 if let Some(mock_retdata) = mocks.get(&call.input) {
@@ -191,6 +204,26 @@ where
                     Err(retdata) => (Return::Revert, remaining_gas, retdata),
                     Ok((_, retdata)) => (Return::Return, remaining_gas, retdata),
                 }
+            }
+        }
+
+        // If the depth is 0, then this is the root call terminating
+        if data.subroutine.depth() == 0 {
+            // Handle expected calls that were not fulfilled
+            if let Some((address, expecteds)) =
+                self.expected_calls.iter().find(|(_, expecteds)| !expecteds.is_empty())
+            {
+                return (
+                    Return::Revert,
+                    remaining_gas,
+                    format!(
+                        "Expected a call to 0x{} with data {}, but got none",
+                        address,
+                        ethers::types::Bytes::from(expecteds[0].clone())
+                    )
+                    .encode()
+                    .into(),
+                )
             }
         }
 

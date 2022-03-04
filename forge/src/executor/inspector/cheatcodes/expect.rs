@@ -106,8 +106,11 @@ pub fn apply<DB: Database>(
         HEVMCalls::ExpectRevert1(inner) => {
             expect_revert(state, inner.0.to_vec().into(), data.subroutine.depth())
         }
-        /*HEVMCalls::ExpectEmit(_) => {}
-        HEVMCalls::ExpectCall(_) => {}*/
+        /* HEVMCalls::ExpectEmit(_) => {} */
+        HEVMCalls::ExpectCall(inner) => {
+            state.expected_calls.entry(inner.0).or_default().push(inner.1.to_vec().into());
+            Ok(Bytes::new())
+        }
         HEVMCalls::MockCall(inner) => {
             state
                 .mocked_calls
