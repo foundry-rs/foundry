@@ -1,8 +1,6 @@
 use bytes::Bytes;
-use ethers::types::{Address, U256};
-use revm::{
-    db::Database, CallContext, CreateScheme, EVMData, Gas, Inspector, Machine, Return, Transfer,
-};
+use ethers::types::Address;
+use revm::{db::Database, CallInputs, CreateInputs, EVMData, Gas, Inspector, Interpreter, Return};
 use std::any::Any;
 
 /// A wrapper trait for [Inspector]s that allows for downcasting to a concrete type.
@@ -66,20 +64,14 @@ impl<DB> Inspector<DB> for InspectorStack<DB>
 where
     DB: Database,
 {
-    fn initialize(&mut self, data: &mut EVMData<'_, DB>) {
-        for inspector in &mut self.inspectors {
-            inspector.initialize(data)
-        }
-    }
-
-    fn initialize_machine(
+    fn initialize_interp(
         &mut self,
-        machine: &mut Machine,
+        interpreter: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
         is_static: bool,
     ) -> Return {
         for inspector in &mut self.inspectors {
-            let status = inspector.initialize_machine(machine, data, is_static);
+            let status = inspector.initialize_interp(interpreter, data, is_static);
 
             // Allow inspectors to exit early
             if status != Return::Continue {
@@ -92,12 +84,12 @@ where
 
     fn step(
         &mut self,
-        machine: &mut Machine,
+        interpreter: &mut Interpreter,
         data: &mut EVMData<'_, DB>,
         is_static: bool,
     ) -> Return {
         for inspector in &mut self.inspectors {
-            let status = inspector.initialize_machine(machine, data, is_static);
+            let status = inspector.step(interpreter, data, is_static);
 
             // Allow inspectors to exit early
             if status != Return::Continue {
@@ -108,9 +100,15 @@ where
         Return::Continue
     }
 
-    fn step_end(&mut self, status: Return, machine: &mut Machine) -> Return {
+    fn step_end(
+        &mut self,
+        interpreter: &mut Interpreter,
+        data: &mut EVMData<'_, DB>,
+        is_static: bool,
+        status: Return,
+    ) -> Return {
         for inspector in &mut self.inspectors {
-            let status = inspector.step_end(status, machine);
+            let status = inspector.step_end(interpreter, data, is_static, status);
 
             // Allow inspectors to exit early
             if status != Return::Continue {
@@ -124,16 +122,11 @@ where
     fn call(
         &mut self,
         data: &mut EVMData<'_, DB>,
-        to: Address,
-        context: &CallContext,
-        transfer: &Transfer,
-        input: &Bytes,
-        gas_limit: u64,
+        call: &CallInputs,
         is_static: bool,
     ) -> (Return, Gas, Bytes) {
         for inspector in &mut self.inspectors {
-            let (status, gas, retdata) =
-                inspector.call(data, to, context, transfer, input, gas_limit, is_static);
+            let (status, gas, retdata) = inspector.call(data, call, is_static);
 
             // Allow inspectors to exit early
             if status != Return::Continue {
@@ -147,44 +140,32 @@ where
     fn call_end(
         &mut self,
         data: &mut EVMData<'_, DB>,
-        to: Address,
-        context: &CallContext,
-        transfer: &Transfer,
-        input: &Bytes,
-        gas_limit: u64,
-        remaining_gas: u64,
+        call: &CallInputs,
+        remaining_gas: Gas,
         status: Return,
-        retdata: &Bytes,
+        retdata: Bytes,
         is_static: bool,
-    ) {
+    ) -> (Return, Gas, Bytes) {
         for inspector in &mut self.inspectors {
-            inspector.call_end(
-                data,
-                to,
-                context,
-                transfer,
-                input,
-                gas_limit,
-                remaining_gas,
-                status,
-                retdata,
-                is_static,
-            );
+            let (new_status, new_gas, new_retdata) =
+                inspector.call_end(data, call, remaining_gas, status, retdata.clone(), is_static);
+
+            // If the inspector returns a different status we assume it wants to tell us something
+            if new_status != status {
+                return (new_status, new_gas, new_retdata)
+            }
         }
+
+        (status, remaining_gas, retdata)
     }
 
     fn create(
         &mut self,
         data: &mut EVMData<'_, DB>,
-        to: Address,
-        scheme: &CreateScheme,
-        value: U256,
-        init_code: &Bytes,
-        gas_limit: u64,
+        call: &CreateInputs,
     ) -> (Return, Option<Address>, Gas, Bytes) {
         for inspector in &mut self.inspectors {
-            let (status, addr, gas, retdata) =
-                inspector.create(data, to, scheme, value, init_code, gas_limit);
+            let (status, addr, gas, retdata) = inspector.create(data, call);
 
             // Allow inspectors to exit early
             if status != Return::Continue {
@@ -198,30 +179,22 @@ where
     fn create_end(
         &mut self,
         data: &mut EVMData<'_, DB>,
-        to: Address,
-        scheme: &CreateScheme,
-        value: U256,
-        init_code: &Bytes,
+        call: &CreateInputs,
         status: Return,
         address: Option<Address>,
-        gas_limit: u64,
-        remaining_gas: u64,
-        retdata: &Bytes,
-    ) {
+        remaining_gas: Gas,
+        retdata: Bytes,
+    ) -> (Return, Option<Address>, Gas, Bytes) {
         for inspector in &mut self.inspectors {
-            inspector.create_end(
-                data,
-                to,
-                scheme,
-                value,
-                init_code,
-                status,
-                address,
-                gas_limit,
-                remaining_gas,
-                retdata,
-            );
+            let (new_status, new_address, new_gas, new_retdata) =
+                inspector.create_end(data, call, status, address, remaining_gas, retdata.clone());
+
+            if new_status != status {
+                return (new_status, new_address, new_gas, new_retdata)
+            }
         }
+
+        (status, address, remaining_gas, retdata)
     }
 
     fn selfdestruct(&mut self) {

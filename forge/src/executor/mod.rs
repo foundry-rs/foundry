@@ -1,8 +1,8 @@
 /// ABIs used internally in the executor
 pub mod abi;
 pub use abi::{
-    patch_hardhat_console_selector, HardhatConsoleCalls, CONSOLE_ABI, HARDHAT_CONSOLE_ABI,
-    HARDHAT_CONSOLE_ADDRESS,
+    patch_hardhat_console_selector, HardhatConsoleCalls, CHEATCODE_ADDRESS, CONSOLE_ABI,
+    HARDHAT_CONSOLE_ABI, HARDHAT_CONSOLE_ADDRESS,
 };
 
 /// Executor configuration
@@ -111,7 +111,16 @@ where
     DB: DatabaseRef,
 {
     pub fn new(inner_db: DB, env: Env, inspector_config: InspectorStackConfig) -> Self {
-        Executor { db: CacheDB::new(inner_db), env, inspector_config }
+        let mut db = CacheDB::new(inner_db);
+
+        // Need to create a non-empty contract on the cheatcodes address so `extcodesize` checks
+        // does not fail
+        db.insert_cache(
+            *CHEATCODE_ADDRESS,
+            revm::AccountInfo { code: Some(Bytes::from_static(&[1])), ..Default::default() },
+        );
+
+        Executor { db, env, inspector_config }
     }
 
     /// Set the balance of an account.
