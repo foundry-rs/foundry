@@ -185,11 +185,15 @@ impl Cmd for TestArgs {
 
         // prepare the test builder
         let evm_spec = crate::utils::evm_spec(&config.evm_version);
-        let builder = MultiContractRunnerBuilder::default()
+        let mut builder = MultiContractRunnerBuilder::default()
             .fuzzer(fuzzer)
             .initial_balance(evm_opts.initial_balance)
             .evm_spec(evm_spec)
             .sender(evm_opts.sender);
+
+        if let Some(ref url) = evm_opts.fork_url {
+            builder = builder.fork_url(url);
+        }
 
         test(
             builder,

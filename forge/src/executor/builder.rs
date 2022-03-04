@@ -87,6 +87,7 @@ impl ExecutorBuilder {
         self
     }
 
+    #[must_use]
     pub fn with_spec(mut self, spec: SpecId) -> Self {
         self.env.cfg.spec_id = spec;
         self

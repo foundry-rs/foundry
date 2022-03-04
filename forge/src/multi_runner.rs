@@ -31,6 +31,8 @@ pub struct MultiContractRunnerBuilder {
     pub initial_balance: U256,
     /// The EVM spec to use
     pub evm_spec: Option<SpecId>,
+    /// The URL for the RPC to be used for forking
+    pub fork_url: Option<String>,
 }
 
 pub type DeployableContracts = BTreeMap<String, (Abi, Bytes, Vec<Bytes>)>;
@@ -131,6 +133,7 @@ impl MultiContractRunnerBuilder {
             identified_contracts: Default::default(),
             evm_opts,
             evm_spec: self.evm_spec.unwrap_or(SpecId::LONDON),
+            fork_url: self.fork_url,
             sender: self.sender,
             fuzzer: self.fuzzer,
             execution_info,
@@ -147,6 +150,12 @@ impl MultiContractRunnerBuilder {
     #[must_use]
     pub fn initial_balance(mut self, initial_balance: U256) -> Self {
         self.initial_balance = initial_balance;
+        self
+    }
+
+    #[must_use]
+    pub fn fork_url(mut self, url: &str) -> Self {
+        self.fork_url = Some(url.to_string());
         self
     }
 
@@ -177,6 +186,8 @@ pub struct MultiContractRunner {
     pub evm_opts: EvmOpts,
     /// The EVM spec
     pub evm_spec: SpecId,
+    /// The URL for the RPC to be used for forking
+    pub fork_url: Option<String>,
     /// All contract execution info, (functions, events, errors)
     pub execution_info: (BTreeMap<[u8; 4], Function>, BTreeMap<H256, Event>, Abi),
     /// The fuzzer which will be used to run parametric tests (w/ non-0 solidity args)
@@ -202,12 +213,16 @@ impl MultiContractRunner {
             .filter(|(name, _)| filter.matches_contract(name))
             .filter(|(_, (abi, _, _))| abi.functions().any(|func| filter.matches_test(&func.name)))
             .map(|(name, (abi, deploy_code, libs))| {
-                // TODO: Fork mode and "vicinity"
-                let executor = ExecutorBuilder::new()
+                let mut builder = ExecutorBuilder::new()
                     .with_cheatcodes(self.evm_opts.ffi)
                     .with_config(self.evm_opts.env.evm_env())
-                    .with_spec(self.evm_spec)
-                    .build();
+                    .with_spec(self.evm_spec);
+
+                if let Some(ref fork_url) = self.fork_url {
+                    builder = builder.with_fork(fork_url);
+                }
+
+                let executor = builder.build();
                 let result =
                     self.run_tests(name, abi, executor, deploy_code.clone(), libs, filter)?;
                 Ok((name.clone(), result))
