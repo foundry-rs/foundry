@@ -18,7 +18,7 @@ pub mod fork;
 
 /// Executor builder
 pub mod builder;
-pub use builder::ExecutorBuilder;
+pub use builder::{ExecutorBuilder, Fork};
 
 /// Fuzzing wrapper for executors
 pub mod fuzz;

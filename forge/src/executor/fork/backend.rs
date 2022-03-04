@@ -482,4 +482,3 @@ mod tests {
         assert_eq!(slots.len() as u64, max_slots);
     }
 }
-

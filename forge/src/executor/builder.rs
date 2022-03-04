@@ -16,8 +16,16 @@ pub struct ExecutorBuilder {
     env: Env,
     /// The configuration used to build an [InspectorStack].
     inspector_config: InspectorStackConfig,
+    fork: Option<Fork>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Fork {
+    // todo: cache path
     /// The URL to a node for fetching remote state
-    fork_url: Option<String>,
+    pub url: String,
+    /// The block to fork against
+    pub pin_block: Option<u64>,
 }
 
 pub enum Backend {
@@ -27,12 +35,15 @@ pub enum Backend {
 
 impl Backend {
     /// Instantiates a new backend union based on whether there was or not a fork url specified
-    fn new(url: Option<String>) -> Self {
-        if let Some(fork) = url {
-            let provider = Provider::try_from(fork).unwrap();
-            // TODO: Add pin block
+    fn new(fork: Option<Fork>) -> Self {
+        if let Some(fork) = fork {
+            let provider = Provider::try_from(fork.url).unwrap();
             // TOOD: Add reading cache from disk
-            let backend = SharedBackend::new(provider, SharedMemCache::default(), None);
+            let backend = SharedBackend::new(
+                provider,
+                SharedMemCache::default(),
+                fork.pin_block.map(Into::into),
+            );
             Backend::Forked(backend)
         } else {
             Backend::Simple(EmptyDB())
@@ -102,14 +113,14 @@ impl ExecutorBuilder {
 
     /// Configure the executor's forking mode
     #[must_use]
-    pub fn with_fork(mut self, url: &str) -> Self {
-        self.fork_url = Some(url.to_string());
+    pub fn with_fork(mut self, fork: Fork) -> Self {
+        self.fork = Some(fork);
         self
     }
 
     /// Builds the executor as configured.
     pub fn build(self) -> Executor<Backend> {
-        let db = Backend::new(self.fork_url);
+        let db = Backend::new(self.fork);
         Executor::new(db, self.env, self.inspector_config)
     }
 

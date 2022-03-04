@@ -1,5 +1,5 @@
 use crate::{
-    executor::{opts::EvmOpts, Executor, ExecutorBuilder, SpecId},
+    executor::{opts::EvmOpts, Executor, ExecutorBuilder, Fork, SpecId},
     runner::TestResult,
     ContractRunner, TestFilter,
 };
@@ -31,8 +31,8 @@ pub struct MultiContractRunnerBuilder {
     pub initial_balance: U256,
     /// The EVM spec to use
     pub evm_spec: Option<SpecId>,
-    /// The URL for the RPC to be used for forking
-    pub fork_url: Option<String>,
+    /// The fork config
+    pub fork: Option<Fork>,
 }
 
 pub type DeployableContracts = BTreeMap<String, (Abi, Bytes, Vec<Bytes>)>;
@@ -133,7 +133,7 @@ impl MultiContractRunnerBuilder {
             identified_contracts: Default::default(),
             evm_opts,
             evm_spec: self.evm_spec.unwrap_or(SpecId::LONDON),
-            fork_url: self.fork_url,
+            fork: self.fork,
             sender: self.sender,
             fuzzer: self.fuzzer,
             execution_info,
@@ -154,8 +154,8 @@ impl MultiContractRunnerBuilder {
     }
 
     #[must_use]
-    pub fn fork_url(mut self, url: &str) -> Self {
-        self.fork_url = Some(url.to_string());
+    pub fn fork(mut self, fork: Fork) -> Self {
+        self.fork = Some(fork);
         self
     }
 
@@ -186,8 +186,8 @@ pub struct MultiContractRunner {
     pub evm_opts: EvmOpts,
     /// The EVM spec
     pub evm_spec: SpecId,
-    /// The URL for the RPC to be used for forking
-    pub fork_url: Option<String>,
+    /// The forking configuration
+    pub fork: Option<Fork>,
     /// All contract execution info, (functions, events, errors)
     pub execution_info: (BTreeMap<[u8; 4], Function>, BTreeMap<H256, Event>, Abi),
     /// The fuzzer which will be used to run parametric tests (w/ non-0 solidity args)
@@ -218,8 +218,8 @@ impl MultiContractRunner {
                     .with_config(self.evm_opts.env.evm_env())
                     .with_spec(self.evm_spec);
 
-                if let Some(ref fork_url) = self.fork_url {
-                    builder = builder.with_fork(fork_url);
+                if let Some(ref fork) = self.fork {
+                    builder = builder.with_fork(fork.clone());
                 }
 
                 let executor = builder.build();
