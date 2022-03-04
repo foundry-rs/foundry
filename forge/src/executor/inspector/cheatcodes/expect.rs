@@ -1,9 +1,12 @@
 use super::Cheatcodes;
 use crate::abi::HEVMCalls;
 use bytes::Bytes;
-use ethers::{abi::AbiEncode, types::Address};
+use ethers::{
+    abi::{AbiEncode, RawLog},
+    types::{Address, H256},
+};
 use once_cell::sync::Lazy;
-use revm::{return_ok, Database, EVMData, Return};
+use revm::{return_ok, Database, EVMData, Interpreter, Return};
 use std::str::FromStr;
 
 /// For some cheatcodes we may internally change the status of the call, i.e. in `expectRevert`.
@@ -94,6 +97,71 @@ pub fn handle_expect_revert(
     }
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct ExpectedEmit {
+    /// The depth at which we expect this emit to have occurred
+    pub depth: u64,
+    /// The log we expect
+    pub log: Option<RawLog>,
+    /// The checks to perform:
+    ///
+    /// ┌───────┬───────┬───────┬────┐
+    /// │topic 1│topic 2│topic 3│data│
+    /// └───────┴───────┴───────┴────┘
+    pub checks: [bool; 4],
+    /// Whether the log was actually found in the subcalls
+    pub found: bool,
+}
+
+pub fn handle_expect_emit(state: &mut Cheatcodes, interpreter: &Interpreter, n: u8) {
+    // Decode the log
+    let (offset, len) =
+        (try_or_return!(interpreter.stack().peek(0)), try_or_return!(interpreter.stack().peek(1)));
+    let data = if len.is_zero() {
+        Vec::new()
+    } else {
+        interpreter.memory.get_slice(as_usize_or_return!(offset), as_usize_or_return!(len)).to_vec()
+    };
+
+    let n = n as usize;
+    let mut topics = Vec::with_capacity(n);
+    for i in 0..n {
+        let mut topic = H256::zero();
+        try_or_return!(interpreter.stack.peek(2 + i)).to_big_endian(topic.as_bytes_mut());
+        topics.push(topic);
+    }
+
+    // Fill or check the expected emits
+    if let Some(next_expect_to_fill) =
+        state.expected_emits.iter_mut().find(|expect| expect.log.is_none())
+    {
+        // We have unfilled expects, so we fill the first one
+        next_expect_to_fill.log = Some(RawLog { topics, data });
+    } else if let Some(next_expect) = state.expected_emits.iter_mut().find(|expect| !expect.found) {
+        // We do not have unfilled expects, so we try to match this log with the first unfound
+        // log that we expect
+        let expected =
+            next_expect.log.as_ref().expect("we should have a log to compare against here");
+        if expected.topics[0] == topics[0] {
+            // Topic 0 matches so the amount of topics in the expected and actual log should
+            // match here
+            let topics_match = topics
+                .iter()
+                .skip(1)
+                .enumerate()
+                .filter(|(i, _)| next_expect.checks[*i])
+                .all(|(i, topic)| topic == &expected.topics[i + 1]);
+
+            // Maybe check data
+            next_expect.found = if next_expect.checks[3] {
+                expected.data == data && topics_match
+            } else {
+                topics_match
+            };
+        }
+    }
+}
+
 pub fn apply<DB: Database>(
     state: &mut Cheatcodes,
     data: &mut EVMData<'_, DB>,
@@ -106,7 +174,14 @@ pub fn apply<DB: Database>(
         HEVMCalls::ExpectRevert1(inner) => {
             expect_revert(state, inner.0.to_vec().into(), data.subroutine.depth())
         }
-        /* HEVMCalls::ExpectEmit(_) => {} */
+        HEVMCalls::ExpectEmit(inner) => {
+            state.expected_emits.push(ExpectedEmit {
+                depth: data.subroutine.depth() + 1,
+                checks: [inner.0, inner.1, inner.2, inner.3],
+                ..Default::default()
+            });
+            Ok(Bytes::new())
+        }
         HEVMCalls::ExpectCall(inner) => {
             state.expected_calls.entry(inner.0).or_default().push(inner.1.to_vec().into());
             Ok(Bytes::new())

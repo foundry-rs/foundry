@@ -3,7 +3,7 @@ mod env;
 pub use env::{Prank, RecordAccess};
 /// Assertion helpers (such as `expectEmit`)
 mod expect;
-pub use expect::ExpectedRevert;
+pub use expect::{ExpectedEmit, ExpectedRevert};
 /// Cheatcodes that interact with the external environment (FFI etc.)
 mod ext;
 /// Cheatcodes that configure the fuzzer
@@ -11,6 +11,7 @@ mod fuzz;
 /// Utility cheatcodes (`sign` etc.)
 mod util;
 
+use self::expect::{handle_expect_emit, handle_expect_revert};
 use crate::{abi::HEVMCalls, executor::CHEATCODE_ADDRESS};
 use bytes::Bytes;
 use ethers::{
@@ -22,12 +23,11 @@ use revm::{
 };
 use std::collections::BTreeMap;
 
-use self::expect::handle_expect_revert;
-
 /// An inspector that handles calls to various cheatcodes, each with their own behavior.
 ///
 /// Cheatcodes can be called by contracts during execution to modify the VM environment, such as
 /// mocking addresses, signatures and altering call reverts.
+#[derive(Default)]
 pub struct Cheatcodes {
     /// Whether FFI is enabled or not
     ffi: bool,
@@ -49,19 +49,14 @@ pub struct Cheatcodes {
 
     /// Expected calls
     pub expected_calls: BTreeMap<Address, Vec<Bytes>>,
+
+    /// Expected emits
+    pub expected_emits: Vec<ExpectedEmit>,
 }
 
 impl Cheatcodes {
     pub fn new(ffi: bool) -> Self {
-        Self {
-            ffi,
-            labels: BTreeMap::new(),
-            prank: None,
-            expected_revert: None,
-            accesses: None,
-            mocked_calls: BTreeMap::new(),
-            expected_calls: BTreeMap::new(),
-        }
+        Self { ffi, ..Default::default() }
     }
 
     fn apply_cheatcode<DB: Database>(
@@ -150,6 +145,7 @@ where
     }
 
     fn step(&mut self, interpreter: &mut Interpreter, _: &mut EVMData<'_, DB>, _: bool) -> Return {
+        // Record writes and reads if `record` has been called
         if let Some(storage_accesses) = &mut self.accesses {
             match interpreter.contract.code[interpreter.program_counter()] {
                 opcode::SLOAD => {
@@ -168,6 +164,18 @@ where
                         .or_insert_with(Vec::new)
                         .push(key);
                 }
+                _ => (),
+            }
+        }
+
+        // Match logs if `expectEmit` has been called
+        if !self.expected_emits.is_empty() {
+            match interpreter.contract.code[interpreter.program_counter()] {
+                opcode::LOG0 => handle_expect_emit(self, interpreter, 0),
+                opcode::LOG1 => handle_expect_emit(self, interpreter, 1),
+                opcode::LOG2 => handle_expect_emit(self, interpreter, 2),
+                opcode::LOG3 => handle_expect_emit(self, interpreter, 3),
+                opcode::LOG4 => handle_expect_emit(self, interpreter, 4),
                 _ => (),
             }
         }
@@ -207,6 +215,23 @@ where
             }
         }
 
+        // Handle expected emits at current depth
+        if !self
+            .expected_emits
+            .iter()
+            .filter(|expected| expected.depth == data.subroutine.depth())
+            .all(|expected| expected.found)
+        {
+            return (
+                Return::Revert,
+                remaining_gas,
+                "Log != expected log".to_string().encode().into(),
+            )
+        } else {
+            // Clear the emits we expected at this depth that have been found
+            self.expected_emits.retain(|expected| !expected.found)
+        }
+
         // If the depth is 0, then this is the root call terminating
         if data.subroutine.depth() == 0 {
             // Handle expected calls that were not fulfilled
@@ -223,6 +248,18 @@ where
                     )
                     .encode()
                     .into(),
+                )
+            }
+
+            // Check if we have any leftover expected emits
+            if !self.expected_emits.is_empty() {
+                return (
+                    Return::Revert,
+                    remaining_gas,
+                    "Expected an emit, but no logs were emitted afterward"
+                        .to_string()
+                        .encode()
+                        .into(),
                 )
             }
         }
