@@ -115,6 +115,8 @@ impl Cmd for RunArgs {
                     Some(evm_opts.sender),
                     None,
                     &predeploy_libraries,
+                    0,
+                    0,
                 );
                 runner.run_test(&func, needs_setup, Some(&known_contracts))?
             }
@@ -128,6 +130,8 @@ impl Cmd for RunArgs {
                     Some(evm_opts.sender),
                     None,
                     &predeploy_libraries,
+                    0,
+                    0,
                 );
                 runner.run_test(&func, needs_setup, Some(&known_contracts))?
             }

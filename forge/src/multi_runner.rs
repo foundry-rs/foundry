@@ -258,6 +258,8 @@ impl MultiContractRunner {
             self.sender,
             Some((&self.execution_info.0, &self.execution_info.1, &self.execution_info.2)),
             libs,
+            40,
+            60,
         );
         runner.run_tests(filter, self.fuzzer.clone(), Some(&self.known_contracts))
     }

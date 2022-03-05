@@ -31,6 +31,8 @@ pub struct FuzzedExecutor<'a, E, S> {
     runner: TestRunner,
     state: PhantomData<S>,
     sender: Address,
+    pub state_weight: u32,
+    pub random_weight: u32,
 }
 
 impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
@@ -44,8 +46,21 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
     }
 
     /// Instantiates a fuzzed executor EVM given a testrunner
-    pub fn new(evm: &'a mut E, runner: TestRunner, sender: Address) -> Self {
-        Self { evm: RefCell::new(evm), runner, state: PhantomData, sender }
+    pub fn new(
+        evm: &'a mut E,
+        runner: TestRunner,
+        sender: Address,
+        state_weight: u32,
+        random_weight: u32,
+    ) -> Self {
+        Self {
+            evm: RefCell::new(evm),
+            runner,
+            state: PhantomData,
+            sender,
+            state_weight,
+            random_weight,
+        }
     }
 
     /// Fuzzes the provided function, assuming it is available at the contract at `address`
@@ -66,20 +81,34 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
         // fuzz test run.
         S: Clone,
     {
-        let strat = (60u32, fuzz_state_calldata(func, None));
+        let mut strats = Vec::new();
+        if self.random_weight > 0 {
+            strats.push((self.random_weight, fuzz_state_calldata(func.clone(), None).boxed()))
+        }
 
         // Snapshot the state before the test starts running
         let pre_test_state = self.evm.borrow().state().clone();
 
         let flattened_state = Rc::new(RefCell::new(self.evm.borrow().flatten_state()));
 
-        // let select = proptest::sample::select(flattened_state.clone());
-        let state_strat = (40u32, fuzz_state_calldata(func, Some(flattened_state.clone())));
+        // we dont shrink for state strategy
+        if self.state_weight > 0 {
+            strats.push((
+                self.state_weight,
+                fuzz_state_calldata(func.clone(), Some(flattened_state.clone()))
+                    .no_shrink()
+                    .boxed(),
+            ))
+        }
+
+        if strats.is_empty() {
+            panic!("Fuzz strategy weights were all 0. Please set at least one strategy weight to be above 0");
+        }
 
         // stores the consumed gas and calldata of every successful fuzz call
         let fuzz_cases: RefCell<Vec<FuzzCase>> = RefCell::new(Default::default());
 
-        let combined_strat = proptest::strategy::Union::new_weighted(vec![strat, state_strat]);
+        let combined_strat = proptest::strategy::Union::new_weighted(strats);
 
         // stores the latest reason of a test call, this will hold the return reason of failed test
         // case if the runner failed
@@ -248,10 +277,10 @@ pub struct FuzzCase {
 
 /// Given a function, it returns a proptest strategy which generates valid abi-encoded calldata
 /// for that function's input types.
-pub fn fuzz_state_calldata<'a>(
-    func: &'a Function,
+pub fn fuzz_state_calldata(
+    func: Function,
     state: Option<Rc<RefCell<HashSet<[u8; 32]>>>>,
-) -> impl Strategy<Value = Bytes> + '_ {
+) -> impl Strategy<Value = Bytes> {
     // We need to compose all the strategies generated for each parameter in all
     // possible combinations
     // let strategy = proptest::sample::select(state.clone().into_iter().collect::<Vec<[u8;
