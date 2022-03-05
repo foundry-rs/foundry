@@ -1,6 +1,9 @@
 //! Verify contract source on etherscan
 
-use crate::{cmd::build::BuildArgs, opts::forge::ContractInfo};
+use crate::{
+    cmd::{build::BuildArgs, flatten::CoreFlattenArgs},
+    opts::forge::ContractInfo,
+};
 use clap::Parser;
 use ethers::{
     abi::Address,
@@ -33,7 +36,7 @@ pub struct VerifyArgs {
     etherscan_key: String,
 
     #[clap(flatten)]
-    opts: BuildArgs,
+    opts: CoreFlattenArgs,
 }
 
 /// Check verification status arguments
@@ -56,7 +59,28 @@ pub async fn run_verify(args: &VerifyArgs) -> eyre::Result<()> {
         eyre::bail!("Contract info must be provided in the format <path>:<name>")
     }
 
-    let project = args.opts.project()?;
+    let CoreFlattenArgs { root, contracts, remappings, remappings_env, lib_paths, hardhat } =
+        args.opts.clone();
+
+    let build_args = BuildArgs {
+        root,
+        contracts,
+        remappings,
+        remappings_env,
+        lib_paths,
+        out_path: None,
+        compiler: Default::default(),
+        names: false,
+        sizes: false,
+        ignored_error_codes: vec![],
+        no_auto_detect: false,
+        offline: false,
+        force: false,
+        hardhat,
+        libraries: vec![],
+    };
+
+    let project = build_args.project()?;
     let contract = project
         .flatten(&project.root().join(args.contract.path.as_ref().unwrap()))
         .map_err(|err| eyre::eyre!("Failed to flatten contract: {}", err))?;
