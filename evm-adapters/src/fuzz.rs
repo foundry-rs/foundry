@@ -348,7 +348,7 @@ fn fuzz_param_with_input(
             .boxed(),
             ParamType::FixedBytes(size) => {
                 // we have to clone outside the prop_map to satisfy lifetime constraints
-                let v = size.clone();
+                let v = *size;
                 selectors
                     .prop_map(move |selector| {
                         let x = *selector.select(&*state.borrow());
