@@ -158,7 +158,7 @@ impl<'config, B: Backend> FuzzState for MemoryStackStateOwned<'config, B> {
         let mut flattened: HashSet<[u8; 32]> = HashSet::new();
         let (applies, logs) = self.substate.clone().deconstruct(&self.backend);
         for apply in applies {
-            if let Apply::Modify { address, basic, storage, ..} = apply {
+            if let Apply::Modify { address, basic, storage, .. } = apply {
                 let old_basic = self.basic(address);
                 flattened.insert(H256::from(address).into());
                 // we keep bytes as little endian

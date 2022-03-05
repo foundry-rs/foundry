@@ -407,7 +407,7 @@ fn fuzz_param_with_input(
             },
             ParamType::Uint(n) => {
                 strategies::UintStrategy::new(*n, vec![]).prop_map(|x| x.into_token()).boxed()
-            },
+            }
             ParamType::Bool => any::<bool>().prop_map(|x| x.into_token()).boxed(),
             ParamType::String => any::<Vec<u8>>()
                 .prop_map(|x| {
