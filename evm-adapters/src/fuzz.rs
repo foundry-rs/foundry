@@ -1,5 +1,5 @@
 //! Fuzzing support abstracted over the [`Evm`](crate::Evm) used
-use crate::Evm;
+use crate::{Evm, ASSUME_MAGIC_RETURN_CODE};
 use ethers::{
     abi::{Abi, Function, ParamType, Token, Tokenizable},
     types::{Address, Bytes, I256, U256},
@@ -11,12 +11,14 @@ use std::{
     rc::Rc,
 };
 
-pub use proptest::test_runner::Config as FuzzConfig;
+pub use proptest::test_runner::{Config as FuzzConfig, Reason};
 use proptest::{
     prelude::*,
     test_runner::{TestError, TestRunner},
 };
 use serde::{Deserialize, Serialize};
+
+mod strategies;
 
 /// Wrapper around any [`Evm`](crate::Evm) implementor which provides fuzzing support using [`proptest`](https://docs.rs/proptest/1.0.0/proptest/).
 ///
@@ -96,6 +98,14 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
                     .call_raw(self.sender, address, calldata.clone(), 0.into(), false)
                     .expect("could not make raw evm call");
 
+                // When assume cheat code is triggered return a special string "FOUNDRY::ASSUME"
+                if returndata.as_ref() == ASSUME_MAGIC_RETURN_CODE {
+                    let _ = return_reason.borrow_mut().insert(reason);
+                    let err = "ASSUME: Too many rejects";
+                    let _ = revert_reason.borrow_mut().insert(err.to_string());
+                    return Err(TestCaseError::Reject(err.into()))
+                }
+
                 // We must check success before resetting the state, otherwise resetting the state
                 // will also reset the `failed` state variable back to false.
                 let success = evm.check_success(address, &reason, should_fail);
@@ -139,6 +149,7 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
                 revert_reason: revert_reason.into_inner().expect("Revert error string must be set"),
             });
 
+        self.evm.borrow_mut().reset(pre_test_state);
         FuzzTestResult { cases: FuzzedCases::new(fuzz_cases.into_inner()), test_error }
     }
 }

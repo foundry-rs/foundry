@@ -1,0 +1,13 @@
+[package]
+name = "forge-fmt"
+version = "0.1.0"
+edition = "2021"
+description = "Foundry's solidity formatting and linting support"
+
+[dependencies]
+indent_write = "2.2.0"
+semver = "1.0.4"
+solang-parser = "0.1.2"
+
+[dev-dependencies]
+pretty_assertions = "1.0.0"

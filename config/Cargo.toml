@@ -10,14 +10,14 @@ readme = "README.md"
 
 [dependencies]
 dirs-next = "2.0.0"
-semver = { version = "1.0.4", features = ["serde"] }
+semver = { version = "1.0.5", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.73"
 toml = "0.5"
 figment = { version = "0.10", features = ["toml", "env"] }
 eyre = "0.6.5"
 ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
-ethers-solc = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
+ethers-solc = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["async", "svm"] }
 Inflector = "0.11.4"
 
 [dev-dependencies]

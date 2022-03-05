@@ -100,6 +100,17 @@ function testDoubleWithFuzzing(uint256 x) public {
 - [ ] debug
 - [x] CLI Tracing with `RUST_LOG=forge=trace`
 
+### Gas Report
+
+Foundry will show you a comprehensive gas report about your contracts. It returns the `min`, `average`, `median` and, `max` gas cost for every function. 
+
+It looks at **all** the tests that make a call to a given function and records the associated gas costs. For example, if something calls a function and it reverts, that's propably the `min` value. Another example is the `max` value that is generated usually during the first call of the function (as it has to initialise storage, variables, etc.)
+
+Usually, the `median` value is what your users will probably end up paying. `max` and `min` concern edge cases that you might want to explicitly test against, but users will probably never encounter.
+
+<img width="626" alt="image" src="https://user-images.githubusercontent.com/13405632/155415392-3ef61d67-8952-40e1-a509-24a8bf18fa80.png">
+
+
 ### Cheat codes
 
 _The below is modified from
@@ -152,6 +163,8 @@ which implements the following methods:
   Tells the evm to expect that the next call reverts with specified error bytes. Valid input types: `bytes`, and `bytes4`. Implicitly, strings get converted to bytes except when shorter than 4, in which case you will need to cast explicitly to `bytes`.
   
 - `function expectEmit(bool,bool,bool,bool) external`: Expects the next emitted event. Params check topic 1, topic 2, topic 3 and data are the same.
+
+- `function getCode(string calldata) external returns (bytes memory)`: Fetches bytecode from a contract artifact. The parameter can either be in the form `ContractFile.sol` (if the filename and contract name are the same), `ContractFile.sol:ContractName`, or `./path/to/artifact.json`.
 
 The below example uses the `warp` cheatcode to override the timestamp & `expectRevert` to expect a specific revert string:
 
@@ -271,7 +284,7 @@ interface Hevm {
     // Expect a call to an address with the specified calldata.
     // Calldata can either be strict or a partial match
     function expectCall(address,bytes calldata) external;
-
+    // Fetches the contract bytecode from its artifact file
     function getCode(string calldata) external returns (bytes memory);
 }
 ```

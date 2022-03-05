@@ -1,11 +1,13 @@
 //! Contains various tests for checking forge's commands
+use ansi_term::Colour;
+use ethers::solc::{artifacts::Metadata, ConfigurableContractArtifact};
 use evm_adapters::evm_opts::{EvmOpts, EvmType};
 use foundry_cli_test_utils::{
     ethers_solc::{remappings::Remapping, PathStyle},
     forgetest, forgetest_ignore, forgetest_init, pretty_eq,
     util::{pretty_err, read_string, TestCommand, TestProject},
 };
-use foundry_config::{parse_with_profile, BasicConfig, Config};
+use foundry_config::{parse_with_profile, BasicConfig, Config, OptimizerDetails};
 use pretty_assertions::assert_eq;
 use std::{
     env::{self},
@@ -240,6 +242,214 @@ forgetest!(can_clean_hardhat, PathStyle::HardHat, |prj: TestProject, mut cmd: Te
     cmd.arg("clean");
     cmd.assert_empty_stdout();
     prj.assert_cleaned();
+});
+
+// checks that extra output works
+forgetest_init!(can_emit_extra_output, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.args(["build", "--extra-output", "metadata"]);
+    cmd.assert_non_empty_stdout();
+
+    let artifact_path = prj.paths().artifacts.join("Contract.sol/Contract.json");
+    let artifact: ConfigurableContractArtifact =
+        ethers::solc::utils::read_json_file(artifact_path).unwrap();
+    assert!(artifact.metadata.is_some());
+
+    cmd.fuse()
+        .args(["build", "--extra-output-files", "metadata", "--force", "--root"])
+        .arg(prj.root());
+    cmd.assert_non_empty_stdout();
+
+    let metadata_path = prj.paths().artifacts.join("Contract.sol/Contract.metadata.json");
+    let _artifact: Metadata = ethers::solc::utils::read_json_file(metadata_path).unwrap();
+});
+
+forgetest!(can_set_solc_explicitly, |prj: TestProject, mut cmd: TestCommand| {
+    prj.inner()
+        .add_source(
+            "Foo",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity >0.8.9;
+contract Greeter {}
+   "#,
+        )
+        .unwrap();
+
+    // explicitly set to run with 0.8.10
+    let config = Config { solc_version: Some("0.8.10".parse().unwrap()), ..Default::default() };
+    prj.write_config(config);
+
+    cmd.arg("build");
+
+    assert!(cmd.stdout_lossy().ends_with(
+        "Compiling...
+Compiling 1 files with 0.8.10
+Compiler run successful
+",
+    ));
+});
+
+forgetest!(can_print_warnings, |prj: TestProject, mut cmd: TestCommand| {
+    prj.inner()
+        .add_source(
+            "Foo",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity >0.8.9;
+contract Greeter {
+    function foo(uint256 a) public {
+        uint256 x = 1;
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    // explicitly set to run with 0.8.10
+    let config = Config { solc_version: Some("0.8.10".parse().unwrap()), ..Default::default() };
+    prj.write_config(config);
+
+    cmd.arg("build");
+
+    let output = cmd.stdout_lossy();
+    assert!(output.contains(
+        "Compiling...
+Compiling 1 files with 0.8.10
+Compiler run successful (with warnings)
+Warning: Unused function parameter. Remove or comment out the variable name to silence this warning.
+",
+    ));
+});
+
+// tests that direct import paths are handled correctly
+forgetest!(can_handle_direct_imports_into_src, |prj: TestProject, mut cmd: TestCommand| {
+    prj.inner()
+        .add_source(
+            "Foo",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+import {FooLib} from "src/FooLib.sol";
+struct Bar {
+    uint8 x;
+}
+contract Foo {
+    mapping(uint256 => Bar) bars;
+    function checker(uint256 id) external {
+        Bar memory b = bars[id];
+        FooLib.check(b);
+    }
+    function checker2() external {
+        FooLib.check2(this);
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    prj.inner()
+        .add_source(
+            "FooLib",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+import {Foo, Bar} from "src/Foo.sol";
+library FooLib {
+    function check(Bar memory b) public {}
+    function check2(Foo f) public {}
+}
+   "#,
+        )
+        .unwrap();
+
+    cmd.arg("build");
+
+    assert_eq!(
+        "Compiling...
+Compiling 2 files with 0.8.10
+Compiler run successful
+",
+        cmd.stdout_lossy()
+    );
+});
+
+// test to ensure yul optimizer can be set as intended
+forgetest!(can_set_yul_optimizer, |prj: TestProject, mut cmd: TestCommand| {
+    prj.inner()
+        .add_source(
+            "Foo",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+contract Foo {
+    function bar() public pure {
+       assembly {
+            let result_start := msize()
+       }
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    cmd.arg("build");
+
+    assert!(
+        cmd.stderr_lossy().contains(
+"The msize instruction cannot be used when the Yul optimizer is activated because it can change its semantics. Either disable the Yul optimizer or do not use the instruction."
+        )
+    );
+
+    // disable yul optimizer explicitly
+    let config = Config {
+        optimizer_details: Some(OptimizerDetails { yul: Some(false), ..Default::default() }),
+        ..Default::default()
+    };
+    prj.write_config(config);
+
+    assert!(cmd.stdout_lossy().ends_with(
+        "Compiling...
+Compiling 1 files with 0.8.10
+Compiler run successful
+",
+    ));
+});
+
+// tests that the `run` command works correctly
+forgetest!(can_execute_run_command, |prj: TestProject, mut cmd: TestCommand| {
+    let script = prj
+        .inner()
+        .add_source(
+            "Foo",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+contract Demo {
+    event log_string(string);
+    function run() external {
+        emit log_string("script ran");
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    cmd.arg("run").arg(script);
+    let output = cmd.stdout_lossy();
+    assert_eq!(
+        format!(
+            "Compiling...
+Compiling 1 files with 0.8.10
+Compiler run successful
+{}
+Gas Used: 1751
+== Logs ==
+script ran
+",
+            Colour::Green.paint("Script ran successfully.")
+        ),
+        output
+    );
 });
 
 // test against a local checkout, useful to debug with local ethers-rs patch

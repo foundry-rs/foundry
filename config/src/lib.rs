@@ -1,7 +1,6 @@
 //! foundry configuration.
 use std::{
     borrow::Cow,
-    collections::BTreeMap,
     path::{Path, PathBuf},
 };
 
@@ -16,11 +15,12 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 
 use ethers_core::types::{Address, U256};
+pub use ethers_solc::artifacts::OptimizerDetails;
 use ethers_solc::{
-    artifacts::{Optimizer, OptimizerDetails, Settings},
+    artifacts::{output_selection::ContractOutputSelection, Optimizer, Settings},
     error::SolcError,
     remappings::{RelativeRemapping, Remapping},
-    EvmVersion, Project, ProjectPathsConfig, SolcConfig,
+    ConfigurableArtifacts, EvmVersion, Project, ProjectPathsConfig, Solc, SolcConfig,
 };
 use figment::{providers::Data, value::Value};
 use inflector::Inflector;
@@ -152,26 +152,44 @@ pub struct Config {
     pub block_difficulty: u64,
     /// the `block.gaslimit` value during EVM execution
     pub block_gas_limit: Option<u64>,
-    /// Pass extra output types
-    pub extra_output: Option<Vec<String>>,
-    /// Settings to pass to the `solc` compiler input
-    // TODO consider making this more structured https://stackoverflow.com/questions/48998034/does-toml-support-nested-arrays-of-objects-tables
-    // TODO this needs to work as extension to the defaults:
+    /// Additional output selection for all contracts
+    /// such as "ir", "devodc", "storageLayout", etc.
+    /// See [Solc Compiler Api](https://docs.soliditylang.org/en/latest/using-the-compiler.html#compiler-api)
+    ///
+    /// The following values are always set because they're required by `forge`
     //{
-    //   "*": {
-    //     "": [
-    //       "ast"
-    //     ],
-    //     "*": [
+    //   "*": [
     //       "abi",
     //       "evm.bytecode",
     //       "evm.deployedBytecode",
     //       "evm.methodIdentifiers"
     //     ]
-    //   }
     // }
     // "#
-    pub solc_settings: Option<String>,
+    #[serde(default)]
+    pub extra_output: Vec<ContractOutputSelection>,
+    /// If set , a separate `json` file will be emitted for every contract depending on the
+    /// selection, eg. `extra_output_files = ["metadata"]` will create a `metadata.json` for
+    /// each contract in the project. See [Contract Metadata](https://docs.soliditylang.org/en/latest/metadata.html)
+    ///
+    /// The difference between `extra_output = ["metadata"]` and
+    /// `extra_output_files = ["metadata]` is that the former will include the
+    /// contract's metadata in the contract's json artifact, whereas the latter will emit the
+    /// output selection as separate files.
+    #[serde(default)]
+    pub extra_output_files: Vec<ContractOutputSelection>,
+    /// The maximum number of local test case rejections allowed
+    /// by proptest, to be encountered during usage of `vm.assume`
+    /// cheatcode.
+    pub fuzz_max_local_rejects: u32,
+    /// The maximum number of global test case rejections allowed
+    /// by proptest, to be encountered during usage of `vm.assume`
+    /// cheatcode.
+    pub fuzz_max_global_rejects: u32,
+    /// Print the names of the compiled contracts
+    pub names: bool,
+    /// Print the sizes of the compiled contracts
+    pub sizes: bool,
     /// The root path where the config detection started from, `Config::with_root`
     #[doc(hidden)]
     //  We're skipping serialization here, so it won't be included in the [`Config::to_string()`]
@@ -357,13 +375,14 @@ impl Config {
     }
 
     fn create_project(&self, cached: bool, no_artifacts: bool) -> Result<Project, SolcError> {
-        let project = Project::builder()
+        let mut project = Project::builder()
+            .artifacts(self.configured_artifacts_handler())
             .paths(self.project_paths())
             .allowed_path(&self.__root.0)
             .allowed_paths(&self.libs)
             .solc_config(SolcConfig::builder().settings(self.solc_settings()?).build())
             .ignore_error_codes(self.ignored_error_codes.clone())
-            .set_auto_detect(self.auto_detect_solc)
+            .set_auto_detect(self.is_auto_detect())
             .set_offline(self.offline)
             .set_cached(cached)
             .set_no_artifacts(no_artifacts)
@@ -373,7 +392,37 @@ impl Config {
             project.cleanup()?;
         }
 
+        if let Some(solc) = self.ensure_solc_version()? {
+            project.solc = solc;
+        }
+
         Ok(project)
+    }
+
+    /// Ensures that the configured version is installed if explicitly set
+    fn ensure_solc_version(&self) -> Result<Option<Solc>, SolcError> {
+        if let Some(ref version) = self.solc_version {
+            let v = version.to_string();
+            let mut solc = Solc::find_svm_installed_version(&v)?;
+            if solc.is_none() {
+                Solc::blocking_install(version)?;
+                solc = Solc::find_svm_installed_version(&v)?;
+            }
+            Ok(solc)
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Returns whether the compiler version should be auto-detected
+    ///
+    /// Returns `false` if `solc_version` is explicitly set, otherwise returns the value of
+    /// `auto_detect_solc`
+    pub fn is_auto_detect(&self) -> bool {
+        if self.solc_version.is_some() {
+            return false
+        }
+        self.auto_detect_solc
     }
 
     /// Returns the `ProjectPathsConfig`  sub set of the config.
@@ -393,8 +442,41 @@ impl Config {
             .sources(&self.src)
             .artifacts(&self.out)
             .libs(self.libs.clone())
-            .remappings(self.remappings.iter().map(|m| m.clone().into()))
+            .remappings(self.get_all_remappings())
             .build_with_root(&self.__root.0)
+    }
+
+    /// Returns all configured [`Remappings`]
+    ///
+    /// **Note:** this will add an additional `<src>/=<src path>` remapping here so imports that
+    /// look like `import {Foo} from "src/Foo.sol";` are properly resolved.
+    ///
+    /// This is due the fact that `solc`'s VFS resolves [direct imports](https://docs.soliditylang.org/en/develop/path-resolution.html#direct-imports) that start with the source directory's name.
+    ///
+    /// So that
+    ///
+    /// ```solidity
+    /// import "./math/math.sol";
+    /// import "contracts/tokens/token.sol";
+    /// ```
+    ///
+    /// in `contracts/contract.sol` are resolved to
+    ///
+    /// ```text
+    /// contracts/tokens/token.sol
+    /// contracts/math/math.sol
+    /// ```
+    pub fn get_all_remappings(&self) -> Vec<Remapping> {
+        let mut remappings: Vec<_> = self.remappings.iter().map(|m| m.clone().into()).collect();
+        if let Some(src_dir_name) =
+            self.src.file_name().and_then(|s| s.to_str()).filter(|s| !s.is_empty())
+        {
+            remappings.push(Remapping {
+                name: format!("{}/", src_dir_name),
+                path: format!("{}", self.src.display()),
+            });
+        }
+        remappings
     }
 
     /// Returns the `Optimizer` based on the configured settings
@@ -406,18 +488,10 @@ impl Config {
         }
     }
 
-    pub fn output_selection(&self) -> BTreeMap<String, BTreeMap<String, Vec<String>>> {
-        let mut output_selection = Settings::default_output_selection();
-
-        if let Some(extras) = &self.extra_output {
-            output_selection.entry("*".to_string()).and_modify(|e1| {
-                e1.entry("*".to_string()).and_modify(|e2| {
-                    e2.extend_from_slice(extras.as_slice());
-                });
-            });
-        }
-
-        output_selection
+    /// returns the [`ethers_solc::ConfigurableArtifacts`] for this config, that includes the
+    /// `extra_output` fields
+    pub fn configured_artifacts_handler(&self) -> ConfigurableArtifacts {
+        ConfigurableArtifacts::new(self.extra_output.clone(), self.extra_output_files.clone())
     }
 
     /// Returns the configured `solc` `Settings` that includes:
@@ -427,16 +501,17 @@ impl Config {
     pub fn solc_settings(&self) -> Result<Settings, SolcError> {
         let libraries = parse_libraries(&self.libraries)?;
         let optimizer = self.optimizer();
-        let output_selection = self.output_selection();
 
-        Ok((Settings {
+        let settings = Settings {
             optimizer,
             evm_version: Some(self.evm_version),
             libraries,
-            output_selection,
             ..Default::default()
-        })
-        .with_ast())
+        }
+        .with_extra_output(self.configured_artifacts_handler().output_selection())
+        .with_ast();
+
+        Ok(settings)
     }
 
     /// Returns the default figment
@@ -551,7 +626,18 @@ impl Config {
     pub fn to_string_pretty(&self) -> Result<String, toml::ser::Error> {
         // serializing to value first to prevent `ValueAfterTable` errors
         let value = toml::Value::try_from(self)?;
-        let s = toml::to_string_pretty(&value)?;
+        let mut s = toml::to_string_pretty(&value)?;
+
+        if self.optimizer_details.is_some() {
+            // this is a hack to make nested tables work because this requires the config's profile
+            s = s
+                .replace("[optimizer_details]", &format!("[{}.optimizer_details]", self.profile))
+                .replace(
+                    "[optimizer_details.yulDetails]",
+                    &format!("[{}.optimizer_details.yulDetails]", self.profile),
+                );
+        }
+
         Ok(format!(
             r#"[{}]
 {}"#,
@@ -716,9 +802,13 @@ impl Default for Config {
             optimizer: true,
             optimizer_runs: 200,
             optimizer_details: None,
-            extra_output: None,
-            solc_settings: None,
+            extra_output: Default::default(),
+            extra_output_files: Default::default(),
+            names: false,
+            sizes: false,
             fuzz_runs: 256,
+            fuzz_max_local_rejects: 1024,
+            fuzz_max_global_rejects: 65536,
             ffi: false,
             sender: "00a329c0648769A73afAc7F9381E08FB43dBEA72".parse().unwrap(),
             tx_origin: "00a329c0648769A73afAc7F9381E08FB43dBEA72".parse().unwrap(),
@@ -1208,6 +1298,17 @@ mod tests {
                 ],
             );
 
+            // contains additional remapping to the source dir
+            assert_eq!(
+                config.get_all_remappings(),
+                vec![
+                    Remapping::from_str("ds-test/=lib/ds-test/src/").unwrap(),
+                    Remapping::from_str("env-lib/=lib/env-lib/").unwrap(),
+                    Remapping::from_str("other/=lib/other/").unwrap(),
+                    Remapping::from_str("some-source/=some-source").unwrap(),
+                ],
+            );
+
             Ok(())
         });
     }
@@ -1275,6 +1376,30 @@ mod tests {
                     ..Config::default()
                 }
             );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_output_selection() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                extra_output = ["metadata", "ir-optimized"]
+                extra_output_files = ["metadata"]
+            "#,
+            )?;
+
+            let config = Config::load();
+
+            assert_eq!(
+                config.extra_output,
+                vec![ContractOutputSelection::Metadata, ContractOutputSelection::IrOptimized]
+            );
+            assert_eq!(config.extra_output_files, vec![ContractOutputSelection::Metadata]);
 
             Ok(())
         });
@@ -1442,6 +1567,45 @@ mod tests {
             jail.create_file("foundry.toml", &default.to_string_pretty().unwrap())?;
             let other = Config::load();
             assert_eq!(default, other);
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_optimizer_settings_basic() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                optimizer = true
+
+                [default.optimizer_details]
+                yul = false
+
+                [default.optimizer_details.yulDetails]
+                stackAllocation = true
+            "#,
+            )?;
+            let loaded = Config::load();
+            assert_eq!(
+                loaded.optimizer_details,
+                Some(OptimizerDetails {
+                    yul: Some(false),
+                    yul_details: Some(YulDetails {
+                        stack_allocation: Some(true),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                })
+            );
+
+            let s = loaded.to_string_pretty().unwrap();
+            jail.create_file("foundry.toml", &s)?;
+
+            let reloaded = Config::load();
+            assert_eq!(loaded, reloaded);
 
             Ok(())
         });

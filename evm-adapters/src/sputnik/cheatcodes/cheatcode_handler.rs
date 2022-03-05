@@ -6,7 +6,7 @@ use super::{
 use crate::{
     call_tracing::{CallTrace, CallTraceArena, LogCallOrder},
     sputnik::{cheatcodes::memory_stackstate_owned::ExpectedEmit, Executor, SputnikExecutor},
-    Evm,
+    Evm, ASSUME_MAGIC_RETURN_CODE,
 };
 use std::collections::{BTreeMap, HashSet};
 
@@ -886,6 +886,13 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
 
                 self.state_mut().labels.insert(address, label);
             }
+            HEVMCalls::Assume(inner) => {
+                self.add_debug(CheatOp::ASSUME);
+                if !inner.0 {
+                    res = ASSUME_MAGIC_RETURN_CODE.into();
+                    return Capture::Exit((ExitReason::Revert(ExitRevert::Reverted), res))
+                }
+            }
         };
 
         self.fill_trace(&trace, true, Some(res.clone()), pre_index);
@@ -1601,7 +1608,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> Handler for CheatcodeStackExecutor<'a
                 return evm_error("Log != expected log")
             } else {
                 // empty out expected_emits after successfully capturing all of them
-                self.state_mut().expected_emits = Vec::new();
+                self.state_mut().expected_emits.retain(|expected| !expected.found);
             }
 
             self.expected_revert(ExpectRevertReturn::Call(res), expected_revert).into_call_inner()

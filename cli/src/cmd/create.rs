@@ -60,7 +60,7 @@ impl Cmd for CreateArgs {
     fn run(self) -> Result<Self::Output> {
         // Find Project & Compile
         let project = self.opts.project()?;
-        let compiled = super::compile(&project)?;
+        let compiled = super::compile(&project, self.opts.names, self.opts.sizes)?;
 
         // Get ABI and BIN
         let (abi, bin, _) = super::read_artifact(&project, compiled, self.contract.clone())?;
@@ -137,10 +137,11 @@ impl CreateArgs {
             deployer
         };
 
-        let deployed_contract = deployer.send().await?;
+        let (deployed_contract, receipt) = deployer.send_with_receipt().await?;
 
         println!("Deployer: {:?}", deployer_address);
         println!("Deployed to: {:?}", deployed_contract.address());
+        println!("Transaction hash: {:?}", receipt.transaction_hash);
 
         Ok(())
     }

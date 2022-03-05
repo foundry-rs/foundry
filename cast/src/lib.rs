@@ -14,6 +14,7 @@ use ethers_core::{
 use ethers_etherscan::Client;
 use ethers_providers::{Middleware, PendingTransaction};
 use eyre::{Context, Result};
+use futures::future::join_all;
 use rustc_hex::{FromHexIter, ToHex};
 use std::str::FromStr;
 
@@ -271,19 +272,30 @@ where
         };
 
         let func = if let Some((sig, args)) = args {
+            let args = resolve_name_args(&args, &self.provider).await;
+
             let func = if sig.contains('(') {
                 get_func(sig)?
+            } else if sig.starts_with("0x") {
+                // if only calldata is provided, returning a dummy function
+                get_func("x()")?
             } else {
                 get_func_etherscan(
                     sig,
                     to,
-                    args.clone(),
+                    &args,
                     chain,
                     etherscan_api_key.expect("Must set ETHERSCAN_API_KEY"),
                 )
                 .await?
             };
-            let data = encode_args(&func, &args)?;
+
+            let data = if sig.starts_with("0x") {
+                hex::decode(strip_0x(sig))?
+            } else {
+                encode_args(&func, &args)?
+            };
+
             tx.set_data(data.into());
             Some(func)
         } else {
@@ -391,6 +403,10 @@ where
             Cast::block_field_as_num(self, block, String::from("timestamp")).await?.to_string();
         let datetime = NaiveDateTime::from_timestamp(timestamp_str.parse::<i64>().unwrap(), 0);
         Ok(datetime.format("%a %b %e %H:%M:%S %Y").to_string())
+    }
+
+    pub async fn timestamp<T: Into<BlockId>>(&self, block: T) -> Result<U256> {
+        Cast::block_field_as_num(self, block, "timestamp".to_string()).await
     }
 
     pub async fn chain(&self) -> Result<&str> {
@@ -1201,13 +1217,12 @@ impl SimpleCast {
     /// # use cast::SimpleCast as Cast;
     ///
     /// # fn main() -> eyre::Result<()> {
-    ///    
+    ///
     ///    assert_eq!(Cast::index("address", "uint256" ,"0xD0074F4E6490ae3f888d1d4f7E3E43326bD3f0f5" ,"2").unwrap().as_str(),"0x9525a448a9000053a4d151336329d6563b7e80b24f8e628e95527f218e8ab5fb");
     ///    assert_eq!(Cast::index("uint256", "uint256" ,"42" ,"6").unwrap().as_str(),"0xfc808b0f31a1e6b9cf25ff6289feae9b51017b392cc8e25620a94a38dcdafcc1");
     /// #    Ok(())
     /// # }
     /// ```
-
     pub fn index(
         from_type: &str,
         to_type: &str,
@@ -1223,6 +1238,21 @@ impl SimpleCast {
 
 fn strip_0x(s: &str) -> &str {
     s.strip_prefix("0x").unwrap_or(s)
+}
+
+async fn resolve_name_args<M: Middleware>(args: &[String], provider: &M) -> Vec<String> {
+    join_all(args.iter().map(|arg| async {
+        if arg.contains('.') {
+            let addr = provider.resolve_name(arg).await;
+            match addr {
+                Ok(addr) => format!("0x{}", hex::encode(addr.as_bytes())),
+                Err(_) => arg.to_string(),
+            }
+        } else {
+            arg.to_string()
+        }
+    }))
+    .await
 }
 
 #[cfg(test)]
