@@ -51,7 +51,7 @@ pub mod test_helpers {
     });
 
     pub fn test_executor() -> Executor<Backend> {
-        ExecutorBuilder::new().with_cheatcodes(false).with_config((*EVM_OPTS).env.evm_env()).build()
+        ExecutorBuilder::new().with_cheatcodes(false).with_config((*EVM_OPTS).evm_env()).build()
     }
 
     pub fn fuzz_executor<'a, DB: DatabaseRef>(

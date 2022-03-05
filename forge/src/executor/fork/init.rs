@@ -7,7 +7,7 @@ pub async fn environment<M: Middleware>(
     provider: &M,
     override_chain_id: Option<u64>,
     pin_block: Option<u64>,
-    origin: Option<Address>,
+    origin: Address,
 ) -> Result<Env, M::Error> {
     let block_number = if let Some(pin_block) = pin_block {
         pin_block
@@ -31,9 +31,10 @@ pub async fn environment<M: Middleware>(
             gas_limit: block.gas_limit,
         },
         tx: TxEnv {
-            caller: origin.unwrap_or_default(),
+            caller: origin,
             gas_price,
             chain_id: Some(override_chain_id.unwrap_or(rpc_chain_id.as_u64())),
+            gas_limit: block.gas_limit.as_u64(),
             ..Default::default()
         },
         ..Default::default()

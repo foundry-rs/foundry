@@ -8,7 +8,7 @@ use clap::{AppSettings, Parser};
 use ethers::solc::{ArtifactOutput, Project};
 use forge::{
     decode::decode_console_logs,
-    executor::{builder::Fork, opts::EvmOpts},
+    executor::{ opts::EvmOpts},
     MultiContractRunnerBuilder, TestFilter, TestResult,
 };
 use foundry_config::{figment::Figment, Config};
@@ -186,17 +186,11 @@ impl Cmd for TestArgs {
 
         // prepare the test builder
         let evm_spec = crate::utils::evm_spec(&config.evm_version);
-        let mut builder = MultiContractRunnerBuilder::default()
+        let builder = MultiContractRunnerBuilder::default()
             .fuzzer(fuzzer)
             .initial_balance(evm_opts.initial_balance)
             .evm_spec(evm_spec)
             .sender(evm_opts.sender);
-
-        // enable forking mode if the url is set
-        if let Some(ref url) = evm_opts.fork_url {
-            builder =
-                builder.fork(Fork { url: url.to_string(), pin_block: evm_opts.fork_block_number });
-        }
 
         test(
             builder,
