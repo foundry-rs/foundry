@@ -276,31 +276,23 @@ fn fuzz_param_with_input(
     state: Option<Rc<RefCell<HashSet<[u8; 32]>>>>,
 ) -> impl Strategy<Value = Token> {
     use proptest::prelude::*;
+    // The key to making this work is the `boxed()` call which type erases everything
+    // https://altsysrq.github.io/proptest-book/proptest/tutorial/transforming-strategies.html
     if let Some(state) = state {
         let selectors = any::<prop::sample::Selector>();
         match param {
-            ParamType::Address => {
-                selectors
-                    .prop_map(move |selector| {
-                        let x = *selector.select(&*state.borrow());
-                        Address::from_slice(&x[12..]).into_token()
-                    })
-                    .boxed()
-                // The key to making this work is the `boxed()` call which type erases everything
-                // https://altsysrq.github.io/proptest-book/proptest/tutorial/transforming-strategies.html
-                // state.prop_map(|x| ).boxed()
-            }
+            ParamType::Address => selectors
+                .prop_map(move |selector| {
+                    let x = *selector.select(&*state.borrow());
+                    Address::from_slice(&x[12..]).into_token()
+                })
+                .boxed(),
             ParamType::Bytes => selectors
                 .prop_map(move |selector| {
                     let x = *selector.select(&*state.borrow());
                     Bytes::from(x).into_token()
                 })
                 .boxed(),
-            // For ints and uints we sample from a U256, then wrap it to the correct size with a
-            // modulo operation. Note that this introduces modulo bias, but it can be removed with
-            // rejection sampling if it's determined the bias is too severe. Rejection sampling may
-            // slow down tests as it resamples bad values, so may want to benchmark the performance
-            // hit and weigh that against the current bias before implementing
             ParamType::Int(n) => match n / 8 {
                 32 => selectors
                     .prop_map(move |selector| {
@@ -354,13 +346,17 @@ fn fuzz_param_with_input(
             )
             .prop_map(Token::Array)
             .boxed(),
-            ParamType::FixedBytes(ref _size) => selectors
-                .prop_map(move |selector| {
-                    let x = *selector.select(&*state.borrow());
-                    // TODO: figure out if size is actually needed here?
-                    Token::FixedBytes(x.to_vec())
-                })
-                .boxed(),
+            ParamType::FixedBytes(size) => {
+                // we have to clone outside the prop_map to satisfy lifetime constraints
+                let v = size.clone();
+                selectors
+                    .prop_map(move |selector| {
+                        let x = *selector.select(&*state.borrow());
+                        let val = x[32 - v..].to_vec();
+                        Token::FixedBytes(val)
+                    })
+                    .boxed()
+            }
             ParamType::FixedArray(param, size) => (0..*size as u64)
                 .map(|_| {
                     fuzz_param_with_input(param, Some(state.clone()))
@@ -379,8 +375,6 @@ fn fuzz_param_with_input(
     } else {
         match param {
             ParamType::Address => {
-                // The key to making this work is the `boxed()` call which type erases everything
-                // https://altsysrq.github.io/proptest-book/proptest/tutorial/transforming-strategies.html
                 any::<[u8; 20]>().prop_map(|x| Address::from_slice(&x).into_token()).boxed()
             }
             ParamType::Bytes => any::<Vec<u8>>().prop_map(|x| Bytes::from(x).into_token()).boxed(),
