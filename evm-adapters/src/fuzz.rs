@@ -272,7 +272,7 @@ fn fuzz_param_with_input(
                 selectors
                     .prop_map(move |selector| {
                         let x = *selector.select(&*state.borrow());
-                        Address::from_slice(&x[..]).into_token()
+                        Address::from_slice(&x[12..]).into_token()
                     })
                     .boxed()
                 // The key to making this work is the `boxed()` call which type erases everything
@@ -460,5 +460,22 @@ mod tests {
         let error = res.test_error.unwrap();
         let revert_reason = error.revert_reason;
         assert_eq!(revert_reason, "fuzztest-revert");
+    }
+
+    #[test]
+    fn finds_fuzzed_state_revert() {
+        let mut evm = vm();
+
+        let compiled = COMPILED.find("FuzzTests").expect("could not find contract");
+        let (addr, _, _, _) =
+            evm.deploy(Address::zero(), compiled.bytecode().unwrap().clone(), 0.into()).unwrap();
+
+        let evm = fuzzvm(&mut evm);
+
+        let func = compiled.abi.unwrap().function("testFuzzedStateRevert").unwrap();
+        let res = evm.fuzz(func, addr, false, compiled.abi);
+        let error = res.test_error.unwrap();
+        let revert_reason = error.revert_reason;
+        assert_eq!(revert_reason, "fuzzstate-revert");
     }
 }
