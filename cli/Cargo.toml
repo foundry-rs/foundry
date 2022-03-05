@@ -58,6 +58,7 @@ walkdir = "2.3.2"
 solang-parser = "0.1.2"
 similar = { version = "2.1.0", features = ["inline"] }
 console = "0.15.0"
+watchexec = "2.0.0-pre.10"
 
 [dev-dependencies]
 foundry-utils = { path = "./../utils", features = ["test"] }
