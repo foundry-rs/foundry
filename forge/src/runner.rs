@@ -3,7 +3,7 @@ use crate::{
         fuzz::{FuzzError, FuzzTestResult, FuzzedCases, FuzzedExecutor},
         CallResult, EvmError, Executor, RawCallResult,
     },
-    TestFilter,
+    TestFilter, CALLER,
 };
 use rayon::iter::ParallelIterator;
 use revm::db::DatabaseRef;
@@ -202,13 +202,17 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
     /// Deploys the test contract inside the runner from the sending account, and optionally runs
     /// the `setUp` function on the test contract.
     pub fn deploy(&mut self, setup: bool) -> Result<(Address, Vec<RawLog>, bool, Option<String>)> {
+        // We max out their balance so that they can deploy and make calls.
+        self.executor.set_balance(self.sender, U256::MAX);
+        self.executor.set_balance(*CALLER, U256::MAX);
+
         // We set the nonce of the deployer accounts to 1 to get the same addresses as DappTools
         self.executor.set_nonce(self.sender, 1);
 
         // Deploy libraries
         self.predeploy_libs.iter().for_each(|code| {
             self.executor
-                .deploy(Address::zero(), code.0.clone(), 0u32.into())
+                .deploy(*CALLER, code.0.clone(), 0u32.into())
                 .expect("couldn't deploy library");
         });
 
