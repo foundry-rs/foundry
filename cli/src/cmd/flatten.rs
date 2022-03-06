@@ -7,26 +7,20 @@ use clap::{Parser, ValueHint};
 use foundry_config::Config;
 
 #[derive(Debug, Clone, Parser)]
-pub struct FlattenArgs {
-    #[clap(help = "the path to the contract to flatten", value_hint = ValueHint::FilePath)]
-    pub target_path: PathBuf,
-
-    #[clap(long, short, help = "output path for the flattened contract", value_hint = ValueHint::FilePath)]
-    pub output: Option<PathBuf>,
-
+pub struct CoreFlattenArgs {
     #[clap(
-        help = "the project's root path. By default, this is the root directory of the current Git repository or the current working directory if it is not part of a Git repository",
-        long,
-        value_hint = ValueHint::DirPath
+    help = "the project's root path. By default, this is the root directory of the current Git repository or the current working directory if it is not part of a Git repository",
+    long,
+    value_hint = ValueHint::DirPath
     )]
     pub root: Option<PathBuf>,
 
     #[clap(
-        env = "DAPP_SRC",
-        help = "the directory relative to the root under which the smart contracts are",
-        long,
-        short,
-        value_hint = ValueHint::DirPath
+    env = "DAPP_SRC",
+    help = "the directory relative to the root under which the smart contracts are",
+    long,
+    short,
+    value_hint = ValueHint::DirPath
     )]
     pub contracts: Option<PathBuf>,
 
@@ -36,9 +30,9 @@ pub struct FlattenArgs {
     pub remappings_env: Option<String>,
 
     #[clap(
-        help = "the paths where your libraries are installed",
-        long,
-        value_hint = ValueHint::DirPath
+    help = "the paths where your libraries are installed",
+    long,
+    value_hint = ValueHint::DirPath
     )]
     pub lib_paths: Vec<PathBuf>,
 
@@ -51,26 +45,30 @@ pub struct FlattenArgs {
     pub hardhat: bool,
 }
 
+#[derive(Debug, Clone, Parser)]
+pub struct FlattenArgs {
+    #[clap(help = "the path to the contract to flatten", value_hint = ValueHint::FilePath)]
+    pub target_path: PathBuf,
+
+    #[clap(long, short, help = "output path for the flattened contract", value_hint = ValueHint::FilePath)]
+    pub output: Option<PathBuf>,
+
+    #[clap(flatten)]
+    core_flatten_args: CoreFlattenArgs,
+}
+
 impl Cmd for FlattenArgs {
     type Output = ();
     fn run(self) -> eyre::Result<Self::Output> {
-        let FlattenArgs {
-            target_path,
-            output,
-            root,
-            contracts,
-            remappings,
-            remappings_env,
-            lib_paths,
-            hardhat,
-        } = self;
+        let FlattenArgs { target_path, output, core_flatten_args } = self;
+
         // flatten is a subset of `BuildArgs` so we can reuse that to get the config
         let build_args = BuildArgs {
-            root,
-            contracts,
-            remappings,
-            remappings_env,
-            lib_paths,
+            root: core_flatten_args.root,
+            contracts: core_flatten_args.contracts,
+            remappings: core_flatten_args.remappings,
+            remappings_env: core_flatten_args.remappings_env,
+            lib_paths: core_flatten_args.lib_paths,
             out_path: None,
             compiler: Default::default(),
             names: false,
@@ -79,7 +77,7 @@ impl Cmd for FlattenArgs {
             no_auto_detect: false,
             offline: false,
             force: false,
-            hardhat,
+            hardhat: core_flatten_args.hardhat,
             libraries: vec![],
             watch: Default::default(),
         };
