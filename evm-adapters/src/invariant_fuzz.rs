@@ -1,5 +1,8 @@
 //! Fuzzing support abstracted over the [`Evm`](crate::Evm) used
+use std::collections::BTreeMap;
 use crate::Evm;
+use crate::fuzz::*;
+
 use ethers::{
     abi::{Abi, Function, ParamType, Token, Tokenizable},
     types::{Address, Bytes, I256, U256},
@@ -22,15 +25,15 @@ use serde::{Deserialize, Serialize};
 /// inputs, until it finds a counterexample. The provided `TestRunner` contains all the
 /// configuration which can be overridden via [environment variables](https://docs.rs/proptest/1.0.0/proptest/test_runner/struct.Config.html)
 #[derive(Debug)]
-pub struct InvairantExecutor<'a, E, S> {
+pub struct InvariantExecutor<'a, E, S> {
     evm: RefCell<&'a mut E>,
     runner: TestRunner,
     state: PhantomData<S>,
     sender: Address,
-    contracts: &'a BTreeMap<Address, <String, Abi>>,
+    contracts: &'a BTreeMap<Address, (String, Abi)>,
 }
 
-impl<'a, S, E: Evm<S>> InvairantExecutor<'a, E, S> {
+impl<'a, S, E: Evm<S>> InvariantExecutor<'a, E, S> {
     pub fn into_inner(self) -> &'a mut E {
         self.evm.into_inner()
     }
@@ -41,8 +44,8 @@ impl<'a, S, E: Evm<S>> InvairantExecutor<'a, E, S> {
     }
 
     /// Instantiates a fuzzed executor EVM given a testrunner
-    pub fn new(evm: &'a mut E, runner: TestRunner, sender: Address) -> Self {
-        Self { evm: RefCell::new(evm), runner, state: PhantomData, sender }
+    pub fn new(evm: &'a mut E, runner: TestRunner, sender: Address, contracts: &'a BTreeMap<Address, (String, Abi)>,) -> Self {
+        Self { evm: RefCell::new(evm), runner, state: PhantomData, sender, contracts }
     }
 
     /// Fuzzes the provided function, assuming it is available at the contract at `address`
@@ -52,7 +55,9 @@ impl<'a, S, E: Evm<S>> InvairantExecutor<'a, E, S> {
     /// Returns a list of all the consumed gas and calldata of every fuzz case
     pub fn invariant_fuzz(
         &self,
-    ) -> FuzzTestResult<E::ReturnReason>
+        invariant_address: Address,
+        abi: Option<&Abi>,
+    ) -> Option<InvariantFuzzTestResult<E::ReturnReason>>
     where
         // We need to be able to clone the state so as to snapshot it and reset
         // it back after every test run, to have isolation of state across each
@@ -60,7 +65,15 @@ impl<'a, S, E: Evm<S>> InvairantExecutor<'a, E, S> {
         S: Clone,
     {
 
-        let strat = invariant_strat(func);
+        let invariants: Vec<Function>;
+        if let Some(abi) = abi {
+            invariants = abi.functions().filter(|func| func.name.starts_with("invariant")).cloned().collect()
+        } else {
+            return None;
+        };
+
+        let contracts: BTreeMap<Address, _> = self.contracts.clone().into_iter().filter(| (addr, _)| *addr != Address::from_slice(&hex::decode("7109709ECfa91a80626fF3989D68f67F5b1DD12D").unwrap()) && *addr !=  Address::from_slice(&hex::decode("000000000000000000636F6e736F6c652e6c6f67").unwrap())).collect();
+        let strat = invariant_strat(contracts);
 
         // Snapshot the state before the test starts running
         let pre_test_state = self.evm.borrow().state().clone();
@@ -72,43 +85,74 @@ impl<'a, S, E: Evm<S>> InvairantExecutor<'a, E, S> {
         // case if the runner failed
         let return_reason: RefCell<Option<E::ReturnReason>> = RefCell::new(None);
         let revert_reason = RefCell::new(None);
+        let mut all_invars = BTreeMap::new();
+        invariants.iter().for_each(|f| {
+            all_invars.insert(f.name.to_string(), None);
+        });
+        let invariant_doesnt_hold = RefCell::new(all_invars);
 
         let mut runner = self.runner.clone();
-        tracing::debug!(func = ?func.name, should_fail, "fuzzing");
-        let test_error = runner
-            .run(&strat, |calldata| {
+        let _test_error = runner
+            .run(&strat, |(address, calldata)| {
+                println!("address {:?} {:?}", address, hex::encode(&calldata));
                 let mut evm = self.evm.borrow_mut();
                 // Before each test, we must reset to the initial state
                 evm.reset(pre_test_state.clone());
 
-                let (returndata, reason, gas, _) = evm
+                let (_, reason, gas, _) = evm
                     .call_raw(self.sender, address, calldata.clone(), 0.into(), false)
                     .expect("could not make raw evm call");
 
-                // We must check success before resetting the state, otherwise resetting the state
-                // will also reset the `failed` state variable back to false.
-                let success = evm.check_success(address, &reason, should_fail);
-
-                // store the result of this test case
-                let _ = return_reason.borrow_mut().insert(reason);
-
-                if !success {
-                    let revert =
-                        foundry_utils::decode_revert(returndata.as_ref(), abi).unwrap_or_default();
-                    let _ = revert_reason.borrow_mut().insert(revert);
+                if !is_fail(*evm, &reason) {
+                    // iterate over invariants, making sure they dont fail
+                    invariants.iter().for_each(|func| {
+                        let (retdata, status, _gas, _logs) = evm.call_unchecked(self.sender, invariant_address, &func, (), 0.into()).expect("EVM error");
+                        if is_fail(*evm, &status) {
+                            invariant_doesnt_hold.borrow_mut().insert(func.name.clone(), Some( InvariantFuzzError {
+                                test_error: proptest::test_runner::TestError::Fail(
+                                    format!(
+                                        "{}, reason: '{}'",
+                                        func.name,
+                                        match foundry_utils::decode_revert(retdata.as_ref(), abi) {
+                                            Ok(e) => e,
+                                            Err(e) => e.to_string(),
+                                        }
+                                    ).into(),
+                                    (address, calldata.clone())
+                                ),
+                                return_reason: status,
+                                revert_reason: foundry_utils::decode_revert(retdata.as_ref(), abi).unwrap_or_default(),
+                                addr: invariant_address,
+                                func: func.short_signature().into(),
+                                })
+                            );
+                        } else {
+                            // This will panic and get caught by the executor
+                            if !evm.check_success(invariant_address, &reason, false) {
+                                invariant_doesnt_hold.borrow_mut().insert(func.name.clone(), Some( InvariantFuzzError {
+                                    test_error: proptest::test_runner::TestError::Fail(
+                                        format!(
+                                            "{}, reason: '{}'",
+                                            func.name,
+                                            match foundry_utils::decode_revert(retdata.as_ref(), abi) {
+                                                Ok(e) => e,
+                                                Err(e) => e.to_string(),
+                                            }
+                                        ).into(),
+                                        (address, calldata.clone())
+                                    ),
+                                    return_reason: status,
+                                    revert_reason: foundry_utils::decode_revert(retdata.as_ref(), abi).unwrap_or_default(),
+                                    addr: invariant_address,
+                                    func: func.short_signature().into(),
+                                }));
+                            }
+                        }
+                    });
+                } else {
+                    // call failed, continue on
+                    return Ok(())
                 }
-
-                // This will panic and get caught by the executor
-                proptest::prop_assert!(
-                    success,
-                    "{}, expected failure: {}, reason: '{}'",
-                    func.name,
-                    should_fail,
-                    match foundry_utils::decode_revert(returndata.as_ref(), abi) {
-                        Ok(e) => e,
-                        Err(e) => e.to_string(),
-                    }
-                );
 
                 // push test case to the case set
                 fuzz_cases.borrow_mut().push(FuzzCase { calldata, gas });
@@ -116,44 +160,56 @@ impl<'a, S, E: Evm<S>> InvairantExecutor<'a, E, S> {
                 Ok(())
             })
             .err()
-            .map(|test_error| FuzzError {
+            .map(|test_error| InvariantFuzzError {
                 test_error,
                 return_reason: return_reason.into_inner().expect("Reason must be set"),
                 revert_reason: revert_reason.into_inner().expect("Revert error string must be set"),
+                addr: invariant_address,
+                func: ethers::prelude::Bytes::default(),
             });
 
-        FuzzTestResult { cases: FuzzedCases::new(fuzz_cases.into_inner()), test_error }
+        Some(InvariantFuzzTestResult { invariants: invariant_doesnt_hold.into_inner(), cases: FuzzedCases::new(fuzz_cases.into_inner()) })
     }
 }
 
 /// The outcome of a fuzz test
 pub struct InvariantFuzzTestResult<Reason> {
+    pub invariants: BTreeMap<String, Option<InvariantFuzzError<Reason>>>,
     /// Every successful fuzz test case
     pub cases: FuzzedCases,
-    /// if there was a case that resulted in an error, this contains the error and the return
-    /// reason of the failed call
-    pub test_error: Option<FuzzError<Reason>>,
 }
 
 impl<Reason> InvariantFuzzTestResult<Reason> {
     /// Returns `true` if all test cases succeeded
     pub fn is_ok(&self) -> bool {
-        self.test_error.is_none()
+        !self.invariants.iter().any(|(_k, i)| i.is_some())
+        // self.test_error.is_none()
     }
 
     /// Returns `true` if a test case failed
     pub fn is_err(&self) -> bool {
-        self.test_error.is_some()
+        self.invariants.iter().any(|(_k, i)| i.is_some())
     }
 }
 
 pub struct InvariantFuzzError<Reason> {
     /// The proptest error occurred as a result of a test case
-    pub test_error: TestError<Bytes>,
+    pub test_error: TestError<(Address, Bytes)>,
     /// The return reason of the offending call
     pub return_reason: Reason,
     /// The revert string of the offending call
     pub revert_reason: String,
+    /// Address of the invariant asserter
+    pub addr: Address,
+    /// Function data for invariant check
+    pub func: ethers::prelude::Bytes,
+}
+
+fn is_fail<S: Clone, E: Evm<S> + crate::Evm<S, ReturnReason = T>, T>(
+    _evm: &mut E,
+    status: &T,
+) -> bool {
+    <E as crate::Evm<S>>::is_fail(status)
 }
 
 /// Container type for all successful test cases
@@ -164,16 +220,16 @@ pub struct InvariantFuzzedCases {
 }
 
 impl InvariantFuzzedCases {
-    pub fn new(mut cases: Vec<InvariantFuzzCase>) -> Self {
+    pub fn new(mut cases: Vec<FuzzCase>) -> Self {
         cases.sort_by_key(|c| c.gas);
         Self { cases }
     }
 
-    pub fn cases(&self) -> &[InvariantFuzzCase] {
+    pub fn cases(&self) -> &[FuzzCase] {
         &self.cases
     }
 
-    pub fn into_cases(self) -> Vec<InvariantFuzzCase> {
+    pub fn into_cases(self) -> Vec<FuzzCase> {
         self.cases
     }
 
@@ -218,27 +274,28 @@ pub struct InvariantFuzzCase {
     pub gas: u64,
 }
 
-pub fn invariant_strat(contracts: BTreeMap<Address, <String, Abi>) -> (impl Strategy<Value = Address> + '_, impl Strategy<Value = Bytes> + '_) {
+pub fn invariant_strat(contracts: BTreeMap<Address, (String, Abi)>) -> BoxedStrategy<(Address, Bytes)> {
     let selectors = any::<prop::sample::Selector>();
-    let strat = selectors.prop_map(move |selector| {
-        let (contract, (name, abi)) = selector.select(contracts);
-        let possible_funcs: Vec<ethers::abi::Function> = abi.functions().filter(|func| !matches(func.state_mutability, ethers::abi::StateMutability::Pure | ethers::abi::StateMutability::View)).collect();
+    selectors.prop_flat_map(move |selector| {
+        let res = selector.select(&contracts);
+        let contract = res.0;
+        let abi = &res.1.1;
+        let possible_funcs: Vec<ethers::abi::Function> = abi.functions().filter(|func| !matches!(func.state_mutability, ethers::abi::StateMutability::Pure | ethers::abi::StateMutability::View)).cloned().collect();
         let func = selector.select(possible_funcs);
-        let calldata = fuzz_calldata(func);
-        (contract, func.encode_input(&tokens).unwrap().into())
-    })
+        fuzz_calldata(*contract, func.clone())
+    }).boxed()
 }
 
 /// Given a function, it returns a proptest strategy which generates valid abi-encoded calldata
 /// for that function's input types.
-pub fn fuzz_calldata(func: &Function) -> impl Strategy<Value = Bytes> + '_ {
+pub fn fuzz_calldata(addr: Address, func: Function) -> impl Strategy<Value = (Address, Bytes)> {
     // We need to compose all the strategies generated for each parameter in all
     // possible combinations
     let strats = func.inputs.iter().map(|input| fuzz_param(&input.kind)).collect::<Vec<_>>();
 
     strats.prop_map(move |tokens| {
         tracing::trace!(input = ?tokens);
-        func.encode_input(&tokens).unwrap().into()
+        (addr, func.encode_input(&tokens).unwrap().into())
     })
 }
 

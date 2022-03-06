@@ -12,6 +12,8 @@ pub use blocking_provider::BlockingProvider;
 
 pub mod fuzz;
 
+pub mod invariant_fuzz;
+
 pub mod call_tracing;
 
 pub mod gas_report;
@@ -54,7 +56,7 @@ pub enum EvmError {
 /// only needs to specify the transaction parameters
 pub trait Evm<State> {
     /// The returned reason type from an EVM (Success / Revert/ Stopped etc.)
-    type ReturnReason: std::fmt::Debug + PartialEq;
+    type ReturnReason: std::fmt::Debug + PartialEq + Clone;
 
     /// Gets the revert reason type
     fn revert() -> Self::ReturnReason;
