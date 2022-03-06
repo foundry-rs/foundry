@@ -452,6 +452,19 @@ script ran
     );
 });
 
+forgetest_init!(can_parse_dapp_libraries, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.set_current_dir(prj.root());
+    cmd.set_env(
+        "DAPP_LIBRARIES",
+        "src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6",
+    );
+    let config = prj.config_from_output(std::iter::empty::<String>());
+    assert_eq!(
+        config.libraries,
+        vec!["src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6".to_string(),]
+    );
+});
+
 // test against a local checkout, useful to debug with local ethers-rs patch
 forgetest_ignore!(can_compile_local_spells, |_: TestProject, mut cmd: TestCommand| {
     let current_dir = std::env::current_dir().unwrap();
