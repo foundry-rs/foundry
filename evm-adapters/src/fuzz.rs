@@ -16,7 +16,7 @@ use proptest::{
 };
 use serde::{Deserialize, Serialize};
 
-mod strategies;
+pub(crate) mod strategies;
 
 /// Wrapper around any [`Evm`](crate::Evm) implementor which provides fuzzing support using [`proptest`](https://docs.rs/proptest/1.0.0/proptest/).
 ///

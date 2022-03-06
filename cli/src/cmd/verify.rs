@@ -78,6 +78,7 @@ pub async fn run_verify(args: &VerifyArgs) -> eyre::Result<()> {
         force: false,
         hardhat,
         libraries: vec![],
+        watch: Default::default(),
     };
 
     let project = build_args.project()?;
