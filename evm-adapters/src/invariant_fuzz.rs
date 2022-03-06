@@ -1,7 +1,6 @@
 //! Fuzzing support abstracted over the [`Evm`](crate::Evm) used
+use crate::{fuzz::*, Evm};
 use std::collections::BTreeMap;
-use crate::Evm;
-use crate::fuzz::*;
 
 use ethers::{
     abi::{Abi, Function, ParamType, Token, Tokenizable},
@@ -18,7 +17,6 @@ use proptest::{
     test_runner::{TestError, TestRunner},
 };
 use serde::{Deserialize, Serialize};
-
 
 use crate::fuzz::strategies;
 
@@ -47,7 +45,12 @@ impl<'a, S, E: Evm<S>> InvariantExecutor<'a, E, S> {
     }
 
     /// Instantiates a fuzzed executor EVM given a testrunner
-    pub fn new(evm: &'a mut E, runner: TestRunner, sender: Address, contracts: &'a BTreeMap<Address, (String, Abi)>,) -> Self {
+    pub fn new(
+        evm: &'a mut E,
+        runner: TestRunner,
+        sender: Address,
+        contracts: &'a BTreeMap<Address, (String, Abi)>,
+    ) -> Self {
         Self { evm: RefCell::new(evm), runner, state: PhantomData, sender, contracts }
     }
 
@@ -67,15 +70,29 @@ impl<'a, S, E: Evm<S>> InvariantExecutor<'a, E, S> {
         // fuzz test run.
         S: Clone,
     {
-
         let invariants: Vec<Function>;
         if let Some(abi) = abi {
-            invariants = abi.functions().filter(|func| func.name.starts_with("invariant")).cloned().collect()
+            invariants =
+                abi.functions().filter(|func| func.name.starts_with("invariant")).cloned().collect()
         } else {
-            return None;
+            return None
         };
 
-        let contracts: BTreeMap<Address, _> = self.contracts.clone().into_iter().filter(| (addr, _)| *addr != Address::from_slice(&hex::decode("7109709ECfa91a80626fF3989D68f67F5b1DD12D").unwrap()) && *addr !=  Address::from_slice(&hex::decode("000000000000000000636F6e736F6c652e6c6f67").unwrap())).collect();
+        let contracts: BTreeMap<Address, _> = self
+            .contracts
+            .clone()
+            .into_iter()
+            .filter(|(addr, _)| {
+                *addr !=
+                    Address::from_slice(
+                        &hex::decode("7109709ECfa91a80626fF3989D68f67F5b1DD12D").unwrap(),
+                    ) &&
+                    *addr !=
+                        Address::from_slice(
+                            &hex::decode("000000000000000000636F6e736F6c652e6c6f67").unwrap(),
+                        )
+            })
+            .collect();
         let strat = invariant_strat(15, contracts);
 
         // Snapshot the state before the test starts running
@@ -111,55 +128,78 @@ impl<'a, S, E: Evm<S>> InvariantExecutor<'a, E, S> {
                     if !is_fail(*evm, &reason) {
                         // iterate over invariants, making sure they dont fail
                         for func in invariants.iter() {
-                            let (retdata, status, _gas, _logs) = evm.call_unchecked(self.sender, invariant_address, &func, (), 0.into()).expect("EVM error");
+                            let (retdata, status, _gas, _logs) = evm
+                                .call_unchecked(self.sender, invariant_address, &func, (), 0.into())
+                                .expect("EVM error");
                             if is_fail(*evm, &status) {
-                                invariant_doesnt_hold.borrow_mut().insert(func.name.clone(), Some( InvariantFuzzError {
-                                    test_error: proptest::test_runner::TestError::Fail(
-                                        format!(
-                                            "{}, reason: '{}'",
-                                            func.name,
-                                            match foundry_utils::decode_revert(retdata.as_ref(), abi) {
-                                                Ok(e) => e,
-                                                Err(e) => e.to_string(),
-                                            }
-                                        ).into(),
-                                        inputs.clone()
-                                    ),
-                                    return_reason: status,
-                                    revert_reason: foundry_utils::decode_revert(retdata.as_ref(), abi).unwrap_or_default(),
-                                    addr: invariant_address,
-                                    func: func.short_signature().into(),
-                                    })
-                                );
-                                break 'all;
-                            } else {
-                                // This will panic and get caught by the executor
-                                if !evm.check_success(invariant_address, &reason, false) {
-                                    invariant_doesnt_hold.borrow_mut().insert(func.name.clone(), Some( InvariantFuzzError {
+                                invariant_doesnt_hold.borrow_mut().insert(
+                                    func.name.clone(),
+                                    Some(InvariantFuzzError {
                                         test_error: proptest::test_runner::TestError::Fail(
                                             format!(
                                                 "{}, reason: '{}'",
                                                 func.name,
-                                                match foundry_utils::decode_revert(retdata.as_ref(), abi) {
+                                                match foundry_utils::decode_revert(
+                                                    retdata.as_ref(),
+                                                    abi
+                                                ) {
                                                     Ok(e) => e,
                                                     Err(e) => e.to_string(),
                                                 }
-                                            ).into(),
-                                            inputs.clone()
+                                            )
+                                            .into(),
+                                            inputs.clone(),
                                         ),
                                         return_reason: status,
-                                        revert_reason: foundry_utils::decode_revert(retdata.as_ref(), abi).unwrap_or_default(),
+                                        revert_reason: foundry_utils::decode_revert(
+                                            retdata.as_ref(),
+                                            abi,
+                                        )
+                                        .unwrap_or_default(),
                                         addr: invariant_address,
                                         func: func.short_signature().into(),
-                                    }));
-                                    break 'all;
+                                    }),
+                                );
+                                break 'all
+                            } else {
+                                // This will panic and get caught by the executor
+                                if !evm.check_success(invariant_address, &reason, false) {
+                                    invariant_doesnt_hold.borrow_mut().insert(
+                                        func.name.clone(),
+                                        Some(InvariantFuzzError {
+                                            test_error: proptest::test_runner::TestError::Fail(
+                                                format!(
+                                                    "{}, reason: '{}'",
+                                                    func.name,
+                                                    match foundry_utils::decode_revert(
+                                                        retdata.as_ref(),
+                                                        abi
+                                                    ) {
+                                                        Ok(e) => e,
+                                                        Err(e) => e.to_string(),
+                                                    }
+                                                )
+                                                .into(),
+                                                inputs.clone(),
+                                            ),
+                                            return_reason: status,
+                                            revert_reason: foundry_utils::decode_revert(
+                                                retdata.as_ref(),
+                                                abi,
+                                            )
+                                            .unwrap_or_default(),
+                                            addr: invariant_address,
+                                            func: func.short_signature().into(),
+                                        }),
+                                    );
+                                    break 'all
                                 }
                             }
                         }
                         // push test case to the case set
                         fuzz_cases.borrow_mut().push(FuzzCase { calldata: calldata.clone(), gas });
                     } else {
-                        // call failed, continue on   
+                        // call failed, continue on
                     }
                 }
 
@@ -176,7 +216,10 @@ impl<'a, S, E: Evm<S>> InvariantExecutor<'a, E, S> {
 
         self.evm.borrow_mut().reset(pre_test_state.clone());
 
-        Some(InvariantFuzzTestResult { invariants: invariant_doesnt_hold.into_inner(), cases: FuzzedCases::new(fuzz_cases.into_inner()) })
+        Some(InvariantFuzzTestResult {
+            invariants: invariant_doesnt_hold.into_inner(),
+            cases: FuzzedCases::new(fuzz_cases.into_inner()),
+        })
     }
 }
 
@@ -282,32 +325,46 @@ pub struct InvariantFuzzCase {
     pub gas: u64,
 }
 
-pub fn invariant_strat(depth: usize, contracts: BTreeMap<Address, (String, Abi)>) -> BoxedStrategy<Vec<(Address, Bytes)>> {
-    let iters = 1..depth+1;
+pub fn invariant_strat(
+    depth: usize,
+    contracts: BTreeMap<Address, (String, Abi)>,
+) -> BoxedStrategy<Vec<(Address, Bytes)>> {
+    let iters = 1..depth + 1;
     proptest::collection::vec(gen_call(contracts), iters).boxed()
 }
 
 fn gen_call(contracts: BTreeMap<Address, (String, Abi)>) -> BoxedStrategy<(Address, Bytes)> {
     let random_contract = select_random_contract(contracts);
-    random_contract.prop_flat_map(move |(contract, abi)| {
-        let func = select_random_function(abi);
-        func.prop_flat_map(move |func| {
-            fuzz_calldata(contract, func.clone())
+    random_contract
+        .prop_flat_map(move |(contract, abi)| {
+            let func = select_random_function(abi);
+            func.prop_flat_map(move |func| fuzz_calldata(contract, func.clone()))
         })
-    }).boxed()
+        .boxed()
 }
 
-fn select_random_contract(contracts: BTreeMap<Address, (String, Abi)>) -> impl Strategy<Value = (Address, Abi)> {
+fn select_random_contract(
+    contracts: BTreeMap<Address, (String, Abi)>,
+) -> impl Strategy<Value = (Address, Abi)> {
     let selectors = any::<prop::sample::Selector>();
     selectors.prop_map(move |selector| {
         let res = selector.select(&contracts);
-        (*res.0, res.1.1.clone())
+        (*res.0, res.1 .1.clone())
     })
 }
 
 fn select_random_function(abi: Abi) -> impl Strategy<Value = Function> {
     let selectors = any::<prop::sample::Selector>();
-    let possible_funcs: Vec<ethers::abi::Function> = abi.functions().filter(|func| !matches!(func.state_mutability, ethers::abi::StateMutability::Pure | ethers::abi::StateMutability::View)).cloned().collect();
+    let possible_funcs: Vec<ethers::abi::Function> = abi
+        .functions()
+        .filter(|func| {
+            !matches!(
+                func.state_mutability,
+                ethers::abi::StateMutability::Pure | ethers::abi::StateMutability::View
+            )
+        })
+        .cloned()
+        .collect();
     selectors.prop_map(move |selector| {
         let func = selector.select(&possible_funcs);
         func.clone()
@@ -329,7 +386,6 @@ pub fn fuzz_calldata(addr: Address, func: Function) -> impl Strategy<Value = (Ad
 
 /// The max length of arrays we fuzz for is 256.
 const MAX_ARRAY_LEN: usize = 256;
-
 
 /// Given an ethabi parameter type, returns a proptest strategy for generating values for that
 /// datatype. Works with ABI Encoder v2 tuples.
