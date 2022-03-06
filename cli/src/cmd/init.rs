@@ -63,10 +63,15 @@ impl Cmd for InitArgs {
 
         // if a template is provided, then this command is just an alias to `git clone <url>
         // <path>`
-        if let Some(ref template) = template {
+        if let Some(template) = template {
+            let template = if template.starts_with("https://") {
+                template
+            } else {
+                "https://github.com/".to_string() + &template
+            };
             p_println!(!quiet => "Initializing {} from {}...", root.display(), template);
             Command::new("git")
-                .args(&["clone", template, &root.display().to_string()])
+                .args(&["clone", &template, &root.display().to_string()])
                 .stdout(Stdio::piped())
                 .spawn()?
                 .wait()?;
@@ -116,8 +121,14 @@ impl Cmd for InitArgs {
 
             if !offline {
                 let opts = DependencyInstallOpts { no_git, no_commit, quiet };
-                Dependency::from_str("https://github.com/dapphub/ds-test")
-                    .and_then(|dependency| install(&root, vec![dependency], opts))?;
+
+                if Path::new(&root.join("lib/ds-test")).exists() {
+                    println!("\"lib/ds-test\" already exists, skipping install....");
+                    install(&root, vec![], opts)?;
+                } else {
+                    Dependency::from_str("https://github.com/dapphub/ds-test")
+                        .and_then(|dependency| install(&root, vec![dependency], opts))?;
+                }
             }
         }
 

@@ -2,10 +2,10 @@ pub mod cmd;
 mod opts;
 mod utils;
 
-use crate::cmd::Cmd;
+use crate::cmd::{watch, Cmd};
 
 use ethers::solc::{self, report::BasicStdoutReporter, Project, ProjectPathsConfig};
-use opts::forge::{Dependency, FullContractInfo, Opts, Subcommands};
+use opts::forge::{Dependency, Opts, Subcommands};
 use std::process::Command;
 
 use clap::{IntoApp, Parser};
@@ -19,22 +19,31 @@ fn main() -> eyre::Result<()> {
     let opts = Opts::parse();
     match opts.sub {
         Subcommands::Test(cmd) => {
-            let outcome = cmd.run()?;
-            outcome.ensure_ok()?;
+            if cmd.build_args().is_watch() {
+                utils::block_on(watch::watch_test(cmd))?;
+            } else {
+                let outcome = cmd.run()?;
+                outcome.ensure_ok()?;
+            }
         }
         Subcommands::Bind(cmd) => {
             cmd.run()?;
         }
         Subcommands::Build(cmd) => {
-            cmd.run()?;
+            if cmd.is_watch() {
+                utils::block_on(crate::cmd::watch::watch_build(cmd))?;
+            } else {
+                cmd.run()?;
+            }
         }
         Subcommands::Run(cmd) => {
             cmd.run()?;
         }
-        Subcommands::VerifyContract { contract, address, constructor_args } => {
-            let FullContractInfo { path, name } = contract;
-            let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
-            rt.block_on(cmd::verify::run(path, name, address, constructor_args))?;
+        Subcommands::VerifyContract(args) => {
+            utils::block_on(cmd::verify::run_verify(&args))?;
+        }
+        Subcommands::VerifyCheck(args) => {
+            utils::block_on(cmd::verify::run_verify_check(&args))?;
         }
         Subcommands::Create(cmd) => {
             cmd.run()?;
@@ -76,6 +85,9 @@ fn main() -> eyre::Result<()> {
         Subcommands::Snapshot(cmd) => {
             cmd.run()?;
         }
+        // Subcommands::Fmt(cmd) => {
+        //     cmd.run()?;
+        // }
         Subcommands::Config(cmd) => {
             cmd.run()?;
         }

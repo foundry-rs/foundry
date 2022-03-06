@@ -3,7 +3,6 @@ pub mod cmd;
 mod utils;
 
 use cast::{Cast, SimpleCast};
-
 mod opts;
 use cast::InterfacePath;
 use ethers::{
@@ -15,7 +14,8 @@ use ethers::{
     },
     providers::{Middleware, Provider},
     signers::{LocalWallet, Signer},
-    types::{Address, Chain, NameOrAddress, Signature, U256},
+    types::{Address, Chain, NameOrAddress, Signature, U256, U64},
+    utils::get_contract_address,
 };
 use opts::{
     cast::{Opts, Subcommands, WalletSubcommands},
@@ -26,7 +26,7 @@ use regex::RegexSet;
 use rustc_hex::ToHex;
 use std::{
     convert::TryFrom,
-    io::{self, Write},
+    io::{self, Read, Write},
     path::Path,
     str::FromStr,
     time::Instant,
@@ -37,6 +37,7 @@ use clap_complete::generate;
 
 use crate::utils::read_secret;
 use eyre::WrapErr;
+use futures::join;
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
@@ -61,6 +62,14 @@ async fn main() -> eyre::Result<()> {
             let val = unwrap_or_stdin(decimal)?;
             println!("{}", SimpleCast::hex(U256::from_dec_str(&val)?));
         }
+        Subcommands::FromBin {} => {
+            let hex: String = io::stdin()
+                .bytes()
+                .map(|x| format!("{:02x}", x.expect("invalid binary data")))
+                .collect();
+            println!("0x{}", hex);
+        }
+
         Subcommands::ToHexdata { input } => {
             let val = unwrap_or_stdin(input)?;
             let output = match val {
@@ -203,6 +212,7 @@ async fn main() -> eyre::Result<()> {
             nonce,
             legacy,
             confirmations,
+            to_json,
         } => {
             let provider = Provider::try_from(eth.rpc_url()?)?;
             let chain_id = Cast::new(&provider).chain_id().await?;
@@ -225,6 +235,7 @@ async fn main() -> eyre::Result<()> {
                             cast_async,
                             legacy,
                             confirmations,
+                            to_json,
                         )
                         .await?;
                     }
@@ -243,6 +254,7 @@ async fn main() -> eyre::Result<()> {
                             cast_async,
                             legacy,
                             confirmations,
+                            to_json,
                         )
                         .await?;
                     }
@@ -261,6 +273,7 @@ async fn main() -> eyre::Result<()> {
                             cast_async,
                             legacy,
                             confirmations,
+                            to_json,
                         )
                         .await?;
                     }
@@ -281,6 +294,7 @@ async fn main() -> eyre::Result<()> {
                     cast_async,
                     legacy,
                     confirmations,
+                    to_json,
                 )
                 .await?;
             }
@@ -361,6 +375,15 @@ async fn main() -> eyre::Result<()> {
         Subcommands::FourByteEvent { topic } => {
             let sigs = foundry_utils::fourbyte_event(&topic).await?;
             sigs.iter().for_each(|sig| println!("{}", sig.0));
+        }
+
+        Subcommands::PrettyCalldata { calldata, offline } => {
+            if !calldata.starts_with("0x") {
+                eprintln!("Expected calldata hex string, received \"{}\"", calldata);
+                std::process::exit(0)
+            }
+            let pretty_data = foundry_utils::pretty_calldata(&calldata, offline).await?;
+            println!("{}", pretty_data);
         }
         Subcommands::Age { block, rpc_url } => {
             let provider = Provider::try_from(rpc_url)?;
@@ -495,6 +518,64 @@ async fn main() -> eyre::Result<()> {
             let selector = contract.abi().functions().last().unwrap().short_signature();
             println!("0x{}", hex::encode(selector));
         }
+        Subcommands::FindBlock { timestamp, rpc_url } => {
+            let ts_target = U256::from(timestamp);
+            let provider = Provider::try_from(rpc_url)?;
+            let last_block_num = provider.get_block_number().await?;
+            let cast_provider = Cast::new(provider);
+
+            let res = join!(cast_provider.timestamp(last_block_num), cast_provider.timestamp(1));
+            let ts_block_latest = res.0.unwrap();
+            let ts_block_1 = res.1.unwrap();
+
+            let block_num = if ts_block_latest.lt(&ts_target) {
+                // If the most recent block's timestamp is below the target, return it
+                last_block_num
+            } else if ts_block_1.gt(&ts_target) {
+                // If the target timestamp is below block 1's timestamp, return that
+                U64::from(1)
+            } else {
+                // Otherwise, find the block that is closest to the timestamp
+                let mut low_block = U64::from(1); // block 0 has a timestamp of 0: https://github.com/ethereum/go-ethereum/issues/17042#issuecomment-559414137
+                let mut high_block = last_block_num;
+                let mut matching_block: Option<U64> = None;
+                while high_block.gt(&low_block) && matching_block.is_none() {
+                    // Get timestamp of middle block (this approach approach to avoids overflow)
+                    let high_minus_low_over_2 = high_block
+                        .checked_sub(low_block)
+                        .ok_or_else(|| eyre::eyre!("unexpected underflow"))
+                        .unwrap()
+                        .checked_div(U64::from(2))
+                        .unwrap();
+                    let mid_block = high_block.checked_sub(high_minus_low_over_2).unwrap();
+                    let ts_mid_block = cast_provider.timestamp(mid_block).await?;
+
+                    // Check if we've found a match or should keep searching
+                    if ts_mid_block.eq(&ts_target) {
+                        matching_block = Some(mid_block)
+                    } else if high_block.checked_sub(low_block).unwrap().eq(&U64::from(1)) {
+                        // The target timestamp is in between these blocks. This rounds to the
+                        // highest block if timestamp is equidistant between blocks
+                        let res = join!(
+                            cast_provider.timestamp(high_block),
+                            cast_provider.timestamp(low_block)
+                        );
+                        let ts_high = res.0.unwrap();
+                        let ts_low = res.1.unwrap();
+                        let high_diff = ts_high.checked_sub(ts_target).unwrap();
+                        let low_diff = ts_target.checked_sub(ts_low).unwrap();
+                        let is_low = low_diff.lt(&high_diff);
+                        matching_block = if is_low { Some(low_block) } else { Some(high_block) }
+                    } else if ts_mid_block.lt(&ts_target) {
+                        low_block = mid_block;
+                    } else {
+                        high_block = mid_block;
+                    }
+                }
+                matching_block.unwrap_or(low_block)
+            };
+            println!("{}", block_num);
+        }
         Subcommands::Wallet { command } => match command {
             WalletSubcommands::New { path, password, unsafe_password } => {
                 let mut rng = thread_rng();
@@ -502,7 +583,8 @@ async fn main() -> eyre::Result<()> {
                 match path {
                     Some(path) => {
                         let password = read_secret(password, unsafe_password)?;
-                        let (key, uuid) = LocalWallet::new_keystore(&path, &mut rng, password)?;
+                        let (key, uuid) =
+                            LocalWallet::new_keystore(&path, &mut rng, password, None)?;
                         let address = SimpleCast::checksum_address(&key.address())?;
                         let filepath = format!(
                             "{}/{}",
@@ -520,14 +602,14 @@ async fn main() -> eyre::Result<()> {
                     None => {
                         let wallet = LocalWallet::new(&mut rng);
                         println!(
-                            "Successfully created new keypair.\nAddress: {}.\nPrivate Key: {}.",
+                            "Successfully created new keypair.\nAddress: {}\nPrivate Key: {}",
                             SimpleCast::checksum_address(&wallet.address())?,
                             hex::encode(wallet.signer().to_bytes()),
                         );
                     }
                 }
             }
-            WalletSubcommands::Vanity { starts_with, ends_with } => {
+            WalletSubcommands::Vanity { starts_with, ends_with, nonce } => {
                 let mut regexs = vec![];
                 if let Some(prefix) = starts_with {
                     let pad_width = prefix.len() + prefix.len() % 2;
@@ -548,20 +630,31 @@ async fn main() -> eyre::Result<()> {
                 );
 
                 let regex = RegexSet::new(regexs)?;
+                let match_contract = nonce.is_some();
 
                 println!("Starting to generate vanity address...");
                 let timer = Instant::now();
                 let wallet = std::iter::repeat_with(move || LocalWallet::new(&mut thread_rng()))
                     .par_bridge()
                     .find_any(|wallet| {
-                        let addr = hex::encode(wallet.address().to_fixed_bytes());
+                        let addr = if match_contract {
+                            // looking for contract address created by wallet with CREATE + nonce
+                            let contract_addr =
+                                get_contract_address(wallet.address(), nonce.unwrap());
+                            hex::encode(contract_addr.to_fixed_bytes())
+                        } else {
+                            // looking for wallet address
+                            hex::encode(wallet.address().to_fixed_bytes())
+                        };
                         regex.matches(&addr).into_iter().count() == regex.patterns().len()
                     })
                     .expect("failed to generate vanity wallet");
 
                 println!(
-                    "Successfully created new keypair in {} seconds.\nAddress: {}.\nPrivate Key: {}.",
+                    "Successfully found vanity address in {} seconds.{}{}\nAddress: {}\nPrivate Key: 0x{}",
                     timer.elapsed().as_secs(),
+                    if match_contract {"\nContract address: "} else {""},
+                    if match_contract {SimpleCast::checksum_address(&get_contract_address(wallet.address(), nonce.unwrap()))?} else {"".to_string()},
                     SimpleCast::checksum_address(&wallet.address())?,
                     hex::encode(wallet.signer().to_bytes()),
                 );
@@ -660,6 +753,7 @@ async fn cast_send<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>
     cast_async: bool,
     legacy: bool,
     confs: usize,
+    to_json: bool,
 ) -> eyre::Result<()>
 where
     M::Error: 'static,
@@ -677,7 +771,7 @@ where
     if cast_async {
         println!("{:#x}", tx_hash);
     } else {
-        let receipt = cast.receipt(format!("{:#x}", tx_hash), None, confs, false, true).await?;
+        let receipt = cast.receipt(format!("{:#x}", tx_hash), None, confs, false, to_json).await?;
         println!("{}", receipt);
     }
 

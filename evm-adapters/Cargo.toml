@@ -9,7 +9,7 @@ edition = "2021"
 [dependencies]
 foundry-utils = { path = "./../utils" }
 
-sputnik = { package = "evm", git = "https://github.com/rust-blockchain/evm",  optional = true, features = ["tracing"] }
+sputnik = { package = "evm", git = "https://github.com/rust-blockchain/evm", default-features = false, optional = true, features = ["std"] }
 
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["solc-full"] }
 ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }

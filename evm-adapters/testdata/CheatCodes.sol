@@ -61,6 +61,8 @@ interface Hevm {
     function getCode(string calldata) external returns (bytes memory);
     // Labels an address in call traces
     function label(address, string calldata) external;
+    // If the condition is false, discard this run's fuzz inputs and generate new ones
+    function assume(bool) external;
 }
 
 contract HasStorage {
@@ -156,7 +158,7 @@ contract CheatCodes is DSTest {
     //     test_store_load_concrete(x);
     // }
 
-    function test_sign_addr_digest(uint sk, bytes32 digest) public {
+    function test_sign_addr_digest(uint248 sk, bytes32 digest) public {
         if (sk == 0) return; // invalid key
 
         (uint8 v, bytes32 r, bytes32 s) = hevm.sign(sk, digest);
@@ -166,7 +168,7 @@ contract CheatCodes is DSTest {
         assertEq(actual, expected);
     }
 
-    function test_sign_addr_message(uint sk, bytes memory message) public {
+    function test_sign_addr_message(uint248 sk, bytes memory message) public {
         test_sign_addr_digest(sk, keccak256(message));
     }
 
@@ -430,6 +432,25 @@ contract CheatCodes is DSTest {
         hevm.expectEmit(true,true,false,true);
         emit Transfer(address(this), address(1338), 1337);
         emitter.t();
+    }
+
+    // Test should fail because the data is different
+    function testFailExpectEmitWithCall1() public {
+        ExpectEmit emitter = new ExpectEmit();
+        hevm.deal(address(this), 1 ether);
+        hevm.expectEmit(true,true,false,true);
+        emit Transfer(address(this), address(1338), 1 gwei);
+        emitter.t4(payable(address(1337)), 100 gwei);
+    }
+
+
+    // Test should fail because, t5 doesn't emit
+    function testFailExpectEmitWithCall2() public {
+        ExpectEmit emitter = new ExpectEmit();
+        hevm.deal(address(this), 1 ether);
+        hevm.expectEmit(true,true,false,true);
+        emit Transfer(address(this), address(1338), 100 gwei);
+        emitter.t5(payable(address(1337)), 100 gwei);
     }
 
     // Test should fail if nothing is called
@@ -804,6 +825,15 @@ contract ExpectEmit {
     function t3() public {
         emit Transfer(msg.sender, address(1337), 1337);
         emit Transfer(msg.sender, address(1337), 1337);
+    }
+
+    function t4(address payable to, uint256 amount) public {
+        (bool success, ) = to.call{value: amount, gas: 30_000}(new bytes(0));
+        emit Transfer(msg.sender, address(1337), 100 gwei);
+    }
+
+    function t5(address payable to, uint256 amount) public {
+        (bool success, ) = to.call{value: amount, gas: 30_000}(new bytes(0));
     }
 }
 

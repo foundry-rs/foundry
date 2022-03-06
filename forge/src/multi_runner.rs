@@ -1,5 +1,4 @@
 use crate::{runner::TestResult, ContractRunner, TestFilter};
-use ethers::prelude::artifacts::CompactContractBytecode;
 use evm_adapters::{
     evm_opts::{BackendKind, EvmOpts},
     sputnik::cheatcodes::{CONSOLE_ABI, HEVMCONSOLE_ABI, HEVM_ABI},
@@ -7,12 +6,10 @@ use evm_adapters::{
 use foundry_utils::PostLinkInput;
 use sputnik::{backend::Backend, Config};
 
-use ethers::solc::Artifact;
-
 use ethers::{
     abi::{Abi, Event, Function},
-    prelude::ArtifactOutput,
-    solc::Project,
+    prelude::{artifacts::CompactContractBytecode, ArtifactId, ArtifactOutput},
+    solc::{Artifact, Project},
     types::{Address, H256, U256},
 };
 
@@ -20,7 +17,7 @@ use proptest::test_runner::TestRunner;
 
 use eyre::Result;
 use rayon::prelude::*;
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, marker::Sync, sync::mpsc::Sender};
 
 /// Builder used for instantiating the multi-contract runner
 #[derive(Debug, Default)]
@@ -47,23 +44,34 @@ impl MultiContractRunnerBuilder {
         // TODO: Can we remove the static? It's due to the `into_artifacts()` call below
         A: ArtifactOutput + 'static,
     {
-        println!("compiling...");
+        println!("Compiling...");
         let output = project.compile()?;
         if output.has_compiler_errors() {
             // return the diagnostics error back to the user.
             eyre::bail!(output.to_string())
         } else if output.is_unchanged() {
-            println!("no files changed, compilation skipped.");
+            println!("No files changed, compilation skipped");
         } else {
-            println!("success.");
+            println!("{}", output);
         }
 
         // This is just the contracts compiled, but we need to merge this with the read cached
         // artifacts
         let contracts = output
             .into_artifacts()
-            .map(|(n, c)| (n, c.into_contract_bytecode()))
+            .map(|(i, c)| (i, c.into_contract_bytecode()))
+            .collect::<Vec<(ArtifactId, CompactContractBytecode)>>();
+
+        let source_paths = contracts
+            .iter()
+            .map(|(i, _)| (i.slug(), i.source.to_string_lossy().into()))
+            .collect::<BTreeMap<String, String>>();
+
+        let contracts = contracts
+            .into_iter()
+            .map(|(i, c)| (i.slug(), c))
             .collect::<BTreeMap<String, CompactContractBytecode>>();
+
         let mut known_contracts: BTreeMap<String, (Abi, Vec<u8>)> = Default::default();
 
         // create a mapping of name => (abi, deployment code, Vec<library deployment code>)
@@ -129,6 +137,7 @@ impl MultiContractRunnerBuilder {
             sender: self.sender,
             fuzzer: self.fuzzer,
             execution_info,
+            source_paths,
         })
     }
 
@@ -177,21 +186,24 @@ pub struct MultiContractRunner {
     fuzzer: Option<TestRunner>,
     /// The address which will be used as the `from` field in all EVM calls
     sender: Option<Address>,
+    /// A map of contract names to absolute source file paths
+    source_paths: BTreeMap<String, String>,
 }
 
 impl MultiContractRunner {
     pub fn test(
         &mut self,
         filter: &(impl TestFilter + Send + Sync),
+        stream_result: Option<Sender<(String, BTreeMap<String, TestResult>)>>,
     ) -> Result<BTreeMap<String, BTreeMap<String, TestResult>>> {
-        // TODO: Convert to iterator, ideally parallel one?
         let contracts = std::mem::take(&mut self.contracts);
-
         let vicinity = self.evm_opts.vicinity()?;
         let backend = self.evm_opts.backend(&vicinity)?;
+        let source_paths = self.source_paths.clone();
 
         let results = contracts
             .par_iter()
+            .filter(|(name, _)| filter.matches_path(source_paths.get(*name).unwrap()))
             .filter(|(name, _)| filter.matches_contract(name))
             .map(|(name, (abi, deploy_code, libs))| {
                 // unavoidable duplication here?
@@ -206,11 +218,18 @@ impl MultiContractRunner {
                 Ok((name.clone(), result))
             })
             .filter_map(|x: Result<_>| x.ok())
-            .filter_map(|(name, res)| if res.is_empty() { None } else { Some((name, res)) })
+            .filter_map(
+                |(name, result)| if result.is_empty() { None } else { Some((name, result)) },
+            )
+            .map_with(stream_result, |stream_result, (name, result)| {
+                if let Some(stream_result) = stream_result.as_ref() {
+                    stream_result.send((name.clone(), result.clone())).unwrap();
+                }
+                (name, result)
+            })
             .collect::<BTreeMap<_, _>>();
 
         self.contracts = contracts;
-
         Ok(results)
     }
 
@@ -247,7 +266,7 @@ impl MultiContractRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::{Filter, EVM_OPTS};
+    use crate::test_helpers::{filter::Filter, EVM_OPTS};
     use ethers::solc::ProjectPathsConfig;
     use std::path::PathBuf;
 
@@ -272,7 +291,7 @@ mod tests {
 
     fn test_multi_runner() {
         let mut runner = runner();
-        let results = runner.test(&Filter::new(".*", ".*")).unwrap();
+        let results = runner.test(&Filter::matches_all(), None).unwrap();
 
         // 9 contracts being built
         assert_eq!(results.keys().len(), 9);
@@ -287,7 +306,8 @@ mod tests {
         }
 
         // can also filter
-        let only_gm = runner.test(&Filter::new("testGm.*", ".*")).unwrap();
+        let filter = Filter::new("testGm.*", ".*", ".*");
+        let only_gm = runner.test(&filter, None).unwrap();
         assert_eq!(only_gm.len(), 1);
 
         assert_eq!(only_gm["GmTest.json:GmTest"].len(), 1);
@@ -296,7 +316,7 @@ mod tests {
 
     fn test_abstract_contract() {
         let mut runner = runner();
-        let results = runner.test(&Filter::new(".*", ".*")).unwrap();
+        let results = runner.test(&Filter::matches_all(), None).unwrap();
         assert!(results.get("Tests.json:Tests").is_none());
         assert!(results.get("ATests.json:ATests").is_some());
         assert!(results.get("BTests.json:BTests").is_some());
@@ -309,7 +329,7 @@ mod tests {
         #[test]
         fn test_sputnik_debug_logs() {
             let mut runner = runner();
-            let results = runner.test(&Filter::new(".*", ".*")).unwrap();
+            let results = runner.test(&Filter::matches_all(), None).unwrap();
 
             let reasons = results["DebugLogsTest.json:DebugLogsTest"]
                 .iter()

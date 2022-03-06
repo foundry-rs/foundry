@@ -718,6 +718,9 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
         let mut reason = None;
         if let Some(err) = test_error {
             match err.test_error {
+                TestError::Abort(r) if r == "Too many global rejects".into() => {
+                    reason = Some(r.message().to_string());
+                }
                 TestError::Fail(_, value) => {
                     // skip the function selector when decoding
                     let args = func.decode_input(&value.as_ref()[4..])?;
@@ -851,7 +854,7 @@ fn revert<S: Clone, E: Evm<S> + evm_adapters::Evm<S, ReturnReason = T>, T>(_evm:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::{Filter, BACKEND, COMPILED, EVM_OPTS};
+    use crate::test_helpers::{filter::Filter, BACKEND, COMPILED, EVM_OPTS};
     use ethers::solc::artifacts::CompactContractRef;
 
     mod sputnik {
@@ -887,8 +890,8 @@ mod tests {
             let mut cfg = FuzzConfig::default();
             cfg.failure_persistence = None;
             let fuzzer = TestRunner::new(cfg);
-            let results =
-                runner.run_tests(&Filter::new("testGreeting", ".*"), Some(fuzzer), None).unwrap();
+            let filter = Filter::new("testGreeting", ".*", ".*");
+            let results = runner.run_tests(&filter, Some(fuzzer), None).unwrap();
             assert!(results["testGreeting()"].success);
             assert!(results["testGreeting(string)"].success);
             assert!(results["testGreeting(string,string)"].success);
@@ -904,8 +907,8 @@ mod tests {
             let mut cfg = FuzzConfig::default();
             cfg.failure_persistence = None;
             let fuzzer = TestRunner::new(cfg);
-            let results =
-                runner.run_tests(&Filter::new("testFuzz.*", ".*"), Some(fuzzer), None).unwrap();
+            let filter = Filter::new("testFuzz.*", ".*", ".*");
+            let results = runner.run_tests(&filter, Some(fuzzer), None).unwrap();
             for (_, res) in results {
                 assert!(!res.success);
                 assert!(res.counterexample.is_some());
@@ -972,7 +975,7 @@ mod tests {
         let mut libs = vec![];
         let runner = sputnik::runner(compiled.abi.as_ref().unwrap(), code, &mut libs);
 
-        let res = runner.run_tests(&Filter::new(".*", ".*"), None, None).unwrap();
+        let res = runner.run_tests(&Filter::matches_all(), None, None).unwrap();
         assert!(!res.is_empty());
         assert!(res.iter().all(|(_, result)| result.success));
     }

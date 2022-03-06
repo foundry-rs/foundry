@@ -1,11 +1,20 @@
 use clap::{Parser, Subcommand, ValueHint};
 
-use ethers::{solc::EvmVersion, types::Address};
+use ethers::solc::{artifacts::output_selection::ContractOutputSelection, EvmVersion};
 use std::{path::PathBuf, str::FromStr};
 
 use crate::cmd::{
-    bind::BindArgs, build::BuildArgs, config, create::CreateArgs, flatten, init::InitArgs,
-    install::InstallArgs, remappings::RemappingArgs, run::RunArgs, snapshot, test,
+    bind::BindArgs,
+    build::BuildArgs,
+    config,
+    create::CreateArgs,
+    flatten,
+    init::InitArgs,
+    install::InstallArgs,
+    remappings::RemappingArgs,
+    run::RunArgs,
+    snapshot, test,
+    verify::{VerifyArgs, VerifyCheckArgs},
 };
 use serde::Serialize;
 
@@ -68,14 +77,12 @@ pub enum Subcommands {
     #[clap(
         about = "Verify your smart contracts source code on Etherscan. Requires `ETHERSCAN_API_KEY` to be set."
     )]
-    VerifyContract {
-        #[clap(help = "Contract source info `<path>:<contractname>`")]
-        contract: FullContractInfo,
-        #[clap(help = "The address of the contract to verify.")]
-        address: Address,
-        #[clap(help = "Constructor args calldata arguments.")]
-        constructor_args: Vec<String>,
-    },
+    VerifyContract(VerifyArgs),
+
+    #[clap(
+        about = "Check verification status on Etherscan. Requires `ETHERSCAN_API_KEY` to be set."
+    )]
+    VerifyCheck(VerifyCheckArgs),
 
     #[clap(alias = "c", about = "Deploy a compiled contract")]
     Create(CreateArgs),
@@ -107,6 +114,8 @@ pub enum Subcommands {
 
     #[clap(about = "Concats a file with all of its imports")]
     Flatten(flatten::FlattenArgs),
+    // #[clap(about = "formats Solidity source files")]
+    // Fmt(FmtArgs),
 }
 
 // A set of solc compiler settings that can be set via command line arguments, which are intended
@@ -129,11 +138,18 @@ pub struct CompilerArgs {
     pub optimize_runs: Option<usize>,
 
     #[clap(
-        help = "Extra output types [evm.assembly, ewasm, ir, irOptimized] eg: `--extra-output evm.assembly`",
+        help = "Extra output types to include in the contract's json artifact [evm.assembly, ewasm, ir, irOptimized, metadata] eg: `--extra-output evm.assembly`",
         long
     )]
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub extra_output: Option<Vec<String>>,
+    pub extra_output: Option<Vec<ContractOutputSelection>>,
+
+    #[clap(
+        help = "Extra output types to write to a separate file [metadata, ir, irOptimized, ewasm] eg: `--extra-output-files metadata`",
+        long
+    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extra_output_files: Option<Vec<ContractOutputSelection>>,
 }
 
 /// Represents the common dapp argument pattern for `<path>:<contractname>` where `<path>:` is
@@ -153,6 +169,13 @@ impl FromStr for ContractInfo {
         let mut iter = s.rsplit(':');
         let name = iter.next().unwrap().to_string();
         let path = iter.next().map(str::to_string);
+
+        if name.ends_with(".sol") || name.contains('/') {
+            return Err(eyre::eyre!(
+                "contract source info format must be `<path>:<contractname>` or `<contractname>`"
+            ))
+        }
+
         Ok(Self { path, name })
     }
 }
@@ -265,5 +288,31 @@ mod tests {
     #[should_panic]
     fn test_invalid_github_repo_dependency() {
         Dependency::from_str("solmate").unwrap();
+    }
+
+    #[test]
+    fn parses_contract_info() {
+        [
+            (
+                "src/contracts/Contracts.sol:Contract",
+                Some("src/contracts/Contracts.sol"),
+                "Contract",
+            ),
+            ("Contract", None, "Contract"),
+        ]
+        .iter()
+        .for_each(|(input, expected_path, expected_name)| {
+            let contract = ContractInfo::from_str(input).unwrap();
+            assert_eq!(contract.path, expected_path.map(ToString::to_string));
+            assert_eq!(contract.name, expected_name.to_string());
+        });
+    }
+
+    #[test]
+    fn contract_info_should_reject_without_name() {
+        ["src/contracts/", "src/contracts/Contracts.sol"].iter().for_each(|input| {
+            let contract = ContractInfo::from_str(input);
+            assert!(contract.is_err())
+        });
     }
 }
