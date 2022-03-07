@@ -133,39 +133,36 @@ impl CreateArgs {
         let bin = bin.into_bytes().unwrap_or_else(|| {
             panic!("no bytecode found in bin object for {}", self.contract.name)
         });
-        let factory = ContractFactory::new(abi, bin, Arc::new(provider));
+        let provider = Arc::new(provider);
+        let factory = ContractFactory::new(abi, bin, provider.clone());
 
         let deployer = factory.deploy_tokens(args)?;
         let is_legacy =
             self.legacy || Chain::try_from(chain).map(|x| Chain::is_legacy(&x)).unwrap_or_default();
-        let deployer = if is_legacy { deployer.legacy() } else { deployer };
+        let mut deployer = if is_legacy { deployer.legacy() } else { deployer };
 
-        let mut deployer = deployer;
+        // fill tx first because if you target a lower gas than current base, eth_estimateGas
+        // will fail and create will fail
+        let mut tx = deployer.tx;
+        provider.fill_transaction(&mut tx, None).await?;
+        deployer.tx = tx;
 
         // set gas price if specified
-        match self.gas_price {
-            Some(gas_price) => {
-                deployer.tx.set_gas_price(gas_price);
-            }
-            None => {}
+        if let Some(gas_price) = self.gas_price {
+            deployer.tx.set_gas_price(gas_price);
         }
 
-        // set max_priority_fee_per_gas if specified
-        match self.priority_fee {
-            Some(priority_fee) => {
-                if is_legacy {
-                    panic!("there is no priority fee for legacy txs");
-                }
-                let mut tx = deployer.tx;
-                tx = match tx {
-                    TypedTransaction::Eip1559(eip1559_tx_request) => TypedTransaction::Eip1559(
-                        eip1559_tx_request.max_priority_fee_per_gas(priority_fee),
-                    ),
-                    _ => tx,
-                };
-                deployer.tx = tx;
+        // set priority fee if specified
+        if let Some(priority_fee) = self.priority_fee {
+            if is_legacy {
+                panic!("there is no priority fee for legacy txs");
             }
-            None => {}
+            deployer.tx = match deployer.tx {
+                TypedTransaction::Eip1559(eip1559_tx_request) => TypedTransaction::Eip1559(
+                    eip1559_tx_request.max_priority_fee_per_gas(priority_fee),
+                ),
+                _ => deployer.tx,
+            };
         }
 
         let (deployed_contract, receipt) = deployer.send_with_receipt().await?;
