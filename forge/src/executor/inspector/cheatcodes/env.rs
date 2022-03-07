@@ -89,7 +89,6 @@ pub fn apply<DB: Database>(
         }
         HEVMCalls::Roll(inner) => {
             data.env.block.number = inner.0;
-            // TODO: Set blockhash somehow
             Ok(Bytes::new())
         }
         HEVMCalls::Fee(inner) => {
