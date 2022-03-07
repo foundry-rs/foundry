@@ -168,8 +168,8 @@ pub enum Subcommands {
     ComputeAddress {
         #[clap(long, env = "ETH_RPC_URL")]
         rpc_url: String,
-        #[clap(help = "the address to create from", parse(try_from_str = parse_name_or_address))]
-        address: NameOrAddress,
+        #[clap(help = "the address to create from")]
+        address: String,
         #[clap(long, help = "address nonce", parse(try_from_str = parse_u256))]
         nonce: Option<U256>,
     },
