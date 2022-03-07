@@ -4933,8 +4933,3 @@ name = "zeroize"
 version = "1.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "50344758e2f40e3a1fcfc8f6f91aa57b5f8ebd8d27919fe6451f15aaaf9ee608"
-
-[[patch.unused]]
-name = "evm"
-version = "0.33.1"
-source = "git+https://github.com/gakonst/evm?branch=bump-primitive-types#7df668d1e53a8ca212fe5fe5362eb9b74839363c"
