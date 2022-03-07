@@ -1,4 +1,4 @@
-use std::{future::Future, str::FromStr, time::Duration};
+use std::{future::Future, path::Path, str::FromStr, time::Duration};
 
 use ethers::{solc::EvmVersion, types::U256};
 #[cfg(feature = "sputnik-evm")]
@@ -18,6 +18,36 @@ pub(crate) const VERSION_MESSAGE: &str = concat!(
     env!("VERGEN_BUILD_TIMESTAMP"),
     ")"
 );
+
+/// Useful extensions to [`std::path::Path`].
+pub trait FoundryPathExt {
+    /// Returns true if the [`Path`] ends with `.t.sol`
+    fn is_sol_test(&self) -> bool;
+
+    /// Returns true if the  [`Path`] has a `sol` extension
+    fn is_sol(&self) -> bool;
+
+    /// Returns true if the  [`Path`] has a `yul` extension
+    fn is_yul(&self) -> bool;
+}
+
+impl<T: AsRef<Path>> FoundryPathExt for T {
+    fn is_sol_test(&self) -> bool {
+        self.as_ref()
+            .file_name()
+            .and_then(|s| s.to_str())
+            .map(|s| s.ends_with(".t.sol"))
+            .unwrap_or_default()
+    }
+
+    fn is_sol(&self) -> bool {
+        self.as_ref().extension() == Some(std::ffi::OsStr::new("sol"))
+    }
+
+    fn is_yul(&self) -> bool {
+        self.as_ref().extension() == Some(std::ffi::OsStr::new("yul"))
+    }
+}
 
 /// Initializes a tracing Subscriber for logging
 #[allow(dead_code)]
@@ -115,3 +145,17 @@ macro_rules! p_println {
     }}
 }
 pub(crate) use p_println;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn foundry_path_ext_works() {
+        let p = Path::new("contracts/MyTest.t.sol");
+        assert!(p.is_sol_test());
+        assert!(p.is_sol());
+        let p = Path::new("contracts/Greeter.sol");
+        assert!(!p.is_sol_test());
+    }
+}
