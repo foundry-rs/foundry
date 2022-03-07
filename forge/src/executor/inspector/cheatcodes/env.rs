@@ -60,7 +60,7 @@ pub struct RecordAccess {
     pub writes: BTreeMap<Address, Vec<U256>>,
 }
 
-fn record(state: &mut Cheatcodes) {
+fn start_record(state: &mut Cheatcodes) {
     state.accesses = Some(Default::default());
 }
 
@@ -162,7 +162,7 @@ pub fn apply<DB: Database>(
             Ok(Bytes::new())
         }
         HEVMCalls::Record(_) => {
-            record(state);
+            start_record(state);
             Ok(Bytes::new())
         }
         HEVMCalls::Accesses(inner) => Ok(accesses(state, inner.0)),
