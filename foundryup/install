@@ -3,14 +3,14 @@ set -e
 
 echo Installing foundryup...
 
-FOUNDRY_DIR=${FOUNDRY_DIR-"$HOME/.foundry"}
+FOUNDRY_DIR=${FOUNDRY_DIR-"$HOME/.local"}
 FOUNDRY_BIN_DIR="$FOUNDRY_DIR/bin"
 FOUNDRY_MAN_DIR="$FOUNDRY_DIR/share/man/man1"
 
 FOUNDRYUP='#!/usr/bin/env bash
 set -e
 
-FOUNDRY_DIR=${FOUNDRY_DIR-"$HOME/.foundry"}
+FOUNDRY_DIR=${FOUNDRY_DIR-"$HOME/.local"}
 FOUNDRY_BIN_DIR="$FOUNDRY_DIR/bin"
 FOUNDRY_MAN_DIR="$FOUNDRY_DIR/share/man/man1"
 
