@@ -23,6 +23,7 @@ pub mod fuzz;
 /// Executor EVM spec identifiers
 pub use revm::SpecId;
 
+use self::inspector::InspectorStackConfig;
 use bytes::Bytes;
 use ethers::{
     abi::{Abi, Detokenize, RawLog, Tokenize},
@@ -31,13 +32,11 @@ use ethers::{
 use eyre::Result;
 use foundry_utils::IntoFunction;
 use hashbrown::HashMap;
-use inspector::{InspectorStack, LogCollector};
+use inspector::InspectorStack;
 use revm::{
     db::{CacheDB, DatabaseCommit, DatabaseRef, EmptyDB},
-    return_ok, Account, CreateScheme, Database, Env, Return, TransactOut, TransactTo, TxEnv, EVM,
+    return_ok, Account, CreateScheme, Env, Return, TransactOut, TransactTo, TxEnv, EVM,
 };
-
-use self::inspector::{Cheatcodes, InspectorStackConfig};
 
 #[derive(thiserror::Error, Debug)]
 pub enum EvmError {
@@ -211,13 +210,13 @@ where
         evm.database(&mut self.db);
 
         // Run the call
-        let mut inspector: InspectorStack<_> = self.inspector_config.stack();
+        let mut inspector = self.inspector_config.stack();
         let (status, out, gas, _) = evm.inspect_commit(&mut inspector);
         let result = match out {
             TransactOut::Call(data) => data,
             _ => Bytes::default(),
         };
-        let (logs, labels) = collect_inspector_states(&inspector);
+        let (logs, labels) = collect_inspector_states(inspector);
 
         Ok(RawCallResult { status, result, gas, logs, labels, state_changeset: None })
     }
@@ -266,14 +265,14 @@ where
         evm.database(&self.db);
 
         // Run the call
-        let mut inspector: InspectorStack<_> = self.inspector_config.stack();
+        let mut inspector = self.inspector_config.stack();
         let (status, out, gas, state_changeset, _) = evm.inspect_ref(&mut inspector);
         let result = match out {
             TransactOut::Call(data) => data,
             _ => Bytes::default(),
         };
 
-        let (logs, labels) = collect_inspector_states(&inspector);
+        let (logs, labels) = collect_inspector_states(inspector);
         Ok(RawCallResult {
             status,
             result,
@@ -295,7 +294,7 @@ where
         evm.env = self.build_env(from, TransactTo::Create(CreateScheme::Create), code, value);
         evm.database(&mut self.db);
 
-        let mut inspector: InspectorStack<_> = self.inspector_config.stack();
+        let mut inspector = self.inspector_config.stack();
         let (status, out, gas, _) = evm.inspect_commit(&mut inspector);
         let addr = match out {
             TransactOut::Create(_, Some(addr)) => addr,
@@ -303,7 +302,7 @@ where
             // regarding deployments in general
             _ => eyre::bail!("deployment failed: {:?}", status),
         };
-        let (logs, _) = collect_inspector_states(&inspector);
+        let (logs, _) = collect_inspector_states(inspector);
 
         Ok((addr, status, gas, logs))
     }
@@ -352,15 +351,10 @@ where
     }
 }
 
-fn collect_inspector_states<DB: Database>(
-    stack: &InspectorStack<DB>,
-) -> (Vec<RawLog>, BTreeMap<Address, String>) {
-    let LogCollector { logs } = stack.get().expect("should always have a log collector");
-    let labels = if let Some(cheatcodes) = stack.get::<Cheatcodes>() {
-        cheatcodes.labels.clone()
-    } else {
-        BTreeMap::new()
-    };
+fn collect_inspector_states(stack: InspectorStack) -> (Vec<RawLog>, BTreeMap<Address, String>) {
+    let logs = if let Some(logs) = stack.logs { logs.logs } else { Vec::new() };
+    let labels =
+        if let Some(cheatcodes) = stack.cheatcodes { cheatcodes.labels } else { BTreeMap::new() };
 
-    (logs.to_vec(), labels)
+    (logs, labels)
 }

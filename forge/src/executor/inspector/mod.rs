@@ -5,7 +5,6 @@ mod logs;
 pub use logs::LogCollector;
 
 mod stack;
-use revm::Database;
 pub use stack::InspectorStack;
 
 mod cheatcodes;
@@ -20,15 +19,12 @@ pub struct InspectorStackConfig {
 }
 
 impl InspectorStackConfig {
-    pub fn stack<DB>(&self) -> InspectorStack<DB>
-    where
-        DB: Database,
-    {
+    pub fn stack(&self) -> InspectorStack {
         let mut stack = InspectorStack::new();
 
-        stack.insert(LogCollector::new());
+        stack.logs = Some(LogCollector::new());
         if self.cheatcodes {
-            stack.insert(Cheatcodes::new(self.ffi));
+            stack.cheatcodes = Some(Cheatcodes::new(self.ffi));
         }
         stack
     }
