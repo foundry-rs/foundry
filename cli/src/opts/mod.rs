@@ -231,7 +231,8 @@ impl Wallet {
 
     fn private_key(&self) -> Result<Option<LocalWallet>> {
         Ok(if let Some(ref private_key) = self.private_key {
-            Some(LocalWallet::from_str(private_key)?)
+            let privk = &private_key.strip_prefix("0x").unwrap_or(private_key);
+            Some(LocalWallet::from_str(privk)?)
         } else {
             None
         })
