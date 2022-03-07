@@ -59,6 +59,9 @@ pub struct CreateArgs {
 
     #[clap(long = "priority-fee", help = "gas priority fee for EIP1559 txs", env = "ETH_GAS_PRIORITY_FEE", parse(try_from_str = parse_u256))]
     priority_fee: Option<U256>,
+
+    #[clap(long = "value", help = "value to send with the contract creation tx", env = "ETH_VALUE", parse(try_from_str = parse_u256))]
+    value: Option<U256>,
 }
 
 impl Cmd for CreateArgs {
@@ -163,6 +166,11 @@ impl CreateArgs {
                 ),
                 _ => deployer.tx,
             };
+        }
+
+        // set tx value if specified
+        if let Some(value) = self.value {
+            deployer.tx.set_value(value);
         }
 
         let (deployed_contract, receipt) = deployer.send_with_receipt().await?;
