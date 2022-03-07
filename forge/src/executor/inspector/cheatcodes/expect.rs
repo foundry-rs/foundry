@@ -51,7 +51,7 @@ pub fn handle_expect_revert(
         return Err("Call did not revert as expected".to_string().encode().into())
     }
 
-    if retdata.is_empty() {
+    if !expected_revert.is_empty() && retdata.is_empty() {
         return Err("Call reverted as expected, but without data".to_string().encode().into())
     }
 
