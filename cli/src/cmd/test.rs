@@ -5,12 +5,11 @@ use crate::{
 };
 use ansi_term::Colour;
 use clap::{AppSettings, Parser};
-use ethers::{
-    abi::RawLog,
-    contract::EthLogDecode,
-    solc::{ArtifactOutput, Project},
+use ethers::solc::{ArtifactOutput, Project};
+use forge::{
+    decode::decode_console_logs, executor::opts::EvmOpts, MultiContractRunnerBuilder, TestFilter,
+    TestResult,
 };
-use forge::{executor::opts::EvmOpts, MultiContractRunnerBuilder, TestFilter, TestResult};
 use foundry_config::{figment::Figment, Config};
 use regex::Regex;
 use std::{collections::BTreeMap, str::FromStr, sync::mpsc::channel, thread};
@@ -354,9 +353,7 @@ fn test<A: ArtifactOutput + 'static>(
                     let mut add_newline = false;
                     if verbosity > 1 {
                         // We only decode logs from Hardhat and DS-style console events
-                        let console_logs: Vec<String> =
-                            result.logs.iter().filter_map(decode_console_log).collect();
-
+                        let console_logs = decode_console_logs(&result.logs);
                         if !console_logs.is_empty() {
                             add_newline = true;
                             println!("Logs:");
@@ -449,42 +446,4 @@ fn test<A: ArtifactOutput + 'static>(
         }*/
         Ok(TestOutcome::new(results, allow_failure))
     }
-}
-
-fn decode_console_log(log: &RawLog) -> Option<String> {
-    use forge::abi::ConsoleEvents::{self, *};
-
-    let decoded = match ConsoleEvents::decode_log(log).ok()? {
-        LogsFilter(inner) => format!("{}", inner.0),
-        LogBytesFilter(inner) => format!("{}", inner.0),
-        LogNamedAddressFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
-        LogNamedBytes32Filter(inner) => {
-            format!("{}: 0x{}", inner.key, hex::encode(inner.val))
-        }
-        LogNamedDecimalIntFilter(inner) => {
-            let (sign, val) = inner.val.into_sign_and_abs();
-            format!(
-                "{}: {}{}",
-                inner.key,
-                sign,
-                ethers::utils::format_units(val, inner.decimals.as_u32()).unwrap()
-            )
-        }
-        LogNamedDecimalUintFilter(inner) => {
-            format!(
-                "{}: {}",
-                inner.key,
-                ethers::utils::format_units(inner.val, inner.decimals.as_u32()).unwrap()
-            )
-        }
-        LogNamedIntFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
-        LogNamedUintFilter(inner) => format!("{}: {:?}", inner.key, inner.val),
-        LogNamedBytesFilter(inner) => {
-            format!("{}: 0x{}", inner.key, hex::encode(inner.val))
-        }
-        LogNamedStringFilter(inner) => format!("{}: {}", inner.key, inner.val),
-
-        e => e.to_string(),
-    };
-    Some(decoded)
 }
