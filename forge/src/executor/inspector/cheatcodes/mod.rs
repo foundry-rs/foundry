@@ -158,6 +158,13 @@ where
                 }
                 opcode::SSTORE => {
                     let key = try_or_continue!(interpreter.stack().peek(0));
+
+                    // An SSTORE does an SLOAD internally
+                    storage_accesses
+                        .reads
+                        .entry(interpreter.contract().address)
+                        .or_insert_with(Vec::new)
+                        .push(key);
                     storage_accesses
                         .writes
                         .entry(interpreter.contract().address)
