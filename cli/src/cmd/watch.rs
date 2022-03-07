@@ -1,9 +1,12 @@
 //! Watch mode support
 
-use crate::cmd::{build::BuildArgs, test::TestArgs};
+use crate::{
+    cmd::{build::BuildArgs, test::TestArgs},
+    utils::{self, FoundryPathExt},
+};
 use clap::Parser;
 use regex::Regex;
-use std::{convert::Infallible, ffi::OsStr, path::PathBuf, str::FromStr, sync::Arc};
+use std::{convert::Infallible, path::PathBuf, str::FromStr, sync::Arc};
 use watchexec::{
     action::{Action, Outcome, PreSpawn},
     command::Shell,
@@ -14,8 +17,6 @@ use watchexec::{
     signal::source::MainSignal,
     Watchexec,
 };
-
-use crate::utils;
 
 /// Executes a [`Watchexec`] that listens for changes in the project's src dir and reruns `forge
 /// build`
@@ -54,7 +55,7 @@ pub async fn watch_test(args: TestArgs) -> eyre::Result<()> {
         runtime,
         Arc::clone(&wx),
         cmd,
-        has_conflicting_pattern_args,
+        WatchTestState { has_conflicting_pattern_args, last_test_files: Default::default() },
         on_test,
     );
 
@@ -65,27 +66,43 @@ pub async fn watch_test(args: TestArgs) -> eyre::Result<()> {
     Ok(())
 }
 
+#[derive(Debug, Clone)]
+struct WatchTestState {
+    /// marks whether the initial test args contains args that would conflict when adding a
+    /// match-path arg
+    has_conflicting_pattern_args: bool,
+    /// Tracks the last changed test files, if any so that if a non-test file was modified we run
+    /// this file instead *Note:* this is a vec, so we can also watch out for changes
+    /// introduced by `forge fmt`
+    last_test_files: Vec<String>,
+}
+
 /// The `on_action` hook for `forge test --watch`
-fn on_test(action: OnActionState<bool>) {
+fn on_test(action: OnActionState<WatchTestState>) {
     let OnActionState { args, runtime, action, wx, cmd, other } = action;
-    let has_conflicting_pattern_args = other;
+    let WatchTestState { has_conflicting_pattern_args, last_test_files } = other;
     if has_conflicting_pattern_args {
         // can't set conflicting arguments
         return
     }
 
     let mut cmd = cmd.clone();
-    // get changed files and update command accordingly
-    let sol_files: Vec<_> = action
+
+    let mut changed_sol_test_files: Vec<_> = action
         .events
         .iter()
         .flat_map(|e| e.paths())
-        .filter(|(path, _)| path.extension() == Some(OsStr::new("sol")))
+        .filter(|(path, _)| path.is_sol_test())
         .filter_map(|(path, _)| path.to_str())
+        .map(str::to_string)
         .collect();
 
-    if sol_files.is_empty() {
-        return
+    if changed_sol_test_files.is_empty() {
+        if last_test_files.is_empty() {
+            return
+        }
+        // reuse the old test files if a non test file was changed
+        changed_sol_test_files = last_test_files;
     }
 
     // replace `--match-path` | `-mp` argument
@@ -95,7 +112,7 @@ fn on_test(action: OnActionState<bool>) {
     }
 
     // append `--match-path` regex
-    let re_str = format!("({})", sol_files.join("|"));
+    let re_str = format!("({})", changed_sol_test_files.join("|"));
     if let Ok(re) = Regex::from_str(&re_str) {
         let mut new_cmd = cmd.clone();
         new_cmd.push("--match-path".to_string());
@@ -104,7 +121,17 @@ fn on_test(action: OnActionState<bool>) {
         let mut config = runtime.clone();
         config.command(new_cmd);
         // re-register the action
-        on_action(args.clone(), config, wx, cmd, has_conflicting_pattern_args, on_test);
+        on_action(
+            args.clone(),
+            config,
+            wx,
+            cmd,
+            WatchTestState {
+                has_conflicting_pattern_args,
+                last_test_files: changed_sol_test_files,
+            },
+            on_test,
+        );
     } else {
         eprintln!("failed to parse new regex {}", re_str);
     }
