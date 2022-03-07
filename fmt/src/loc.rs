@@ -54,13 +54,16 @@ impl LineOfCode for AssemblyStatement {
     fn loc(&self) -> Loc {
         match self {
             AssemblyStatement::Assign(loc, _, _) |
-            AssemblyStatement::LetAssign(loc, _, _) |
+            AssemblyStatement::VariableDeclaration(loc, _, _) |
             AssemblyStatement::If(loc, _, _) |
             AssemblyStatement::For(loc, _, _, _, _) |
             AssemblyStatement::Switch(loc, _, _, _) |
             AssemblyStatement::Leave(loc) |
             AssemblyStatement::Break(loc) |
-            AssemblyStatement::Continue(loc) => *loc,
+            AssemblyStatement::Continue(loc) |
+            AssemblyStatement::Block(loc, _) => *loc,
+            AssemblyStatement::FunctionDefinition(expr) => expr.loc,
+            AssemblyStatement::FunctionCall(expr) => expr.loc,
             AssemblyStatement::Expression(expr) => expr.loc(),
         }
     }
@@ -69,26 +72,22 @@ impl LineOfCode for AssemblyStatement {
 impl LineOfCode for AssemblyExpression {
     fn loc(&self) -> Loc {
         *match self {
-            AssemblyExpression::BoolLiteral(loc, _) |
-            AssemblyExpression::NumberLiteral(loc, _) |
-            AssemblyExpression::HexNumberLiteral(loc, _) |
+            AssemblyExpression::BoolLiteral(loc, _, _) |
+            AssemblyExpression::NumberLiteral(loc, _, _) |
+            AssemblyExpression::HexNumberLiteral(loc, _, _) |
             AssemblyExpression::Assign(loc, _, _) |
             AssemblyExpression::LetAssign(loc, _, _) |
-            AssemblyExpression::Function(loc, _, _) |
             AssemblyExpression::Member(loc, _, _) |
             AssemblyExpression::Subscript(loc, _, _) => loc,
-            AssemblyExpression::StringLiteral(literal) => &literal.loc,
+            AssemblyExpression::StringLiteral(literal, _) => &literal.loc,
             AssemblyExpression::Variable(ident) => &ident.loc,
+            AssemblyExpression::FunctionCall(expr) => &expr.loc,
         }
     }
 }
 
 impl LineOfCode for FunctionDefinition {
     fn loc(&self) -> Loc {
-        Loc(
-            self.loc.0,
-            self.loc.1,
-            self.body.as_ref().map(|body| body.loc().2).unwrap_or(self.loc.2),
-        )
+        self.loc
     }
 }

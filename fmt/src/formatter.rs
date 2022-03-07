@@ -149,7 +149,7 @@ impl<'a, W: Write> Formatter<'a, W> {
 
     /// Returns number of blank lines between two parts of source code
     fn blank_lines<T: LineOfCode>(&self, a: &mut T, b: &&mut T) -> usize {
-        return self.source[a.loc().2..b.loc().1].matches('\n').count()
+        return self.source[a.loc().start()..b.loc().end()].matches('\n').count()
     }
 }
 
@@ -182,7 +182,7 @@ impl<'a, W: Write> Write for Formatter<'a, W> {
 // Traverse the Solidity Parse Tree and write to the code formatter
 impl<'a, W: Write> Visitor for Formatter<'a, W> {
     fn visit_source(&mut self, loc: Loc) -> VResult {
-        let source = String::from_utf8(self.source.as_bytes()[loc.1..loc.2].to_vec())?;
+        let source = String::from_utf8(self.source.as_bytes()[loc.start()..loc.end()].to_vec())?;
         let mut lines = source.splitn(2, '\n');
 
         write!(self, "{}", lines.next().unwrap())?;
