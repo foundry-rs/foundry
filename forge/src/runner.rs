@@ -276,7 +276,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                     labeled_addresses: Default::default(),
                 },
             )]
-            .into());
+            .into())
         }
 
         // Run all unit tests
@@ -356,7 +356,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                 }
                 err => {
                     tracing::error!(?err);
-                    return Err(err.into());
+                    return Err(err.into())
                 }
             },
         };

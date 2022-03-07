@@ -7,9 +7,8 @@ use ansi_term::Colour;
 use clap::{AppSettings, Parser};
 use ethers::solc::{ArtifactOutput, Project};
 use forge::{
-    decode::decode_console_logs,
-    executor::{ opts::EvmOpts},
-    MultiContractRunnerBuilder, TestFilter, TestResult,
+    decode::decode_console_logs, executor::opts::EvmOpts, MultiContractRunnerBuilder, TestFilter,
+    TestResult,
 };
 use foundry_config::{figment::Figment, Config};
 use regex::Regex;
