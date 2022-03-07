@@ -12,6 +12,9 @@ use std::str::FromStr;
 /// For some cheatcodes we may internally change the status of the call, i.e. in `expectRevert`.
 /// Solidity will see a successful call and attempt to decode the return data. Therefore, we need
 /// to populate the return with dummy bytes so the decode doesn't fail.
+///
+/// 320 bytes was arbitrarily chosen because it is long enough for return values up to 10 words in
+/// size.
 static DUMMY_CALL_OUTPUT: [u8; 320] = [0u8; 320];
 
 /// Same reasoning as [DUMMY_CALL_OUTPUT], but for creates.
