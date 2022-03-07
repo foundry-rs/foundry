@@ -189,6 +189,11 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", provider.client_version().await?);
         }
+        Subcommands::ComputeAddress { rpc_url, address, nonce } => {
+            let provider = Provider::try_from(rpc_url)?;
+            let addr =  Cast::new(&provider).compute_address(address, nonce)?;
+            println!("Computed Address: {}", addr);
+        }
         Subcommands::Code { block, who, rpc_url } => {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).code(who, block).await?);
