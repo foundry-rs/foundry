@@ -259,7 +259,10 @@ impl MultiContractRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::{Filter, EVM_OPTS};
+    use crate::{
+        decode::decode_console_logs,
+        test_helpers::{filter::Filter, EVM_OPTS},
+    };
     use ethers::solc::ProjectPathsConfig;
     use std::collections::HashMap;
 
@@ -277,7 +280,7 @@ mod tests {
     #[test]
     fn test_multi_runner() {
         let mut runner = runner();
-        let results = runner.test(&Filter::new(".*", ".*", ".*")).unwrap();
+        let results = runner.test(&Filter::new(".*", ".*", ".*"), None).unwrap();
 
         // 9 contracts being built
         assert_eq!(results.keys().len(), 11);
@@ -296,7 +299,7 @@ mod tests {
         }
 
         // can also filter
-        let only_gm = runner.test(&Filter::new("testGm.*", ".*", ".*")).unwrap();
+        let only_gm = runner.test(&Filter::new("testGm.*", ".*", ".*"), None).unwrap();
         assert_eq!(only_gm.len(), 1);
 
         assert_eq!(only_gm["GmTest.json:GmTest"].len(), 1);
@@ -306,48 +309,41 @@ mod tests {
     #[test]
     fn test_abstract_contract() {
         let mut runner = runner();
-        let results = runner.test(&Filter::new(".*", ".*", ".*")).unwrap();
+        let results = runner.test(&Filter::new(".*", ".*", ".*"), None).unwrap();
         assert!(results.get("Tests.json:Tests").is_none());
         assert!(results.get("ATests.json:ATests").is_some());
         assert!(results.get("BTests.json:BTests").is_some());
     }
 
-    // TODO: This test is currently ignored since we have no means of getting logs from reverted
-    // tests (case 3 and 4). We should re-enable when we have that capability.
     #[test]
-    #[ignore]
     fn test_debug_logs() {
         let mut runner = runner();
-        let results = runner.test(&Filter::new(".*", ".*", ".*")).unwrap();
+        let results = runner.test(&Filter::new(".*", ".*", ".*"), None).unwrap();
 
         let reasons = results["DebugLogsTest.json:DebugLogsTest"]
             .iter()
-            .map(|(name, res)| (name, res.logs.clone()))
+            .map(|(name, res)| (name, decode_console_logs(&res.logs)))
             .collect::<HashMap<_, _>>();
         assert_eq!(
             reasons[&"test1()".to_owned()],
-            //vec!["constructor".to_owned(), "setUp".to_owned(), "one".to_owned()]
-            vec![]
+            vec!["constructor".to_owned(), "setUp".to_owned(), "one".to_owned()]
         );
         assert_eq!(
             reasons[&"test2()".to_owned()],
-            //vec!["constructor".to_owned(), "setUp".to_owned(), "two".to_owned()]
-            vec![]
+            vec!["constructor".to_owned(), "setUp".to_owned(), "two".to_owned()]
         );
         assert_eq!(
             reasons[&"testFailWithRevert()".to_owned()],
-            //vec![
-            //    "constructor".to_owned(),
-            //    "setUp".to_owned(),
-            //    "three".to_owned(),
-            //    "failure".to_owned()
-            //]
-            vec![]
+            vec![
+                "constructor".to_owned(),
+                "setUp".to_owned(),
+                "three".to_owned(),
+                "failure".to_owned()
+            ]
         );
         assert_eq!(
             reasons[&"testFailWithRequire()".to_owned()],
-            //vec!["constructor".to_owned(), "setUp".to_owned(), "four".to_owned()]
-            vec![]
+            vec!["constructor".to_owned(), "setUp".to_owned(), "four".to_owned()]
         );
     }
 }
