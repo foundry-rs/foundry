@@ -28,6 +28,9 @@ pub enum Subcommands {
     #[clap(name = "--to-hex")]
     #[clap(about = "Convert a decimal number into hex")]
     ToHex { decimal: Option<String> },
+    #[clap(name = "--from-bin")]
+    #[clap(about = "Convert binary data into hex data")]
+    FromBin,
     #[clap(name = "--to-hexdata")]
     #[clap(about = r#"[<hex>|</path>|<@tag>]
     Output lowercase, 0x-prefixed hex, converting from the
@@ -53,7 +56,7 @@ pub enum Subcommands {
         value: Option<String>,
     },
     #[clap(name = "--to-bytes32")]
-    #[clap(about = "Left-pads a hex bytes string to 32 bytes")]
+    #[clap(about = "Right-pads a hex bytes string to 32 bytes")]
     ToBytes32 { bytes: Option<String> },
     #[clap(name = "--to-dec")]
     #[clap(about = "Convert hex value into decimal number")]
@@ -160,6 +163,16 @@ pub enum Subcommands {
         #[clap(long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
+    #[clap(name = "compute-address")]
+    #[clap(about = "Returns the computed address from a given address and nonce pair")]
+    ComputeAddress {
+        #[clap(long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+        #[clap(help = "the address to create from")]
+        address: String,
+        #[clap(long, help = "address nonce", parse(try_from_str = parse_u256))]
+        nonce: Option<U256>,
+    },
     #[clap(name = "namehash")]
     #[clap(about = "Returns ENS namehash of provided name")]
     Namehash { name: String },
@@ -259,7 +272,7 @@ pub enum Subcommands {
             help = "the function signature you want to decode, in the format `<name>(<in-types>)(<out-types>)`"
         )]
         sig: String,
-        #[clap(help = "the encoded calladata, in hex format")]
+        #[clap(help = "the encoded calldata, in hex format")]
         calldata: String,
     },
     #[clap(name = "--abi-decode")]
@@ -271,14 +284,14 @@ pub enum Subcommands {
             help = "the function signature you want to decode, in the format `<name>(<in-types>)(<out-types>)`"
         )]
         sig: String,
-        #[clap(help = "the encoded calladata, in hex format")]
+        #[clap(help = "the encoded calldata, in hex format")]
         calldata: String,
         #[clap(long, short, help = "the encoded output, in hex format")]
         input: bool,
     },
     #[clap(name = "abi-encode")]
     #[clap(
-        about = "ABI encodes the given arguments with the function signature, excluidng the selector"
+        about = "ABI encodes the given arguments with the function signature, excluding the selector"
     )]
     AbiEncode {
         #[clap(help = "the function signature")]
@@ -323,6 +336,15 @@ pub enum Subcommands {
         #[clap(help = "the 32 byte topic")]
         topic: String,
     },
+    #[clap(name = "pretty-calldata")]
+    #[clap(about = "Pretty prints calldata, if available gets signature from 4byte.directory")]
+    PrettyCalldata {
+        #[clap(help = "Hex encoded calldata")]
+        calldata: String,
+        #[clap(long, short, help = "Skip the 4byte directory lookup.")]
+        offline: bool,
+    },
+
     #[clap(name = "age")]
     #[clap(about = "Prints the timestamp of a block")]
     Age {
@@ -466,6 +488,16 @@ pub enum Subcommands {
         #[clap(help = "The human-readable function signature, e.g. 'transfer(address,uint256)'")]
         sig: String,
     },
+    #[clap(
+        name = "find-block",
+        about = "Prints the block number closes to the provided timestamp"
+    )]
+    FindBlock {
+        #[clap(help = "The UNIX timestamp to search for (in seconds)")]
+        timestamp: u64,
+        #[clap(long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+    },
     #[clap(about = "Generate shell completions script")]
     Completions {
         #[clap(arg_enum)]
@@ -501,6 +533,11 @@ pub enum WalletSubcommands {
         starts_with: Option<String>,
         #[clap(long, help = "Suffix for vanity address")]
         ends_with: Option<String>,
+        #[clap(
+            long,
+            help = "Generate a vanity contract address created by the generated account with specified nonce"
+        )]
+        nonce: Option<u64>, /* 2^64-1 is max possible nonce per https://eips.ethereum.org/EIPS/eip-2681 */
     },
     #[clap(name = "address", about = "Convert a private key to an address")]
     Address {

@@ -182,7 +182,7 @@ impl<'a, 'b, S: StackState<'a>, P: PrecompileSet> SputnikExecutor<S>
         gas_limit: u64,
         access_list: Vec<(H160, Vec<H256>)>,
     ) -> ExitReason {
-        self.transact_create(caller, value, data, gas_limit, access_list)
+        self.transact_create(caller, value, data, gas_limit, access_list).0
     }
 
     fn create_address(&self, scheme: CreateScheme) -> Address {

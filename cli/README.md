@@ -265,7 +265,7 @@ You can optionally specify a regular expression, to only run matching functions:
 ```bash
 $ forge test -m Cannot
 $HOME/oss/foundry/target/release/forge test -m Cannot
-no files changed, compilation skipped.
+no files changed, compilation skipped
 Running 1 test for "Greet.json":Greet
 [PASS] testCannotGm (gas: 6819)
 
@@ -279,7 +279,7 @@ the `--json` flag
 
 ```bash
 $ forge test --json
-no files changed, compilation skipped.
+no files changed, compilation skipped
 {"\"Gm.json\":Gm":{"testNonOwnerCannotGm":{"success":true,"reason":null,"gas_used":3782,"counterexample":null,"logs":[]},"testOwnerCannotGmOnBadBlocks":{"success":true,"reason":null,"gas_used":7771,"counterexample":null,"logs":[]},"testOwnerCanGmOnGoodBlocks":{"success":true,"reason":null,"gas_used":31696,"counterexample":null,"logs":[]}},"\"Greet.json\":Greet":{"testWorksForAllGreetings":{"success":true,"reason":null,"gas_used":null,"counterexample":null,"logs":[]},"testCannotGm":{"success":true,"reason":null,"gas_used":6819,"counterexample":null,"logs":[]},"testCanSetGreeting":{"success":true,"reason":null,"gas_used":31070,"counterexample":null,"logs":[]}}}
 ```
 
@@ -395,7 +395,7 @@ SUBCOMMANDS:
     --max-uint               maximum u256 value
     --min-int                minimum i256 value
     --to-ascii               convert hex data to text data
-    --to-bytes32             left-pads a hex bytes string to 32 bytes)
+    --to-bytes32             right-pads a hex bytes string to 32 bytes
     --to-checksum-address    convert an address to a checksummed format (EIP-55)
     --to-dec                 convert hex value into decimal number
     --to-fix                 convert integers into fixed point with specified decimals
@@ -413,6 +413,7 @@ SUBCOMMANDS:
     4byte                    Fetches function signatures given the selector from 4byte.directory
     4byte-decode             Decodes transaction calldata by fetching the signature using 4byte.directory
     4byte-event              Takes a 32 byte topic and prints the response from querying 4byte.directory for that topic
+    pretty-calldata          Pretty prints calldata, if available gets signature from 4byte.directory
     abi-encode
     age                      Prints the timestamp of a block
     balance                  Print the balance of <account> in wei

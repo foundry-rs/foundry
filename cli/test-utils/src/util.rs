@@ -111,9 +111,20 @@ impl TestProject {
         self.inner().paths()
     }
 
+    /// Returns the path to the project's `foundry.toml` file
+    pub fn config_path(&self) -> PathBuf {
+        self.root().join(Config::FILE_NAME)
+    }
+
+    /// Writes the given config as toml to `foundry.toml`
+    pub fn write_config(&self, config: Config) {
+        let file = self.config_path();
+        pretty_err(&file, fs::write(&file, config.to_string_pretty().unwrap()));
+    }
+
     /// Asserts that the `<root>/foundry.toml` file exits
     pub fn assert_config_exists(&self) {
-        assert!(self.root().join(Config::FILE_NAME).exists());
+        assert!(self.config_path().exists());
     }
 
     /// Creates all project dirs and ensure they were created
@@ -335,6 +346,17 @@ impl TestCommand {
                 panic!("could not convert from string: {:?}\n\n{}", err, stdout);
             }
         }
+    }
+
+    /// Returns the `stderr` of the output as `String`.
+    pub fn stderr_lossy(&mut self) -> String {
+        let output = self.cmd.output().unwrap();
+        String::from_utf8_lossy(&output.stderr).to_string()
+    }
+
+    /// Returns the `stdout` of the output as `String`.
+    pub fn stdout_lossy(&mut self) -> String {
+        String::from_utf8_lossy(&self.output().stdout).to_string()
     }
 
     /// Gets the output of a command. If the command failed, then this panics.

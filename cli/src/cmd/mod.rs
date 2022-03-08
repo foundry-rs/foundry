@@ -51,17 +51,15 @@ pub mod snapshot;
 pub mod test;
 pub mod tree;
 pub mod verify;
+pub mod watch;
 
 use crate::opts::forge::ContractInfo;
 use ethers::{
     abi::Abi,
-    prelude::{
-        artifacts::{CompactBytecode, CompactDeployedBytecode},
-        Graph,
-    },
-    solc::{artifacts::Source, cache::SolFilesCache},
+    prelude::artifacts::{CompactBytecode, CompactDeployedBytecode},
+    solc::cache::SolFilesCache,
 };
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf};
 
 /// Common trait for all cli commands
 pub trait Cmd: clap::Parser + Sized {
@@ -71,9 +69,15 @@ pub trait Cmd: clap::Parser + Sized {
 
 use ethers::solc::{artifacts::CompactContractBytecode, Project, ProjectCompileOutput};
 
+use foundry_utils::to_table;
+
 /// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
 /// compilation was successful or if there was a cache hit.
-pub fn compile(project: &Project) -> eyre::Result<ProjectCompileOutput> {
+pub fn compile(
+    project: &Project,
+    print_names: bool,
+    print_sizes: bool,
+) -> eyre::Result<ProjectCompileOutput> {
     if !project.paths.sources.exists() {
         eyre::bail!(
             r#"no contracts to compile, contracts folder "{}" does not exist.
@@ -85,48 +89,69 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
         );
     }
 
-    println!("compiling...");
+    println!("Compiling...");
     let output = project.compile()?;
     if output.has_compiler_errors() {
         eyre::bail!(output.to_string())
     } else if output.is_unchanged() {
-        println!("no files changed, compilation skipped.");
+        println!("No files changed, compilation skipped");
     } else {
+        // print the compiler output / warnings
         println!("{}", output);
-        println!("success.");
+
+        // print any sizes or names
+        if print_names {
+            let compiled_contracts = output.compiled_contracts_by_compiler_version();
+            for (version, contracts) in compiled_contracts.into_iter() {
+                println!(
+                    "  compiler version: {}.{}.{}",
+                    version.major, version.minor, version.patch
+                );
+                for (name, _) in contracts {
+                    println!("    - {}", name);
+                }
+            }
+        }
+        if print_sizes {
+            // add extra newline if names were already printed
+            if print_names {
+                println!();
+            }
+            let compiled_contracts = output.compiled_contracts_by_compiler_version();
+            let mut sizes = BTreeMap::new();
+            for (_, contracts) in compiled_contracts.into_iter() {
+                for (name, contract) in contracts {
+                    let bytecode: CompactContractBytecode = contract.into();
+                    let size = if let Some(code) = bytecode.bytecode {
+                        if let Some(object) = code.object.as_bytes() {
+                            object.to_vec().len()
+                        } else {
+                            0
+                        }
+                    } else {
+                        0
+                    };
+                    sizes.insert(name, size);
+                }
+            }
+            let json = serde_json::to_value(&sizes)?;
+            println!("name             size (bytes)");
+            println!("-----------------------------");
+            println!("{}", to_table(json));
+        }
     }
+
     Ok(output)
 }
 
-/// Manually compile a project with added sources
-pub fn manual_compile(
-    project: &Project,
-    added_sources: Vec<PathBuf>,
-) -> eyre::Result<ProjectCompileOutput> {
-    let mut sources = project.paths.read_input_files()?;
-    sources.extend(Source::read_all_files(added_sources)?);
-    println!("compiling...");
-    if project.auto_detect {
-        tracing::trace!("using solc auto detection to compile sources");
-        let output = project.svm_compile(sources)?;
-        if output.has_compiler_errors() {
-            // return the diagnostics error back to the user.
-            eyre::bail!(output.to_string())
-        }
-        return Ok(output)
-    }
-
-    let mut solc = project.solc.clone();
-    if !project.allowed_lib_paths.is_empty() {
-        solc = solc.arg("--allow-paths").arg(project.allowed_lib_paths.to_string());
-    }
-
-    let (sources, _) = Graph::resolve_sources(&project.paths, sources)?.into_sources();
-    let output = project.compile_with_version(&solc, sources)?;
+/// Compile a set of files not necessarily included in the `project`'s source dir
+pub fn compile_files(project: &Project, files: Vec<PathBuf>) -> eyre::Result<ProjectCompileOutput> {
+    println!("Compiling...");
+    let output = project.compile_files(files)?;
     if output.has_compiler_errors() {
-        // return the diagnostics error back to the user.
         eyre::bail!(output.to_string())
     }
+    println!("{}", output);
     Ok(output)
 }
 
@@ -167,6 +192,7 @@ fn get_artifact_from_name(
         Some(artifact) => (
             artifact
                 .abi
+                .map(Into::into)
                 .ok_or_else(|| eyre::Error::msg(format!("abi not found for {}", contract.name)))?,
             artifact.bytecode.ok_or_else(|| {
                 eyre::Error::msg(format!("bytecode not found for {}", contract.name))

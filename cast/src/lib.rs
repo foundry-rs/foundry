@@ -8,7 +8,7 @@ use ethers_core::{
         Abi, AbiParser, Token,
     },
     types::{transaction::eip2718::TypedTransaction, Chain, *},
-    utils::{self, keccak256, parse_units},
+    utils::{self, get_contract_address, keccak256, parse_units},
 };
 
 use ethers_etherscan::Client;
@@ -405,6 +405,10 @@ where
         Ok(datetime.format("%a %b %e %H:%M:%S %Y").to_string())
     }
 
+    pub async fn timestamp<T: Into<BlockId>>(&self, block: T) -> Result<U256> {
+        Cast::block_field_as_num(self, block, "timestamp".to_string()).await
+    }
+
     pub async fn chain(&self) -> Result<&str> {
         let genesis_hash = Cast::block(
             self,
@@ -493,6 +497,38 @@ where
         block: Option<BlockId>,
     ) -> Result<U256> {
         Ok(self.provider.get_transaction_count(who, block).await?)
+    }
+
+    /// ```no_run
+    /// use cast::Cast;
+    /// use ethers_providers::{Provider, Http};
+    /// use ethers_core::types::Address;
+    /// use std::{str::FromStr, convert::TryFrom};
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
+    /// let cast = Cast::new(provider);
+    /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
+    /// let nonce = cast.nonce(addr, None).await? + 5;
+    /// let computed_address = cast.compute_address(addr, Some(nonce)).await?;
+    /// println!("Computed address for address {} with nonce {}: {}", addr, nonce, computed_address);
+    /// let computed_address_no_nonce = cast.compute_address(addr, None).await?;
+    /// println!("Computed address for address {} with nonce {}: {}", addr, nonce, computed_address_no_nonce);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn compute_address<T: Into<Address> + Copy + Send + Sync>(
+        &self,
+        address: T,
+        nonce: Option<U256>,
+    ) -> Result<Address> {
+        let unpacked = if let Some(n) = nonce {
+            n
+        } else {
+            self.provider.get_transaction_count(address.into(), None).await?
+        };
+
+        Ok(get_contract_address(address, unpacked))
     }
 
     /// ```no_run
@@ -1213,13 +1249,12 @@ impl SimpleCast {
     /// # use cast::SimpleCast as Cast;
     ///
     /// # fn main() -> eyre::Result<()> {
-    ///    
+    ///
     ///    assert_eq!(Cast::index("address", "uint256" ,"0xD0074F4E6490ae3f888d1d4f7E3E43326bD3f0f5" ,"2").unwrap().as_str(),"0x9525a448a9000053a4d151336329d6563b7e80b24f8e628e95527f218e8ab5fb");
     ///    assert_eq!(Cast::index("uint256", "uint256" ,"42" ,"6").unwrap().as_str(),"0xfc808b0f31a1e6b9cf25ff6289feae9b51017b392cc8e25620a94a38dcdafcc1");
     /// #    Ok(())
     /// # }
     /// ```
-
     pub fn index(
         from_type: &str,
         to_type: &str,

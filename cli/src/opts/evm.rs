@@ -71,6 +71,7 @@ pub struct EvmArgs {
 
     #[clap(
         help = r#"Verbosity mode of EVM output as number of occurences of the `v` flag (-v, -vv, -vvv, etc.)
+    2: print test logs for all tests
     3: print test trace for failing tests
     4: always print test trace, print setup for failing tests
     5: always print test trace and setup

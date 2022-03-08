@@ -10,10 +10,10 @@ use ethers::solc::{ArtifactOutput, Project};
 use evm_adapters::{
     call_tracing::ExecutionInfo, evm_opts::EvmOpts, gas_report::GasReport, sputnik::helpers::vm,
 };
-use forge::{MultiContractRunnerBuilder, TestFilter};
+use forge::{MultiContractRunnerBuilder, TestFilter, TestResult};
 use foundry_config::{figment::Figment, Config};
 use regex::Regex;
-use std::{collections::BTreeMap, str::FromStr};
+use std::{collections::BTreeMap, str::FromStr, sync::mpsc::channel, thread};
 
 #[derive(Debug, Clone, Parser)]
 pub struct Filter {
@@ -22,7 +22,7 @@ pub struct Filter {
         short = 'm',
         help = "only run test methods matching regex (deprecated, see --match-test)"
     )]
-    pattern: Option<regex::Regex>,
+    pub pattern: Option<regex::Regex>,
 
     #[clap(
         long = "match-test",
@@ -30,7 +30,7 @@ pub struct Filter {
         help = "only run test methods matching regex",
         conflicts_with = "pattern"
     )]
-    test_pattern: Option<regex::Regex>,
+    pub test_pattern: Option<regex::Regex>,
 
     #[clap(
         long = "no-match-test",
@@ -38,7 +38,7 @@ pub struct Filter {
         help = "only run test methods not matching regex",
         conflicts_with = "pattern"
     )]
-    test_pattern_inverse: Option<regex::Regex>,
+    pub test_pattern_inverse: Option<regex::Regex>,
 
     #[clap(
         long = "match-contract",
@@ -46,7 +46,7 @@ pub struct Filter {
         help = "only run test methods in contracts matching regex",
         conflicts_with = "pattern"
     )]
-    contract_pattern: Option<regex::Regex>,
+    pub contract_pattern: Option<regex::Regex>,
 
     #[clap(
         long = "no-match-contract",
@@ -62,7 +62,7 @@ pub struct Filter {
         help = "only run test methods in source files at path matching regex. Requires absolute path",
         conflicts_with = "pattern"
     )]
-    path_pattern: Option<regex::Regex>,
+    pub path_pattern: Option<regex::Regex>,
 
     #[clap(
         long = "no-match-path",
@@ -70,7 +70,7 @@ pub struct Filter {
         help = "only run test methods in source files at path not matching regex. Requires absolute path",
         conflicts_with = "pattern"
     )]
-    path_pattern_inverse: Option<regex::Regex>,
+    pub path_pattern_inverse: Option<regex::Regex>,
 }
 
 impl TestFilter for Filter {
@@ -145,6 +145,18 @@ pub struct TestArgs {
         env = "FORGE_ALLOW_FAILURE"
     )]
     allow_failure: bool,
+}
+
+impl TestArgs {
+    /// Returns the flattened [`BuildArgs`]
+    pub fn build_args(&self) -> &BuildArgs {
+        &self.opts
+    }
+
+    /// Returns the flattened [`Filter`] arguments
+    pub fn filter(&self) -> &Filter {
+        &self.filter
+    }
 }
 
 impl Cmd for TestArgs {
@@ -311,124 +323,123 @@ fn test<A: ArtifactOutput + 'static>(
 ) -> eyre::Result<TestOutcome> {
     let verbosity = evm_opts.verbosity;
     let gas_reporting = gas_reports.0;
-
     if gas_reporting && evm_opts.verbosity < 3 {
         // force evm to do tracing, but dont hit the verbosity print path
         evm_opts.verbosity = 3;
     }
-
     let mut runner = builder.build(project, evm_opts)?;
 
-    let results = runner.test(&filter)?;
-
-    let mut gas_report = GasReport::new(gas_reports.1);
-
-    let (funcs, events, errors) = runner.execution_info;
     if json {
-        let res = serde_json::to_string(&results)?;
+        let results = runner.test(&filter, None)?;
+        let res = serde_json::to_string(&results)?; // TODO: Make this work normally
         println!("{}", res);
+        Ok(TestOutcome::new(results, allow_failure))
     } else {
         // Dapptools-style printing of test results
-        for (i, (contract_name, tests)) in results.iter().enumerate() {
-            if i > 0 {
-                println!()
-            }
-            if !tests.is_empty() {
-                let term = if tests.len() > 1 { "tests" } else { "test" };
-                println!("Running {} {} for {}", tests.len(), term, contract_name);
-            }
+        let mut gas_report = GasReport::new(gas_reports.1);
+        let (tx, rx) = channel::<(String, BTreeMap<String, TestResult>)>();
+        let known_contracts = runner.known_contracts.clone();
+        let execution_info = runner.execution_info.clone();
 
-            for (name, result) in tests {
-                // build up gas report
-                if gas_reporting {
+        let handle = thread::spawn(move || {
+            while let Ok((contract_name, tests)) = rx.recv() {
+                println!();
+                if !tests.is_empty() {
+                    let term = if tests.len() > 1 { "tests" } else { "test" };
+                    println!("Running {} {} for {}", tests.len(), term, contract_name);
+                }
+                for (name, result) in tests {
+                    short_test_result(&name, &result);
+                    // adds a linebreak only if there were any traces or logs, so that the
+                    // output does not look like 1 big block.
+                    let mut add_newline = false;
+                    if verbosity > 1 && !result.logs.is_empty() {
+                        add_newline = true;
+                        println!("Logs:");
+                        for log in &result.logs {
+                            println!("  {}", log);
+                        }
+                    }
+                    if verbosity > 2 {
+                        if let (Some(traces), Some(identified_contracts)) =
+                            (&result.traces, &result.identified_contracts)
+                        {
+                            if !result.success && verbosity == 3 || verbosity > 3 {
+                                // add a new line if any logs were printed & to separate them from
+                                // the traces to be printed
+                                if !result.logs.is_empty() {
+                                    println!();
+                                }
+                                let mut ident = identified_contracts.clone();
+                                let (funcs, events, errors) = &execution_info;
+                                let mut exec_info = ExecutionInfo::new(
+                                    // &runner.known_contracts,
+                                    &known_contracts,
+                                    &mut ident,
+                                    &result.labeled_addresses,
+                                    funcs,
+                                    events,
+                                    errors,
+                                );
+                                let vm = vm();
+                                let mut trace_string = "".to_string();
+                                if verbosity > 4 || !result.success {
+                                    add_newline = true;
+                                    println!("Traces:");
+                                    // print setup calls as well
+                                    traces.iter().for_each(|trace| {
+                                        trace.construct_trace_string(
+                                            0,
+                                            &mut exec_info,
+                                            &vm,
+                                            "  ",
+                                            &mut trace_string,
+                                        );
+                                    });
+                                } else if !traces.is_empty() {
+                                    add_newline = true;
+                                    println!("Traces:");
+                                    traces
+                                        .last()
+                                        .expect("no last but not empty")
+                                        .construct_trace_string(
+                                            0,
+                                            &mut exec_info,
+                                            &vm,
+                                            "  ",
+                                            &mut trace_string,
+                                        );
+                                }
+                                if !trace_string.is_empty() {
+                                    println!("{}", trace_string);
+                                }
+                            }
+                        }
+                    }
+                    if add_newline {
+                        println!();
+                    }
+                }
+            }
+        });
+
+        let results = runner.test(&filter, Some(tx))?;
+
+        handle.join().unwrap();
+
+        if gas_reporting {
+            for tests in results.values() {
+                for result in tests.values() {
                     if let (Some(traces), Some(identified_contracts)) =
                         (&result.traces, &result.identified_contracts)
                     {
                         gas_report.analyze(traces, identified_contracts);
                     }
                 }
-
-                short_test_result(name, result);
-
-                // adds a linebreak only if there were any traces or logs, so that the
-                // output does not look like 1 big block.
-                let mut add_newline = false;
-                if verbosity > 1 && !result.logs.is_empty() {
-                    add_newline = true;
-                    println!("Logs:");
-                    for log in &result.logs {
-                        println!("  {}", log);
-                    }
-                }
-
-                if verbosity > 2 {
-                    if let (Some(traces), Some(identified_contracts)) =
-                        (&result.traces, &result.identified_contracts)
-                    {
-                        if !result.success && verbosity == 3 || verbosity > 3 {
-                            // add a new line if any logs were printed & to separate them from
-                            // the traces to be printed
-                            if !result.logs.is_empty() {
-                                println!();
-                            }
-
-                            let mut ident = identified_contracts.clone();
-                            let mut exec_info = ExecutionInfo::new(
-                                &runner.known_contracts,
-                                &mut ident,
-                                &result.labeled_addresses,
-                                &funcs,
-                                &events,
-                                &errors,
-                            );
-                            let vm = vm();
-                            let mut trace_string = "".to_string();
-                            if verbosity > 4 || !result.success {
-                                add_newline = true;
-                                println!("Traces:");
-
-                                // print setup calls as well
-                                traces.iter().for_each(|trace| {
-                                    trace.construct_trace_string(
-                                        0,
-                                        &mut exec_info,
-                                        &vm,
-                                        "  ",
-                                        &mut trace_string,
-                                    );
-                                });
-                            } else if !traces.is_empty() {
-                                add_newline = true;
-                                println!("Traces:");
-                                traces
-                                    .last()
-                                    .expect("no last but not empty")
-                                    .construct_trace_string(
-                                        0,
-                                        &mut exec_info,
-                                        &vm,
-                                        "  ",
-                                        &mut trace_string,
-                                    );
-                            }
-                            if !trace_string.is_empty() {
-                                println!("{}", trace_string);
-                            }
-                        }
-                    }
-                }
-
-                if add_newline {
-                    println!();
-                }
             }
+            gas_report.finalize();
+            println!("{}", gas_report);
         }
+        Ok(TestOutcome::new(results, allow_failure))
     }
-
-    if gas_reporting {
-        gas_report.finalize();
-        println!("{}", gas_report);
-    }
-
-    Ok(TestOutcome::new(results, allow_failure))
 }
