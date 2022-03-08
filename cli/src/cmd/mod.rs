@@ -51,6 +51,7 @@ pub mod snapshot;
 pub mod test;
 pub mod verify;
 pub mod watch;
+pub mod inspect;
 
 use crate::opts::forge::ContractInfo;
 use ethers::{

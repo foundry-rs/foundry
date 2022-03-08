@@ -15,6 +15,7 @@ use crate::cmd::{
     run::RunArgs,
     snapshot, test,
     verify::{VerifyArgs, VerifyCheckArgs},
+    inspect::InspectArgs
 };
 use serde::Serialize;
 
@@ -116,6 +117,9 @@ pub enum Subcommands {
     Flatten(flatten::FlattenArgs),
     // #[clap(about = "formats Solidity source files")]
     // Fmt(FmtArgs),
+
+    #[clap(about = "Outputs a contract in a specified format (ir, assembly, ...)")]
+    Inspect(inspect::InspectArgs),
 }
 
 // A set of solc compiler settings that can be set via command line arguments, which are intended
