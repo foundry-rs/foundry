@@ -95,6 +95,13 @@ pub struct BuildArgs {
     pub remappings_env: Option<String>,
 
     #[clap(
+        help = "the path where cached compiled contracts are stored",
+        long = "cache-path",
+        value_hint = ValueHint::DirPath
+    )]
+    pub cache_path: Option<PathBuf>,
+
+    #[clap(
         help = "the paths where your libraries are installed",
         long,
         value_hint = ValueHint::DirPath

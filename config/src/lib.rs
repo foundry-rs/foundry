@@ -87,6 +87,8 @@ pub struct Config {
     pub libraries: Vec<String>,
     /// whether to enable cache
     pub cache: bool,
+    /// where the cache is stored if enabled
+    pub cache_path: PathBuf,
     /// whether to force a `project.clean()`
     pub force: bool,
     /// evm version to use
@@ -439,6 +441,7 @@ impl Config {
     /// ```
     pub fn project_paths(&self) -> ProjectPathsConfig {
         ProjectPathsConfig::builder()
+            .cache(&self.cache_path)
             .sources(&self.src)
             .artifacts(&self.out)
             .libs(self.libs.clone())
@@ -793,6 +796,7 @@ impl Default for Config {
             out: "out".into(),
             libs: vec!["lib".into()],
             cache: true,
+            cache_path: "cache".into(),
             force: false,
             evm_version: Default::default(),
             gas_reports: vec!["*".to_string()],
