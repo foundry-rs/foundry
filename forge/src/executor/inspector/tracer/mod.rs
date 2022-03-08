@@ -12,8 +12,7 @@ use trace::{CallTrace, CallTraceArena};
 
 #[derive(Default, Debug)]
 pub struct Tracer {
-    pub previous_trace_index: usize,
-    pub current_trace_index: usize,
+    pub trace_stack: Vec<usize>,
     pub traces: CallTraceArena,
 }
 
@@ -30,7 +29,7 @@ impl Tracer {
         value: U256,
         created: bool,
     ) {
-        self.current_trace_index = self.traces.push_trace(
+        self.trace_stack.push(self.traces.push_trace(
             0,
             CallTrace {
                 depth,
@@ -41,15 +40,16 @@ impl Tracer {
                 // TODO: Labels
                 ..Default::default()
             },
-        );
+        ));
     }
 
     pub fn fill_trace(&mut self, success: bool, cost: u64, output: Vec<u8>) {
-        let trace = &mut self.traces.arena[self.current_trace_index].trace;
+        let trace = &mut self.traces.arena
+            [self.trace_stack.pop().expect("more traces were filled than started")]
+        .trace;
         trace.success = success;
         trace.cost = cost;
         trace.output = output;
-        self.current_trace_index = self.previous_trace_index;
     }
 }
 
