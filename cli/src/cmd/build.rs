@@ -99,6 +99,7 @@ pub struct BuildArgs {
         long = "cache-path",
         value_hint = ValueHint::DirPath
     )]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub cache_path: Option<PathBuf>,
 
     #[clap(

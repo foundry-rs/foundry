@@ -21,6 +21,7 @@ use ethers_solc::{
     error::SolcError,
     remappings::{RelativeRemapping, Remapping},
     ConfigurableArtifacts, EvmVersion, Project, ProjectPathsConfig, Solc, SolcConfig,
+    cache::SOLIDITY_FILES_CACHE_FILENAME,
 };
 use figment::{providers::Data, value::Value};
 use inflector::Inflector;
@@ -443,7 +444,7 @@ impl Config {
     /// ```
     pub fn project_paths(&self) -> ProjectPathsConfig {
         ProjectPathsConfig::builder()
-            .cache(&self.cache_path)
+            .cache(&self.cache_path.join(SOLIDITY_FILES_CACHE_FILENAME))
             .sources(&self.src)
             .artifacts(&self.out)
             .libs(self.libs.clone())
