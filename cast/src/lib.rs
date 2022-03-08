@@ -8,7 +8,7 @@ use ethers_core::{
         Abi, AbiParser, Token,
     },
     types::{transaction::eip2718::TypedTransaction, Chain, *},
-    utils::{self, keccak256, parse_units},
+    utils::{self, get_contract_address, keccak256, parse_units},
 };
 
 use ethers_etherscan::Client;
@@ -497,6 +497,38 @@ where
         block: Option<BlockId>,
     ) -> Result<U256> {
         Ok(self.provider.get_transaction_count(who, block).await?)
+    }
+
+    /// ```no_run
+    /// use cast::Cast;
+    /// use ethers_providers::{Provider, Http};
+    /// use ethers_core::types::Address;
+    /// use std::{str::FromStr, convert::TryFrom};
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
+    /// let cast = Cast::new(provider);
+    /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
+    /// let nonce = cast.nonce(addr, None).await? + 5;
+    /// let computed_address = cast.compute_address(addr, Some(nonce)).await?;
+    /// println!("Computed address for address {} with nonce {}: {}", addr, nonce, computed_address);
+    /// let computed_address_no_nonce = cast.compute_address(addr, None).await?;
+    /// println!("Computed address for address {} with nonce {}: {}", addr, nonce, computed_address_no_nonce);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn compute_address<T: Into<Address> + Copy + Send + Sync>(
+        &self,
+        address: T,
+        nonce: Option<U256>,
+    ) -> Result<Address> {
+        let unpacked = if let Some(n) = nonce {
+            n
+        } else {
+            self.provider.get_transaction_count(address.into(), None).await?
+        };
+
+        Ok(get_contract_address(address, unpacked))
     }
 
     /// ```no_run
