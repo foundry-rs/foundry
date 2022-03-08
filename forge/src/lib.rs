@@ -1,3 +1,5 @@
+pub mod decode;
+
 /// The Forge test runner
 mod runner;
 pub use runner::{ContractRunner, TestKind, TestKindGas, TestResult};
