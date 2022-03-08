@@ -193,7 +193,7 @@ async fn main() -> eyre::Result<()> {
             let pubkey = Address::from_str(&address).expect("invalid pubkey provided");
             let provider = Provider::try_from(rpc_url)?;
             let addr = Cast::new(&provider).compute_address(pubkey, nonce).await?;
-            println!("Computed Address: {}", addr);
+            println!("Computed Address: {:?}", addr);
         }
         Subcommands::Code { block, who, rpc_url } => {
             let provider = Provider::try_from(rpc_url)?;
