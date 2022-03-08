@@ -114,15 +114,24 @@ where
 
     fn create_end(
         &mut self,
-        _: &mut EVMData<'_, DB>,
+        data: &mut EVMData<'_, DB>,
         _: &CreateInputs,
         status: Return,
         address: Option<Address>,
         gas: Gas,
         retdata: Bytes,
     ) -> (Return, Option<Address>, Gas, Bytes) {
-        // TODO: `retdata` should be replaced with the contract code
-        self.fill_trace(matches!(status, return_ok!()), gas.spend(), retdata.to_vec());
+        let code = match address {
+            Some(address) => data
+                .subroutine
+                .account(address)
+                .info
+                .code
+                .as_ref()
+                .map_or(vec![], |code| code.to_vec()),
+            None => vec![],
+        };
+        self.fill_trace(matches!(status, return_ok!()), gas.spend(), code);
 
         (status, address, gas, retdata)
     }
