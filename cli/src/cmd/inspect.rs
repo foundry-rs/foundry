@@ -75,21 +75,21 @@ impl FromStr for ContractArtifactFields {
 
 #[derive(Debug, Clone, Parser)]
 pub struct InspectArgs {
-    /// All build arguments are supported
-    #[clap(flatten)]
-    build: build::BuildArgs,
-
     #[clap(help = "the contract to inspect")]
     pub contract: String,
 
-    #[clap(long, short, help = "the contract artifact field to inspect")]
+    #[clap(help = "the contract artifact field to inspect")]
     pub mode: ContractArtifactFields,
+
+    /// All build arguments are supported
+    #[clap(flatten)]
+    build: build::BuildArgs,
 }
 
 impl Cmd for InspectArgs {
     type Output = ();
     fn run(self) -> eyre::Result<Self::Output> {
-        let InspectArgs { build, contract, mode } = self;
+        let InspectArgs { contract, mode, build  } = self;
 
         // Build the project
         let project = build.project()?;

@@ -452,6 +452,44 @@ script ran
     );
 });
 
+// tests that the `inspect` command works correctly
+forgetest!(can_execute_inspect_command, |prj: TestProject, mut cmd: TestCommand| {
+    let contract_name = "Foo";
+    let script = prj
+        .inner()
+        .add_source(
+            contract_name,
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+contract Demo {
+    event log_string(string);
+    function run() external {
+        emit log_string("script ran");
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    cmd.arg("inspect").arg("bytecode").arg(contract_name);
+    let output = cmd.stdout_lossy();
+    assert_eq!(
+        format!(
+            "Compiling...
+Compiling 1 files with 0.8.10
+Compiler run successful
+{}
+Gas Used: 1751
+== Logs ==
+script ran
+",
+            Colour::Green.paint("Script ran successfully.")
+        ),
+        output
+    );
+});
+
 forgetest_init!(can_parse_dapp_libraries, |prj: TestProject, mut cmd: TestCommand| {
     cmd.set_current_dir(prj.root());
     cmd.set_env(
