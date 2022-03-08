@@ -352,7 +352,7 @@ fn test<A: ArtifactOutput + 'static>(
                     short_test_result(&name, &result);
                     // adds a linebreak only if there were any traces or logs, so that the
                     // output does not look like 1 big block.
-                    let add_newline = false;
+                    let mut add_newline = false;
                     if verbosity > 1 && !result.logs.is_empty() {
                         // We only decode logs from Hardhat and DS-style console events
                         let console_logs = decode_console_logs(&result.logs);

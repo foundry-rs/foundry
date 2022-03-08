@@ -25,7 +25,7 @@ rlp = "0.5.1"
 
 bytes = "1.1.0"
 thiserror = "1.0.29"
-revm = { package = "revm", git = "https://github.com/onbjerg/revm", branch = "onbjerg/blockhashes", default-features = false, features = ["std", "k256"] }
+revm = { package = "revm", git = "https://github.com/onbjerg/revm", branch = "onbjerg/tracer-ends", default-features = false, features = ["std", "k256"] }
 hashbrown = "0.12"
 once_cell = "1.9.0"
 parking_lot = "0.12.0"
