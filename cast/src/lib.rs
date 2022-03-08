@@ -8,7 +8,7 @@ use ethers_core::{
         Abi, AbiParser, Token,
     },
     types::{transaction::eip2718::TypedTransaction, Chain, *},
-    utils::{self, keccak256, parse_units, get_contract_address},
+    utils::{self, get_contract_address, keccak256, parse_units},
 };
 
 use ethers_etherscan::Client;
@@ -520,9 +520,11 @@ where
     pub async fn compute_address<T: Into<Address> + Copy + Send + Sync>(
         &self,
         address: T,
-        nonce: Option<U256>
+        nonce: Option<U256>,
     ) -> Result<Address> {
-        let unpacked = if let Some(n) = nonce { n } else {
+        let unpacked = if let Some(n) = nonce {
+            n
+        } else {
             self.provider.get_transaction_count(address.into(), None).await?
         };
 
