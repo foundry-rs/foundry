@@ -10,12 +10,12 @@ use crate::cmd::{
     create::CreateArgs,
     flatten,
     init::InitArgs,
+    inspect,
     install::InstallArgs,
     remappings::RemappingArgs,
     run::RunArgs,
     snapshot, test,
     verify::{VerifyArgs, VerifyCheckArgs},
-    inspect
 };
 use serde::Serialize;
 
@@ -117,7 +117,6 @@ pub enum Subcommands {
     Flatten(flatten::FlattenArgs),
     // #[clap(about = "formats Solidity source files")]
     // Fmt(FmtArgs),
-
     #[clap(about = "Outputs a contract in a specified format (ir, assembly, ...)")]
     Inspect(inspect::InspectArgs),
 }

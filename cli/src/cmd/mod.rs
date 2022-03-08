@@ -44,6 +44,7 @@ pub mod create;
 pub mod flatten;
 pub mod fmt;
 pub mod init;
+pub mod inspect;
 pub mod install;
 pub mod remappings;
 pub mod run;
@@ -51,7 +52,6 @@ pub mod snapshot;
 pub mod test;
 pub mod verify;
 pub mod watch;
-pub mod inspect;
 
 use crate::opts::forge::ContractInfo;
 use ethers::{
