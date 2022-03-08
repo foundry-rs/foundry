@@ -3,11 +3,12 @@
 use crate::{
     cmd::{build::BuildArgs, Cmd},
     opts::{EthereumOpts, WalletType},
+    utils::parse_u256,
 };
 use ethers::{
     abi::{Abi, Constructor, Token},
     prelude::{artifacts::BytecodeObject, ContractFactory, Http, Middleware, Provider},
-    types::Chain,
+    types::{transaction::eip2718::TypedTransaction, Chain, U256},
 };
 
 use eyre::Result;
@@ -52,6 +53,15 @@ pub struct CreateArgs {
         help = "use legacy transactions instead of EIP1559 ones. this is auto-enabled for common networks without EIP1559"
     )]
     legacy: bool,
+
+    #[clap(long = "gas-price", help = "gas price for legacy txs or maxFeePerGas for EIP1559 txs", env = "ETH_GAS_PRICE", parse(try_from_str = parse_u256))]
+    gas_price: Option<U256>,
+
+    #[clap(long = "priority-fee", help = "gas priority fee for EIP1559 txs", env = "ETH_GAS_PRIORITY_FEE", parse(try_from_str = parse_u256))]
+    priority_fee: Option<U256>,
+
+    #[clap(long = "value", help = "value to send with the contract creation tx", env = "ETH_VALUE", parse(try_from_str = parse_u256))]
+    value: Option<U256>,
 }
 
 impl Cmd for CreateArgs {
@@ -126,16 +136,42 @@ impl CreateArgs {
         let bin = bin.into_bytes().unwrap_or_else(|| {
             panic!("no bytecode found in bin object for {}", self.contract.name)
         });
-        let factory = ContractFactory::new(abi, bin, Arc::new(provider));
+        let provider = Arc::new(provider);
+        let factory = ContractFactory::new(abi, bin, provider.clone());
 
         let deployer = factory.deploy_tokens(args)?;
-        let deployer = if self.legacy ||
-            Chain::try_from(chain).map(|x| Chain::is_legacy(&x)).unwrap_or_default()
-        {
-            deployer.legacy()
-        } else {
-            deployer
-        };
+        let is_legacy =
+            self.legacy || Chain::try_from(chain).map(|x| Chain::is_legacy(&x)).unwrap_or_default();
+        let mut deployer = if is_legacy { deployer.legacy() } else { deployer };
+
+        // fill tx first because if you target a lower gas than current base, eth_estimateGas
+        // will fail and create will fail
+        let mut tx = deployer.tx;
+        provider.fill_transaction(&mut tx, None).await?;
+        deployer.tx = tx;
+
+        // set gas price if specified
+        if let Some(gas_price) = self.gas_price {
+            deployer.tx.set_gas_price(gas_price);
+        }
+
+        // set priority fee if specified
+        if let Some(priority_fee) = self.priority_fee {
+            if is_legacy {
+                panic!("there is no priority fee for legacy txs");
+            }
+            deployer.tx = match deployer.tx {
+                TypedTransaction::Eip1559(eip1559_tx_request) => TypedTransaction::Eip1559(
+                    eip1559_tx_request.max_priority_fee_per_gas(priority_fee),
+                ),
+                _ => deployer.tx,
+            };
+        }
+
+        // set tx value if specified
+        if let Some(value) = self.value {
+            deployer.tx.set_value(value);
+        }
 
         let (deployed_contract, receipt) = deployer.send_with_receipt().await?;
 

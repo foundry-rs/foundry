@@ -163,6 +163,16 @@ pub enum Subcommands {
         #[clap(long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
+    #[clap(name = "compute-address")]
+    #[clap(about = "Returns the computed address from a given address and nonce pair")]
+    ComputeAddress {
+        #[clap(long, env = "ETH_RPC_URL")]
+        rpc_url: String,
+        #[clap(help = "the address to create from")]
+        address: String,
+        #[clap(long, help = "address nonce", parse(try_from_str = parse_u256))]
+        nonce: Option<U256>,
+    },
     #[clap(name = "namehash")]
     #[clap(about = "Returns ENS namehash of provided name")]
     Namehash { name: String },

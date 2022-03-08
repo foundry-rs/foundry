@@ -305,6 +305,16 @@ console.log(someValue);
 
 ```
 
+Note: to make logs visible in `stdout`, you must use at least level 2 verbosity.
+```bash
+$> forge test -vv
+[PASS] test1() (gas: 7683)
+...
+Logs:
+  <your log string or event>
+  ...
+```
+
 ## Remappings
 If you are working in a repo with NPM-style imports, like
 ```

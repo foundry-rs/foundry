@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{future::Future, path::Path, str::FromStr, time::Duration};
 
 use ethers::{solc::EvmVersion, types::U256};
 #[cfg(feature = "sputnik-evm")]
@@ -18,6 +18,36 @@ pub(crate) const VERSION_MESSAGE: &str = concat!(
     env!("VERGEN_BUILD_TIMESTAMP"),
     ")"
 );
+
+/// Useful extensions to [`std::path::Path`].
+pub trait FoundryPathExt {
+    /// Returns true if the [`Path`] ends with `.t.sol`
+    fn is_sol_test(&self) -> bool;
+
+    /// Returns true if the  [`Path`] has a `sol` extension
+    fn is_sol(&self) -> bool;
+
+    /// Returns true if the  [`Path`] has a `yul` extension
+    fn is_yul(&self) -> bool;
+}
+
+impl<T: AsRef<Path>> FoundryPathExt for T {
+    fn is_sol_test(&self) -> bool {
+        self.as_ref()
+            .file_name()
+            .and_then(|s| s.to_str())
+            .map(|s| s.ends_with(".t.sol"))
+            .unwrap_or_default()
+    }
+
+    fn is_sol(&self) -> bool {
+        self.as_ref().extension() == Some(std::ffi::OsStr::new("sol"))
+    }
+
+    fn is_yul(&self) -> bool {
+        self.as_ref().extension() == Some(std::ffi::OsStr::new("yul"))
+    }
+}
 
 /// Initializes a tracing Subscriber for logging
 #[allow(dead_code)]
@@ -75,6 +105,30 @@ pub fn parse_u256(s: &str) -> eyre::Result<U256> {
     Ok(if s.starts_with("0x") { U256::from_str(s)? } else { U256::from_dec_str(s)? })
 }
 
+/// Parses a `Duration` from a &str
+pub fn parse_delay(delay: &str) -> eyre::Result<Duration> {
+    let delay = if delay.ends_with("ms") {
+        let d: u64 = delay.trim_end_matches("ms").parse()?;
+        Duration::from_millis(d)
+    } else {
+        let d: f64 = delay.parse()?;
+        let delay = (d * 1000.0).round();
+        if delay.is_infinite() || delay.is_nan() || delay.is_sign_negative() {
+            eyre::bail!("delay must be finite and non-negative");
+        }
+
+        Duration::from_millis(delay as u64)
+    };
+    Ok(delay)
+}
+
+/// Runs the `future` in a new [`tokio::runtime::Runtime`]
+#[allow(unused)]
+pub fn block_on<F: Future>(future: F) -> F::Output {
+    let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
+    rt.block_on(future)
+}
+
 /// Conditionally print a message
 ///
 /// This macro accepts a predicate and the message to print if the predicate is tru
@@ -91,3 +145,17 @@ macro_rules! p_println {
     }}
 }
 pub(crate) use p_println;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn foundry_path_ext_works() {
+        let p = Path::new("contracts/MyTest.t.sol");
+        assert!(p.is_sol_test());
+        assert!(p.is_sol());
+        let p = Path::new("contracts/Greeter.sol");
+        assert!(!p.is_sol_test());
+    }
+}
