@@ -3471,7 +3471,7 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "1.2.0"
-source = "git+https://github.com/bluealloy/revm?branch=main#ee15ac2da4645f421b6630c3e26b85316038d181"
+source = "git+https://github.com/onbjerg/revm?branch=onbjerg/blockhashes#fd8f390daca7e60b97798423a053a4509b54a569"
 dependencies = [
  "arrayref",
  "auto_impl",
@@ -3487,13 +3487,13 @@ dependencies = [
 [[package]]
 name = "revm_precompiles"
 version = "0.4.0"
-source = "git+https://github.com/bluealloy/revm?branch=main#ee15ac2da4645f421b6630c3e26b85316038d181"
+source = "git+https://github.com/onbjerg/revm?branch=onbjerg/blockhashes#fd8f390daca7e60b97798423a053a4509b54a569"
 dependencies = [
  "bytes",
+ "k256",
  "num 0.4.0",
  "primitive-types",
  "ripemd",
- "secp256k1",
  "sha2 0.10.2",
  "sha3 0.10.1",
  "substrate-bn",
@@ -3720,24 +3720,6 @@ dependencies = [
  "pkcs8",
  "subtle",
  "zeroize",
-]
-
-[[package]]
-name = "secp256k1"
-version = "0.22.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "26947345339603ae8395f68e2f3d85a6b0a8ddfe6315818e80b8504415099db0"
-dependencies = [
- "secp256k1-sys",
-]
-
-[[package]]
-name = "secp256k1-sys"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "07b5b9d7322572e1f3aeed208668ce87789b3645dbb73082c5ce99a004103a35"
-dependencies = [
- "cc",
 ]
 
 [[package]]

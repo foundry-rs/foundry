@@ -1,7 +1,5 @@
 mod strategies;
 
-// TODO Port when we have cheatcodes again
-//use crate::{Evm, ASSUME_MAGIC_RETURN_CODE};
 use crate::executor::{Executor, RawCallResult};
 use ethers::{
     abi::{Abi, Function},
@@ -11,9 +9,12 @@ use revm::{db::DatabaseRef, Return};
 use strategies::fuzz_calldata;
 
 pub use proptest::test_runner::{Config as FuzzConfig, Reason};
-use proptest::test_runner::{TestError, TestRunner};
+use proptest::test_runner::{TestCaseError, TestError, TestRunner};
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
+
+/// Magic return code for the `assume` cheatcode
+pub const ASSUME_MAGIC_RETURN_CODE: &[u8] = "FOUNDRY::ASSUME".as_bytes();
 
 /// Wrapper around an [`Executor`] which provides fuzzing support using [`proptest`](https://docs.rs/proptest/1.0.0/proptest/).
 ///
@@ -69,13 +70,12 @@ where
                     .expect("could not make raw evm call");
 
                 // When assume cheat code is triggered return a special string "FOUNDRY::ASSUME"
-                // TODO: Re-implement when cheatcodes are ported
-                /*if returndata.as_ref() == ASSUME_MAGIC_RETURN_CODE {
-                    let _ = return_reason.borrow_mut().insert(reason);
+                if result.as_ref() == ASSUME_MAGIC_RETURN_CODE {
+                    *return_reason.borrow_mut() = Some(status);
                     let err = "ASSUME: Too many rejects";
-                    let _ = revert_reason.borrow_mut().insert(err.to_string());
-                    return Err(TestCaseError::Reject(err.into()));
-                }*/
+                    *revert_reason.borrow_mut() = Some(err.to_string());
+                    return Err(TestCaseError::Reject(err.into()))
+                }
 
                 let success = self.executor.is_success(
                     address,

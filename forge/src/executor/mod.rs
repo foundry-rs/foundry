@@ -1,8 +1,10 @@
 /// ABIs used internally in the executor
 pub mod abi;
+use std::collections::BTreeMap;
+
 pub use abi::{
-    patch_hardhat_console_selector, HardhatConsoleCalls, CONSOLE_ABI, HARDHAT_CONSOLE_ABI,
-    HARDHAT_CONSOLE_ADDRESS,
+    patch_hardhat_console_selector, HardhatConsoleCalls, CHEATCODE_ADDRESS, CONSOLE_ABI,
+    HARDHAT_CONSOLE_ABI, HARDHAT_CONSOLE_ADDRESS,
 };
 
 /// Executor configuration
@@ -21,6 +23,7 @@ pub mod fuzz;
 /// Executor EVM spec identifiers
 pub use revm::SpecId;
 
+use self::inspector::InspectorStackConfig;
 use bytes::Bytes;
 use ethers::{
     abi::{Abi, Detokenize, RawLog, Tokenize},
@@ -29,7 +32,7 @@ use ethers::{
 use eyre::Result;
 use foundry_utils::IntoFunction;
 use hashbrown::HashMap;
-use inspector::LogCollector;
+use inspector::InspectorStack;
 use revm::{
     db::{CacheDB, DatabaseCommit, DatabaseRef, EmptyDB},
     return_ok, Account, CreateScheme, Env, Return, TransactOut, TransactTo, TxEnv, EVM,
@@ -65,6 +68,8 @@ pub struct CallResult<D: Detokenize> {
     pub gas: u64,
     /// The logs emitted during the call
     pub logs: Vec<RawLog>,
+    /// The labels assigned to addresses during the call
+    pub labels: BTreeMap<Address, String>,
     /// The changeset of the state.
     ///
     /// This is only present if the changed state was not committed to the database (i.e. if you
@@ -83,6 +88,8 @@ pub struct RawCallResult {
     pub gas: u64,
     /// The logs emitted during the call
     pub logs: Vec<RawLog>,
+    /// The labels assigned to addresses during the call
+    pub labels: BTreeMap<Address, String>,
     /// The changeset of the state.
     ///
     /// This is only present if the changed state was not committed to the database (i.e. if you
@@ -101,18 +108,24 @@ pub struct Executor<DB: DatabaseRef> {
     // we need to set `evm.env`.
     db: CacheDB<DB>,
     env: Env,
-    // TODO: Here we are going to store information about the enabled inspectors, or just the
-    // meta-inspector.
-    // NOTE: It is important that the inspector gets a new state every time.
-    //inspector: LogCollector,
+    inspector_config: InspectorStackConfig,
 }
 
 impl<DB> Executor<DB>
 where
     DB: DatabaseRef,
 {
-    pub fn new(inner_db: DB, env: Env) -> Self {
-        Executor { db: CacheDB::new(inner_db), env }
+    pub fn new(inner_db: DB, env: Env, inspector_config: InspectorStackConfig) -> Self {
+        let mut db = CacheDB::new(inner_db);
+
+        // Need to create a non-empty contract on the cheatcodes address so `extcodesize` checks
+        // does not fail
+        db.insert_cache(
+            *CHEATCODE_ADDRESS,
+            revm::AccountInfo { code: Some(Bytes::from_static(&[1])), ..Default::default() },
+        );
+
+        Executor { db, env, inspector_config }
     }
 
     /// Set the balance of an account.
@@ -161,12 +174,12 @@ where
     ) -> std::result::Result<CallResult<D>, EvmError> {
         let func = func.into();
         let calldata = Bytes::from(encode_function_data(&func, args)?.to_vec());
-        let RawCallResult { result, status, gas, logs, .. } =
+        let RawCallResult { result, status, gas, logs, labels, .. } =
             self.call_raw_committing(from, to, calldata, value)?;
         match status {
             return_ok!() => {
                 let result = decode_function_data(&func, result, false)?;
-                Ok(CallResult { status, result, gas, logs, state_changeset: None })
+                Ok(CallResult { status, result, gas, logs, labels, state_changeset: None })
             }
             _ => {
                 let reason = foundry_utils::decode_revert(result.as_ref(), abi)
@@ -197,14 +210,15 @@ where
         evm.database(&mut self.db);
 
         // Run the call
-        let mut inspector = LogCollector::new();
+        let mut inspector = self.inspector_config.stack();
         let (status, out, gas, _) = evm.inspect_commit(&mut inspector);
         let result = match out {
             TransactOut::Call(data) => data,
             _ => Bytes::default(),
         };
+        let (logs, labels) = collect_inspector_states(inspector);
 
-        Ok(RawCallResult { status, result, gas, logs: inspector.logs, state_changeset: None })
+        Ok(RawCallResult { status, result, gas, logs, labels, state_changeset: None })
     }
 
     /// Performs a call to an account on the current state of the VM.
@@ -221,12 +235,12 @@ where
     ) -> std::result::Result<CallResult<D>, EvmError> {
         let func = func.into();
         let calldata = Bytes::from(encode_function_data(&func, args)?.to_vec());
-        let RawCallResult { result, status, gas, logs, state_changeset } =
+        let RawCallResult { result, status, gas, logs, labels, state_changeset } =
             self.call_raw(from, to, calldata, value)?;
         match status {
             return_ok!() => {
                 let result = decode_function_data(&func, result, false)?;
-                Ok(CallResult { status, result, gas, logs, state_changeset })
+                Ok(CallResult { status, result, gas, logs, labels, state_changeset })
             }
             _ => {
                 let reason = foundry_utils::decode_revert(result.as_ref(), abi)
@@ -251,18 +265,20 @@ where
         evm.database(&self.db);
 
         // Run the call
-        let mut inspector = LogCollector::new();
+        let mut inspector = self.inspector_config.stack();
         let (status, out, gas, state_changeset, _) = evm.inspect_ref(&mut inspector);
         let result = match out {
             TransactOut::Call(data) => data,
             _ => Bytes::default(),
         };
 
+        let (logs, labels) = collect_inspector_states(inspector);
         Ok(RawCallResult {
             status,
             result,
             gas,
-            logs: inspector.logs,
+            logs: logs.to_vec(),
+            labels,
             state_changeset: Some(state_changeset),
         })
     }
@@ -278,7 +294,7 @@ where
         evm.env = self.build_env(from, TransactTo::Create(CreateScheme::Create), code, value);
         evm.database(&mut self.db);
 
-        let mut inspector = LogCollector::new();
+        let mut inspector = self.inspector_config.stack();
         let (status, out, gas, _) = evm.inspect_commit(&mut inspector);
         let addr = match out {
             TransactOut::Create(_, Some(addr)) => addr,
@@ -286,8 +302,9 @@ where
             // regarding deployments in general
             _ => eyre::bail!("deployment failed: {:?}", status),
         };
+        let (logs, _) = collect_inspector_states(inspector);
 
-        Ok((addr, status, gas, inspector.logs))
+        Ok((addr, status, gas, logs))
     }
 
     /// Check if a call to a test contract was successful
@@ -304,7 +321,7 @@ where
         let mut db = CacheDB::new(EmptyDB());
         db.insert_cache(address, self.db.basic(address));
         db.commit(state_changeset);
-        let executor = Executor::new(db, self.env.clone());
+        let executor = Executor::new(db, self.env.clone(), self.inspector_config.clone());
 
         if success {
             // Check if a DSTest assertion failed
@@ -332,4 +349,12 @@ where
             tx: TxEnv { caller, transact_to, data, value, ..self.env.tx.clone() },
         }
     }
+}
+
+fn collect_inspector_states(stack: InspectorStack) -> (Vec<RawLog>, BTreeMap<Address, String>) {
+    let logs = if let Some(logs) = stack.logs { logs.logs } else { Vec::new() };
+    let labels =
+        if let Some(cheatcodes) = stack.cheatcodes { cheatcodes.labels } else { BTreeMap::new() };
+
+    (logs, labels)
 }
