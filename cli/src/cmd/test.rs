@@ -8,8 +8,9 @@ use ansi_term::Colour;
 use clap::{AppSettings, Parser};
 use ethers::solc::{ArtifactOutput, ProjectCompileOutput};
 use forge::{
-    decode::decode_console_logs, executor::opts::EvmOpts, MultiContractRunnerBuilder, TestFilter,
-    TestResult,
+    decode::decode_console_logs,
+    executor::{inspector::trace::ExecutionInfo, opts::EvmOpts},
+    MultiContractRunnerBuilder, TestFilter, TestResult,
 };
 use foundry_config::{figment::Figment, Config};
 use regex::Regex;
@@ -337,9 +338,8 @@ fn test<A: ArtifactOutput + 'static>(
         // TODO: Re-enable when ported
         //let mut gas_report = GasReport::new(gas_reports.1);
         let (tx, rx) = channel::<(String, BTreeMap<String, TestResult>)>();
-        //let known_contracts = runner.known_contracts.clone();
-        // TODO: Re-enable when ported
-        //let execution_info = runner.execution_info.clone();
+        let known_contracts = runner.known_contracts.clone();
+        let execution_info = runner.execution_info.clone();
 
         let handle = thread::spawn(move || {
             while let Ok((contract_name, tests)) = rx.recv() {
@@ -363,8 +363,8 @@ fn test<A: ArtifactOutput + 'static>(
                             }
                         }
                     }
-                    // TODO: Re-enable this when traces are ported
-                    /*if verbosity > 2 {
+
+                    if verbosity > 2 {
                         if let (Some(traces), Some(identified_contracts)) =
                             (&result.traces, &result.identified_contracts)
                         {
@@ -385,7 +385,7 @@ fn test<A: ArtifactOutput + 'static>(
                                     events,
                                     errors,
                                 );
-                                let vm = vm();
+
                                 let mut trace_string = "".to_string();
                                 if verbosity > 4 || !result.success {
                                     add_newline = true;
@@ -395,7 +395,6 @@ fn test<A: ArtifactOutput + 'static>(
                                         trace.construct_trace_string(
                                             0,
                                             &mut exec_info,
-                                            &vm,
                                             "  ",
                                             &mut trace_string,
                                         );
@@ -409,7 +408,6 @@ fn test<A: ArtifactOutput + 'static>(
                                         .construct_trace_string(
                                             0,
                                             &mut exec_info,
-                                            &vm,
                                             "  ",
                                             &mut trace_string,
                                         );
@@ -418,10 +416,10 @@ fn test<A: ArtifactOutput + 'static>(
                                     println!("{}", trace_string);
                                 }
                             }
+                            if add_newline {
+                                println!();
+                            }
                         }
-                    }*/
-                    if add_newline {
-                        println!();
                     }
                 }
             }

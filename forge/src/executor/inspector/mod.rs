@@ -4,6 +4,9 @@ mod macros;
 mod logs;
 pub use logs::LogCollector;
 
+mod tracer;
+pub use tracer::{trace, Tracer};
+
 mod stack;
 pub use stack::InspectorStack;
 
@@ -16,6 +19,8 @@ pub struct InspectorStackConfig {
     pub cheatcodes: bool,
     /// Whether or not the FFI cheatcode is enabled
     pub ffi: bool,
+    /// Whether or not tracing is enabled
+    pub tracing: bool,
 }
 
 impl InspectorStackConfig {
@@ -25,6 +30,9 @@ impl InspectorStackConfig {
         stack.logs = Some(LogCollector::new());
         if self.cheatcodes {
             stack.cheatcodes = Some(Cheatcodes::new(self.ffi));
+        }
+        if self.tracing {
+            stack.tracer = Some(Tracer::new());
         }
         stack
     }

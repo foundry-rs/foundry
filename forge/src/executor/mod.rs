@@ -26,7 +26,7 @@ pub mod fuzz;
 /// Executor EVM spec identifiers
 pub use revm::SpecId;
 
-use self::inspector::InspectorStackConfig;
+use self::inspector::{trace::CallTraceArena, InspectorStackConfig};
 use crate::CALLER;
 use bytes::Bytes;
 use ethers::{
@@ -74,6 +74,8 @@ pub struct CallResult<D: Detokenize> {
     pub logs: Vec<RawLog>,
     /// The labels assigned to addresses during the call
     pub labels: BTreeMap<Address, String>,
+    /// The traces of the call
+    pub traces: Option<CallTraceArena>,
     /// The changeset of the state.
     ///
     /// This is only present if the changed state was not committed to the database (i.e. if you
@@ -94,6 +96,8 @@ pub struct RawCallResult {
     pub logs: Vec<RawLog>,
     /// The labels assigned to addresses during the call
     pub labels: BTreeMap<Address, String>,
+    /// The traces of the call
+    pub traces: Option<CallTraceArena>,
     /// The changeset of the state.
     ///
     /// This is only present if the changed state was not committed to the database (i.e. if you
@@ -177,12 +181,12 @@ where
     ) -> std::result::Result<CallResult<D>, EvmError> {
         let func = func.into();
         let calldata = Bytes::from(encode_function_data(&func, args)?.to_vec());
-        let RawCallResult { result, status, gas, logs, labels, .. } =
+        let RawCallResult { result, status, gas, logs, labels, traces, .. } =
             self.call_raw_committing(from, to, calldata, value)?;
         match status {
             return_ok!() => {
                 let result = decode_function_data(&func, result, false)?;
-                Ok(CallResult { status, result, gas, logs, labels, state_changeset: None })
+                Ok(CallResult { status, result, gas, logs, labels, traces, state_changeset: None })
             }
             _ => {
                 let reason = foundry_utils::decode_revert(result.as_ref(), abi)
@@ -219,9 +223,9 @@ where
             TransactOut::Call(data) => data,
             _ => Bytes::default(),
         };
-        let (logs, labels) = collect_inspector_states(inspector);
+        let (logs, labels, traces) = collect_inspector_states(inspector);
 
-        Ok(RawCallResult { status, result, gas, logs, labels, state_changeset: None })
+        Ok(RawCallResult { status, result, gas, logs, labels, traces, state_changeset: None })
     }
 
     /// Performs a call to an account on the current state of the VM.
@@ -238,12 +242,12 @@ where
     ) -> std::result::Result<CallResult<D>, EvmError> {
         let func = func.into();
         let calldata = Bytes::from(encode_function_data(&func, args)?.to_vec());
-        let RawCallResult { result, status, gas, logs, labels, state_changeset } =
+        let RawCallResult { result, status, gas, logs, labels, traces, state_changeset } =
             self.call_raw(from, to, calldata, value)?;
         match status {
             return_ok!() => {
                 let result = decode_function_data(&func, result, false)?;
-                Ok(CallResult { status, result, gas, logs, labels, state_changeset })
+                Ok(CallResult { status, result, gas, logs, labels, traces, state_changeset })
             }
             _ => {
                 let reason = foundry_utils::decode_revert(result.as_ref(), abi)
@@ -275,13 +279,14 @@ where
             _ => Bytes::default(),
         };
 
-        let (logs, labels) = collect_inspector_states(inspector);
+        let (logs, labels, traces) = collect_inspector_states(inspector);
         Ok(RawCallResult {
             status,
             result,
             gas,
             logs: logs.to_vec(),
             labels,
+            traces,
             state_changeset: Some(state_changeset),
         })
     }
@@ -305,7 +310,7 @@ where
             // regarding deployments in general
             _ => eyre::bail!("deployment failed: {:?}", status),
         };
-        let (logs, _) = collect_inspector_states(inspector);
+        let (logs, _, _) = collect_inspector_states(inspector);
 
         Ok((addr, status, gas, logs))
     }
@@ -354,10 +359,13 @@ where
     }
 }
 
-fn collect_inspector_states(stack: InspectorStack) -> (Vec<RawLog>, BTreeMap<Address, String>) {
+fn collect_inspector_states(
+    stack: InspectorStack,
+) -> (Vec<RawLog>, BTreeMap<Address, String>, Option<CallTraceArena>) {
     let logs = if let Some(logs) = stack.logs { logs.logs } else { Vec::new() };
     let labels =
         if let Some(cheatcodes) = stack.cheatcodes { cheatcodes.labels } else { BTreeMap::new() };
+    let traces = stack.tracer.map(|tracer| tracer.traces);
 
-    (logs, labels)
+    (logs, labels, traces)
 }

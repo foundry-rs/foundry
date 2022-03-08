@@ -208,6 +208,10 @@ impl MultiContractRunner {
                     builder = builder.with_fork(fork);
                 }
 
+                if self.evm_opts.verbosity >= 3 {
+                    builder = builder.with_tracing();
+                }
+
                 let executor = builder.build();
                 let result =
                     self.run_tests(name, abi, executor, deploy_code.clone(), libs, filter)?;

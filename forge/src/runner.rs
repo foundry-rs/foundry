@@ -1,6 +1,7 @@
 use crate::{
     executor::{
         fuzz::{FuzzError, FuzzTestResult, FuzzedCases, FuzzedExecutor},
+        inspector::trace::CallTraceArena,
         CallResult, EvmError, Executor, RawCallResult,
     },
     TestFilter, CALLER,
@@ -67,9 +68,7 @@ pub struct TestResult {
     pub kind: TestKind,
 
     /// Traces
-    // TODO
-    //pub traces: Option<Vec<CallTraceArena>>,
-    traces: Option<Vec<()>>,
+    pub traces: Option<Vec<CallTraceArena>>,
 
     /// Identified contracts
     pub identified_contracts: Option<BTreeMap<Address, (String, Abi)>>,
@@ -331,17 +330,23 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         let errors_abi = self.execution_info.as_ref().map(|(_, _, errors)| errors);
         let errors_abi = if let Some(ref abi) = errors_abi { abi } else { self.contract };
 
-        let identified_contracts: Option<BTreeMap<Address, (String, Abi)>> = None;
+        // TODO
+        let identified_contracts: Option<BTreeMap<Address, (String, Abi)>> = Some(BTreeMap::new());
 
-        let (status, reason, gas_used, logs, state_changeset) = match self
+        let (status, reason, gas_used, logs, traces, state_changeset) = match self
             .executor
             .call::<(), _, _>(self.sender, address, func.clone(), (), 0.into(), Some(errors_abi))
         {
             Ok(CallResult {
-                status, gas: gas_used, logs: execution_logs, state_changeset, ..
+                status,
+                gas: gas_used,
+                logs: execution_logs,
+                traces,
+                state_changeset,
+                ..
             }) => {
                 logs.extend(execution_logs);
-                (status, None, gas_used, logs, state_changeset)
+                (status, None, gas_used, logs, traces, state_changeset)
             }
             Err(err) => match err {
                 EvmError::Execution {
@@ -352,7 +357,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                     state_changeset,
                 } => {
                     logs.extend(execution_logs);
-                    (status, Some(reason), gas_used, logs, state_changeset)
+                    (status, Some(reason), gas_used, logs, None, state_changeset)
                 }
                 err => {
                     tracing::error!(?err);
@@ -380,7 +385,8 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
             counterexample: None,
             logs,
             kind: TestKind::Standard(gas_used),
-            traces: None,
+            // TODO: Setup traces
+            traces: traces.map(|traces| vec![traces]),
             identified_contracts,
             debug_calls: None,
             labeled_addresses: Default::default(),
