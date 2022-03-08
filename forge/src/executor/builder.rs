@@ -1,46 +1,44 @@
 use revm::{db::EmptyDB, Env, SpecId};
 
-use super::Executor;
+use super::{inspector::InspectorStackConfig, Executor};
 
 #[derive(Default)]
 pub struct ExecutorBuilder {
-    /// Whether or not cheatcodes are enabled
-    cheatcodes: bool,
-    /// Whether or not the FFI cheatcode is enabled
-    ffi: bool,
     /// The execution environment configuration.
-    config: Env,
+    env: Env,
+    /// The configuration used to build an [InspectorStack].
+    inspector_config: InspectorStackConfig,
 }
 
 impl ExecutorBuilder {
     #[must_use]
     pub fn new() -> Self {
-        Self { cheatcodes: false, ffi: false, config: Env::default() }
+        Default::default()
     }
 
     /// Enables cheatcodes on the executor.
     #[must_use]
     pub fn with_cheatcodes(mut self, ffi: bool) -> Self {
-        self.cheatcodes = true;
-        self.ffi = ffi;
+        self.inspector_config.cheatcodes = true;
+        self.inspector_config.ffi = ffi;
         self
     }
 
     pub fn with_spec(mut self, spec: SpecId) -> Self {
-        self.config.cfg.spec_id = spec;
+        self.env.cfg.spec_id = spec;
         self
     }
 
     /// Configure the execution environment (gas limit, chain spec, ...)
     #[must_use]
-    pub fn with_config(mut self, config: Env) -> Self {
-        self.config = config;
+    pub fn with_config(mut self, env: Env) -> Self {
+        self.env = env;
         self
     }
 
     /// Builds the executor as configured.
     pub fn build(self) -> Executor<EmptyDB> {
-        Executor::new(EmptyDB(), self.config)
+        Executor::new(EmptyDB(), self.env, self.inspector_config)
     }
 
     // TODO: add with_traces

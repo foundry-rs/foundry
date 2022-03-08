@@ -2,6 +2,47 @@ use ethers::types::{Address, Selector};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 
+/// The cheatcode handler address.
+///
+/// This is the same address as the one used in DappTools's HEVM.
+pub static CHEATCODE_ADDRESS: Lazy<Address> = Lazy::new(|| {
+    Address::from_slice(&hex::decode("7109709ECfa91a80626fF3989D68f67F5b1DD12D").unwrap())
+});
+
+// Bindings for cheatcodes
+ethers::contract::abigen!(
+    HEVM,
+    r#"[
+            roll(uint256)
+            warp(uint256)
+            fee(uint256)
+            store(address,bytes32,bytes32)
+            load(address,bytes32)(bytes32)
+            ffi(string[])(bytes)
+            addr(uint256)(address)
+            sign(uint256,bytes32)(uint8,bytes32,bytes32)
+            prank(address)
+            startPrank(address)
+            prank(address,address)
+            startPrank(address,address)
+            stopPrank()
+            deal(address,uint256)
+            etch(address,bytes)
+            expectRevert(bytes)
+            expectRevert(bytes4)
+            record()
+            accesses(address)(bytes32[],bytes32[])
+            expectEmit(bool,bool,bool,bool)
+            mockCall(address,bytes,bytes)
+            clearMockedCalls()
+            expectCall(address,bytes)
+            getCode(string)
+            label(address,string)
+            assume(bool)
+    ]"#,
+);
+pub use hevm_mod::{HEVMCalls, HEVM_ABI};
+
 /// The Hardhat console address.
 ///
 /// See: https://github.com/nomiclabs/hardhat/blob/master/packages/hardhat-core/console.sol

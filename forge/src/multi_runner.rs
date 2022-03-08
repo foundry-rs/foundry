@@ -252,7 +252,10 @@ impl MultiContractRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::{filter::Filter, EVM_OPTS};
+    use crate::{
+        decode::decode_console_logs,
+        test_helpers::{filter::Filter, EVM_OPTS},
+    };
     use ethers::solc::{Project, ProjectPathsConfig};
     use std::collections::HashMap;
 
@@ -307,42 +310,35 @@ mod tests {
         assert!(results.get("BTests.json:BTests").is_some());
     }
 
-    // TODO: This test is currently ignored since we have no means of getting logs from reverted
-    // tests (case 3 and 4). We should re-enable when we have that capability.
     #[test]
-    #[ignore]
     fn test_debug_logs() {
         let mut runner = runner();
         let results = runner.test(&Filter::new(".*", ".*", ".*"), None).unwrap();
 
         let reasons = results["DebugLogsTest.json:DebugLogsTest"]
             .iter()
-            .map(|(name, res)| (name, res.logs.clone()))
+            .map(|(name, res)| (name, decode_console_logs(&res.logs)))
             .collect::<HashMap<_, _>>();
         assert_eq!(
             reasons[&"test1()".to_owned()],
-            //vec!["constructor".to_owned(), "setUp".to_owned(), "one".to_owned()]
-            vec![]
+            vec!["constructor".to_owned(), "setUp".to_owned(), "one".to_owned()]
         );
         assert_eq!(
             reasons[&"test2()".to_owned()],
-            //vec!["constructor".to_owned(), "setUp".to_owned(), "two".to_owned()]
-            vec![]
+            vec!["constructor".to_owned(), "setUp".to_owned(), "two".to_owned()]
         );
         assert_eq!(
             reasons[&"testFailWithRevert()".to_owned()],
-            //vec![
-            //    "constructor".to_owned(),
-            //    "setUp".to_owned(),
-            //    "three".to_owned(),
-            //    "failure".to_owned()
-            //]
-            vec![]
+            vec![
+                "constructor".to_owned(),
+                "setUp".to_owned(),
+                "three".to_owned(),
+                "failure".to_owned()
+            ]
         );
         assert_eq!(
             reasons[&"testFailWithRequire()".to_owned()],
-            //vec!["constructor".to_owned(), "setUp".to_owned(), "four".to_owned()]
-            vec![]
+            vec!["constructor".to_owned(), "setUp".to_owned(), "four".to_owned()]
         );
     }
 }
