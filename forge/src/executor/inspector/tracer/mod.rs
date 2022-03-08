@@ -1,7 +1,13 @@
 pub mod trace;
 
 use bytes::Bytes;
-use revm::{return_ok, CallInputs, Database, EVMData, Gas, Inspector, Return};
+use ethers::{
+    types::Address,
+    utils::{get_contract_address, get_create2_address},
+};
+use revm::{
+    return_ok, CallInputs, CreateInputs, CreateScheme, Database, EVMData, Gas, Inspector, Return,
+};
 use trace::{CallTrace, CallTraceArena};
 
 #[derive(Default)]
@@ -56,5 +62,50 @@ where
         self.current_trace.success = matches!(status, return_ok!());
 
         (status, remaining_gas, retdata)
+    }
+
+    fn create(
+        &mut self,
+        data: &mut EVMData<'_, DB>,
+        call: &CreateInputs,
+    ) -> (Return, Option<Address>, Gas, Bytes) {
+        let nonce = data.db.basic(call.caller).nonce;
+        let mut trace = CallTrace {
+            depth: data.subroutine.depth() as usize,
+            addr: match call.scheme {
+                CreateScheme::Create => get_contract_address(call.caller, nonce),
+                CreateScheme::Create2 { salt } => {
+                    let mut buffer: [u8; 4 * 8] = [0; 4 * 8];
+                    salt.to_big_endian(&mut buffer);
+                    get_create2_address(call.caller, buffer, call.init_code.clone())
+                }
+            },
+            created: true,
+            data: call.init_code.to_vec(),
+            value: call.value,
+            // TODO: Labels
+            ..Default::default()
+        };
+        self.traces.push_trace(0, &mut trace);
+        self.current_trace = trace;
+
+        (Return::Continue, None, Gas::new(call.gas_limit), Bytes::new())
+    }
+
+    fn create_end(
+        &mut self,
+        _: &mut EVMData<'_, DB>,
+        _: &CreateInputs,
+        status: Return,
+        address: Option<Address>,
+        remaining_gas: Gas,
+        retdata: Bytes,
+    ) -> (Return, Option<Address>, Gas, Bytes) {
+        self.current_trace.output = retdata.to_vec();
+        // TODO
+        self.current_trace.cost = 0;
+        self.current_trace.success = matches!(status, return_ok!());
+
+        (status, address, remaining_gas, retdata)
     }
 }
