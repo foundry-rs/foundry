@@ -21,31 +21,6 @@ impl LogCollector {
         Default::default()
     }
 
-    fn log(&mut self, interpreter: &Interpreter, n: u8) {
-        let (offset, len) = (
-            try_or_return!(interpreter.stack().peek(0)),
-            try_or_return!(interpreter.stack().peek(1)),
-        );
-        let data = if len.is_zero() {
-            Vec::new()
-        } else {
-            interpreter
-                .memory
-                .get_slice(as_usize_or_return!(offset), as_usize_or_return!(len))
-                .to_vec()
-        };
-
-        let n = n as usize;
-        let mut topics = Vec::with_capacity(n);
-        for i in 0..n {
-            let mut topic = H256::zero();
-            try_or_return!(interpreter.stack.peek(2 + i)).to_big_endian(topic.as_bytes_mut());
-            topics.push(topic);
-        }
-
-        self.logs.push(RawLog { topics, data });
-    }
-
     fn hardhat_log(&mut self, input: Vec<u8>) -> (Return, Bytes) {
         // Patch the Hardhat-style selectors
         let input = patch_hardhat_console_selector(input.to_vec());
@@ -76,13 +51,8 @@ where
         _: &mut EVMData<'_, DB>,
         _is_static: bool,
     ) -> Return {
-        match interpreter.contract.code[interpreter.program_counter()] {
-            opcode::LOG0 => self.log(interpreter, 0),
-            opcode::LOG1 => self.log(interpreter, 1),
-            opcode::LOG2 => self.log(interpreter, 2),
-            opcode::LOG3 => self.log(interpreter, 3),
-            opcode::LOG4 => self.log(interpreter, 4),
-            _ => (),
+        if let Some(log) = extract_log(interpreter) {
+            self.logs.push(log);
         }
 
         Return::Continue
@@ -114,4 +84,35 @@ fn convert_hh_log_to_event(call: HardhatConsoleCalls) -> RawLog {
         // Convert the parameters of the call to their string representation for the log
         data: ethers::abi::encode(&[Token::String(call.to_string())]),
     }
+}
+
+/// Extracts a log from the interpreter if there is any.
+pub fn extract_log(interpreter: &Interpreter) -> Option<RawLog> {
+    let num_topics = match interpreter.contract.code[interpreter.program_counter()] {
+        opcode::LOG0 => 0,
+        opcode::LOG1 => 1,
+        opcode::LOG2 => 2,
+        opcode::LOG3 => 3,
+        opcode::LOG4 => 4,
+        _ => return None,
+    };
+
+    let (offset, len) = (interpreter.stack().peek(0).ok()?, interpreter.stack().peek(1).ok()?);
+    let data = if len.is_zero() {
+        Vec::new()
+    } else {
+        interpreter
+            .memory
+            .get_slice(as_usize_or_return!(offset, None), as_usize_or_return!(len, None))
+            .to_vec()
+    };
+
+    let mut topics = Vec::with_capacity(num_topics);
+    for i in 0..num_topics {
+        let mut topic = H256::zero();
+        interpreter.stack.peek(2 + i).ok()?.to_big_endian(topic.as_bytes_mut());
+        topics.push(topic);
+    }
+
+    Some(RawLog { topics, data })
 }

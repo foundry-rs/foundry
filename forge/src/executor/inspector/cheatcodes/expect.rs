@@ -3,10 +3,10 @@ use crate::abi::HEVMCalls;
 use bytes::Bytes;
 use ethers::{
     abi::{AbiEncode, RawLog},
-    types::{Address, H256},
+    types::Address,
 };
 use once_cell::sync::Lazy;
-use revm::{return_ok, Database, EVMData, Interpreter, Return};
+use revm::{return_ok, Database, EVMData, Return};
 use std::str::FromStr;
 
 /// For some cheatcodes we may internally change the status of the call, i.e. in `expectRevert`.
@@ -116,39 +116,23 @@ pub struct ExpectedEmit {
     pub found: bool,
 }
 
-pub fn handle_expect_emit(state: &mut Cheatcodes, interpreter: &Interpreter, n: u8) {
-    // Decode the log
-    let (offset, len) =
-        (try_or_return!(interpreter.stack().peek(0)), try_or_return!(interpreter.stack().peek(1)));
-    let data = if len.is_zero() {
-        Vec::new()
-    } else {
-        interpreter.memory.get_slice(as_usize_or_return!(offset), as_usize_or_return!(len)).to_vec()
-    };
-
-    let n = n as usize;
-    let mut topics = Vec::with_capacity(n);
-    for i in 0..n {
-        let mut topic = H256::zero();
-        try_or_return!(interpreter.stack.peek(2 + i)).to_big_endian(topic.as_bytes_mut());
-        topics.push(topic);
-    }
-
+pub fn handle_expect_emit(state: &mut Cheatcodes, log: RawLog) {
     // Fill or check the expected emits
     if let Some(next_expect_to_fill) =
         state.expected_emits.iter_mut().find(|expect| expect.log.is_none())
     {
         // We have unfilled expects, so we fill the first one
-        next_expect_to_fill.log = Some(RawLog { topics, data });
+        next_expect_to_fill.log = Some(log);
     } else if let Some(next_expect) = state.expected_emits.iter_mut().find(|expect| !expect.found) {
         // We do not have unfilled expects, so we try to match this log with the first unfound
         // log that we expect
         let expected =
             next_expect.log.as_ref().expect("we should have a log to compare against here");
-        if expected.topics[0] == topics[0] {
+        if expected.topics[0] == log.topics[0] {
             // Topic 0 matches so the amount of topics in the expected and actual log should
             // match here
-            let topics_match = topics
+            let topics_match = log
+                .topics
                 .iter()
                 .skip(1)
                 .enumerate()
@@ -157,7 +141,7 @@ pub fn handle_expect_emit(state: &mut Cheatcodes, interpreter: &Interpreter, n: 
 
             // Maybe check data
             next_expect.found = if next_expect.checks[3] {
-                expected.data == data && topics_match
+                expected.data == log.data && topics_match
             } else {
                 topics_match
             };
