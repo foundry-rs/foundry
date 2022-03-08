@@ -219,9 +219,8 @@ impl<'config, B: Backend> FuzzState for MemoryStackStateOwned<'config, B> {
             });
             log.data.chunks(32).for_each(|chunk| {
                 let mut to_fill: [u8; 32] = [0; 32];
-                let _ = (&mut to_fill[..])
-                    .write(chunk)
-                    .expect("Chunk cannot be greater than 32 bytes");
+                let _ =
+                    (&mut to_fill[..]).write(chunk).expect("Chunk cannot be greater than 32 bytes");
                 flattened.insert(to_fill);
             });
         }

@@ -3,7 +3,7 @@ use ethers::{
     abi::{Function, ParamType, Token, Tokenizable},
     types::{Address, Bytes, I256, U256},
 };
-use proptest::prelude::Strategy;
+use proptest::prelude::{Strategy, *};
 use std::{cell::RefCell, collections::HashSet, rc::Rc};
 
 /// Given a function, it returns a proptest strategy which generates valid abi-encoded calldata
@@ -35,103 +35,10 @@ fn fuzz_param_with_input(
     param: &ParamType,
     state: Option<Rc<RefCell<HashSet<[u8; 32]>>>>,
 ) -> impl Strategy<Value = Token> {
-    use proptest::prelude::*;
     // The key to making this work is the `boxed()` call which type erases everything
     // https://altsysrq.github.io/proptest-book/proptest/tutorial/transforming-strategies.html
     if let Some(state) = state {
-        let selectors = any::<prop::sample::Selector>();
-        match param {
-            ParamType::Address => selectors
-                .prop_map(move |selector| {
-                    let x = *selector.select(&*state.borrow());
-                    Address::from_slice(&x[12..]).into_token()
-                })
-                .boxed(),
-            ParamType::Bytes => selectors
-                .prop_map(move |selector| {
-                    let x = *selector.select(&*state.borrow());
-                    Bytes::from(x).into_token()
-                })
-                .boxed(),
-            ParamType::Int(n) => match n / 8 {
-                32 => selectors
-                    .prop_map(move |selector| {
-                        let x = *selector.select(&*state.borrow());
-                        I256::from_raw(U256::from(x)).into_token()
-                    })
-                    .boxed(),
-                y @ 1..=31 => selectors
-                    .prop_map(move |selector| {
-                        let x = *selector.select(&*state.borrow());
-                        // Generate a uintN in the correct range, then shift it to the range of intN
-                        // by subtracting 2^(N-1)
-                        let uint = U256::from(x) % U256::from(2).pow(U256::from(y * 8));
-                        let max_int_plus1 = U256::from(2).pow(U256::from(y * 8 - 1));
-                        let num = I256::from_raw(uint.overflowing_sub(max_int_plus1).0);
-                        num.into_token()
-                    })
-                    .boxed(),
-                _ => panic!("unsupported solidity type int{}", n),
-            },
-            ParamType::Uint(n) => match n / 8 {
-                32 => selectors
-                    .prop_map(move |selector| {
-                        let x = *selector.select(&*state.borrow());
-                        U256::from(x).into_token()
-                    })
-                    .boxed(),
-                y @ 1..=31 => selectors
-                    .prop_map(move |selector| {
-                        let x = *selector.select(&*state.borrow());
-                        (U256::from(x) % (U256::from(2).pow(U256::from(y * 8)))).into_token()
-                    })
-                    .boxed(),
-                _ => panic!("unsupported solidity type uint{}", n),
-            },
-            ParamType::Bool => selectors
-                .prop_map(move |selector| {
-                    let x = *selector.select(&*state.borrow());
-                    Token::Bool(x[31] == 1)
-                })
-                .boxed(),
-            ParamType::String => selectors
-                .prop_map(move |selector| {
-                    let x = *selector.select(&*state.borrow());
-                    Token::String(unsafe { std::str::from_utf8_unchecked(&x).to_string() })
-                })
-                .boxed(),
-            ParamType::Array(param) => proptest::collection::vec(
-                fuzz_param_with_input(param, Some(state)),
-                0..MAX_ARRAY_LEN,
-            )
-            .prop_map(Token::Array)
-            .boxed(),
-            ParamType::FixedBytes(size) => {
-                // we have to clone outside the prop_map to satisfy lifetime constraints
-                let v = *size;
-                selectors
-                    .prop_map(move |selector| {
-                        let x = *selector.select(&*state.borrow());
-                        let val = x[32 - v..].to_vec();
-                        Token::FixedBytes(val)
-                    })
-                    .boxed()
-            }
-            ParamType::FixedArray(param, size) => (0..*size as u64)
-                .map(|_| {
-                    fuzz_param_with_input(param, Some(state.clone()))
-                        .prop_map(|param| param.into_token())
-                })
-                .collect::<Vec<_>>()
-                .prop_map(Token::FixedArray)
-                .boxed(),
-            ParamType::Tuple(params) => params
-                .iter()
-                .map(|p| fuzz_param_with_input(p, Some(state.clone())))
-                .collect::<Vec<_>>()
-                .prop_map(Token::Tuple)
-                .boxed(),
-        }
+        state_fuzz(param, state)
     } else {
         match param {
             ParamType::Address => {
@@ -190,5 +97,100 @@ fn fuzz_param_with_input(
                 .prop_map(Token::Tuple)
                 .boxed(),
         }
+    }
+}
+
+fn state_fuzz(param: &ParamType, state: Rc<RefCell<HashSet<[u8; 32]>>>) -> BoxedStrategy<Token> {
+    let selectors = any::<prop::sample::Selector>();
+    match param {
+        ParamType::Address => selectors
+            .prop_map(move |selector| {
+                let x = *selector.select(&*state.borrow());
+                Address::from_slice(&x[12..]).into_token()
+            })
+            .boxed(),
+        ParamType::Bytes => selectors
+            .prop_map(move |selector| {
+                let x = *selector.select(&*state.borrow());
+                Bytes::from(x).into_token()
+            })
+            .boxed(),
+        ParamType::Int(n) => match n / 8 {
+            32 => selectors
+                .prop_map(move |selector| {
+                    let x = *selector.select(&*state.borrow());
+                    I256::from_raw(U256::from(x)).into_token()
+                })
+                .boxed(),
+            y @ 1..=31 => selectors
+                .prop_map(move |selector| {
+                    let x = *selector.select(&*state.borrow());
+                    // Generate a uintN in the correct range, then shift it to the range of intN
+                    // by subtracting 2^(N-1)
+                    let uint = U256::from(x) % U256::from(2).pow(U256::from(y * 8));
+                    let max_int_plus1 = U256::from(2).pow(U256::from(y * 8 - 1));
+                    let num = I256::from_raw(uint.overflowing_sub(max_int_plus1).0);
+                    num.into_token()
+                })
+                .boxed(),
+            _ => panic!("unsupported solidity type int{}", n),
+        },
+        ParamType::Uint(n) => match n / 8 {
+            32 => selectors
+                .prop_map(move |selector| {
+                    let x = *selector.select(&*state.borrow());
+                    U256::from(x).into_token()
+                })
+                .boxed(),
+            y @ 1..=31 => selectors
+                .prop_map(move |selector| {
+                    let x = *selector.select(&*state.borrow());
+                    (U256::from(x) % (U256::from(2).pow(U256::from(y * 8)))).into_token()
+                })
+                .boxed(),
+            _ => panic!("unsupported solidity type uint{}", n),
+        },
+        ParamType::Bool => selectors
+            .prop_map(move |selector| {
+                let x = *selector.select(&*state.borrow());
+                Token::Bool(x[31] == 1)
+            })
+            .boxed(),
+        ParamType::String => selectors
+            .prop_map(move |selector| {
+                let x = *selector.select(&*state.borrow());
+                Token::String(unsafe { std::str::from_utf8_unchecked(&x).to_string() })
+            })
+            .boxed(),
+        ParamType::Array(param) => {
+            proptest::collection::vec(fuzz_param_with_input(param, Some(state)), 0..MAX_ARRAY_LEN)
+                .prop_map(Token::Array)
+                .boxed()
+        }
+        ParamType::FixedBytes(size) => {
+            // we have to clone outside the prop_map to satisfy lifetime constraints
+            let v = *size;
+            selectors
+                .prop_map(move |selector| {
+                    let x = *selector.select(&*state.borrow());
+                    let val = x[32 - v..].to_vec();
+                    Token::FixedBytes(val)
+                })
+                .boxed()
+        }
+        ParamType::FixedArray(param, size) => (0..*size as u64)
+            .map(|_| {
+                fuzz_param_with_input(param, Some(state.clone()))
+                    .prop_map(|param| param.into_token())
+            })
+            .collect::<Vec<_>>()
+            .prop_map(Token::FixedArray)
+            .boxed(),
+        ParamType::Tuple(params) => params
+            .iter()
+            .map(|p| fuzz_param_with_input(p, Some(state.clone())))
+            .collect::<Vec<_>>()
+            .prop_map(Token::Tuple)
+            .boxed(),
     }
 }
