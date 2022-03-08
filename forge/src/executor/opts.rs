@@ -1,6 +1,12 @@
-use ethers::types::{Address, U256};
+use ethers::{
+    providers::Provider,
+    types::{Address, U256},
+};
+use foundry_utils::RuntimeOrHandle;
 use revm::{BlockEnv, CfgEnv, SpecId, TxEnv};
 use serde::{Deserialize, Serialize};
+
+use super::fork::environment;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct EvmOpts {
@@ -63,27 +69,41 @@ pub struct Env {
     pub block_gas_limit: Option<u64>,
 }
 
-impl Env {
+impl EvmOpts {
     pub fn evm_env(&self) -> revm::Env {
-        revm::Env {
-            block: BlockEnv {
-                number: self.block_number.into(),
-                coinbase: self.block_coinbase,
-                timestamp: self.block_timestamp.into(),
-                difficulty: self.block_difficulty.into(),
-                basefee: self.block_base_fee_per_gas.into(),
-                gas_limit: self.block_gas_limit.unwrap_or(self.gas_limit).into(),
-            },
-            cfg: CfgEnv {
-                chain_id: self.chain_id.unwrap_or(99).into(),
-                spec_id: SpecId::LONDON,
-                perf_all_precompiles_have_balance: false,
-            },
-            tx: TxEnv {
-                gas_price: self.gas_price.into(),
-                gas_limit: self.block_gas_limit.unwrap_or(self.gas_limit),
-                ..Default::default()
-            },
+        if let Some(ref fork_url) = self.fork_url {
+            let rt = RuntimeOrHandle::new();
+            let provider =
+                Provider::try_from(fork_url.as_str()).expect("could not instantiated provider");
+            let fut =
+                environment(&provider, self.env.chain_id, self.fork_block_number, self.sender);
+            match rt {
+                RuntimeOrHandle::Runtime(runtime) => runtime.block_on(fut),
+                RuntimeOrHandle::Handle(handle) => handle.block_on(fut),
+            }
+            .expect("could not instantiate forked environment")
+        } else {
+            revm::Env {
+                block: BlockEnv {
+                    number: self.env.block_number.into(),
+                    coinbase: self.env.block_coinbase,
+                    timestamp: self.env.block_timestamp.into(),
+                    difficulty: self.env.block_difficulty.into(),
+                    basefee: self.env.block_base_fee_per_gas.into(),
+                    gas_limit: self.env.block_gas_limit.unwrap_or(self.env.gas_limit).into(),
+                },
+                cfg: CfgEnv {
+                    chain_id: self.env.chain_id.unwrap_or(99).into(),
+                    spec_id: SpecId::LONDON,
+                    perf_all_precompiles_have_balance: false,
+                },
+                tx: TxEnv {
+                    gas_price: self.env.gas_price.into(),
+                    gas_limit: self.env.block_gas_limit.unwrap_or(self.env.gas_limit),
+                    caller: self.sender,
+                    ..Default::default()
+                },
+            }
         }
     }
 }
