@@ -107,7 +107,7 @@ where
             }
         });
 
-        (Return::Continue, Gas::new(0), Bytes::new())
+        (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
     }
 
     fn call_end(
@@ -146,7 +146,7 @@ where
             }
         });
 
-        (Return::Continue, None, Gas::new(0), Bytes::new())
+        (Return::Continue, None, Gas::new(call.gas_limit), Bytes::new())
     }
 
     fn create_end(

@@ -90,8 +90,8 @@ where
     ) -> (Return, Gas, Bytes) {
         if call.contract == *CHEATCODE_ADDRESS {
             match self.apply_cheatcode(data, call.context.caller, call) {
-                Ok(retdata) => (Return::Return, Gas::new(0), retdata),
-                Err(err) => (Return::Revert, Gas::new(0), err),
+                Ok(retdata) => (Return::Return, Gas::new(call.gas_limit), retdata),
+                Err(err) => (Return::Revert, Gas::new(call.gas_limit), err),
             }
         } else {
             // Handle expected calls
@@ -106,15 +106,15 @@ where
             // Handle mocked calls
             if let Some(mocks) = self.mocked_calls.get(&call.contract) {
                 if let Some(mock_retdata) = mocks.get(&call.input) {
-                    return (Return::Return, Gas::new(0), mock_retdata.clone())
+                    return (Return::Return, Gas::new(call.gas_limit), mock_retdata.clone())
                 } else if let Some((_, mock_retdata)) =
                     mocks.iter().find(|(mock, _)| *mock == &call.input[..mock.len()])
                 {
-                    return (Return::Return, Gas::new(0), mock_retdata.clone())
+                    return (Return::Return, Gas::new(call.gas_limit), mock_retdata.clone())
                 }
             }
 
-            (Return::Continue, Gas::new(0), Bytes::new())
+            (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
         }
     }
 
