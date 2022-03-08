@@ -1,10 +1,14 @@
 use sputnik::{
     backend::{Apply, Backend, Basic},
     executor::stack::{MemoryStackSubstate, StackState, StackSubstateMetadata},
-    ExitError, Transfer,
+    ExitError, Opcode, Transfer,
 };
 
-use crate::{call_tracing::CallTraceArena, sputnik::cheatcodes::debugger::DebugArena, FuzzState};
+use crate::{
+    call_tracing::CallTraceArena,
+    sputnik::cheatcodes::debugger::{DebugArena, OpCode},
+    FuzzState,
+};
 use ethers::{
     abi::RawLog,
     types::{H160, H256, U256},
@@ -155,12 +159,39 @@ impl<'config, B: Backend> MemoryStackStateOwned<'config, B> {
 
 impl<'config, B: Backend> FuzzState for MemoryStackStateOwned<'config, B> {
     fn flatten_state(&self) -> HashSet<[u8; 32]> {
+        use std::io::Write;
+
         let mut flattened: HashSet<[u8; 32]> = HashSet::new();
         let (applies, logs) = self.substate.clone().deconstruct(&self.backend);
         for apply in applies {
-            if let Apply::Modify { address, basic, storage, .. } = apply {
+            if let Apply::Modify { address, basic, storage, code, .. } = apply {
                 let old_basic = self.basic(address);
                 flattened.insert(H256::from(address).into());
+
+                // insert all push bytes
+                if let Some(code) = code {
+                    let mut i = 0;
+                    while i < code.len() {
+                        let wrapped_op = OpCode::from(Opcode(code[i]));
+                        if let Some(push_size) = wrapped_op.push_size() {
+                            let push_start = i + 1;
+                            i = push_start + push_size as usize;
+                            if i < code.len() {
+                                let mut to_fill: [u8; 32] = [0; 32];
+                                let _ = (&mut to_fill[..])
+                                    .write(&code[push_start..i])
+                                    .expect("PUSH cannot be greater than 32 bytes");
+                                flattened.insert(to_fill);
+                            } else {
+                                // because of metadata bs, we may hit this codepath. just ignore it
+                                // and continue on
+                            }
+                        } else {
+                            i += 1;
+                        }
+                    }
+                }
+
                 // we keep bytes as little endian
                 let mut h = H256::default();
                 old_basic.balance.to_little_endian(h.as_mut());
@@ -187,7 +218,11 @@ impl<'config, B: Backend> FuzzState for MemoryStackStateOwned<'config, B> {
                 flattened.insert(topic.0);
             });
             log.data.chunks(32).for_each(|chunk| {
-                flattened.insert(H256::from_slice(chunk).into());
+                let mut to_fill: [u8; 32] = [0; 32];
+                let _ = (&mut to_fill[..])
+                    .write(chunk)
+                    .expect("Chunk cannot be greater than 32 bytes");
+                flattened.insert(to_fill);
             });
         }
         flattened

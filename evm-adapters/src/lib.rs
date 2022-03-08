@@ -20,6 +20,8 @@ pub mod gas_report;
 /// Helpers for easily constructing EVM objects.
 pub mod evm_opts;
 
+pub mod fuzz_strategies;
+
 use ethers::{
     abi::{Abi, Detokenize, Tokenize},
     contract::{decode_function_data, encode_function_data},
