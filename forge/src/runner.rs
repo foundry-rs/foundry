@@ -73,7 +73,7 @@ pub struct TestResult {
     /// Identified contracts
     pub identified_contracts: Option<BTreeMap<Address, (String, Abi)>>,
 
-    /// Debug Steps
+    /// Debug steps
     // TODO
     #[serde(skip)]
     //pub debug_calls: Option<Vec<DebugArena>>,
@@ -200,7 +200,10 @@ impl<'a, DB: DatabaseRef> ContractRunner<'a, DB> {
 impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
     /// Deploys the test contract inside the runner from the sending account, and optionally runs
     /// the `setUp` function on the test contract.
-    pub fn deploy(&mut self, setup: bool) -> Result<(Address, Vec<RawLog>, bool, Option<String>)> {
+    pub fn deploy(
+        &mut self,
+        setup: bool,
+    ) -> Result<(Address, Vec<RawLog>, Option<CallTraceArena>, bool, Option<String>)> {
         // We max out their balance so that they can deploy and make calls.
         self.executor.set_balance(self.sender, U256::MAX);
         self.executor.set_balance(*CALLER, U256::MAX);
@@ -225,17 +228,19 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         // Optionally call the `setUp` function
         if setup {
             tracing::trace!("setting up");
-            let (setup_failed, setup_logs, reason) = match self.executor.setup(addr) {
-                Ok((_, logs)) => (false, logs, None),
-                Err(EvmError::Execution { logs, reason, .. }) => {
-                    (true, logs, Some(format!("Setup failed: {}", reason)))
+            let (setup_failed, setup_logs, setup_traces, reason) = match self.executor.setup(addr) {
+                Ok(CallResult { traces, logs, .. }) => (false, logs, traces, None),
+                Err(EvmError::Execution { logs, traces, reason, .. }) => {
+                    (true, logs, traces, Some(format!("Setup failed: {}", reason)))
                 }
-                Err(e) => (true, Vec::new(), Some(format!("Setup failed: {}", &e.to_string()))),
+                Err(e) => {
+                    (true, Vec::new(), None, Some(format!("Setup failed: {}", &e.to_string())))
+                }
             };
             logs.extend_from_slice(&setup_logs);
-            Ok((addr, logs, setup_failed, reason))
+            Ok((addr, logs, setup_traces, setup_failed, reason))
         } else {
-            Ok((addr, logs, false, None))
+            Ok((addr, logs, None, false, None))
         }
     }
 
@@ -257,7 +262,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
             .filter(|func| filter.matches_test(&func.name))
             .partition(|func| func.inputs.is_empty());
 
-        let (addr, init_logs, setup_failed, reason) = self.deploy(needs_setup)?;
+        let (addr, init_logs, init_traces, setup_failed, reason) = self.deploy(needs_setup)?;
         if setup_failed {
             // The setup failed, so we return a single test result for `setUp`
             return Ok([(
@@ -269,7 +274,8 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                     counterexample: None,
                     logs: init_logs,
                     kind: TestKind::Standard(0),
-                    traces: None,
+                    traces: init_traces.map(|traces| vec![traces]),
+                    // TODO
                     identified_contracts: None,
                     debug_calls: None,
                     labeled_addresses: Default::default(),
@@ -282,7 +288,13 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         let mut test_results = unit_tests
             .par_iter()
             .map(|func| {
-                let result = self.run_test(func, known_contracts, addr, init_logs.clone())?;
+                let result = self.run_test(
+                    func,
+                    known_contracts,
+                    addr,
+                    init_logs.clone(),
+                    init_traces.clone().map(|traces| vec![traces]),
+                )?;
                 Ok((func.signature(), result))
             })
             .collect::<Result<BTreeMap<_, _>>>()?;
@@ -320,6 +332,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         _known_contracts: Option<&BTreeMap<String, (Abi, Vec<u8>)>>,
         address: Address,
         mut logs: Vec<RawLog>,
+        mut traces: Option<Vec<CallTraceArena>>,
     ) -> Result<TestResult> {
         let start = Instant::now();
         // The expected result depends on the function name.
@@ -341,10 +354,14 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                 status,
                 gas: gas_used,
                 logs: execution_logs,
-                traces,
+                traces: execution_traces,
                 state_changeset,
                 ..
             }) => {
+                if let Some(execution_traces) = execution_traces {
+                    traces.get_or_insert_with(Default::default).push(execution_traces);
+                }
+
                 logs.extend(execution_logs);
                 (status, None, gas_used, logs, traces, state_changeset)
             }
@@ -354,8 +371,14 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                     reason,
                     gas_used,
                     logs: execution_logs,
+                    traces: execution_traces,
                     state_changeset,
+                    ..
                 } => {
+                    if let Some(execution_traces) = execution_traces {
+                        traces.get_or_insert_with(Default::default).push(execution_traces);
+                    }
+
                     logs.extend(execution_logs);
                     (status, Some(reason), gas_used, logs, None, state_changeset)
                 }
@@ -385,8 +408,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
             counterexample: None,
             logs,
             kind: TestKind::Standard(gas_used),
-            // TODO: Setup traces
-            traces: traces.map(|traces| vec![traces]),
+            traces,
             identified_contracts,
             debug_calls: None,
             labeled_addresses: Default::default(),

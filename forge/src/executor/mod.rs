@@ -51,6 +51,7 @@ pub enum EvmError {
         reason: String,
         gas_used: u64,
         logs: Vec<RawLog>,
+        traces: Option<CallTraceArena>,
         state_changeset: Option<HashMap<Address, Account>>,
     },
     /// Error which occurred during ABI encoding/decoding
@@ -158,13 +159,8 @@ where
     }
 
     /// Calls the `setUp()` function on a contract.
-    pub fn setup(
-        &mut self,
-        address: Address,
-    ) -> std::result::Result<(Return, Vec<RawLog>), EvmError> {
-        let CallResult { status, logs, .. } =
-            self.call_committing::<(), _, _>(*CALLER, address, "setUp()", (), 0.into(), None)?;
-        Ok((status, logs))
+    pub fn setup(&mut self, address: Address) -> std::result::Result<CallResult<()>, EvmError> {
+        self.call_committing::<(), _, _>(*CALLER, address, "setUp()", (), 0.into(), None)
     }
 
     /// Performs a call to an account on the current state of the VM.
@@ -196,6 +192,7 @@ where
                     reason,
                     gas_used: gas,
                     logs,
+                    traces,
                     state_changeset: None,
                 })
             }
@@ -252,7 +249,14 @@ where
             _ => {
                 let reason = foundry_utils::decode_revert(result.as_ref(), abi)
                     .unwrap_or_else(|_| format!("{:?}", status));
-                Err(EvmError::Execution { status, reason, gas_used: gas, logs, state_changeset })
+                Err(EvmError::Execution {
+                    status,
+                    reason,
+                    gas_used: gas,
+                    logs,
+                    traces,
+                    state_changeset,
+                })
             }
         }
     }
