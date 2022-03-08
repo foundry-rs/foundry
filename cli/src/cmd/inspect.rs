@@ -1,29 +1,6 @@
-use std::{
-  path::PathBuf,
-  str::FromStr,
-};
-
 use crate::cmd::{build, Cmd};
-use clap::{Parser, ValueHint};
-use foundry_config::Config;
-
-#[derive(Debug, Clone)]
-pub enum Mode {
-    IR,
-    Bytecode,
-}
-
-impl FromStr for Mode {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "ir" | "IR" | "ir-mode" | "-ir" => Ok(Mode::IR),
-            "bytecode" | "BYTECODE" | "-bytecode" => Ok(Mode::Bytecode),
-            _ => Err(format!("Unrecognized mode `{}`, must be one of [IR, Bytecode]", s)),
-        }
-    }
-}
+use clap::{Parser};
+use ethers::prelude::artifacts::output_selection::ContractOutputSelection;
 
 #[derive(Debug, Clone, Parser)]
 pub struct InspectArgs {
@@ -34,8 +11,8 @@ pub struct InspectArgs {
     #[clap(help = "the contract to inspect")]
     pub contract: String,
 
-    #[clap(long, short, help = "the mode to build the ")]
-    pub mode: Option<Mode>,
+    #[clap(long, short, help = "the contract output selection")]
+    pub mode: Option<ContractOutputSelection>,
 }
 
 impl Cmd for InspectArgs {
@@ -52,25 +29,36 @@ impl Cmd for InspectArgs {
         )?;
 
         // For the compiled artifacts, find the contract
-        let artifacts = outcome.compiled_artifacts().find(contract);
+        let artifacts = outcome.compiled_artifacts().find(contract.clone());
 
-        println!("ConfigurableContractArtifact: {:?}", artifacts);
+        // Unwrap the inner artifact
+        let artifact = match artifacts {
+          Some(a) => a,
+          None => {
+            eyre::eyre!(
+              "Could not find artifact `{}` in the compiled artifacts",
+              contract
+            );
+            return Ok(());
+          }
+        };
 
-        // let paths = config.project_paths();
-        // let target_path = dunce::canonicalize(target_path)?;
-        // let flattened = paths
-        //     .flatten(&target_path)
-        //     .map_err(|err| eyre::Error::msg(format!("failed to flatten the file: {}", err)))?;
-
-        // TODO: fetch or generate the IR or bytecode
-
-        // IR by default
-        if let Some(Mode::Bytecode) = mode {
-          // TODO: output bytecode
-          println!("<bytecode>");
+        // Match on ContractOutputSelection
+        if let Some(m) = mode {
+          match m {
+            ContractOutputSelection::Abi => println!("{:?}", artifact.abi),
+            ContractOutputSelection::DevDoc => println!("{:?}", artifact.devdoc),
+            ContractOutputSelection::UserDoc => println!("{:?}", artifact.userdoc),
+            ContractOutputSelection::Metadata => println!("{:?}", artifact.metadata),
+            ContractOutputSelection::Ir => println!("{:?}", artifact.ir),
+            ContractOutputSelection::IrOptimized => println!("{:?}", artifact.ir_optimized),
+            ContractOutputSelection::StorageLayout => println!("{:?}", artifact.storage_layout),
+            ContractOutputSelection::Evm(e) => println!("{:?}", artifact.bytecode),
+            ContractOutputSelection::Ewasm(e) => println!("{:?}", artifact.ewasm),
+          }
         } else {
-          // TODO: output IR
-          println!("<IR>");
+          // Otherwise, by default, print the bytecode
+          println!("{:?}", artifact.bytecode);
         }
 
         Ok(())
