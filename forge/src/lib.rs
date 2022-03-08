@@ -18,12 +18,17 @@ pub trait TestFilter {
     fn matches_path(&self, path: impl AsRef<str>) -> bool;
 }
 
+use ethers::types::Address;
+use once_cell::sync::Lazy;
+static CALLER: Lazy<Address> = Lazy::new(Address::random);
+
 #[cfg(test)]
 pub mod test_helpers {
     use crate::executor::fuzz::FuzzedExecutor;
 
     use super::{
         executor::{
+            builder::Backend,
             opts::{Env, EvmOpts},
             Executor, ExecutorBuilder,
         },
@@ -32,9 +37,9 @@ pub mod test_helpers {
     use ethers::{
         prelude::Lazy,
         solc::{AggregatedCompilerOutput, Project, ProjectPathsConfig},
-        types::{Address, U256},
+        types::U256,
     };
-    use revm::db::{DatabaseRef, EmptyDB};
+    use revm::db::DatabaseRef;
 
     pub static COMPILED: Lazy<AggregatedCompilerOutput> = Lazy::new(|| {
         let paths =
@@ -49,8 +54,8 @@ pub mod test_helpers {
         ..Default::default()
     });
 
-    pub fn test_executor() -> Executor<EmptyDB> {
-        ExecutorBuilder::new().with_cheatcodes(false).with_config((*EVM_OPTS).env.evm_env()).build()
+    pub fn test_executor() -> Executor<Backend> {
+        ExecutorBuilder::new().with_cheatcodes(false).with_config((*EVM_OPTS).evm_env()).build()
     }
 
     pub fn fuzz_executor<'a, DB: DatabaseRef>(
@@ -58,7 +63,7 @@ pub mod test_helpers {
     ) -> FuzzedExecutor<'a, DB> {
         let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
 
-        FuzzedExecutor::new(executor, proptest::test_runner::TestRunner::new(cfg), Address::zero())
+        FuzzedExecutor::new(executor, proptest::test_runner::TestRunner::new(cfg), *CALLER)
     }
 
     pub mod filter {

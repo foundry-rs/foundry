@@ -1,5 +1,5 @@
 use crate::{
-    executor::{opts::EvmOpts, Executor, ExecutorBuilder, SpecId},
+    executor::{opts::EvmOpts, Executor, ExecutorBuilder, Fork, SpecId},
     runner::TestResult,
     ContractRunner, TestFilter,
 };
@@ -31,6 +31,8 @@ pub struct MultiContractRunnerBuilder {
     pub initial_balance: U256,
     /// The EVM spec to use
     pub evm_spec: Option<SpecId>,
+    /// The fork config
+    pub fork: Option<Fork>,
 }
 
 pub type DeployableContracts = BTreeMap<String, (Abi, Bytes, Vec<Bytes>)>;
@@ -187,7 +189,7 @@ impl MultiContractRunner {
         stream_result: Option<Sender<(String, BTreeMap<String, TestResult>)>>,
     ) -> Result<BTreeMap<String, BTreeMap<String, TestResult>>> {
         let source_paths = self.source_paths.clone();
-
+        let env = self.evm_opts.evm_env();
         let results = self
             .contracts
             .par_iter()
@@ -195,12 +197,18 @@ impl MultiContractRunner {
             .filter(|(name, _)| filter.matches_contract(name))
             .filter(|(_, (abi, _, _))| abi.functions().any(|func| filter.matches_test(&func.name)))
             .map(|(name, (abi, deploy_code, libs))| {
-                // TODO: Fork mode and "vicinity"
-                let executor = ExecutorBuilder::new()
+                let mut builder = ExecutorBuilder::new()
                     .with_cheatcodes(self.evm_opts.ffi)
-                    .with_config(self.evm_opts.env.evm_env())
-                    .with_spec(self.evm_spec)
-                    .build();
+                    .with_config(env.clone())
+                    .with_spec(self.evm_spec);
+
+                if let Some(ref url) = self.evm_opts.fork_url {
+                    let fork =
+                        Fork { url: url.clone(), pin_block: self.evm_opts.fork_block_number };
+                    builder = builder.with_fork(fork);
+                }
+
+                let executor = builder.build();
                 let result =
                     self.run_tests(name, abi, executor, deploy_code.clone(), libs, filter)?;
                 Ok((name.clone(), result))
@@ -227,7 +235,7 @@ impl MultiContractRunner {
         err,
         fields(name = %_name)
     )]
-    fn run_tests<DB: DatabaseRef + Clone + Send + Sync>(
+    fn run_tests<DB: DatabaseRef + Send + Sync>(
         &self,
         _name: &str,
         contract: &Abi,
