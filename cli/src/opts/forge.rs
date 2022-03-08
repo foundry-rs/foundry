@@ -15,7 +15,7 @@ use crate::cmd::{
     run::RunArgs,
     snapshot, test,
     verify::{VerifyArgs, VerifyCheckArgs},
-    inspect::InspectArgs
+    inspect
 };
 use serde::Serialize;
 
