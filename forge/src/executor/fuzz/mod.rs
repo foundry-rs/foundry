@@ -217,7 +217,7 @@ pub struct FuzzCase {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::CALLER;
 
     use crate::test_helpers::{fuzz_executor, test_executor, COMPILED};
 
@@ -226,9 +226,8 @@ mod tests {
         let mut executor = test_executor();
 
         let compiled = COMPILED.find("FuzzTests").expect("could not find contract");
-        let (addr, _, _, _) = executor
-            .deploy(Address::zero(), compiled.bytecode().unwrap().0.clone(), 0.into())
-            .unwrap();
+        let (addr, _, _, _) =
+            executor.deploy(*CALLER, compiled.bytecode().unwrap().0.clone(), 0.into()).unwrap();
 
         let executor = fuzz_executor(&executor);
 
