@@ -214,7 +214,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         // Deploy libraries
         self.predeploy_libs.iter().for_each(|code| {
             self.executor
-                .deploy(*CALLER, code.0.clone(), 0u32.into())
+                .deploy(self.sender, code.0.clone(), 0u32.into())
                 .expect("couldn't deploy library");
         });
 
