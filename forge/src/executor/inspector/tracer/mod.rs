@@ -2,7 +2,7 @@ pub mod trace;
 
 use bytes::Bytes;
 use ethers::{
-    types::Address,
+    types::{Address, U256},
     utils::{get_contract_address, get_create2_address},
 };
 use revm::{
@@ -10,15 +10,46 @@ use revm::{
 };
 use trace::{CallTrace, CallTraceArena};
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Tracer {
-    current_trace: CallTrace,
+    pub previous_trace_index: usize,
+    pub current_trace_index: usize,
     pub traces: CallTraceArena,
 }
 
 impl Tracer {
     pub fn new() -> Self {
         Default::default()
+    }
+
+    pub fn start_trace(
+        &mut self,
+        depth: usize,
+        addr: Address,
+        data: Vec<u8>,
+        value: U256,
+        created: bool,
+    ) {
+        self.current_trace_index = self.traces.push_trace(
+            0,
+            CallTrace {
+                depth,
+                addr,
+                created,
+                data,
+                value,
+                // TODO: Labels
+                ..Default::default()
+            },
+        );
+    }
+
+    pub fn fill_trace(&mut self, success: bool, cost: u64, output: Vec<u8>) {
+        let trace = &mut self.traces.arena[self.current_trace_index].trace;
+        trace.success = success;
+        trace.cost = cost;
+        trace.output = output;
+        self.current_trace_index = self.previous_trace_index;
     }
 }
 
@@ -32,17 +63,13 @@ where
         call: &CallInputs,
         _: bool,
     ) -> (Return, Gas, Bytes) {
-        let mut trace = CallTrace {
-            depth: data.subroutine.depth() as usize,
-            addr: call.contract,
-            created: false,
-            data: call.input.to_vec(),
-            value: call.transfer.value,
-            // TODO: Labels
-            ..Default::default()
-        };
-        self.traces.push_trace(0, &mut trace);
-        self.current_trace = trace;
+        self.start_trace(
+            data.subroutine.depth() as usize,
+            call.contract,
+            call.input.to_vec(),
+            call.transfer.value,
+            false,
+        );
 
         (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
     }
@@ -51,17 +78,14 @@ where
         &mut self,
         _: &mut EVMData<'_, DB>,
         _: &CallInputs,
-        remaining_gas: Gas,
+        gas: Gas,
         status: Return,
         retdata: Bytes,
         _: bool,
     ) -> (Return, Gas, Bytes) {
-        self.current_trace.output = retdata.to_vec();
-        // TODO
-        self.current_trace.cost = 0;
-        self.current_trace.success = matches!(status, return_ok!());
+        self.fill_trace(matches!(status, return_ok!()), gas.spend(), retdata.to_vec());
 
-        (status, remaining_gas, retdata)
+        (status, gas, retdata)
     }
 
     fn create(
@@ -70,9 +94,9 @@ where
         call: &CreateInputs,
     ) -> (Return, Option<Address>, Gas, Bytes) {
         let nonce = data.db.basic(call.caller).nonce;
-        let mut trace = CallTrace {
-            depth: data.subroutine.depth() as usize,
-            addr: match call.scheme {
+        self.start_trace(
+            data.subroutine.depth() as usize,
+            match call.scheme {
                 CreateScheme::Create => get_contract_address(call.caller, nonce),
                 CreateScheme::Create2 { salt } => {
                     let mut buffer: [u8; 4 * 8] = [0; 4 * 8];
@@ -80,14 +104,10 @@ where
                     get_create2_address(call.caller, buffer, call.init_code.clone())
                 }
             },
-            created: true,
-            data: call.init_code.to_vec(),
-            value: call.value,
-            // TODO: Labels
-            ..Default::default()
-        };
-        self.traces.push_trace(0, &mut trace);
-        self.current_trace = trace;
+            call.init_code.to_vec(),
+            call.value,
+            true,
+        );
 
         (Return::Continue, None, Gas::new(call.gas_limit), Bytes::new())
     }
@@ -98,14 +118,12 @@ where
         _: &CreateInputs,
         status: Return,
         address: Option<Address>,
-        remaining_gas: Gas,
+        gas: Gas,
         retdata: Bytes,
     ) -> (Return, Option<Address>, Gas, Bytes) {
-        self.current_trace.output = retdata.to_vec();
-        // TODO
-        self.current_trace.cost = 0;
-        self.current_trace.success = matches!(status, return_ok!());
+        // TODO: `retdata` should be replaced with the contract code
+        self.fill_trace(matches!(status, return_ok!()), gas.spend(), retdata.to_vec());
 
-        (status, address, remaining_gas, retdata)
+        (status, address, gas, retdata)
     }
 }

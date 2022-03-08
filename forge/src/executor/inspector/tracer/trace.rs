@@ -8,12 +8,13 @@ use foundry_utils::format_token;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
 /// An arena of `CallTraceNode`s
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CallTraceArena {
     /// The arena of nodes
     pub arena: Vec<CallTraceNode>,
     /// The entry index, denoting the first node's index in the arena
+    // TODO: Is this necessary at all?
     pub entry: usize,
 }
 
@@ -107,29 +108,32 @@ impl Output {
 }
 
 impl CallTraceArena {
-    /// Pushes a new trace into the arena, returning the trace that was passed in with updated
-    /// values
-    pub fn push_trace(&mut self, entry: usize, mut new_trace: &mut CallTrace) {
+    /// Pushes a new trace into the arena, returning the trace ID
+    pub fn push_trace(&mut self, entry: usize, mut new_trace: CallTrace) -> usize {
         match new_trace.depth {
             // The entry node, just update it
             0 => {
-                self.update(new_trace.clone());
+                let idx = new_trace.idx;
+                self.update(new_trace);
+                idx
             }
-            // we found the parent node, add the new trace as a child
+            // We found the parent node, add the new trace as a child
             _ if self.arena[entry].trace.depth == new_trace.depth - 1 => {
-                new_trace.idx = self.arena.len();
+                let idx = self.arena.len();
+                new_trace.idx = idx;
                 new_trace.location = self.arena[entry].children.len();
                 self.arena[entry].ordering.push(LogCallOrder::Call(new_trace.location));
                 let node = CallTraceNode {
                     parent: Some(entry),
-                    idx: self.arena.len(),
-                    trace: new_trace.clone(),
+                    idx,
+                    trace: new_trace,
                     ..Default::default()
                 };
                 self.arena.push(node);
-                self.arena[entry].children.push(new_trace.idx);
+                self.arena[entry].children.push(idx);
+                idx
             }
-            // we haven't found the parent node, go deeper
+            // We haven't found the parent node, go deeper
             _ => self.push_trace(
                 *self.arena[entry].children.last().expect("Disconnected trace"),
                 new_trace,
@@ -234,56 +238,33 @@ impl CallTraceArena {
             Colour::Red
         };
 
-        // we have to clone the name and abi because identified_contracts is later borrowed
-        // immutably
-        let res = if let Some((name, abi)) = exec_info.identified_contracts.get(&trace.addr) {
-            Some((name.clone(), abi.clone()))
+        // TODO: We could unify this with labels
+        let name = if let Some((name, _)) = exec_info.identified_contracts.get(&trace.addr) {
+            Some(name.clone())
         } else {
             None
         };
-        if res.is_none() {
-            if trace.created {
-                // we couldn't identify, print the children and logs without the abi
-                full_str.push_str(&*format!(
-                    "\n{}{} <Unknown>@{}",
-                    left,
-                    Colour::Yellow.paint("→ new"),
-                    trace.addr
-                ));
-                self.construct_children_and_logs(idx, exec_info, left, full_str);
-                full_str.push_str(&*format!(
-                    "\n{}  └─ {} {} bytes of code",
-                    left.replace("├─", "│").replace("└─", "  "),
-                    color.paint("←"),
-                    trace.output.len()
-                ));
-            } else {
-                let output = trace.construct_func_call(exec_info, None, color, left, full_str);
-                self.construct_children_and_logs(idx, exec_info, left, full_str);
-                output.construct_string(exec_info, color, left, full_str);
-            }
-        } else if let Some((name, _abi)) = res {
-            if trace.created {
-                full_str.push_str(&*format!(
-                    "\n{}{} {}@{}",
-                    left,
-                    Colour::Yellow.paint("→ new"),
-                    name,
-                    trace.addr
-                ));
-                self.construct_children_and_logs(idx, exec_info, left, full_str);
-                full_str.push_str(&*format!(
-                    "\n{}  └─ {} {} bytes of code",
-                    left.replace("├─", "│").replace("└─", "  "),
-                    color.paint("←"),
-                    trace.output.len()
-                ));
-            } else {
-                let output =
-                    trace.construct_func_call(exec_info, Some(&name), color, left, full_str);
-                self.construct_children_and_logs(idx, exec_info, left, full_str);
-                output.construct_string(exec_info, color, left, full_str);
-            }
+
+        if trace.created {
+            // we couldn't identify, print the children and logs without the abi
+            full_str.push_str(&*format!(
+                "\n{}{} {}@{}",
+                left,
+                Colour::Yellow.paint("→ new"),
+                name.unwrap_or_else(|| "<Unknown>".to_string()),
+                trace.addr
+            ));
+            self.construct_children_and_logs(idx, exec_info, left, full_str);
+            full_str.push_str(&*format!(
+                "\n{}  └─ {} {} bytes of code",
+                left.replace("├─", "│").replace("└─", "  "),
+                color.paint("←"),
+                trace.output.len()
+            ));
+        } else {
+            let output = trace.construct_func_call(exec_info, name.as_ref(), color, left, full_str);
+            self.construct_children_and_logs(idx, exec_info, left, full_str);
+            output.construct_string(exec_info, color, left, full_str);
         }
     }
 
