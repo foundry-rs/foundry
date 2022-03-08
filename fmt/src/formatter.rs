@@ -149,7 +149,7 @@ impl<'a, W: Write> Formatter<'a, W> {
 
     /// Returns number of blank lines between two parts of source code
     fn blank_lines<T: LineOfCode>(&self, a: &mut T, b: &&mut T) -> usize {
-        return self.source[a.loc().2..b.loc().1].matches('\n').count()
+        return self.source[a.loc().end()..b.loc().start()].matches('\n').count()
     }
 }
 
@@ -182,7 +182,7 @@ impl<'a, W: Write> Write for Formatter<'a, W> {
 // Traverse the Solidity Parse Tree and write to the code formatter
 impl<'a, W: Write> Visitor for Formatter<'a, W> {
     fn visit_source(&mut self, loc: Loc) -> VResult {
-        let source = String::from_utf8(self.source.as_bytes()[loc.1..loc.2].to_vec())?;
+        let source = String::from_utf8(self.source.as_bytes()[loc.start()..loc.end()].to_vec())?;
         let mut lines = source.splitn(2, '\n');
 
         write!(self, "{}", lines.next().unwrap())?;
@@ -191,18 +191,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             // without triggering an indentation
             self.write_str(&format!("\n{}", remainder))?;
         }
-
-        Ok(())
-    }
-
-    fn visit_stray_semicolon(&mut self) -> VResult {
-        write!(self, ";")?;
-
-        Ok(())
-    }
-
-    fn visit_newline(&mut self) -> VResult {
-        writeln!(self)?;
 
         Ok(())
     }
@@ -447,6 +435,18 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         Ok(())
     }
+
+    fn visit_stray_semicolon(&mut self) -> VResult {
+        write!(self, ";")?;
+
+        Ok(())
+    }
+
+    fn visit_newline(&mut self) -> VResult {
+        writeln!(self)?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -471,7 +471,7 @@ mod tests {
             .split("`;")
             .for_each(|test| {
                 let is_header = |line: &str, name: &str| {
-                    line.starts_with("=") && line.ends_with("=") && line.contains(name)
+                    line.starts_with('=') && line.ends_with('=') && line.contains(name)
                 };
 
                 let mut lines = test.split('\n');
@@ -481,7 +481,7 @@ mod tests {
                     .skip_while(|line| !is_header(line, "options"))
                     .take_while(|line| !is_header(line, "input"))
                     .filter_map(|line| {
-                        let parts = line.splitn(2, ":").collect::<Vec<_>>();
+                        let parts = line.splitn(2, ':').collect::<Vec<_>>();
 
                         if parts.len() != 2 {
                             return None
@@ -534,7 +534,7 @@ mod tests {
 
         let (mut source_unit, _comments) = solang_parser::parse(source, 1).unwrap();
         let mut result = String::new();
-        let mut f = Formatter::new(&mut result, &source, config);
+        let mut f = Formatter::new(&mut result, source, config);
 
         source_unit.visit(&mut f).unwrap();
 
