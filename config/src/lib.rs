@@ -331,6 +331,8 @@ impl Config {
 
         self.remappings =
             self.remappings.into_iter().map(|r| RelativeRemapping::new(r.into(), &root)).collect();
+        
+        self.cache_path = p(&root, &self.cache_path);
 
         self
     }
