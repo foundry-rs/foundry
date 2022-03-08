@@ -3486,10 +3486,10 @@ version = "0.4.0"
 source = "git+https://github.com/onbjerg/revm?branch=onbjerg/blockhashes#ed4e9aeec068ba36b054fdfb807060f1555ec484"
 dependencies = [
  "bytes",
+ "k256",
  "num 0.4.0",
  "primitive-types",
  "ripemd",
- "secp256k1",
  "sha2 0.10.2",
  "sha3 0.10.1",
  "substrate-bn",
@@ -3716,24 +3716,6 @@ dependencies = [
  "pkcs8",
  "subtle",
  "zeroize",
-]
-
-[[package]]
-name = "secp256k1"
-version = "0.21.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c42e6f1735c5f00f51e43e28d6634141f2bcad10931b2609ddd74a86d751260"
-dependencies = [
- "secp256k1-sys",
-]
-
-[[package]]
-name = "secp256k1-sys"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "957da2573cde917463ece3570eab4a0b3f19de6f1646cde62e6fd3868f566036"
-dependencies = [
- "cc",
 ]
 
 [[package]]
