@@ -68,7 +68,7 @@ libs = ['lib']
 remappings = []
 libraries = []
 cache = true
-cache_path 'cache'
+cache_path = 'cache'
 force = false
 evm_version = 'london'
 gas_reports = ['*']
