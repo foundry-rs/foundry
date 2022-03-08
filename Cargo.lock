@@ -5016,9 +5016,9 @@ dependencies = [
 
 [[package]]
 name = "watchexec"
-version = "2.0.0-pre.10"
+version = "2.0.0-pre.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "56c84127066dd06c8fb74ce978818ee2cd0040259bf35d28babdba1b24f2f69d"
+checksum = "3115ed7db83103ab13d6ada8892372bf596eca52cf2ae06571b906fd7dcba4c6"
 dependencies = [
  "async-recursion",
  "async-stream",
