@@ -10,6 +10,7 @@ use ethers_core::{
     types::{transaction::eip2718::TypedTransaction, Chain, *},
     utils::{self, keccak256, parse_units},
 };
+use ethers_providers::StreamExt;
 
 use ethers_etherscan::Client;
 use ethers_providers::{Middleware, PendingTransaction};
@@ -50,7 +51,7 @@ where
     /// Makes a read-only call to the specified address
     ///
     /// ```no_run
-    /// 
+    ///
     /// use cast::Cast;
     /// use ethers_core::types::{Address, Chain};
     /// use ethers_providers::{Provider, Http};
@@ -377,6 +378,41 @@ where
         let block = if to_json { serde_json::to_string(&block)? } else { to_table(block) };
 
         Ok(block)
+    }
+
+    pub async fn print_raw_logs<T: Into<BlockId>, A: Into<NameOrAddress>>(
+        &self,
+        specific_block: Option<T>,
+        contract: A,
+    ) -> Result<()> {
+        let address = match contract.into() {
+            NameOrAddress::Name(ref ens_name) => self.provider.resolve_name(ens_name).await?,
+            NameOrAddress::Address(addr) => addr,
+        };
+        match specific_block {
+            Some(block_id) => {
+                let filter: Filter = match block_id.into() {
+                    BlockId::Hash(hash) => Filter::new()
+                        .address(ValueOrArray::Value(address.into()))
+                        .at_block_hash(hash),
+                    BlockId::Number(number) => Filter::new()
+                        .address(ValueOrArray::Value(address.into()))
+                        .from_block(number),
+                };
+                let logs: Vec<Log> = self.provider.get_logs(&filter).await?;
+                println!("{:?}", logs);
+            }
+            None => {
+                let mut stream = self.provider.watch_blocks().await?;
+                let mut filter = Filter::new().address(ValueOrArray::Value(address.into()));
+                while let Some(block) = stream.next().await {
+                    filter = filter.at_block_hash(block);
+                    let logs = self.provider.get_logs(&filter).await?;
+                    println!("New Block: {}\n{:?}\n", block, logs);
+                }
+            }
+        }
+        Ok(())
     }
 
     async fn block_field_as_num<T: Into<BlockId>>(&self, block: T, field: String) -> Result<U256> {
@@ -1204,7 +1240,7 @@ impl SimpleCast {
         let code = meta.source_code();
 
         if code.is_empty() {
-            return Err(eyre::eyre!("unverified contract"))
+            return Err(eyre::eyre!("unverified contract"));
         }
 
         Ok(code)

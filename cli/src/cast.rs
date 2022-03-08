@@ -158,6 +158,10 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).block_number().await?);
         }
+        Subcommands::Logs { block, address, rpc_url } => {
+            let provider = Provider::try_from(rpc_url)?;
+            Cast::new(provider).print_raw_logs(block, address).await?
+        }
         Subcommands::Call { eth, address, sig, args, block } => {
             let provider = Provider::try_from(eth.rpc_url()?)?;
             println!(
