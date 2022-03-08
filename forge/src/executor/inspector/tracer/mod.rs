@@ -6,9 +6,14 @@ use ethers::{
     utils::{get_contract_address, get_create2_address},
 };
 use revm::{
-    return_ok, CallInputs, CreateInputs, CreateScheme, Database, EVMData, Gas, Inspector, Return,
+    return_ok, CallInputs, CreateInputs, CreateScheme, Database, EVMData, Gas, Inspector,
+    Interpreter, Return,
 };
 use trace::{CallTrace, CallTraceArena};
+
+use self::trace::LogCallOrder;
+
+use super::logs::extract_log;
 
 #[derive(Default, Debug)]
 pub struct Tracer {
@@ -72,6 +77,21 @@ where
         );
 
         (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
+    }
+
+    fn step(
+        &mut self,
+        interpreter: &mut Interpreter,
+        _: &mut EVMData<'_, DB>,
+        _is_static: bool,
+    ) -> Return {
+        if let Some(log) = extract_log(interpreter) {
+            let node = &mut self.traces.arena[*self.trace_stack.last().expect("no ongoing trace")];
+            node.ordering.push(LogCallOrder::Log(node.logs.len()));
+            node.logs.push(log);
+        }
+
+        Return::Continue
     }
 
     fn call_end(
