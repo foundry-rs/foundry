@@ -96,9 +96,9 @@ where
     ) -> (Return, Gas, Bytes) {
         if call.contract == *HARDHAT_CONSOLE_ADDRESS {
             let (status, reason) = self.hardhat_log(call.input.to_vec());
-            (status, Gas::new(0), reason)
+            (status, Gas::new(call.gas_limit), reason)
         } else {
-            (Return::Continue, Gas::new(0), Bytes::new())
+            (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
         }
     }
 }
