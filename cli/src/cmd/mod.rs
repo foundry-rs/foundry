@@ -50,13 +50,17 @@ pub mod remappings;
 pub mod run;
 pub mod snapshot;
 pub mod test;
+pub mod tree;
 pub mod verify;
 pub mod watch;
 
 use crate::opts::forge::ContractInfo;
 use ethers::{
     abi::Abi,
-    prelude::artifacts::{CompactBytecode, CompactDeployedBytecode},
+    prelude::{
+        artifacts::{CompactBytecode, CompactDeployedBytecode},
+        report::NoReporter,
+    },
     solc::cache::SolFilesCache,
 };
 use std::{collections::BTreeMap, path::PathBuf};
@@ -159,7 +163,11 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
         );
     }
 
-    let output = project.compile()?;
+    let output = ethers::solc::report::with_scoped(
+        &ethers::solc::report::Report::new(NoReporter::default()),
+        || project.compile(),
+    )?;
+
     if output.has_compiler_errors() {
         eyre::bail!(output.to_string())
     }

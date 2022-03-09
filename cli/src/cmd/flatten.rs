@@ -30,6 +30,13 @@ pub struct CoreFlattenArgs {
     pub remappings_env: Option<String>,
 
     #[clap(
+        help = "the path where cached compiled contracts are stored",
+        long = "cache-path",
+        value_hint = ValueHint::DirPath
+    )]
+    pub cache_path: Option<PathBuf>,
+
+    #[clap(
     help = "the paths where your libraries are installed",
     long,
     value_hint = ValueHint::DirPath
@@ -68,6 +75,7 @@ impl Cmd for FlattenArgs {
             contracts: core_flatten_args.contracts,
             remappings: core_flatten_args.remappings,
             remappings_env: core_flatten_args.remappings_env,
+            cache_path: core_flatten_args.cache_path,
             lib_paths: core_flatten_args.lib_paths,
             out_path: None,
             compiler: Default::default(),

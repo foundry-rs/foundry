@@ -59,7 +59,7 @@ cargo build --release
 # copy the binaries under `./target/release/{forge, cast}` to your $PATH.
 ```
 
-Or via `cargo install https://github.com/gakonst/foundry --locked`
+Or via `cargo install --git https://github.com/gakonst/foundry --locked`
 
 ### Releases
 

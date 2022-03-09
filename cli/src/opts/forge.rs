@@ -14,7 +14,7 @@ use crate::cmd::{
     install::InstallArgs,
     remappings::RemappingArgs,
     run::RunArgs,
-    snapshot, test,
+    snapshot, test, tree,
     verify::{VerifyArgs, VerifyCheckArgs},
 };
 use serde::Serialize;
@@ -119,6 +119,8 @@ pub enum Subcommands {
     // Fmt(FmtArgs),
     #[clap(about = "Outputs a contract in a specified format (ir, assembly, ...)")]
     Inspect(inspect::InspectArgs),
+    #[clap(about = "Display a tree visualization of the project's dependency graph")]
+    Tree(tree::TreeArgs),
 }
 
 // A set of solc compiler settings that can be set via command line arguments, which are intended

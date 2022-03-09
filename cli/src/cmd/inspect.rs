@@ -103,7 +103,7 @@ impl Cmd for InspectArgs {
 
         // Map mode to ContractOutputSelection
         let mut cos = if let Some(v) = build.compiler.extra_output { v } else { vec![] };
-        if !cos.iter().any(|&i| i.to_string()==mode.to_string()) {
+        if !cos.iter().any(|&i| i.to_string() == mode.to_string()) {
             match mode {
                 ContractArtifactFields::Abi => cos.push(ContractOutputSelection::Abi),
                 ContractArtifactFields::Bytecode => { /* Auto Generated */ }

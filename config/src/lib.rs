@@ -18,6 +18,7 @@ use ethers_core::types::{Address, U256};
 pub use ethers_solc::artifacts::OptimizerDetails;
 use ethers_solc::{
     artifacts::{output_selection::ContractOutputSelection, Optimizer, Settings},
+    cache::SOLIDITY_FILES_CACHE_FILENAME,
     error::SolcError,
     remappings::{RelativeRemapping, Remapping},
     ConfigurableArtifacts, EvmVersion, Project, ProjectPathsConfig, Solc, SolcConfig,
@@ -87,6 +88,8 @@ pub struct Config {
     pub libraries: Vec<String>,
     /// whether to enable cache
     pub cache: bool,
+    /// where the cache is stored if enabled
+    pub cache_path: PathBuf,
     /// whether to force a `project.clean()`
     pub force: bool,
     /// evm version to use
@@ -330,6 +333,8 @@ impl Config {
         self.remappings =
             self.remappings.into_iter().map(|r| RelativeRemapping::new(r.into(), &root)).collect();
 
+        self.cache_path = p(&root, &self.cache_path);
+
         self
     }
 
@@ -439,6 +444,7 @@ impl Config {
     /// ```
     pub fn project_paths(&self) -> ProjectPathsConfig {
         ProjectPathsConfig::builder()
+            .cache(&self.cache_path.join(SOLIDITY_FILES_CACHE_FILENAME))
             .sources(&self.src)
             .artifacts(&self.out)
             .libs(self.libs.clone())
@@ -793,6 +799,7 @@ impl Default for Config {
             out: "out".into(),
             libs: vec!["lib".into()],
             cache: true,
+            cache_path: "cache".into(),
             force: false,
             evm_version: Default::default(),
             gas_reports: vec!["*".to_string()],
@@ -1194,6 +1201,20 @@ mod tests {
             jail.set_env("FOUNDRY_PROFILE", "hardhat");
             let figment: Figment = Config::hardhat().into();
             assert_eq!(figment.profile(), "hardhat");
+
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                libs = ['lib']
+                [local]
+                libs = ['modules']
+            "#,
+            )?;
+            jail.set_env("FOUNDRY_PROFILE", "local");
+            let config = Config::load();
+            assert_eq!(config.libs, vec![PathBuf::from("modules")]);
+
             Ok(())
         });
     }

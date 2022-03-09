@@ -336,6 +336,16 @@ impl TestCommand {
         self
     }
 
+    /// Returns the `Config` as spit out by `forge config`
+    pub fn config(&mut self) -> Config {
+        self.fuse().args(["config", "--json"]);
+        let output = self.output();
+        let c = String::from_utf8_lossy(&output.stdout);
+        let config = serde_json::from_str(c.as_ref()).unwrap();
+        self.fuse();
+        config
+    }
+
     /// Runs and captures the stdout of the given command.
     pub fn stdout(&mut self) -> String {
         let o = self.output();
