@@ -1,9 +1,17 @@
 use std::{fmt, str::FromStr};
 
-use crate::{cmd::{build::{self, BuildArgs}, Cmd}, opts::forge::CompilerArgs};
+use crate::{
+    cmd::{
+        build::{self, BuildArgs},
+        Cmd,
+    },
+    opts::forge::CompilerArgs,
+};
 use clap::Parser;
-use ethers::prelude::artifacts::output_selection::{ContractOutputSelection, EvmOutputSelection, EwasmOutputSelection};
-use serde_json::{Value, to_value};
+use ethers::prelude::artifacts::output_selection::{
+    ContractOutputSelection, EvmOutputSelection, EwasmOutputSelection,
+};
+use serde_json::{to_value, Value};
 
 /// Contract level output selection
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -91,47 +99,55 @@ pub struct InspectArgs {
 impl Cmd for InspectArgs {
     type Output = ();
     fn run(self) -> eyre::Result<Self::Output> {
-        let InspectArgs { contract, mode, build  } = self;
+        let InspectArgs { contract, mode, build } = self;
 
         // Map mode to ContractOutputSelection
         let mut cos = if let Some(v) = build.compiler.extra_output { v } else { vec![] };
-        let selection: Vec<_> = cos.iter().map(|s| s.to_string()).collect();
-        if !selection.contains(&mode.to_string()) {
-          match mode {
-            ContractArtifactFields::Abi => cos.push(ContractOutputSelection::Abi),
-            ContractArtifactFields::Bytecode => { /* Auto Generated */ },
-            ContractArtifactFields::DeployedBytecode => { /* Auto Generated */ },
-            ContractArtifactFields::Assembly => cos.push(ContractOutputSelection::Evm(EvmOutputSelection::Assembly)),
-            ContractArtifactFields::MethodIdentifiers => cos.push(ContractOutputSelection::Evm(EvmOutputSelection::MethodIdentifiers)),
-            ContractArtifactFields::GasEstimates => cos.push(ContractOutputSelection::Evm(EvmOutputSelection::GasEstimates)),
-            ContractArtifactFields::Metadata => cos.push(ContractOutputSelection::Metadata),
-            ContractArtifactFields::StorageLayout => cos.push(ContractOutputSelection::StorageLayout),
-            ContractArtifactFields::UserDoc => cos.push(ContractOutputSelection::UserDoc),
-            ContractArtifactFields::DevDoc => cos.push(ContractOutputSelection::DevDoc),
-            ContractArtifactFields::Ir => cos.push(ContractOutputSelection::Ir),
-            ContractArtifactFields::IrOptimized => cos.push(ContractOutputSelection::IrOptimized),
-            ContractArtifactFields::Ewasm => cos.push(ContractOutputSelection::Ewasm(EwasmOutputSelection::All)),
-          }
+        if !cos.iter().any(|&i| i.to_string()==mode.to_string()) {
+            match mode {
+                ContractArtifactFields::Abi => cos.push(ContractOutputSelection::Abi),
+                ContractArtifactFields::Bytecode => { /* Auto Generated */ }
+                ContractArtifactFields::DeployedBytecode => { /* Auto Generated */ }
+                ContractArtifactFields::Assembly => {
+                    cos.push(ContractOutputSelection::Evm(EvmOutputSelection::Assembly))
+                }
+                ContractArtifactFields::MethodIdentifiers => {
+                    cos.push(ContractOutputSelection::Evm(EvmOutputSelection::MethodIdentifiers))
+                }
+                ContractArtifactFields::GasEstimates => {
+                    cos.push(ContractOutputSelection::Evm(EvmOutputSelection::GasEstimates))
+                }
+                ContractArtifactFields::Metadata => cos.push(ContractOutputSelection::Metadata),
+                ContractArtifactFields::StorageLayout => {
+                    cos.push(ContractOutputSelection::StorageLayout)
+                }
+                ContractArtifactFields::UserDoc => cos.push(ContractOutputSelection::UserDoc),
+                ContractArtifactFields::DevDoc => cos.push(ContractOutputSelection::DevDoc),
+                ContractArtifactFields::Ir => cos.push(ContractOutputSelection::Ir),
+                ContractArtifactFields::IrOptimized => {
+                    cos.push(ContractOutputSelection::IrOptimized)
+                }
+                ContractArtifactFields::Ewasm => {
+                    cos.push(ContractOutputSelection::Ewasm(EwasmOutputSelection::All))
+                }
+            }
         }
 
         // Build modified Args
         let modified_build_args = BuildArgs {
-          compiler: CompilerArgs {
-            extra_output: Some(cos),
-            ..build.compiler
-          },
-          ..build
+            compiler: CompilerArgs { extra_output: Some(cos), ..build.compiler },
+            ..build
         };
 
         // Build the project
         let project = modified_build_args.project()?;
-        let outcome = super::compile(&project, build.names, build.sizes)?;
+        let outcome = super::suppress_compile(&project)?;
 
         // If the project is unchanged, used cached artifacts
         let artifacts = if outcome.is_unchanged() {
-          outcome.cached_artifacts()
+            outcome.cached_artifacts()
         } else {
-          outcome.compiled_artifacts()
+            outcome.compiled_artifacts()
         };
 
         // For the compiled artifacts, find the contract
@@ -139,52 +155,89 @@ impl Cmd for InspectArgs {
 
         // Unwrap the inner artifact
         let artifact = found_artifact.unwrap_or_else(|| {
-          eyre::eyre!("Could not find artifact `{}` in the compiled artifacts", contract);
-          panic!("Could not find artifact `{}` in the compiled artifacts", contract)
+            eyre::eyre!("Could not find artifact `{}` in the compiled artifacts", contract);
+            panic!("Could not find artifact `{}` in the compiled artifacts", contract)
         });
 
         // Match on ContractArtifactFields and Pretty Print
         match mode {
             ContractArtifactFields::Abi => {
-              println!("{}", serde_json::to_string_pretty(&to_value(&artifact.abi).unwrap()).unwrap());
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&to_value(&artifact.abi).unwrap()).unwrap()
+                );
             }
             ContractArtifactFields::Bytecode => {
-              let tval: Value = to_value(&artifact.bytecode).unwrap();
-              println!("{}", tval.get("object").unwrap_or_else(|| &tval).clone().as_str().unwrap());
+                let tval: Value = to_value(&artifact.bytecode).unwrap();
+                println!("{}", tval.get("object").unwrap_or(&tval).clone().as_str().unwrap());
             }
             ContractArtifactFields::DeployedBytecode => {
-              let tval: Value = to_value(&artifact.deployed_bytecode).unwrap();
-              println!("{}", tval.get("object").unwrap_or_else(|| &tval).clone().as_str().unwrap());
+                let tval: Value = to_value(&artifact.deployed_bytecode).unwrap();
+                println!("{}", tval.get("object").unwrap_or(&tval).clone().as_str().unwrap());
             }
             ContractArtifactFields::Assembly => {
-              println!("{}", serde_json::to_string_pretty(&to_value(&artifact.assembly).unwrap()).unwrap());
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&to_value(&artifact.assembly).unwrap()).unwrap()
+                );
             }
             ContractArtifactFields::MethodIdentifiers => {
-              println!("{}", serde_json::to_string_pretty(&to_value(&artifact.method_identifiers).unwrap()).unwrap());
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&to_value(&artifact.method_identifiers).unwrap())
+                        .unwrap()
+                );
             }
             ContractArtifactFields::GasEstimates => {
-              println!("{}", serde_json::to_string_pretty(&to_value(&artifact.gas_estimates).unwrap()).unwrap());
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&to_value(&artifact.gas_estimates).unwrap())
+                        .unwrap()
+                );
             }
             ContractArtifactFields::Metadata => {
-              println!("{}", serde_json::to_string_pretty(&to_value(&artifact.metadata).unwrap()).unwrap());
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&to_value(&artifact.metadata).unwrap()).unwrap()
+                );
             }
             ContractArtifactFields::StorageLayout => {
-              println!("{}", serde_json::to_string_pretty(&to_value(&artifact.storage_layout).unwrap()).unwrap());
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&to_value(&artifact.storage_layout).unwrap())
+                        .unwrap()
+                );
             }
             ContractArtifactFields::UserDoc => {
-              println!("{}", serde_json::to_string_pretty(&to_value(&artifact.userdoc).unwrap()).unwrap());
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&to_value(&artifact.userdoc).unwrap()).unwrap()
+                );
             }
             ContractArtifactFields::DevDoc => {
-              println!("{}", serde_json::to_string_pretty(&to_value(&artifact.devdoc).unwrap()).unwrap());
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&to_value(&artifact.devdoc).unwrap()).unwrap()
+                );
             }
             ContractArtifactFields::Ir => {
-              println!("{}", serde_json::to_string_pretty(&to_value(&artifact.ir).unwrap()).unwrap());
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&to_value(&artifact.ir).unwrap()).unwrap()
+                );
             }
             ContractArtifactFields::IrOptimized => {
-              println!("{}", serde_json::to_string_pretty(&to_value(&artifact.ir_optimized).unwrap()).unwrap());
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&to_value(&artifact.ir_optimized).unwrap())
+                        .unwrap()
+                );
             }
             ContractArtifactFields::Ewasm => {
-              println!("{}", serde_json::to_string_pretty(&to_value(&artifact.ewasm).unwrap()).unwrap());
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&to_value(&artifact.ewasm).unwrap()).unwrap()
+                );
             }
         };
 

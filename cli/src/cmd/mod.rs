@@ -144,6 +144,29 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
     Ok(output)
 }
 
+/// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
+/// compilation was successful or if there was a cache hit.
+/// Doesn't print anything to stdout, thus is "suppressed".
+pub fn suppress_compile(project: &Project) -> eyre::Result<ProjectCompileOutput> {
+    if !project.paths.sources.exists() {
+        eyre::bail!(
+            r#"no contracts to compile, contracts folder "{}" does not exist.
+Check the configured workspace settings:
+{}
+If you are in a subdirectory in a Git repository, try adding `--root .`"#,
+            project.paths.sources.display(),
+            project.paths
+        );
+    }
+
+    let output = project.compile()?;
+    if output.has_compiler_errors() {
+        eyre::bail!(output.to_string())
+    }
+
+    Ok(output)
+}
+
 /// Compile a set of files not necessarily included in the `project`'s source dir
 pub fn compile_files(project: &Project, files: Vec<PathBuf>) -> eyre::Result<ProjectCompileOutput> {
     println!("Compiling...");
