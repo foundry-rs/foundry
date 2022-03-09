@@ -2,6 +2,8 @@ use std::{fmt, str::FromStr};
 
 use crate::cmd::{build, Cmd};
 use clap::Parser;
+use serde_json::{Value, to_value};
+use tracing_subscriber::fmt::format::Json;
 
 /// Contract level output selection
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -106,25 +108,24 @@ impl Cmd for InspectArgs {
             .unwrap();
 
         // Match on ContractOutputSelection
-        match mode {
-            ContractArtifactFields::Abi => println!("{:?}", artifact.abi),
-            ContractArtifactFields::Bytecode => println!("{:?}", artifact.bytecode),
-            ContractArtifactFields::DeployedBytecode => {
-                println!("{:?}", artifact.deployed_bytecode)
-            }
-            ContractArtifactFields::Assembly => println!("{:?}", artifact.assembly),
-            ContractArtifactFields::MethodIdentifiers => {
-                println!("{:?}", artifact.method_identifiers)
-            }
-            ContractArtifactFields::GasEstimates => println!("{:?}", artifact.gas_estimates),
-            ContractArtifactFields::Metadata => println!("{:?}", artifact.metadata),
-            ContractArtifactFields::StorageLayout => println!("{:?}", artifact.storage_layout),
-            ContractArtifactFields::UserDoc => println!("{:?}", artifact.userdoc),
-            ContractArtifactFields::DevDoc => println!("{:?}", artifact.devdoc),
-            ContractArtifactFields::Ir => println!("{:?}", artifact.ir),
-            ContractArtifactFields::IrOptimized => println!("{:?}", artifact.ir_optimized),
-            ContractArtifactFields::Ewasm => println!("{:?}", artifact.ewasm),
-        }
+        let output: Value = match mode {
+            ContractArtifactFields::Abi => to_value(&artifact.abi).unwrap(),
+            ContractArtifactFields::Bytecode => to_value(&artifact.bytecode).unwrap(),
+            ContractArtifactFields::DeployedBytecode => to_value(&artifact.deployed_bytecode).unwrap(),
+            ContractArtifactFields::Assembly => to_value(&artifact.assembly).unwrap(),
+            ContractArtifactFields::MethodIdentifiers => to_value(&artifact.method_identifiers).unwrap(),
+            ContractArtifactFields::GasEstimates => to_value(&artifact.gas_estimates).unwrap(),
+            ContractArtifactFields::Metadata => to_value(&artifact.metadata).unwrap(),
+            ContractArtifactFields::StorageLayout => to_value(&artifact.storage_layout).unwrap(),
+            ContractArtifactFields::UserDoc => to_value(&artifact.userdoc).unwrap(),
+            ContractArtifactFields::DevDoc => to_value(&artifact.devdoc).unwrap(),
+            ContractArtifactFields::Ir => to_value(&artifact.ir).unwrap(),
+            ContractArtifactFields::IrOptimized => to_value(&artifact.ir_optimized).unwrap(),
+            ContractArtifactFields::Ewasm => to_value(&artifact.ewasm).unwrap(),
+        };
+
+        // Pretty print the output with serde_json
+        println!("{}", serde_json::to_string_pretty(&output).unwrap());
 
         Ok(())
     }
