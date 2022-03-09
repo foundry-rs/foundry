@@ -13,14 +13,11 @@ use std::collections::BTreeMap;
 pub struct CallTraceArena {
     /// The arena of nodes
     pub arena: Vec<CallTraceNode>,
-    /// The entry index, denoting the first node's index in the arena
-    // TODO: Is this necessary at all?
-    pub entry: usize,
 }
 
 impl Default for CallTraceArena {
     fn default() -> Self {
-        CallTraceArena { arena: vec![Default::default()], entry: 0 }
+        CallTraceArena { arena: vec![Default::default()] }
     }
 }
 

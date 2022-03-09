@@ -220,7 +220,7 @@ pub struct Test {
 
 impl Test {
     pub fn gas_used(&self) -> u64 {
-        self.result.gas_used
+        self.result.kind.gas_used().gas()
     }
 }
 

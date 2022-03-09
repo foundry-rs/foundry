@@ -48,13 +48,6 @@ pub struct TestResult {
     /// still be successful (i.e self.success == true) when it's expected to fail.
     pub reason: Option<String>,
 
-    /// The gas used during execution.
-    ///
-    /// If this is the result of a fuzz test (`TestKind::Fuzz`), then this is the median of all
-    /// successful cases
-    // TODO: The gas usage is both in TestKind and here. We should dedupe.
-    pub gas_used: u64,
-
     /// Minimal reproduction test case for failing fuzz tests
     pub counterexample: Option<CounterExample>,
 
@@ -268,7 +261,6 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                 TestResult {
                     success: false,
                     reason,
-                    gas_used: 0,
                     counterexample: None,
                     logs: init_logs,
                     kind: TestKind::Standard(0),
@@ -395,7 +387,6 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         Ok(TestResult {
             success,
             reason,
-            gas_used,
             counterexample: None,
             logs,
             kind: TestKind::Standard(gas_used),
@@ -465,7 +456,6 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         Ok(TestResult {
             success,
             reason,
-            gas_used: cases.median_gas(),
             counterexample,
             logs,
             kind: TestKind::Fuzz(cases),
