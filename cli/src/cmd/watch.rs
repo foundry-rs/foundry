@@ -88,6 +88,7 @@ pub async fn watch_test(args: TestArgs) -> eyre::Result<()> {
     let no_reconfigure = args.filter().pattern.is_some() ||
         args.filter().test_pattern.is_some() ||
         args.filter().path_pattern.is_some() ||
+        args.filter().contract_pattern.is_some() ||
         args.build_args().watch.run_all;
 
     on_action(
@@ -120,6 +121,7 @@ struct WatchTestState {
 fn on_test(action: OnActionState<WatchTestState>) {
     let OnActionState { args, runtime, action, wx, cmd, other } = action;
     let WatchTestState { no_reconfigure, last_test_files } = other;
+
     if no_reconfigure {
         // nothing to reconfigure
         return
