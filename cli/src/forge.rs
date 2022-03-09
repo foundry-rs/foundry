@@ -5,7 +5,7 @@ mod utils;
 
 use crate::cmd::{watch, Cmd};
 
-use ethers::solc::{self, report::BasicStdoutReporter, Project, ProjectPathsConfig};
+use ethers::solc::{Project, ProjectPathsConfig};
 use opts::forge::{Dependency, Opts, Subcommands};
 use std::process::Command;
 

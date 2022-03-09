@@ -28,7 +28,6 @@ static TERM_SETTINGS: Lazy<TermSettings> = Lazy::new(TermSettings::from_env);
 
 /// Helper type to determine the current tty
 pub struct TermSettings {
-    // colors: bool,
     indicate_progress: bool,
 }
 
@@ -46,7 +45,7 @@ pub struct Spinner {
     indicator: &'static [&'static str],
     no_progress: bool,
     message: String,
-    i: usize,
+    idx: usize,
 }
 
 #[allow(unused)]
@@ -60,7 +59,7 @@ impl Spinner {
             indicator,
             no_progress: !TERM_SETTINGS.indicate_progress,
             message: msg.into(),
-            i: 0,
+            idx: 0,
         }
     }
 
@@ -73,15 +72,15 @@ impl Spinner {
     }
 
     fn tick_bytes(&mut self) -> String {
-        if self.i >= self.indicator.len() {
-            self.i = 0;
+        if self.idx >= self.indicator.len() {
+            self.idx = 0;
         }
 
         let s = format!(
             "\r\x1b[2K\x1b[1m[\x1b[32m{}\x1b[0;1m]\x1b[0m {}",
-            self.indicator[self.i], self.message
+            self.indicator[self.idx], self.message
         );
-        self.i += 1;
+        self.idx += 1;
 
         s
     }
