@@ -423,128 +423,85 @@ impl CallTrace {
         color: Colour,
         left: &str,
     ) -> (String, String) {
-        // Is data longer than 4, meaning we can attempt to decode it
-        if self.data.len() >= 4 {
-            if let Some(func) = exec_info.funcs.get(&self.data[0..4]) {
-                let mut strings = "".to_string();
-                if !self.data[4..].is_empty() {
-                    let params = func.decode_input(&self.data[4..]).expect("Bad func data decode");
-                    strings = params
-                        .iter()
-                        .map(|token| format_labeled_token(token, exec_info))
-                        .collect::<Vec<_>>()
-                        .join(", ");
+        let (function_name, inputs, outputs) = if let Some(func) = &self.function {
+            // Attempt to decode function inputs
+            let mut inputs = if !self.data[4..].is_empty() {
+                func.decode_input(&self.data[4..])
+                    .expect("could not decode inputs")
+                    .iter()
+                    .map(|token| format_labeled_token(token, exec_info))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            } else {
+                "".to_string()
+            };
 
-                    if self.address == *CHEATCODE_ADDRESS && func.name == "expectRevert" {
-                        // try to decode better than just `bytes` for `expectRevert`
-                        if let Ok(decoded) =
-                            foundry_utils::decode_revert(&self.data, Some(exec_info.errors))
-                        {
-                            strings = decoded;
-                        }
-                    }
+            // Better decoding for inputs to `expectRevert`
+            if self.address == *CHEATCODE_ADDRESS && func.name == "expectRevert" {
+                if let Ok(decoded) =
+                    foundry_utils::decode_revert(&self.data, Some(exec_info.errors))
+                {
+                    inputs = decoded;
                 }
-                let output = if !self.output.is_empty() && self.success {
-                    if let Ok(tokens) = func.decode_output(&self.output[..]) {
-                        Output::Token(tokens)
-                    } else {
-                        Output::Raw(self.output[..].to_vec())
-                    }
-                } else if !self.output.is_empty() && !self.success {
-                    if let Ok(decoded_error) =
-                        foundry_utils::decode_revert(&self.output[..], Some(exec_info.errors))
-                    {
-                        Output::Token(vec![ethers::abi::Token::String(decoded_error)])
-                    } else {
-                        Output::Raw(self.output.clone())
-                    }
-                } else {
-                    Output::Raw(vec![])
-                };
-
-                return (
-                    format!(
-                        "\n{}[{}] {}::{}{}({})",
-                        left,
-                        self.gas_cost,
-                        color.paint(self.label.as_ref().unwrap_or(&self.address.to_string())),
-                        color.paint(func.name.clone()),
-                        if self.value > 0.into() {
-                            format!("{{value: {}}}", self.value)
-                        } else {
-                            "".to_string()
-                        },
-                        strings,
-                    ),
-                    output.construct_string(exec_info, color, left),
-                )
             }
-        } else {
-            // fallback function
-            let output = if !self.success {
+
+            // Attempt to decode function outputs/reverts
+            let outputs = if self.output.is_empty() {
+                Output::Raw(vec![])
+            } else if self.success {
+                if let Ok(tokens) = func.decode_output(&self.output[..]) {
+                    Output::Token(tokens)
+                } else {
+                    Output::Raw(self.output.clone())
+                }
+            } else {
                 if let Ok(decoded_error) =
                     foundry_utils::decode_revert(&self.output[..], Some(exec_info.errors))
                 {
                     Output::Token(vec![ethers::abi::Token::String(decoded_error)])
                 } else {
-                    Output::Raw(self.output[..].to_vec())
+                    Output::Raw(self.output.clone())
                 }
-            } else {
-                Output::Raw(self.output[..].to_vec())
             };
 
-            return (
-                format!(
-                    "\n{}[{}] {}::fallback{}()",
-                    left,
-                    self.gas_cost,
-                    color.paint(self.label.as_ref().unwrap_or(&self.address.to_string())),
-                    if self.value > 0.into() {
-                        format!("{{value: {}}}", self.value)
-                    } else {
-                        "".to_string()
-                    }
-                ),
-                output.construct_string(exec_info, color, left),
-            )
-        }
-
-        // We couldn't decode the function call, so print it as an abstract call
-        let output = if !self.success {
-            if let Ok(decoded_error) =
-                foundry_utils::decode_revert(&self.output[..], Some(exec_info.errors))
-            {
-                Output::Token(vec![ethers::abi::Token::String(decoded_error)])
-            } else {
-                Output::Raw(self.output[..].to_vec())
-            }
+            (func.name.clone(), inputs, outputs)
         } else {
-            Output::Raw(self.output[..].to_vec())
+            // Attempt to decode reverts
+            let outputs = if !self.success {
+                if let Ok(decoded_error) =
+                    foundry_utils::decode_revert(&self.output[..], Some(exec_info.errors))
+                {
+                    Output::Token(vec![ethers::abi::Token::String(decoded_error)])
+                } else {
+                    Output::Raw(self.output.clone())
+                }
+            } else {
+                Output::Raw(self.output.clone())
+            };
+
+            if self.data.len() < 4 {
+                ("fallback".to_string(), String::new(), outputs)
+            } else {
+                (hex::encode(&self.data[0..4]), hex::encode(&self.data[4..]), outputs)
+            }
+        };
+        let transfer = if !self.value.is_zero() {
+            format!("{{value: {}}}", self.value)
+        } else {
+            "".to_string()
         };
 
-        return (
+        (
             format!(
                 "\n{}[{}] {}::{}{}({})",
                 left,
                 self.gas_cost,
-                color.paint(self.label.as_ref().unwrap_or(&self.address.to_string()).to_string()),
-                if self.data.len() >= 4 {
-                    hex::encode(&self.data[0..4])
-                } else {
-                    hex::encode(&self.data[..])
-                },
-                if self.value > 0.into() {
-                    format!("{{value: {}}}", self.value)
-                } else {
-                    "".to_string()
-                },
-                if self.data.len() >= 4 {
-                    hex::encode(&self.data[4..])
-                } else {
-                    hex::encode(&vec![][..])
-                },
+                color.paint(self.label.as_ref().unwrap_or(&self.address.to_string())),
+                color.paint(function_name),
+                transfer,
+                inputs,
             ),
-            output.construct_string(exec_info, color, left),
+            outputs.construct_string(exec_info, color, left),
         )
     }
 }
