@@ -465,6 +465,26 @@ forgetest_init!(can_parse_dapp_libraries, |prj: TestProject, mut cmd: TestComman
     );
 });
 
+forgetest!(can_load_different_profile, |prj: TestProject, mut cmd: TestCommand| {
+    prj.create_file(
+        "foundry.toml",
+        r#"
+[default]
+libs = ['lib']
+
+[local]
+libs = ['modules']
+"#,
+    );
+
+    let config = prj.config_from_output(std::iter::empty::<String>());
+    assert!(config.libs[0].ends_with("lib"));
+
+    cmd.set_env("FOUNDRY_PROFILE", "local");
+    let config = prj.config_from_output(std::iter::empty::<String>());
+    assert!(config.libs[0].ends_with("modules"));
+});
+
 // test against a local checkout, useful to debug with local ethers-rs patch
 forgetest_ignore!(can_compile_local_spells, |_: TestProject, mut cmd: TestCommand| {
     let current_dir = std::env::current_dir().unwrap();
