@@ -1,18 +1,11 @@
 use crate::executor::CHEATCODE_ADDRESS;
 use ansi_term::Colour;
 use ethers::{
-    abi::{Abi, Address, Event, Function, RawLog, Token},
-    types::{H160, H256, U256},
+    abi::{Address, RawLog},
+    types::U256,
 };
-use foundry_utils::format_token;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
-
-const PIPE: &str = "│ ";
-const EDGE: &str = "└─ ";
-const BRANCH: &str = "├─ ";
-const CALL: &str = "→ ";
-const RETURN: &str = "← ";
+use std::fmt::{self, Write};
 
 /// An arena of `CallTraceNode`s
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,113 +20,28 @@ impl Default for CallTraceArena {
     }
 }
 
-// Gets pretty print strings for tokens
-pub fn format_labeled_token(param: &Token, exec_info: &ExecutionInfo<'_>) -> String {
-    match param {
-        Token::Address(addr) => {
-            if let Some(label) = exec_info.labeled_addrs.get(addr) {
-                format!("{} [{:?}]", label, addr)
-            } else {
-                format_token(param)
-            }
-        }
-        _ => format_token(param),
-    }
-}
-
-/// Function output type
-pub enum Output {
-    /// Decoded vec of tokens
-    Token(Vec<ethers::abi::Token>),
-    /// Not decoded raw bytes
-    Raw(Vec<u8>),
-}
-
-/// A struct with all information about execution
-pub struct ExecutionInfo<'a> {
-    pub contracts: &'a BTreeMap<String, (Abi, Vec<u8>)>,
-    pub labeled_addrs: &'a BTreeMap<H160, String>,
-    pub funcs: &'a BTreeMap<[u8; 4], Function>,
-    pub events: &'a BTreeMap<H256, Event>,
-    pub errors: &'a Abi,
-}
-
-impl<'a> ExecutionInfo<'a> {
-    pub fn new(
-        contracts: &'a BTreeMap<String, (Abi, Vec<u8>)>,
-        labeled_addrs: &'a BTreeMap<H160, String>,
-        funcs: &'a BTreeMap<[u8; 4], Function>,
-        events: &'a BTreeMap<H256, Event>,
-        errors: &'a Abi,
-    ) -> Self {
-        Self { contracts, labeled_addrs, funcs, events, errors }
-    }
-}
-
-impl Output {
-    pub fn construct_string<'a>(
-        self,
-        exec_info: &ExecutionInfo<'a>,
-        color: Colour,
-        left: &str,
-    ) -> String {
-        let formatted = match self {
-            Output::Token(token) => {
-                let strings = token
-                    .iter()
-                    .map(|token| format_labeled_token(token, exec_info))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                if strings.is_empty() {
-                    "()".to_string()
-                } else {
-                    strings
-                }
-            }
-            Output::Raw(bytes) => {
-                if bytes.is_empty() {
-                    "()".to_string()
-                } else {
-                    "0x".to_string() + &hex::encode(&bytes)
-                }
-            }
-        };
-
-        format!(
-            "\n{}  {}{}{}",
-            left.replace(BRANCH, PIPE).replace(EDGE, "  "),
-            EDGE,
-            color.paint(RETURN),
-            formatted
-        )
-    }
-}
-
 impl CallTraceArena {
     /// Pushes a new trace into the arena, returning the trace ID
-    pub fn push_trace(&mut self, entry: usize, mut new_trace: CallTrace) -> usize {
+    pub fn push_trace(&mut self, entry: usize, new_trace: CallTrace) -> usize {
         match new_trace.depth {
             // The entry node, just update it
             0 => {
-                let idx = new_trace.idx;
-                self.update(new_trace);
-                idx
+                let node = &mut self.arena[0];
+                node.trace.update(new_trace);
+                0
             }
             // We found the parent node, add the new trace as a child
             _ if self.arena[entry].trace.depth == new_trace.depth - 1 => {
-                let idx = self.arena.len();
-                new_trace.idx = idx;
-                new_trace.location = self.arena[entry].children.len();
-                self.arena[entry].ordering.push(LogCallOrder::Call(new_trace.location));
-                let node = CallTraceNode {
-                    parent: Some(entry),
-                    idx,
-                    trace: new_trace,
-                    ..Default::default()
-                };
+                let id = self.arena.len();
+
+                let trace_location = self.arena[entry].children.len();
+                self.arena[entry].ordering.push(LogCallOrder::Call(trace_location));
+                let node =
+                    CallTraceNode { parent: Some(entry), trace: new_trace, ..Default::default() };
                 self.arena.push(node);
-                self.arena[entry].children.push(idx);
-                idx
+                self.arena[entry].children.push(id);
+
+                id
             }
             // We haven't found the parent node, go deeper
             _ => self.push_trace(
@@ -142,149 +50,138 @@ impl CallTraceArena {
             ),
         }
     }
+}
 
-    /// Updates the values in the calltrace held by the arena based on the passed in trace
-    pub fn update(&mut self, trace: CallTrace) {
-        let node = &mut self.arena[trace.idx];
-        node.trace.update(trace);
+const PIPE: &str = "  │ ";
+const EDGE: &str = "  └─ ";
+const BRANCH: &str = "  ├─ ";
+const CALL: &str = "→ ";
+const RETURN: &str = "← ";
+
+impl fmt::Display for CallTraceArena {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fn inner(
+            arena: &CallTraceArena,
+            writer: &mut (impl Write + ?Sized),
+            idx: usize,
+            left: &str,
+            child: &str,
+        ) -> fmt::Result {
+            let node = &arena.arena[idx];
+
+            // Display trace header
+            writeln!(writer, "{}{}", left, node.trace)?;
+
+            // Display logs and subcalls
+            let left_prefix = format!("{}{}", child, BRANCH);
+            let right_prefix = format!("{}{}", child, PIPE);
+            for child in &node.ordering {
+                match child {
+                    LogCallOrder::Log(index) => {
+                        let mut log = String::new();
+                        write!(log, "{}", node.logs[*index])?;
+
+                        // Prepend our tree structure symbols to each line of the displayed log
+                        log.lines().enumerate().try_for_each(|(i, line)| {
+                            writeln!(
+                                writer,
+                                "{}{}",
+                                if i == 0 { &left_prefix } else { &right_prefix },
+                                line
+                            )
+                        })?;
+                    }
+                    LogCallOrder::Call(index) => {
+                        inner(arena, writer, node.children[*index], &left_prefix, &right_prefix)?;
+                    }
+                }
+            }
+
+            // Determine color for return arrow
+            let color = if node.trace.address == *CHEATCODE_ADDRESS {
+                Colour::Blue
+            } else if node.trace.success {
+                Colour::Green
+            } else {
+                Colour::Red
+            };
+
+            // Display trace return data
+            write!(writer, "{}{}", child, EDGE)?;
+            write!(writer, "{}", color.paint(RETURN))?;
+            if node.trace.created {
+                if let RawOrDecodedReturnData::Raw(bytes) = &node.trace.output {
+                    writeln!(writer, "{} bytes of code", bytes.len())?;
+                } else {
+                    unreachable!("We should never have decoded calldata for contract creations");
+                }
+            } else {
+                writeln!(writer, "{}", node.trace.output)?;
+            }
+
+            Ok(())
+        }
+
+        inner(self, f, 0, "  ", "  ")
     }
+}
 
-    /*/// Updates `identified_contracts` for future use so that after an `evm.reset_state()`, we
-    /// already know which contract corresponds to which address.
+/// A raw or decoded log.
+#[derive(Debug, Clone)]
+pub enum RawOrDecodedLog {
+    /// A raw log
+    Raw(RawLog),
+    /// A decoded log.
     ///
-    /// `idx` is the call arena index to start at. Generally this will be 0, but if you want to
-    /// update a subset of the tree, you can pass in a different index
-    ///
-    /// `contracts` are the known contracts of (name => (abi, runtime_code)). It is used to identify
-    /// a deployed contract.
-    ///
-    /// `identified_contracts` are the identified contract addresses built up from comparing
-    /// deployed contracts against `contracts`
-    ///
-    /// `evm` is the evm that we used so that we can grab deployed code if needed. A lot of times,
-    /// the evm state is reset so we wont have any code but it can be useful if we want to
-    /// pretty print right after a test.
-    pub fn update_identified<'a, S: Clone, E: crate::Evm<S>>(
-        &self,
-        idx: usize,
-        contracts: &BTreeMap<String, (Abi, Vec<u8>)>,
-        identified_contracts: &mut BTreeMap<H160, (String, Abi)>,
-        evm: &'a E,
-    ) {
-        let trace = &self.arena[idx].trace;
+    /// The first member of the tuple is the event name, and the second is a vector of decoded
+    /// parameters.
+    Decoded(String, Vec<(String, String)>),
+}
 
-        #[cfg(feature = "sputnik")]
-        identified_contracts.insert(*CHEATCODE_ADDRESS, ("VM".to_string(), HEVM_ABI.clone()));
+impl fmt::Display for RawOrDecodedLog {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            RawOrDecodedLog::Raw(log) => {
+                for (i, topic) in log.topics.iter().enumerate() {
+                    writeln!(
+                        f,
+                        "{:>12}: {}",
+                        if i == 0 {
+                            "emit topic 0".to_string()
+                        } else {
+                            format!("topic {}", i + 1)
+                        },
+                        Colour::Cyan.paint(format!("0x{}", hex::encode(&topic)))
+                    )?;
+                }
 
-        let res = identified_contracts.get(&trace.addr);
-        if res.is_none() {
-            let code = if trace.created { trace.output.clone() } else { evm.code(trace.addr) };
-            if let Some((name, (abi, _code))) = contracts
-                .iter()
-                .find(|(_key, (_abi, known_code))| diff_score(known_code, &code) < 0.10)
-            {
-                identified_contracts.insert(trace.addr, (name.to_string(), abi.clone()));
+                write!(
+                    f,
+                    "         data: {}",
+                    Colour::Cyan.paint(format!("0x{}", hex::encode(&log.data)))
+                )
+            }
+            RawOrDecodedLog::Decoded(name, params) => {
+                let params = params
+                    .iter()
+                    .map(|(name, value)| format!("{}: {}", name, value))
+                    .collect::<Vec<String>>()
+                    .join(", ");
+
+                write!(f, "emit {}({})", Colour::Cyan.paint(name.clone()), params)
             }
         }
-
-        // update all children nodes
-        self.update_children(idx, contracts, identified_contracts, evm);
     }
+}
 
-    /// Updates all children nodes by recursing into `update_identified`
-    pub fn update_children<'a, S: Clone, E: crate::Evm<S>>(
-        &self,
-        idx: usize,
-        contracts: &BTreeMap<String, (Abi, Vec<u8>)>,
-        identified_contracts: &mut BTreeMap<H160, (String, Abi)>,
-        evm: &'a E,
-    ) {
-        let children_idxs = &self.arena[idx].children;
-        children_idxs.iter().for_each(|child_idx| {
-            self.update_identified(*child_idx, contracts, identified_contracts, evm);
-        });
-    }*/
-
-    /// Construct a CallTraceArena trace string
-    ///
-    /// `idx` is the call arena index to start at. Generally this will be 0, but if you want to
-    /// print a subset of the tree, you can pass in a different index
-    ///
-    /// `contracts` are the known contracts of (name => (abi, runtime_code)). It is used to identify
-    /// a deployed contract.
-    ///
-    /// `evm` is the evm that we used so that we can grab deployed code if needed. A lot of times,
-    /// the evm state is reset so we wont have any code but it can be useful if we want to
-    /// pretty print right after a test.
-    ///
-    /// For a user, `left` input should generally be `""`. Left is used recursively
-    /// to build the tree print out structure and is built up as we recurse down the tree.
-    pub fn construct_trace_string<'a>(
-        &self,
-        idx: usize,
-        exec_info: &mut ExecutionInfo<'a>,
-        left: &str,
-    ) -> String {
-        let trace = &self.arena[idx].trace;
-
-        // color the trace function call & output by success
-        let color = if trace.address == *CHEATCODE_ADDRESS {
-            Colour::Blue
-        } else if trace.success {
-            Colour::Green
-        } else {
-            Colour::Red
-        };
-
-        if trace.created {
-            String::from_iter([
-                format!(
-                    "\n{}{} {}@{}",
-                    left,
-                    Colour::Yellow.paint(format!("{}{}", CALL, "new")),
-                    trace.label.as_ref().unwrap_or(&"<Unknown>".to_string()),
-                    trace.address
-                ),
-                self.construct_children_and_logs(idx, exec_info, left),
-                format!(
-                    "\n{}  {}{}{} bytes of code",
-                    left.replace(BRANCH, PIPE).replace(EDGE, "  "),
-                    EDGE,
-                    color.paint(RETURN),
-                    trace.output.len()
-                ),
-            ])
-        } else {
-            let (call, ret) = trace.construct_func_call(exec_info, color, left);
-            String::from_iter([call, self.construct_children_and_logs(idx, exec_info, left), ret])
-        }
-    }
-
-    /// Prints child calls and logs in order
-    pub fn construct_children_and_logs<'a>(
-        &self,
-        node_idx: usize,
-        exec_info: &mut ExecutionInfo<'a>,
-        left: &str,
-    ) -> String {
-        // Ordering stores a vec of `LogCallOrder` which is populated based on if
-        // a log or a call was called first. This makes it such that we always print
-        // logs and calls in the correct order
-        self.arena[node_idx]
-            .ordering
-            .iter()
-            .map(|ordering| match ordering {
-                LogCallOrder::Log(index) => {
-                    self.arena[node_idx].construct_log(exec_info, *index, exec_info.events, left)
-                }
-                LogCallOrder::Call(index) => self.construct_trace_string(
-                    self.arena[node_idx].children[*index],
-                    exec_info,
-                    &(left.replace(BRANCH, PIPE).replace(EDGE, "  ") + &format!("  {}", BRANCH)),
-                ),
-            })
-            .collect()
-    }
+/// Ordering enum for calls and logs
+///
+/// i.e. if Call 0 occurs before Log 0, it will be pushed into the `CallTraceNode`'s ordering before
+/// the log.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum LogCallOrder {
+    Log(usize),
+    Call(usize),
 }
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
@@ -300,98 +197,64 @@ pub struct CallTraceNode {
     pub trace: CallTrace,
     /// Logs
     #[serde(skip)]
-    pub logs: Vec<RawLog>,
+    pub logs: Vec<RawOrDecodedLog>,
     /// Ordering of child calls and logs
     pub ordering: Vec<LogCallOrder>,
 }
 
-impl CallTraceNode {
-    /// Prints a log at a particular index, optionally decoding if abi is provided
-    pub fn construct_log<'a, 'b>(
-        &self,
-        exec_info: &'b ExecutionInfo<'a>,
-        index: usize,
-        events: &BTreeMap<H256, Event>,
-        left: &str,
-    ) -> String {
-        let log = &self.logs[index];
-        let right = &format!("  {}", BRANCH);
+/// Raw or decoded calldata.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub enum RawOrDecodedCall {
+    /// Raw calldata
+    Raw(Vec<u8>),
+    /// Decoded calldata.
+    ///
+    /// The first element in the tuple is the function name, and the second element is a vector of
+    /// decoded parameters.
+    Decoded(String, Vec<String>),
+}
 
-        if let Some(event) = events.get(&log.topics[0]) {
-            if let Ok(parsed) = event.parse_log(log.clone()) {
-                let params = parsed.params;
-                let strings = params
-                    .into_iter()
-                    .map(|param| {
-                        format!("{}: {}", param.name, format_labeled_token(&param.value, exec_info))
-                    })
-                    .collect::<Vec<String>>()
-                    .join(", ");
-
-                return format!(
-                    "\n{}emit {}({})",
-                    left.replace(BRANCH, PIPE) + right,
-                    Colour::Cyan.paint(event.name.clone()),
-                    strings
-                )
-            }
-        }
-
-        // We couldn't decode the log
-        let formatted: String = log
-            .topics
-            .iter()
-            .enumerate()
-            .map(|(i, topic)| {
-                let right = if i == log.topics.len() - 1 && log.data.is_empty() {
-                    format!("  {}", EDGE)
-                } else {
-                    format!("  {}", BRANCH)
-                };
-                format!(
-                    "\n{}{}topic {}: {}",
-                    if i == 0 {
-                        left.replace(BRANCH, PIPE) + &right
-                    } else {
-                        left.replace(BRANCH, PIPE) + &format!("  {}", PIPE)
-                    },
-                    if i == 0 { " emit " } else { "      " },
-                    i,
-                    Colour::Cyan.paint(format!("0x{}", hex::encode(&topic)))
-                )
-            })
-            .collect();
-
-        format!(
-            "{}\n{}        data: {}",
-            formatted,
-            left.replace(BRANCH, PIPE).replace(EDGE, "  ") + &format!("  {} ", PIPE),
-            Colour::Cyan.paint(format!("0x{}", hex::encode(&log.data)))
-        )
+impl Default for RawOrDecodedCall {
+    fn default() -> Self {
+        RawOrDecodedCall::Raw(Vec::new())
     }
 }
 
-/// Ordering enum for calls and logs
-///
-/// i.e. if Call 0 occurs before Log 0, it will be pushed into the `CallTraceNode`'s ordering before
-/// the log.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum LogCallOrder {
-    Log(usize),
-    Call(usize),
+/// Raw or decoded return data.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub enum RawOrDecodedReturnData {
+    /// Raw return data
+    Raw(Vec<u8>),
+    /// Decoded return data
+    Decoded(String),
+}
+
+impl Default for RawOrDecodedReturnData {
+    fn default() -> Self {
+        RawOrDecodedReturnData::Raw(Vec::new())
+    }
+}
+
+impl fmt::Display for RawOrDecodedReturnData {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match &self {
+            RawOrDecodedReturnData::Raw(bytes) => {
+                if bytes.is_empty() {
+                    write!(f, "()")
+                } else {
+                    write!(f, "0x{}", hex::encode(&bytes))
+                }
+            }
+            RawOrDecodedReturnData::Decoded(decoded) => write!(f, "{}", decoded.clone()),
+        }
+    }
 }
 
 /// A trace of a call.
-///
-/// Traces come in two forms: raw and decoded.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct CallTrace {
     /// The depth of the call
     pub depth: usize,
-    /// TODO: Docs
-    pub location: usize,
-    /// The ID of this trace
-    pub idx: usize,
     /// Whether the call was successful
     pub success: bool,
     /// The label for the destination address, if any
@@ -402,13 +265,11 @@ pub struct CallTrace {
     pub created: bool,
     /// The value tranferred in the call
     pub value: U256,
-    /// The called function if we could determine it
-    pub function: Option<Function>,
     /// The calldata for the call, or the init code for contract creations
-    pub data: Vec<u8>,
+    pub data: RawOrDecodedCall,
     /// The return data of the call if this was not a contract creation, otherwise it is the
     /// runtime bytecode of the created contract
-    pub output: Vec<u8>,
+    pub output: RawOrDecodedReturnData,
     /// The gas cost of the call
     pub gas_cost: u64,
 }
@@ -423,114 +284,52 @@ impl CallTrace {
         self.data = new_trace.data;
         self.address = new_trace.address;
     }
-
-    /// Prints function call, returning the decoded or raw output
-    pub fn construct_func_call<'a>(
-        &self,
-        exec_info: &mut ExecutionInfo<'a>,
-        color: Colour,
-        left: &str,
-    ) -> (String, String) {
-        let (function_name, inputs, outputs) = if let Some(func) = &self.function {
-            // Attempt to decode function inputs
-            let mut inputs = if !self.data[4..].is_empty() {
-                func.decode_input(&self.data[4..])
-                    .expect("could not decode inputs")
-                    .iter()
-                    .map(|token| format_labeled_token(token, exec_info))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            } else {
-                "".to_string()
-            };
-
-            // Better decoding for inputs to `expectRevert`
-            if self.address == *CHEATCODE_ADDRESS && func.name == "expectRevert" {
-                if let Ok(decoded) =
-                    foundry_utils::decode_revert(&self.data, Some(exec_info.errors))
-                {
-                    inputs = decoded;
-                }
-            }
-
-            // Attempt to decode function outputs/reverts
-            let outputs = if self.output.is_empty() {
-                Output::Raw(vec![])
-            } else if self.success {
-                if let Ok(tokens) = func.decode_output(&self.output[..]) {
-                    Output::Token(tokens)
-                } else {
-                    Output::Raw(self.output.clone())
-                }
-            } else {
-                if let Ok(decoded_error) =
-                    foundry_utils::decode_revert(&self.output[..], Some(exec_info.errors))
-                {
-                    Output::Token(vec![ethers::abi::Token::String(decoded_error)])
-                } else {
-                    Output::Raw(self.output.clone())
-                }
-            };
-
-            (func.name.clone(), inputs, outputs)
-        } else {
-            // Attempt to decode reverts
-            let outputs = if !self.success {
-                if let Ok(decoded_error) =
-                    foundry_utils::decode_revert(&self.output[..], Some(exec_info.errors))
-                {
-                    Output::Token(vec![ethers::abi::Token::String(decoded_error)])
-                } else {
-                    Output::Raw(self.output.clone())
-                }
-            } else {
-                Output::Raw(self.output.clone())
-            };
-
-            if self.data.len() < 4 {
-                ("fallback".to_string(), String::new(), outputs)
-            } else {
-                (hex::encode(&self.data[0..4]), hex::encode(&self.data[4..]), outputs)
-            }
-        };
-        let transfer = if !self.value.is_zero() {
-            format!("{{value: {}}}", self.value)
-        } else {
-            "".to_string()
-        };
-
-        (
-            format!(
-                "\n{}[{}] {}::{}{}({})",
-                left,
-                self.gas_cost,
-                color.paint(self.label.as_ref().unwrap_or(&self.address.to_string())),
-                color.paint(function_name),
-                transfer,
-                inputs,
-            ),
-            outputs.construct_string(exec_info, color, left),
-        )
-    }
 }
 
-// very simple fuzzy matching to account for immutables. Will fail for small contracts that are
-// basically all immutable vars
-/*fn diff_score(bytecode1: &[u8], bytecode2: &[u8]) -> f64 {
-    let cutoff_len = usize::min(bytecode1.len(), bytecode2.len());
-    let b1 = &bytecode1[..cutoff_len];
-    let b2 = &bytecode2[..cutoff_len];
-    if cutoff_len == 0 {
-        return 1.0
-    }
+impl fmt::Display for CallTrace {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if self.created {
+            write!(
+                f,
+                "{}new {}@{}",
+                Colour::Yellow.paint(CALL),
+                self.label.as_ref().unwrap_or(&"<Unknown>".to_string()),
+                self.address
+            )?;
+        } else {
+            let color = if self.address == *CHEATCODE_ADDRESS {
+                Colour::Blue
+            } else if self.success {
+                Colour::Green
+            } else {
+                Colour::Red
+            };
 
-    let mut diff_chars = 0;
-    for i in 0..cutoff_len {
-        if b1[i] != b2[i] {
-            diff_chars += 1;
+            let (func, inputs) = match &self.data {
+                RawOrDecodedCall::Raw(bytes) => {
+                    // We assume that the fallback function (`data.len() < 4`) counts as decoded
+                    // calldata
+                    assert!(bytes.len() >= 4);
+                    (hex::encode(&bytes[0..4]), hex::encode(&bytes[4..]))
+                }
+                RawOrDecodedCall::Decoded(func, inputs) => (func.clone(), inputs.join(", ")),
+            };
+
+            write!(
+                f,
+                "[{}] {}::{}{}({})",
+                self.gas_cost,
+                color.paint(self.label.clone().unwrap_or_else(|| self.address.to_string())),
+                color.paint(func),
+                if !self.value.is_zero() {
+                    format!("{{value: {}}}", self.value)
+                } else {
+                    "".to_string()
+                },
+                inputs
+            )?;
         }
-    }
 
-    // println!("diff_score {}", diff_chars as f64 / cutoff_len as f64);
-    diff_chars as f64 / cutoff_len as f64
-}*/
+        Ok(())
+    }
+}

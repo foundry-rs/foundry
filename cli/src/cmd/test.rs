@@ -8,9 +8,8 @@ use ansi_term::Colour;
 use clap::{AppSettings, Parser};
 use ethers::solc::{ArtifactOutput, ProjectCompileOutput};
 use forge::{
-    decode::decode_console_logs,
-    executor::{inspector::trace::ExecutionInfo, opts::EvmOpts},
-    MultiContractRunnerBuilder, TestFilter, TestResult,
+    decode::decode_console_logs, executor::opts::EvmOpts, MultiContractRunnerBuilder, TestFilter,
+    TestResult,
 };
 use foundry_config::{figment::Figment, Config};
 use regex::Regex;
@@ -338,9 +337,6 @@ fn test<A: ArtifactOutput + 'static>(
         // TODO: Re-enable when ported
         //let mut gas_report = GasReport::new(gas_reports.1);
         let (tx, rx) = channel::<(String, BTreeMap<String, TestResult>)>();
-        let known_contracts = runner.known_contracts.clone();
-        let execution_info = runner.execution_info.clone();
-
         let handle = thread::spawn(move || {
             while let Ok((contract_name, tests)) = rx.recv() {
                 println!();
@@ -372,36 +368,17 @@ fn test<A: ArtifactOutput + 'static>(
                                 if !result.logs.is_empty() {
                                     println!();
                                 }
-                                let (funcs, events, errors) = &execution_info;
-                                let mut exec_info = ExecutionInfo::new(
-                                    // &runner.known_contracts,
-                                    &known_contracts,
-                                    &result.labeled_addresses,
-                                    funcs,
-                                    events,
-                                    errors,
-                                );
-
                                 if verbosity > 4 || !result.success {
                                     add_newline = true;
                                     println!("Traces:");
                                     // Print setup trace as well
                                     traces.iter().for_each(|trace| {
-                                        println!(
-                                            "{}",
-                                            trace.construct_trace_string(0, &mut exec_info, "  ")
-                                        );
+                                        println!("{}", trace);
                                     });
                                 } else if !traces.is_empty() {
                                     add_newline = true;
                                     println!("Traces:");
-                                    println!(
-                                        "{}",
-                                        traces
-                                            .last()
-                                            .expect("no last but not empty")
-                                            .construct_trace_string(0, &mut exec_info, "  ")
-                                    );
+                                    println!("{}", traces.last().expect("no last but not empty"));
                                 }
                             }
                             if add_newline {

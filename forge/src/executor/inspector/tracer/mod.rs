@@ -1,6 +1,6 @@
 pub mod trace;
 
-use self::trace::LogCallOrder;
+use self::trace::{LogCallOrder, RawOrDecodedCall, RawOrDecodedLog, RawOrDecodedReturnData};
 use super::logs::extract_log;
 use bytes::Bytes;
 use ethers::{
@@ -38,7 +38,7 @@ impl Tracer {
                 depth,
                 address,
                 created,
-                data,
+                data: RawOrDecodedCall::Raw(data),
                 value,
                 // TODO: Labels
                 ..Default::default()
@@ -52,7 +52,7 @@ impl Tracer {
         .trace;
         trace.success = success;
         trace.gas_cost = cost;
-        trace.output = output;
+        trace.output = RawOrDecodedReturnData::Raw(output);
     }
 }
 
@@ -86,7 +86,7 @@ where
         if let Some(log) = extract_log(interpreter) {
             let node = &mut self.traces.arena[*self.trace_stack.last().expect("no ongoing trace")];
             node.ordering.push(LogCallOrder::Log(node.logs.len()));
-            node.logs.push(log);
+            node.logs.push(RawOrDecodedLog::Raw(log));
         }
 
         Return::Continue
