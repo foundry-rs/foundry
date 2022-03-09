@@ -18,10 +18,10 @@ use ethers_core::types::{Address, U256};
 pub use ethers_solc::artifacts::OptimizerDetails;
 use ethers_solc::{
     artifacts::{output_selection::ContractOutputSelection, Optimizer, Settings},
+    cache::SOLIDITY_FILES_CACHE_FILENAME,
     error::SolcError,
     remappings::{RelativeRemapping, Remapping},
     ConfigurableArtifacts, EvmVersion, Project, ProjectPathsConfig, Solc, SolcConfig,
-    cache::SOLIDITY_FILES_CACHE_FILENAME,
 };
 use figment::{providers::Data, value::Value};
 use inflector::Inflector;
@@ -332,7 +332,7 @@ impl Config {
 
         self.remappings =
             self.remappings.into_iter().map(|r| RelativeRemapping::new(r.into(), &root)).collect();
-        
+
         self.cache_path = p(&root, &self.cache_path);
 
         self
