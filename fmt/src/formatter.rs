@@ -4,8 +4,10 @@ use std::fmt::Write;
 
 use indent_write::fmt::IndentWriter;
 use solang_parser::pt::{
-    ContractDefinition, DocComment, EnumDefinition, Identifier, Loc, SourceUnit, SourceUnitPart,
-    StringLiteral,
+    AssemblyStatement, Base, ContractDefinition, DocComment, EnumDefinition, ErrorDefinition,
+    EventDefinition, EventParameter, Expression, FunctionDefinition, Identifier, Loc,
+    NamedArgument, SourceUnit, SourceUnitPart, Statement, StringLiteral, StructDefinition, Using,
+    VariableDefinition,
 };
 
 use crate::{
@@ -73,14 +75,12 @@ impl<'a, W: Write> Formatter<'a, W> {
 
     fn indent(&mut self, delta: usize) {
         let level = self.level();
-
-        *level = level.saturating_add(delta)
+        *level += delta
     }
 
     fn dedent(&mut self, delta: usize) {
         let level = self.level();
-
-        *level = level.saturating_sub(delta)
+        *level -= delta
     }
 
     /// Write opening bracket with respect to `config.bracket_spacing` setting:
@@ -93,6 +93,18 @@ impl<'a, W: Write> Formatter<'a, W> {
     /// `" }"` if `true`, `"}"` if `false`
     fn write_closing_bracket(&mut self) -> std::fmt::Result {
         write!(self, "{}", if self.config.bracket_spacing { " }" } else { "}" })
+    }
+
+    /// Write opening parentheses with respect to `config.bracket_spacing` setting:
+    /// `"( "` if `true`, `"("` if `false`
+    fn write_opening_parentheses(&mut self) -> std::fmt::Result {
+        write!(self, "{}", if self.config.bracket_spacing { "( " } else { "(" })
+    }
+
+    /// Write closing parentheses with respect to `config.bracket_spacing` setting:
+    /// `" )"` if `true`, `")"` if `false`
+    fn write_closing_parentheses(&mut self) -> std::fmt::Result {
+        write!(self, "{}", if self.config.bracket_spacing { " )" } else { ")" })
     }
 
     /// Write empty brackets with respect to `config.bracket_spacing` setting:
@@ -133,6 +145,27 @@ impl<'a, W: Write> Formatter<'a, W> {
             write!(self, "{}", items.join(separator))?;
         }
 
+        Ok(())
+    }
+
+    /// visit a vec of items and add a separator in between
+    fn visit_separated<T: Visitable>(
+        &mut self,
+        items: &mut Vec<T>,
+        separator: &str,
+        multiline: bool,
+    ) -> VResult {
+        let mut iter = items.iter_mut().peekable();
+        while let Some(item) = iter.next() {
+            item.visit(self)?;
+            if iter.peek().is_some() {
+                if multiline {
+                    writeln!(self, "{}", separator)?;
+                } else {
+                    write!(self, "{}", separator)?;
+                }
+            }
+        }
         Ok(())
     }
 
@@ -260,19 +293,20 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_doc_comments(&mut self, doc_comments: &mut [DocComment]) -> VResult {
-        for (i, doc_comment) in doc_comments.iter_mut().enumerate() {
-            if i > 0 {
-                writeln!(self)?;
-            }
+        let mut iter = doc_comments.iter_mut();
+        if let Some(doc_comment) = iter.next() {
+            doc_comment.visit(self)?
+        }
+        for doc_comment in iter {
+            writeln!(self)?;
             doc_comment.visit(self)?;
         }
-
         Ok(())
     }
 
     fn visit_contract(&mut self, contract: &mut ContractDefinition) -> VResult {
         if !contract.doc.is_empty() {
-            contract.doc.visit(self)?;
+            self.visit_doc_comments(&mut contract.doc)?;
             writeln!(self)?;
         }
 
@@ -336,6 +370,16 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    fn visit_base(&mut self, base: &mut Base) -> VResult {
+        write!(self, "{}", base.name.name)?;
+        if let Some(ref mut exprs) = base.args {
+            self.write_opening_parentheses()?;
+            self.visit_separated(exprs, ", ", false)?;
+            self.write_closing_parentheses()?;
+        }
+        Ok(())
+    }
+
     fn visit_pragma(&mut self, ident: &mut Identifier, str: &mut StringLiteral) -> VResult {
         write!(self, "pragma {} ", &ident.name)?;
 
@@ -344,7 +388,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             // There are some issues with parsing Solidity's versions with crates like `semver`:
             // 1. Ranges like `>=0.4.21<0.6.0` or `>=0.4.21 <0.6.0` are not parseable at all.
             // 2. Versions like `0.8.10` got transformed into `^0.8.10` which is not the same.
-            // TODO: semver-solidity crate :D
+            // TODO: semver-solidity crate :D VersionReq
             write!(self, "{};", str.string)?;
         } else {
             write!(self, "{};", str.string)?;
@@ -355,7 +399,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
     fn visit_import_plain(&mut self, import: &mut StringLiteral) -> VResult {
         write!(self, "import \"{}\";", &import.string)?;
-
         Ok(())
     }
 
@@ -365,7 +408,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         alias: &mut Identifier,
     ) -> VResult {
         write!(self, "import \"{}\" as {};", global.string, alias.name)?;
-
         Ok(())
     }
 
@@ -436,15 +478,18 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    fn visit_break(&mut self) -> VResult {
+        write!(self, "break")?;
+        Ok(())
+    }
+
     fn visit_stray_semicolon(&mut self) -> VResult {
         write!(self, ";")?;
-
         Ok(())
     }
 
     fn visit_newline(&mut self) -> VResult {
         writeln!(self)?;
-
         Ok(())
     }
 }
@@ -457,6 +502,7 @@ mod tests {
 
     use super::*;
 
+    /// reads the prettier-plugin-solidity snapshot for a directory
     fn test_directory(dir: &str) {
         let snapshot_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("testdata/prettier-plugin-solidity/tests/format")

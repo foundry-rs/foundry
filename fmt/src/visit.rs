@@ -9,7 +9,7 @@ pub type VResult = Result<(), Box<dyn std::error::Error>>;
 /// A trait that is invoked while traversing the Solidity Parse Tree.
 /// Each method of the [Visitor] trait is a hook that can be potentially overridden.
 ///
-/// Currently the main implementor of this trait is the [`Formatter`](crate::Formatter) struct.
+/// Currently, the main implementor of this trait is the [`Formatter`](crate::Formatter) struct.
 pub trait Visitor {
     fn visit_source(&mut self, _loc: Loc) -> VResult;
 
@@ -26,6 +26,10 @@ pub trait Visitor {
     }
 
     fn visit_contract(&mut self, _contract: &mut ContractDefinition) -> VResult {
+        Ok(())
+    }
+
+    fn visit_base(&mut self, _base: &mut Base) -> VResult {
         Ok(())
     }
 
@@ -172,7 +176,6 @@ pub trait Visitor {
     fn visit_using(&mut self, using: &mut Using) -> VResult {
         self.visit_source(using.loc)?;
         self.visit_stray_semicolon()?;
-
         Ok(())
     }
 }
@@ -187,10 +190,18 @@ pub trait Visitable {
     fn visit(&mut self, v: &mut impl Visitor) -> VResult;
 }
 
+impl<T: Visitable> Visitable for Vec<T> {
+    fn visit(&mut self, v: &mut impl Visitor) -> VResult {
+        for t in self {
+            t.visit(v)?;
+        }
+        Ok(())
+    }
+}
+
 impl Visitable for Loc {
     fn visit(&mut self, v: &mut impl Visitor) -> VResult {
         v.visit_source(*self)?;
-
         Ok(())
     }
 }
@@ -198,15 +209,6 @@ impl Visitable for Loc {
 impl Visitable for DocComment {
     fn visit(&mut self, v: &mut impl Visitor) -> VResult {
         v.visit_doc_comment(self)?;
-
-        Ok(())
-    }
-}
-
-impl Visitable for Vec<DocComment> {
-    fn visit(&mut self, v: &mut impl Visitor) -> VResult {
-        v.visit_doc_comments(self)?;
-
         Ok(())
     }
 }
@@ -262,7 +264,13 @@ impl Visitable for ContractPart {
 impl Visitable for Statement {
     fn visit(&mut self, v: &mut impl Visitor) -> VResult {
         v.visit_statement(self)?;
+        Ok(())
+    }
+}
 
+impl Visitable for Expression {
+    fn visit(&mut self, v: &mut impl Visitor) -> VResult {
+        v.visit_expr(self)?;
         Ok(())
     }
 }
