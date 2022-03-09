@@ -190,11 +190,12 @@ enum SpinnerMsg {
 
 impl Drop for SpinnerReporter {
     fn drop(&mut self) {
-        let (tx, rx) = mpsc::channel();
         if let Ok(sender) = self.sender.lock() {
-            let _ = sender.send(SpinnerMsg::Shutdown(tx));
+            let (tx, rx) = mpsc::channel();
+            if sender.send(SpinnerMsg::Shutdown(tx)).is_ok() {
+                let _ = rx.recv();
+            }
         }
-        let _ = rx.recv();
     }
 }
 
