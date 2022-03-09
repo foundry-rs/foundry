@@ -1,7 +1,7 @@
 use crate::executor::CHEATCODE_ADDRESS;
 use ansi_term::Colour;
 use ethers::{
-    abi::{Abi, Event, Function, RawLog, Token},
+    abi::{Abi, Address, Event, Function, RawLog, Token},
     types::{H160, H256, U256},
 };
 use foundry_utils::format_token;
@@ -49,7 +49,6 @@ pub enum Output {
 /// A struct with all information about execution
 pub struct ExecutionInfo<'a> {
     pub contracts: &'a BTreeMap<String, (Abi, Vec<u8>)>,
-    pub identified_contracts: &'a mut BTreeMap<H160, (String, Abi)>,
     pub labeled_addrs: &'a BTreeMap<H160, String>,
     pub funcs: &'a BTreeMap<[u8; 4], Function>,
     pub events: &'a BTreeMap<H256, Event>,
@@ -59,13 +58,12 @@ pub struct ExecutionInfo<'a> {
 impl<'a> ExecutionInfo<'a> {
     pub fn new(
         contracts: &'a BTreeMap<String, (Abi, Vec<u8>)>,
-        identified_contracts: &'a mut BTreeMap<H160, (String, Abi)>,
         labeled_addrs: &'a BTreeMap<H160, String>,
         funcs: &'a BTreeMap<[u8; 4], Function>,
         events: &'a BTreeMap<H256, Event>,
         errors: &'a Abi,
     ) -> Self {
-        Self { contracts, identified_contracts, labeled_addrs, funcs, events, errors }
+        Self { contracts, labeled_addrs, funcs, events, errors }
     }
 }
 
@@ -77,33 +75,34 @@ impl Output {
         left: &str,
         full_str: &mut String,
     ) {
-        match self {
+        let formatted = match self {
             Output::Token(token) => {
                 let strings = token
                     .iter()
                     .map(|token| format_labeled_token(token, exec_info))
                     .collect::<Vec<_>>()
                     .join(", ");
-                full_str.push_str(&*format!(
-                    "\n{}  └─ {} {}",
-                    left.replace("├─", "│").replace("└─", "  "),
-                    color.paint("←"),
-                    if strings.is_empty() { "()" } else { &*strings }
-                ));
+                if strings.is_empty() {
+                    "()".to_string()
+                } else {
+                    strings
+                }
             }
             Output::Raw(bytes) => {
-                full_str.push_str(&*format!(
-                    "\n{}  └─ {} {}",
-                    left.replace("├─", "│").replace("└─", "  "),
-                    color.paint("←"),
-                    if bytes.is_empty() {
-                        "()".to_string()
-                    } else {
-                        "0x".to_string() + &hex::encode(&bytes)
-                    }
-                ));
+                if bytes.is_empty() {
+                    "()".to_string()
+                } else {
+                    "0x".to_string() + &hex::encode(&bytes)
+                }
             }
-        }
+        };
+
+        full_str.push_str(&*format!(
+            "\n{}  └─ {} {}",
+            left.replace("├─", "│").replace("└─", "  "),
+            color.paint("←"),
+            formatted
+        ));
     }
 }
 
@@ -211,9 +210,6 @@ impl CallTraceArena {
     /// `contracts` are the known contracts of (name => (abi, runtime_code)). It is used to identify
     /// a deployed contract.
     ///
-    /// `identified_contracts` are the identified contract addresses built up from comparing
-    /// deployed contracts against `contracts`
-    ///
     /// `evm` is the evm that we used so that we can grab deployed code if needed. A lot of times,
     /// the evm state is reset so we wont have any code but it can be useful if we want to
     /// pretty print right after a test.
@@ -230,19 +226,12 @@ impl CallTraceArena {
         let trace = &self.arena[idx].trace;
 
         // color the trace function call & output by success
-        let color = if trace.addr == *CHEATCODE_ADDRESS {
+        let color = if trace.address == *CHEATCODE_ADDRESS {
             Colour::Blue
         } else if trace.success {
             Colour::Green
         } else {
             Colour::Red
-        };
-
-        // TODO: We could unify this with labels
-        let name = if let Some((name, _)) = exec_info.identified_contracts.get(&trace.addr) {
-            Some(name.clone())
-        } else {
-            None
         };
 
         if trace.created {
@@ -251,8 +240,8 @@ impl CallTraceArena {
                 "\n{}{} {}@{}",
                 left,
                 Colour::Yellow.paint("→ new"),
-                name.unwrap_or_else(|| "<Unknown>".to_string()),
-                trace.addr
+                trace.label.as_ref().unwrap_or(&"<Unknown>".to_string()),
+                trace.address
             ));
             self.construct_children_and_logs(idx, exec_info, left, full_str);
             full_str.push_str(&*format!(
@@ -262,7 +251,7 @@ impl CallTraceArena {
                 trace.output.len()
             ));
         } else {
-            let output = trace.construct_func_call(exec_info, name.as_ref(), color, left, full_str);
+            let output = trace.construct_func_call(exec_info, color, left, full_str);
             self.construct_children_and_logs(idx, exec_info, left, full_str);
             output.construct_string(exec_info, color, left, full_str);
         }
@@ -379,56 +368,63 @@ impl CallTraceNode {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
 /// Ordering enum for calls and logs
 ///
 /// i.e. if Call 0 occurs before Log 0, it will be pushed into the `CallTraceNode`'s ordering before
 /// the log.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum LogCallOrder {
     Log(usize),
     Call(usize),
 }
 
-/// Call trace of a tx
-#[derive(Clone, Default, Debug, Deserialize, Serialize)]
+/// A trace of a call.
+///
+/// Traces come in two forms: raw and decoded.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct CallTrace {
+    /// The depth of the call
     pub depth: usize,
+    /// TODO: Docs
     pub location: usize,
+    /// The ID of this trace
     pub idx: usize,
-    /// Successful
+    /// Whether the call was successful
     pub success: bool,
-    /// Label for an address
+    /// The label for the destination address, if any
     pub label: Option<String>,
-    /// Callee
-    pub addr: H160,
-    /// Creation
+    /// The destination address of the call
+    pub address: Address,
+    /// Whether the call was a contract creation or not
     pub created: bool,
-    /// Ether value transfer
+    /// The value tranferred in the call
     pub value: U256,
-    /// Call data, including function selector (if applicable)
+    /// The called function if we could determine it
+    pub function: Option<Function>,
+    /// The calldata for the call, or the init code for contract creations
     pub data: Vec<u8>,
-    /// Gas cost
-    pub cost: u64,
-    /// Output
+    /// The return data of the call if this was not a contract creation, otherwise it is the
+    /// runtime bytecode of the created contract
     pub output: Vec<u8>,
+    /// The gas cost of the call
+    pub gas_cost: u64,
 }
 
 impl CallTrace {
     /// Updates a trace given another trace
     fn update(&mut self, new_trace: Self) {
         self.success = new_trace.success;
-        self.addr = new_trace.addr;
-        self.cost = new_trace.cost;
+        self.address = new_trace.address;
+        self.gas_cost = new_trace.gas_cost;
         self.output = new_trace.output;
         self.data = new_trace.data;
-        self.addr = new_trace.addr;
+        self.address = new_trace.address;
     }
 
     /// Prints function call, returning the decoded or raw output
     pub fn construct_func_call<'a>(
         &self,
         exec_info: &mut ExecutionInfo<'a>,
-        name: Option<&String>,
         color: Colour,
         left: &str,
         full_str: &mut String,
@@ -445,7 +441,7 @@ impl CallTrace {
                         .collect::<Vec<_>>()
                         .join(", ");
 
-                    if self.addr == *CHEATCODE_ADDRESS && func.name == "expectRevert" {
+                    if self.address == *CHEATCODE_ADDRESS && func.name == "expectRevert" {
                         // try to decode better than just `bytes` for `expectRevert`
                         if let Ok(decoded) =
                             foundry_utils::decode_revert(&self.data, Some(exec_info.errors))
@@ -458,12 +454,8 @@ impl CallTrace {
                 full_str.push_str(&*format!(
                     "\n{}[{}] {}::{}{}({})",
                     left,
-                    self.cost,
-                    color.paint(
-                        // clippy bug makes us do this
-                        #[allow(clippy::or_fun_call)]
-                        self.label.as_ref().unwrap_or(name.unwrap_or(&self.addr.to_string()))
-                    ),
+                    self.gas_cost,
+                    color.paint(self.label.as_ref().unwrap_or(&self.address.to_string())),
                     color.paint(func.name.clone()),
                     if self.value > 0.into() {
                         format!("{{value: {}}}", self.value)
@@ -496,12 +488,8 @@ impl CallTrace {
             full_str.push_str(&*format!(
                 "\n{}[{}] {}::fallback{}()",
                 left,
-                self.cost,
-                color.paint(
-                    // clippy bug makes us do this
-                    #[allow(clippy::or_fun_call)]
-                    self.label.as_ref().unwrap_or(name.unwrap_or(&self.addr.to_string()))
-                ),
+                self.gas_cost,
+                color.paint(self.label.as_ref().unwrap_or(&self.address.to_string())),
                 if self.value > 0.into() {
                     format!("{{value: {}}}", self.value)
                 } else {
@@ -523,8 +511,8 @@ impl CallTrace {
         full_str.push_str(&*format!(
             "\n{}[{}] {}::{}{}({})",
             left,
-            self.cost,
-            color.paint(self.label.as_ref().unwrap_or(&self.addr.to_string()).to_string()),
+            self.gas_cost,
+            color.paint(self.label.as_ref().unwrap_or(&self.address.to_string()).to_string()),
             if self.data.len() >= 4 {
                 hex::encode(&self.data[0..4])
             } else {

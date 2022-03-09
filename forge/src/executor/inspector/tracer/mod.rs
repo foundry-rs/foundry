@@ -1,5 +1,7 @@
 pub mod trace;
 
+use self::trace::LogCallOrder;
+use super::logs::extract_log;
 use bytes::Bytes;
 use ethers::{
     types::{Address, U256},
@@ -10,10 +12,6 @@ use revm::{
     Interpreter, Return,
 };
 use trace::{CallTrace, CallTraceArena};
-
-use self::trace::LogCallOrder;
-
-use super::logs::extract_log;
 
 #[derive(Default, Debug)]
 pub struct Tracer {
@@ -29,7 +27,7 @@ impl Tracer {
     pub fn start_trace(
         &mut self,
         depth: usize,
-        addr: Address,
+        address: Address,
         data: Vec<u8>,
         value: U256,
         created: bool,
@@ -38,7 +36,7 @@ impl Tracer {
             0,
             CallTrace {
                 depth,
-                addr,
+                address,
                 created,
                 data,
                 value,
@@ -53,7 +51,7 @@ impl Tracer {
             [self.trace_stack.pop().expect("more traces were filled than started")]
         .trace;
         trace.success = success;
-        trace.cost = cost;
+        trace.gas_cost = cost;
         trace.output = output;
     }
 }
