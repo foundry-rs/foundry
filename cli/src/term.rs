@@ -137,7 +137,7 @@ impl Spinner {
 /// This reporter will prefix messages with a spinning cursor
 pub struct SpinnerReporter {
     /// the timeout in ms
-    sender: Arc<Mutex<mpsc::Sender<String>>>,
+    sender: Arc<Mutex<mpsc::Sender<SpinnerMsg>>>,
 }
 impl SpinnerReporter {
     /// Spawns the [`Spinner`] on a new thread
@@ -146,16 +146,26 @@ impl SpinnerReporter {
     ///
     /// On drop the channel will disconnect and the thread will terminate
     pub fn spawn() -> Self {
-        let (sender, rx) = mpsc::channel::<String>();
+        let (sender, rx) = mpsc::channel::<SpinnerMsg>();
         std::thread::spawn(move || {
             let mut spinner = Spinner::new("Compiling...");
             loop {
                 spinner.tick();
                 match rx.try_recv() {
                     Ok(msg) => {
-                        spinner.message(msg);
-                        // don't delete past messages
-                        println!();
+                        match msg {
+                            SpinnerMsg::Msg(msg) => {
+                                spinner.message(msg);
+                                // new line so past messages are not overwritten
+                                println!();
+                            }
+                            SpinnerMsg::Shutdown(ack) => {
+                                // end with a newline
+                                println!();
+                                let _ = ack.send(());
+                                break
+                            }
+                        }
                     }
                     Err(TryRecvError::Disconnected) => break,
                     Err(TryRecvError::Empty) => {
@@ -168,13 +178,24 @@ impl SpinnerReporter {
     }
 
     fn send_msg(&self, msg: impl Into<String>) {
-        let _ = self.sender.lock().unwrap().send(msg.into());
+        if let Ok(sender) = self.sender.lock() {
+            let _ = sender.send(SpinnerMsg::Msg(msg.into()));
+        }
     }
+}
+
+enum SpinnerMsg {
+    Msg(String),
+    Shutdown(mpsc::Sender<()>),
 }
 
 impl Drop for SpinnerReporter {
     fn drop(&mut self) {
-        println!()
+        let (tx, rx) = mpsc::channel();
+        if let Ok(sender) = self.sender.lock() {
+            let _ = sender.send(SpinnerMsg::Shutdown(tx));
+        }
+        let _ = rx.recv();
     }
 }
 
