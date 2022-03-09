@@ -1,5 +1,6 @@
 pub mod cmd;
 
+mod term;
 mod utils;
 
 use cast::{Cast, SimpleCast};

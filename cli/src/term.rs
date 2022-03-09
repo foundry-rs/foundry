@@ -1,9 +1,18 @@
 //! terminal utils
 
 use atty::{self, Stream};
-use ethers::solc::report::Reporter;
+use ethers::solc::{report::Reporter, CompilerInput, Solc};
 use once_cell::sync::Lazy;
-use std::{io, io::prelude::*};
+use semver::Version;
+use std::{
+    io,
+    io::prelude::*,
+    path::Path,
+    sync::{
+        mpsc::{self, TryRecvError},
+        Arc, Mutex,
+    },
+};
 
 /// Some spinners
 // https://github.com/gernest/wow/blob/master/spin/spinners.go
@@ -40,6 +49,7 @@ pub struct Spinner {
     i: usize,
 }
 
+#[allow(unused)]
 impl Spinner {
     pub fn new(msg: impl Into<String>) -> Self {
         Self::with_indicator(SPINNERS[0], msg)
@@ -68,7 +78,7 @@ impl Spinner {
         }
 
         let s = format!(
-            "\r\x1b[2K\x1b[1m[\x1b[32m{}\x1b[0;1m]\x1b[0m {}...",
+            "\r\x1b[2K\x1b[1m[\x1b[32m{}\x1b[0;1m]\x1b[0m {}",
             self.indicator[self.i], self.message
         );
         self.i += 1;
@@ -93,6 +103,14 @@ impl Spinner {
         self.message = msg.into();
     }
 
+    pub fn clear_line(&self) {
+        if self.no_progress {
+            return
+        }
+        print!("\r\x33[2K\r");
+        io::stdout().flush().unwrap();
+    }
+
     pub fn clear(&self) {
         if self.no_progress {
             return
@@ -115,9 +133,76 @@ impl Spinner {
 }
 
 /// A spinner used as [`ethers::solc::report::Reporter`]
-pub struct SpinnerReporter {}
+///
+/// This reporter will prefix messages with a spinning cursor
+pub struct SpinnerReporter {
+    /// the timeout in ms
+    sender: Arc<Mutex<mpsc::Sender<String>>>,
+}
+impl SpinnerReporter {
+    /// Spawns the [`Spinner`] on a new thread
+    ///
+    /// The spinner's message will be updated via the `ethers::solc::Reporter` events
+    ///
+    /// On drop the channel will disconnect and the thread will terminate
+    pub fn spawn() -> Self {
+        let (sender, rx) = mpsc::channel::<String>();
+        std::thread::spawn(move || {
+            let mut spinner = Spinner::new("Compiling...");
+            loop {
+                spinner.tick();
+                match rx.try_recv() {
+                    Ok(msg) => {
+                        spinner.message(msg);
+                        // don't delete past messages
+                        println!();
+                    }
+                    Err(TryRecvError::Disconnected) => break,
+                    Err(TryRecvError::Empty) => {
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                    }
+                }
+            }
+        });
+        SpinnerReporter { sender: Arc::new(Mutex::new(sender)) }
+    }
 
-impl Reporter for SpinnerReporter {}
+    fn send_msg(&self, msg: impl Into<String>) {
+        let _ = self.sender.lock().unwrap().send(msg.into());
+    }
+}
+
+impl Drop for SpinnerReporter {
+    fn drop(&mut self) {
+        println!()
+    }
+}
+
+impl Reporter for SpinnerReporter {
+    fn on_solc_spawn(&self, _solc: &Solc, version: &Version, input: &CompilerInput) {
+        self.send_msg(format!(
+            "Compiling {} files with {}.{}.{}",
+            input.sources.len(),
+            version.major,
+            version.minor,
+            version.patch
+        ))
+    }
+
+    /// Invoked before a new [`Solc`] bin is installed
+    fn on_solc_installation_start(&self, version: &Version) {
+        self.send_msg(format!("installing solc version \"{}\"", version));
+    }
+
+    /// Invoked before a new [`Solc`] bin was successfully installed
+    fn on_solc_installation_success(&self, version: &Version) {
+        self.send_msg(format!("Successfully installed solc {}", version));
+    }
+
+    fn on_unresolved_import(&self, import: &Path) {
+        self.send_msg(format!("Unable to resolve imported file: \"{}\"", import.display()));
+    }
+}
 
 #[cfg(test)]
 mod tests {
