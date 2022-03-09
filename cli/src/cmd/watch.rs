@@ -84,8 +84,8 @@ pub async fn watch_test(args: TestArgs) -> eyre::Result<()> {
     runtime.command(cmd.clone());
     let wx = Watchexec::new(init, runtime.clone())?;
 
-    // marker to check whether we can safely override the command
-    let has_conflicting_pattern_args = args.filter().pattern.is_some() ||
+    // marker to check whether to override the command
+    let no_reconfigure = args.filter().pattern.is_some() ||
         args.filter().test_pattern.is_some() ||
         args.filter().path_pattern.is_some() ||
         args.build_args().watch.run_all;
@@ -95,7 +95,7 @@ pub async fn watch_test(args: TestArgs) -> eyre::Result<()> {
         runtime,
         Arc::clone(&wx),
         cmd,
-        WatchTestState { has_conflicting_pattern_args, last_test_files: Default::default() },
+        WatchTestState { no_reconfigure, last_test_files: Default::default() },
         on_test,
     );
 
@@ -108,9 +108,8 @@ pub async fn watch_test(args: TestArgs) -> eyre::Result<()> {
 
 #[derive(Debug, Clone)]
 struct WatchTestState {
-    /// marks whether the initial test args contains args that would conflict when adding a
-    /// match-path arg
-    has_conflicting_pattern_args: bool,
+    /// marks whether we can reconfigure the watcher command with the `--match-path` arg
+    no_reconfigure: bool,
     /// Tracks the last changed test files, if any so that if a non-test file was modified we run
     /// this file instead *Note:* this is a vec, so we can also watch out for changes
     /// introduced by `forge fmt`
@@ -120,9 +119,9 @@ struct WatchTestState {
 /// The `on_action` hook for `forge test --watch`
 fn on_test(action: OnActionState<WatchTestState>) {
     let OnActionState { args, runtime, action, wx, cmd, other } = action;
-    let WatchTestState { has_conflicting_pattern_args, last_test_files } = other;
-    if has_conflicting_pattern_args {
-        // can't set conflicting arguments
+    let WatchTestState { no_reconfigure, last_test_files } = other;
+    if no_reconfigure {
+        // nothing to reconfigure
         return
     }
 
@@ -166,10 +165,7 @@ fn on_test(action: OnActionState<WatchTestState>) {
             config,
             wx,
             cmd,
-            WatchTestState {
-                has_conflicting_pattern_args,
-                last_test_files: changed_sol_test_files,
-            },
+            WatchTestState { no_reconfigure, last_test_files: changed_sol_test_files },
             on_test,
         );
     } else {
