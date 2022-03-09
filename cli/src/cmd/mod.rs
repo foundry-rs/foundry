@@ -49,6 +49,7 @@ pub mod remappings;
 pub mod run;
 pub mod snapshot;
 pub mod test;
+pub mod tree;
 pub mod verify;
 pub mod watch;
 

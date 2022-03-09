@@ -1201,6 +1201,20 @@ mod tests {
             jail.set_env("FOUNDRY_PROFILE", "hardhat");
             let figment: Figment = Config::hardhat().into();
             assert_eq!(figment.profile(), "hardhat");
+
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                libs = ['lib']
+                [local]
+                libs = ['modules']
+            "#,
+            )?;
+            jail.set_env("FOUNDRY_PROFILE", "local");
+            let config = Config::load();
+            assert_eq!(config.libs, vec![PathBuf::from("modules")]);
+
             Ok(())
         });
     }
