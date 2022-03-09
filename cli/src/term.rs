@@ -15,7 +15,7 @@ pub static SPINNERS: &[&[&str]] = &[
     &[" ", "▘", "▀", "▜", "█", "▟", "▄", "▖"],
 ];
 
-static TERM_SETTINGS: Lazy<TermSettings> = Lazy::new(|| TermSettings::from_env());
+static TERM_SETTINGS: Lazy<TermSettings> = Lazy::new(TermSettings::from_env);
 
 /// Helper type to determine the current tty
 pub struct TermSettings {
@@ -80,7 +80,7 @@ impl Spinner {
         if self.no_progress {
             return
         }
-        println!("\r\x1b[2K\x1b[1m[\x1b[32m{}\x1b[0;1m]\x1b[0m {}", '+', self.message);
+        println!("\r\x1b[2K\x1b[1m[\x1b[32m+\x1b[0;1m]\x1b[0m {}", self.message);
         io::stdout().flush().unwrap();
     }
 
@@ -110,7 +110,7 @@ impl Spinner {
         if self.no_progress {
             return
         }
-        println!("\r\x1b[2K\x1b[1m[\x1b[31m{}\x1b[0;1m]\x1b[0m {}", '-', line);
+        println!("\r\x1b[2K\x1b[1m[\x1b[31m-\x1b[0;1m]\x1b[0m {}", line);
     }
 }
 
