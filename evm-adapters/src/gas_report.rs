@@ -15,6 +15,7 @@ use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, *};
 pub struct GasReport {
     pub report_for: Vec<String>,
     pub contracts: BTreeMap<String, ContractInfo>,
+    pub stdout: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -34,8 +35,8 @@ pub struct GasInfo {
 }
 
 impl GasReport {
-    pub fn new(report_for: Vec<String>) -> Self {
-        Self { report_for, ..Default::default() }
+    pub fn new(report_for: Vec<String>, export: bool) -> Self {
+        Self { report_for, stdout: !export, ..Default::default() }
     }
 
     pub fn analyze(
@@ -133,33 +134,59 @@ impl Display for GasReport {
         for (name, contract) in self.contracts.iter() {
             let mut table = Table::new();
             table.load_preset(UTF8_FULL).apply_modifier(UTF8_ROUND_CORNERS);
-            table.set_header(vec![Cell::new(format!("{} contract", name))
-                .add_attribute(Attribute::Bold)
-                .fg(Color::Green)]);
-            table.add_row(vec![
-                Cell::new("Deployment Cost").add_attribute(Attribute::Bold).fg(Color::Cyan),
-                Cell::new("Deployment Size").add_attribute(Attribute::Bold).fg(Color::Cyan),
-            ]);
-            table.add_row(vec![contract.gas.to_string(), contract.size.to_string()]);
-
-            table.add_row(vec![
-                Cell::new("Function Name").add_attribute(Attribute::Bold).fg(Color::Magenta),
-                Cell::new("min").add_attribute(Attribute::Bold).fg(Color::Green),
-                Cell::new("avg").add_attribute(Attribute::Bold).fg(Color::Yellow),
-                Cell::new("median").add_attribute(Attribute::Bold).fg(Color::Yellow),
-                Cell::new("max").add_attribute(Attribute::Bold).fg(Color::Red),
-                Cell::new("# calls").add_attribute(Attribute::Bold),
-            ]);
-            contract.functions.iter().for_each(|(fname, function)| {
+            if self.stdout {
+                // include coloring
+                table.set_header(vec![Cell::new(format!("{} contract", name))
+                    .add_attribute(Attribute::Bold)
+                    .fg(Color::Green)]);
                 table.add_row(vec![
-                    Cell::new(fname.to_string()).add_attribute(Attribute::Bold),
-                    Cell::new(function.min.to_string()).fg(Color::Green),
-                    Cell::new(function.mean.to_string()).fg(Color::Yellow),
-                    Cell::new(function.median.to_string()).fg(Color::Yellow),
-                    Cell::new(function.max.to_string()).fg(Color::Red),
-                    Cell::new(function.calls.len().to_string()),
+                    Cell::new("Deployment Cost").add_attribute(Attribute::Bold).fg(Color::Cyan),
+                    Cell::new("Deployment Size").add_attribute(Attribute::Bold).fg(Color::Cyan),
                 ]);
-            });
+                table.add_row(vec![contract.gas.to_string(), contract.size.to_string()]);
+
+                table.add_row(vec![
+                    Cell::new("Function Name").add_attribute(Attribute::Bold).fg(Color::Magenta),
+                    Cell::new("min").add_attribute(Attribute::Bold).fg(Color::Green),
+                    Cell::new("avg").add_attribute(Attribute::Bold).fg(Color::Yellow),
+                    Cell::new("median").add_attribute(Attribute::Bold).fg(Color::Yellow),
+                    Cell::new("max").add_attribute(Attribute::Bold).fg(Color::Red),
+                    Cell::new("# calls").add_attribute(Attribute::Bold),
+                ]);
+                contract.functions.iter().for_each(|(fname, function)| {
+                    table.add_row(vec![
+                        Cell::new(fname.to_string()).add_attribute(Attribute::Bold),
+                        Cell::new(function.min.to_string()).fg(Color::Green),
+                        Cell::new(function.mean.to_string()).fg(Color::Yellow),
+                        Cell::new(function.median.to_string()).fg(Color::Yellow),
+                        Cell::new(function.max.to_string()).fg(Color::Red),
+                        Cell::new(function.calls.len().to_string()),
+                    ]);
+                });
+            } else {
+                table.set_header(vec![Cell::new(format!("{} contract", name))]);
+                table.add_row(vec![Cell::new("Deployment Cost"), Cell::new("Deployment Size")]);
+                table.add_row(vec![contract.gas.to_string(), contract.size.to_string()]);
+
+                table.add_row(vec![
+                    Cell::new("Function Name"),
+                    Cell::new("min"),
+                    Cell::new("avg"),
+                    Cell::new("median"),
+                    Cell::new("max"),
+                    Cell::new("# calls"),
+                ]);
+                contract.functions.iter().for_each(|(fname, function)| {
+                    table.add_row(vec![
+                        Cell::new(fname.to_string()),
+                        Cell::new(function.min.to_string()),
+                        Cell::new(function.mean.to_string()),
+                        Cell::new(function.median.to_string()),
+                        Cell::new(function.max.to_string()),
+                        Cell::new(function.calls.len().to_string()),
+                    ]);
+                });
+            }
             writeln!(f, "{}", table)?
         }
         Ok(())

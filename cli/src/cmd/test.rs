@@ -130,6 +130,9 @@ pub struct TestArgs {
     #[clap(help = "print a gas report", long = "gas-report")]
     gas_report: bool,
 
+    #[clap(help = "export a gas report to .gas_report", alias = "gre", long = "gas-report-export")]
+    gas_report_export: bool,
+
     #[clap(flatten)]
     evm_opts: EvmArgs,
 
@@ -201,7 +204,7 @@ impl Cmd for TestArgs {
             filter,
             json,
             allow_failure,
-            (self.gas_report, config.gas_reports),
+            (self.gas_report, self.gas_report_export, config.gas_reports),
         )
     }
 }
@@ -319,10 +322,11 @@ fn test<A: ArtifactOutput + 'static>(
     filter: Filter,
     json: bool,
     allow_failure: bool,
-    gas_reports: (bool, Vec<String>),
+    gas_reports: (bool, bool, Vec<String>),
 ) -> eyre::Result<TestOutcome> {
     let verbosity = evm_opts.verbosity;
     let gas_reporting = gas_reports.0;
+    let gas_reporting_export = gas_reports.1;
     if gas_reporting && evm_opts.verbosity < 3 {
         // force evm to do tracing, but dont hit the verbosity print path
         evm_opts.verbosity = 3;
@@ -336,7 +340,7 @@ fn test<A: ArtifactOutput + 'static>(
         Ok(TestOutcome::new(results, allow_failure))
     } else {
         // Dapptools-style printing of test results
-        let mut gas_report = GasReport::new(gas_reports.1);
+        let mut gas_report = GasReport::new(gas_reports.2, gas_reporting_export);
         let (tx, rx) = channel::<(String, BTreeMap<String, TestResult>)>();
         let known_contracts = runner.known_contracts.clone();
         let execution_info = runner.execution_info.clone();
@@ -438,7 +442,17 @@ fn test<A: ArtifactOutput + 'static>(
                 }
             }
             gas_report.finalize();
-            println!("{}", gas_report);
+            if gas_reporting_export {
+                let table_view = format!("{}", gas_report);
+                if let Err(e) = std::fs::write(".gas-report", table_view) {
+                    println!(
+                        "error writing to .gas-report: {:?}.\noutputting to stdout instead\n{}",
+                        e, gas_report
+                    );
+                }
+            } else {
+                println!("{}", gas_report);
+            }
         }
         Ok(TestOutcome::new(results, allow_failure))
     }
