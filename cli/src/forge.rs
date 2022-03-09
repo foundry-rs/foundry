@@ -1,5 +1,6 @@
 pub mod cmd;
 mod opts;
+mod term;
 mod utils;
 
 use crate::cmd::{watch, Cmd};

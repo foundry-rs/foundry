@@ -1717,6 +1717,7 @@ name = "foundry-cli"
 version = "0.1.0"
 dependencies = [
  "ansi_term",
+ "atty",
  "cast",
  "clap",
  "clap_complete",
