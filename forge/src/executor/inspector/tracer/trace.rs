@@ -8,6 +8,12 @@ use foundry_utils::format_token;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+const PIPE: &str = "│ ";
+const EDGE: &str = "└─ ";
+const BRANCH: &str = "├─ ";
+const CALL: &str = "→ ";
+const RETURN: &str = "← ";
+
 /// An arena of `CallTraceNode`s
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CallTraceArena {
@@ -94,9 +100,10 @@ impl Output {
         };
 
         format!(
-            "\n{}  └─ {} {}",
-            left.replace("├─", "│").replace("└─", "  "),
-            color.paint("←"),
+            "\n{}  {}{}{}",
+            left.replace(BRANCH, PIPE).replace(EDGE, "  "),
+            EDGE,
+            color.paint(RETURN),
             formatted
         )
     }
@@ -234,15 +241,16 @@ impl CallTraceArena {
                 format!(
                     "\n{}{} {}@{}",
                     left,
-                    Colour::Yellow.paint("→ new"),
+                    Colour::Yellow.paint(format!("{}{}", CALL, "new")),
                     trace.label.as_ref().unwrap_or(&"<Unknown>".to_string()),
                     trace.address
                 ),
                 self.construct_children_and_logs(idx, exec_info, left),
                 format!(
-                    "\n{}  └─ {} {} bytes of code",
-                    left.replace("├─", "│").replace("└─", "  "),
-                    color.paint("←"),
+                    "\n{}  {}{}{} bytes of code",
+                    left.replace(BRANCH, PIPE).replace(EDGE, "  "),
+                    EDGE,
+                    color.paint(RETURN),
                     trace.output.len()
                 ),
             ])
@@ -272,7 +280,7 @@ impl CallTraceArena {
                 LogCallOrder::Call(index) => self.construct_trace_string(
                     self.arena[node_idx].children[*index],
                     exec_info,
-                    &(left.replace("├─", "│").replace("└─", "  ") + "  ├─ "),
+                    &(left.replace(BRANCH, PIPE).replace(EDGE, "  ") + &format!("  {}", BRANCH)),
                 ),
             })
             .collect()
@@ -307,7 +315,7 @@ impl CallTraceNode {
         left: &str,
     ) -> String {
         let log = &self.logs[index];
-        let right = "  ├─ ";
+        let right = &format!("  {}", BRANCH);
 
         if let Some(event) = events.get(&log.topics[0]) {
             if let Ok(parsed) = event.parse_log(log.clone()) {
@@ -322,7 +330,7 @@ impl CallTraceNode {
 
                 return format!(
                     "\n{}emit {}({})",
-                    left.replace("├─", "│") + right,
+                    left.replace(BRANCH, PIPE) + right,
                     Colour::Cyan.paint(event.name.clone()),
                     strings
                 )
@@ -336,16 +344,16 @@ impl CallTraceNode {
             .enumerate()
             .map(|(i, topic)| {
                 let right = if i == log.topics.len() - 1 && log.data.is_empty() {
-                    "  └─ "
+                    format!("  {}", EDGE)
                 } else {
-                    "  ├─"
+                    format!("  {}", BRANCH)
                 };
                 format!(
                     "\n{}{}topic {}: {}",
                     if i == 0 {
-                        left.replace("├─", "│") + right
+                        left.replace(BRANCH, PIPE) + &right
                     } else {
-                        left.replace("├─", "│") + "  │ "
+                        left.replace(BRANCH, PIPE) + &format!("  {}", PIPE)
                     },
                     if i == 0 { " emit " } else { "      " },
                     i,
@@ -357,7 +365,7 @@ impl CallTraceNode {
         format!(
             "{}\n{}        data: {}",
             formatted,
-            left.replace("├─", "│").replace("└─", "  ") + "  │  ",
+            left.replace(BRANCH, PIPE).replace(EDGE, "  ") + &format!("  {} ", PIPE),
             Colour::Cyan.paint(format!("0x{}", hex::encode(&log.data)))
         )
     }
