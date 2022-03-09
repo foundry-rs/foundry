@@ -123,7 +123,6 @@ impl MultiContractRunnerBuilder {
         Ok(MultiContractRunner {
             contracts: deployable_contracts,
             known_contracts,
-            identified_contracts: Default::default(),
             evm_opts,
             evm_spec: self.evm_spec.unwrap_or(SpecId::LONDON),
             sender: self.sender,
@@ -166,8 +165,6 @@ pub struct MultiContractRunner {
     pub contracts: BTreeMap<String, (Abi, ethers::prelude::Bytes, Vec<ethers::prelude::Bytes>)>,
     /// Compiled contracts by name that have an Abi and runtime bytecode
     pub known_contracts: BTreeMap<String, (Abi, Vec<u8>)>,
-    /// Identified contracts by test
-    pub identified_contracts: BTreeMap<String, BTreeMap<Address, (String, Abi)>>,
     /// The EVM instance used in the test runner
     pub evm_opts: EvmOpts,
     /// The EVM spec
@@ -257,7 +254,7 @@ impl MultiContractRunner {
             Some((&self.execution_info.0, &self.execution_info.1, &self.execution_info.2)),
             libs,
         );
-        runner.run_tests(filter, self.fuzzer.clone(), Some(&self.known_contracts))
+        runner.run_tests(filter, self.fuzzer.clone())
     }
 }
 

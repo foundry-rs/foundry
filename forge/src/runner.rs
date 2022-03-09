@@ -25,7 +25,6 @@ use serde::{Deserialize, Serialize};
 pub struct CounterExample {
     pub calldata: Bytes,
 
-    // Token does not implement Serde (lol), so we just serialize the calldata
     #[serde(skip)]
     pub args: Vec<Token>,
 }
@@ -249,7 +248,6 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         &mut self,
         filter: &impl TestFilter,
         fuzzer: Option<TestRunner>,
-        known_contracts: Option<&BTreeMap<String, (Abi, Vec<u8>)>>,
     ) -> Result<BTreeMap<String, TestResult>> {
         tracing::info!("starting tests");
         let start = Instant::now();
@@ -290,7 +288,6 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
             .map(|func| {
                 let result = self.run_test(
                     func,
-                    known_contracts,
                     addr,
                     init_logs.clone(),
                     init_traces.clone().map(|traces| vec![traces]),
@@ -304,13 +301,8 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                 .par_iter()
                 .filter(|func| !func.inputs.is_empty())
                 .map(|func| {
-                    let result = self.run_fuzz_test(
-                        func,
-                        fuzzer.clone(),
-                        known_contracts,
-                        addr,
-                        init_logs.clone(),
-                    )?;
+                    let result =
+                        self.run_fuzz_test(func, fuzzer.clone(), addr, init_logs.clone())?;
                     Ok((func.signature(), result))
                 })
                 .collect::<Result<BTreeMap<_, _>>>()?;
@@ -329,7 +321,6 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
     pub fn run_test(
         &self,
         func: &Function,
-        _known_contracts: Option<&BTreeMap<String, (Abi, Vec<u8>)>>,
         address: Address,
         mut logs: Vec<RawLog>,
         mut traces: Option<Vec<CallTraceArena>>,
@@ -420,7 +411,6 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         &self,
         func: &Function,
         runner: TestRunner,
-        _known_contracts: Option<&BTreeMap<String, (Abi, Vec<u8>)>>,
         address: Address,
         mut logs: Vec<RawLog>,
     ) -> Result<TestResult> {
@@ -524,7 +514,7 @@ mod tests {
         cfg.failure_persistence = None;
         let fuzzer = TestRunner::new(cfg);
         let results =
-            runner.run_tests(&Filter::new("testGreeting", ".*", ".*"), Some(fuzzer), None).unwrap();
+            runner.run_tests(&Filter::new("testGreeting", ".*", ".*"), Some(fuzzer)).unwrap();
         assert!(results["testGreeting()"].success);
         assert!(results["testGreeting(string)"].success);
         assert!(results["testGreeting(string,string)"].success);
@@ -541,7 +531,7 @@ mod tests {
         cfg.failure_persistence = None;
         let fuzzer = TestRunner::new(cfg);
         let results =
-            runner.run_tests(&Filter::new("testFuzz.*", ".*", ".*"), Some(fuzzer), None).unwrap();
+            runner.run_tests(&Filter::new("testFuzz.*", ".*", ".*"), Some(fuzzer)).unwrap();
         for (_, res) in results {
             assert!(!res.success);
             assert!(res.counterexample.is_some());
@@ -558,9 +548,8 @@ mod tests {
         let mut cfg = FuzzConfig::default();
         cfg.failure_persistence = None;
         let fuzzer = TestRunner::new(cfg);
-        let res = runner
-            .run_tests(&Filter::new("testStringFuzz.*", ".*", ".*"), Some(fuzzer), None)
-            .unwrap();
+        let res =
+            runner.run_tests(&Filter::new("testStringFuzz.*", ".*", ".*"), Some(fuzzer)).unwrap();
         assert_eq!(res.len(), 1);
         assert!(res["testStringFuzz(string)"].success);
         assert!(res["testStringFuzz(string)"].counterexample.is_none());
@@ -576,9 +565,8 @@ mod tests {
         let mut cfg = FuzzConfig::default();
         cfg.failure_persistence = None;
         let fuzzer = TestRunner::new(cfg);
-        let res = runner
-            .run_tests(&Filter::new("testShrinking.*", ".*", ".*"), Some(fuzzer), None)
-            .unwrap();
+        let res =
+            runner.run_tests(&Filter::new("testShrinking.*", ".*", ".*"), Some(fuzzer)).unwrap();
         assert_eq!(res.len(), 1);
 
         let res = res["testShrinking(uint256,uint256)"].clone();
@@ -597,9 +585,8 @@ mod tests {
         // we reduce the shrinking iters and observe a larger result
         cfg.max_shrink_iters = 5;
         let fuzzer = TestRunner::new(cfg);
-        let res = runner
-            .run_tests(&Filter::new("testShrinking.*", ".*", ".*"), Some(fuzzer), None)
-            .unwrap();
+        let res =
+            runner.run_tests(&Filter::new("testShrinking.*", ".*", ".*"), Some(fuzzer)).unwrap();
         assert_eq!(res.len(), 1);
 
         let res = res["testShrinking(uint256,uint256)"].clone();
