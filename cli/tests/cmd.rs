@@ -458,31 +458,11 @@ forgetest_init!(can_parse_dapp_libraries, |prj: TestProject, mut cmd: TestComman
         "DAPP_LIBRARIES",
         "src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6",
     );
-    let config = prj.config_from_output(std::iter::empty::<String>());
+    let config = cmd.config();
     assert_eq!(
         config.libraries,
         vec!["src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6".to_string(),]
     );
-});
-
-forgetest!(can_load_different_profile, |prj: TestProject, mut cmd: TestCommand| {
-    prj.create_file(
-        "foundry.toml",
-        r#"
-[default]
-libs = ['lib']
-
-[local]
-libs = ['modules']
-"#,
-    );
-
-    let config = prj.config_from_output(std::iter::empty::<String>());
-    assert!(config.libs[0].ends_with("lib"));
-
-    cmd.set_env("FOUNDRY_PROFILE", "local");
-    let config = prj.config_from_output(std::iter::empty::<String>());
-    assert!(config.libs[0].ends_with("modules"));
 });
 
 // test against a local checkout, useful to debug with local ethers-rs patch
