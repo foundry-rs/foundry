@@ -68,13 +68,12 @@ impl<'a> ExecutionInfo<'a> {
 }
 
 impl Output {
-    pub fn construct_string<'a, 'b>(
+    pub fn construct_string<'a>(
         self,
-        exec_info: &'b ExecutionInfo<'a>,
+        exec_info: &ExecutionInfo<'a>,
         color: Colour,
         left: &str,
-        full_str: &mut String,
-    ) {
+    ) -> String {
         let formatted = match self {
             Output::Token(token) => {
                 let strings = token
@@ -97,12 +96,12 @@ impl Output {
             }
         };
 
-        full_str.push_str(&*format!(
+        format!(
             "\n{}  └─ {} {}",
             left.replace("├─", "│").replace("└─", "  "),
             color.paint("←"),
             formatted
-        ));
+        )
     }
 }
 
@@ -221,8 +220,7 @@ impl CallTraceArena {
         idx: usize,
         exec_info: &mut ExecutionInfo<'a>,
         left: &str,
-        full_str: &mut String,
-    ) {
+    ) -> String {
         let trace = &self.arena[idx].trace;
 
         // color the trace function call & output by success
@@ -235,25 +233,25 @@ impl CallTraceArena {
         };
 
         if trace.created {
-            // we couldn't identify, print the children and logs without the abi
-            full_str.push_str(&*format!(
-                "\n{}{} {}@{}",
-                left,
-                Colour::Yellow.paint("→ new"),
-                trace.label.as_ref().unwrap_or(&"<Unknown>".to_string()),
-                trace.address
-            ));
-            self.construct_children_and_logs(idx, exec_info, left, full_str);
-            full_str.push_str(&*format!(
-                "\n{}  └─ {} {} bytes of code",
-                left.replace("├─", "│").replace("└─", "  "),
-                color.paint("←"),
-                trace.output.len()
-            ));
+            String::from_iter([
+                format!(
+                    "\n{}{} {}@{}",
+                    left,
+                    Colour::Yellow.paint("→ new"),
+                    trace.label.as_ref().unwrap_or(&"<Unknown>".to_string()),
+                    trace.address
+                ),
+                self.construct_children_and_logs(idx, exec_info, left),
+                format!(
+                    "\n{}  └─ {} {} bytes of code",
+                    left.replace("├─", "│").replace("└─", "  "),
+                    color.paint("←"),
+                    trace.output.len()
+                ),
+            ])
         } else {
-            let output = trace.construct_func_call(exec_info, color, left, full_str);
-            self.construct_children_and_logs(idx, exec_info, left, full_str);
-            output.construct_string(exec_info, color, left, full_str);
+            let (call, ret) = trace.construct_func_call(exec_info, color, left);
+            String::from_iter([call, self.construct_children_and_logs(idx, exec_info, left), ret])
         }
     }
 
@@ -263,30 +261,24 @@ impl CallTraceArena {
         node_idx: usize,
         exec_info: &mut ExecutionInfo<'a>,
         left: &str,
-        full_str: &mut String,
-    ) {
+    ) -> String {
         // Ordering stores a vec of `LogCallOrder` which is populated based on if
         // a log or a call was called first. This makes it such that we always print
         // logs and calls in the correct order
-        self.arena[node_idx].ordering.iter().for_each(|ordering| match ordering {
-            LogCallOrder::Log(index) => {
-                self.arena[node_idx].construct_log(
-                    exec_info,
-                    *index,
-                    exec_info.events,
-                    left,
-                    full_str,
-                );
-            }
-            LogCallOrder::Call(index) => {
-                self.construct_trace_string(
+        self.arena[node_idx]
+            .ordering
+            .iter()
+            .map(|ordering| match ordering {
+                LogCallOrder::Log(index) => {
+                    self.arena[node_idx].construct_log(exec_info, *index, exec_info.events, left)
+                }
+                LogCallOrder::Call(index) => self.construct_trace_string(
                     self.arena[node_idx].children[*index],
                     exec_info,
                     &(left.replace("├─", "│").replace("└─", "  ") + "  ├─ "),
-                    full_str,
-                );
-            }
-        });
+                ),
+            })
+            .collect()
     }
 }
 
@@ -316,8 +308,7 @@ impl CallTraceNode {
         index: usize,
         events: &BTreeMap<H256, Event>,
         left: &str,
-        full_str: &mut String,
-    ) {
+    ) -> String {
         let log = &self.logs[index];
         let right = "  ├─ ";
 
@@ -331,40 +322,47 @@ impl CallTraceNode {
                     })
                     .collect::<Vec<String>>()
                     .join(", ");
-                full_str.push_str(&*format!(
+
+                return format!(
                     "\n{}emit {}({})",
                     left.replace("├─", "│") + right,
                     Colour::Cyan.paint(event.name.clone()),
                     strings
-                ));
-                return
+                )
             }
         }
 
-        // we didnt decode the log, print it as an unknown log
-        for (i, topic) in log.topics.iter().enumerate() {
-            let right = if i == log.topics.len() - 1 && log.data.is_empty() {
-                "  └─ "
-            } else {
-                "  ├─"
-            };
-            full_str.push_str(&*format!(
-                "\n{}{}topic {}: {}",
-                if i == 0 {
-                    left.replace("├─", "│") + right
+        // We couldn't decode the log
+        let formatted: String = log
+            .topics
+            .iter()
+            .enumerate()
+            .map(|(i, topic)| {
+                let right = if i == log.topics.len() - 1 && log.data.is_empty() {
+                    "  └─ "
                 } else {
-                    left.replace("├─", "│") + "  │ "
-                },
-                if i == 0 { " emit " } else { "      " },
-                i,
-                Colour::Cyan.paint(format!("0x{}", hex::encode(&topic)))
-            ))
-        }
-        full_str.push_str(&*format!(
-            "\n{}        data: {}",
+                    "  ├─"
+                };
+                format!(
+                    "\n{}{}topic {}: {}",
+                    if i == 0 {
+                        left.replace("├─", "│") + right
+                    } else {
+                        left.replace("├─", "│") + "  │ "
+                    },
+                    if i == 0 { " emit " } else { "      " },
+                    i,
+                    Colour::Cyan.paint(format!("0x{}", hex::encode(&topic)))
+                )
+            })
+            .collect();
+
+        format!(
+            "{}\n{}        data: {}",
+            formatted,
             left.replace("├─", "│").replace("└─", "  ") + "  │  ",
             Colour::Cyan.paint(format!("0x{}", hex::encode(&log.data)))
-        ))
+        )
     }
 }
 
@@ -427,8 +425,7 @@ impl CallTrace {
         exec_info: &mut ExecutionInfo<'a>,
         color: Colour,
         left: &str,
-        full_str: &mut String,
-    ) -> Output {
+    ) -> (String, String) {
         // Is data longer than 4, meaning we can attempt to decode it
         if self.data.len() >= 4 {
             if let Some(func) = exec_info.funcs.get(&self.data[0..4]) {
@@ -450,94 +447,108 @@ impl CallTrace {
                         }
                     }
                 }
-
-                full_str.push_str(&*format!(
-                    "\n{}[{}] {}::{}{}({})",
-                    left,
-                    self.gas_cost,
-                    color.paint(self.label.as_ref().unwrap_or(&self.address.to_string())),
-                    color.paint(func.name.clone()),
-                    if self.value > 0.into() {
-                        format!("{{value: {}}}", self.value)
-                    } else {
-                        "".to_string()
-                    },
-                    strings,
-                ));
-
-                if !self.output.is_empty() && self.success {
+                let output = if !self.output.is_empty() && self.success {
                     if let Ok(tokens) = func.decode_output(&self.output[..]) {
-                        return Output::Token(tokens)
+                        Output::Token(tokens)
                     } else {
-                        return Output::Raw(self.output[..].to_vec())
+                        Output::Raw(self.output[..].to_vec())
                     }
                 } else if !self.output.is_empty() && !self.success {
                     if let Ok(decoded_error) =
                         foundry_utils::decode_revert(&self.output[..], Some(exec_info.errors))
                     {
-                        return Output::Token(vec![ethers::abi::Token::String(decoded_error)])
+                        Output::Token(vec![ethers::abi::Token::String(decoded_error)])
                     } else {
-                        return Output::Raw(self.output.clone())
+                        Output::Raw(self.output.clone())
                     }
                 } else {
-                    return Output::Raw(vec![])
-                }
+                    Output::Raw(vec![])
+                };
+
+                return (
+                    format!(
+                        "\n{}[{}] {}::{}{}({})",
+                        left,
+                        self.gas_cost,
+                        color.paint(self.label.as_ref().unwrap_or(&self.address.to_string())),
+                        color.paint(func.name.clone()),
+                        if self.value > 0.into() {
+                            format!("{{value: {}}}", self.value)
+                        } else {
+                            "".to_string()
+                        },
+                        strings,
+                    ),
+                    output.construct_string(exec_info, color, left),
+                )
             }
         } else {
             // fallback function
-            full_str.push_str(&*format!(
-                "\n{}[{}] {}::fallback{}()",
+            let output = if !self.success {
+                if let Ok(decoded_error) =
+                    foundry_utils::decode_revert(&self.output[..], Some(exec_info.errors))
+                {
+                    Output::Token(vec![ethers::abi::Token::String(decoded_error)])
+                } else {
+                    Output::Raw(self.output[..].to_vec())
+                }
+            } else {
+                Output::Raw(self.output[..].to_vec())
+            };
+
+            return (
+                format!(
+                    "\n{}[{}] {}::fallback{}()",
+                    left,
+                    self.gas_cost,
+                    color.paint(self.label.as_ref().unwrap_or(&self.address.to_string())),
+                    if self.value > 0.into() {
+                        format!("{{value: {}}}", self.value)
+                    } else {
+                        "".to_string()
+                    }
+                ),
+                output.construct_string(exec_info, color, left),
+            )
+        }
+
+        // We couldn't decode the function call, so print it as an abstract call
+        let output = if !self.success {
+            if let Ok(decoded_error) =
+                foundry_utils::decode_revert(&self.output[..], Some(exec_info.errors))
+            {
+                Output::Token(vec![ethers::abi::Token::String(decoded_error)])
+            } else {
+                Output::Raw(self.output[..].to_vec())
+            }
+        } else {
+            Output::Raw(self.output[..].to_vec())
+        };
+
+        return (
+            format!(
+                "\n{}[{}] {}::{}{}({})",
                 left,
                 self.gas_cost,
-                color.paint(self.label.as_ref().unwrap_or(&self.address.to_string())),
+                color.paint(self.label.as_ref().unwrap_or(&self.address.to_string()).to_string()),
+                if self.data.len() >= 4 {
+                    hex::encode(&self.data[0..4])
+                } else {
+                    hex::encode(&self.data[..])
+                },
                 if self.value > 0.into() {
                     format!("{{value: {}}}", self.value)
                 } else {
                     "".to_string()
-                }
-            ));
-
-            if !self.success {
-                if let Ok(decoded_error) =
-                    foundry_utils::decode_revert(&self.output[..], Some(exec_info.errors))
-                {
-                    return Output::Token(vec![ethers::abi::Token::String(decoded_error)])
-                }
-            }
-            return Output::Raw(self.output[..].to_vec())
-        }
-
-        // We couldn't decode the function call, so print it as an abstract call
-        full_str.push_str(&*format!(
-            "\n{}[{}] {}::{}{}({})",
-            left,
-            self.gas_cost,
-            color.paint(self.label.as_ref().unwrap_or(&self.address.to_string()).to_string()),
-            if self.data.len() >= 4 {
-                hex::encode(&self.data[0..4])
-            } else {
-                hex::encode(&self.data[..])
-            },
-            if self.value > 0.into() {
-                format!("{{value: {}}}", self.value)
-            } else {
-                "".to_string()
-            },
-            if self.data.len() >= 4 {
-                hex::encode(&self.data[4..])
-            } else {
-                hex::encode(&vec![][..])
-            },
-        ));
-
-        if !self.success {
-            if let Ok(decoded_error) =
-                foundry_utils::decode_revert(&self.output[..], Some(exec_info.errors))
-            {
-                return Output::Token(vec![ethers::abi::Token::String(decoded_error)])
-            }
-        }
-        Output::Raw(self.output[..].to_vec())
+                },
+                if self.data.len() >= 4 {
+                    hex::encode(&self.data[4..])
+                } else {
+                    hex::encode(&vec![][..])
+                },
+            ),
+            output.construct_string(exec_info, color, left),
+        )
     }
 }
 

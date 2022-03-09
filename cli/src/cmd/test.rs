@@ -365,55 +365,43 @@ fn test<A: ArtifactOutput + 'static>(
                     }
 
                     if verbosity > 2 {
-                        if let (Some(traces), Some(identified_contracts)) =
-                            (&result.traces, &result.identified_contracts)
-                        {
+                        if let Some(traces) = &result.traces {
                             if !result.success && verbosity == 3 || verbosity > 3 {
                                 // add a new line if any logs were printed & to separate them from
                                 // the traces to be printed
                                 if !result.logs.is_empty() {
                                     println!();
                                 }
-                                let mut ident = identified_contracts.clone();
                                 let (funcs, events, errors) = &execution_info;
                                 let mut exec_info = ExecutionInfo::new(
                                     // &runner.known_contracts,
                                     &known_contracts,
-                                    &mut ident,
                                     &result.labeled_addresses,
                                     funcs,
                                     events,
                                     errors,
                                 );
 
-                                let mut trace_string = "".to_string();
                                 if verbosity > 4 || !result.success {
                                     add_newline = true;
                                     println!("Traces:");
-                                    // print setup calls as well
+                                    // Print setup trace as well
                                     traces.iter().for_each(|trace| {
-                                        trace.construct_trace_string(
-                                            0,
-                                            &mut exec_info,
-                                            "  ",
-                                            &mut trace_string,
+                                        println!(
+                                            "{}",
+                                            trace.construct_trace_string(0, &mut exec_info, "  ")
                                         );
                                     });
                                 } else if !traces.is_empty() {
                                     add_newline = true;
                                     println!("Traces:");
-                                    traces
-                                        .last()
-                                        .expect("no last but not empty")
-                                        .construct_trace_string(
-                                            0,
-                                            &mut exec_info,
-                                            "  ",
-                                            &mut trace_string,
-                                        );
-                                }
-                                if !trace_string.is_empty() {
-                                    println!("{}", trace_string);
+                                    println!(
+                                        "{}",
+                                        traces
+                                            .last()
+                                            .expect("no last but not empty")
+                                            .construct_trace_string(0, &mut exec_info, "  ")
+                                    );
                                 }
                             }
                             if add_newline {
