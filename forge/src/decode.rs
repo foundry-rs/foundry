@@ -2,6 +2,8 @@
 use crate::abi::ConsoleEvents::{self, *};
 use ethers::{abi::RawLog, contract::EthLogDecode};
 
+// TODO: Put trace decoding stuff in here
+
 /// Decode a set of logs, only returning logs from DSTest logging events and Hardhat's `console.log`
 pub fn decode_console_logs(logs: &[RawLog]) -> Vec<String> {
     logs.iter().filter_map(decode_console_log).collect()

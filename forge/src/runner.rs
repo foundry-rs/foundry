@@ -62,9 +62,6 @@ pub struct TestResult {
     /// Traces
     pub traces: Option<Vec<CallTraceArena>>,
 
-    /// Identified contracts
-    pub identified_contracts: Option<BTreeMap<Address, (String, Abi)>>,
-
     /// Debug steps
     // TODO
     #[serde(skip)]
@@ -195,7 +192,14 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
     pub fn deploy(
         &mut self,
         setup: bool,
-    ) -> Result<(Address, Vec<RawLog>, Option<CallTraceArena>, bool, Option<String>)> {
+    ) -> Result<(
+        Address,
+        Vec<RawLog>,
+        Option<CallTraceArena>,
+        BTreeMap<Address, String>,
+        bool,
+        Option<String>,
+    )> {
         // We max out their balance so that they can deploy and make calls.
         self.executor.set_balance(self.sender, U256::MAX);
         self.executor.set_balance(*CALLER, U256::MAX);
@@ -220,19 +224,26 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         // Optionally call the `setUp` function
         if setup {
             tracing::trace!("setting up");
-            let (setup_failed, setup_logs, setup_traces, reason) = match self.executor.setup(addr) {
-                Ok(CallResult { traces, logs, .. }) => (false, logs, traces, None),
-                Err(EvmError::Execution { logs, traces, reason, .. }) => {
-                    (true, logs, traces, Some(format!("Setup failed: {}", reason)))
+            let (setup_failed, setup_logs, setup_traces, setup_labels, reason) = match self
+                .executor
+                .setup(addr)
+            {
+                Ok(CallResult { traces, labels, logs, .. }) => (false, logs, traces, labels, None),
+                Err(EvmError::Execution { traces, labels, logs, reason, .. }) => {
+                    (true, logs, traces, labels, Some(format!("Setup failed: {}", reason)))
                 }
-                Err(e) => {
-                    (true, Vec::new(), None, Some(format!("Setup failed: {}", &e.to_string())))
-                }
+                Err(e) => (
+                    true,
+                    Vec::new(),
+                    None,
+                    BTreeMap::new(),
+                    Some(format!("Setup failed: {}", &e.to_string())),
+                ),
             };
             logs.extend_from_slice(&setup_logs);
-            Ok((addr, logs, setup_traces, setup_failed, reason))
+            Ok((addr, logs, setup_traces, setup_labels, setup_failed, reason))
         } else {
-            Ok((addr, logs, None, false, None))
+            Ok((addr, logs, None, BTreeMap::new(), false, None))
         }
     }
 
@@ -253,7 +264,8 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
             .filter(|func| filter.matches_test(&func.name))
             .partition(|func| func.inputs.is_empty());
 
-        let (addr, init_logs, init_traces, setup_failed, reason) = self.deploy(needs_setup)?;
+        let (addr, init_logs, init_traces, init_labels, setup_failed, reason) =
+            self.deploy(needs_setup)?;
         if setup_failed {
             // The setup failed, so we return a single test result for `setUp`
             return Ok([(
@@ -266,9 +278,8 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                     kind: TestKind::Standard(0),
                     traces: init_traces.map(|traces| vec![traces]),
                     // TODO
-                    identified_contracts: None,
                     debug_calls: None,
-                    labeled_addresses: Default::default(),
+                    labeled_addresses: init_labels,
                 },
             )]
             .into())
@@ -283,6 +294,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                     addr,
                     init_logs.clone(),
                     init_traces.clone().map(|traces| vec![traces]),
+                    init_labels.clone(),
                 )?;
                 Ok((func.signature(), result))
             })
@@ -293,8 +305,14 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                 .par_iter()
                 .filter(|func| !func.inputs.is_empty())
                 .map(|func| {
-                    let result =
-                        self.run_fuzz_test(func, fuzzer.clone(), addr, init_logs.clone())?;
+                    let result = self.run_fuzz_test(
+                        func,
+                        fuzzer.clone(),
+                        addr,
+                        init_logs.clone(),
+                        init_traces.clone().map(|traces| vec![traces]),
+                        init_labels.clone(),
+                    )?;
                     Ok((func.signature(), result))
                 })
                 .collect::<Result<BTreeMap<_, _>>>()?;
@@ -316,6 +334,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         address: Address,
         mut logs: Vec<RawLog>,
         mut traces: Option<Vec<CallTraceArena>>,
+        mut labels: BTreeMap<Address, String>,
     ) -> Result<TestResult> {
         let start = Instant::now();
         // The expected result depends on the function name.
@@ -326,18 +345,20 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         let errors_abi = self.execution_info.as_ref().map(|(_, _, errors)| errors);
         let errors_abi = if let Some(ref abi) = errors_abi { abi } else { self.contract };
 
-        // TODO
-        let identified_contracts: Option<BTreeMap<Address, (String, Abi)>> = Some(BTreeMap::new());
-
-        let (status, reason, gas_used, logs, traces, state_changeset) = match self
-            .executor
-            .call::<(), _, _>(self.sender, address, func.clone(), (), 0.into(), Some(errors_abi))
-        {
+        let (status, reason, gas_used, state_changeset) = match self.executor.call::<(), _, _>(
+            self.sender,
+            address,
+            func.clone(),
+            (),
+            0.into(),
+            Some(errors_abi),
+        ) {
             Ok(CallResult {
                 status,
                 gas: gas_used,
                 logs: execution_logs,
                 traces: execution_traces,
+                labels: new_labels,
                 state_changeset,
                 ..
             }) => {
@@ -345,8 +366,12 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                     traces.get_or_insert_with(Default::default).push(execution_traces);
                 }
 
+                for (addr, label) in new_labels.into_iter() {
+                    labels.insert(addr, label);
+                }
+
                 logs.extend(execution_logs);
-                (status, None, gas_used, logs, traces, state_changeset)
+                (status, None, gas_used, state_changeset)
             }
             Err(err) => match err {
                 EvmError::Execution {
@@ -355,6 +380,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                     gas_used,
                     logs: execution_logs,
                     traces: execution_traces,
+                    labels: new_labels,
                     state_changeset,
                     ..
                 } => {
@@ -362,8 +388,12 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                         traces.get_or_insert_with(Default::default).push(execution_traces);
                     }
 
+                    for (addr, label) in new_labels.into_iter() {
+                        labels.insert(addr, label);
+                    }
+
                     logs.extend(execution_logs);
-                    (status, Some(reason), gas_used, logs, None, state_changeset)
+                    (status, Some(reason), gas_used, state_changeset)
                 }
                 err => {
                     tracing::error!(?err);
@@ -391,9 +421,8 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
             logs,
             kind: TestKind::Standard(gas_used),
             traces,
-            identified_contracts,
             debug_calls: None,
-            labeled_addresses: Default::default(),
+            labeled_addresses: labels,
         })
     }
 
@@ -404,13 +433,13 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         runner: TestRunner,
         address: Address,
         mut logs: Vec<RawLog>,
+        traces: Option<Vec<CallTraceArena>>,
+        labels: BTreeMap<Address, String>,
     ) -> Result<TestResult> {
         // We do not trace in fuzz tests as it is a big performance hit
         let start = Instant::now();
         // TODO: Dedupe (`TestDescriptor`?)
         let should_fail = func.name.starts_with("testFail");
-
-        let identified_contracts: Option<BTreeMap<Address, (String, Abi)>> = None;
 
         // Wrap the executor in a fuzzed version
         // TODO: When tracing is ported, we should disable it here.
@@ -459,10 +488,9 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
             counterexample,
             logs,
             kind: TestKind::Fuzz(cases),
-            traces: Default::default(),
-            identified_contracts,
+            traces,
             debug_calls: None,
-            labeled_addresses: Default::default(),
+            labeled_addresses: labels,
         })
     }
 }

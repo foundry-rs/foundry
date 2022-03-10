@@ -52,6 +52,7 @@ pub enum EvmError {
         gas_used: u64,
         logs: Vec<RawLog>,
         traces: Option<CallTraceArena>,
+        labels: BTreeMap<Address, String>,
         state_changeset: Option<HashMap<Address, Account>>,
     },
     /// Error which occurred during ABI encoding/decoding
@@ -193,6 +194,7 @@ where
                     gas_used: gas,
                     logs,
                     traces,
+                    labels,
                     state_changeset: None,
                 })
             }
@@ -255,6 +257,7 @@ where
                     gas_used: gas,
                     logs,
                     traces,
+                    labels,
                     state_changeset,
                 })
             }

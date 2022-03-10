@@ -40,7 +40,6 @@ impl Tracer {
                 created,
                 data: RawOrDecodedCall::Raw(data),
                 value,
-                // TODO: Labels
                 ..Default::default()
             },
         ));

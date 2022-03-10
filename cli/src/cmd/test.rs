@@ -8,8 +8,12 @@ use ansi_term::Colour;
 use clap::{AppSettings, Parser};
 use ethers::solc::{ArtifactOutput, ProjectCompileOutput};
 use forge::{
-    decode::decode_console_logs, executor::opts::EvmOpts, MultiContractRunnerBuilder, TestFilter,
-    TestResult,
+    decode::decode_console_logs,
+    executor::{
+        inspector::trace::{CallTraceDecodingInfo, LocalTraceIdentifier},
+        opts::EvmOpts,
+    },
+    MultiContractRunnerBuilder, TestFilter, TestResult,
 };
 use foundry_config::{figment::Figment, Config};
 use regex::Regex;
@@ -336,20 +340,17 @@ fn test<A: ArtifactOutput + 'static>(
     } else {
         // TODO: Re-enable when ported
         //let mut gas_report = GasReport::new(gas_reports.1);
+        let local_identifier = LocalTraceIdentifier::new(&runner.known_contracts);
         let (tx, rx) = channel::<(String, BTreeMap<String, TestResult>)>();
         let handle = thread::spawn(move || {
             while let Ok((contract_name, tests)) = rx.recv() {
-                println!();
                 if !tests.is_empty() {
                     let term = if tests.len() > 1 { "tests" } else { "test" };
                     println!("Running {} {} for {}", tests.len(), term, contract_name);
                 }
-                for (name, result) in tests {
+                for (name, mut result) in tests {
                     short_test_result(&name, &result);
-                    // adds a linebreak only if there were any traces or logs, so that the
-                    // output does not look like 1 big block.
-                    let mut add_newline = false;
-                    if verbosity > 1 && !result.logs.is_empty() {
+                    if verbosity > 1 {
                         // We only decode logs from Hardhat and DS-style console events
                         let console_logs = decode_console_logs(&result.logs);
                         if !console_logs.is_empty() {
@@ -357,36 +358,46 @@ fn test<A: ArtifactOutput + 'static>(
                             for log in console_logs {
                                 println!("  {}", log);
                             }
+                            println!();
                         }
                     }
 
                     if verbosity > 2 {
-                        if let Some(traces) = &result.traces {
-                            if !result.success && verbosity == 3 || verbosity > 3 {
-                                // add a new line if any logs were printed & to separate them from
-                                // the traces to be printed
-                                if !result.logs.is_empty() {
-                                    println!();
-                                }
-                                if verbosity > 4 || !result.success {
-                                    add_newline = true;
-                                    println!("Traces:");
-                                    // Print setup trace as well
-                                    traces.iter().for_each(|trace| {
-                                        println!("{}", trace);
-                                    });
-                                } else if !traces.is_empty() {
-                                    add_newline = true;
-                                    println!("Traces:");
-                                    println!("{}", traces.last().expect("no last but not empty"));
-                                }
-                            }
-                            if add_newline {
+                        if let Some(traces) = &mut result.traces {
+                            if (!result.success && verbosity == 3 || verbosity > 3) &&
+                                !traces.is_empty()
+                            {
+                                // Identify addresses in each trace
+                                let mut info = CallTraceDecodingInfo::new_with_labels(
+                                    result.labeled_addresses.clone(),
+                                );
+                                traces.iter().for_each(|trace| {
+                                    info.identify(&trace, &local_identifier);
+                                });
+
+                                let num_traces = traces.len();
+                                let traces = if verbosity <= 4 && result.success {
+                                    // Only display the test trace
+                                    // NOTE: This is safe because of the `!traces.is_empty()` check
+                                    // above
+                                    &mut traces[num_traces - 1..]
+                                } else {
+                                    // Display the test trace and the setup trace
+                                    &mut traces[..]
+                                };
+
+                                println!("Traces:");
+                                traces.iter_mut().for_each(|trace| {
+                                    trace.decode(&info);
+                                    println!("{}", trace);
+                                });
                                 println!();
                             }
                         }
                     }
                 }
+
+                println!();
             }
         });
 
