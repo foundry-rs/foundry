@@ -269,7 +269,6 @@ impl TestOutcome {
         if !self.allow_failure {
             let failures = self.failures().count();
             if failures > 0 {
-                println!();
                 println!("Failed tests:");
                 for (name, result) in self.failures() {
                     short_test_result(name, result);
@@ -342,60 +341,69 @@ fn test<A: ArtifactOutput + 'static>(
         let (tx, rx) = channel::<(String, BTreeMap<String, TestResult>)>();
         let handle = thread::spawn(move || {
             while let Ok((contract_name, tests)) = rx.recv() {
+                println!();
                 if !tests.is_empty() {
                     let term = if tests.len() > 1 { "tests" } else { "test" };
                     println!("Running {} {} for {}", tests.len(), term, contract_name);
                 }
                 for (name, mut result) in tests {
                     short_test_result(&name, &result);
-                    if verbosity > 1 {
-                        // We only decode logs from Hardhat and DS-style console events
-                        let console_logs = decode_console_logs(&result.logs);
-                        if !console_logs.is_empty() {
-                            println!("Logs:");
-                            for log in console_logs {
-                                println!("  {}", log);
-                            }
-                            println!();
-                        }
+
+                    // We only display logs at level 2 and above
+                    if verbosity < 2 {
+                        continue
                     }
 
-                    if verbosity > 2 {
-                        if let Some(traces) = &mut result.traces {
-                            if (!result.success && verbosity == 3 || verbosity > 3) &&
-                                !traces.is_empty()
-                            {
-                                // Identify addresses in each trace
-                                let mut decoder = CallTraceDecoder::new_with_labels(
-                                    result.labeled_addresses.clone(),
-                                );
-                                traces.iter().for_each(|trace| {
-                                    decoder.identify(&trace, &local_identifier);
-                                });
-
-                                let num_traces = traces.len();
-                                let traces = if verbosity <= 4 && result.success {
-                                    // Only display the test trace
-                                    // NOTE: This is safe because of the `!traces.is_empty()` check
-                                    // above
-                                    &mut traces[num_traces - 1..]
-                                } else {
-                                    // Display the test trace and the setup trace
-                                    &mut traces[..]
-                                };
-
-                                println!("Traces:");
-                                traces.iter_mut().for_each(|trace| {
-                                    decoder.decode(trace);
-                                    println!("{}", trace);
-                                });
-                                println!();
-                            }
+                    // We only decode logs from Hardhat and DS-style console events
+                    let console_logs = decode_console_logs(&result.logs);
+                    if !console_logs.is_empty() {
+                        println!("Logs:");
+                        for log in console_logs {
+                            println!("  {}", log);
                         }
+                        println!();
+                    }
+
+                    if let Some(traces) = &mut result.traces {
+                        if traces.is_empty() {
+                            continue
+                        }
+
+                        // We only display traces at verbosity level 3 and above
+                        if verbosity < 3 {
+                            continue
+                        }
+
+                        // At verbosity level 3, we only display traces for failed tests
+                        if verbosity == 3 && result.success {
+                            continue
+                        }
+
+                        // Identify addresses in each trace
+                        let mut decoder =
+                            CallTraceDecoder::new_with_labels(result.labeled_addresses.clone());
+                        traces.iter().for_each(|trace| {
+                            decoder.identify(&trace, &local_identifier);
+                        });
+
+                        // At verbosity level 4, we also display the setup trace for failed tests
+                        // At verbosity level 5, we display all traces for all tests
+                        let print_setup = (verbosity >= 5) || (verbosity == 4 && !result.success);
+                        let traces = if print_setup {
+                            &mut traces[..]
+                        } else {
+                            let num_traces = traces.len();
+                            // NOTE: This is safe because of the `!traces.is_empty()` check above
+                            &mut traces[num_traces - 1..]
+                        };
+
+                        println!("Traces:");
+                        traces.iter_mut().for_each(|trace| {
+                            decoder.decode(trace);
+                            println!("{}", trace);
+                        });
                     }
                 }
-
-                println!();
             }
         });
 

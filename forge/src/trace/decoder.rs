@@ -9,6 +9,13 @@ use ethers::{
 use foundry_utils::format_token;
 use std::collections::BTreeMap;
 
+/// The call trace decoder.
+///
+/// The decoder collects address labels and ABIs from any number of [TraceIdentifier]s, which it
+/// then uses to decode the call trace.
+///
+/// Note that a call trace decoder is required for each new set of traces, since addresses in
+/// different sets might overlap.
 #[derive(Default, Debug)]
 pub struct CallTraceDecoder {
     /// Address labels
