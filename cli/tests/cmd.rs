@@ -455,7 +455,7 @@ script ran
 // tests that the `inspect` command works correctly
 forgetest!(can_execute_inspect_command, |prj: TestProject, mut cmd: TestCommand| {
     let contract_name = "Foo";
-    let script = prj
+    let _ = prj
         .inner()
         .add_source(
             contract_name,
@@ -468,24 +468,14 @@ contract Demo {
         emit log_string("script ran");
     }
 }
-   "#,
+    "#,
         )
         .unwrap();
 
-    cmd.arg("inspect").arg("bytecode").arg(contract_name);
+    cmd.arg("inspect").arg(contract_name).arg("bytecode");
     let output = cmd.stdout_lossy();
     assert_eq!(
-        format!(
-            "Compiling...
-Compiling 1 files with 0.8.10
-Compiler run successful
-{}
-Gas Used: 1751
-== Logs ==
-script ran
-",
-            Colour::Green.paint("Script ran successfully.")
-        ),
+        "0x608060405234801561001057600080fd5b5060d38061001f6000396000f3fe6080604052348015600f57600080fd5b506004361060285760003560e01c8063c040622614602d575b600080fd5b60336035565b005b7f0b2e13ff20ac7b474198655583edf70dedd2c1dc980e329c4fbb2fc0748b796b6040516093906020808252600a908201527f7363726970742072616e00000000000000000000000000000000000000000000604082015260600190565b60405180910390a156fea2646970667358221220087a3c832c1188b944b1abac5b07149f47b0cd023b8f53bbbfa0590e5e89bb2064736f6c634300080c0033",
         output
     );
 });
