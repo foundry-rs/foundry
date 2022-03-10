@@ -2,6 +2,7 @@
 use std::{
     borrow::Cow,
     path::{Path, PathBuf},
+    str::FromStr,
 };
 
 use figment::{
@@ -97,11 +98,14 @@ pub struct Config {
     pub evm_version: EvmVersion,
     /// list of contracts to report gas of
     pub gas_reports: Vec<String>,
-    /// Concrete solc version to use if any.
+    /// The Solc instance to use if any.
     ///
     /// This takes precedence over `auto_detect_solc`, if a version is set then this overrides
     /// auto-detection.
-    pub solc_version: Option<Version>,
+    ///
+    /// **Note** for backwards compatibility reasons this also accepts solc_version from the toml
+    /// file, see [`BackwardsCompatProvider`]
+    pub solc: Option<SolcReq>,
     /// whether to autodetect the solc compiler version to use
     pub auto_detect_solc: bool,
     /// Offline mode, if set, network access (downloading solc) is disallowed.
@@ -397,7 +401,7 @@ impl Config {
             project.cleanup()?;
         }
 
-        if let Some(solc) = self.ensure_solc_version()? {
+        if let Some(solc) = self.ensure_solc()? {
             project.solc = solc;
         }
 
@@ -405,18 +409,37 @@ impl Config {
     }
 
     /// Ensures that the configured version is installed if explicitly set
-    fn ensure_solc_version(&self) -> Result<Option<Solc>, SolcError> {
-        if let Some(ref version) = self.solc_version {
-            let v = version.to_string();
-            let mut solc = Solc::find_svm_installed_version(&v)?;
-            if solc.is_none() {
-                Solc::blocking_install(version)?;
-                solc = Solc::find_svm_installed_version(&v)?;
-            }
-            Ok(solc)
-        } else {
-            Ok(None)
+    ///
+    /// If `solc` is [`SolcReq::Version`] then this will download and install the solc version if
+    /// it's missing.
+    ///
+    /// If `solc` is [`SolcReq::Local`] then this will ensure that the path exists.
+    fn ensure_solc(&self) -> Result<Option<Solc>, SolcError> {
+        if let Some(ref solc) = self.solc {
+            let solc = match solc {
+                SolcReq::Version(version) => {
+                    let v = version.to_string();
+                    let mut solc = Solc::find_svm_installed_version(&v)?;
+                    if solc.is_none() {
+                        Solc::blocking_install(version)?;
+                        solc = Solc::find_svm_installed_version(&v)?;
+                    }
+                    solc
+                }
+                SolcReq::Local(solc) => {
+                    if !solc.is_file() {
+                        return Err(SolcError::msg(format!(
+                            "`solc` {} does not exist",
+                            solc.display()
+                        )))
+                    }
+                    Some(Solc::new(solc))
+                }
+            };
+            return Ok(solc)
         }
+
+        Ok(None)
     }
 
     /// Returns whether the compiler version should be auto-detected
@@ -424,7 +447,7 @@ impl Config {
     /// Returns `false` if `solc_version` is explicitly set, otherwise returns the value of
     /// `auto_detect_solc`
     pub fn is_auto_detect(&self) -> bool {
-        if self.solc_version.is_some() {
+        if self.solc.is_some() {
             return false
         }
         self.auto_detect_solc
@@ -704,13 +727,15 @@ impl From<Config> for Figment {
 
         // check global foundry.toml file
         if let Some(global_toml) = Config::foundry_dir_toml().filter(|p| p.exists()) {
-            figment = figment.merge(ForcedSnakeCaseData(Toml::file(global_toml).nested()))
+            figment = figment.merge(BackwardsCompatProvider(ForcedSnakeCaseData(
+                Toml::file(global_toml).nested(),
+            )))
         }
 
         figment = figment
-            .merge(ForcedSnakeCaseData(
+            .merge(BackwardsCompatProvider(ForcedSnakeCaseData(
                 Toml::file(Env::var_or("FOUNDRY_CONFIG", Config::FILE_NAME)).nested(),
-            ))
+            )))
             .merge(Env::prefixed("DAPP_").ignore(&["REMAPPINGS", "LIBRARIES"]).global())
             .merge(Env::prefixed("DAPP_TEST_").global())
             .merge(DappEnvCompatProvider)
@@ -803,7 +828,7 @@ impl Default for Config {
             force: false,
             evm_version: Default::default(),
             gas_reports: vec!["*".to_string()],
-            solc_version: None,
+            solc: None,
             auto_detect_solc: true,
             offline: false,
             optimizer: true,
@@ -842,6 +867,28 @@ impl Default for Config {
     }
 }
 
+/// Variants for selecting the [`Solc`] instance
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum SolcReq {
+    /// Requires a specific solc version, that's either already installed (via `svm`) or will be
+    /// auto installed (via `svm`)
+    Version(Version),
+    /// Path to an existing local solc installation
+    Local(PathBuf),
+}
+
+impl<T: AsRef<str>> From<T> for SolcReq {
+    fn from(s: T) -> Self {
+        let s = s.as_ref();
+        if let Ok(v) = Version::from_str(s) {
+            SolcReq::Version(v)
+        } else {
+            SolcReq::Local(s.into())
+        }
+    }
+}
+
 /// A Provider that ensures all keys are snake case
 struct ForcedSnakeCaseData<F: Format>(Data<F>);
 
@@ -854,6 +901,26 @@ impl<F: Format> Provider for ForcedSnakeCaseData<F> {
         let mut map = Map::new();
         for (profile, dict) in self.0.data()? {
             map.insert(profile, dict.into_iter().map(|(k, v)| (k.to_snake_case(), v)).collect());
+        }
+        Ok(map)
+    }
+}
+
+/// A Provider that handles breaking changes
+struct BackwardsCompatProvider<P>(P);
+
+impl<P: Provider> Provider for BackwardsCompatProvider<P> {
+    fn metadata(&self) -> Metadata {
+        Metadata::named("Backwards compat provider")
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+        let mut map = Map::new();
+        for (profile, mut dict) in self.0.data()? {
+            if let Some(v) = dict.remove("solc_version") {
+                dict.insert("solc".to_string(), v);
+            }
+            map.insert(profile, dict);
         }
         Ok(map)
     }
@@ -1363,6 +1430,46 @@ mod tests {
                     ..Config::default()
                 }
             );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_solc_req() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                solc_version = "0.8.12"
+            "#,
+            )?;
+
+            let config = Config::load();
+            assert_eq!(config.solc, Some(SolcReq::Version("0.8.12".parse().unwrap())));
+
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                solc = "0.8.12"
+            "#,
+            )?;
+
+            let config = Config::load();
+            assert_eq!(config.solc, Some(SolcReq::Version("0.8.12".parse().unwrap())));
+
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                solc = "path/to/local/solc"
+            "#,
+            )?;
+
+            let config = Config::load();
+            assert_eq!(config.solc, Some(SolcReq::Local("path/to/local/solc".into())));
 
             Ok(())
         });

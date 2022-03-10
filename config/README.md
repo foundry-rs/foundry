@@ -29,7 +29,7 @@ The following is an example of what such a file might look like:
 src = "src"
 out = "out"
 libs = ["lib"]
-solc-version = "0.8.10"
+solc = "0.8.10" # to use a specific local solc install set the path as `solc = "<path to solc>/solc"`
 eth-rpc-url = "https://mainnet.infura.io"
 
 ## set only when the `hardhat` profile is selected

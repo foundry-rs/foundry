@@ -254,9 +254,7 @@ forgetest_init!(can_emit_extra_output, |prj: TestProject, mut cmd: TestCommand| 
         ethers::solc::utils::read_json_file(artifact_path).unwrap();
     assert!(artifact.metadata.is_some());
 
-    cmd.fuse()
-        .args(["build", "--extra-output-files", "metadata", "--force", "--root"])
-        .arg(prj.root());
+    cmd.fuse().args(["build", "--extra-output-files", "metadata", "--force"]).root_arg();
     cmd.assert_non_empty_stdout();
 
     let metadata_path = prj.paths().artifacts.join("Contract.sol/Contract.metadata.json");
@@ -276,7 +274,7 @@ contract Greeter {}
         .unwrap();
 
     // explicitly set to run with 0.8.10
-    let config = Config { solc_version: Some("0.8.10".parse().unwrap()), ..Default::default() };
+    let config = Config { solc: Some("0.8.10".into()), ..Default::default() };
     prj.write_config(config);
 
     cmd.arg("build");
@@ -306,7 +304,7 @@ contract Greeter {
         .unwrap();
 
     // explicitly set to run with 0.8.10
-    let config = Config { solc_version: Some("0.8.10".parse().unwrap()), ..Default::default() };
+    let config = Config { solc: Some("0.8.10".into()), ..Default::default() };
     prj.write_config(config);
 
     cmd.arg("build");
@@ -371,6 +369,49 @@ Compiler run successful
 ",
         cmd.stdout_lossy()
     );
+});
+
+// tests that `--use <solc>` works
+forgetest!(can_use_solc, |prj: TestProject, mut cmd: TestCommand| {
+    prj.inner()
+        .add_source(
+            "Foo",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity >=0.8.10;
+contract Foo {}
+   "#,
+        )
+        .unwrap();
+
+    cmd.args(["build", "--use", "0.8.11"]);
+
+    assert!(cmd.stdout_lossy().ends_with(
+        "Compiling 1 files with 0.8.11
+Compiler run successful
+"
+    ));
+
+    cmd.fuse().args(["build", "--force", "--use", "solc:0.8.11"]).root_arg();
+
+    assert!(cmd.stdout_lossy().ends_with(
+        "Compiling 1 files with 0.8.11
+Compiler run successful
+"
+    ));
+
+    // fails to use solc that does not exist
+    cmd.fuse().args(["build", "--use", "this/solc/does/not/exist"]);
+    assert!(cmd.stderr_lossy().contains("this/solc/does/not/exist does not exist"));
+
+    // 0.8.11 was installed in previous step, so we can use the path to this directly
+    let local_solc = ethers::solc::Solc::find_svm_installed_version("0.8.11").unwrap().unwrap();
+    cmd.fuse().args(["build", "--force", "--use"]).arg(local_solc.solc).root_arg();
+    assert!(cmd.stdout_lossy().ends_with(
+        "Compiling 1 files with 0.8.11
+Compiler run successful
+"
+    ));
 });
 
 // test to ensure yul optimizer can be set as intended
