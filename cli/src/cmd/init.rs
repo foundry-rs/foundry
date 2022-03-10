@@ -48,7 +48,6 @@ pub struct InitArgs {
     force: bool,
     #[clap(
         help = "initialize .vscode/settings.json file with solidity settings and generate a remappings.txt file.",
-        conflicts_with = "template",
         long
     )]
     vscode: bool,
@@ -136,11 +135,10 @@ impl Cmd for InitArgs {
                         .and_then(|dependency| install(&root, vec![dependency], opts))?;
                 }
             }
-
-            // vscode init
-            if vscode {
-                init_vscode(&root)?;
-            }
+        }
+        // vscode init
+        if vscode {
+            init_vscode(&root)?;
         }
 
         p_println!(!quiet => "    {} forge project.",   Colour::Green.paint("Initialized"));
@@ -213,14 +211,14 @@ fn init_vscode(root: &Path) -> eyre::Result<()> {
 
     let obj = settings.as_object_mut().expect("Expected settings object");
     // insert [vscode-solidity settings](https://github.com/juanfranblanco/vscode-solidity)
-    obj.insert(
-        "solidity.packageDefaultDependenciesContractsDirectory".to_string(),
-        serde_json::Value::String("src".to_string()),
-    );
-    obj.insert(
-        "solidity.packageDefaultDependenciesDirectory".to_string(),
-        serde_json::Value::String("lib".to_string()),
-    );
+    let src_key = "solidity.packageDefaultDependenciesContractsDirectory";
+    if !obj.contains_key(src_key) {
+        obj.insert(src_key.to_string(), serde_json::Value::String("src".to_string()));
+    }
+    let lib_key = "solidity.packageDefaultDependenciesDirectory";
+    if !obj.contains_key(lib_key) {
+        obj.insert(lib_key.to_string(), serde_json::Value::String("lib".to_string()));
+    }
 
     let content = serde_json::to_string_pretty(&settings)?;
     std::fs::write(settings_file, content)?;

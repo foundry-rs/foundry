@@ -2,10 +2,7 @@
 
 use crate::cmd::Cmd;
 use clap::{Parser, ValueHint};
-use ethers::solc::{
-    remappings::{RelativeRemapping, Remapping},
-    ProjectPathsConfig,
-};
+use ethers::solc::{remappings::Remapping, ProjectPathsConfig};
 use std::path::{Path, PathBuf};
 
 /// Command to list remappings
@@ -48,7 +45,7 @@ impl Cmd for RemappingArgs {
 pub fn relative_remappings(lib: &Path, root: &Path) -> Vec<Remapping> {
     Remapping::find_many(lib)
         .into_iter()
-        .map(|r| RelativeRemapping::new(r, root))
+        .map(|r| r.into_relative(root).to_relative_remapping())
         .map(Into::into)
         .collect()
 }
