@@ -191,10 +191,7 @@ impl Cmd for InspectArgs {
                 println!("{}", tval.get("object").unwrap_or(&tval).clone().as_str().unwrap());
             }
             ContractArtifactFields::Assembly | ContractArtifactFields::AssemblyOptimized => {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&to_value(&artifact.assembly).unwrap()).unwrap()
-                );
+                println!("{}", to_value(&artifact.assembly).unwrap().as_str().unwrap());
             }
             ContractArtifactFields::MethodIdentifiers => {
                 println!(
@@ -236,17 +233,10 @@ impl Cmd for InspectArgs {
                 );
             }
             ContractArtifactFields::Ir => {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&to_value(&artifact.ir).unwrap()).unwrap()
-                );
+                println!("{}", to_value(&artifact.ir).unwrap().as_str().unwrap());
             }
             ContractArtifactFields::IrOptimized => {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&to_value(&artifact.ir_optimized).unwrap())
-                        .unwrap()
-                );
+                println!("{}", to_value(&artifact.ir_optimized).unwrap().as_str().unwrap());
             }
             ContractArtifactFields::Ewasm => {
                 println!(
