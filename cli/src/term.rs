@@ -225,6 +225,15 @@ impl Reporter for SpinnerReporter {
     }
 }
 
+/// Calls `f` within the [`SpinnerReporter`] that displays a spinning cursor to display solc
+/// progress
+pub fn with_spinner_reporter<T>(f: impl FnOnce() -> T) -> T {
+    ethers::solc::report::with_scoped(
+        &ethers::solc::report::Report::new(SpinnerReporter::spawn()),
+        f,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

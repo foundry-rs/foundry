@@ -9,12 +9,13 @@ use sputnik::{backend::Backend, Config};
 use ethers::{
     abi::{Abi, Event, Function},
     prelude::{artifacts::CompactContractBytecode, ArtifactId, ArtifactOutput},
-    solc::{Artifact, Project},
+    solc::Artifact,
     types::{Address, H256, U256},
 };
 
 use proptest::test_runner::TestRunner;
 
+use ethers::solc::ProjectCompileOutput;
 use eyre::Result;
 use rayon::prelude::*;
 use std::{collections::BTreeMap, marker::Sync, sync::mpsc::Sender};
@@ -39,22 +40,14 @@ pub type DeployableContracts =
 impl MultiContractRunnerBuilder {
     /// Given an EVM, proceeds to return a runner which is able to execute all tests
     /// against that evm
-    pub fn build<A>(self, project: Project<A>, evm_opts: EvmOpts) -> Result<MultiContractRunner>
+    pub fn build<A>(
+        self,
+        output: ProjectCompileOutput<A>,
+        evm_opts: EvmOpts,
+    ) -> Result<MultiContractRunner>
     where
-        // TODO: Can we remove the static? It's due to the `into_artifacts()` call below
-        A: ArtifactOutput + 'static,
+        A: ArtifactOutput,
     {
-        println!("Compiling...");
-        let output = project.compile()?;
-        if output.has_compiler_errors() {
-            // return the diagnostics error back to the user.
-            eyre::bail!(output.to_string())
-        } else if output.is_unchanged() {
-            println!("No files changed, compilation skipped");
-        } else {
-            println!("{}", output);
-        }
-
         // This is just the contracts compiled, but we need to merge this with the read cached
         // artifacts
         let contracts = output
@@ -101,7 +94,7 @@ impl MultiContractRunnerBuilder {
                     };
 
                 let abi = contract.abi.expect("We should have an abi by now");
-                // if its a test, add it to deployable contracts
+                // if it's a test, add it to deployable contracts
                 if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) &&
                     abi.functions().any(|func| func.name.starts_with("test"))
                 {
@@ -267,7 +260,7 @@ impl MultiContractRunner {
 mod tests {
     use super::*;
     use crate::test_helpers::{filter::Filter, EVM_OPTS};
-    use ethers::solc::ProjectPathsConfig;
+    use ethers::solc::{Project, ProjectPathsConfig};
     use std::path::PathBuf;
 
     fn project() -> Project {
@@ -286,7 +279,9 @@ mod tests {
     }
 
     fn runner() -> MultiContractRunner {
-        MultiContractRunnerBuilder::default().build(project(), EVM_OPTS.clone()).unwrap()
+        MultiContractRunnerBuilder::default()
+            .build(project().compile().unwrap(), EVM_OPTS.clone())
+            .unwrap()
     }
 
     fn test_multi_runner() {
