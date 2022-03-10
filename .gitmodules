@@ -4,3 +4,6 @@
 [submodule "foundry_seminar2/lib/solmate"]
 	path = foundry_seminar2/lib/solmate
 	url = https://github.com/Rari-Capital/solmate
+[submodule "foundry_seminar2/lib/forge-std"]
+	path = foundry_seminar2/lib/forge-std
+	url = https://github.com/brockelmore/forge-std
