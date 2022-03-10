@@ -280,8 +280,7 @@ contract Greeter {}
     cmd.arg("build");
 
     assert!(cmd.stdout_lossy().ends_with(
-        "Compiling...
-Compiling 1 files with 0.8.10
+        "
 Compiler run successful
 ",
     ));
@@ -311,8 +310,7 @@ contract Greeter {
 
     let output = cmd.stdout_lossy();
     assert!(output.contains(
-        "Compiling...
-Compiling 1 files with 0.8.10
+        "
 Compiler run successful (with warnings)
 Warning: Unused function parameter. Remove or comment out the variable name to silence this warning.
 ",
@@ -362,13 +360,11 @@ library FooLib {
 
     cmd.arg("build");
 
-    assert_eq!(
-        "Compiling...
-Compiling 2 files with 0.8.10
+    assert!(cmd.stdout_lossy().ends_with(
+        "
 Compiler run successful
-",
-        cmd.stdout_lossy()
-    );
+"
+    ));
 });
 
 // tests that `--use <solc>` works
@@ -449,8 +445,7 @@ contract Foo {
     prj.write_config(config);
 
     assert!(cmd.stdout_lossy().ends_with(
-        "Compiling...
-Compiling 1 files with 0.8.10
+        "
 Compiler run successful
 ",
     ));
@@ -477,20 +472,16 @@ contract Demo {
 
     cmd.arg("run").arg(script);
     let output = cmd.stdout_lossy();
-    assert_eq!(
-        format!(
-            "Compiling...
-Compiling 1 files with 0.8.10
+    assert!(output.ends_with(&format!(
+        "
 Compiler run successful
 {}
 Gas Used: 1751
 == Logs ==
 script ran
 ",
-            Colour::Green.paint("Script ran successfully.")
-        ),
-        output
-    );
+        Colour::Green.paint("Script ran successfully.")
+    ),));
 });
 
 forgetest_init!(can_parse_dapp_libraries, |prj: TestProject, mut cmd: TestCommand| {

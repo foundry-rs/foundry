@@ -53,7 +53,7 @@ pub mod tree;
 pub mod verify;
 pub mod watch;
 
-use crate::opts::forge::ContractInfo;
+use crate::{opts::forge::ContractInfo, term};
 use ethers::{
     abi::Abi,
     prelude::artifacts::{CompactBytecode, CompactDeployedBytecode},
@@ -89,8 +89,8 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
         );
     }
 
-    println!("Compiling...");
-    let output = project.compile()?;
+    let output = term::with_spinner_reporter(|| project.compile())?;
+
     if output.has_compiler_errors() {
         eyre::bail!(output.to_string())
     } else if output.is_unchanged() {
@@ -146,8 +146,8 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
 
 /// Compile a set of files not necessarily included in the `project`'s source dir
 pub fn compile_files(project: &Project, files: Vec<PathBuf>) -> eyre::Result<ProjectCompileOutput> {
-    println!("Compiling...");
-    let output = project.compile_files(files)?;
+    let output = term::with_spinner_reporter(|| project.compile_files(files))?;
+
     if output.has_compiler_errors() {
         eyre::bail!(output.to_string())
     }
