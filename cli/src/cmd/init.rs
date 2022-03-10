@@ -201,12 +201,10 @@ fn init_vscode(root: &Path) -> eyre::Result<()> {
     let mut settings = if !vscode_dir.is_dir() {
         std::fs::create_dir_all(&vscode_dir)?;
         serde_json::json!({})
+    } else if settings_file.exists() {
+        ethers::solc::utils::read_json_file(&settings_file)?
     } else {
-        if settings_file.exists() {
-            ethers::solc::utils::read_json_file(&settings_file)?
-        } else {
-            serde_json::json!({})
-        }
+        serde_json::json!({})
     };
 
     let obj = settings.as_object_mut().expect("Expected settings object");
