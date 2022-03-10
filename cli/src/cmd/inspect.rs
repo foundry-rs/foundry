@@ -64,7 +64,7 @@ impl FromStr for ContractArtifactFields {
             "deployedbytecode" => Ok(ContractArtifactFields::DeployedBytecode),
             "assembly" | "asm" => Ok(ContractArtifactFields::Assembly),
             "asmOptimized" | "assemblyOptimized" | "assemblyoptimized" | "assembly_optimized" |
-            "amso" => Ok(ContractArtifactFields::AssemblyOptimized),
+            "asmo" => Ok(ContractArtifactFields::AssemblyOptimized),
             "methodIdentifiers" | "method_identifiers" | "method-identifiers" => {
                 Ok(ContractArtifactFields::MethodIdentifiers)
             }
@@ -239,10 +239,7 @@ impl Cmd for InspectArgs {
                 println!("{}", to_value(&artifact.ir_optimized).unwrap().as_str().unwrap());
             }
             ContractArtifactFields::Ewasm => {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&to_value(&artifact.ewasm).unwrap()).unwrap()
-                );
+                println!("{}", to_value(&artifact.ewasm).unwrap().as_str().unwrap());
             }
         };
 
