@@ -65,7 +65,7 @@ impl FromStr for ContractArtifactFields {
             "assembly" | "asm" => Ok(ContractArtifactFields::Assembly),
             "asmOptimized" | "assemblyOptimized" | "assemblyoptimized" | "assembly_optimized" |
             "asmo" => Ok(ContractArtifactFields::AssemblyOptimized),
-            "methodIdentifiers" | "method_identifiers" | "method-identifiers" => {
+            "methodIdentifiers" | "method_identifiers" | "method-identifiers" | "mi" => {
                 Ok(ContractArtifactFields::MethodIdentifiers)
             }
             "gasEstimates" | "gas" | "gas_estimates" | "gas-estimates" | "gasestimates" => {
