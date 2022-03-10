@@ -26,8 +26,8 @@ pub mod fuzz;
 /// Executor EVM spec identifiers
 pub use revm::SpecId;
 
-use self::inspector::{trace::CallTraceArena, InspectorStackConfig};
-use crate::CALLER;
+use self::inspector::InspectorStackConfig;
+use crate::{trace::CallTraceArena, CALLER};
 use bytes::Bytes;
 use ethers::{
     abi::{Abi, Detokenize, RawLog, Tokenize},

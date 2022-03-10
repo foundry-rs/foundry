@@ -1,7 +1,8 @@
-pub mod trace;
-
-use self::trace::{LogCallOrder, RawOrDecodedCall, RawOrDecodedLog, RawOrDecodedReturnData};
 use super::logs::extract_log;
+use crate::trace::{
+    CallTrace, CallTraceArena, LogCallOrder, RawOrDecodedCall, RawOrDecodedLog,
+    RawOrDecodedReturnData,
+};
 use bytes::Bytes;
 use ethers::{
     types::{Address, U256},
@@ -11,8 +12,8 @@ use revm::{
     return_ok, CallInputs, CreateInputs, CreateScheme, Database, EVMData, Gas, Inspector,
     Interpreter, Return,
 };
-use trace::{CallTrace, CallTraceArena};
 
+/// An inspector that collects call traces.
 #[derive(Default, Debug)]
 pub struct Tracer {
     pub trace_stack: Vec<usize>,

@@ -9,10 +9,8 @@ use clap::{AppSettings, Parser};
 use ethers::solc::{ArtifactOutput, ProjectCompileOutput};
 use forge::{
     decode::decode_console_logs,
-    executor::{
-        inspector::trace::{CallTraceDecodingInfo, LocalTraceIdentifier},
-        opts::EvmOpts,
-    },
+    executor::opts::EvmOpts,
+    trace::{identifier::LocalTraceIdentifier, CallTraceDecoder},
     MultiContractRunnerBuilder, TestFilter, TestResult,
 };
 use foundry_config::{figment::Figment, Config};
@@ -368,11 +366,11 @@ fn test<A: ArtifactOutput + 'static>(
                                 !traces.is_empty()
                             {
                                 // Identify addresses in each trace
-                                let mut info = CallTraceDecodingInfo::new_with_labels(
+                                let mut decoder = CallTraceDecoder::new_with_labels(
                                     result.labeled_addresses.clone(),
                                 );
                                 traces.iter().for_each(|trace| {
-                                    info.identify(&trace, &local_identifier);
+                                    decoder.identify(&trace, &local_identifier);
                                 });
 
                                 let num_traces = traces.len();
@@ -388,7 +386,7 @@ fn test<A: ArtifactOutput + 'static>(
 
                                 println!("Traces:");
                                 traces.iter_mut().for_each(|trace| {
-                                    trace.decode(&info);
+                                    decoder.decode(trace);
                                     println!("{}", trace);
                                 });
                                 println!();

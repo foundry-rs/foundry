@@ -1,9 +1,9 @@
 use crate::{
     executor::{
         fuzz::{FuzzError, FuzzTestResult, FuzzedCases, FuzzedExecutor},
-        inspector::trace::CallTraceArena,
         CallResult, EvmError, Executor, RawCallResult,
     },
+    trace::CallTraceArena,
     TestFilter, CALLER,
 };
 use rayon::iter::ParallelIterator;

@@ -5,7 +5,7 @@ mod logs;
 pub use logs::LogCollector;
 
 mod tracer;
-pub use tracer::{trace, Tracer};
+pub use tracer::Tracer;
 
 mod stack;
 pub use stack::InspectorStack;
