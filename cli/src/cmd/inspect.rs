@@ -20,6 +20,7 @@ pub enum ContractArtifactFields {
     Bytecode,
     DeployedBytecode,
     Assembly,
+    AssemblyOptimized,
     MethodIdentifiers,
     GasEstimates,
     Metadata,
@@ -38,6 +39,7 @@ impl fmt::Display for ContractArtifactFields {
             ContractArtifactFields::Bytecode => f.write_str("bytecode"),
             ContractArtifactFields::DeployedBytecode => f.write_str("deployedBytecode"),
             ContractArtifactFields::Assembly => f.write_str("assembly"),
+            ContractArtifactFields::AssemblyOptimized => f.write_str("assemblyOptimized"),
             ContractArtifactFields::MethodIdentifiers => f.write_str("methodIdentifiers"),
             ContractArtifactFields::GasEstimates => f.write_str("gasEstimates"),
             ContractArtifactFields::Metadata => f.write_str("metadata"),
@@ -61,6 +63,8 @@ impl FromStr for ContractArtifactFields {
             "deployedBytecode" | "deployed_bytecode" | "deployed-bytecode" | "deployed" |
             "deployedbytecode" => Ok(ContractArtifactFields::DeployedBytecode),
             "assembly" | "asm" => Ok(ContractArtifactFields::Assembly),
+            "asmOptimized" | "assemblyOptimized" | "assemblyoptimized" | "assembly_optimized" |
+            "amso" => Ok(ContractArtifactFields::AssemblyOptimized),
             "methodIdentifiers" | "method_identifiers" | "method-identifiers" => {
                 Ok(ContractArtifactFields::MethodIdentifiers)
             }
@@ -108,7 +112,7 @@ impl Cmd for InspectArgs {
                 ContractArtifactFields::Abi => cos.push(ContractOutputSelection::Abi),
                 ContractArtifactFields::Bytecode => { /* Auto Generated */ }
                 ContractArtifactFields::DeployedBytecode => { /* Auto Generated */ }
-                ContractArtifactFields::Assembly => {
+                ContractArtifactFields::Assembly | ContractArtifactFields::AssemblyOptimized => {
                     cos.push(ContractOutputSelection::Evm(EvmOutputSelection::Assembly))
                 }
                 ContractArtifactFields::MethodIdentifiers => {
@@ -133,9 +137,20 @@ impl Cmd for InspectArgs {
             }
         }
 
+        // Run Optimized?
+        let optimized = if let ContractArtifactFields::AssemblyOptimized = mode {
+            true
+        } else {
+            build.compiler.optimize
+        };
+
         // Build modified Args
         let modified_build_args = BuildArgs {
-            compiler: CompilerArgs { extra_output: Some(cos), ..build.compiler },
+            compiler: CompilerArgs {
+                extra_output: Some(cos),
+                optimize: optimized,
+                ..build.compiler
+            },
             ..build
         };
 
@@ -175,7 +190,7 @@ impl Cmd for InspectArgs {
                 let tval: Value = to_value(&artifact.deployed_bytecode).unwrap();
                 println!("{}", tval.get("object").unwrap_or(&tval).clone().as_str().unwrap());
             }
-            ContractArtifactFields::Assembly => {
+            ContractArtifactFields::Assembly | ContractArtifactFields::AssemblyOptimized => {
                 println!(
                     "{}",
                     serde_json::to_string_pretty(&to_value(&artifact.assembly).unwrap()).unwrap()
