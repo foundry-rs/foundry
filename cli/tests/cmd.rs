@@ -276,7 +276,7 @@ contract Greeter {}
         .unwrap();
 
     // explicitly set to run with 0.8.10
-    let config = Config { solc_version: Some("0.8.10".parse().unwrap()), ..Default::default() };
+    let config = Config { solc: Some("0.8.10".parse().unwrap()), ..Default::default() };
     prj.write_config(config);
 
     cmd.arg("build");
@@ -306,7 +306,7 @@ contract Greeter {
         .unwrap();
 
     // explicitly set to run with 0.8.10
-    let config = Config { solc_version: Some("0.8.10".parse().unwrap()), ..Default::default() };
+    let config = Config { solc: Some("0.8.10".parse().unwrap()), ..Default::default() };
     prj.write_config(config);
 
     cmd.arg("build");
