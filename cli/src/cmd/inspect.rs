@@ -8,9 +8,7 @@ use crate::{
     opts::forge::CompilerArgs,
 };
 use clap::Parser;
-use ethers::prelude::artifacts::output_selection::{
-    ContractOutputSelection, EvmOutputSelection, EwasmOutputSelection,
-};
+use ethers::prelude::artifacts::output_selection::{ContractOutputSelection, EvmOutputSelection};
 use serde_json::{to_value, Value};
 
 /// Contract level output selection
@@ -23,13 +21,14 @@ pub enum ContractArtifactFields {
     AssemblyOptimized,
     MethodIdentifiers,
     GasEstimates,
-    Metadata,
     StorageLayout,
-    UserDoc,
     DevDoc,
     Ir,
     IrOptimized,
-    Ewasm,
+    // TODO: Add once these commands aren't broken at compiler-level
+    // Metadata,
+    // UserDoc,
+    // Ewasm,
 }
 
 impl fmt::Display for ContractArtifactFields {
@@ -42,13 +41,14 @@ impl fmt::Display for ContractArtifactFields {
             ContractArtifactFields::AssemblyOptimized => f.write_str("assemblyOptimized"),
             ContractArtifactFields::MethodIdentifiers => f.write_str("methodIdentifiers"),
             ContractArtifactFields::GasEstimates => f.write_str("gasEstimates"),
-            ContractArtifactFields::Metadata => f.write_str("metadata"),
             ContractArtifactFields::StorageLayout => f.write_str("storageLayout"),
-            ContractArtifactFields::UserDoc => f.write_str("userdoc"),
             ContractArtifactFields::DevDoc => f.write_str("devdoc"),
             ContractArtifactFields::Ir => f.write_str("ir"),
             ContractArtifactFields::IrOptimized => f.write_str("irOptimized"),
-            ContractArtifactFields::Ewasm => f.write_str("ewasm"),
+            // TODO: Add once these commands aren't broken at compiler-level
+            // ContractArtifactFields::Metadata => f.write_str("metadata"),
+            // ContractArtifactFields::UserDoc => f.write_str("userdoc"),
+            // ContractArtifactFields::Ewasm => f.write_str("ewasm"),
         }
     }
 }
@@ -71,17 +71,18 @@ impl FromStr for ContractArtifactFields {
             "gasEstimates" | "gas" | "gas_estimates" | "gas-estimates" | "gasestimates" => {
                 Ok(ContractArtifactFields::GasEstimates)
             }
-            "metadata" | "meta" => Ok(ContractArtifactFields::Metadata),
             "storageLayout" | "storage_layout" | "storage-layout" | "storagelayout" | "storage" => {
                 Ok(ContractArtifactFields::StorageLayout)
             }
-            "userdoc" => Ok(ContractArtifactFields::UserDoc),
             "devdoc" => Ok(ContractArtifactFields::DevDoc),
             "ir" => Ok(ContractArtifactFields::Ir),
             "ir-optimized" | "irOptimized" | "iroptimized" | "iro" => {
                 Ok(ContractArtifactFields::IrOptimized)
             }
-            "ewasm" => Ok(ContractArtifactFields::Ewasm),
+            // TODO: Add once these commands aren't broken at compiler-level
+            // "metadata" | "meta" => Ok(ContractArtifactFields::Metadata),
+            // "userdoc" => Ok(ContractArtifactFields::UserDoc),
+            // "ewasm" => Ok(ContractArtifactFields::Ewasm),
             _ => Ok(ContractArtifactFields::Bytecode),
         }
     }
@@ -121,19 +122,21 @@ impl Cmd for InspectArgs {
                 ContractArtifactFields::GasEstimates => {
                     cos.push(ContractOutputSelection::Evm(EvmOutputSelection::GasEstimates))
                 }
-                ContractArtifactFields::Metadata => cos.push(ContractOutputSelection::Metadata),
                 ContractArtifactFields::StorageLayout => {
                     cos.push(ContractOutputSelection::StorageLayout)
                 }
-                ContractArtifactFields::UserDoc => cos.push(ContractOutputSelection::UserDoc),
                 ContractArtifactFields::DevDoc => cos.push(ContractOutputSelection::DevDoc),
                 ContractArtifactFields::Ir => cos.push(ContractOutputSelection::Ir),
                 ContractArtifactFields::IrOptimized => {
                     cos.push(ContractOutputSelection::IrOptimized)
-                }
-                ContractArtifactFields::Ewasm => {
-                    cos.push(ContractOutputSelection::Ewasm(EwasmOutputSelection::All))
-                }
+                } /* TODO: Add once these commands aren't broken at compiler-level
+                   * ContractArtifactFields::Metadata =>
+                   * cos.push(ContractOutputSelection::Metadata),
+                   * ContractArtifactFields::UserDoc =>
+                   * cos.push(ContractOutputSelection::UserDoc),
+                   * ContractArtifactFields::Ewasm => {
+                   *     cos.push(ContractOutputSelection::Ewasm(EwasmOutputSelection::All))
+                   * } */
             }
         }
 
@@ -207,23 +210,11 @@ impl Cmd for InspectArgs {
                         .unwrap()
                 );
             }
-            ContractArtifactFields::Metadata => {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&to_value(&artifact.metadata).unwrap()).unwrap()
-                );
-            }
             ContractArtifactFields::StorageLayout => {
                 println!(
                     "{}",
                     serde_json::to_string_pretty(&to_value(&artifact.storage_layout).unwrap())
                         .unwrap()
-                );
-            }
-            ContractArtifactFields::UserDoc => {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&to_value(&artifact.userdoc).unwrap()).unwrap()
                 );
             }
             ContractArtifactFields::DevDoc => {
@@ -237,10 +228,22 @@ impl Cmd for InspectArgs {
             }
             ContractArtifactFields::IrOptimized => {
                 println!("{}", to_value(&artifact.ir_optimized).unwrap().as_str().unwrap());
-            }
-            ContractArtifactFields::Ewasm => {
-                println!("{}", to_value(&artifact.ewasm).unwrap().as_str().unwrap());
-            }
+            } /* TODO: Add once these commands aren't broken at compiler-level
+               * ContractArtifactFields::Metadata => {
+               *     println!(
+               *         "{}",
+               *         serde_json::to_string_pretty(&to_value(&artifact.metadata).unwrap()).
+               * unwrap()     );
+               * }
+               * ContractArtifactFields::UserDoc => {
+               *     println!(
+               *         "{}",
+               *         serde_json::to_string_pretty(&to_value(&artifact.userdoc).unwrap()).
+               * unwrap()     );
+               * }
+               * ContractArtifactFields::Ewasm => {
+               *     println!("{}", to_value(&artifact.ewasm).unwrap().as_str().unwrap());
+               * } */
         };
 
         Ok(())
