@@ -143,7 +143,7 @@ impl EthereumOpts {
         if self.flashbots {
             Ok(FLASHBOTS_URL)
         } else {
-            self.rpc_url.as_deref().ok_or_else(|| eyre::Error::msg("no Ethereum RPC provided, maybe you forgot to set the --rpc-url or the ETH_RPC_URL parameter? Alternatively, consider using the --flashbots flag to get frontrunning protection"))
+            Ok(self.rpc_url.as_deref().unwrap_or("http://localhost:8545"))
         }
     }
 }
