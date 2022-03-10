@@ -3,6 +3,7 @@ use std::{fmt::Write, path::PathBuf};
 use clap::Parser;
 use console::{style, Style};
 use ethers::solc::ProjectPathsConfig;
+
 use rayon::prelude::*;
 use similar::{ChangeTag, TextDiff};
 

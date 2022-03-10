@@ -224,7 +224,7 @@ async fn main() -> eyre::Result<()> {
             let chain_id = Cast::new(&provider).chain_id().await?;
             let sig = sig.unwrap_or_default();
 
-            if let Some(signer) = eth.signer_with(chain_id, provider.clone()).await? {
+            if let Ok(Some(signer)) = eth.signer_with(chain_id, provider.clone()).await {
                 match signer {
                     WalletType::Ledger(signer) => {
                         cast_send(
@@ -284,8 +284,7 @@ async fn main() -> eyre::Result<()> {
                         .await?;
                     }
                 }
-            } else {
-                let from = eth.from.expect("No ETH_FROM or signer specified");
+            } else if let Some(from) = eth.from {
                 cast_send(
                     provider,
                     from,
@@ -303,6 +302,8 @@ async fn main() -> eyre::Result<()> {
                     to_json,
                 )
                 .await?;
+            } else {
+                eyre::bail!("No wallet or sender address provided.")
             }
         }
         Subcommands::PublishTx { eth, raw_tx, cast_async } => {
