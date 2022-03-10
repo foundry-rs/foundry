@@ -130,7 +130,7 @@ fn install_as_submodule(dep: &Dependency, libs: &Path, no_commit: bool) -> eyre:
         .stderr(Stdio::piped())
         .output()?;
 
-    let stderr = str::from_utf8(&output.stderr).unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
 
     if stderr.contains("remote: Repository not found") {
         eyre::bail!("Repo: \"{}\" not found!", &dep.url)
@@ -139,6 +139,8 @@ fn install_as_submodule(dep: &Dependency, libs: &Path, no_commit: bool) -> eyre:
             "\"lib/{}\" already exists in the index, you can update it using forge update.",
             &dep.name
         )
+    } else if stderr.contains("not a git repository") {
+        eyre::bail!("\"{}\" is not a git repository", &dep.url)
     }
 
     // call update on it
