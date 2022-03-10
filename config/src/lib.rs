@@ -2,6 +2,7 @@
 use std::{
     borrow::Cow,
     path::{Path, PathBuf},
+    str::FromStr,
 };
 
 use figment::{
@@ -875,6 +876,17 @@ pub enum SolcReq {
     Version(Version),
     /// Path to an existing local solc installation
     Local(PathBuf),
+}
+
+impl<T: AsRef<str>> From<T> for SolcReq {
+    fn from(s: T) -> Self {
+        let s = s.as_ref();
+        if let Ok(v) = Version::from_str(s) {
+            SolcReq::Version(v)
+        } else {
+            SolcReq::Local(s.into())
+        }
+    }
 }
 
 /// A Provider that ensures all keys are snake case

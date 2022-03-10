@@ -141,6 +141,15 @@ pub struct BuildArgs {
     pub no_auto_detect: bool,
 
     #[clap(
+        help = "specify the solc version or path to a local solc to run with.\
+        This accepts values of the form `x.y.z`, `solc:x.y.z` or `path/to/existing/solc`",
+        value_name = "use",
+        long = "use"
+    )]
+    #[serde(skip)]
+    pub use_solc: Option<String>,
+
+    #[clap(
         help = "if set to true, runs without accessing the network (missing solc versions will not be installed)",
         long
     )]
@@ -250,6 +259,10 @@ impl Provider for BuildArgs {
 
         if self.no_auto_detect {
             dict.insert("auto_detect_solc".to_string(), false.into());
+        }
+
+        if let Some(ref solc) = self.use_solc {
+            dict.insert("solc".to_string(), solc.trim_start_matches("solc:").into());
         }
 
         if self.offline {
