@@ -86,19 +86,12 @@ where
                 cases.borrow_mut().push(FuzzCase { calldata, gas: call.gas });
                 Ok(())
             } else {
-                Err(TestCaseError::fail(format!(
-                    r#"{} ({}). Reason: "{}""#,
-                    func.name,
-                    if should_fail {
-                        "succeeded, but expected failure"
-                    } else {
-                        "failed, but expected success"
-                    },
+                Err(TestCaseError::fail(
                     match foundry_utils::decode_revert(call.result.as_ref(), errors) {
                         Ok(e) => e,
-                        Err(e) => e.to_string(),
-                    }
-                )))
+                        Err(_) => "".to_string(),
+                    },
+                ))
             }
         });
 
@@ -118,7 +111,8 @@ where
                 result.reason = Some(reason.to_string());
             }
             Err(TestError::Fail(reason, calldata)) => {
-                result.reason = Some(reason.to_string());
+                let reason = reason.to_string();
+                result.reason = if reason.is_empty() { None } else { Some(reason) };
 
                 let args = func
                     .decode_input(&calldata.as_ref()[4..])
@@ -175,18 +169,6 @@ pub struct FuzzTestResult {
     /// Labeled addresses
     pub labeled_addresses: BTreeMap<Address, String>,
 }
-
-/*impl FuzzTestResult {
-    /// Returns `true` if all test cases succeeded
-    pub fn is_ok(&self) -> bool {
-        self.test_error.is_none()
-    }
-
-    /// Returns `true` if a test case failed
-    pub fn is_err(&self) -> bool {
-        self.test_error.is_some()
-    }
-}*/
 
 /// Container type for all successful test cases
 #[derive(Clone, Debug, Serialize, Deserialize)]
