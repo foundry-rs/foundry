@@ -676,9 +676,11 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                     Err(err) => return evm_error(&err.to_string()),
                 };
 
-                // get the hex string & decode it
+                // get the hex string
                 let output = unsafe { std::str::from_utf8_unchecked(&output) };
-                let decoded = match hex::decode(&output.trim()[2..]) {
+                let output = output.strip_prefix("0x").unwrap_or(output);
+                //decode hex
+                let decoded = match hex::decode(output) {
                     Ok(res) => res,
                     Err(err) => return evm_error(&err.to_string()),
                 };
