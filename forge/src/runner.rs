@@ -221,7 +221,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                     Some(format!("Setup failed: {}", &e.to_string())),
                 ),
             };
-            traces.extend(setup_traces.map(|traces| (TraceKind::Deployment, traces)).into_iter());
+            traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)).into_iter());
             logs.extend_from_slice(&setup_logs);
 
             Ok((addr, logs, traces, setup_labels, setup_failed, reason))
