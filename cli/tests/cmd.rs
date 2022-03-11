@@ -382,19 +382,12 @@ contract Foo {}
 
     cmd.args(["build", "--use", "0.8.11"]);
 
-    assert!(cmd.stdout_lossy().ends_with(
-        "Compiling 1 files with 0.8.11
-Compiler run successful
-"
-    ));
+    let stdout = cmd.stdout_lossy();
+    assert!(stdout.ends_with("\n\nCompiler run successful\n"));
 
     cmd.fuse().args(["build", "--force", "--use", "solc:0.8.11"]).root_arg();
 
-    assert!(cmd.stdout_lossy().ends_with(
-        "Compiling 1 files with 0.8.11
-Compiler run successful
-"
-    ));
+    assert!(stdout.ends_with("\n\nCompiler run successful\n"));
 
     // fails to use solc that does not exist
     cmd.fuse().args(["build", "--use", "this/solc/does/not/exist"]);
@@ -403,11 +396,7 @@ Compiler run successful
     // 0.8.11 was installed in previous step, so we can use the path to this directly
     let local_solc = ethers::solc::Solc::find_svm_installed_version("0.8.11").unwrap().unwrap();
     cmd.fuse().args(["build", "--force", "--use"]).arg(local_solc.solc).root_arg();
-    assert!(cmd.stdout_lossy().ends_with(
-        "Compiling 1 files with 0.8.11
-Compiler run successful
-"
-    ));
+    assert!(stdout.ends_with("\n\nCompiler run successful\n"));
 });
 
 // test to ensure yul optimizer can be set as intended

@@ -1259,7 +1259,7 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#b05136e173f83f3c59280501a3fd4b04f7356e6f"
+source = "git+https://github.com/gakonst/ethers-rs#341e98b4b0913c14add343a797b248eee3ecc370"
 dependencies = [
  "ethers-addressbook",
  "ethers-contract",
@@ -1274,7 +1274,7 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "0.1.0"
-source = "git+https://github.com/gakonst/ethers-rs#b05136e173f83f3c59280501a3fd4b04f7356e6f"
+source = "git+https://github.com/gakonst/ethers-rs#341e98b4b0913c14add343a797b248eee3ecc370"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -1285,7 +1285,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#b05136e173f83f3c59280501a3fd4b04f7356e6f"
+source = "git+https://github.com/gakonst/ethers-rs#341e98b4b0913c14add343a797b248eee3ecc370"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1303,7 +1303,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#b05136e173f83f3c59280501a3fd4b04f7356e6f"
+source = "git+https://github.com/gakonst/ethers-rs#341e98b4b0913c14add343a797b248eee3ecc370"
 dependencies = [
  "Inflector",
  "cfg-if 1.0.0",
@@ -1326,7 +1326,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#b05136e173f83f3c59280501a3fd4b04f7356e6f"
+source = "git+https://github.com/gakonst/ethers-rs#341e98b4b0913c14add343a797b248eee3ecc370"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -1340,7 +1340,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#b05136e173f83f3c59280501a3fd4b04f7356e6f"
+source = "git+https://github.com/gakonst/ethers-rs#341e98b4b0913c14add343a797b248eee3ecc370"
 dependencies = [
  "arrayvec 0.7.2",
  "bytes",
@@ -1368,7 +1368,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "0.2.0"
-source = "git+https://github.com/gakonst/ethers-rs#b05136e173f83f3c59280501a3fd4b04f7356e6f"
+source = "git+https://github.com/gakonst/ethers-rs#341e98b4b0913c14add343a797b248eee3ecc370"
 dependencies = [
  "ethers-core",
  "ethers-solc",
@@ -1382,7 +1382,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#b05136e173f83f3c59280501a3fd4b04f7356e6f"
+source = "git+https://github.com/gakonst/ethers-rs#341e98b4b0913c14add343a797b248eee3ecc370"
 dependencies = [
  "async-trait",
  "ethers-contract",
@@ -1405,7 +1405,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#b05136e173f83f3c59280501a3fd4b04f7356e6f"
+source = "git+https://github.com/gakonst/ethers-rs#341e98b4b0913c14add343a797b248eee3ecc370"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -1437,7 +1437,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#b05136e173f83f3c59280501a3fd4b04f7356e6f"
+source = "git+https://github.com/gakonst/ethers-rs#341e98b4b0913c14add343a797b248eee3ecc370"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1460,7 +1460,7 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "0.3.0"
-source = "git+https://github.com/gakonst/ethers-rs#b05136e173f83f3c59280501a3fd4b04f7356e6f"
+source = "git+https://github.com/gakonst/ethers-rs#341e98b4b0913c14add343a797b248eee3ecc370"
 dependencies = [
  "colored",
  "dunce",
@@ -4278,7 +4278,7 @@ checksum = "6bdef32e8150c2a081110b42772ffe7d7c9032b606bc226c8260fd97e0976601"
 [[package]]
 name = "svm-rs"
 version = "0.2.9"
-source = "git+https://github.com/roynalnaruto/svm-rs#8e33f55fa2a2afb937749e31b2ffa42600bfe216"
+source = "git+https://github.com/gakonst/svm-rs?branch=patch-1#4c46f8b37c4ccb011095a003b7a0a4aa0b3b1d60"
 dependencies = [
  "anyhow",
  "cfg-if 1.0.0",
