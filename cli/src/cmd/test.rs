@@ -349,7 +349,7 @@ fn test<A: ArtifactOutput + 'static>(
                 println!("Running {} {} for {}", tests.len(), term, contract_name);
             }
             for (name, result) in &mut tests {
-                short_test_result(&name, &result);
+                short_test_result(name, result);
 
                 // We only display logs at level 2 and above
                 if verbosity < 2 {
@@ -383,7 +383,7 @@ fn test<A: ArtifactOutput + 'static>(
 
                     println!("Traces:");
                     for (kind, trace) in &mut result.traces {
-                        decoder.identify(&trace, &local_identifier);
+                        decoder.identify(trace, &local_identifier);
 
                         let should_include = match kind {
                             // At verbosity level 4, we also display the setup trace for failed

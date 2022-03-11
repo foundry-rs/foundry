@@ -62,6 +62,19 @@ pub enum EvmError {
     Eyre(#[from] eyre::Error),
 }
 
+/// The result of a deployment.
+#[derive(Debug)]
+pub struct DeployResult {
+    /// The address of the deployed contract
+    pub address: Address,
+    /// The gas cost of the deployment
+    pub gas: u64,
+    /// The logs emitted during the deployment
+    pub logs: Vec<RawLog>,
+    /// The traces of the deployment
+    pub traces: Option<CallTraceArena>,
+}
+
 /// The result of a call.
 #[derive(Debug)]
 pub struct CallResult<D: Detokenize> {
@@ -312,19 +325,14 @@ where
     }
 
     /// Deploys a contract and commits the new state to the underlying database.
-    pub fn deploy(
-        &mut self,
-        from: Address,
-        code: Bytes,
-        value: U256,
-    ) -> Result<(Address, Return, u64, Vec<RawLog>, Option<CallTraceArena>)> {
+    pub fn deploy(&mut self, from: Address, code: Bytes, value: U256) -> Result<DeployResult> {
         let mut evm = EVM::new();
         evm.env = self.build_env(from, TransactTo::Create(CreateScheme::Create), code, value);
         evm.database(&mut self.db);
 
         let mut inspector = self.inspector_config.stack();
         let (status, out, gas, _) = evm.inspect_commit(&mut inspector);
-        let addr = match out {
+        let address = match out {
             TransactOut::Create(_, Some(addr)) => addr,
             // TODO: We should have better error handling logic in the test runner
             // regarding deployments in general
@@ -332,7 +340,7 @@ where
         };
         let (logs, _, traces) = collect_inspector_states(inspector);
 
-        Ok((addr, status, gas, logs, traces))
+        Ok(DeployResult { address, gas, logs, traces })
     }
 
     /// Check if a call to a test contract was successful.
