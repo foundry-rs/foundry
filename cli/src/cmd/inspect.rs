@@ -59,29 +59,30 @@ impl FromStr for ContractArtifactFields {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "abi" => Ok(ContractArtifactFields::Abi),
-            "bytecode" => Ok(ContractArtifactFields::Bytecode),
             "deployedBytecode" | "deployed_bytecode" | "deployed-bytecode" | "deployed" |
             "deployedbytecode" => Ok(ContractArtifactFields::DeployedBytecode),
             "assembly" | "asm" => Ok(ContractArtifactFields::Assembly),
             "asmOptimized" | "assemblyOptimized" | "assemblyoptimized" | "assembly_optimized" |
-            "asmo" => Ok(ContractArtifactFields::AssemblyOptimized),
-            "methodIdentifiers" | "method_identifiers" | "method-identifiers" | "mi" => {
-                Ok(ContractArtifactFields::MethodIdentifiers)
+            "asmopt" | "assembly-optimized" | "asmo" => {
+                Ok(ContractArtifactFields::AssemblyOptimized)
             }
+            "methods" | "methodidentifiers" | "methodIdentifiers" | "method_identifiers" |
+            "method-identifiers" | "mi" => Ok(ContractArtifactFields::MethodIdentifiers),
             "gasEstimates" | "gas" | "gas_estimates" | "gas-estimates" | "gasestimates" => {
                 Ok(ContractArtifactFields::GasEstimates)
             }
             "storageLayout" | "storage_layout" | "storage-layout" | "storagelayout" | "storage" => {
                 Ok(ContractArtifactFields::StorageLayout)
             }
-            "devdoc" => Ok(ContractArtifactFields::DevDoc),
-            "ir" => Ok(ContractArtifactFields::Ir),
-            "ir-optimized" | "irOptimized" | "iroptimized" | "iro" => {
+            "devdoc" | "dev-doc" | "devDoc" => Ok(ContractArtifactFields::DevDoc),
+            "ir" | "iR" | "IR" => Ok(ContractArtifactFields::Ir),
+            "ir-optimized" | "irOptimized" | "iroptimized" | "iro" | "iropt" => {
                 Ok(ContractArtifactFields::IrOptimized)
             }
             "metadata" | "meta" => Ok(ContractArtifactFields::Metadata),
-            "userdoc" => Ok(ContractArtifactFields::UserDoc),
-            "ewasm" => Ok(ContractArtifactFields::Ewasm),
+            "userdoc" | "userDoc" | "user-doc" => Ok(ContractArtifactFields::UserDoc),
+            "ewasm" | "e-wasm" => Ok(ContractArtifactFields::Ewasm),
+            // Don't need to match bytecode since this is covered by the default case here
             _ => Ok(ContractArtifactFields::Bytecode),
         }
     }
