@@ -649,11 +649,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
 
                 // get the hex string
                 let output = unsafe { std::str::from_utf8_unchecked(&output) };
-                let mut output = output.trim();
-                //remove "0x" only if present 
-                if output.starts_with("0x") {
-                    output = &output[2..]
-                }
+                let output = output.strip_prefix("0x").unwrap_or(output);
                 //decode hex
                 let decoded = match hex::decode(output) {
                     Ok(res) => res,
