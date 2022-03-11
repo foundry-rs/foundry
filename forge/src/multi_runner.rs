@@ -178,14 +178,14 @@ impl MultiContractRunner {
         filter: &(impl TestFilter + Send + Sync),
         stream_result: Option<Sender<(String, BTreeMap<String, TestResult>)>>,
     ) -> Result<BTreeMap<String, BTreeMap<String, TestResult>>> {
-        let source_paths = self.source_paths.clone();
         let env = self.evm_opts.evm_env();
         let results = self
             .contracts
             .par_iter()
-            .filter(|(name, _)| filter.matches_path(source_paths.get(*name).unwrap()))
-            .filter(|(name, _)| filter.matches_contract(name))
-            .filter(|(_, (abi, _, _))| abi.functions().any(|func| filter.matches_test(&func.name)))
+            .filter(|(name, _)| {
+                filter.matches_path(&self.source_paths.get(*name).unwrap()) &&
+                    filter.matches_contract(name)
+            })
             .map(|(name, (abi, deploy_code, libs))| {
                 let mut builder = ExecutorBuilder::new()
                     .with_cheatcodes(self.evm_opts.ffi)
@@ -207,10 +207,8 @@ impl MultiContractRunner {
                     self.run_tests(name, abi, executor, deploy_code.clone(), libs, filter)?;
                 Ok((name.clone(), result))
             })
-            .filter_map(|x: Result<_>| x.ok())
-            .filter_map(
-                |(name, result)| if result.is_empty() { None } else { Some((name, result)) },
-            )
+            .filter_map(Result::<_>::ok)
+            .filter(|(_, results)| !results.is_empty())
             .map_with(stream_result, |stream_result, (name, result)| {
                 if let Some(stream_result) = stream_result.as_ref() {
                     stream_result.send((name.clone(), result.clone())).unwrap();
