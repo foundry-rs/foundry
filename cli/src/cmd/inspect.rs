@@ -63,7 +63,9 @@ impl FromStr for ContractArtifactFields {
             "deployedbytecode" => Ok(ContractArtifactFields::DeployedBytecode),
             "assembly" | "asm" => Ok(ContractArtifactFields::Assembly),
             "asmOptimized" | "assemblyOptimized" | "assemblyoptimized" | "assembly_optimized" |
-            "assembly-optimized" | "asmo" => Ok(ContractArtifactFields::AssemblyOptimized),
+            "asmopt" | "assembly-optimized" | "asmo" => {
+                Ok(ContractArtifactFields::AssemblyOptimized)
+            }
             "methods" | "methodidentifiers" | "methodIdentifiers" | "method_identifiers" |
             "method-identifiers" | "mi" => Ok(ContractArtifactFields::MethodIdentifiers),
             "gasEstimates" | "gas" | "gas_estimates" | "gas-estimates" | "gasestimates" => {
@@ -74,7 +76,7 @@ impl FromStr for ContractArtifactFields {
             }
             "devdoc" | "dev-doc" | "devDoc" => Ok(ContractArtifactFields::DevDoc),
             "ir" | "iR" | "IR" => Ok(ContractArtifactFields::Ir),
-            "ir-optimized" | "irOptimized" | "iroptimized" | "iro" => {
+            "ir-optimized" | "irOptimized" | "iroptimized" | "iro" | "iropt" => {
                 Ok(ContractArtifactFields::IrOptimized)
             }
             "metadata" | "meta" => Ok(ContractArtifactFields::Metadata),
