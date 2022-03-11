@@ -10,6 +10,7 @@ use ethers::solc::{ArtifactOutput, ProjectCompileOutput};
 use forge::{
     decode::decode_console_logs,
     executor::opts::EvmOpts,
+    gas_report::GasReport,
     trace::{identifier::LocalTraceIdentifier, CallTraceDecoder},
     MultiContractRunnerBuilder, TestFilter, TestResult,
 };
@@ -319,108 +320,99 @@ fn test<A: ArtifactOutput + 'static>(
     filter: Filter,
     json: bool,
     allow_failure: bool,
-    gas_reports: (bool, Vec<String>),
+    (gas_reporting, gas_reports): (bool, Vec<String>),
 ) -> eyre::Result<TestOutcome> {
     let verbosity = evm_opts.verbosity;
-    let gas_reporting = gas_reports.0;
     if gas_reporting && evm_opts.verbosity < 3 {
-        // force evm to do tracing, but don't hit the verbosity print path
+        // Enable tracing without hitting the verbosity print path
         evm_opts.verbosity = 3;
     }
     let mut runner = builder.build(output, evm_opts)?;
 
     if json {
         let results = runner.test(&filter, None)?;
-        let res = serde_json::to_string(&results)?; // TODO: Make this work normally
-        println!("{}", res);
+        // TODO: Make this work normally
+        println!("{}", serde_json::to_string(&results)?);
         Ok(TestOutcome::new(results, allow_failure))
     } else {
-        // TODO: Re-enable when ported
-        //let mut gas_report = GasReport::new(gas_reports.1);
         let local_identifier = LocalTraceIdentifier::new(&runner.known_contracts);
         let (tx, rx) = channel::<(String, BTreeMap<String, TestResult>)>();
-        let handle = thread::spawn(move || {
-            while let Ok((contract_name, tests)) = rx.recv() {
-                println!();
-                if !tests.is_empty() {
-                    let term = if tests.len() > 1 { "tests" } else { "test" };
-                    println!("Running {} {} for {}", tests.len(), term, contract_name);
-                }
-                for (name, mut result) in tests {
-                    short_test_result(&name, &result);
 
-                    // We only display logs at level 2 and above
-                    if verbosity < 2 {
+        thread::spawn(move || runner.test(&filter, Some(tx)).unwrap());
+
+        let mut results: BTreeMap<String, BTreeMap<String, TestResult>> = BTreeMap::new();
+        let mut gas_report = GasReport::new(gas_reports);
+        for (contract_name, mut tests) in rx {
+            println!();
+            if !tests.is_empty() {
+                let term = if tests.len() > 1 { "tests" } else { "test" };
+                println!("Running {} {} for {}", tests.len(), term, contract_name);
+            }
+            for (name, result) in &mut tests {
+                short_test_result(&name, &result);
+
+                // We only display logs at level 2 and above
+                if verbosity < 2 {
+                    continue
+                }
+
+                // We only decode logs from Hardhat and DS-style console events
+                let console_logs = decode_console_logs(&result.logs);
+                if !console_logs.is_empty() {
+                    println!("Logs:");
+                    for log in console_logs {
+                        println!("  {}", log);
+                    }
+                    println!();
+                }
+
+                if !result.traces.is_empty() {
+                    // We only display traces at verbosity level 3 and above
+                    if verbosity < 3 {
                         continue
                     }
 
-                    // We only decode logs from Hardhat and DS-style console events
-                    let console_logs = decode_console_logs(&result.logs);
-                    if !console_logs.is_empty() {
-                        println!("Logs:");
-                        for log in console_logs {
-                            println!("  {}", log);
-                        }
-                        println!();
+                    // At verbosity level 3, we only display traces for failed tests
+                    if verbosity == 3 && result.success {
+                        continue
                     }
 
-                    if !result.traces.is_empty() {
-                        // We only display traces at verbosity level 3 and above
-                        if verbosity < 3 {
-                            continue
-                        }
+                    // Identify addresses in each trace
+                    let mut decoder =
+                        CallTraceDecoder::new_with_labels(result.labeled_addresses.clone());
+                    result.traces.iter().for_each(|trace| {
+                        decoder.identify(&trace, &local_identifier);
+                    });
 
-                        // At verbosity level 3, we only display traces for failed tests
-                        if verbosity == 3 && result.success {
-                            continue
-                        }
+                    // At verbosity level 4, we also display the setup trace for failed tests
+                    // At verbosity level 5, we display all traces for all tests
+                    let print_setup = (verbosity >= 5) || (verbosity == 4 && !result.success);
+                    let traces = if print_setup {
+                        &mut result.traces[..]
+                    } else {
+                        let num_traces = result.traces.len();
+                        // NOTE: This is safe because of the `!traces.is_empty()` check above
+                        &mut result.traces[num_traces - 1..]
+                    };
 
-                        // Identify addresses in each trace
-                        let mut decoder =
-                            CallTraceDecoder::new_with_labels(result.labeled_addresses.clone());
-                        result.traces.iter().for_each(|trace| {
-                            decoder.identify(&trace, &local_identifier);
-                        });
+                    println!("Traces:");
+                    traces.iter_mut().for_each(|trace| {
+                        decoder.decode(trace);
+                        println!("{}", trace);
+                    });
 
-                        // At verbosity level 4, we also display the setup trace for failed tests
-                        // At verbosity level 5, we display all traces for all tests
-                        let print_setup = (verbosity >= 5) || (verbosity == 4 && !result.success);
-                        let traces = if print_setup {
-                            &mut result.traces[..]
-                        } else {
-                            let num_traces = result.traces.len();
-                            // NOTE: This is safe because of the `!traces.is_empty()` check above
-                            &mut result.traces[num_traces - 1..]
-                        };
-
-                        println!("Traces:");
-                        traces.iter_mut().for_each(|trace| {
-                            decoder.decode(trace);
-                            println!("{}", trace);
-                        });
+                    if gas_reporting {
+                        gas_report.analyze(&result.traces);
                     }
                 }
             }
-        });
+            results.insert(contract_name, tests);
+        }
 
-        let results = runner.test(&filter, Some(tx))?;
+        if gas_reporting {
+            println!("{}", gas_report.finalize());
+        }
 
-        handle.join().unwrap();
-
-        // TODO: Re-enable when ported
-        /*if gas_reporting {
-            for tests in results.values() {
-                for result in tests.values() {
-                    if let (Some(traces), Some(identified_contracts)) =
-                        (&result.traces, &result.identified_contracts)
-                    {
-                        gas_report.analyze(traces, identified_contracts);
-                    }
-                }
-            }
-            gas_report.finalize();
-            println!("{}", gas_report);
-        }*/
         Ok(TestOutcome::new(results, allow_failure))
     }
 }

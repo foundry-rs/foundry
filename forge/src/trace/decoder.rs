@@ -18,14 +18,18 @@ use std::collections::BTreeMap;
 /// different sets might overlap.
 #[derive(Default, Debug)]
 pub struct CallTraceDecoder {
+    /// Addresses identified to be a specific contract.
+    ///
+    /// The values are in the form `"<artifact>:<contract>"`.
+    pub contracts: BTreeMap<Address, String>,
     /// Address labels
-    labels: BTreeMap<Address, String>,
+    pub labels: BTreeMap<Address, String>,
     /// All known functions
-    functions: BTreeMap<[u8; 4], Function>,
+    pub functions: BTreeMap<[u8; 4], Function>,
     /// All known events
-    events: BTreeMap<H256, Event>,
+    pub events: BTreeMap<H256, Event>,
     /// All known errors
-    errors: Abi,
+    pub errors: Abi,
 }
 
 impl CallTraceDecoder {
@@ -35,6 +39,7 @@ impl CallTraceDecoder {
     /// as DSTest-style logs.
     pub fn new() -> Self {
         Self {
+            contracts: BTreeMap::new(),
             labels: [(*CHEATCODE_ADDRESS, "VM".to_string())].into(),
             functions: HEVM_ABI
                 .functions()
@@ -61,9 +66,16 @@ impl CallTraceDecoder {
     ///
     /// Unknown contracts are contracts that either lack a label or an ABI.
     pub fn identify(&mut self, trace: &CallTraceArena, identifier: &impl TraceIdentifier) {
-        // TODO: Only iterate over addresses we haven't identified yet
         trace.addresses_iter().for_each(|(address, code)| {
-            let (label, abi) = identifier.identify_address(address, code);
+            // We only try to identify addresses with missing data
+            if self.labels.contains_key(address) && self.contracts.contains_key(address) {
+                return
+            }
+
+            let (contract, label, abi) = identifier.identify_address(address, code);
+            if let Some(contract) = contract {
+                self.contracts.entry(*address).or_insert(contract);
+            }
 
             if let Some(label) = label {
                 self.labels.entry(*address).or_insert(label);
@@ -99,6 +111,11 @@ impl CallTraceDecoder {
 
     pub fn decode(&self, traces: &mut CallTraceArena) {
         for node in traces.arena.iter_mut() {
+            // Set contract name
+            if let Some(contract) = self.contracts.get(&node.trace.address) {
+                node.trace.contract = Some(contract.clone());
+            }
+
             // Set label
             if let Some(label) = self.labels.get(&node.trace.address) {
                 node.trace.label = Some(label.clone());

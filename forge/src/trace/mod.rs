@@ -279,6 +279,14 @@ pub struct CallTrace {
     pub depth: usize,
     /// Whether the call was successful
     pub success: bool,
+    /// The name of the contract, if any.
+    ///
+    /// The format is `"<artifact>:<contract>"` for easy lookup in local contracts.
+    ///
+    /// This member is not used by the core call tracing functionality (decoding/displaying). The
+    /// intended use case is for other components that may want to process traces by specific
+    /// contracts (e.g. gas reports).
+    pub contract: Option<String>,
     /// The label for the destination address, if any
     pub label: Option<String>,
     /// The destination address of the call

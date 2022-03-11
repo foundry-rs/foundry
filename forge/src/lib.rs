@@ -3,6 +3,9 @@ pub mod decode;
 /// Call trace arena, decoding and formatting
 pub mod trace;
 
+/// Gas reports
+pub mod gas_report;
+
 /// The Forge test runner
 mod runner;
 pub use runner::{ContractRunner, TestKind, TestKindGas, TestResult};
