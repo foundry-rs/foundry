@@ -97,14 +97,26 @@ pub fn extract_log(interpreter: &Interpreter) -> Option<RawLog> {
         _ => return None,
     };
 
-    let (offset, len) = (interpreter.stack().peek(0).ok()?, interpreter.stack().peek(1).ok()?);
-    let data = if len.is_zero() {
+    let (offset, len) = (
+        as_usize_or_return!(interpreter.stack().peek(0).ok()?, None),
+        as_usize_or_return!(interpreter.stack().peek(1).ok()?, None),
+    );
+    let data = if len == 0 {
         Vec::new()
     } else {
-        interpreter
-            .memory
-            .get_slice(as_usize_or_return!(offset, None), as_usize_or_return!(len, None))
-            .to_vec()
+        // If we're trying to access more memory than exists, we will pretend like that memory is
+        // zeroed. We could resize the memory here, but it would mess up the gas accounting REVM
+        // does for memory resizes.
+        if offset > interpreter.memory.len() {
+            vec![0; len]
+        } else if offset + len > interpreter.memory.len() {
+            let mut data =
+                Vec::from(interpreter.memory.get_slice(offset, interpreter.memory.len()));
+            data.resize(offset + len, 0);
+            data
+        } else {
+            interpreter.memory.get_slice(offset, len).to_vec()
+        }
     };
 
     let mut topics = Vec::with_capacity(num_topics);
