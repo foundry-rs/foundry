@@ -308,6 +308,12 @@ impl TestCommand {
         self
     }
 
+    /// Convenience function to add `--root project.root()` argument
+    pub fn root_arg(&mut self) -> &mut TestCommand {
+        let root = self.project.root().to_path_buf();
+        self.arg("--root").arg(root)
+    }
+
     /// Set the environment variable `k` to value `v`. The variable will be
     /// removed when the command is dropped.
     pub fn set_env(&mut self, k: impl AsRef<str>, v: impl Display) {
@@ -378,8 +384,8 @@ impl TestCommand {
     /// Runs the command and prints its output
     pub fn print_output(&mut self) {
         let output = self.cmd.output().unwrap();
-        println!("{}", String::from_utf8_lossy(&output.stdout));
-        println!("{}", String::from_utf8_lossy(&output.stderr));
+        println!("stdout: {}", String::from_utf8_lossy(&output.stdout));
+        println!("stderr: {}", String::from_utf8_lossy(&output.stderr));
     }
 
     /// Runs the command and asserts that it resulted in an error exit code.

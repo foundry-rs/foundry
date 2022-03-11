@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 
 use std::{fs::File, io::Read, path::Path};
 
+use serde::Deserialize;
 use sputnik::{
     backend::Backend,
     executor::stack::{
@@ -395,6 +396,34 @@ fn evm_error(retdata: &str) -> Capture<(ExitReason, Vec<u8>), Infallible> {
     ))
 }
 
+// Enum which unifies the deserialization of Hardhat-style artifacts
+// with Forge-style artifacts, to get their bytecode.
+#[derive(Deserialize)]
+#[serde(untagged)]
+#[allow(clippy::large_enum_variant)]
+enum Bytecode {
+    Bytecode(BytecodeHelper),
+    CompactContractBytecode(CompactContractBytecode),
+}
+
+// helper type for deserialization
+#[derive(Deserialize)]
+struct BytecodeHelper {
+    #[serde(deserialize_with = "ethers::solc::artifacts::deserialize_bytes")]
+    bytecode: ethers::types::Bytes,
+}
+
+impl Bytecode {
+    fn into_inner(self) -> Option<ethers::types::Bytes> {
+        match self {
+            Bytecode::Bytecode(inner) => Some(inner.bytecode),
+            Bytecode::CompactContractBytecode(inner) => {
+                inner.bytecode.and_then(|bcode| bcode.object.into_bytes())
+            }
+        }
+    }
+}
+
 // helper for creating the Expected Revert return type, based on if there was a call or a create,
 // and if there was any decoded retdata that matched the expected revert value.
 fn revert_return_evm<T: ToString>(
@@ -647,9 +676,11 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                     Err(err) => return evm_error(&err.to_string()),
                 };
 
-                // get the hex string & decode it
+                // get the hex string
                 let output = unsafe { std::str::from_utf8_unchecked(&output) };
-                let decoded = match hex::decode(&output.trim()[2..]) {
+                let output = output.strip_prefix("0x").unwrap_or(output);
+                //decode hex
+                let decoded = match hex::decode(output) {
                     Ok(res) => res,
                     Err(err) => return evm_error(&err.to_string()),
                 };
@@ -660,6 +691,7 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
             HEVMCalls::GetCode(inner) => {
                 self.add_debug(CheatOp::GETCODE);
 
+                // TODO: Make this path relative to project root in some way.
                 let path = if inner.0.ends_with(".json") {
                     Path::new(&inner.0).to_path_buf()
                 } else {
@@ -684,11 +716,9 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                     Err(e) => return evm_error(&e.to_string()),
                 }
 
-                match serde_json::from_str::<CompactContractBytecode>(&data) {
-                    Ok(contract_file) => {
-                        if let Some(bin) =
-                            contract_file.bytecode.and_then(|bcode| bcode.object.into_bytes())
-                        {
+                match serde_json::from_str::<Bytecode>(&data) {
+                    Ok(bytecode) => {
+                        if let Some(bin) = bytecode.into_inner() {
                             res = ethers::abi::encode(&[Token::Bytes(bin.to_vec())]);
                         } else {
                             return evm_error(

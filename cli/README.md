@@ -29,6 +29,7 @@ SUBCOMMANDS:
     create             deploy a compiled contract
     help               Print this message or the help of the given subcommand(s)
     init               initializes a new forge sample repository
+    inspect            Outputs a contract in a specified format (ir, assembly, ...)
     install            installs one or more dependencies as git submodules
     remappings         prints the automatically inferred remappings for this repository
     remove             removes one or more dependencies from git submodules
@@ -283,7 +284,7 @@ no files changed, compilation skipped
 {"\"Gm.json\":Gm":{"testNonOwnerCannotGm":{"success":true,"reason":null,"gas_used":3782,"counterexample":null,"logs":[]},"testOwnerCannotGmOnBadBlocks":{"success":true,"reason":null,"gas_used":7771,"counterexample":null,"logs":[]},"testOwnerCanGmOnGoodBlocks":{"success":true,"reason":null,"gas_used":31696,"counterexample":null,"logs":[]}},"\"Greet.json\":Greet":{"testWorksForAllGreetings":{"success":true,"reason":null,"gas_used":null,"counterexample":null,"logs":[]},"testCannotGm":{"success":true,"reason":null,"gas_used":6819,"counterexample":null,"logs":[]},"testCanSetGreeting":{"success":true,"reason":null,"gas_used":31070,"counterexample":null,"logs":[]}}}
 ```
 
-## Running a Subset of Tests
+#### Running a Subset of Tests
 
 By default, `forge test` (and `forge snapshot`) will run every function in any contract if the function starts with `test`.
 
@@ -296,7 +297,7 @@ You can narrow down the amount of tests to run by using one or more of the curre
 --no-match-contract <CONTRACT_PATTERN_INVERSE>
 ```
 
-### Examples
+#### Examples
 
 `--match-contract` and `--no-match-contract` matches against the name of the contracts containing tests. Consider the following contracts, each containing a few tests.
 
@@ -334,6 +335,60 @@ contract ContractBar {
 * `forge test --no-match-test test` will run no tests
 
 You can always combine any of the four arguments, they have AND semantics.
+
+### Inspect
+
+The `inspect` subcommand compiles the specified contract and prints the specified mode.
+
+To run the `inspect` command, run `forge inspect <CONTRACT> <MODE>`.
+Where `<CONTRACT>` is the name of the contract to inspect, and `<MODE>` is the compiled artifact output field.
+
+`<MODE>` can be one of the following:
+- `abi`
+- `bytecode`
+- `deployed-bytecode`
+- `asm`
+- `assembly-optimized`
+- `method-identifiers`
+- `gas-estimates`
+- `storage-layout`
+- `dev-doc`
+- `user-doc`
+- `ir`
+- `ir-optimiized`
+- `metadata`
+- `ewasm`
+
+For example, to get the bytecode of `Greeter.sol` in this project structure:
+```ml
+src
+└─ Greeter.sol
+```
+run: `forge inspect Greeter bytecode`
+
+Which will output the contract bytecode as a hex string.
+
+TIP: To save this easily to a file (for example `output.txt`),
+you can redirect the output of `forge inspect` to the file like so:
+`forge inspect Greeter bytecode > output.txt`
+
+##### Forge Inspect Command Docs
+
+Output of `forge inspect --help`:
+```
+forge-inspect
+Outputs a contract in a specified format (ir, assembly, ...)
+
+USAGE:
+    forge inspect [OPTIONS] <CONTRACT> <MODE>
+
+ARGS:
+    <CONTRACT>
+            the contract to inspect
+
+    <MODE>
+            the contract artifact field to inspect
+```
 
 ### Common Patterns
 

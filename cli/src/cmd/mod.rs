@@ -44,6 +44,7 @@ pub mod create;
 pub mod flatten;
 pub mod fmt;
 pub mod init;
+pub mod inspect;
 pub mod install;
 pub mod remappings;
 pub mod run;
@@ -53,10 +54,13 @@ pub mod tree;
 pub mod verify;
 pub mod watch;
 
-use crate::opts::forge::ContractInfo;
+use crate::{opts::forge::ContractInfo, term};
 use ethers::{
     abi::Abi,
-    prelude::artifacts::{CompactBytecode, CompactDeployedBytecode},
+    prelude::{
+        artifacts::{CompactBytecode, CompactDeployedBytecode},
+        report::NoReporter,
+    },
     solc::cache::SolFilesCache,
 };
 use std::{collections::BTreeMap, path::PathBuf};
@@ -89,8 +93,8 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
         );
     }
 
-    println!("Compiling...");
-    let output = project.compile()?;
+    let output = term::with_spinner_reporter(|| project.compile())?;
+
     if output.has_compiler_errors() {
         eyre::bail!(output.to_string())
     } else if output.is_unchanged() {
@@ -144,10 +148,37 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
     Ok(output)
 }
 
+/// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
+/// compilation was successful or if there was a cache hit.
+/// Doesn't print anything to stdout, thus is "suppressed".
+pub fn suppress_compile(project: &Project) -> eyre::Result<ProjectCompileOutput> {
+    if !project.paths.sources.exists() {
+        eyre::bail!(
+            r#"no contracts to compile, contracts folder "{}" does not exist.
+Check the configured workspace settings:
+{}
+If you are in a subdirectory in a Git repository, try adding `--root .`"#,
+            project.paths.sources.display(),
+            project.paths
+        );
+    }
+
+    let output = ethers::solc::report::with_scoped(
+        &ethers::solc::report::Report::new(NoReporter::default()),
+        || project.compile(),
+    )?;
+
+    if output.has_compiler_errors() {
+        eyre::bail!(output.to_string())
+    }
+
+    Ok(output)
+}
+
 /// Compile a set of files not necessarily included in the `project`'s source dir
 pub fn compile_files(project: &Project, files: Vec<PathBuf>) -> eyre::Result<ProjectCompileOutput> {
-    println!("Compiling...");
-    let output = project.compile_files(files)?;
+    let output = term::with_spinner_reporter(|| project.compile_files(files))?;
+
     if output.has_compiler_errors() {
         eyre::bail!(output.to_string())
     }

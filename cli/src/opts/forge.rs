@@ -10,6 +10,7 @@ use crate::cmd::{
     create::CreateArgs,
     flatten,
     init::InitArgs,
+    inspect,
     install::InstallArgs,
     remappings::RemappingArgs,
     run::RunArgs,
@@ -116,6 +117,8 @@ pub enum Subcommands {
     Flatten(flatten::FlattenArgs),
     // #[clap(about = "formats Solidity source files")]
     // Fmt(FmtArgs),
+    #[clap(about = "Outputs a contract in a specified format (ir, assembly, ...)")]
+    Inspect(inspect::InspectArgs),
     #[clap(about = "Display a tree visualization of the project's dependency graph")]
     Tree(tree::TreeArgs),
 }

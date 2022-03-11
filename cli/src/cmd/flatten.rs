@@ -83,6 +83,7 @@ impl Cmd for FlattenArgs {
             sizes: false,
             ignored_error_codes: vec![],
             no_auto_detect: false,
+            use_solc: None,
             offline: false,
             force: false,
             hardhat: core_flatten_args.hardhat,

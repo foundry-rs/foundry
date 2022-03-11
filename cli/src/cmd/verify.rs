@@ -82,6 +82,7 @@ pub async fn run_verify(args: &VerifyArgs) -> eyre::Result<()> {
         sizes: false,
         ignored_error_codes: vec![],
         no_auto_detect: false,
+        use_solc: None,
         offline: false,
         force: false,
         hardhat,
