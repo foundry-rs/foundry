@@ -228,13 +228,6 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         tracing::info!("starting tests");
         let start = Instant::now();
         let needs_setup = self.contract.functions().any(|func| func.name == "setUp");
-        let (unit_tests, fuzz_tests): (Vec<_>, Vec<_>) = self
-            .contract
-            .functions()
-            .into_iter()
-            .filter(|func| func.name.starts_with("test"))
-            .filter(|func| filter.matches_test(&func.name))
-            .partition(|func| func.inputs.is_empty());
 
         let (addr, init_logs, init_trace, init_labels, setup_failed, reason) =
             self.deploy(needs_setup)?;
@@ -257,63 +250,69 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
             .into())
         }
 
-        // Run all unit tests
-        let mut test_results = unit_tests
-            .par_iter()
-            .map(|func| {
-                let result = self.run_test(
-                    func,
-                    addr,
-                    init_logs.clone(),
-                    init_trace.clone(),
-                    init_labels.clone(),
-                )?;
-                Ok((func.signature(), result))
-            })
-            .collect::<Result<BTreeMap<_, _>>>()?;
+        // Collect valid test functions
+        let tests: Vec<_> = self
+            .contract
+            .functions()
+            .into_iter()
+            .filter(|func| func.name.starts_with("test") && filter.matches_test(&func.name))
+            .map(|func| (func, func.name.starts_with("testFail")))
+            .collect();
 
-        if let Some(fuzzer) = fuzzer {
-            let fuzz_results = fuzz_tests
-                .par_iter()
-                .filter(|func| !func.inputs.is_empty())
-                .map(|func| {
-                    let result = self.run_fuzz_test(
+        let test_results = tests
+            .par_iter()
+            .filter_map(|(func, should_fail)| {
+                let result = if func.inputs.is_empty() {
+                    Some(self.run_test(
                         func,
+                        *should_fail,
+                        addr,
+                        init_logs.clone(),
+                        init_trace.clone(),
+                        init_labels.clone(),
+                    ))
+                } else if let Some(fuzzer) = &fuzzer {
+                    Some(self.run_fuzz_test(
+                        func,
+                        *should_fail,
                         fuzzer.clone(),
                         addr,
                         init_logs.clone(),
                         init_trace.clone(),
                         init_labels.clone(),
-                    )?;
-                    Ok((func.signature(), result))
-                })
-                .collect::<Result<BTreeMap<_, _>>>()?;
-            test_results.extend(fuzz_results);
-        }
+                    ))
+                } else {
+                    None
+                };
+
+                result.map(|result| Ok((func.signature(), result?)))
+            })
+            .collect::<Result<BTreeMap<_, _>>>()?;
 
         if !test_results.is_empty() {
             let successful = test_results.iter().filter(|(_, tst)| tst.success).count();
-            let duration = Instant::now().duration_since(start);
-            tracing::info!(?duration, "done. {}/{} successful", successful, test_results.len());
+            tracing::info!(
+                duration = ?Instant::now().duration_since(start),
+                "done. {}/{} successful",
+                successful,
+                test_results.len()
+            );
         }
         Ok(test_results)
     }
 
-    #[tracing::instrument(name = "test", skip_all, fields(name = %func.signature()))]
+    #[tracing::instrument(name = "test", skip_all, fields(name = %func.signature(), %should_fail))]
     pub fn run_test(
         &self,
         func: &Function,
+        should_fail: bool,
         address: Address,
         mut logs: Vec<RawLog>,
         init_trace: Option<CallTraceArena>,
         mut labels: BTreeMap<Address, String>,
     ) -> Result<TestResult> {
-        let start = Instant::now();
-        // The expected result depends on the function name.
-        let should_fail = func.name.starts_with("testFail");
-        tracing::debug!(func = ?func.signature(), should_fail, "unit-testing");
-
         // Run unit test
+        let start = Instant::now();
         let (status, reason, gas_used, execution_trace, state_changeset) = match self
             .executor
             .call::<(), _, _>(self.sender, address, func.clone(), (), 0.into(), self.errors)
@@ -377,21 +376,19 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         })
     }
 
-    #[tracing::instrument(name = "fuzz-test", skip_all, fields(name = %func.signature()))]
+    #[tracing::instrument(name = "fuzz-test", skip_all, fields(name = %func.signature(), %should_fail))]
     pub fn run_fuzz_test(
         &self,
         func: &Function,
+        should_fail: bool,
         runner: TestRunner,
         address: Address,
         mut logs: Vec<RawLog>,
         init_trace: Option<CallTraceArena>,
         mut labels: BTreeMap<Address, String>,
     ) -> Result<TestResult> {
-        let should_fail = func.name.starts_with("testFail");
-        let start = Instant::now();
-        tracing::debug!(should_fail, "fuzzing");
-
         // Run fuzz test
+        let start = Instant::now();
         let mut result = FuzzedExecutor::new(&self.executor, runner, self.sender).fuzz(
             func,
             address,
