@@ -122,16 +122,8 @@ impl fmt::Display for CallTraceArena {
                 }
             }
 
-            // Determine color for return arrow
-            let color = if node.trace.address == *CHEATCODE_ADDRESS {
-                Colour::Blue
-            } else if node.trace.success {
-                Colour::Green
-            } else {
-                Colour::Red
-            };
-
             // Display trace return data
+            let color = trace_color(&node.trace);
             write!(writer, "{}{}", child, EDGE)?;
             write!(writer, "{}", color.paint(RETURN))?;
             if node.trace.created {
@@ -327,14 +319,6 @@ impl fmt::Display for CallTrace {
                 self.address
             )?;
         } else {
-            let color = if self.address == *CHEATCODE_ADDRESS {
-                Colour::Blue
-            } else if self.success {
-                Colour::Green
-            } else {
-                Colour::Red
-            };
-
             let (func, inputs) = match &self.data {
                 RawOrDecodedCall::Raw(bytes) => {
                     // We assume that the fallback function (`data.len() < 4`) counts as decoded
@@ -345,6 +329,7 @@ impl fmt::Display for CallTrace {
                 RawOrDecodedCall::Decoded(func, inputs) => (func.clone(), inputs.join(", ")),
             };
 
+            let color = trace_color(self);
             write!(
                 f,
                 "[{}] {}::{}{}({})",
@@ -361,5 +346,16 @@ impl fmt::Display for CallTrace {
         }
 
         Ok(())
+    }
+}
+
+/// Chooses the color of the trace depending on the destination address and status of the call.
+fn trace_color(trace: &CallTrace) -> Colour {
+    if trace.address == *CHEATCODE_ADDRESS {
+        Colour::Blue
+    } else if trace.success {
+        Colour::Green
+    } else {
+        Colour::Red
     }
 }
