@@ -94,6 +94,9 @@ fn main() -> eyre::Result<()> {
         Subcommands::Flatten(cmd) => {
             cmd.run()?;
         }
+        Subcommands::Inspect(cmd) => {
+            cmd.run()?;
+        }
         Subcommands::Tree(cmd) => {
             cmd.run()?;
         }
