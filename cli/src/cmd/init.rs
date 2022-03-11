@@ -48,6 +48,7 @@ pub struct InitArgs {
     force: bool,
     #[clap(
         help = "initialize .vscode/settings.json file with solidity settings and generate a remappings.txt file.",
+        conflicts_with = "template",
         long
     )]
     vscode: bool,
@@ -135,10 +136,10 @@ impl Cmd for InitArgs {
                         .and_then(|dependency| install(&root, vec![dependency], opts))?;
                 }
             }
-        }
-        // vscode init
-        if vscode {
-            init_vscode(&root)?;
+            // vscode init
+            if vscode {
+                init_vscode(&root)?;
+            }
         }
 
         p_println!(!quiet => "    {} forge project.",   Colour::Green.paint("Initialized"));
