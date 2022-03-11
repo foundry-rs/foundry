@@ -240,6 +240,7 @@ pub struct FuzzCase {
 mod tests {
     use super::FuzzTestResult;
     use crate::{
+        executor::DeployResult,
         test_helpers::{fuzz_executor, test_executor, COMPILED},
         CALLER,
     };
@@ -249,13 +250,14 @@ mod tests {
         let mut executor = test_executor();
 
         let compiled = COMPILED.find("FuzzTests").expect("could not find contract");
-        let (addr, _, _, _) =
+        let DeployResult { address, .. } =
             executor.deploy(*CALLER, compiled.bytecode().unwrap().0.clone(), 0.into()).unwrap();
 
         let executor = fuzz_executor(&executor);
 
         let func = compiled.abi.unwrap().function("testFuzzedRevert").unwrap();
-        let FuzzTestResult { reason, success, .. } = executor.fuzz(func, addr, false, compiled.abi);
+        let FuzzTestResult { reason, success, .. } =
+            executor.fuzz(func, address, false, compiled.abi);
         assert!(!success, "test did not revert");
         assert_eq!(reason, Some("fuzztest-revert".to_string()));
     }
