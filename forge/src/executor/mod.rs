@@ -1,7 +1,5 @@
 /// ABIs used internally in the executor
 pub mod abi;
-use std::collections::BTreeMap;
-
 pub use abi::{
     patch_hardhat_console_selector, HardhatConsoleCalls, CHEATCODE_ADDRESS, CONSOLE_ABI,
     HARDHAT_CONSOLE_ABI, HARDHAT_CONSOLE_ADDRESS,
@@ -41,6 +39,7 @@ use revm::{
     db::{CacheDB, DatabaseCommit, DatabaseRef, EmptyDB},
     return_ok, Account, CreateScheme, Env, Return, TransactOut, TransactTo, TxEnv, EVM,
 };
+use std::collections::BTreeMap;
 
 #[derive(thiserror::Error, Debug)]
 pub enum EvmError {
@@ -105,6 +104,20 @@ pub struct RawCallResult {
     /// This is only present if the changed state was not committed to the database (i.e. if you
     /// used `call` and `call_raw` not `call_committing` or `call_raw_committing`).
     pub state_changeset: Option<HashMap<Address, Account>>,
+}
+
+impl Default for RawCallResult {
+    fn default() -> Self {
+        Self {
+            status: Return::Continue,
+            result: Bytes::new(),
+            gas: 0,
+            logs: Vec::new(),
+            labels: BTreeMap::new(),
+            traces: None,
+            state_changeset: None,
+        }
+    }
 }
 
 pub struct Executor<DB: DatabaseRef> {
@@ -322,7 +335,14 @@ where
         Ok((addr, status, gas, logs))
     }
 
-    /// Check if a call to a test contract was successful
+    /// Check if a call to a test contract was successful.
+    ///
+    /// This function checks both the VM status of the call and DSTest's `failed`.
+    ///
+    /// DSTest will not revert inside its `assertEq`-like functions which allows
+    /// to test multiple assertions in 1 test function while also preserving logs.
+    ///
+    /// Instead it sets `failed` to `true` which we must check.
     pub fn is_success(
         &self,
         address: Address,

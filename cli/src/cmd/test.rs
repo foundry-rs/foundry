@@ -364,11 +364,7 @@ fn test<A: ArtifactOutput + 'static>(
                         println!();
                     }
 
-                    if let Some(traces) = &mut result.traces {
-                        if traces.is_empty() {
-                            continue
-                        }
-
+                    if !result.traces.is_empty() {
                         // We only display traces at verbosity level 3 and above
                         if verbosity < 3 {
                             continue
@@ -382,7 +378,7 @@ fn test<A: ArtifactOutput + 'static>(
                         // Identify addresses in each trace
                         let mut decoder =
                             CallTraceDecoder::new_with_labels(result.labeled_addresses.clone());
-                        traces.iter().for_each(|trace| {
+                        result.traces.iter().for_each(|trace| {
                             decoder.identify(&trace, &local_identifier);
                         });
 
@@ -390,11 +386,11 @@ fn test<A: ArtifactOutput + 'static>(
                         // At verbosity level 5, we display all traces for all tests
                         let print_setup = (verbosity >= 5) || (verbosity == 4 && !result.success);
                         let traces = if print_setup {
-                            &mut traces[..]
+                            &mut result.traces[..]
                         } else {
-                            let num_traces = traces.len();
+                            let num_traces = result.traces.len();
                             // NOTE: This is safe because of the `!traces.is_empty()` check above
-                            &mut traces[num_traces - 1..]
+                            &mut result.traces[num_traces - 1..]
                         };
 
                         println!("Traces:");

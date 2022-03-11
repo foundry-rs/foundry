@@ -3,20 +3,17 @@ use crate::{
     runner::TestResult,
     ContractRunner, TestFilter,
 };
-use foundry_utils::PostLinkInput;
-use revm::db::DatabaseRef;
-
 use ethers::{
-    abi::{Abi, Event, Function},
-    prelude::{artifacts::CompactContractBytecode, Artifact, ArtifactId, ArtifactOutput},
-    types::{Address, Bytes, H256, U256},
+    abi::Abi,
+    prelude::{artifacts::CompactContractBytecode, ArtifactId, ArtifactOutput},
+    solc::{Artifact, ProjectCompileOutput},
+    types::{Address, Bytes, U256},
 };
-
-use proptest::test_runner::TestRunner;
-
-use ethers::solc::ProjectCompileOutput;
 use eyre::Result;
+use foundry_utils::PostLinkInput;
+use proptest::test_runner::TestRunner;
 use rayon::prelude::*;
+use revm::db::DatabaseRef;
 use std::{collections::BTreeMap, marker::Sync, sync::mpsc::Sender};
 
 /// Builder used for instantiating the multi-contract runner
@@ -115,10 +112,6 @@ impl MultiContractRunnerBuilder {
             },
         )?;
 
-        // TODO Add forge specific contracts
-        //known_contracts.insert("VM".to_string(), (HEVM_ABI.clone(), Vec::new()));
-        //known_contracts.insert("VM_CONSOLE".to_string(), (CONSOLE_ABI.clone(), Vec::new()));
-
         let execution_info = foundry_utils::flatten_known_contracts(&known_contracts);
         Ok(MultiContractRunner {
             contracts: deployable_contracts,
@@ -127,7 +120,7 @@ impl MultiContractRunnerBuilder {
             evm_spec: self.evm_spec.unwrap_or(SpecId::LONDON),
             sender: self.sender,
             fuzzer: self.fuzzer,
-            execution_info,
+            errors: Some(execution_info.2),
             source_paths,
         })
     }
@@ -169,8 +162,8 @@ pub struct MultiContractRunner {
     pub evm_opts: EvmOpts,
     /// The EVM spec
     pub evm_spec: SpecId,
-    /// All contract execution info, (functions, events, errors)
-    pub execution_info: (BTreeMap<[u8; 4], Function>, BTreeMap<H256, Event>, Abi),
+    /// All known errors, used for decoding reverts
+    pub errors: Option<Abi>,
     /// The fuzzer which will be used to run parametric tests (w/ non-0 solidity args)
     fuzzer: Option<TestRunner>,
     /// The address which will be used as the `from` field in all EVM calls
@@ -251,7 +244,7 @@ impl MultiContractRunner {
             deploy_code,
             self.evm_opts.initial_balance,
             self.sender,
-            Some((&self.execution_info.0, &self.execution_info.1, &self.execution_info.2)),
+            self.errors.as_ref(),
             libs,
         );
         runner.run_tests(filter, self.fuzzer.clone())

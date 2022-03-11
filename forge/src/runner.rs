@@ -1,40 +1,21 @@
 use crate::{
     executor::{
-        fuzz::{FuzzError, FuzzTestResult, FuzzedCases, FuzzedExecutor},
-        CallResult, EvmError, Executor, RawCallResult,
+        fuzz::{CounterExample, FuzzedCases, FuzzedExecutor},
+        CallResult, EvmError, Executor,
     },
     trace::CallTraceArena,
     TestFilter, CALLER,
 };
-use rayon::iter::ParallelIterator;
-use revm::db::DatabaseRef;
-
 use ethers::{
-    abi::{Abi, Event, Function, RawLog, Token},
-    types::{Address, Bytes, H256, U256},
+    abi::{Abi, Function, RawLog},
+    types::{Address, Bytes, U256},
 };
-
 use eyre::Result;
-use std::{collections::BTreeMap, fmt, time::Instant};
-
-use proptest::test_runner::{TestError, TestRunner};
-use rayon::iter::IntoParallelRefIterator;
+use proptest::test_runner::TestRunner;
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use revm::db::DatabaseRef;
 use serde::{Deserialize, Serialize};
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CounterExample {
-    pub calldata: Bytes,
-
-    #[serde(skip)]
-    pub args: Vec<Token>,
-}
-
-impl fmt::Display for CounterExample {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let args = foundry_utils::format_tokens(&self.args).collect::<Vec<_>>().join(", ");
-        write!(f, "calldata=0x{}, args=[{}]", hex::encode(&self.calldata), args)
-    }
-}
+use std::{collections::BTreeMap, fmt, time::Instant};
 
 /// The result of an executed solidity test
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -60,7 +41,7 @@ pub struct TestResult {
     pub kind: TestKind,
 
     /// Traces
-    pub traces: Option<Vec<CallTraceArena>>,
+    pub traces: Vec<CallTraceArena>,
 
     /// Debug steps
     // TODO
@@ -135,32 +116,23 @@ impl TestKind {
     }
 }
 
-/// Type complexity wrapper around execution info
-type MaybeExecutionInfo<'a> =
-    Option<(&'a BTreeMap<[u8; 4], Function>, &'a BTreeMap<H256, Event>, &'a Abi)>;
-
-// TODO: Get rid of known contracts, execution info and so on once we rewrite tracing, since we are
-// moving all the decoding/display logic to the CLI. Traces and logs returned from the runner (and
-// consequently the multi runner) are in a raw (but digestible) format.
 pub struct ContractRunner<'a, DB: DatabaseRef> {
     /// The executor used by the runner.
     pub executor: Executor<DB>,
 
-    // Contract deployment options
-    /// The deployed contract's ABI
-    pub contract: &'a Abi,
+    /// Library contracts to be deployed before the test contract
+    pub predeploy_libs: &'a [Bytes],
     /// The deployed contract's code
-    // This is cheap to clone due to [`bytes::Bytes`], so OK to own
     pub code: Bytes,
+    /// The test contract's ABI
+    pub contract: &'a Abi,
+    /// All known errors, used to decode reverts
+    pub errors: Option<&'a Abi>,
+
     /// The initial balance of the test contract
     pub initial_balance: U256,
     /// The address which will be used as the `from` field in all EVM calls
     pub sender: Address,
-
-    /// Contract execution info, (functions, events, errors)
-    pub execution_info: MaybeExecutionInfo<'a>,
-    /// library contracts to be deployed before this contract
-    pub predeploy_libs: &'a [Bytes],
 }
 
 impl<'a, DB: DatabaseRef> ContractRunner<'a, DB> {
@@ -171,7 +143,7 @@ impl<'a, DB: DatabaseRef> ContractRunner<'a, DB> {
         code: Bytes,
         initial_balance: U256,
         sender: Option<Address>,
-        execution_info: MaybeExecutionInfo<'a>,
+        errors: Option<&'a Abi>,
         predeploy_libs: &'a [Bytes],
     ) -> Self {
         Self {
@@ -180,7 +152,7 @@ impl<'a, DB: DatabaseRef> ContractRunner<'a, DB> {
             code,
             initial_balance,
             sender: sender.unwrap_or_default(),
-            execution_info,
+            errors,
             predeploy_libs,
         }
     }
@@ -224,7 +196,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         // Optionally call the `setUp` function
         if setup {
             tracing::trace!("setting up");
-            let (setup_failed, setup_logs, setup_traces, setup_labels, reason) = match self
+            let (setup_failed, setup_logs, setup_trace, setup_labels, reason) = match self
                 .executor
                 .setup(addr)
             {
@@ -241,7 +213,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                 ),
             };
             logs.extend_from_slice(&setup_logs);
-            Ok((addr, logs, setup_traces, setup_labels, setup_failed, reason))
+            Ok((addr, logs, setup_trace, setup_labels, setup_failed, reason))
         } else {
             Ok((addr, logs, None, BTreeMap::new(), false, None))
         }
@@ -264,7 +236,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
             .filter(|func| filter.matches_test(&func.name))
             .partition(|func| func.inputs.is_empty());
 
-        let (addr, init_logs, init_traces, init_labels, setup_failed, reason) =
+        let (addr, init_logs, init_trace, init_labels, setup_failed, reason) =
             self.deploy(needs_setup)?;
         if setup_failed {
             // The setup failed, so we return a single test result for `setUp`
@@ -276,7 +248,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                     counterexample: None,
                     logs: init_logs,
                     kind: TestKind::Standard(0),
-                    traces: init_traces.map(|traces| vec![traces]),
+                    traces: init_trace.into_iter().collect(),
                     // TODO
                     debug_calls: None,
                     labeled_addresses: init_labels,
@@ -293,7 +265,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                     func,
                     addr,
                     init_logs.clone(),
-                    init_traces.clone().map(|traces| vec![traces]),
+                    init_trace.clone(),
                     init_labels.clone(),
                 )?;
                 Ok((func.signature(), result))
@@ -310,7 +282,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                         fuzzer.clone(),
                         addr,
                         init_logs.clone(),
-                        init_traces.clone().map(|traces| vec![traces]),
+                        init_trace.clone(),
                         init_labels.clone(),
                     )?;
                     Ok((func.signature(), result))
@@ -333,86 +305,65 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         func: &Function,
         address: Address,
         mut logs: Vec<RawLog>,
-        mut traces: Option<Vec<CallTraceArena>>,
+        init_trace: Option<CallTraceArena>,
         mut labels: BTreeMap<Address, String>,
     ) -> Result<TestResult> {
         let start = Instant::now();
         // The expected result depends on the function name.
-        // TODO: Dedupe (`TestDescriptor`?)
         let should_fail = func.name.starts_with("testFail");
         tracing::debug!(func = ?func.signature(), should_fail, "unit-testing");
 
-        let errors_abi = self.execution_info.as_ref().map(|(_, _, errors)| errors);
-        let errors_abi = if let Some(ref abi) = errors_abi { abi } else { self.contract };
-
-        let (status, reason, gas_used, state_changeset) = match self.executor.call::<(), _, _>(
-            self.sender,
-            address,
-            func.clone(),
-            (),
-            0.into(),
-            Some(errors_abi),
-        ) {
+        // Run unit test
+        let (status, reason, gas_used, execution_trace, state_changeset) = match self
+            .executor
+            .call::<(), _, _>(self.sender, address, func.clone(), (), 0.into(), self.errors)
+        {
             Ok(CallResult {
                 status,
                 gas: gas_used,
                 logs: execution_logs,
-                traces: execution_traces,
+                traces: execution_trace,
                 labels: new_labels,
                 state_changeset,
                 ..
             }) => {
-                if let Some(execution_traces) = execution_traces {
-                    traces.get_or_insert_with(Default::default).push(execution_traces);
-                }
-
-                for (addr, label) in new_labels.into_iter() {
-                    labels.insert(addr, label);
-                }
-
+                labels.extend(new_labels);
                 logs.extend(execution_logs);
-                (status, None, gas_used, state_changeset)
+                (status, None, gas_used, execution_trace, state_changeset)
             }
-            Err(err) => match err {
-                EvmError::Execution {
-                    status,
-                    reason,
-                    gas_used,
-                    logs: execution_logs,
-                    traces: execution_traces,
-                    labels: new_labels,
-                    state_changeset,
-                    ..
-                } => {
-                    if let Some(execution_traces) = execution_traces {
-                        traces.get_or_insert_with(Default::default).push(execution_traces);
-                    }
-
-                    for (addr, label) in new_labels.into_iter() {
-                        labels.insert(addr, label);
-                    }
-
-                    logs.extend(execution_logs);
-                    (status, Some(reason), gas_used, state_changeset)
-                }
-                err => {
-                    tracing::error!(?err);
-                    return Err(err.into())
-                }
-            },
+            Err(EvmError::Execution {
+                status,
+                reason,
+                gas_used,
+                logs: execution_logs,
+                traces: execution_trace,
+                labels: new_labels,
+                state_changeset,
+                ..
+            }) => {
+                labels.extend(new_labels);
+                logs.extend(execution_logs);
+                (status, Some(reason), gas_used, execution_trace, state_changeset)
+            }
+            Err(err) => {
+                tracing::error!(?err);
+                return Err(err.into())
+            }
         };
 
-        // DSTest will not revert inside its `assertEq`-like functions
-        // which allows to test multiple assertions in 1 test function while also
-        // preserving logs - instead it sets `failed` to `true` which we must check.
         let success = self.executor.is_success(
             address,
             status,
             state_changeset.expect("we should have a state changeset"),
             should_fail,
         );
-        let duration = Instant::now().duration_since(start);
-        tracing::debug!(?duration, %success, %gas_used);
+
+        // Record test execution time
+        tracing::debug!(
+            duration = ?Instant::now().duration_since(start),
+            %success,
+            %gas_used
+        );
 
         Ok(TestResult {
             success,
@@ -420,7 +371,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
             counterexample: None,
             logs,
             kind: TestKind::Standard(gas_used),
-            traces,
+            traces: vec![init_trace, execution_trace].into_iter().flatten().collect(),
             debug_calls: None,
             labeled_addresses: labels,
         })
@@ -433,62 +384,38 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         runner: TestRunner,
         address: Address,
         mut logs: Vec<RawLog>,
-        traces: Option<Vec<CallTraceArena>>,
-        labels: BTreeMap<Address, String>,
+        init_trace: Option<CallTraceArena>,
+        mut labels: BTreeMap<Address, String>,
     ) -> Result<TestResult> {
-        // We do not trace in fuzz tests as it is a big performance hit
-        let start = Instant::now();
-        // TODO: Dedupe (`TestDescriptor`?)
         let should_fail = func.name.starts_with("testFail");
+        let start = Instant::now();
+        tracing::debug!(should_fail, "fuzzing");
 
-        // Wrap the executor in a fuzzed version
-        // TODO: When tracing is ported, we should disable it here.
-        let executor = FuzzedExecutor::new(&self.executor, runner, self.sender);
-        let FuzzTestResult { cases, test_error } =
-            executor.fuzz(func, address, should_fail, Some(self.contract));
+        // Run fuzz test
+        let mut result = FuzzedExecutor::new(&self.executor, runner, self.sender).fuzz(
+            func,
+            address,
+            should_fail,
+            self.errors,
+        );
 
-        // Rerun the failed fuzz case to get more information like traces and logs
-        if let Some(FuzzError { test_error: TestError::Fail(_, ref calldata), .. }) = test_error {
-            // TODO: When tracing is ported, we should re-enable it here to get traces.
-            let RawCallResult { logs: execution_logs, .. } =
-                self.executor.call_raw(self.sender, address, calldata.0.clone(), 0.into())?;
-            logs.extend(execution_logs);
-        }
+        // Record logs and labels
+        logs.append(&mut result.logs);
+        labels.append(&mut result.labeled_addresses);
 
-        let (success, counterexample, reason) = match test_error {
-            Some(err) => {
-                let (counterexample, reason) = match err.test_error {
-                    TestError::Abort(r) if r == "Too many global rejects".into() => {
-                        (None, Some(r.message().to_string()))
-                    }
-                    TestError::Fail(_, calldata) => {
-                        // Skip the function selector when decoding
-                        let args = func.decode_input(&calldata.as_ref()[4..])?;
-
-                        (Some(CounterExample { calldata, args }), None)
-                    }
-                    e => panic!("Unexpected test error: {:?}", e),
-                };
-
-                if !err.revert_reason.is_empty() {
-                    (false, counterexample, Some(err.revert_reason))
-                } else {
-                    (false, counterexample, reason)
-                }
-            }
-            _ => (true, None, None),
-        };
-
-        let duration = Instant::now().duration_since(start);
-        tracing::debug!(?duration, %success);
+        // Record test execution time
+        tracing::debug!(
+            duration = ?Instant::now().duration_since(start),
+            success = %result.success
+        );
 
         Ok(TestResult {
-            success,
-            reason,
-            counterexample,
-            logs,
-            kind: TestKind::Fuzz(cases),
-            traces,
+            success: result.success,
+            reason: result.reason,
+            counterexample: result.counterexample,
+            logs: result.logs,
+            kind: TestKind::Fuzz(result.cases),
+            traces: vec![init_trace, result.traces].into_iter().flatten().collect(),
             debug_calls: None,
             labeled_addresses: labels,
         })
