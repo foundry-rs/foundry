@@ -111,7 +111,10 @@ where
         data: &mut EVMData<'_, DB>,
         call: &CreateInputs,
     ) -> (Return, Option<Address>, Gas, Bytes) {
-        let nonce = data.db.basic(call.caller).nonce;
+        // TODO: Does this increase gas cost?
+        data.subroutine.load_account(call.caller, data.db);
+        let nonce = data.subroutine.account(call.caller).info.nonce;
+
         self.start_trace(
             data.subroutine.depth() as usize,
             match call.scheme {
