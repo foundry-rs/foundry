@@ -317,7 +317,7 @@ where
         from: Address,
         code: Bytes,
         value: U256,
-    ) -> Result<(Address, Return, u64, Vec<RawLog>)> {
+    ) -> Result<(Address, Return, u64, Vec<RawLog>, Option<CallTraceArena>)> {
         let mut evm = EVM::new();
         evm.env = self.build_env(from, TransactTo::Create(CreateScheme::Create), code, value);
         evm.database(&mut self.db);
@@ -330,9 +330,9 @@ where
             // regarding deployments in general
             _ => eyre::bail!("deployment failed: {:?}", status),
         };
-        let (logs, _, _) = collect_inspector_states(inspector);
+        let (logs, _, traces) = collect_inspector_states(inspector);
 
-        Ok((addr, status, gas, logs))
+        Ok((addr, status, gas, logs, traces))
     }
 
     /// Check if a call to a test contract was successful.

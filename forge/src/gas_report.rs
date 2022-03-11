@@ -1,6 +1,6 @@
 use crate::{
     executor::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
-    trace::{CallTraceArena, RawOrDecodedCall},
+    trace::{CallTraceArena, RawOrDecodedCall, TraceKind},
 };
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, *};
 use ethers::types::U256;
@@ -34,9 +34,9 @@ impl GasReport {
         Self { report_for, ..Default::default() }
     }
 
-    pub fn analyze(&mut self, traces: &[CallTraceArena]) {
+    pub fn analyze(&mut self, traces: &[(TraceKind, CallTraceArena)]) {
         let report_for_all = self.report_for.is_empty() || self.report_for.iter().any(|s| s == "*");
-        traces.iter().for_each(|trace| {
+        traces.iter().for_each(|(_, trace)| {
             self.analyze_trace(trace, report_for_all);
         });
     }

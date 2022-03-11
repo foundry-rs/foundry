@@ -301,10 +301,12 @@ impl CallTrace {
     fn update(&mut self, new_trace: Self) {
         self.success = new_trace.success;
         self.address = new_trace.address;
-        self.gas_cost = new_trace.gas_cost;
-        self.output = new_trace.output;
+        self.created = new_trace.created;
+        self.value = new_trace.value;
         self.data = new_trace.data;
+        self.output = new_trace.output;
         self.address = new_trace.address;
+        self.gas_cost = new_trace.gas_cost;
     }
 }
 
@@ -347,6 +349,14 @@ impl fmt::Display for CallTrace {
 
         Ok(())
     }
+}
+
+/// Specifies the kind of trace.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum TraceKind {
+    Deployment,
+    Setup,
+    Execution,
 }
 
 /// Chooses the color of the trace depending on the destination address and status of the call.

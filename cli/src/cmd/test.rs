@@ -11,7 +11,7 @@ use forge::{
     decode::decode_console_logs,
     executor::opts::EvmOpts,
     gas_report::GasReport,
-    trace::{identifier::LocalTraceIdentifier, CallTraceDecoder},
+    trace::{identifier::LocalTraceIdentifier, CallTraceDecoder, TraceKind},
     MultiContractRunnerBuilder, TestFilter, TestResult,
 };
 use foundry_config::{figment::Figment, Config};
@@ -380,26 +380,27 @@ fn test<A: ArtifactOutput + 'static>(
                     // Identify addresses in each trace
                     let mut decoder =
                         CallTraceDecoder::new_with_labels(result.labeled_addresses.clone());
-                    result.traces.iter().for_each(|trace| {
-                        decoder.identify(&trace, &local_identifier);
-                    });
-
-                    // At verbosity level 4, we also display the setup trace for failed tests
-                    // At verbosity level 5, we display all traces for all tests
-                    let print_setup = (verbosity >= 5) || (verbosity == 4 && !result.success);
-                    let traces = if print_setup {
-                        &mut result.traces[..]
-                    } else {
-                        let num_traces = result.traces.len();
-                        // NOTE: This is safe because of the `!traces.is_empty()` check above
-                        &mut result.traces[num_traces - 1..]
-                    };
 
                     println!("Traces:");
-                    traces.iter_mut().for_each(|trace| {
-                        decoder.decode(trace);
-                        println!("{}", trace);
-                    });
+                    for (kind, trace) in &mut result.traces {
+                        decoder.identify(&trace, &local_identifier);
+
+                        let should_include = match kind {
+                            // At verbosity level 4, we also display the setup trace for failed
+                            // tests At verbosity level 5, we display
+                            // all traces for all tests
+                            TraceKind::Setup => {
+                                (verbosity >= 5) || (verbosity == 4 && !result.success)
+                            }
+                            TraceKind::Execution => verbosity > 3 || !result.success,
+                            _ => false,
+                        };
+
+                        if should_include {
+                            decoder.decode(trace);
+                            println!("{}", trace);
+                        }
+                    }
 
                     if gas_reporting {
                         gas_report.analyze(&result.traces);
