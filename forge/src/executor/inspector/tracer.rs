@@ -1,7 +1,10 @@
 use super::logs::extract_log;
-use crate::trace::{
-    CallTrace, CallTraceArena, LogCallOrder, RawOrDecodedCall, RawOrDecodedLog,
-    RawOrDecodedReturnData,
+use crate::{
+    executor::HARDHAT_CONSOLE_ADDRESS,
+    trace::{
+        CallTrace, CallTraceArena, LogCallOrder, RawOrDecodedCall, RawOrDecodedLog,
+        RawOrDecodedReturnData,
+    },
 };
 use bytes::Bytes;
 use ethers::{
@@ -66,13 +69,15 @@ where
         call: &CallInputs,
         _: bool,
     ) -> (Return, Gas, Bytes) {
-        self.start_trace(
-            data.subroutine.depth() as usize,
-            call.contract,
-            call.input.to_vec(),
-            call.transfer.value,
-            false,
-        );
+        if call.contract != *HARDHAT_CONSOLE_ADDRESS {
+            self.start_trace(
+                data.subroutine.depth() as usize,
+                call.contract,
+                call.input.to_vec(),
+                call.transfer.value,
+                false,
+            );
+        }
 
         (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
     }
@@ -95,13 +100,15 @@ where
     fn call_end(
         &mut self,
         _: &mut EVMData<'_, DB>,
-        _: &CallInputs,
+        call: &CallInputs,
         gas: Gas,
         status: Return,
         retdata: Bytes,
         _: bool,
     ) -> (Return, Gas, Bytes) {
-        self.fill_trace(matches!(status, return_ok!()), gas.spend(), retdata.to_vec());
+        if call.contract != *HARDHAT_CONSOLE_ADDRESS {
+            self.fill_trace(matches!(status, return_ok!()), gas.spend(), retdata.to_vec());
+        }
 
         (status, gas, retdata)
     }
