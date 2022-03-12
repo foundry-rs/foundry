@@ -348,7 +348,7 @@ Where `<CONTRACT>` is the name of the contract to inspect, and `<MODE>` is the c
 - `bytecode`
 - `deployed-bytecode`
 - `asm`
-- `assembly-optimized`
+- `asm-optimized`
 - `method-identifiers`
 - `gas-estimates`
 - `storage-layout`
