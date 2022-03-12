@@ -307,13 +307,15 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         &self,
         func: &Function,
         should_fail: bool,
-        mut setup: TestSetup,
+        setup: TestSetup,
     ) -> Result<TestResult> {
+        let TestSetup { address, mut logs, mut traces, mut labeled_addresses, .. } = setup;
+
         // Run unit test
         let start = Instant::now();
         let (status, reason, gas_used, execution_traces, state_changeset) = match self
             .executor
-            .call::<(), _, _>(self.sender, setup.address, func.clone(), (), 0.into(), self.errors)
+            .call::<(), _, _>(self.sender, address, func.clone(), (), 0.into(), self.errors)
         {
             Ok(CallResult {
                 status,
@@ -324,8 +326,8 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                 state_changeset,
                 ..
             }) => {
-                setup.labeled_addresses.extend(new_labels);
-                setup.logs.extend(execution_logs);
+                labeled_addresses.extend(new_labels);
+                logs.extend(execution_logs);
                 (status, None, gas_used, execution_trace, state_changeset)
             }
             Err(EvmError::Execution {
@@ -338,8 +340,8 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                 state_changeset,
                 ..
             }) => {
-                setup.labeled_addresses.extend(new_labels);
-                setup.logs.extend(execution_logs);
+                labeled_addresses.extend(new_labels);
+                logs.extend(execution_logs);
                 (status, Some(reason), gas_used, execution_trace, state_changeset)
             }
             Err(err) => {
@@ -347,9 +349,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                 return Err(err.into())
             }
         };
-        setup
-            .traces
-            .extend(execution_traces.map(|traces| (TraceKind::Execution, traces)).into_iter());
+        traces.extend(execution_traces.map(|traces| (TraceKind::Execution, traces)).into_iter());
 
         let success = self.executor.is_success(
             setup.address,
@@ -369,11 +369,11 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
             success,
             reason,
             counterexample: None,
-            logs: setup.logs,
+            logs,
             kind: TestKind::Standard(gas_used),
-            traces: setup.traces,
+            traces,
             debug_calls: None,
-            labeled_addresses: setup.labeled_addresses,
+            labeled_addresses,
         })
     }
 
@@ -383,21 +383,23 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         func: &Function,
         should_fail: bool,
         runner: TestRunner,
-        mut setup: TestSetup,
+        setup: TestSetup,
     ) -> Result<TestResult> {
+        let TestSetup { address, mut logs, mut traces, mut labeled_addresses, .. } = setup;
+
         // Run fuzz test
         let start = Instant::now();
         let mut result = FuzzedExecutor::new(&self.executor, runner, self.sender).fuzz(
             func,
-            setup.address,
+            address,
             should_fail,
             self.errors,
         );
 
         // Record logs, labels and traces
-        setup.logs.append(&mut result.logs);
-        setup.labeled_addresses.append(&mut result.labeled_addresses);
-        setup.traces.extend(result.traces.map(|traces| (TraceKind::Execution, traces)).into_iter());
+        logs.append(&mut result.logs);
+        labeled_addresses.append(&mut result.labeled_addresses);
+        traces.extend(result.traces.map(|traces| (TraceKind::Execution, traces)).into_iter());
 
         // Record test execution time
         tracing::debug!(
@@ -409,11 +411,11 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
             success: result.success,
             reason: result.reason,
             counterexample: result.counterexample,
-            logs: setup.logs,
+            logs,
             kind: TestKind::Fuzz(result.cases),
-            traces: setup.traces,
+            traces,
             debug_calls: None,
-            labeled_addresses: setup.labeled_addresses,
+            labeled_addresses,
         })
     }
 }
