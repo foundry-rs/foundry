@@ -124,6 +124,30 @@ forgetest!(can_init_non_empty, |prj: TestProject, mut cmd: TestCommand| {
     assert!(prj.root().join("lib/ds-test").exists());
 });
 
+// Checks that remappings.txt and .vscode/settings.json is generated
+forgetest!(can_init_vscode, |prj: TestProject, mut cmd: TestCommand| {
+    prj.wipe();
+
+    cmd.arg("init").arg(prj.root()).arg("--vscode");
+    cmd.assert_non_empty_stdout();
+
+    let settings = prj.root().join(".vscode/settings.json");
+    assert!(settings.is_file());
+    let settings: serde_json::Value = ethers::solc::utils::read_json_file(&settings).unwrap();
+    assert_eq!(
+        settings,
+        serde_json::json!({
+             "solidity.packageDefaultDependenciesContractsDirectory": "src",
+            "solidity.packageDefaultDependenciesDirectory": "lib"
+        })
+    );
+
+    let remappings = prj.root().join("remappings.txt");
+    assert!(remappings.is_file());
+    let content = std::fs::read_to_string(remappings).unwrap();
+    assert_eq!(content, "ds-test/=lib/ds-test/src/");
+});
+
 // checks that config works
 // - foundry.toml is properly generated
 // - paths are resolved properly
