@@ -315,7 +315,7 @@ impl fmt::Display for CallTrace {
         if self.created {
             write!(
                 f,
-                "{}new {}@{}",
+                "{}new {}@{:?}",
                 Colour::Yellow.paint(CALL),
                 self.label.as_ref().unwrap_or(&"<Unknown>".to_string()),
                 self.address
