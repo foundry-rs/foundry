@@ -186,6 +186,7 @@ impl MultiContractRunner {
                 filter.matches_path(&self.source_paths.get(*name).unwrap()) &&
                     filter.matches_contract(name)
             })
+            .filter(|(_, (abi, _, _))| abi.functions().any(|func| filter.matches_test(&func.name)))
             .map(|(name, (abi, deploy_code, libs))| {
                 let mut builder = ExecutorBuilder::new()
                     .with_cheatcodes(self.evm_opts.ffi)
