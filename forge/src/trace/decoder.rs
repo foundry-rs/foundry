@@ -24,8 +24,8 @@ pub struct CallTraceDecoder {
     pub contracts: BTreeMap<Address, String>,
     /// Address labels
     pub labels: BTreeMap<Address, String>,
-    /// All known functions
-    pub functions: BTreeMap<[u8; 4], Function>,
+    /// A mapping of addresses to their known functions
+    pub functions: BTreeMap<Address, BTreeMap<[u8; 4], Function>>,
     /// All known events
     pub events: BTreeMap<H256, Event>,
     /// All known errors
@@ -41,10 +41,14 @@ impl CallTraceDecoder {
         Self {
             contracts: BTreeMap::new(),
             labels: [(*CHEATCODE_ADDRESS, "VM".to_string())].into(),
-            functions: HEVM_ABI
-                .functions()
-                .map(|func| (func.short_signature(), func.clone()))
-                .collect::<BTreeMap<[u8; 4], Function>>(),
+            functions: [(
+                *CHEATCODE_ADDRESS,
+                HEVM_ABI
+                    .functions()
+                    .map(|func| (func.short_signature(), func.clone()))
+                    .collect::<BTreeMap<[u8; 4], Function>>(),
+            )]
+            .into(),
             events: CONSOLE_ABI
                 .events()
                 .map(|event| (event.signature(), event.clone()))
@@ -82,12 +86,12 @@ impl CallTraceDecoder {
             }
 
             if let Some(abi) = abi {
-                // Flatten functions from all ABIs
-                abi.functions().map(|func| (func.short_signature(), func.clone())).for_each(
-                    |(sig, func)| {
-                        self.functions.insert(sig, func);
-                    },
-                );
+                // Store known functions for the address
+                self.functions.entry(*address).or_insert_with(|| {
+                    abi.functions()
+                        .map(|func| (func.short_signature(), func.clone()))
+                        .collect::<BTreeMap<[u8; 4], Function>>()
+                });
 
                 // Flatten events from all ABIs
                 abi.events().map(|event| (event.signature(), event.clone())).for_each(
@@ -124,7 +128,11 @@ impl CallTraceDecoder {
             // Decode call
             if let RawOrDecodedCall::Raw(bytes) = &node.trace.data {
                 if bytes.len() >= 4 {
-                    if let Some(func) = self.functions.get(&bytes[0..4]) {
+                    if let Some(func) = self
+                        .functions
+                        .get(&node.trace.address)
+                        .and_then(|funcs| funcs.get(&bytes[0..4]))
+                    {
                         // Decode inputs
                         let inputs = if !bytes[4..].is_empty() {
                             if node.trace.address == *CHEATCODE_ADDRESS {
@@ -146,7 +154,6 @@ impl CallTraceDecoder {
                         } else {
                             Vec::new()
                         };
-
                         node.trace.data = RawOrDecodedCall::Decoded(func.name.clone(), inputs);
 
                         if let RawOrDecodedReturnData::Raw(bytes) = &node.trace.output {
