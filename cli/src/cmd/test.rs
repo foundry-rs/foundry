@@ -6,11 +6,7 @@ use crate::{
 };
 use ansi_term::Colour;
 use clap::{AppSettings, Parser};
-use ethers::{
-    abi::RawLog,
-    contract::EthLogDecode,
-    solc::{ArtifactOutput, ProjectCompileOutput},
-};
+use ethers::solc::{ArtifactOutput, ProjectCompileOutput};
 use forge::{
     decode::decode_console_logs, executor::opts::EvmOpts, MultiContractRunnerBuilder, TestFilter,
     TestResult,
@@ -190,7 +186,7 @@ impl Cmd for TestArgs {
         let output = super::compile(&project, false, false)?;
 
         // prepare the test builder
-        let mut evm_spec = crate::utils::evm_spec(&config.evm_version);
+        let evm_spec = crate::utils::evm_spec(&config.evm_version);
         let builder = MultiContractRunnerBuilder::default()
             .fuzzer(fuzzer)
             .initial_balance(evm_opts.initial_balance)
@@ -341,7 +337,7 @@ fn test<A: ArtifactOutput + 'static>(
         // TODO: Re-enable when ported
         //let mut gas_report = GasReport::new(gas_reports.1);
         let (tx, rx) = channel::<(String, BTreeMap<String, TestResult>)>();
-        let known_contracts = runner.known_contracts.clone();
+        //let known_contracts = runner.known_contracts.clone();
         // TODO: Re-enable when ported
         //let execution_info = runner.execution_info.clone();
 
@@ -356,7 +352,7 @@ fn test<A: ArtifactOutput + 'static>(
                     short_test_result(&name, &result);
                     // adds a linebreak only if there were any traces or logs, so that the
                     // output does not look like 1 big block.
-                    let mut add_newline = false;
+                    let add_newline = false;
                     if verbosity > 1 && !result.logs.is_empty() {
                         // We only decode logs from Hardhat and DS-style console events
                         let console_logs = decode_console_logs(&result.logs);
