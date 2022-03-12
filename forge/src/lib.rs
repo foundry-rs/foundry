@@ -3,6 +3,9 @@ pub mod decode;
 /// Call trace arena, decoding and formatting
 pub mod trace;
 
+/// Debugger arena
+pub mod debugger;
+
 /// Gas reports
 pub mod gas_report;
 
