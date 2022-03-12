@@ -64,9 +64,8 @@ impl FromStr for ContractArtifactFields {
             "deployedbytecode" => Ok(ContractArtifactFields::DeployedBytecode),
             "assembly" | "asm" => Ok(ContractArtifactFields::Assembly),
             "asmOptimized" | "assemblyOptimized" | "assemblyoptimized" | "assembly_optimized" |
-            "asmopt" | "assembly-optimized" | "asmo" | "asm-optimized" => {
-                Ok(ContractArtifactFields::AssemblyOptimized)
-            }
+            "asmopt" | "assembly-optimized" | "asmo" | "asm-optimized" | "asmoptimized" |
+            "asm_optimized" => Ok(ContractArtifactFields::AssemblyOptimized),
             "methods" | "methodidentifiers" | "methodIdentifiers" | "method_identifiers" |
             "method-identifiers" | "mi" => Ok(ContractArtifactFields::MethodIdentifiers),
             "gasEstimates" | "gas" | "gas_estimates" | "gas-estimates" | "gasestimates" => {
