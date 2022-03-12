@@ -1,6 +1,7 @@
 //! Cast
 //!
 //! TODO
+use async_trait::async_trait;
 use chrono::NaiveDateTime;
 use ethers_core::{
     abi::{
@@ -10,7 +11,7 @@ use ethers_core::{
     types::{transaction::eip2718::TypedTransaction, Chain, *},
     utils::{self, keccak256, parse_units},
 };
-use ethers_providers::StreamExt;
+use ethers_providers::{FilterWatcher, StreamExt};
 
 use ethers_etherscan::Client;
 use ethers_providers::{Middleware, PendingTransaction};
@@ -380,11 +381,11 @@ where
         Ok(block)
     }
 
-    pub async fn print_raw_logs<T: Into<BlockId>, A: Into<NameOrAddress>>(
+    pub async fn raw_logs<T: Into<BlockId>, A: Into<NameOrAddress>>(
         &self,
         specific_block: Option<T>,
         contract: A,
-    ) -> Result<()> {
+    ) -> Result<RawLogStream<'_, M, T, H256>> {
         let address = match contract.into() {
             NameOrAddress::Name(ref ens_name) => self.provider.resolve_name(ens_name).await?,
             NameOrAddress::Address(addr) => addr,
@@ -399,20 +400,14 @@ where
                         .address(ValueOrArray::Value(address.into()))
                         .from_block(number),
                 };
-                let logs: Vec<Log> = self.provider.get_logs(&filter).await?;
-                println!("{:?}", logs);
+                Ok(RawLogStream::new(filter, self.provider, None))
             }
             None => {
                 let mut stream = self.provider.watch_blocks().await?;
                 let mut filter = Filter::new().address(ValueOrArray::Value(address.into()));
-                while let Some(block) = stream.next().await {
-                    filter = filter.at_block_hash(block);
-                    let logs = self.provider.get_logs(&filter).await?;
-                    println!("New Block: {}\n{:?}\n", block, logs);
-                }
+                Ok(RawLogStream::new(filter, self.provider, Some(stream)))
             }
         }
-        Ok(())
     }
 
     async fn block_field_as_num<T: Into<BlockId>>(&self, block: T, field: String) -> Result<U256> {
@@ -656,6 +651,31 @@ where
 
         let receipt = if to_json { serde_json::to_string(&receipt)? } else { to_table(receipt) };
         Ok(receipt)
+    }
+}
+
+pub struct RawLogStream<'a, M, R, T> {
+    provider: M,
+    stream: Option<FilterWatcher<'a, T, R>>,
+    logs_filter: Filter,
+}
+
+impl<'a, M: Middleware, R, T> RawLogStream<'a, M, R, T>
+where
+    M::Error: 'static,
+{
+    pub fn new(logs_filter: Filter, provider: M, stream: Option<FilterWatcher<'a, T, R>>) -> Self {
+        Self { provider, logs_filter, stream }
+    }
+
+    pub async fn next(&self) -> Result<Option<Vec<Log>>> {
+        if let Some(stream) = self.stream {
+            if let Some(block) = stream.next().await {
+                self.logs_filter = self.logs_filter.at_block_hash(block);
+            }
+        }
+        let logs = self.provider.get_logs(&self.logs_filter).await?;
+        Ok(Some(logs))
     }
 }
 
