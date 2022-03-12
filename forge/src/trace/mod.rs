@@ -315,7 +315,8 @@ impl fmt::Display for CallTrace {
         if self.created {
             write!(
                 f,
-                "{}{} {}@{:?}",
+                "[{}] {}{} {}@{:?}",
+                self.gas_cost,
                 Colour::Yellow.paint(CALL),
                 Colour::Yellow.paint("new"),
                 self.label.as_ref().unwrap_or(&"<Unknown>".to_string()),
