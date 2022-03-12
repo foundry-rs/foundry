@@ -543,6 +543,53 @@ forgetest_init!(can_parse_dapp_libraries, |prj: TestProject, mut cmd: TestComman
     );
 });
 
+// test that `forge snapshot` commands work
+forgetest!(can_check_snapshot, |prj: TestProject, mut cmd: TestCommand| {
+    prj.insert_ds_test();
+
+    prj.inner()
+        .add_source(
+            "ATest.t.sol",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+import "./test.sol";
+contract ATest is DSTest {
+    function testExample() public {
+        assertTrue(true);
+    }
+}
+   "#,
+        )
+        .unwrap();
+    prj.inner()
+        .add_source(
+            "BTest.t.sol",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+import "./test.sol";
+contract BTest is DSTest {
+    function testExample() public {
+        assertTrue(true);
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    cmd.arg("snapshot");
+
+    let out = cmd.stdout();
+    assert!(
+        out.contains("Running 1 test for BTest.json:BTest") &&
+            out.contains("Running 1 test for ATest.json:ATest")
+    );
+
+    cmd.arg("--check");
+    let _ = cmd.output();
+});
+
 // test against a local checkout, useful to debug with local ethers-rs patch
 forgetest_ignore!(can_compile_local_spells, |_: TestProject, mut cmd: TestCommand| {
     let current_dir = std::env::current_dir().unwrap();
