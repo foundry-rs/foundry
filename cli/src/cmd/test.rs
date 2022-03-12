@@ -331,7 +331,6 @@ fn test<A: ArtifactOutput + 'static>(
 
     if json {
         let results = runner.test(&filter, None)?;
-        // TODO: Make this work normally
         println!("{}", serde_json::to_string(&results)?);
         Ok(TestOutcome::new(results, allow_failure))
     } else {
