@@ -1,11 +1,3 @@
-use ethers::abi::Abi;
-use std::{
-    cmp::{max, min},
-    collections::{BTreeMap, VecDeque},
-    time::{Duration, Instant},
-};
-use tui::text::Text;
-
 use crossterm::{
     event::{
         self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, MouseEvent,
@@ -14,36 +6,36 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ethers::solc::artifacts::ContractBytecodeSome;
+use ethers::{abi::Abi, solc::artifacts::ContractBytecodeSome, types::Address};
+use eyre::Result;
+use forge::debugger::DebugStep;
 use std::{
-    io::{self},
+    cmp::{max, min},
+    collections::{BTreeMap, VecDeque},
+    io,
     sync::mpsc,
     thread,
+    time::{Duration, Instant},
 };
-
-use evm_adapters::sputnik::cheatcodes::debugger::DebugStep;
-use eyre::Result;
 use tui::{
     backend::{Backend, CrosstermBackend},
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     terminal::Frame,
-    text::{Span, Spans},
+    text::{Span, Spans, Text},
     widgets::{Block, Borders, Paragraph, Wrap},
     Terminal,
 };
 
-use ethers::types::Address;
-
-/// Trait for starting the ui
+/// Trait for starting the UI
 pub trait Ui {
-    /// Start the agent that will now take over.
+    /// Start the agent that will now take over
     fn start(self) -> Result<TUIExitReason>;
 }
 
-/// Used to indicate why the Ui stopped
+/// Used to indicate why the UI stopped
 pub enum TUIExitReason {
-    /// 'q' exit
+    /// Exit using <q>
     CharExit,
 }
 
@@ -499,7 +491,7 @@ impl Tui {
     ) {
         let block_source_code = Block::default()
             .title(format!(
-                " Address: {}, pc: {}, call's gas used: {} ",
+                " Address: {} | PC: {} | Gas used in call: {} ",
                 address,
                 if let Some(step) = debug_steps.get(current_step) {
                     step.pc.to_string()
@@ -623,7 +615,7 @@ impl Tui {
     ) {
         let memory = &debug_steps[current_step].memory;
         let stack_space = Block::default()
-            .title(format!(" Memory - Max Expansion: {} bytes", memory.effective_len()))
+            .title(format!(" Memory (max expansion: {} bytes)", memory.effective_len()))
             .borders(Borders::ALL);
         let memory = memory.data();
         let max_i = memory.len() / 32;
@@ -660,23 +652,23 @@ impl Tui {
 
 impl Ui for Tui {
     fn start(mut self) -> Result<TUIExitReason> {
-        // if something panics inside here, we should do everything we can to
+        // If something panics inside here, we should do everything we can to
         // not corrupt the user's terminal.
         std::panic::set_hook(Box::new(|e| {
             disable_raw_mode().expect("Unable to disable raw mode");
-            execute!(std::io::stdout(), LeaveAlternateScreen, DisableMouseCapture)
+            execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture)
                 .expect("unable to execute disable mouse capture");
             println!("{}", e);
         }));
-        // this is the recommend tick rate from tui-rs, based on their examples
+        // This is the recommend tick rate from tui-rs, based on their examples
         let tick_rate = Duration::from_millis(200);
 
-        // setup a channel to send interrupts
+        // Setup a channel to send interrupts
         let (tx, rx) = mpsc::channel();
         thread::spawn(move || {
             let mut last_tick = Instant::now();
             loop {
-                // poll events since last tick
+                // Poll events since last tick
                 if event::poll(tick_rate - last_tick.elapsed()).unwrap() {
                     let event = event::read().unwrap();
                     if let Event::Key(key) = event {
@@ -689,7 +681,7 @@ impl Ui for Tui {
                         }
                     }
                 }
-                // force update if time has passed
+                // Force update if time has passed
                 if last_tick.elapsed() > tick_rate {
                     if tx.send(Interrupt::IntervalElapsed).is_err() {
                         return
@@ -716,9 +708,9 @@ impl Ui for Tui {
                     .collect();
                 last_index = draw_memory.inner_call_index;
             }
-            // grab interrupt
+            // Grab interrupt
             match rx.recv()? {
-                // key press
+                // Key press
                 Interrupt::KeyPressed(event) => match event.code {
                     // Exit
                     KeyCode::Char('q') => {
@@ -732,7 +724,7 @@ impl Ui for Tui {
                     }
                     // Move down
                     KeyCode::Char('j') | KeyCode::Down => {
-                        // grab number of times to do it
+                        // Grab number of times to do it
                         for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
                             if self.current_step < opcode_list.len() - 1 {
                                 self.current_step += 1;
