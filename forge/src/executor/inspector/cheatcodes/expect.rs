@@ -163,7 +163,7 @@ pub fn apply<DB: Database>(
         }
         HEVMCalls::ExpectEmit(inner) => {
             state.expected_emits.push(ExpectedEmit {
-                depth: data.subroutine.depth() + 1,
+                depth: data.subroutine.depth(),
                 checks: [inner.0, inner.1, inner.2, inner.3],
                 ..Default::default()
             });
