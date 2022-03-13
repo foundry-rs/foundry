@@ -3,20 +3,17 @@ use crate::{
     runner::TestResult,
     ContractRunner, TestFilter,
 };
-use foundry_utils::PostLinkInput;
-use revm::db::DatabaseRef;
-
 use ethers::{
-    abi::{Abi, Event, Function},
-    prelude::{artifacts::CompactContractBytecode, Artifact, ArtifactId, ArtifactOutput},
-    types::{Address, Bytes, H256, U256},
+    abi::Abi,
+    prelude::{artifacts::CompactContractBytecode, ArtifactId, ArtifactOutput},
+    solc::{Artifact, ProjectCompileOutput},
+    types::{Address, Bytes, U256},
 };
-
-use proptest::test_runner::TestRunner;
-
-use ethers::solc::ProjectCompileOutput;
 use eyre::Result;
+use foundry_utils::PostLinkInput;
+use proptest::test_runner::TestRunner;
 use rayon::prelude::*;
+use revm::db::DatabaseRef;
 use std::{collections::BTreeMap, marker::Sync, sync::mpsc::Sender};
 
 /// Builder used for instantiating the multi-contract runner
@@ -115,20 +112,15 @@ impl MultiContractRunnerBuilder {
             },
         )?;
 
-        // TODO Add forge specific contracts
-        //known_contracts.insert("VM".to_string(), (HEVM_ABI.clone(), Vec::new()));
-        //known_contracts.insert("VM_CONSOLE".to_string(), (CONSOLE_ABI.clone(), Vec::new()));
-
         let execution_info = foundry_utils::flatten_known_contracts(&known_contracts);
         Ok(MultiContractRunner {
             contracts: deployable_contracts,
             known_contracts,
-            identified_contracts: Default::default(),
             evm_opts,
             evm_spec: self.evm_spec.unwrap_or(SpecId::LONDON),
             sender: self.sender,
             fuzzer: self.fuzzer,
-            execution_info,
+            errors: Some(execution_info.2),
             source_paths,
         })
     }
@@ -166,14 +158,12 @@ pub struct MultiContractRunner {
     pub contracts: BTreeMap<String, (Abi, ethers::prelude::Bytes, Vec<ethers::prelude::Bytes>)>,
     /// Compiled contracts by name that have an Abi and runtime bytecode
     pub known_contracts: BTreeMap<String, (Abi, Vec<u8>)>,
-    /// Identified contracts by test
-    pub identified_contracts: BTreeMap<String, BTreeMap<Address, (String, Abi)>>,
     /// The EVM instance used in the test runner
     pub evm_opts: EvmOpts,
     /// The EVM spec
     pub evm_spec: SpecId,
-    /// All contract execution info, (functions, events, errors)
-    pub execution_info: (BTreeMap<[u8; 4], Function>, BTreeMap<H256, Event>, Abi),
+    /// All known errors, used for decoding reverts
+    pub errors: Option<Abi>,
     /// The fuzzer which will be used to run parametric tests (w/ non-0 solidity args)
     fuzzer: Option<TestRunner>,
     /// The address which will be used as the `from` field in all EVM calls
@@ -188,13 +178,14 @@ impl MultiContractRunner {
         filter: &(impl TestFilter + Send + Sync),
         stream_result: Option<Sender<(String, BTreeMap<String, TestResult>)>>,
     ) -> Result<BTreeMap<String, BTreeMap<String, TestResult>>> {
-        let source_paths = self.source_paths.clone();
         let env = self.evm_opts.evm_env();
         let results = self
             .contracts
             .par_iter()
-            .filter(|(name, _)| filter.matches_path(source_paths.get(*name).unwrap()))
-            .filter(|(name, _)| filter.matches_contract(name))
+            .filter(|(name, _)| {
+                filter.matches_path(&self.source_paths.get(*name).unwrap()) &&
+                    filter.matches_contract(name)
+            })
             .filter(|(_, (abi, _, _))| abi.functions().any(|func| filter.matches_test(&func.name)))
             .map(|(name, (abi, deploy_code, libs))| {
                 let mut builder = ExecutorBuilder::new()
@@ -208,15 +199,17 @@ impl MultiContractRunner {
                     builder = builder.with_fork(fork);
                 }
 
+                if self.evm_opts.verbosity >= 3 {
+                    builder = builder.with_tracing();
+                }
+
                 let executor = builder.build();
                 let result =
                     self.run_tests(name, abi, executor, deploy_code.clone(), libs, filter)?;
                 Ok((name.clone(), result))
             })
-            .filter_map(|x: Result<_>| x.ok())
-            .filter_map(
-                |(name, result)| if result.is_empty() { None } else { Some((name, result)) },
-            )
+            .filter_map(Result::<_>::ok)
+            .filter(|(_, results)| !results.is_empty())
             .map_with(stream_result, |stream_result, (name, result)| {
                 if let Some(stream_result) = stream_result.as_ref() {
                     stream_result.send((name.clone(), result.clone())).unwrap();
@@ -250,10 +243,10 @@ impl MultiContractRunner {
             deploy_code,
             self.evm_opts.initial_balance,
             self.sender,
-            Some((&self.execution_info.0, &self.execution_info.1, &self.execution_info.2)),
+            self.errors.as_ref(),
             libs,
         );
-        runner.run_tests(filter, self.fuzzer.clone(), Some(&self.known_contracts))
+        runner.run_tests(filter, self.fuzzer.clone())
     }
 }
 

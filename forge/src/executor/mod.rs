@@ -1,7 +1,5 @@
 /// ABIs used internally in the executor
 pub mod abi;
-use std::collections::BTreeMap;
-
 pub use abi::{
     patch_hardhat_console_selector, HardhatConsoleCalls, CHEATCODE_ADDRESS, CONSOLE_ABI,
     HARDHAT_CONSOLE_ABI, HARDHAT_CONSOLE_ADDRESS,
@@ -27,7 +25,7 @@ pub mod fuzz;
 pub use revm::SpecId;
 
 use self::inspector::InspectorStackConfig;
-use crate::CALLER;
+use crate::{trace::CallTraceArena, CALLER};
 use bytes::Bytes;
 use ethers::{
     abi::{Abi, Detokenize, RawLog, Tokenize},
@@ -41,6 +39,7 @@ use revm::{
     db::{CacheDB, DatabaseCommit, DatabaseRef, EmptyDB},
     return_ok, Account, CreateScheme, Env, Return, TransactOut, TransactTo, TxEnv, EVM,
 };
+use std::collections::BTreeMap;
 
 #[derive(thiserror::Error, Debug)]
 pub enum EvmError {
@@ -51,6 +50,8 @@ pub enum EvmError {
         reason: String,
         gas_used: u64,
         logs: Vec<RawLog>,
+        traces: Option<CallTraceArena>,
+        labels: BTreeMap<Address, String>,
         state_changeset: Option<HashMap<Address, Account>>,
     },
     /// Error which occurred during ABI encoding/decoding
@@ -59,6 +60,19 @@ pub enum EvmError {
     /// Any other error.
     #[error(transparent)]
     Eyre(#[from] eyre::Error),
+}
+
+/// The result of a deployment.
+#[derive(Debug)]
+pub struct DeployResult {
+    /// The address of the deployed contract
+    pub address: Address,
+    /// The gas cost of the deployment
+    pub gas: u64,
+    /// The logs emitted during the deployment
+    pub logs: Vec<RawLog>,
+    /// The traces of the deployment
+    pub traces: Option<CallTraceArena>,
 }
 
 /// The result of a call.
@@ -74,6 +88,8 @@ pub struct CallResult<D: Detokenize> {
     pub logs: Vec<RawLog>,
     /// The labels assigned to addresses during the call
     pub labels: BTreeMap<Address, String>,
+    /// The traces of the call
+    pub traces: Option<CallTraceArena>,
     /// The changeset of the state.
     ///
     /// This is only present if the changed state was not committed to the database (i.e. if you
@@ -94,11 +110,27 @@ pub struct RawCallResult {
     pub logs: Vec<RawLog>,
     /// The labels assigned to addresses during the call
     pub labels: BTreeMap<Address, String>,
+    /// The traces of the call
+    pub traces: Option<CallTraceArena>,
     /// The changeset of the state.
     ///
     /// This is only present if the changed state was not committed to the database (i.e. if you
     /// used `call` and `call_raw` not `call_committing` or `call_raw_committing`).
     pub state_changeset: Option<HashMap<Address, Account>>,
+}
+
+impl Default for RawCallResult {
+    fn default() -> Self {
+        Self {
+            status: Return::Continue,
+            result: Bytes::new(),
+            gas: 0,
+            logs: Vec::new(),
+            labels: BTreeMap::new(),
+            traces: None,
+            state_changeset: None,
+        }
+    }
 }
 
 pub struct Executor<DB: DatabaseRef> {
@@ -154,13 +186,8 @@ where
     }
 
     /// Calls the `setUp()` function on a contract.
-    pub fn setup(
-        &mut self,
-        address: Address,
-    ) -> std::result::Result<(Return, Vec<RawLog>), EvmError> {
-        let CallResult { status, logs, .. } =
-            self.call_committing::<(), _, _>(*CALLER, address, "setUp()", (), 0.into(), None)?;
-        Ok((status, logs))
+    pub fn setup(&mut self, address: Address) -> std::result::Result<CallResult<()>, EvmError> {
+        self.call_committing::<(), _, _>(*CALLER, address, "setUp()", (), 0.into(), None)
     }
 
     /// Performs a call to an account on the current state of the VM.
@@ -177,12 +204,12 @@ where
     ) -> std::result::Result<CallResult<D>, EvmError> {
         let func = func.into();
         let calldata = Bytes::from(encode_function_data(&func, args)?.to_vec());
-        let RawCallResult { result, status, gas, logs, labels, .. } =
+        let RawCallResult { result, status, gas, logs, labels, traces, .. } =
             self.call_raw_committing(from, to, calldata, value)?;
         match status {
             return_ok!() => {
                 let result = decode_function_data(&func, result, false)?;
-                Ok(CallResult { status, result, gas, logs, labels, state_changeset: None })
+                Ok(CallResult { status, result, gas, logs, labels, traces, state_changeset: None })
             }
             _ => {
                 let reason = foundry_utils::decode_revert(result.as_ref(), abi)
@@ -192,6 +219,8 @@ where
                     reason,
                     gas_used: gas,
                     logs,
+                    traces,
+                    labels,
                     state_changeset: None,
                 })
             }
@@ -219,9 +248,9 @@ where
             TransactOut::Call(data) => data,
             _ => Bytes::default(),
         };
-        let (logs, labels) = collect_inspector_states(inspector);
+        let (logs, labels, traces) = collect_inspector_states(inspector);
 
-        Ok(RawCallResult { status, result, gas, logs, labels, state_changeset: None })
+        Ok(RawCallResult { status, result, gas, logs, labels, traces, state_changeset: None })
     }
 
     /// Performs a call to an account on the current state of the VM.
@@ -238,17 +267,25 @@ where
     ) -> std::result::Result<CallResult<D>, EvmError> {
         let func = func.into();
         let calldata = Bytes::from(encode_function_data(&func, args)?.to_vec());
-        let RawCallResult { result, status, gas, logs, labels, state_changeset } =
+        let RawCallResult { result, status, gas, logs, labels, traces, state_changeset } =
             self.call_raw(from, to, calldata, value)?;
         match status {
             return_ok!() => {
                 let result = decode_function_data(&func, result, false)?;
-                Ok(CallResult { status, result, gas, logs, labels, state_changeset })
+                Ok(CallResult { status, result, gas, logs, labels, traces, state_changeset })
             }
             _ => {
                 let reason = foundry_utils::decode_revert(result.as_ref(), abi)
                     .unwrap_or_else(|_| format!("{:?}", status));
-                Err(EvmError::Execution { status, reason, gas_used: gas, logs, state_changeset })
+                Err(EvmError::Execution {
+                    status,
+                    reason,
+                    gas_used: gas,
+                    logs,
+                    traces,
+                    labels,
+                    state_changeset,
+                })
             }
         }
     }
@@ -275,42 +312,45 @@ where
             _ => Bytes::default(),
         };
 
-        let (logs, labels) = collect_inspector_states(inspector);
+        let (logs, labels, traces) = collect_inspector_states(inspector);
         Ok(RawCallResult {
             status,
             result,
             gas,
             logs: logs.to_vec(),
             labels,
+            traces,
             state_changeset: Some(state_changeset),
         })
     }
 
     /// Deploys a contract and commits the new state to the underlying database.
-    pub fn deploy(
-        &mut self,
-        from: Address,
-        code: Bytes,
-        value: U256,
-    ) -> Result<(Address, Return, u64, Vec<RawLog>)> {
+    pub fn deploy(&mut self, from: Address, code: Bytes, value: U256) -> Result<DeployResult> {
         let mut evm = EVM::new();
         evm.env = self.build_env(from, TransactTo::Create(CreateScheme::Create), code, value);
         evm.database(&mut self.db);
 
         let mut inspector = self.inspector_config.stack();
         let (status, out, gas, _) = evm.inspect_commit(&mut inspector);
-        let addr = match out {
+        let address = match out {
             TransactOut::Create(_, Some(addr)) => addr,
             // TODO: We should have better error handling logic in the test runner
             // regarding deployments in general
             _ => eyre::bail!("deployment failed: {:?}", status),
         };
-        let (logs, _) = collect_inspector_states(inspector);
+        let (logs, _, traces) = collect_inspector_states(inspector);
 
-        Ok((addr, status, gas, logs))
+        Ok(DeployResult { address, gas, logs, traces })
     }
 
-    /// Check if a call to a test contract was successful
+    /// Check if a call to a test contract was successful.
+    ///
+    /// This function checks both the VM status of the call and DSTest's `failed`.
+    ///
+    /// DSTest will not revert inside its `assertEq`-like functions which allows
+    /// to test multiple assertions in 1 test function while also preserving logs.
+    ///
+    /// Instead it sets `failed` to `true` which we must check.
     pub fn is_success(
         &self,
         address: Address,
@@ -354,10 +394,13 @@ where
     }
 }
 
-fn collect_inspector_states(stack: InspectorStack) -> (Vec<RawLog>, BTreeMap<Address, String>) {
+fn collect_inspector_states(
+    stack: InspectorStack,
+) -> (Vec<RawLog>, BTreeMap<Address, String>, Option<CallTraceArena>) {
     let logs = if let Some(logs) = stack.logs { logs.logs } else { Vec::new() };
     let labels =
         if let Some(cheatcodes) = stack.cheatcodes { cheatcodes.labels } else { BTreeMap::new() };
+    let traces = stack.tracer.map(|tracer| tracer.traces);
 
-    (logs, labels)
+    (logs, labels, traces)
 }
