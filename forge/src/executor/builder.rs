@@ -98,6 +98,14 @@ impl ExecutorBuilder {
         self
     }
 
+    /// Enables tracing
+    #[must_use]
+    pub fn with_tracing(mut self) -> Self {
+        self.inspector_config.tracing = true;
+        self
+    }
+
+    /// Sets the EVM spec to use
     #[must_use]
     pub fn with_spec(mut self, spec: SpecId) -> Self {
         self.env.cfg.spec_id = spec;
@@ -124,6 +132,5 @@ impl ExecutorBuilder {
         Executor::new(db, self.env, self.inspector_config)
     }
 
-    // TODO: add with_traces
     // TODO: add with_debug(ger?)
 }
