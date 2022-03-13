@@ -569,7 +569,7 @@ pub async fn pretty_calldata(calldata: impl AsRef<str>, offline: bool) -> Result
     let sigs = if offline {
         vec![]
     } else {
-        fourbyte(selector).await?.into_iter().map(|sig| sig.0).collect()
+        fourbyte(selector).await.unwrap_or_default().into_iter().map(|sig| sig.0).collect()
     };
     let (_, data) = calldata.split_at(8);
 
