@@ -100,6 +100,20 @@ pub fn get_contract_name(id: &str) -> &str {
     id.rsplit(':').next().unwrap_or(id)
 }
 
+/// This returns the `file name` part, See [`get_contract_name`]
+///
+/// # Example
+///
+/// ```
+/// assert_eq!(
+///     "SafeTransferLibTest.json",
+///     utils::get_file_name("SafeTransferLibTest.json:SafeTransferLibTest")
+/// );
+/// ```
+pub fn get_file_name(id: &str) -> &str {
+    id.split(':').next().unwrap_or(id)
+}
+
 /// parse a hex str or decimal str as U256
 pub fn parse_u256(s: &str) -> eyre::Result<U256> {
     Ok(if s.starts_with("0x") { U256::from_str(s)? } else { U256::from_dec_str(s)? })

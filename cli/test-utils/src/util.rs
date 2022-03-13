@@ -161,6 +161,12 @@ impl TestProject {
         path
     }
 
+    /// Adds DSTest as a source under "test.sol"
+    pub fn insert_ds_test(&self) -> PathBuf {
+        let s = include_str!("../../../evm-adapters/testdata/DsTest.sol");
+        self.inner().add_source("test.sol", s).unwrap()
+    }
+
     /// Asserts all project paths exist
     ///
     ///   - sources
