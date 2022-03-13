@@ -439,7 +439,7 @@ contract CheatCodes is DSTest {
         ExpectEmit emitter = new ExpectEmit();
         hevm.deal(address(this), 1 ether);
         hevm.expectEmit(true,true,false,true);
-        emit Transfer(address(this), address(1338), 1 gwei);
+        emit Transfer(address(this), address(1337), 1 gwei);
         emitter.t4(payable(address(1337)), 100 gwei);
     }
 
@@ -449,7 +449,7 @@ contract CheatCodes is DSTest {
         ExpectEmit emitter = new ExpectEmit();
         hevm.deal(address(this), 1 ether);
         hevm.expectEmit(true,true,false,true);
-        emit Transfer(address(this), address(1338), 100 gwei);
+        emit Transfer(address(this), address(1337), 100 gwei);
         emitter.t5(payable(address(1337)), 100 gwei);
     }
 
