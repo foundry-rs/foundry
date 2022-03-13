@@ -4326,7 +4326,7 @@ checksum = "6bdef32e8150c2a081110b42772ffe7d7c9032b606bc226c8260fd97e0976601"
 [[package]]
 name = "svm-rs"
 version = "0.2.9"
-source = "git+https://github.com/roynalnaruto/svm-rs#3aea7a7401bb5cf62e915d42ebdc764172452187"
+source = "git+https://github.com/roynalnaruto/svm-rs#caf5f3df6a37bd2373a60e5631135321ca1dc3ce"
 dependencies = [
  "anyhow",
  "cfg-if 1.0.0",
