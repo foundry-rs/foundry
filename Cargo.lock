@@ -569,7 +569,7 @@ version = "3.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da95d038ede1a964ce99f49cbe27a7fb538d1da595e4b4f70b8c8f338d17bf16"
 dependencies = [
- "heck",
+ "heck 0.4.0",
  "proc-macro-error",
  "proc-macro2",
  "quote",
@@ -709,6 +709,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "comfy-table"
+version = "5.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b103d85ca6e209388771bfb7aa6b68a7aeec4afbf6f0a0264bfbf50360e5212e"
+dependencies = [
+ "crossterm",
+ "strum",
+ "strum_macros",
+ "unicode-width",
+]
+
+[[package]]
 name = "command-group"
 version = "1.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -835,6 +847,31 @@ checksum = "b5e5bed1f1c269533fa816a0a5492b3545209a205ca1a54842be180eb63a16a6"
 dependencies = [
  "cfg-if 1.0.0",
  "lazy_static",
+]
+
+[[package]]
+name = "crossterm"
+version = "0.23.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77b75a27dc8d220f1f8521ea69cd55a34d720a200ebb3a624d9aa19193d3b432"
+dependencies = [
+ "bitflags",
+ "crossterm_winapi",
+ "libc",
+ "mio 0.7.14",
+ "parking_lot 0.12.0",
+ "signal-hook",
+ "signal-hook-mio",
+ "winapi",
+]
+
+[[package]]
+name = "crossterm_winapi"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ae1b35a484aa10e07fe0638d02301c5ad24de82d310ccbd2f3693da5f09bf1c"
+dependencies = [
+ "winapi",
 ]
 
 [[package]]
@@ -1493,7 +1530,9 @@ checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
 name = "forge"
 version = "0.1.0"
 dependencies = [
+ "ansi_term",
  "bytes",
+ "comfy-table",
  "ethers",
  "eyre",
  "foundry-utils",
@@ -1883,6 +1922,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8c21d40587b92fa6a6c6e3c1bdbf87d75511db5672f9c93175574b3a00df1758"
 dependencies = [
  "ahash",
+]
+
+[[package]]
+name = "heck"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d621efb26863f0e9924c6ac577e8275e5e6b77455db64ffa6c65c904e9e132c"
+dependencies = [
+ "unicode-segmentation",
 ]
 
 [[package]]
@@ -3476,7 +3524,7 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "1.2.0"
-source = "git+https://github.com/onbjerg/revm?branch=onbjerg/blockhashes#fd8f390daca7e60b97798423a053a4509b54a569"
+source = "git+https://github.com/onbjerg/revm?branch=onbjerg/tracer-ends#7a243f84a4ea9f5a969e9546bbf3d6b6096c845e"
 dependencies = [
  "arrayref",
  "auto_impl",
@@ -3492,7 +3540,7 @@ dependencies = [
 [[package]]
 name = "revm_precompiles"
 version = "0.4.0"
-source = "git+https://github.com/onbjerg/revm?branch=onbjerg/blockhashes#fd8f390daca7e60b97798423a053a4509b54a569"
+source = "git+https://github.com/onbjerg/revm?branch=onbjerg/tracer-ends#7a243f84a4ea9f5a969e9546bbf3d6b6096c845e"
 dependencies = [
  "bytes",
  "k256",
@@ -3907,6 +3955,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "signal-hook"
+version = "0.3.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "647c97df271007dcea485bb74ffdb57f2e683f1306c854f468a0c244badabf2d"
+dependencies = [
+ "libc",
+ "signal-hook-registry",
+]
+
+[[package]]
+name = "signal-hook-mio"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "29fd5867f1c4f2c5be079aee7a2adf1152ebb04a4bc4d341f504b7dece607ed4"
+dependencies = [
+ "libc",
+ "mio 0.7.14",
+ "signal-hook",
+]
+
+[[package]]
 name = "signal-hook-registry"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4014,6 +4083,25 @@ name = "strsim"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "73473c0e59e6d5812c5dfe2a064a6444949f089e20eec9a2e5506596494e4623"
+
+[[package]]
+name = "strum"
+version = "0.23.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cae14b91c7d11c9a851d3fbc80a963198998c2a64eec840477fa92d8ce9b70bb"
+
+[[package]]
+name = "strum_macros"
+version = "0.23.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5bb0dc7ee9c15cea6199cde9a127fa16a4c5819af85395457ad72d68edc85a38"
+dependencies = [
+ "heck 0.3.3",
+ "proc-macro2",
+ "quote",
+ "rustversion",
+ "syn",
+]
 
 [[package]]
 name = "substrate-bn"
@@ -4535,6 +4623,12 @@ checksum = "d54590932941a9e9266f0832deed84ebe1bf2e4c9e4a3554d393d18f5e854bf9"
 dependencies = [
  "tinyvec",
 ]
+
+[[package]]
+name = "unicode-segmentation"
+version = "1.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7e8820f5d777f6224dc4be3632222971ac30164d4a258d595640799554ebfd99"
 
 [[package]]
 name = "unicode-width"

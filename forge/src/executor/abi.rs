@@ -72,7 +72,7 @@ ethers::contract::abigen!(
             event log_named_string       (string key, string val)
     ]"#
 );
-pub use console_mod::CONSOLE_ABI;
+pub use console_mod::{ConsoleEvents, CONSOLE_ABI};
 
 // Bindings for Hardhat console
 ethers::contract::abigen!(HardhatConsole, "./abi/console.json",);
