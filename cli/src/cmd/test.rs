@@ -9,8 +9,11 @@ use ansi_term::Colour;
 use clap::{AppSettings, Parser};
 use ethers::solc::{ArtifactOutput, ProjectCompileOutput};
 use forge::{
-    decode::decode_console_logs, executor::opts::EvmOpts, MultiContractRunnerBuilder, TestFilter,
-    TestResult,
+    decode::decode_console_logs,
+    executor::opts::EvmOpts,
+    gas_report::GasReport,
+    trace::{identifier::LocalTraceIdentifier, CallTraceDecoder, TraceKind},
+    MultiContractRunnerBuilder, TestFilter, TestResult,
 };
 use foundry_config::{figment::Figment, Config};
 use regex::Regex;
@@ -220,7 +223,7 @@ pub struct Test {
 
 impl Test {
     pub fn gas_used(&self) -> u64 {
-        self.result.gas_used
+        self.result.kind.gas_used().gas()
     }
 
     /// Returns the contract name of the artifact id
@@ -278,7 +281,6 @@ impl TestOutcome {
         if !self.allow_failure {
             let failures = self.failures().count();
             if failures > 0 {
-                println!();
                 println!("Failed tests:");
                 for (name, result) in self.failures() {
                     short_test_result(name, result);
@@ -329,133 +331,99 @@ fn test<A: ArtifactOutput + 'static>(
     filter: Filter,
     json: bool,
     allow_failure: bool,
-    gas_reports: (bool, Vec<String>),
+    (gas_reporting, gas_reports): (bool, Vec<String>),
 ) -> eyre::Result<TestOutcome> {
     let verbosity = evm_opts.verbosity;
-    let gas_reporting = gas_reports.0;
     if gas_reporting && evm_opts.verbosity < 3 {
-        // force evm to do tracing, but don't hit the verbosity print path
+        // Enable tracing without hitting the verbosity print path
         evm_opts.verbosity = 3;
     }
     let mut runner = builder.build(output, evm_opts)?;
 
     if json {
         let results = runner.test(&filter, None)?;
-        let res = serde_json::to_string(&results)?; // TODO: Make this work normally
-        println!("{}", res);
+        println!("{}", serde_json::to_string(&results)?);
         Ok(TestOutcome::new(results, allow_failure))
     } else {
-        // TODO: Re-enable when ported
-        //let mut gas_report = GasReport::new(gas_reports.1);
+        let local_identifier = LocalTraceIdentifier::new(&runner.known_contracts);
         let (tx, rx) = channel::<(String, BTreeMap<String, TestResult>)>();
-        //let known_contracts = runner.known_contracts.clone();
-        // TODO: Re-enable when ported
-        //let execution_info = runner.execution_info.clone();
 
-        let handle = thread::spawn(move || {
-            while let Ok((contract_name, tests)) = rx.recv() {
-                println!();
-                if !tests.is_empty() {
-                    let term = if tests.len() > 1 { "tests" } else { "test" };
-                    println!("Running {} {} for {}", tests.len(), term, contract_name);
+        thread::spawn(move || runner.test(&filter, Some(tx)).unwrap());
+
+        let mut results: BTreeMap<String, BTreeMap<String, TestResult>> = BTreeMap::new();
+        let mut gas_report = GasReport::new(gas_reports);
+        for (contract_name, mut tests) in rx {
+            println!();
+            if !tests.is_empty() {
+                let term = if tests.len() > 1 { "tests" } else { "test" };
+                println!("Running {} {} for {}", tests.len(), term, contract_name);
+            }
+            for (name, result) in &mut tests {
+                short_test_result(name, result);
+
+                // We only display logs at level 2 and above
+                if verbosity < 2 {
+                    continue
                 }
-                for (name, result) in tests {
-                    short_test_result(&name, &result);
-                    // adds a linebreak only if there were any traces or logs, so that the
-                    // output does not look like 1 big block.
-                    let add_newline = false;
-                    if verbosity > 1 && !result.logs.is_empty() {
-                        // We only decode logs from Hardhat and DS-style console events
-                        let console_logs = decode_console_logs(&result.logs);
-                        if !console_logs.is_empty() {
-                            println!("Logs:");
-                            for log in console_logs {
-                                println!("  {}", log);
+
+                // We only decode logs from Hardhat and DS-style console events
+                let console_logs = decode_console_logs(&result.logs);
+                if !console_logs.is_empty() {
+                    println!("Logs:");
+                    for log in console_logs {
+                        println!("  {}", log);
+                    }
+                    println!();
+                }
+
+                if !result.traces.is_empty() {
+                    // We only display traces at verbosity level 3 and above
+                    if verbosity < 3 {
+                        continue
+                    }
+
+                    // At verbosity level 3, we only display traces for failed tests
+                    if verbosity == 3 && result.success {
+                        continue
+                    }
+
+                    // Identify addresses in each trace
+                    let mut decoder =
+                        CallTraceDecoder::new_with_labels(result.labeled_addresses.clone());
+
+                    println!("Traces:");
+                    for (kind, trace) in &mut result.traces {
+                        decoder.identify(trace, &local_identifier);
+
+                        let should_include = match kind {
+                            // At verbosity level 4, we also display the setup trace for failed
+                            // tests At verbosity level 5, we display
+                            // all traces for all tests
+                            TraceKind::Setup => {
+                                (verbosity >= 5) || (verbosity == 4 && !result.success)
                             }
+                            TraceKind::Execution => verbosity > 3 || !result.success,
+                            _ => false,
+                        };
+
+                        if should_include {
+                            decoder.decode(trace);
+                            println!("{}", trace);
                         }
                     }
-                    // TODO: Re-enable this when traces are ported
-                    /*if verbosity > 2 {
-                        if let (Some(traces), Some(identified_contracts)) =
-                            (&result.traces, &result.identified_contracts)
-                        {
-                            if !result.success && verbosity == 3 || verbosity > 3 {
-                                // add a new line if any logs were printed & to separate them from
-                                // the traces to be printed
-                                if !result.logs.is_empty() {
-                                    println!();
-                                }
-                                let mut ident = identified_contracts.clone();
-                                let (funcs, events, errors) = &execution_info;
-                                let mut exec_info = ExecutionInfo::new(
-                                    // &runner.known_contracts,
-                                    &known_contracts,
-                                    &mut ident,
-                                    &result.labeled_addresses,
-                                    funcs,
-                                    events,
-                                    errors,
-                                );
-                                let vm = vm();
-                                let mut trace_string = "".to_string();
-                                if verbosity > 4 || !result.success {
-                                    add_newline = true;
-                                    println!("Traces:");
-                                    // print setup calls as well
-                                    traces.iter().for_each(|trace| {
-                                        trace.construct_trace_string(
-                                            0,
-                                            &mut exec_info,
-                                            &vm,
-                                            "  ",
-                                            &mut trace_string,
-                                        );
-                                    });
-                                } else if !traces.is_empty() {
-                                    add_newline = true;
-                                    println!("Traces:");
-                                    traces
-                                        .last()
-                                        .expect("no last but not empty")
-                                        .construct_trace_string(
-                                            0,
-                                            &mut exec_info,
-                                            &vm,
-                                            "  ",
-                                            &mut trace_string,
-                                        );
-                                }
-                                if !trace_string.is_empty() {
-                                    println!("{}", trace_string);
-                                }
-                            }
-                        }
-                    }*/
-                    if add_newline {
-                        println!();
+
+                    if gas_reporting {
+                        gas_report.analyze(&result.traces);
                     }
                 }
             }
-        });
+            results.insert(contract_name, tests);
+        }
 
-        let results = runner.test(&filter, Some(tx))?;
+        if gas_reporting {
+            println!("{}", gas_report.finalize());
+        }
 
-        handle.join().unwrap();
-
-        // TODO: Re-enable when ported
-        /*if gas_reporting {
-            for tests in results.values() {
-                for result in tests.values() {
-                    if let (Some(traces), Some(identified_contracts)) =
-                        (&result.traces, &result.identified_contracts)
-                    {
-                        gas_report.analyze(traces, identified_contracts);
-                    }
-                }
-            }
-            gas_report.finalize();
-            println!("{}", gas_report);
-        }*/
         Ok(TestOutcome::new(results, allow_failure))
     }
 }

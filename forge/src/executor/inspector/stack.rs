@@ -1,4 +1,4 @@
-use super::{Cheatcodes, LogCollector};
+use super::{Cheatcodes, LogCollector, Tracer};
 use bytes::Bytes;
 use ethers::types::Address;
 use revm::{db::Database, CallInputs, CreateInputs, EVMData, Gas, Inspector, Interpreter, Return};
@@ -23,6 +23,7 @@ macro_rules! call_inspectors {
 /// remaining inspectors are not called.
 #[derive(Default)]
 pub struct InspectorStack {
+    pub tracer: Option<Tracer>,
     pub logs: Option<LogCollector>,
     pub cheatcodes: Option<Cheatcodes>,
 }
@@ -43,7 +44,7 @@ where
         data: &mut EVMData<'_, DB>,
         is_static: bool,
     ) -> Return {
-        call_inspectors!(inspector, [&mut self.logs, &mut self.cheatcodes], {
+        call_inspectors!(inspector, [&mut self.tracer, &mut self.logs, &mut self.cheatcodes], {
             let status = inspector.initialize_interp(interpreter, data, is_static);
 
             // Allow inspectors to exit early
@@ -61,7 +62,7 @@ where
         data: &mut EVMData<'_, DB>,
         is_static: bool,
     ) -> Return {
-        call_inspectors!(inspector, [&mut self.logs, &mut self.cheatcodes], {
+        call_inspectors!(inspector, [&mut self.tracer, &mut self.logs, &mut self.cheatcodes], {
             let status = inspector.step(interpreter, data, is_static);
 
             // Allow inspectors to exit early
@@ -80,7 +81,7 @@ where
         is_static: bool,
         status: Return,
     ) -> Return {
-        call_inspectors!(inspector, [&mut self.logs, &mut self.cheatcodes], {
+        call_inspectors!(inspector, [&mut self.tracer, &mut self.logs, &mut self.cheatcodes], {
             let status = inspector.step_end(interpreter, data, is_static, status);
 
             // Allow inspectors to exit early
@@ -98,7 +99,7 @@ where
         call: &CallInputs,
         is_static: bool,
     ) -> (Return, Gas, Bytes) {
-        call_inspectors!(inspector, [&mut self.logs, &mut self.cheatcodes], {
+        call_inspectors!(inspector, [&mut self.tracer, &mut self.logs, &mut self.cheatcodes], {
             let (status, gas, retdata) = inspector.call(data, call, is_static);
 
             // Allow inspectors to exit early
@@ -119,7 +120,7 @@ where
         retdata: Bytes,
         is_static: bool,
     ) -> (Return, Gas, Bytes) {
-        call_inspectors!(inspector, [&mut self.logs, &mut self.cheatcodes], {
+        call_inspectors!(inspector, [&mut self.tracer, &mut self.logs, &mut self.cheatcodes], {
             let (new_status, new_gas, new_retdata) =
                 inspector.call_end(data, call, remaining_gas, status, retdata.clone(), is_static);
 
@@ -137,7 +138,7 @@ where
         data: &mut EVMData<'_, DB>,
         call: &CreateInputs,
     ) -> (Return, Option<Address>, Gas, Bytes) {
-        call_inspectors!(inspector, [&mut self.logs, &mut self.cheatcodes], {
+        call_inspectors!(inspector, [&mut self.tracer, &mut self.logs, &mut self.cheatcodes], {
             let (status, addr, gas, retdata) = inspector.create(data, call);
 
             // Allow inspectors to exit early
@@ -158,7 +159,7 @@ where
         remaining_gas: Gas,
         retdata: Bytes,
     ) -> (Return, Option<Address>, Gas, Bytes) {
-        call_inspectors!(inspector, [&mut self.logs, &mut self.cheatcodes], {
+        call_inspectors!(inspector, [&mut self.tracer, &mut self.logs, &mut self.cheatcodes], {
             let (new_status, new_address, new_gas, new_retdata) =
                 inspector.create_end(data, call, status, address, remaining_gas, retdata.clone());
 
@@ -171,7 +172,7 @@ where
     }
 
     fn selfdestruct(&mut self) {
-        call_inspectors!(inspector, [&mut self.logs, &mut self.cheatcodes], {
+        call_inspectors!(inspector, [&mut self.tracer, &mut self.logs, &mut self.cheatcodes], {
             Inspector::<DB>::selfdestruct(inspector);
         });
     }

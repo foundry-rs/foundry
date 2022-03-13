@@ -1,36 +1,21 @@
 use crate::{
     executor::{
-        fuzz::{FuzzError, FuzzTestResult, FuzzedCases, FuzzedExecutor},
-        CallResult, EvmError, Executor, RawCallResult,
+        fuzz::{CounterExample, FuzzedCases, FuzzedExecutor},
+        CallResult, DeployResult, EvmError, Executor,
     },
+    trace::{CallTraceArena, TraceKind},
     TestFilter, CALLER,
 };
 use ethers::{
-    abi::{Abi, Event, Function, RawLog, Token},
-    types::{Address, Bytes, H256, U256},
+    abi::{Abi, Function, RawLog},
+    types::{Address, Bytes, U256},
 };
 use eyre::Result;
-use proptest::test_runner::{TestError, TestRunner};
+use proptest::test_runner::TestRunner;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use revm::db::DatabaseRef;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt, time::Instant};
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CounterExample {
-    pub calldata: Bytes,
-
-    // Token does not implement Serde (lol), so we just serialize the calldata
-    #[serde(skip)]
-    pub args: Vec<Token>,
-}
-
-impl fmt::Display for CounterExample {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let args = foundry_utils::format_tokens(&self.args).collect::<Vec<_>>().join(", ");
-        write!(f, "calldata=0x{}, args=[{}]", hex::encode(&self.calldata), args)
-    }
-}
 
 /// The result of an executed solidity test
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -44,13 +29,6 @@ pub struct TestResult {
     /// still be successful (i.e self.success == true) when it's expected to fail.
     pub reason: Option<String>,
 
-    /// The gas used during execution.
-    ///
-    /// If this is the result of a fuzz test (`TestKind::Fuzz`), then this is the median of all
-    /// successful cases
-    // TODO: The gas usage is both in TestKind and here. We should dedupe.
-    pub gas_used: u64,
-
     /// Minimal reproduction test case for failing fuzz tests
     pub counterexample: Option<CounterExample>,
 
@@ -63,14 +41,9 @@ pub struct TestResult {
     pub kind: TestKind,
 
     /// Traces
-    // TODO
-    //pub traces: Option<Vec<CallTraceArena>>,
-    traces: Option<Vec<()>>,
+    pub traces: Vec<(TraceKind, CallTraceArena)>,
 
-    /// Identified contracts
-    pub identified_contracts: Option<BTreeMap<Address, (String, Abi)>>,
-
-    /// Debug Steps
+    /// Debug steps
     // TODO
     #[serde(skip)]
     //pub debug_calls: Option<Vec<DebugArena>>,
@@ -143,32 +116,39 @@ impl TestKind {
     }
 }
 
-/// Type complexity wrapper around execution info
-type MaybeExecutionInfo<'a> =
-    Option<(&'a BTreeMap<[u8; 4], Function>, &'a BTreeMap<H256, Event>, &'a Abi)>;
+#[derive(Clone, Debug, Default)]
+pub struct TestSetup {
+    /// The address at which the test contract was deployed
+    pub address: Address,
+    /// The logs emitted during setup
+    pub logs: Vec<RawLog>,
+    /// Call traces of the setup
+    pub traces: Vec<(TraceKind, CallTraceArena)>,
+    /// Addresses labeled during setup
+    pub labeled_addresses: BTreeMap<Address, String>,
+    /// Whether the setup failed
+    pub setup_failed: bool,
+    /// The reason the setup failed
+    pub reason: Option<String>,
+}
 
-// TODO: Get rid of known contracts, execution info and so on once we rewrite tracing, since we are
-// moving all the decoding/display logic to the CLI. Traces and logs returned from the runner (and
-// consequently the multi runner) are in a raw (but digestible) format.
 pub struct ContractRunner<'a, DB: DatabaseRef> {
     /// The executor used by the runner.
     pub executor: Executor<DB>,
 
-    // Contract deployment options
-    /// The deployed contract's ABI
-    pub contract: &'a Abi,
+    /// Library contracts to be deployed before the test contract
+    pub predeploy_libs: &'a [Bytes],
     /// The deployed contract's code
-    // This is cheap to clone due to [`bytes::Bytes`], so OK to own
     pub code: Bytes,
+    /// The test contract's ABI
+    pub contract: &'a Abi,
+    /// All known errors, used to decode reverts
+    pub errors: Option<&'a Abi>,
+
     /// The initial balance of the test contract
     pub initial_balance: U256,
     /// The address which will be used as the `from` field in all EVM calls
     pub sender: Address,
-
-    /// Contract execution info, (functions, events, errors)
-    pub execution_info: MaybeExecutionInfo<'a>,
-    /// library contracts to be deployed before this contract
-    pub predeploy_libs: &'a [Bytes],
 }
 
 impl<'a, DB: DatabaseRef> ContractRunner<'a, DB> {
@@ -179,7 +159,7 @@ impl<'a, DB: DatabaseRef> ContractRunner<'a, DB> {
         code: Bytes,
         initial_balance: U256,
         sender: Option<Address>,
-        execution_info: MaybeExecutionInfo<'a>,
+        errors: Option<&'a Abi>,
         predeploy_libs: &'a [Bytes],
     ) -> Self {
         Self {
@@ -188,7 +168,7 @@ impl<'a, DB: DatabaseRef> ContractRunner<'a, DB> {
             code,
             initial_balance,
             sender: sender.unwrap_or_default(),
-            execution_info,
+            errors,
             predeploy_libs,
         }
     }
@@ -197,7 +177,7 @@ impl<'a, DB: DatabaseRef> ContractRunner<'a, DB> {
 impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
     /// Deploys the test contract inside the runner from the sending account, and optionally runs
     /// the `setUp` function on the test contract.
-    pub fn deploy(&mut self, setup: bool) -> Result<(Address, Vec<RawLog>, bool, Option<String>)> {
+    pub fn setup(&mut self, setup: bool) -> Result<TestSetup> {
         // We max out their balance so that they can deploy and make calls.
         self.executor.set_balance(self.sender, U256::MAX);
         self.executor.set_balance(*CALLER, U256::MAX);
@@ -206,34 +186,54 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         self.executor.set_nonce(self.sender, 1);
 
         // Deploy libraries
-        self.predeploy_libs.iter().for_each(|code| {
-            self.executor
-                .deploy(*CALLER, code.0.clone(), 0u32.into())
-                .expect("couldn't deploy library");
-        });
+        let mut traces: Vec<(TraceKind, CallTraceArena)> = self
+            .predeploy_libs
+            .iter()
+            .filter_map(|code| {
+                let DeployResult { traces, .. } = self
+                    .executor
+                    .deploy(self.sender, code.0.clone(), 0u32.into())
+                    .expect("couldn't deploy library");
+
+                traces
+            })
+            .map(|traces| (TraceKind::Deployment, traces))
+            .collect();
 
         // Deploy an instance of the contract
-        let (addr, _, _, mut logs) = self
+        let DeployResult { address, mut logs, traces: contract_traces, .. } = self
             .executor
             .deploy(self.sender, self.code.0.clone(), 0u32.into())
             .expect("couldn't deploy");
-        self.executor.set_balance(addr, self.initial_balance);
+        traces.extend(contract_traces.map(|traces| (TraceKind::Deployment, traces)).into_iter());
+        self.executor.set_balance(address, self.initial_balance);
 
         // Optionally call the `setUp` function
-        if setup {
+        Ok(if setup {
             tracing::trace!("setting up");
-            let (setup_failed, setup_logs, reason) = match self.executor.setup(addr) {
-                Ok((_, logs)) => (false, logs, None),
-                Err(EvmError::Execution { logs, reason, .. }) => {
-                    (true, logs, Some(format!("Setup failed: {}", reason)))
+            let (setup_failed, setup_logs, setup_traces, labeled_addresses, reason) = match self
+                .executor
+                .setup(address)
+            {
+                Ok(CallResult { traces, labels, logs, .. }) => (false, logs, traces, labels, None),
+                Err(EvmError::Execution { traces, labels, logs, reason, .. }) => {
+                    (true, logs, traces, labels, Some(format!("Setup failed: {}", reason)))
                 }
-                Err(e) => (true, Vec::new(), Some(format!("Setup failed: {}", &e.to_string()))),
+                Err(e) => (
+                    true,
+                    Vec::new(),
+                    None,
+                    BTreeMap::new(),
+                    Some(format!("Setup failed: {}", &e.to_string())),
+                ),
             };
+            traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)).into_iter());
             logs.extend_from_slice(&setup_logs);
-            Ok((addr, logs, setup_failed, reason))
+
+            TestSetup { address, logs, traces, labeled_addresses, setup_failed, reason }
         } else {
-            Ok((addr, logs, false, None))
-        }
+            TestSetup { address, logs, traces, ..Default::default() }
+        })
     }
 
     /// Runs all tests for a contract whose names match the provided regular expression
@@ -241,216 +241,181 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         &mut self,
         filter: &impl TestFilter,
         fuzzer: Option<TestRunner>,
-        known_contracts: Option<&BTreeMap<String, (Abi, Vec<u8>)>>,
     ) -> Result<BTreeMap<String, TestResult>> {
         tracing::info!("starting tests");
         let start = Instant::now();
         let needs_setup = self.contract.functions().any(|func| func.name == "setUp");
-        let (unit_tests, fuzz_tests): (Vec<_>, Vec<_>) = self
-            .contract
-            .functions()
-            .into_iter()
-            .filter(|func| func.name.starts_with("test"))
-            .filter(|func| filter.matches_test(&func.name))
-            .partition(|func| func.inputs.is_empty());
 
-        let (addr, init_logs, setup_failed, reason) = self.deploy(needs_setup)?;
-        if setup_failed {
+        let setup = self.setup(needs_setup)?;
+        if setup.setup_failed {
             // The setup failed, so we return a single test result for `setUp`
             return Ok([(
                 "setUp()".to_string(),
                 TestResult {
                     success: false,
-                    reason,
-                    gas_used: 0,
+                    reason: setup.reason,
                     counterexample: None,
-                    logs: init_logs,
+                    logs: setup.logs,
                     kind: TestKind::Standard(0),
-                    traces: None,
-                    identified_contracts: None,
+                    traces: setup.traces,
+                    // TODO
                     debug_calls: None,
-                    labeled_addresses: Default::default(),
+                    labeled_addresses: setup.labeled_addresses,
                 },
             )]
             .into())
         }
 
-        // Run all unit tests
-        let mut test_results = unit_tests
+        // Collect valid test functions
+        let tests: Vec<_> = self
+            .contract
+            .functions()
+            .into_iter()
+            .filter(|func| func.name.starts_with("test") && filter.matches_test(&func.name))
+            .map(|func| (func, func.name.starts_with("testFail")))
+            .collect();
+
+        let test_results = tests
             .par_iter()
-            .map(|func| {
-                let result = self.run_test(func, known_contracts, addr, init_logs.clone())?;
-                Ok((func.signature(), result))
+            .filter_map(|(func, should_fail)| {
+                let result = if func.inputs.is_empty() {
+                    Some(self.run_test(func, *should_fail, setup.clone()))
+                } else {
+                    fuzzer.as_ref().map(|fuzzer| {
+                        self.run_fuzz_test(func, *should_fail, fuzzer.clone(), setup.clone())
+                    })
+                };
+
+                result.map(|result| Ok((func.signature(), result?)))
             })
             .collect::<Result<BTreeMap<_, _>>>()?;
 
-        if let Some(fuzzer) = fuzzer {
-            let fuzz_results = fuzz_tests
-                .par_iter()
-                .filter(|func| !func.inputs.is_empty())
-                .map(|func| {
-                    let result = self.run_fuzz_test(
-                        func,
-                        fuzzer.clone(),
-                        known_contracts,
-                        addr,
-                        init_logs.clone(),
-                    )?;
-                    Ok((func.signature(), result))
-                })
-                .collect::<Result<BTreeMap<_, _>>>()?;
-            test_results.extend(fuzz_results);
-        }
-
         if !test_results.is_empty() {
             let successful = test_results.iter().filter(|(_, tst)| tst.success).count();
-            let duration = Instant::now().duration_since(start);
-            tracing::info!(?duration, "done. {}/{} successful", successful, test_results.len());
+            tracing::info!(
+                duration = ?Instant::now().duration_since(start),
+                "done. {}/{} successful",
+                successful,
+                test_results.len()
+            );
         }
         Ok(test_results)
     }
 
-    #[tracing::instrument(name = "test", skip_all, fields(name = %func.signature()))]
+    #[tracing::instrument(name = "test", skip_all, fields(name = %func.signature(), %should_fail))]
     pub fn run_test(
         &self,
         func: &Function,
-        _known_contracts: Option<&BTreeMap<String, (Abi, Vec<u8>)>>,
-        address: Address,
-        mut logs: Vec<RawLog>,
+        should_fail: bool,
+        setup: TestSetup,
     ) -> Result<TestResult> {
+        let TestSetup { address, mut logs, mut traces, mut labeled_addresses, .. } = setup;
+
+        // Run unit test
         let start = Instant::now();
-        // The expected result depends on the function name.
-        // TODO: Dedupe (`TestDescriptor`?)
-        let should_fail = func.name.starts_with("testFail");
-        tracing::debug!(func = ?func.signature(), should_fail, "unit-testing");
-
-        let errors_abi = self.execution_info.as_ref().map(|(_, _, errors)| errors);
-        let errors_abi = if let Some(ref abi) = errors_abi { abi } else { self.contract };
-
-        let identified_contracts: Option<BTreeMap<Address, (String, Abi)>> = None;
-
-        let (status, reason, gas_used, logs, state_changeset) = match self
+        let (status, reason, gas_used, execution_traces, state_changeset) = match self
             .executor
-            .call::<(), _, _>(self.sender, address, func.clone(), (), 0.into(), Some(errors_abi))
+            .call::<(), _, _>(self.sender, address, func.clone(), (), 0.into(), self.errors)
         {
             Ok(CallResult {
-                status, gas: gas_used, logs: execution_logs, state_changeset, ..
+                status,
+                gas: gas_used,
+                logs: execution_logs,
+                traces: execution_trace,
+                labels: new_labels,
+                state_changeset,
+                ..
             }) => {
+                labeled_addresses.extend(new_labels);
                 logs.extend(execution_logs);
-                (status, None, gas_used, logs, state_changeset)
+                (status, None, gas_used, execution_trace, state_changeset)
             }
-            Err(err) => match err {
-                EvmError::Execution {
-                    status,
-                    reason,
-                    gas_used,
-                    logs: execution_logs,
-                    state_changeset,
-                } => {
-                    logs.extend(execution_logs);
-                    (status, Some(reason), gas_used, logs, state_changeset)
-                }
-                err => {
-                    tracing::error!(?err);
-                    return Err(err.into())
-                }
-            },
+            Err(EvmError::Execution {
+                status,
+                reason,
+                gas_used,
+                logs: execution_logs,
+                traces: execution_trace,
+                labels: new_labels,
+                state_changeset,
+                ..
+            }) => {
+                labeled_addresses.extend(new_labels);
+                logs.extend(execution_logs);
+                (status, Some(reason), gas_used, execution_trace, state_changeset)
+            }
+            Err(err) => {
+                tracing::error!(?err);
+                return Err(err.into())
+            }
         };
+        traces.extend(execution_traces.map(|traces| (TraceKind::Execution, traces)).into_iter());
 
-        // DSTest will not revert inside its `assertEq`-like functions
-        // which allows to test multiple assertions in 1 test function while also
-        // preserving logs - instead it sets `failed` to `true` which we must check.
         let success = self.executor.is_success(
-            address,
+            setup.address,
             status,
             state_changeset.expect("we should have a state changeset"),
             should_fail,
         );
-        let duration = Instant::now().duration_since(start);
-        tracing::debug!(?duration, %success, %gas_used);
+
+        // Record test execution time
+        tracing::debug!(
+            duration = ?Instant::now().duration_since(start),
+            %success,
+            %gas_used
+        );
 
         Ok(TestResult {
             success,
             reason,
-            gas_used,
             counterexample: None,
             logs,
             kind: TestKind::Standard(gas_used),
-            traces: None,
-            identified_contracts,
+            traces,
             debug_calls: None,
-            labeled_addresses: Default::default(),
+            labeled_addresses,
         })
     }
 
-    #[tracing::instrument(name = "fuzz-test", skip_all, fields(name = %func.signature()))]
+    #[tracing::instrument(name = "fuzz-test", skip_all, fields(name = %func.signature(), %should_fail))]
     pub fn run_fuzz_test(
         &self,
         func: &Function,
+        should_fail: bool,
         runner: TestRunner,
-        _known_contracts: Option<&BTreeMap<String, (Abi, Vec<u8>)>>,
-        address: Address,
-        mut logs: Vec<RawLog>,
+        setup: TestSetup,
     ) -> Result<TestResult> {
-        // We do not trace in fuzz tests as it is a big performance hit
+        let TestSetup { address, mut logs, mut traces, mut labeled_addresses, .. } = setup;
+
+        // Run fuzz test
         let start = Instant::now();
-        // TODO: Dedupe (`TestDescriptor`?)
-        let should_fail = func.name.starts_with("testFail");
+        let mut result = FuzzedExecutor::new(&self.executor, runner, self.sender).fuzz(
+            func,
+            address,
+            should_fail,
+            self.errors,
+        );
 
-        let identified_contracts: Option<BTreeMap<Address, (String, Abi)>> = None;
+        // Record logs, labels and traces
+        logs.append(&mut result.logs);
+        labeled_addresses.append(&mut result.labeled_addresses);
+        traces.extend(result.traces.map(|traces| (TraceKind::Execution, traces)).into_iter());
 
-        // Wrap the executor in a fuzzed version
-        // TODO: When tracing is ported, we should disable it here.
-        let executor = FuzzedExecutor::new(&self.executor, runner, self.sender);
-        let FuzzTestResult { cases, test_error } =
-            executor.fuzz(func, address, should_fail, Some(self.contract));
-
-        // Rerun the failed fuzz case to get more information like traces and logs
-        if let Some(FuzzError { test_error: TestError::Fail(_, ref calldata), .. }) = test_error {
-            // TODO: When tracing is ported, we should re-enable it here to get traces.
-            let RawCallResult { logs: execution_logs, .. } =
-                self.executor.call_raw(self.sender, address, calldata.0.clone(), 0.into())?;
-            logs.extend(execution_logs);
-        }
-
-        let (success, counterexample, reason) = match test_error {
-            Some(err) => {
-                let (counterexample, reason) = match err.test_error {
-                    TestError::Abort(r) if r == "Too many global rejects".into() => {
-                        (None, Some(r.message().to_string()))
-                    }
-                    TestError::Fail(_, calldata) => {
-                        // Skip the function selector when decoding
-                        let args = func.decode_input(&calldata.as_ref()[4..])?;
-
-                        (Some(CounterExample { calldata, args }), None)
-                    }
-                    e => panic!("Unexpected test error: {:?}", e),
-                };
-
-                if !err.revert_reason.is_empty() {
-                    (false, counterexample, Some(err.revert_reason))
-                } else {
-                    (false, counterexample, reason)
-                }
-            }
-            _ => (true, None, None),
-        };
-
-        let duration = Instant::now().duration_since(start);
-        tracing::debug!(?duration, %success);
+        // Record test execution time
+        tracing::debug!(
+            duration = ?Instant::now().duration_since(start),
+            success = %result.success
+        );
 
         Ok(TestResult {
-            success,
-            reason,
-            gas_used: cases.median_gas(),
-            counterexample,
+            success: result.success,
+            reason: result.reason,
+            counterexample: result.counterexample,
             logs,
-            kind: TestKind::Fuzz(cases),
-            traces: Default::default(),
-            identified_contracts,
+            kind: TestKind::Fuzz(result.cases),
+            traces,
             debug_calls: None,
-            labeled_addresses: Default::default(),
+            labeled_addresses,
         })
     }
 }
@@ -492,7 +457,7 @@ mod tests {
         cfg.failure_persistence = None;
         let fuzzer = TestRunner::new(cfg);
         let results =
-            runner.run_tests(&Filter::new("testGreeting", ".*", ".*"), Some(fuzzer), None).unwrap();
+            runner.run_tests(&Filter::new("testGreeting", ".*", ".*"), Some(fuzzer)).unwrap();
         assert!(results["testGreeting()"].success);
         assert!(results["testGreeting(string)"].success);
         assert!(results["testGreeting(string,string)"].success);
@@ -509,7 +474,7 @@ mod tests {
         cfg.failure_persistence = None;
         let fuzzer = TestRunner::new(cfg);
         let results =
-            runner.run_tests(&Filter::new("testFuzz.*", ".*", ".*"), Some(fuzzer), None).unwrap();
+            runner.run_tests(&Filter::new("testFuzz.*", ".*", ".*"), Some(fuzzer)).unwrap();
         for (_, res) in results {
             assert!(!res.success);
             assert!(res.counterexample.is_some());
@@ -526,9 +491,8 @@ mod tests {
         let mut cfg = FuzzConfig::default();
         cfg.failure_persistence = None;
         let fuzzer = TestRunner::new(cfg);
-        let res = runner
-            .run_tests(&Filter::new("testStringFuzz.*", ".*", ".*"), Some(fuzzer), None)
-            .unwrap();
+        let res =
+            runner.run_tests(&Filter::new("testStringFuzz.*", ".*", ".*"), Some(fuzzer)).unwrap();
         assert_eq!(res.len(), 1);
         assert!(res["testStringFuzz(string)"].success);
         assert!(res["testStringFuzz(string)"].counterexample.is_none());
@@ -544,9 +508,8 @@ mod tests {
         let mut cfg = FuzzConfig::default();
         cfg.failure_persistence = None;
         let fuzzer = TestRunner::new(cfg);
-        let res = runner
-            .run_tests(&Filter::new("testShrinking.*", ".*", ".*"), Some(fuzzer), None)
-            .unwrap();
+        let res =
+            runner.run_tests(&Filter::new("testShrinking.*", ".*", ".*"), Some(fuzzer)).unwrap();
         assert_eq!(res.len(), 1);
 
         let res = res["testShrinking(uint256,uint256)"].clone();
@@ -565,9 +528,8 @@ mod tests {
         // we reduce the shrinking iters and observe a larger result
         cfg.max_shrink_iters = 5;
         let fuzzer = TestRunner::new(cfg);
-        let res = runner
-            .run_tests(&Filter::new("testShrinking.*", ".*", ".*"), Some(fuzzer), None)
-            .unwrap();
+        let res =
+            runner.run_tests(&Filter::new("testShrinking.*", ".*", ".*"), Some(fuzzer)).unwrap();
         assert_eq!(res.len(), 1);
 
         let res = res["testShrinking(uint256,uint256)"].clone();

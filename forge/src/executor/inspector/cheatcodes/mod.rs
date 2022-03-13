@@ -23,6 +23,8 @@ use revm::{
 };
 use std::collections::BTreeMap;
 
+use super::logs::extract_log;
+
 /// An inspector that handles calls to various cheatcodes, each with their own behavior.
 ///
 /// Cheatcodes can be called by contracts during execution to modify the VM environment, such as
@@ -177,13 +179,8 @@ where
 
         // Match logs if `expectEmit` has been called
         if !self.expected_emits.is_empty() {
-            match interpreter.contract.code[interpreter.program_counter()] {
-                opcode::LOG0 => handle_expect_emit(self, interpreter, 0),
-                opcode::LOG1 => handle_expect_emit(self, interpreter, 1),
-                opcode::LOG2 => handle_expect_emit(self, interpreter, 2),
-                opcode::LOG3 => handle_expect_emit(self, interpreter, 3),
-                opcode::LOG4 => handle_expect_emit(self, interpreter, 4),
-                _ => (),
+            if let Some(log) = extract_log(interpreter) {
+                handle_expect_emit(self, log)
             }
         }
 
