@@ -14,13 +14,13 @@ vergen = { version = "6.0.0", default-features = false, features = [
 ] }
 
 [dependencies]
-clap = { version = "3.0.10", features = [
+clap = { version = "3.1.6", features = [
     "derive",
     "env",
     "unicode",
     "wrap_help",
 ] }
-clap_complete = "3.0.4"
+clap_complete = "3.1.1"
 forge-fmt = { path = "../fmt" }
 foundry-utils = { path = "../utils" }
 forge = { path = "../forge" }
