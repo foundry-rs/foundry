@@ -43,12 +43,6 @@ pub struct TestResult {
     /// Traces
     pub traces: Vec<(TraceKind, CallTraceArena)>,
 
-    /// Debug steps
-    // TODO
-    #[serde(skip)]
-    //pub debug_calls: Option<Vec<DebugArena>>,
-    pub debug_calls: Option<Vec<()>>,
-
     /// Labeled addresses
     pub labeled_addresses: BTreeMap<Address, String>,
 }
@@ -201,11 +195,11 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
             .collect();
 
         // Deploy an instance of the contract
-        let DeployResult { address, mut logs, traces: contract_traces, .. } = self
+        let DeployResult { address, mut logs, traces: constructor_traces, .. } = self
             .executor
             .deploy(self.sender, self.code.0.clone(), 0u32.into())
             .expect("couldn't deploy");
-        traces.extend(contract_traces.map(|traces| (TraceKind::Deployment, traces)).into_iter());
+        traces.extend(constructor_traces.map(|traces| (TraceKind::Deployment, traces)).into_iter());
         self.executor.set_balance(address, self.initial_balance);
 
         // Optionally call the `setUp` function
@@ -258,8 +252,6 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                     logs: setup.logs,
                     kind: TestKind::Standard(0),
                     traces: setup.traces,
-                    // TODO
-                    debug_calls: None,
                     labeled_addresses: setup.labeled_addresses,
                 },
             )]
@@ -372,7 +364,6 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
             logs,
             kind: TestKind::Standard(gas_used),
             traces,
-            debug_calls: None,
             labeled_addresses,
         })
     }
@@ -414,7 +405,6 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
             logs,
             kind: TestKind::Fuzz(result.cases),
             traces,
-            debug_calls: None,
             labeled_addresses,
         })
     }

@@ -121,7 +121,6 @@ where
         // TODO: Does this increase gas cost?
         data.subroutine.load_account(call.caller, data.db);
         let nonce = data.subroutine.account(call.caller).info.nonce;
-
         self.start_trace(
             data.subroutine.depth() as usize,
             match call.scheme {

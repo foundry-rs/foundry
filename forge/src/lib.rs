@@ -27,9 +27,11 @@ pub trait TestFilter {
     fn matches_path(&self, path: impl AsRef<str>) -> bool;
 }
 
+// TODO: Why did we add this again?
+pub static CALLER: Lazy<Address> = Lazy::new(Address::random);
+
 use ethers::types::Address;
 use once_cell::sync::Lazy;
-static CALLER: Lazy<Address> = Lazy::new(Address::random);
 
 #[cfg(test)]
 pub mod test_helpers {
