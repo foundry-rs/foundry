@@ -54,7 +54,7 @@ impl Cmd for ExecArgs {
         let parsed_bytecode = Bytes::from(hex::decode(bytecode_vec)?);
 
         // need to match on the backend type
-        let func = IntoFunction::into("fallback()");
+        let func = IntoFunction::into("test()");
         let contract = Default::default();
         let predeploy_libs = Vec::new();
         let result = match backend {
@@ -90,9 +90,9 @@ impl Cmd for ExecArgs {
         println!("Full result: {:?}", result);
 
         if result.success {
-            println!("{}", Colour::Green.paint("Script ran successfully."));
+            println!("{}", Colour::Green.paint("Bytecode executed successfully."));
         } else {
-            println!("{}", Colour::Red.paint("Script failed."));
+            println!("{}", Colour::Red.paint("Bytecode failed."));
         }
 
         println!("Gas Used: {}", result.gas_used);
@@ -104,10 +104,7 @@ impl Cmd for ExecArgs {
 }
 
 impl ExecArgs {
-    /// Compiles the file with auto-detection and compiler params.
     pub fn build(&self, _: Config, _: &EvmOpts) -> eyre::Result<()> {
-        // TODO: ??
-
         Ok(())
     }
 }
