@@ -222,7 +222,9 @@ impl Reporter for SpinnerReporter {
     }
 
     fn on_solc_installation_error(&self, version: &Version, error: &str) {
-        self.send_msg(Colour::Red.paint(format!("Failed to install solc {}: {}", version, error)));
+        self.send_msg(
+            Colour::Red.paint(format!("Failed to install solc {}: {}", version, error)).to_string(),
+        );
     }
 
     fn on_unresolved_import(&self, import: &Path, remappings: &[Remapping]) {
