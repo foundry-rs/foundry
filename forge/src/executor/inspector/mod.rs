@@ -7,6 +7,9 @@ pub use logs::LogCollector;
 mod tracer;
 pub use tracer::Tracer;
 
+mod debugger;
+pub use debugger::Debugger;
+
 mod stack;
 pub use stack::InspectorStack;
 
@@ -21,6 +24,8 @@ pub struct InspectorStackConfig {
     pub ffi: bool,
     /// Whether or not tracing is enabled
     pub tracing: bool,
+    /// Whether or not the debugger is enabled
+    pub debugger: bool,
 }
 
 impl InspectorStackConfig {
@@ -33,6 +38,9 @@ impl InspectorStackConfig {
         }
         if self.tracing {
             stack.tracer = Some(Tracer::new());
+        }
+        if self.debugger {
+            stack.debugger = Some(Debugger::new());
         }
         stack
     }
