@@ -1,7 +1,5 @@
 FROM debian
 
-LABEL key="georgios@paradigm.xyz"
-
 RUN apt-get update -y; apt-get install -y curl git
 WORKDIR /root
 ADD . .
