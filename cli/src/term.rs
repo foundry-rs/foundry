@@ -1,5 +1,6 @@
 //! terminal utils
 
+use ansi_term::Colour;
 use atty::{self, Stream};
 use ethers::solc::{remappings::Remapping, report::Reporter, CompilerInput, Solc};
 use once_cell::sync::Lazy;
@@ -218,6 +219,10 @@ impl Reporter for SpinnerReporter {
     /// Invoked before a new [`Solc`] bin was successfully installed
     fn on_solc_installation_success(&self, version: &Version) {
         self.send_msg(format!("Successfully installed solc {}", version));
+    }
+
+    fn on_solc_installation_error(&self, version: &Version, error: &str) {
+        self.send_msg(Colour::Red.paint(format!("Failed to install solc {}: {}", version, error)));
     }
 
     fn on_unresolved_import(&self, import: &Path, remappings: &[Remapping]) {
