@@ -603,9 +603,6 @@ impl Tui {
         f.render_widget(paragraph, area);
     }
 
-    // cargo r --manifest-path ../foundry/Cargo.toml --bin forge run ./src/test/Locke.t.sol -t
-    // StreamTest --sig "test_fundStream()" --debug
-
     /// Draw memory in memory pane
     fn draw_memory<B: Backend>(
         f: &mut Frame<B>,
@@ -625,24 +622,28 @@ impl Tui {
             .chunks(32)
             .enumerate()
             .map(|(i, mem_word)| {
-                let strings: String = mem_word
-                    .chunks(4)
-                    .map(|bytes4| {
-                        bytes4
-                            .iter()
-                            .map(|byte| {
-                                let v: Vec<u8> = vec![*byte];
-                                hex::encode(&v[..])
-                            })
-                            .collect::<Vec<String>>()
-                            .join(" ")
+                let words: Vec<Span> = mem_word
+                    .iter()
+                    .map(|byte| {
+                        Span::styled(
+                            format!("{:02x} ", byte),
+                            if *byte == 0 {
+                                Style::default().fg(Color::Gray).add_modifier(Modifier::DIM)
+                            } else {
+                                Style::default().fg(Color::White)
+                            },
+                        )
                     })
-                    .collect::<Vec<String>>()
-                    .join("  ");
-                Spans::from(Span::styled(
-                    format!("{:0min_len$x}: {} \n", i * 32, strings, min_len = min_len),
+                    .collect();
+
+                let mut spans = vec![Span::styled(
+                    format!("{:0min_len$x}| ", i * 32, min_len = min_len),
                     Style::default().fg(Color::White),
-                ))
+                )];
+                spans.extend(words);
+                spans.push(Span::raw("\n"));
+
+                Spans::from(spans)
             })
             .collect();
         let paragraph = Paragraph::new(text).block(stack_space).wrap(Wrap { trim: true });
