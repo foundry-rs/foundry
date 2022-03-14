@@ -8,6 +8,7 @@ use crate::cmd::{
     build::BuildArgs,
     config,
     create::CreateArgs,
+    exec::ExecArgs,
     flatten,
     init::InitArgs,
     inspect,
@@ -87,6 +88,9 @@ pub enum Subcommands {
 
     #[clap(alias = "c", about = "Deploy a compiled contract")]
     Create(CreateArgs),
+
+    #[clap(alias = "e", about = "Executes Arbitrary Bytecode")]
+    Exec(ExecArgs),
 
     #[clap(alias = "i", about = "Initializes a new forge sample project")]
     Init(InitArgs),

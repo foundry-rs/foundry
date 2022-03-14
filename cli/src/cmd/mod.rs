@@ -41,6 +41,7 @@ pub mod bind;
 pub mod build;
 pub mod config;
 pub mod create;
+pub mod exec;
 pub mod flatten;
 pub mod fmt;
 pub mod init;
