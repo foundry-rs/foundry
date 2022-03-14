@@ -594,21 +594,33 @@ impl Tui {
             .rev()
             .enumerate()
             .map(|(i, stack_item)| {
-                Spans::from(Span::styled(
-                    format!(
-                        "{: >min_len$}| {} \n",
-                        i,
-                        (0..32)
-                            .into_iter()
-                            .map(|i| format!("{:02x}", stack_item.byte(i)))
-                            .collect::<Vec<String>>()
-                            .join(" "),
-                        min_len = min_len
-                    ),
+                let words: Vec<Span> = (0..32)
+                    .into_iter()
+                    .rev()
+                    .map(|i| stack_item.byte(i))
+                    .map(|byte| {
+                        Span::styled(
+                            format!("{:02x} ", byte),
+                            if byte == 0 {
+                                Style::default().fg(Color::Gray).add_modifier(Modifier::DIM)
+                            } else {
+                                Style::default().fg(Color::White)
+                            },
+                        )
+                    })
+                    .collect();
+
+                let mut spans = vec![Span::styled(
+                    format!("{:0min_len$}| ", i, min_len = min_len),
                     Style::default().fg(Color::White),
-                ))
+                )];
+                spans.extend(words);
+                spans.push(Span::raw("\n"));
+
+                Spans::from(spans)
             })
             .collect();
+
         let paragraph = Paragraph::new(text).block(stack_space).wrap(Wrap { trim: true });
         f.render_widget(paragraph, area);
     }
