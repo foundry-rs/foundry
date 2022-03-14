@@ -110,6 +110,60 @@ where
         })
     }
 
+    /// Generates an access list for the specified transaction
+    ///
+    /// ```no_run
+    /// 
+    /// use cast::Cast;
+    /// use ethers_core::types::{Address, Chain};
+    /// use ethers_providers::{Provider, Http};
+    /// use std::{str::FromStr, convert::TryFrom};
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
+    /// let cast = Cast::new(provider);
+    /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
+    /// let sig = "function greeting(uint256 i) public returns (string)";
+    /// let args = vec!["5".to_owned()];
+    /// let access_list = cast.access_list(Address::zero(), to, (sig, args), Chain::Mainnet, None, false).await?;
+    /// println!("{}", access_list);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn access_list<F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
+        &self,
+        from: F,
+        to: T,
+        args: (&str, Vec<String>),
+        chain: Chain,
+        block: Option<BlockId>,
+        to_json: bool,
+    ) -> Result<String> {
+        let (tx, _) =
+            self.build_tx(from, to, Some(args), None, None, None, None, chain, None, false).await?;
+
+        let access_list = self.provider.create_access_list(&tx, block).await?;
+        let res = if to_json {
+            serde_json::to_string(&access_list)?
+        } else {
+            let mut s = Vec::<String>::new();
+            s.push(format!("gas used: {}", access_list.gas_used));
+            s.push("access list:".to_string());
+            for al in access_list.access_list.0 {
+                s.push(format!("- address: {:?}", al.address));
+                if !al.storage_keys.is_empty() {
+                    s.push("  keys:".to_string());
+                    for key in al.storage_keys {
+                        s.push(format!("    {:?}", key));
+                    }
+                }
+            }
+            s.join("\n")
+        };
+
+        Ok(res)
+    }
+
     pub async fn balance<T: Into<NameOrAddress> + Send + Sync>(
         &self,
         who: T,
