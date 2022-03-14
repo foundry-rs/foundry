@@ -305,12 +305,12 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
 
         // Run unit test
         let start = Instant::now();
-        let (status, reason, gas_used, execution_traces, state_changeset) = match self
+        let (reverted, reason, gas_used, execution_traces, state_changeset) = match self
             .executor
             .call::<(), _, _>(self.sender, address, func.clone(), (), 0.into(), self.errors)
         {
             Ok(CallResult {
-                status,
+                reverted,
                 gas: gas_used,
                 logs: execution_logs,
                 traces: execution_trace,
@@ -320,10 +320,10 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
             }) => {
                 labeled_addresses.extend(new_labels);
                 logs.extend(execution_logs);
-                (status, None, gas_used, execution_trace, state_changeset)
+                (reverted, None, gas_used, execution_trace, state_changeset)
             }
             Err(EvmError::Execution {
-                status,
+                reverted,
                 reason,
                 gas_used,
                 logs: execution_logs,
@@ -334,7 +334,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
             }) => {
                 labeled_addresses.extend(new_labels);
                 logs.extend(execution_logs);
-                (status, Some(reason), gas_used, execution_trace, state_changeset)
+                (reverted, Some(reason), gas_used, execution_trace, state_changeset)
             }
             Err(err) => {
                 tracing::error!(?err);
@@ -345,7 +345,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
 
         let success = self.executor.is_success(
             setup.address,
-            status,
+            reverted,
             state_changeset.expect("we should have a state changeset"),
             should_fail,
         );

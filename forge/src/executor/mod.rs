@@ -49,7 +49,7 @@ pub enum EvmError {
     /// Error which occurred during execution of a transaction
     #[error("Execution reverted: {reason} (gas: {gas_used})")]
     Execution {
-        status: Return,
+        reverted: bool,
         reason: String,
         gas_used: u64,
         logs: Vec<RawLog>,
@@ -84,8 +84,8 @@ pub struct DeployResult {
 /// The result of a call.
 #[derive(Debug)]
 pub struct CallResult<D: Detokenize> {
-    /// The status of the call
-    pub status: Return,
+    /// Whether the call reverted or not
+    pub reverted: bool,
     /// The decoded result of the call
     pub result: D,
     /// The gas used for the call
@@ -109,7 +109,9 @@ pub struct CallResult<D: Detokenize> {
 #[derive(Debug)]
 pub struct RawCallResult {
     /// The status of the call
-    pub status: Return,
+    status: Return,
+    /// Whether the call reverted or not
+    pub reverted: bool,
     /// The raw result of the call
     pub result: Bytes,
     /// The gas used for the call
@@ -133,6 +135,7 @@ impl Default for RawCallResult {
     fn default() -> Self {
         Self {
             status: Return::Continue,
+            reverted: false,
             result: Bytes::new(),
             gas: 0,
             logs: Vec::new(),
@@ -215,13 +218,13 @@ where
     ) -> std::result::Result<CallResult<D>, EvmError> {
         let func = func.into();
         let calldata = Bytes::from(encode_function_data(&func, args)?.to_vec());
-        let RawCallResult { result, status, gas, logs, labels, traces, debug, .. } =
+        let RawCallResult { result, status, reverted, gas, logs, labels, traces, debug, .. } =
             self.call_raw_committing(from, to, calldata, value)?;
         match status {
             return_ok!() => {
                 let result = decode_function_data(&func, result, false)?;
                 Ok(CallResult {
-                    status,
+                    reverted,
                     result,
                     gas,
                     logs,
@@ -235,7 +238,7 @@ where
                 let reason = foundry_utils::decode_revert(result.as_ref(), abi)
                     .unwrap_or_else(|_| format!("{:?}", status));
                 Err(EvmError::Execution {
-                    status,
+                    reverted,
                     reason,
                     gas_used: gas,
                     logs,
@@ -273,6 +276,7 @@ where
 
         Ok(RawCallResult {
             status,
+            reverted: !matches!(status, return_ok!()),
             result,
             gas,
             logs,
@@ -297,18 +301,36 @@ where
     ) -> std::result::Result<CallResult<D>, EvmError> {
         let func = func.into();
         let calldata = Bytes::from(encode_function_data(&func, args)?.to_vec());
-        let RawCallResult { result, status, gas, logs, labels, traces, debug, state_changeset } =
-            self.call_raw(from, to, calldata, value)?;
+        let RawCallResult {
+            result,
+            status,
+            reverted,
+            gas,
+            logs,
+            labels,
+            traces,
+            debug,
+            state_changeset,
+        } = self.call_raw(from, to, calldata, value)?;
         match status {
             return_ok!() => {
                 let result = decode_function_data(&func, result, false)?;
-                Ok(CallResult { status, result, gas, logs, labels, traces, debug, state_changeset })
+                Ok(CallResult {
+                    reverted,
+                    result,
+                    gas,
+                    logs,
+                    labels,
+                    traces,
+                    debug,
+                    state_changeset,
+                })
             }
             _ => {
                 let reason = foundry_utils::decode_revert(result.as_ref(), abi)
                     .unwrap_or_else(|_| format!("{:?}", status));
                 Err(EvmError::Execution {
-                    status,
+                    reverted,
                     reason,
                     gas_used: gas,
                     logs,
@@ -346,6 +368,7 @@ where
         let (logs, labels, traces, debug) = collect_inspector_states(inspector);
         Ok(RawCallResult {
             status,
+            reverted: !matches!(status, return_ok!()),
             result,
             gas,
             logs: logs.to_vec(),
@@ -386,18 +409,17 @@ where
     pub fn is_success(
         &self,
         address: Address,
-        status: Return,
+        reverted: bool,
         state_changeset: HashMap<Address, Account>,
         should_fail: bool,
     ) -> bool {
-        let mut success = matches!(status, return_ok!());
-
         // Construct a new VM with the state changeset
         let mut db = CacheDB::new(EmptyDB());
         db.insert_cache(address, self.db.basic(address));
         db.commit(state_changeset);
         let executor = Executor::new(db, self.env.clone(), self.inspector_config.clone());
 
+        let mut success = !reverted;
         if success {
             // Check if a DSTest assertion failed
             let call = executor.call::<bool, _, _>(

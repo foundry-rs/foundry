@@ -376,6 +376,7 @@ impl<DB: DatabaseRef> Runner<DB> {
         Ok(if setup {
             match self.executor.setup(address) {
                 Ok(CallResult {
+                    reverted,
                     traces: setup_traces,
                     labels,
                     logs: setup_logs,
@@ -384,6 +385,7 @@ impl<DB: DatabaseRef> Runner<DB> {
                     ..
                 }) |
                 Err(EvmError::Execution {
+                    reverted,
                     traces: setup_traces,
                     labels,
                     logs: setup_logs,
@@ -401,8 +403,7 @@ impl<DB: DatabaseRef> Runner<DB> {
                             logs,
                             traces,
                             labeled_addresses: labels,
-                            // TODO
-                            success: true,
+                            success: !reverted,
                             debug: vec![constructor_debug, debug].into_iter().collect(),
                             gas_used,
                         },
@@ -416,7 +417,6 @@ impl<DB: DatabaseRef> Runner<DB> {
                 RunResult {
                     logs,
                     traces,
-                    // TODO
                     success: true,
                     debug: vec![constructor_debug].into_iter().collect(),
                     gas_used: 0,
@@ -427,11 +427,10 @@ impl<DB: DatabaseRef> Runner<DB> {
     }
 
     pub fn run(&mut self, address: Address, calldata: Bytes) -> eyre::Result<RunResult> {
-        let RawCallResult { status: _status, gas, logs, traces, labels, debug, .. } =
+        let RawCallResult { reverted, gas, logs, traces, labels, debug, .. } =
             self.executor.call_raw(self.sender, address, calldata.0, 0.into())?;
         Ok(RunResult {
-            // TODO
-            success: true,
+            success: !reverted,
             gas_used: gas,
             logs,
             traces: traces.map(|traces| vec![(TraceKind::Execution, traces)]).unwrap_or_default(),
