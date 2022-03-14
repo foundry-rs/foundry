@@ -151,6 +151,22 @@ async fn main() -> eyre::Result<()> {
                 )?
             );
         }
+        Subcommands::AccessList { eth, address, sig, args, block, to_json } => {
+            let provider = Provider::try_from(eth.rpc_url()?)?;
+            println!(
+                "{}",
+                Cast::new(provider)
+                    .access_list(
+                        eth.from.unwrap_or(Address::zero()),
+                        address,
+                        (&sig, args),
+                        eth.chain,
+                        block,
+                        to_json,
+                    )
+                    .await?
+            );
+        }
         Subcommands::Block { rpc_url, block, full, field, to_json } => {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).block(block, full, field, to_json).await?);

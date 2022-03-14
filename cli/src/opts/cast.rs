@@ -100,6 +100,20 @@ pub enum Subcommands {
         value: Option<String>,
         unit: Option<String>,
     },
+    #[clap(name = "access-list")]
+    #[clap(about = "Create an access list for a transaction")]
+    AccessList {
+        #[clap(help = "the address you want to query", parse(try_from_str = parse_name_or_address))]
+        address: NameOrAddress,
+        sig: String,
+        args: Vec<String>,
+        #[clap(long, short, help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
+        block: Option<BlockId>,
+        #[clap(flatten)]
+        eth: EthereumOpts,
+        #[clap(long = "json", short = 'j')]
+        to_json: bool,
+    },
     #[clap(name = "block")]
     #[clap(
         about = "Prints information about <block>. If <field> is given, print only the value of that field"
