@@ -168,7 +168,7 @@ impl Tui {
         let block_controls = Block::default();
 
         let text_output = Text::from(Span::styled(
-            "[q]: Quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end",
+            "[q]: quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end",
             Style::default().add_modifier(Modifier::DIM)
         ));
         let paragraph = Paragraph::new(text_output)
@@ -190,7 +190,7 @@ impl Tui {
         area: Rect,
     ) {
         let block_source_code = Block::default()
-            .title(format!("Contract construction: {}", creation))
+            .title(if creation { "Contract creation" } else { "Contract call" })
             .borders(Borders::ALL);
 
         let mut text_output: Text = Text::from("");
@@ -491,7 +491,7 @@ impl Tui {
     ) {
         let block_source_code = Block::default()
             .title(format!(
-                " Address: {} | PC: {} | Gas used in call: {} ",
+                "Address: {} | PC: {} | Gas used in call: {}",
                 address,
                 if let Some(step) = debug_steps.get(current_step) {
                     step.pc.to_string()
@@ -547,17 +547,17 @@ impl Tui {
             // Format line number
             let line_number_format = if line_number == current_step {
                 let step: &DebugStep = &debug_steps[line_number];
-                format!("{:0>max_pc_len$x} ▶", step.pc, max_pc_len = max_pc_len)
+                format!("{:0>max_pc_len$x}|▶", step.pc, max_pc_len = max_pc_len)
             } else if line_number < debug_steps.len() {
                 let step: &DebugStep = &debug_steps[line_number];
-                format!("{:0>max_pc_len$x}: ", step.pc, max_pc_len = max_pc_len)
+                format!("{:0>max_pc_len$x}| ", step.pc, max_pc_len = max_pc_len)
             } else {
                 "END CALL".to_string()
             };
 
             if let Some(op) = opcode_list.get(line_number) {
                 text_output.push(Spans::from(Span::styled(
-                    format!("{} {}", line_number_format, op),
+                    format!("{}{}", line_number_format, op),
                     Style::default().fg(Color::White).bg(bg_color),
                 )));
             } else {
@@ -612,7 +612,7 @@ impl Tui {
     ) {
         let memory = &debug_steps[current_step].memory;
         let stack_space = Block::default()
-            .title(format!(" Memory (max expansion: {} bytes)", memory.effective_len()))
+            .title(format!("Memory (max expansion: {} bytes)", memory.effective_len()))
             .borders(Borders::ALL);
         let memory = memory.data();
         let max_i = memory.len() / 32;
