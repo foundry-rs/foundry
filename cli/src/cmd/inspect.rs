@@ -59,13 +59,13 @@ impl FromStr for ContractArtifactFields {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "abi" => Ok(ContractArtifactFields::Abi),
+            "b" | "bytes" | "bytecode" => Ok(ContractArtifactFields::Bytecode),
             "deployedBytecode" | "deployed_bytecode" | "deployed-bytecode" | "deployed" |
             "deployedbytecode" => Ok(ContractArtifactFields::DeployedBytecode),
             "assembly" | "asm" => Ok(ContractArtifactFields::Assembly),
             "asmOptimized" | "assemblyOptimized" | "assemblyoptimized" | "assembly_optimized" |
-            "asmopt" | "assembly-optimized" | "asmo" => {
-                Ok(ContractArtifactFields::AssemblyOptimized)
-            }
+            "asmopt" | "assembly-optimized" | "asmo" | "asm-optimized" | "asmoptimized" |
+            "asm_optimized" => Ok(ContractArtifactFields::AssemblyOptimized),
             "methods" | "methodidentifiers" | "methodIdentifiers" | "method_identifiers" |
             "method-identifiers" | "mi" => Ok(ContractArtifactFields::MethodIdentifiers),
             "gasEstimates" | "gas" | "gas_estimates" | "gas-estimates" | "gasestimates" => {
@@ -82,8 +82,7 @@ impl FromStr for ContractArtifactFields {
             "metadata" | "meta" => Ok(ContractArtifactFields::Metadata),
             "userdoc" | "userDoc" | "user-doc" => Ok(ContractArtifactFields::UserDoc),
             "ewasm" | "e-wasm" => Ok(ContractArtifactFields::Ewasm),
-            // Don't need to match bytecode since this is covered by the default case here
-            _ => Ok(ContractArtifactFields::Bytecode),
+            _ => Err(format!("Unknown mode: {}", s)),
         }
     }
 }

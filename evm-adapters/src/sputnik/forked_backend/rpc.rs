@@ -218,10 +218,7 @@ mod tests {
         let cfg = Config::london();
         let compiled = COMPILED.find("Greeter").expect("could not find contract");
 
-        let provider = Provider::<Http>::try_from(
-            "https://mainnet.infura.io/v3/c60b0bb42f8a4c6481ecd229eddaca27",
-        )
-        .unwrap();
+        let provider = ethers::providers::MAINNET.provider();
         let rt = Runtime::new().unwrap();
         let blk = Some(13292465);
         let vicinity = rt.block_on(vicinity(&provider, None, blk, None)).unwrap();

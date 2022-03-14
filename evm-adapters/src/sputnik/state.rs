@@ -256,10 +256,7 @@ mod tests {
     // shareable
     static G_FORKED_BACKEND: Lazy<GlobalBackend> = Lazy::new(|| {
         let cache = new_shared_cache(MemCache::default());
-        let provider = Provider::<Http>::try_from(
-            "https://mainnet.infura.io/v3/c60b0bb42f8a4c6481ecd229eddaca27",
-        )
-        .unwrap();
+        let provider = ethers::providers::MAINNET.provider();
         let vicinity = G_VICINITY.clone();
         let backend = SharedBackend::new(Arc::new(provider), cache.clone(), vicinity, None);
         GlobalBackend { cache, backend }

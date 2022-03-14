@@ -3,6 +3,7 @@
 use crate::{
     cmd::{build::BuildArgs, Cmd},
     opts::evm::EvmArgs,
+    utils,
 };
 use ansi_term::Colour;
 use clap::{AppSettings, Parser};
@@ -222,6 +223,16 @@ pub struct Test {
 impl Test {
     pub fn gas_used(&self) -> u64 {
         self.result.gas_used
+    }
+
+    /// Returns the contract name of the artifact id
+    pub fn contract_name(&self) -> &str {
+        utils::get_contract_name(&self.artifact_id)
+    }
+
+    /// Returns the file name of the artifact id
+    pub fn file_name(&self) -> &str {
+        utils::get_file_name(&self.artifact_id)
     }
 }
 

@@ -74,7 +74,7 @@ fn main() -> eyre::Result<()> {
             cmd.run()?;
         }
         Subcommands::Completions { shell } => {
-            generate(shell, &mut Opts::into_app(), "forge", &mut std::io::stdout())
+            generate(shell, &mut Opts::command(), "forge", &mut std::io::stdout())
         }
         Subcommands::Clean { root } => {
             let root = root.unwrap_or_else(|| std::env::current_dir().unwrap());
