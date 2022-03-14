@@ -585,16 +585,26 @@ impl Tui {
         area: Rect,
     ) {
         let stack_space =
-            Block::default().title(format!(" Stack: {} ", current_step)).borders(Borders::ALL);
+            Block::default().title(format!("Stack: {}", current_step)).borders(Borders::ALL);
         let stack = &debug_steps[current_step].stack;
         let min_len = usize::max(format!("{}", stack.len()).len(), 2);
 
         let text: Vec<Spans> = stack
             .iter()
+            .rev()
             .enumerate()
             .map(|(i, stack_item)| {
                 Spans::from(Span::styled(
-                    format!("{: <min_len$}: {:?} \n", i, stack_item, min_len = min_len),
+                    format!(
+                        "{: >min_len$}| {} \n",
+                        i,
+                        (0..32)
+                            .into_iter()
+                            .map(|i| format!("{:02x}", stack_item.byte(i)))
+                            .collect::<Vec<String>>()
+                            .join(" "),
+                        min_len = min_len
+                    ),
                     Style::default().fg(Color::White),
                 ))
             })
