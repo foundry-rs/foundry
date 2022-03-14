@@ -1,7 +1,8 @@
 //! terminal utils
 
+use ansi_term::Colour;
 use atty::{self, Stream};
-use ethers::solc::{report::Reporter, CompilerInput, Solc};
+use ethers::solc::{remappings::Remapping, report::Reporter, CompilerInput, Solc};
 use once_cell::sync::Lazy;
 use semver::Version;
 use std::{
@@ -220,8 +221,18 @@ impl Reporter for SpinnerReporter {
         self.send_msg(format!("Successfully installed solc {}", version));
     }
 
-    fn on_unresolved_import(&self, import: &Path) {
-        self.send_msg(format!("Unable to resolve imported file: \"{}\"", import.display()));
+    fn on_solc_installation_error(&self, version: &Version, error: &str) {
+        self.send_msg(
+            Colour::Red.paint(format!("Failed to install solc {}: {}", version, error)).to_string(),
+        );
+    }
+
+    fn on_unresolved_import(&self, import: &Path, remappings: &[Remapping]) {
+        self.send_msg(format!(
+            "Unable to resolve import: \"{}\" with remappings:\n    {}",
+            import.display(),
+            remappings.iter().map(|r| r.to_string()).collect::<Vec<_>>().join("\n    ")
+        ));
     }
 }
 
