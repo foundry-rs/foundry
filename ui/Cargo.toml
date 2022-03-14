@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 crossterm = "0.22.1"
-tui = {  version = "0.16.0", default-features = false, features = ["crossterm"] }
+tui = { version = "0.16.0", default-features = false, features = ["crossterm"] }
 eyre = "0.6.5"
 hex = "0.4.3"
 ethers = { git = "https://github.com/gakonst/ethers-rs" }

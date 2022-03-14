@@ -6,7 +6,7 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ethers::{abi::Abi, solc::artifacts::ContractBytecodeSome, types::Address};
+use ethers::{solc::artifacts::ContractBytecodeSome, types::Address};
 use eyre::Result;
 use forge::debugger::DebugStep;
 use std::{
@@ -46,7 +46,7 @@ pub struct Tui {
     key_buffer: String,
     /// current step in the debug steps
     current_step: usize,
-    identified_contracts: BTreeMap<Address, (String, Abi)>,
+    identified_contracts: BTreeMap<Address, String>,
     known_contracts: BTreeMap<String, ContractBytecodeSome>,
     source_code: BTreeMap<u32, String>,
 }
@@ -57,7 +57,7 @@ impl Tui {
     pub fn new(
         debug_arena: Vec<(Address, Vec<DebugStep>, bool)>,
         current_step: usize,
-        identified_contracts: BTreeMap<Address, (String, Abi)>,
+        identified_contracts: BTreeMap<Address, String>,
         known_contracts: BTreeMap<String, ContractBytecodeSome>,
         source_code: BTreeMap<u32, String>,
     ) -> Result<Self> {
@@ -96,7 +96,7 @@ impl Tui {
     fn draw_layout<B: Backend>(
         f: &mut Frame<B>,
         address: Address,
-        identified_contracts: &BTreeMap<Address, (String, Abi)>,
+        identified_contracts: &BTreeMap<Address, String>,
         known_contracts: &BTreeMap<String, ContractBytecodeSome>,
         source_code: &BTreeMap<u32, String>,
         debug_steps: &[DebugStep],
@@ -182,7 +182,7 @@ impl Tui {
     fn draw_src<B: Backend>(
         f: &mut Frame<B>,
         address: Address,
-        identified_contracts: &BTreeMap<Address, (String, Abi)>,
+        identified_contracts: &BTreeMap<Address, String>,
         known_contracts: &BTreeMap<String, ContractBytecodeSome>,
         source_code: &BTreeMap<u32, String>,
         ic: usize,
@@ -196,7 +196,7 @@ impl Tui {
         let mut text_output: Text = Text::from("");
 
         if let Some(contract_name) = identified_contracts.get(&address) {
-            if let Some(known) = known_contracts.get(&contract_name.0) {
+            if let Some(known) = known_contracts.get(contract_name) {
                 // grab either the creation source map or runtime sourcemap
                 if let Some(sourcemap) = if creation {
                     known.bytecode.source_map()
