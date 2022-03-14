@@ -146,7 +146,8 @@ where
         let res = if to_json {
             serde_json::to_string(&access_list)?
         } else {
-            let mut s = vec![ format!("gas used: {}", access_list.gas_used), "access list:".to_string()];
+            let mut s =
+                vec![format!("gas used: {}", access_list.gas_used), "access list:".to_string()];
             for al in access_list.access_list.0 {
                 s.push(format!("- address: {:?}", al.address));
                 if !al.storage_keys.is_empty() {
