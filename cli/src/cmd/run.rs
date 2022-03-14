@@ -114,11 +114,20 @@ impl Cmd for RunArgs {
             let (address, mut result) =
                 runner.setup(&predeploy_libraries, bytecode, needs_setup)?;
 
-            let RunResult { success, logs, traces, debug: run_debug, labeled_addresses, .. } =
-                runner
-                    .run(address, encode_args(&IntoFunction::into(self.sig), &self.args)?.into())?;
+            let RunResult {
+                success,
+                gas_used,
+                logs,
+                traces,
+                debug: run_debug,
+                labeled_addresses,
+                ..
+            } = runner
+                .run(address, encode_args(&IntoFunction::into(self.sig), &self.args)?.into())?;
 
             result.success &= success;
+
+            result.gas_used = gas_used;
             result.logs.extend(logs);
             result.traces.extend(traces);
             result.debug = run_debug;
@@ -192,10 +201,9 @@ impl Cmd for RunArgs {
             }
 
             println!("Gas used: {}", result.gas_used);
-            println!("== Logs == ");
+            println!("== Logs ==");
             let console_logs = decode_console_logs(&result.logs);
             if !console_logs.is_empty() {
-                println!("Logs:");
                 for log in console_logs {
                     println!("  {}", log);
                 }
