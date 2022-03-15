@@ -47,16 +47,16 @@ use std::collections::BTreeMap;
 #[derive(thiserror::Error, Debug)]
 pub enum EvmError {
     /// Error which occurred during execution of a transaction
-    #[error("Execution reverted: {reason} (gas: {gas_used})")]
+    #[error("Execution reverted: {reason} (gas: {gas})")]
     Execution {
         reverted: bool,
         reason: String,
-        gas_used: u64,
+        gas: u64,
         logs: Vec<RawLog>,
         traces: Option<CallTraceArena>,
         debug: Option<DebugArena>,
         labels: BTreeMap<Address, String>,
-        state_changeset: Option<HashMap<Address, Account>>,
+        state_changeset: HashMap<Address, Account>,
     },
     /// Error which occurred during ABI encoding/decoding
     #[error(transparent)]
@@ -102,7 +102,7 @@ pub struct CallResult<D: Detokenize> {
     ///
     /// This is only present if the changed state was not committed to the database (i.e. if you
     /// used `call` and `call_raw` not `call_committing` or `call_raw_committing`).
-    pub state_changeset: Option<HashMap<Address, Account>>,
+    pub state_changeset: HashMap<Address, Account>,
 }
 
 /// The result of a raw call.
@@ -128,7 +128,7 @@ pub struct RawCallResult {
     ///
     /// This is only present if the changed state was not committed to the database (i.e. if you
     /// used `call` and `call_raw` not `call_committing` or `call_raw_committing`).
-    pub state_changeset: Option<HashMap<Address, Account>>,
+    pub state_changeset: HashMap<Address, Account>,
 }
 
 impl Default for RawCallResult {
@@ -142,7 +142,7 @@ impl Default for RawCallResult {
             labels: BTreeMap::new(),
             traces: None,
             debug: None,
-            state_changeset: None,
+            state_changeset: HashMap::new(),
         }
     }
 }
@@ -218,8 +218,17 @@ where
     ) -> std::result::Result<CallResult<D>, EvmError> {
         let func = func.into();
         let calldata = Bytes::from(encode_function_data(&func, args)?.to_vec());
-        let RawCallResult { result, status, reverted, gas, logs, labels, traces, debug, .. } =
-            self.call_raw_committing(from, to, calldata, value)?;
+        let RawCallResult {
+            result,
+            status,
+            reverted,
+            gas,
+            logs,
+            labels,
+            traces,
+            debug,
+            state_changeset,
+        } = self.call_raw_committing(from, to, calldata, value)?;
         match status {
             return_ok!() => {
                 let result = decode_function_data(&func, result, false)?;
@@ -231,7 +240,7 @@ where
                     labels,
                     traces,
                     debug,
-                    state_changeset: None,
+                    state_changeset,
                 })
             }
             _ => {
@@ -240,12 +249,12 @@ where
                 Err(EvmError::Execution {
                     reverted,
                     reason,
-                    gas_used: gas,
+                    gas,
                     logs,
                     traces,
                     debug,
                     labels,
-                    state_changeset: None,
+                    state_changeset,
                 })
             }
         }
@@ -261,30 +270,9 @@ where
         calldata: Bytes,
         value: U256,
     ) -> Result<RawCallResult> {
-        let mut evm = EVM::new();
-        evm.env = self.build_env(from, TransactTo::Call(to), calldata, value);
-        evm.database(&mut self.db);
-
-        // Run the call
-        let mut inspector = self.inspector_config.stack();
-        let (status, out, gas, _) = evm.inspect_commit(&mut inspector);
-        let result = match out {
-            TransactOut::Call(data) => data,
-            _ => Bytes::default(),
-        };
-        let InspectorData { logs, labels, traces, debug } = collect_inspector_states(inspector);
-
-        Ok(RawCallResult {
-            status,
-            reverted: !matches!(status, return_ok!()),
-            result,
-            gas,
-            logs,
-            labels,
-            traces,
-            debug,
-            state_changeset: None,
-        })
+        let result = self.call_raw(from, to, calldata, value)?;
+        self.db.commit(result.state_changeset.clone());
+        Ok(result)
     }
 
     /// Performs a call to an account on the current state of the VM.
@@ -332,7 +320,7 @@ where
                 Err(EvmError::Execution {
                     reverted,
                     reason,
-                    gas_used: gas,
+                    gas,
                     logs,
                     traces,
                     debug,
@@ -375,7 +363,7 @@ where
             labels,
             traces,
             debug,
-            state_changeset: Some(state_changeset),
+            state_changeset,
         })
     }
 

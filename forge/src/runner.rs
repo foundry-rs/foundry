@@ -311,7 +311,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         {
             Ok(CallResult {
                 reverted,
-                gas: gas_used,
+                gas,
                 logs: execution_logs,
                 traces: execution_trace,
                 labels: new_labels,
@@ -320,12 +320,12 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
             }) => {
                 labeled_addresses.extend(new_labels);
                 logs.extend(execution_logs);
-                (reverted, None, gas_used, execution_trace, state_changeset)
+                (reverted, None, gas, execution_trace, state_changeset)
             }
             Err(EvmError::Execution {
                 reverted,
                 reason,
-                gas_used,
+                gas,
                 logs: execution_logs,
                 traces: execution_trace,
                 labels: new_labels,
@@ -334,7 +334,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
             }) => {
                 labeled_addresses.extend(new_labels);
                 logs.extend(execution_logs);
-                (reverted, Some(reason), gas_used, execution_trace, state_changeset)
+                (reverted, Some(reason), gas, execution_trace, state_changeset)
             }
             Err(err) => {
                 tracing::error!(?err);
@@ -343,12 +343,8 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         };
         traces.extend(execution_traces.map(|traces| (TraceKind::Execution, traces)).into_iter());
 
-        let success = self.executor.is_success(
-            setup.address,
-            reverted,
-            state_changeset.expect("we should have a state changeset"),
-            should_fail,
-        );
+        let success =
+            self.executor.is_success(setup.address, reverted, state_changeset, should_fail);
 
         // Record test execution time
         tracing::debug!(
@@ -507,11 +503,12 @@ mod tests {
 
         // get the counterexample with shrinking enabled by default
         let counterexample = res.counterexample.unwrap();
+
+        // casting to u64 here is safe because the shrunk result is always gonna be small
+        // enough to fit in a u64, whereas as seen below, that's not possible without
+        // shrinking
         let product_with_shrinking: u64 =
-                // casting to u64 here is safe because the shrunk result is always gonna be small
-                // enough to fit in a u64, whereas as seen below, that's not possible without
-                // shrinking
-                counterexample.args.into_iter().map(|x| x.into_uint().unwrap().as_u64()).product();
+            counterexample.args.into_iter().map(|x| x.into_uint().unwrap().as_u64()).product();
 
         let mut cfg = FuzzConfig::default();
         cfg.failure_persistence = None;

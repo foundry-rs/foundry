@@ -117,13 +117,7 @@ impl Cmd for RunArgs {
                 runner.setup(&predeploy_libraries, bytecode, needs_setup)?;
 
             let RunResult {
-                success,
-                gas_used,
-                logs,
-                traces,
-                debug: run_debug,
-                labeled_addresses,
-                ..
+                success, gas, logs, traces, debug: run_debug, labeled_addresses, ..
             } = runner.run(
                 address,
                 if let Some(calldata) = self.sig.strip_prefix("0x") {
@@ -135,7 +129,7 @@ impl Cmd for RunArgs {
 
             result.success &= success;
 
-            result.gas_used = gas_used;
+            result.gas = gas;
             result.logs.extend(logs);
             result.traces.extend(traces);
             result.debug = run_debug;
@@ -208,7 +202,7 @@ impl Cmd for RunArgs {
                 println!("{}", Colour::Red.paint("Script failed."));
             }
 
-            println!("Gas used: {}", result.gas_used);
+            println!("Gas used: {}", result.gas);
             println!("== Logs ==");
             let console_logs = decode_console_logs(&result.logs);
             if !console_logs.is_empty() {
@@ -327,7 +321,7 @@ struct RunResult {
     pub logs: Vec<RawLog>,
     pub traces: Vec<(TraceKind, CallTraceArena)>,
     pub debug: Option<Vec<DebugArena>>,
-    pub gas_used: u64,
+    pub gas: u64,
     pub labeled_addresses: BTreeMap<Address, String>,
 }
 
@@ -389,7 +383,7 @@ impl<DB: DatabaseRef> Runner<DB> {
                     labels,
                     logs: setup_logs,
                     debug,
-                    gas: gas_used,
+                    gas,
                     ..
                 }) |
                 Err(EvmError::Execution {
@@ -398,7 +392,7 @@ impl<DB: DatabaseRef> Runner<DB> {
                     labels,
                     logs: setup_logs,
                     debug,
-                    gas_used,
+                    gas,
                     ..
                 }) => {
                     traces
@@ -413,7 +407,7 @@ impl<DB: DatabaseRef> Runner<DB> {
                             labeled_addresses: labels,
                             success: !reverted,
                             debug: vec![constructor_debug, debug].into_iter().collect(),
-                            gas_used,
+                            gas,
                         },
                     )
                 }
@@ -427,7 +421,7 @@ impl<DB: DatabaseRef> Runner<DB> {
                     traces,
                     success: true,
                     debug: vec![constructor_debug].into_iter().collect(),
-                    gas_used: 0,
+                    gas: 0,
                     labeled_addresses: Default::default(),
                 },
             )
@@ -439,7 +433,7 @@ impl<DB: DatabaseRef> Runner<DB> {
             self.executor.call_raw(self.sender, address, calldata.0, 0.into())?;
         Ok(RunResult {
             success: !reverted,
-            gas_used: gas,
+            gas,
             logs,
             traces: traces.map(|traces| vec![(TraceKind::Execution, traces)]).unwrap_or_default(),
             debug: vec![debug].into_iter().collect(),

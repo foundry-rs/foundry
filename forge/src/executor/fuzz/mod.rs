@@ -78,7 +78,7 @@ where
             let success = self.executor.is_success(
                 address,
                 call.reverted,
-                call.state_changeset.clone().expect("we should have a state changeset"),
+                call.state_changeset.clone(),
                 should_fail,
             );
 
