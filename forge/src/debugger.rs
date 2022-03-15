@@ -149,31 +149,6 @@ impl DebugStep {
     }
 }
 
-impl Display for DebugStep {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Some(push_bytes) = &self.push_bytes {
-            write!(
-                f,
-                "pc: {:?}\nop: {}(0x{})\nstack: {:#?}\nmemory: 0x{}\n\n",
-                self.pc,
-                self.instruction,
-                hex::encode(push_bytes),
-                self.stack,
-                hex::encode(self.memory.data())
-            )
-        } else {
-            write!(
-                f,
-                "pc: {:?}\nop: {}\nstack: {:#?}\nmemory: 0x{}\n\n",
-                self.pc,
-                self.instruction,
-                self.stack,
-                hex::encode(self.memory.data())
-            )
-        }
-    }
-}
-
 #[derive(Debug, Copy, Clone)]
 pub enum Instruction {
     OpCode(u8),
