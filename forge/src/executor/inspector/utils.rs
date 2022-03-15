@@ -53,5 +53,5 @@ pub fn get_create_address(call: &CreateInputs, nonce: u64) -> Address {
 /// Get the gas used, accounting for refunds
 pub fn gas_used(spec: SpecId, gas: &Gas) -> u64 {
     let refund_quotient = if SpecId::enabled(spec, SpecId::LONDON) { 5 } else { 2 };
-    gas.spend() - (gas.refunded() as u64).min(gas.spend() / 5)
+    gas.spend() - (gas.refunded() as u64).min(gas.spend() / refund_quotient)
 }
