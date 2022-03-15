@@ -233,7 +233,9 @@ impl Cmd for TestArgs {
                 }
                 n =>
                     Err(
-                    eyre::eyre!("{} tests matched your criteria, but exactly 1 test must match in order to run the debugger.", n))
+                    eyre::eyre!("{} tests matched your criteria, but exactly 1 test must match in order to run the debugger.\n
+                        \n
+                        Use --match-contract and --match-path to further limit the search.", n))
             }
         } else {
             let TestArgs { filter, .. } = self;
