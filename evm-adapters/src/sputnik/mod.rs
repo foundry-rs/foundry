@@ -114,6 +114,7 @@ pub trait SputnikExecutor<S> {
 }
 
 // The implementation for the base Stack Executor just forwards to the internal methods.
+#[allow(clippy::only_used_in_recursion)]
 impl<'a, 'b, S: StackState<'a>, P: PrecompileSet> SputnikExecutor<S>
     for StackExecutor<'a, 'b, S, P>
 {
