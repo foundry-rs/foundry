@@ -584,9 +584,9 @@ impl Tui {
         current_step: usize,
         area: Rect,
     ) {
-        let stack_space =
-            Block::default().title(format!("Stack: {}", current_step)).borders(Borders::ALL);
         let stack = &debug_steps[current_step].stack;
+        let stack_space =
+            Block::default().title(format!("Stack: {}", stack.len())).borders(Borders::ALL);
         let min_len = usize::max(format!("{}", stack.len()).len(), 2);
 
         let text: Vec<Spans> = stack
