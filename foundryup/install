@@ -38,7 +38,8 @@ OPTIONS:
     -h, --help      Print help information
     -v, --version   Install a specific version
     -b, --branch    Install a specific branch
-    -r, --repo      Install a forks main branch"
+    -r, --repo      Install a forks main branch
+    --path          Install from a local repository"
     exit 0
 fi
 
