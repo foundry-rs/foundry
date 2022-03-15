@@ -7,7 +7,9 @@ use foundry_cli_test_utils::{
     forgetest, forgetest_ignore, forgetest_init, pretty_eq,
     util::{pretty_err, read_string, TestCommand, TestProject},
 };
-use foundry_config::{parse_with_profile, BasicConfig, Config, OptimizerDetails};
+use foundry_config::{
+    parse_with_profile, BasicConfig, Config, OptimizerDetails, SolidityErrorCode,
+};
 use pretty_assertions::assert_eq;
 use std::{
     env::{self},
@@ -588,6 +590,44 @@ contract BTest is DSTest {
 
     cmd.arg("--check");
     let _ = cmd.output();
+});
+
+// test that `forge build` does not print `(with warnings)` if there arent any
+forgetest!(can_compile_without_warnings, |prj: TestProject, mut cmd: TestCommand| {
+    let config = Config {
+        ignored_error_codes: vec![SolidityErrorCode::SpdxLicenseNotProvided],
+        ..Default::default()
+    };
+    prj.write_config(config);
+    prj.inner()
+        .add_source(
+            "A",
+            r#"
+pragma solidity 0.8.10;
+contract A {
+    function testExample() public {}
+}
+   "#,
+        )
+        .unwrap();
+
+    cmd.args(["build", "--force"]);
+    let out = cmd.stdout();
+    // no warnings
+    assert!(out.trim().starts_with("Compiler run successful"));
+    assert!(!out.trim().starts_with("Compiler run successful (with warnings)"));
+
+    // don't ignore errors
+    let config = Config { ignored_error_codes: vec![], ..Default::default() };
+    prj.write_config(config);
+    let out = cmd.stdout();
+
+    assert!(out.trim().starts_with("Compiler run successful (with warnings)"));
+    assert!(
+      out.contains(
+                    r#"Warning: SPDX license identifier not provided in source file. Before publishing, consider adding a comment containing "SPDX-License-Identifier: <SPDX-License>" to each source file. Use "SPDX-License-Identifier: UNLICENSED" for non-open-source code. Please see https://spdx.org for more information."#
+        )
+    );
 });
 
 // test against a local checkout, useful to debug with local ethers-rs patch

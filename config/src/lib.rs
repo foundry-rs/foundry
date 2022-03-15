@@ -13,7 +13,7 @@ use figment::{
 // reexport so cli types can implement `figment::Provider` to easily merge compiler arguments
 pub use figment;
 use semver::Version;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use ethers_core::types::{Address, U256};
 pub use ethers_solc::artifacts::OptimizerDetails;
@@ -127,8 +127,8 @@ pub struct Config {
     pub verbosity: u8,
     /// url of the rpc server that should be used for any rpc calls
     pub eth_rpc_url: Option<String>,
-    /// list of solidity error codes to always silence
-    pub ignored_error_codes: Vec<u64>,
+    /// list of solidity error codes to always silence in the compiler output
+    pub ignored_error_codes: Vec<SolidityErrorCode>,
     /// The number of test cases that must execute for each property test
     pub fuzz_runs: u32,
     /// Whether to allow ffi cheatcodes in test
@@ -390,7 +390,7 @@ impl Config {
             .allowed_path(&self.__root.0)
             .allowed_paths(&self.libs)
             .solc_config(SolcConfig::builder().settings(self.solc_settings()?).build())
-            .ignore_error_codes(self.ignored_error_codes.clone())
+            .ignore_error_codes(self.ignored_error_codes.iter().copied().map(Into::into))
             .set_auto_detect(self.is_auto_detect())
             .set_offline(self.offline)
             .set_cached(cached)
@@ -861,9 +861,52 @@ impl Default for Config {
             verbosity: 0,
             remappings: vec![],
             libraries: vec![],
-            ignored_error_codes: vec![],
+            ignored_error_codes: vec![SolidityErrorCode::SpdxLicenseNotProvided],
             __non_exhaustive: (),
         }
+    }
+}
+/// A non-exhaustive list of solidity error codes
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum SolidityErrorCode {
+    /// Warning that SPDX license identifier not provided in source file
+    SpdxLicenseNotProvided,
+    Other(u64),
+}
+
+impl From<SolidityErrorCode> for u64 {
+    fn from(code: SolidityErrorCode) -> u64 {
+        match code {
+            SolidityErrorCode::SpdxLicenseNotProvided => 1878,
+            SolidityErrorCode::Other(code) => code,
+        }
+    }
+}
+
+impl From<u64> for SolidityErrorCode {
+    fn from(code: u64) -> Self {
+        match code {
+            1878 => SolidityErrorCode::SpdxLicenseNotProvided,
+            other => SolidityErrorCode::Other(other),
+        }
+    }
+}
+
+impl Serialize for SolidityErrorCode {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_u64((*self).into())
+    }
+}
+
+impl<'de> Deserialize<'de> for SolidityErrorCode {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        u64::deserialize(deserializer).map(Into::into)
     }
 }
 
