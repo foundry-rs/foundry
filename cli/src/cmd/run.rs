@@ -32,31 +32,33 @@ foundry_config::impl_figment_convert!(RunArgs, opts, evm_opts);
 
 #[derive(Debug, Clone, Parser)]
 pub struct RunArgs {
-    #[clap(help = "the path of the contract to run", value_hint = ValueHint::FilePath)]
+    /// The path of the contract to run.
+    ///
+    /// If multiple contracts exist in the same file you must specify the target contract with
+    /// --target-contract.
+    #[clap(value_hint = ValueHint::FilePath)]
     pub path: PathBuf,
 
+    /// Arguments to pass to the script function.
     pub args: Vec<String>,
 
-    #[clap(flatten)]
-    pub evm_opts: EvmArgs,
-
-    #[clap(flatten)]
-    opts: BuildArgs,
-
-    #[clap(
-        long,
-        short,
-        help = "the contract you want to call and deploy, only necessary if there are more than 1 contract (Interfaces do not count) definitions on the script"
-    )]
+    /// The name of the contract you want to run.
+    #[clap(long, short)]
     pub target_contract: Option<String>,
 
-    #[clap(
-        long,
-        short,
-        default_value = "run()",
-        help = "the function you want to call on the script contract, defaults to run()"
-    )]
+    /// The signature of the function you want to call in the contract, or raw calldata.
+    #[clap(long, short, default_value = "run()")]
     pub sig: String,
+
+    /// Open the script in the debugger.
+    #[clap(long)]
+    pub debug: bool,
+
+    #[clap(flatten, next_help_heading = "BUILD OPTIONS")]
+    pub opts: BuildArgs,
+
+    #[clap(flatten, next_help_heading = "EVM OPTIONS")]
+    pub evm_opts: EvmArgs,
 }
 
 impl Cmd for RunArgs {
@@ -104,7 +106,7 @@ impl Cmd for RunArgs {
         if verbosity >= 3 {
             builder = builder.with_tracing();
         }
-        if evm_opts.debug {
+        if self.debug {
             builder = builder.with_tracing().with_debugger();
         }
 
@@ -122,8 +124,14 @@ impl Cmd for RunArgs {
                 debug: run_debug,
                 labeled_addresses,
                 ..
-            } = runner
-                .run(address, encode_args(&IntoFunction::into(self.sig), &self.args)?.into())?;
+            } = runner.run(
+                address,
+                if let Some(calldata) = self.sig.strip_prefix("0x") {
+                    hex::decode(calldata)?.into()
+                } else {
+                    encode_args(&IntoFunction::into(self.sig), &self.args)?.into()
+                },
+            )?;
 
             result.success &= success;
 
@@ -143,7 +151,7 @@ impl Cmd for RunArgs {
             decoder.identify(trace, &local_identifier);
         }
 
-        if evm_opts.debug {
+        if self.debug {
             let source_code: BTreeMap<u32, String> = sources
                 .iter()
                 .map(|(id, path)| {
