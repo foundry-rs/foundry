@@ -31,9 +31,6 @@ pub struct EvmOpts {
 
     /// Verbosity mode of EVM output as number of occurences
     pub verbosity: u8,
-
-    /// enable debugger
-    pub debug: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

@@ -163,7 +163,7 @@ impl TestProject {
 
     /// Adds DSTest as a source under "test.sol"
     pub fn insert_ds_test(&self) -> PathBuf {
-        let s = include_str!("../../../evm-adapters/testdata/DsTest.sol");
+        let s = include_str!("../../../forge/testdata/DsTest.sol");
         self.inner().add_source("test.sol", s).unwrap()
     }
 

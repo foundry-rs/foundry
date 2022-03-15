@@ -26,8 +26,7 @@ foundry-utils = { path = "../utils" }
 forge = { path = "../forge" }
 foundry-config = { path = "../config" }
 cast = { path = "../cast" }
-# TODO: Re-enable when ported
-#ui = { path = "../ui" }
+ui = { path = "../ui" }
 dunce = "1.0.2"
 # ethers = "0.5"
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
