@@ -43,12 +43,6 @@ pub struct TestResult {
     /// Traces
     pub traces: Vec<(TraceKind, CallTraceArena)>,
 
-    /// Debug steps
-    // TODO
-    #[serde(skip)]
-    //pub debug_calls: Option<Vec<DebugArena>>,
-    pub debug_calls: Option<Vec<()>>,
-
     /// Labeled addresses
     pub labeled_addresses: BTreeMap<Address, String>,
 }
@@ -201,11 +195,11 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
             .collect();
 
         // Deploy an instance of the contract
-        let DeployResult { address, mut logs, traces: contract_traces, .. } = self
+        let DeployResult { address, mut logs, traces: constructor_traces, .. } = self
             .executor
             .deploy(self.sender, self.code.0.clone(), 0u32.into())
             .expect("couldn't deploy");
-        traces.extend(contract_traces.map(|traces| (TraceKind::Deployment, traces)).into_iter());
+        traces.extend(constructor_traces.map(|traces| (TraceKind::Deployment, traces)).into_iter());
         self.executor.set_balance(address, self.initial_balance);
 
         // Optionally call the `setUp` function
@@ -258,8 +252,6 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                     logs: setup.logs,
                     kind: TestKind::Standard(0),
                     traces: setup.traces,
-                    // TODO
-                    debug_calls: None,
                     labeled_addresses: setup.labeled_addresses,
                 },
             )]
@@ -313,12 +305,12 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
 
         // Run unit test
         let start = Instant::now();
-        let (status, reason, gas_used, execution_traces, state_changeset) = match self
+        let (reverted, reason, gas_used, execution_traces, state_changeset) = match self
             .executor
             .call::<(), _, _>(self.sender, address, func.clone(), (), 0.into(), self.errors)
         {
             Ok(CallResult {
-                status,
+                reverted,
                 gas: gas_used,
                 logs: execution_logs,
                 traces: execution_trace,
@@ -328,10 +320,10 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
             }) => {
                 labeled_addresses.extend(new_labels);
                 logs.extend(execution_logs);
-                (status, None, gas_used, execution_trace, state_changeset)
+                (reverted, None, gas_used, execution_trace, state_changeset)
             }
             Err(EvmError::Execution {
-                status,
+                reverted,
                 reason,
                 gas_used,
                 logs: execution_logs,
@@ -342,7 +334,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
             }) => {
                 labeled_addresses.extend(new_labels);
                 logs.extend(execution_logs);
-                (status, Some(reason), gas_used, execution_trace, state_changeset)
+                (reverted, Some(reason), gas_used, execution_trace, state_changeset)
             }
             Err(err) => {
                 tracing::error!(?err);
@@ -353,7 +345,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
 
         let success = self.executor.is_success(
             setup.address,
-            status,
+            reverted,
             state_changeset.expect("we should have a state changeset"),
             should_fail,
         );
@@ -372,7 +364,6 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
             logs,
             kind: TestKind::Standard(gas_used),
             traces,
-            debug_calls: None,
             labeled_addresses,
         })
     }
@@ -414,7 +405,6 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
             logs,
             kind: TestKind::Fuzz(result.cases),
             traces,
-            debug_calls: None,
             labeled_addresses,
         })
     }

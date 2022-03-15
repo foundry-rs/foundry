@@ -1,82 +1,83 @@
-use crate::cmd::{build::BuildArgs, compile_files, Cmd};
-use clap::{Parser, ValueHint};
-use evm_adapters::sputnik::cheatcodes::{CONSOLE_ABI, HEVMCONSOLE_ABI, HEVM_ABI};
-
-use forge::ContractRunner;
-use foundry_utils::IntoFunction;
-use std::{collections::BTreeMap, path::PathBuf};
-use ui::{TUIExitReason, Tui, Ui};
-
-use ethers::solc::Project;
-
-use crate::opts::evm::EvmArgs;
-use ansi_term::Colour;
-use ethers::{
-    abi::Abi,
-    solc::artifacts::{CompactContractBytecode, ContractBytecode, ContractBytecodeSome},
+use crate::{
+    cmd::{build::BuildArgs, compile_files, Cmd},
+    opts::evm::EvmArgs,
 };
-use evm_adapters::{
-    call_tracing::ExecutionInfo,
-    evm_opts::{BackendKind, EvmOpts},
-    sputnik::{cheatcodes::debugger::DebugArena, helpers::vm},
+use ansi_term::Colour;
+use clap::{Parser, ValueHint};
+use ethers::{
+    abi::{Abi, RawLog},
+    solc::{
+        artifacts::{CompactContractBytecode, ContractBytecode, ContractBytecodeSome},
+        Project,
+    },
+    types::{Address, Bytes, U256},
+};
+use forge::{
+    debugger::DebugArena,
+    decode::decode_console_logs,
+    executor::{
+        opts::EvmOpts, CallResult, DatabaseRef, DeployResult, EvmError, Executor, ExecutorBuilder,
+        Fork, RawCallResult,
+    },
+    trace::{identifier::LocalTraceIdentifier, CallTraceArena, CallTraceDecoder, TraceKind},
+    CALLER,
 };
 use foundry_config::{figment::Figment, Config};
-use foundry_utils::PostLinkInput;
+use foundry_utils::{encode_args, IntoFunction, PostLinkInput};
+use std::{collections::BTreeMap, path::PathBuf};
+use ui::{TUIExitReason, Tui, Ui};
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::impl_figment_convert!(RunArgs, opts, evm_opts);
 
 #[derive(Debug, Clone, Parser)]
 pub struct RunArgs {
-    #[clap(help = "the path to the contract to run", value_hint = ValueHint::FilePath)]
+    /// The path of the contract to run.
+    ///
+    /// If multiple contracts exist in the same file you must specify the target contract with
+    /// --target-contract.
+    #[clap(value_hint = ValueHint::FilePath)]
     pub path: PathBuf,
 
-    #[clap(flatten)]
-    pub evm_opts: EvmArgs,
+    /// Arguments to pass to the script function.
+    pub args: Vec<String>,
 
-    #[clap(flatten)]
-    opts: BuildArgs,
-
-    #[clap(
-        long,
-        short,
-        help = "the contract you want to call and deploy, only necessary if there are more than 1 contract (Interfaces do not count) definitions on the script"
-    )]
+    /// The name of the contract you want to run.
+    #[clap(long, short)]
     pub target_contract: Option<String>,
 
-    #[clap(
-        long,
-        short,
-        help = "the function you want to call on the script contract, defaults to run()"
-    )]
-    pub sig: Option<String>,
+    /// The signature of the function you want to call in the contract, or raw calldata.
+    #[clap(long, short, default_value = "run()")]
+    pub sig: String,
+
+    /// Open the script in the debugger.
+    #[clap(long)]
+    pub debug: bool,
+
+    #[clap(flatten, next_help_heading = "BUILD OPTIONS")]
+    pub opts: BuildArgs,
+
+    #[clap(flatten, next_help_heading = "EVM OPTIONS")]
+    pub evm_opts: EvmArgs,
 }
 
 impl Cmd for RunArgs {
     type Output = ();
     fn run(self) -> eyre::Result<Self::Output> {
-        // Keeping it like this for simplicity.
-        #[cfg(not(feature = "sputnik-evm"))]
-        unimplemented!("`run` does not work with EVMs other than Sputnik yet");
-
         let figment: Figment = From::from(&self);
-        let mut evm_opts = figment.extract::<EvmOpts>()?;
+        let evm_opts = figment.extract::<EvmOpts>()?;
+        let verbosity = evm_opts.verbosity;
         let config = Config::from_provider(figment).sanitized();
-        let evm_version = config.evm_version;
-        if evm_opts.debug {
-            evm_opts.verbosity = 3;
-        }
 
-        let func = IntoFunction::into(self.sig.as_deref().unwrap_or("run()"));
         let BuildOutput {
             project,
             contract,
             highlevel_known_contracts,
             sources,
             predeploy_libraries,
-        } = self.build(config, &evm_opts)?;
+        } = self.build(&config, &evm_opts)?;
 
-        let mut known_contracts = highlevel_known_contracts
+        let known_contracts = highlevel_known_contracts
             .iter()
             .map(|(name, c)| {
                 (
@@ -89,168 +90,133 @@ impl Cmd for RunArgs {
             })
             .collect::<BTreeMap<String, (Abi, Vec<u8>)>>();
 
-        known_contracts.insert("VM".to_string(), (HEVM_ABI.clone(), Vec::new()));
-        known_contracts.insert("VM_CONSOLE".to_string(), (HEVMCONSOLE_ABI.clone(), Vec::new()));
-        known_contracts.insert("CONSOLE".to_string(), (CONSOLE_ABI.clone(), Vec::new()));
-
         let CompactContractBytecode { abi, bytecode, .. } = contract;
-        let abi = abi.expect("No abi for contract");
-        let bytecode = bytecode.expect("No bytecode").object.into_bytes().unwrap();
+        let abi = abi.expect("no ABI for contract");
+        let bytecode = bytecode.expect("no bytecode for contract").object.into_bytes().unwrap();
         let needs_setup = abi.functions().any(|func| func.name == "setUp");
 
-        let mut cfg = crate::utils::sputnik_cfg(&evm_version);
-        cfg.create_contract_limit = None;
-        let vicinity = evm_opts.vicinity()?;
-        let backend = evm_opts.backend(&vicinity)?;
+        let mut builder = ExecutorBuilder::new()
+            .with_cheatcodes(evm_opts.ffi)
+            .with_config(evm_opts.evm_env())
+            .with_spec(crate::utils::evm_spec(&config.evm_version));
+        if let Some(ref url) = self.evm_opts.fork_url {
+            let fork = Fork { url: url.clone(), pin_block: self.evm_opts.fork_block_number };
+            builder = builder.with_fork(fork);
+        }
+        if verbosity >= 3 {
+            builder = builder.with_tracing();
+        }
+        if self.debug {
+            builder = builder.with_tracing().with_debugger();
+        }
 
-        // need to match on the backend type
-        let result = match backend {
-            BackendKind::Simple(ref backend) => {
-                let runner = ContractRunner::new(
-                    &evm_opts,
-                    &cfg,
-                    backend,
-                    &abi,
-                    bytecode,
-                    Some(evm_opts.sender),
-                    None,
-                    &predeploy_libraries,
-                );
-                runner.run_test(&func, needs_setup, Some(&known_contracts))?
-            }
-            BackendKind::Shared(ref backend) => {
-                let runner = ContractRunner::new(
-                    &evm_opts,
-                    &cfg,
-                    backend,
-                    &abi,
-                    bytecode,
-                    Some(evm_opts.sender),
-                    None,
-                    &predeploy_libraries,
-                );
-                runner.run_test(&func, needs_setup, Some(&known_contracts))?
-            }
+        let mut result = {
+            let mut runner =
+                Runner::new(builder.build(), evm_opts.initial_balance, evm_opts.sender);
+            let (address, mut result) =
+                runner.setup(&predeploy_libraries, bytecode, needs_setup)?;
+
+            let RunResult {
+                success,
+                gas_used,
+                logs,
+                traces,
+                debug: run_debug,
+                labeled_addresses,
+                ..
+            } = runner.run(
+                address,
+                if let Some(calldata) = self.sig.strip_prefix("0x") {
+                    hex::decode(calldata)?.into()
+                } else {
+                    encode_args(&IntoFunction::into(self.sig), &self.args)?.into()
+                },
+            )?;
+
+            result.success &= success;
+
+            result.gas_used = gas_used;
+            result.logs.extend(logs);
+            result.traces.extend(traces);
+            result.debug = run_debug;
+            result.labeled_addresses.extend(labeled_addresses);
+
+            result
         };
 
-        if evm_opts.debug {
-            // 4. Boot up debugger
+        // Identify addresses in each trace
+        let local_identifier = LocalTraceIdentifier::new(&known_contracts);
+        let mut decoder = CallTraceDecoder::new_with_labels(result.labeled_addresses.clone());
+        for (_, trace) in &mut result.traces {
+            decoder.identify(trace, &local_identifier);
+        }
+
+        if self.debug {
             let source_code: BTreeMap<u32, String> = sources
                 .iter()
                 .map(|(id, path)| {
-                    if let Some(resolved) =
-                        project.paths.resolve_library_import(&PathBuf::from(path))
-                    {
-                        (
-                            *id,
-                            std::fs::read_to_string(resolved).expect(&*format!(
-                                "Something went wrong reading the source file: {:?}",
-                                path
-                            )),
-                        )
-                    } else {
-                        (
-                            *id,
-                            std::fs::read_to_string(path).expect(&*format!(
-                                "Something went wrong reading the source file: {:?}",
-                                path
-                            )),
-                        )
-                    }
+                    let resolved = project
+                        .paths
+                        .resolve_library_import(&PathBuf::from(path))
+                        .unwrap_or_else(|| PathBuf::from(path));
+                    (
+                        *id,
+                        std::fs::read_to_string(resolved).expect(&*format!(
+                            "Something went wrong reading the source file: {:?}",
+                            path
+                        )),
+                    )
                 })
                 .collect();
 
-            let calls: Vec<DebugArena> = result.debug_calls.expect("Debug must be enabled by now");
-            println!("debugging");
-            let index = if needs_setup && calls.len() > 1 { 1 } else { 0 };
-            let mut flattened = Vec::new();
-            calls[index].flatten(0, &mut flattened);
-            flattened = flattened[1..].to_vec();
-            let tui = Tui::new(
-                flattened,
-                0,
-                result.identified_contracts.expect("debug but not verbosity"),
-                highlevel_known_contracts,
-                source_code,
-            )?;
+            let calls: Vec<DebugArena> = result.debug.expect("we should have collected debug info");
+            let flattened = calls.last().expect("we should have collected debug info").flatten(0);
+            let tui =
+                Tui::new(flattened, 0, decoder.contracts, highlevel_known_contracts, source_code)?;
             match tui.start().expect("Failed to start tui") {
                 TUIExitReason::CharExit => return Ok(()),
             }
-        } else if evm_opts.verbosity > 2 {
-            // support traces
-            if let (Some(traces), Some(identified_contracts)) =
-                (&result.traces, &result.identified_contracts)
-            {
-                if !result.success && evm_opts.verbosity == 3 || evm_opts.verbosity > 3 {
-                    let mut ident = identified_contracts.clone();
-                    let (funcs, events, errors) =
-                        foundry_utils::flatten_known_contracts(&known_contracts);
-                    let mut exec_info = ExecutionInfo::new(
-                        &known_contracts,
-                        &mut ident,
-                        &result.labeled_addresses,
-                        &funcs,
-                        &events,
-                        &errors,
-                    );
-                    let vm = vm();
-                    let mut trace_string = "".to_string();
-                    if evm_opts.verbosity > 4 || !result.success {
-                        // print setup calls as well
-                        traces.iter().for_each(|trace| {
-                            trace.construct_trace_string(
-                                0,
-                                &mut exec_info,
-                                &vm,
-                                "",
-                                &mut trace_string,
-                            );
-                        });
-                    } else if !traces.is_empty() {
-                        traces.last().expect("no last but not empty").construct_trace_string(
-                            0,
-                            &mut exec_info,
-                            &vm,
-                            "",
-                            &mut trace_string,
-                        );
-                    }
-                    if !trace_string.is_empty() {
-                        println!("{}", trace_string);
-                    }
-                } else {
-                    // 5. print the result nicely
-                    if result.success {
-                        println!("{}", Colour::Green.paint("Script ran successfully."));
-                    } else {
-                        println!("{}", Colour::Red.paint("Script failed."));
-                    }
-
-                    println!("Gas Used: {}", result.gas_used);
-                    println!("== Logs == ");
-                    result.logs.iter().for_each(|log| println!("{}", log));
-                }
-                println!();
-            } else if result.traces.is_none() {
-                eyre::bail!("Unexpected error: No traces despite verbosity level. Please report this as a bug: https://github.com/gakonst/foundry/issues/new?assignees=&labels=T-bug&template=BUG-FORM.yml");
-            } else if result.identified_contracts.is_none() {
-                eyre::bail!(
-                    "Unexpected error: No identified contracts. Please report this as a bug: https://github.com/gakonst/foundry/issues/new?assignees=&labels=T-bug&template=BUG-FORM.yml"
-                );
-            }
         } else {
-            // 5. print the result nicely
+            if verbosity >= 3 {
+                if result.traces.is_empty() {
+                    eyre::bail!("Unexpected error: No traces despite verbosity level. Please report this as a bug: https://github.com/gakonst/foundry/issues/new?assignees=&labels=T-bug&template=BUG-FORM.yml");
+                }
+
+                if !result.success && verbosity == 3 || verbosity > 3 {
+                    println!("Traces:");
+                    for (kind, trace) in &mut result.traces {
+                        let should_include = match kind {
+                            TraceKind::Setup => {
+                                (verbosity >= 5) || (verbosity == 4 && !result.success)
+                            }
+                            TraceKind::Execution => verbosity > 3 || !result.success,
+                            _ => false,
+                        };
+
+                        if should_include {
+                            decoder.decode(trace);
+                            println!("{}", trace);
+                        }
+                    }
+                    println!();
+                }
+            }
+
             if result.success {
                 println!("{}", Colour::Green.paint("Script ran successfully."));
             } else {
                 println!("{}", Colour::Red.paint("Script failed."));
             }
 
-            println!("Gas Used: {}", result.gas_used);
+            println!("Gas used: {}", result.gas_used);
             println!("== Logs ==");
-            result.logs.iter().for_each(|log| println!("{}", log));
+            let console_logs = decode_console_logs(&result.logs);
+            if !console_logs.is_empty() {
+                for log in console_logs {
+                    println!("  {}", log);
+                }
+            }
         }
-
         Ok(())
     }
 }
@@ -273,7 +239,7 @@ pub struct BuildOutput {
 
 impl RunArgs {
     /// Compiles the file with auto-detection and compiler params.
-    pub fn build(&self, config: Config, evm_opts: &EvmOpts) -> eyre::Result<BuildOutput> {
+    pub fn build(&self, config: &Config, evm_opts: &EvmOpts) -> eyre::Result<BuildOutput> {
         let target_contract = dunce::canonicalize(&self.path)?;
         let project = config.ephemeral_no_artifacts_project()?;
         let output = compile_files(&project, vec![target_contract])?;
@@ -352,6 +318,132 @@ impl RunArgs {
             highlevel_known_contracts,
             sources: sources.into_ids().collect(),
             predeploy_libraries: run_dependencies,
+        })
+    }
+}
+
+struct RunResult {
+    pub success: bool,
+    pub logs: Vec<RawLog>,
+    pub traces: Vec<(TraceKind, CallTraceArena)>,
+    pub debug: Option<Vec<DebugArena>>,
+    pub gas_used: u64,
+    pub labeled_addresses: BTreeMap<Address, String>,
+}
+
+struct Runner<DB: DatabaseRef> {
+    pub executor: Executor<DB>,
+    pub initial_balance: U256,
+    pub sender: Address,
+}
+
+impl<DB: DatabaseRef> Runner<DB> {
+    pub fn new(executor: Executor<DB>, initial_balance: U256, sender: Address) -> Self {
+        Self { executor, initial_balance, sender }
+    }
+
+    pub fn setup(
+        &mut self,
+        libraries: &[Bytes],
+        code: Bytes,
+        setup: bool,
+    ) -> eyre::Result<(Address, RunResult)> {
+        // We max out their balance so that they can deploy and make calls.
+        self.executor.set_balance(self.sender, U256::MAX);
+        self.executor.set_balance(*CALLER, U256::MAX);
+
+        // We set the nonce of the deployer accounts to 1 to get the same addresses as DappTools
+        self.executor.set_nonce(self.sender, 1);
+
+        // Deploy libraries
+        let mut traces: Vec<(TraceKind, CallTraceArena)> = libraries
+            .iter()
+            .filter_map(|code| {
+                let DeployResult { traces, .. } = self
+                    .executor
+                    .deploy(self.sender, code.0.clone(), 0u32.into())
+                    .expect("couldn't deploy library");
+
+                traces
+            })
+            .map(|traces| (TraceKind::Deployment, traces))
+            .collect();
+
+        // Deploy an instance of the contract
+        let DeployResult {
+            address,
+            mut logs,
+            traces: constructor_traces,
+            debug: constructor_debug,
+            ..
+        } = self.executor.deploy(self.sender, code.0, 0u32.into()).expect("couldn't deploy");
+        traces.extend(constructor_traces.map(|traces| (TraceKind::Deployment, traces)).into_iter());
+        self.executor.set_balance(address, self.initial_balance);
+
+        // Optionally call the `setUp` function
+        Ok(if setup {
+            match self.executor.setup(address) {
+                Ok(CallResult {
+                    reverted,
+                    traces: setup_traces,
+                    labels,
+                    logs: setup_logs,
+                    debug,
+                    gas: gas_used,
+                    ..
+                }) |
+                Err(EvmError::Execution {
+                    reverted,
+                    traces: setup_traces,
+                    labels,
+                    logs: setup_logs,
+                    debug,
+                    gas_used,
+                    ..
+                }) => {
+                    traces
+                        .extend(setup_traces.map(|traces| (TraceKind::Setup, traces)).into_iter());
+                    logs.extend_from_slice(&setup_logs);
+
+                    (
+                        address,
+                        RunResult {
+                            logs,
+                            traces,
+                            labeled_addresses: labels,
+                            success: !reverted,
+                            debug: vec![constructor_debug, debug].into_iter().collect(),
+                            gas_used,
+                        },
+                    )
+                }
+                Err(e) => return Err(e.into()),
+            }
+        } else {
+            (
+                address,
+                RunResult {
+                    logs,
+                    traces,
+                    success: true,
+                    debug: vec![constructor_debug].into_iter().collect(),
+                    gas_used: 0,
+                    labeled_addresses: Default::default(),
+                },
+            )
+        })
+    }
+
+    pub fn run(&mut self, address: Address, calldata: Bytes) -> eyre::Result<RunResult> {
+        let RawCallResult { reverted, gas, logs, traces, labels, debug, .. } =
+            self.executor.call_raw(self.sender, address, calldata.0, 0.into())?;
+        Ok(RunResult {
+            success: !reverted,
+            gas_used: gas,
+            logs,
+            traces: traces.map(|traces| vec![(TraceKind::Execution, traces)]).unwrap_or_default(),
+            debug: vec![debug].into_iter().collect(),
+            labeled_addresses: labels,
         })
     }
 }
