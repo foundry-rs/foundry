@@ -105,6 +105,13 @@ impl ExecutorBuilder {
         self
     }
 
+    /// Enables the debugger
+    #[must_use]
+    pub fn with_debugger(mut self) -> Self {
+        self.inspector_config.debugger = true;
+        self
+    }
+
     /// Sets the EVM spec to use
     #[must_use]
     pub fn with_spec(mut self, spec: SpecId) -> Self {
@@ -131,6 +138,4 @@ impl ExecutorBuilder {
         let db = Backend::new(self.fork);
         Executor::new(db, self.env, self.inspector_config)
     }
-
-    // TODO: add with_debug(ger?)
 }

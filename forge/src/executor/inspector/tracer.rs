@@ -1,19 +1,15 @@
 use super::logs::extract_log;
 use crate::{
-    executor::HARDHAT_CONSOLE_ADDRESS,
+    executor::{inspector::utils::get_create_address, HARDHAT_CONSOLE_ADDRESS},
     trace::{
         CallTrace, CallTraceArena, LogCallOrder, RawOrDecodedCall, RawOrDecodedLog,
         RawOrDecodedReturnData,
     },
 };
 use bytes::Bytes;
-use ethers::{
-    types::{Address, U256},
-    utils::{get_contract_address, get_create2_address},
-};
+use ethers::types::{Address, U256};
 use revm::{
-    return_ok, CallInputs, CreateInputs, CreateScheme, Database, EVMData, Gas, Inspector,
-    Interpreter, Return,
+    return_ok, CallInputs, CreateInputs, Database, EVMData, Gas, Inspector, Interpreter, Return,
 };
 
 /// An inspector that collects call traces.
@@ -121,17 +117,9 @@ where
         // TODO: Does this increase gas cost?
         data.subroutine.load_account(call.caller, data.db);
         let nonce = data.subroutine.account(call.caller).info.nonce;
-
         self.start_trace(
             data.subroutine.depth() as usize,
-            match call.scheme {
-                CreateScheme::Create => get_contract_address(call.caller, nonce),
-                CreateScheme::Create2 { salt } => {
-                    let mut buffer: [u8; 4 * 8] = [0; 4 * 8];
-                    salt.to_big_endian(&mut buffer);
-                    get_create2_address(call.caller, buffer, call.init_code.clone())
-                }
-            },
+            get_create_address(call, nonce),
             call.init_code.to_vec(),
             call.value,
             true,

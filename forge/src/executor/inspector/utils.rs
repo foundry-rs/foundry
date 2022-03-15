@@ -1,3 +1,9 @@
+use ethers::{
+    types::Address,
+    utils::{get_contract_address, get_create2_address},
+};
+use revm::{CreateInputs, CreateScheme};
+
 /// Returns [Return::Continue] on an error, discarding the error.
 ///
 /// Useful for inspectors that read state that might be invalid, but do not want to emit
@@ -30,4 +36,16 @@ macro_rules! as_usize_or_return {
             $v.0[0] as usize
         }
     };
+}
+
+/// Get the address of a contract creation
+pub fn get_create_address(call: &CreateInputs, nonce: u64) -> Address {
+    match call.scheme {
+        CreateScheme::Create => get_contract_address(call.caller, nonce),
+        CreateScheme::Create2 { salt } => {
+            let mut buffer: [u8; 4 * 8] = [0; 4 * 8];
+            salt.to_big_endian(&mut buffer);
+            get_create2_address(call.caller, buffer, call.init_code.clone())
+        }
+    }
 }
