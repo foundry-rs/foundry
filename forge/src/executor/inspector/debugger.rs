@@ -1,15 +1,12 @@
 use crate::{
     debugger::{DebugArena, DebugNode, DebugStep, Instruction},
-    executor::CHEATCODE_ADDRESS,
+    executor::{inspector::utils::get_create_address, CHEATCODE_ADDRESS},
 };
 use bytes::Bytes;
-use ethers::{
-    types::Address,
-    utils::{get_contract_address, get_create2_address},
-};
+use ethers::types::Address;
 use revm::{
-    CallInputs, CreateInputs, CreateScheme, Database, EVMData, Gas, Inspector, Interpreter, Memory,
-    OpCode, Return,
+    CallInputs, CreateInputs, Database, EVMData, Gas, Inspector, Interpreter, Memory, OpCode,
+    Return,
 };
 use std::collections::BTreeMap;
 
@@ -173,15 +170,7 @@ where
         // TODO: Does this increase gas cost?
         data.subroutine.load_account(call.caller, data.db);
         let nonce = data.subroutine.account(call.caller).info.nonce;
-        let address = match call.scheme {
-            CreateScheme::Create => get_contract_address(call.caller, nonce),
-            CreateScheme::Create2 { salt } => {
-                let mut buffer: [u8; 4 * 8] = [0; 4 * 8];
-                salt.to_big_endian(&mut buffer);
-                get_create2_address(call.caller, buffer, call.init_code.clone())
-            }
-        };
-        self.enter(data.subroutine.depth() as usize, address, true);
+        self.enter(data.subroutine.depth() as usize, get_create_address(call, nonce), true);
 
         (Return::Continue, None, Gas::new(call.gas_limit), Bytes::new())
     }

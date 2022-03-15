@@ -1,5 +1,5 @@
 #[macro_use]
-mod macros;
+mod utils;
 
 mod logs;
 pub use logs::LogCollector;
