@@ -1,16 +1,14 @@
 use crate::cmd::{build::BuildArgs, Cmd};
-use clap::{Parser};
+use clap::Parser;
 
 use forge::ContractRunner;
 use foundry_utils::IntoFunction;
 
-use ethers::{prelude::{Bytes}};
+use ethers::prelude::Bytes;
 
 use crate::opts::evm::EvmArgs;
 use ansi_term::Colour;
-use evm_adapters::{
-    evm_opts::{BackendKind, EvmOpts},
-};
+use evm_adapters::evm_opts::{BackendKind, EvmOpts};
 use foundry_config::{figment::Figment, Config};
 
 // Loads project's figment and merges the build cli arguments into it
