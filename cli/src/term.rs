@@ -8,7 +8,7 @@ use semver::Version;
 use std::{
     io,
     io::prelude::*,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         mpsc::{self, TryRecvError},
         Arc, Mutex,
@@ -201,10 +201,16 @@ impl Drop for SpinnerReporter {
 }
 
 impl Reporter for SpinnerReporter {
-    fn on_solc_spawn(&self, _solc: &Solc, version: &Version, input: &CompilerInput) {
+    fn on_solc_spawn(
+        &self,
+        _solc: &Solc,
+        version: &Version,
+        _input: &CompilerInput,
+        dirty_files: &[PathBuf],
+    ) {
         self.send_msg(format!(
             "Compiling {} files with {}.{}.{}",
-            input.sources.len(),
+            dirty_files.len(),
             version.major,
             version.minor,
             version.patch
