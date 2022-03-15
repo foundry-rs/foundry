@@ -460,7 +460,8 @@ Compiler run successful
     ));
 });
 
-// tests that the `run` command works correctly
+// Tests that the `run` command works correctly
+// TODO: The original gas usage was "1751" before the REVM port. It should be changed back
 forgetest!(can_execute_run_command, |prj: TestProject, mut cmd: TestCommand| {
     let script = prj
         .inner()
@@ -482,12 +483,80 @@ contract Demo {
     cmd.arg("run").arg(script);
     let output = cmd.stdout_lossy();
     assert!(output.ends_with(&format!(
-        "
-Compiler run successful
+        "Compiler run successful
 {}
-Gas Used: 1751
+Gas used: 22815
 == Logs ==
-script ran
+  script ran
+",
+        Colour::Green.paint("Script ran successfully.")
+    ),));
+});
+
+// Tests that the run command can run arbitrary functions
+forgetest!(can_execute_run_command_with_sig, |prj: TestProject, mut cmd: TestCommand| {
+    let script = prj
+        .inner()
+        .add_source(
+            "Foo",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+contract Demo {
+    event log_string(string);
+    function myFunction() external {
+        emit log_string("script ran");
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    cmd.arg("run").arg(script).arg("--sig").arg("myFunction()");
+    let output = cmd.stdout_lossy();
+    assert!(output.ends_with(&format!(
+        "Compiler run successful
+{}
+Gas used: 22815
+== Logs ==
+  script ran
+",
+        Colour::Green.paint("Script ran successfully.")
+    ),));
+});
+
+// Tests that the run command can run functions with arguments
+forgetest!(can_execute_run_command_with_args, |prj: TestProject, mut cmd: TestCommand| {
+    let script = prj
+        .inner()
+        .add_source(
+            "Foo",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+contract Demo {
+    event log_string(string);
+    event log_uint(uint);
+    function run(uint256 a, uint256 b) external {
+        emit log_string("script ran");
+        emit log_uint(a);
+        emit log_uint(b);
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    cmd.arg("run").arg(script).arg("--sig").arg("run(uint256,uint256)").arg("1").arg("2");
+    let output = cmd.stdout_lossy();
+    assert!(output.ends_with(&format!(
+        "Compiler run successful
+{}
+Gas used: 25301
+== Logs ==
+  script ran
+  1
+  2
 ",
         Colour::Green.paint("Script ran successfully.")
     ),));

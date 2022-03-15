@@ -47,8 +47,7 @@ pub mod init;
 pub mod inspect;
 pub mod install;
 pub mod remappings;
-// TODO: Re-enable when ported
-//pub mod run;
+pub mod run;
 pub mod snapshot;
 pub mod test;
 pub mod tree;

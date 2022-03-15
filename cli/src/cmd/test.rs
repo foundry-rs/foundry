@@ -1,79 +1,52 @@
 //! Test command
-
 use crate::{
-    cmd::{build::BuildArgs, Cmd},
+    cmd::{build::BuildArgs, run::RunArgs, Cmd},
     opts::evm::EvmArgs,
     utils,
 };
 use ansi_term::Colour;
 use clap::{AppSettings, Parser};
-use ethers::solc::{ArtifactOutput, ProjectCompileOutput};
 use forge::{
     decode::decode_console_logs,
     executor::opts::EvmOpts,
     gas_report::GasReport,
     trace::{identifier::LocalTraceIdentifier, CallTraceDecoder, TraceKind},
-    MultiContractRunnerBuilder, TestFilter, TestResult,
+    MultiContractRunner, MultiContractRunnerBuilder, TestFilter, TestKind, TestResult,
 };
 use foundry_config::{figment::Figment, Config};
 use regex::Regex;
-use std::{collections::BTreeMap, str::FromStr, sync::mpsc::channel, thread};
+use std::{collections::BTreeMap, path::PathBuf, str::FromStr, sync::mpsc::channel, thread};
 
 #[derive(Debug, Clone, Parser)]
 pub struct Filter {
-    #[clap(
-        long = "match",
-        short = 'm',
-        help = "only run test methods matching regex (deprecated, see --match-test)"
-    )]
+    /// Only run test functions matching the specified pattern.
+    ///
+    /// Deprecated: See --match-test
+    #[clap(long = "match", short = 'm')]
     pub pattern: Option<regex::Regex>,
 
-    #[clap(
-        long = "match-test",
-        alias = "mt",
-        help = "only run test methods matching regex",
-        conflicts_with = "pattern"
-    )]
+    /// Only run test functions matching the specified pattern.
+    #[clap(long = "match-test", alias = "mt", conflicts_with = "pattern")]
     pub test_pattern: Option<regex::Regex>,
 
-    #[clap(
-        long = "no-match-test",
-        alias = "nmt",
-        help = "only run test methods not matching regex",
-        conflicts_with = "pattern"
-    )]
+    /// Only run test functions that do not match the specified pattern.
+    #[clap(long = "no-match-test", alias = "nmt", conflicts_with = "pattern")]
     pub test_pattern_inverse: Option<regex::Regex>,
 
-    #[clap(
-        long = "match-contract",
-        alias = "mc",
-        help = "only run test methods in contracts matching regex",
-        conflicts_with = "pattern"
-    )]
+    /// Only run tests in contracts matching the specified pattern.
+    #[clap(long = "match-contract", alias = "mc", conflicts_with = "pattern")]
     pub contract_pattern: Option<regex::Regex>,
 
-    #[clap(
-        long = "no-match-contract",
-        alias = "nmc",
-        help = "only run test methods in contracts not matching regex",
-        conflicts_with = "pattern"
-    )]
+    /// Only run tests in contracts that do not match the specified pattern.
+    #[clap(long = "no-match-contract", alias = "nmc", conflicts_with = "pattern")]
     contract_pattern_inverse: Option<regex::Regex>,
 
-    #[clap(
-        long = "match-path",
-        alias = "mp",
-        help = "only run test methods in source files at path matching regex. Requires absolute path",
-        conflicts_with = "pattern"
-    )]
+    /// Only run tests in source files matching the specified pattern.
+    #[clap(long = "match-path", alias = "mp", conflicts_with = "pattern")]
     pub path_pattern: Option<regex::Regex>,
 
-    #[clap(
-        long = "no-match-path",
-        alias = "nmp",
-        help = "only run test methods in source files at path not matching regex. Requires absolute path",
-        conflicts_with = "pattern"
-    )]
+    /// Only run tests in source files that do not match the specified pattern.
+    #[clap(long = "no-match-path", alias = "nmp", conflicts_with = "pattern")]
     pub path_pattern_inverse: Option<regex::Regex>,
 }
 
@@ -125,30 +98,46 @@ impl TestFilter for Filter {
 foundry_config::impl_figment_convert!(TestArgs, opts, evm_opts);
 
 #[derive(Debug, Clone, Parser)]
-// This is required to group Filter options in help output
 #[clap(global_setting = AppSettings::DeriveDisplayOrder)]
 pub struct TestArgs {
-    #[clap(help = "print the test results in json format", long, short)]
-    json: bool,
-
-    #[clap(help = "print a gas report", long = "gas-report")]
-    gas_report: bool,
-
-    #[clap(flatten)]
-    evm_opts: EvmArgs,
-
     #[clap(flatten)]
     filter: Filter,
 
-    #[clap(flatten)]
-    opts: BuildArgs,
+    /// Run a test in the debugger.
+    ///
+    /// The argument passed to this flag is the name of the test function you want to run, and it
+    /// works the same as --match-test.
+    ///
+    /// If more than one test matches your specified criteria, you must add additional filters
+    /// until only one test is found (see --match-contract and --match-path).
+    ///
+    /// The matching test will be opened in the debugger regardless of the outcome of the test.
+    ///
+    /// If the matching test is a fuzz test, then it will open the debugger on the first failure
+    /// case.
+    /// If the fuzz test does not fail, it will open the debugger on the last fuzz case.
+    ///
+    /// For more fine-grained control of which fuzz case is run, see forge run.
+    #[clap(long, value_name = "TEST FUNCTION")]
+    debug: Option<Regex>,
 
-    #[clap(
-        help = "if set to true, the process will exit with an exit code = 0, even if the tests fail",
-        long,
-        env = "FORGE_ALLOW_FAILURE"
-    )]
+    /// Print a gas report.
+    #[clap(long = "gas-report")]
+    gas_report: bool,
+
+    /// Force the process to exit with code 0, even if the tests fail.
+    #[clap(long, env = "FORGE_ALLOW_FAILURE")]
     allow_failure: bool,
+
+    /// Output test results in JSON format.
+    #[clap(long, short)]
+    json: bool,
+
+    #[clap(flatten, next_help_heading = "EVM OPTIONS")]
+    evm_opts: EvmArgs,
+
+    #[clap(flatten, next_help_heading = "BUILD OPTIONS")]
+    opts: BuildArgs,
 }
 
 impl TestArgs {
@@ -166,13 +155,11 @@ impl TestArgs {
 impl Cmd for TestArgs {
     type Output = TestOutcome;
 
-    fn run(self) -> eyre::Result<Self::Output> {
-        // merge all configs
+    fn run(mut self) -> eyre::Result<Self::Output> {
+        // Merge all configs
         let figment: Figment = From::from(&self);
-        let evm_opts = figment.extract::<EvmOpts>()?;
+        let mut evm_opts = figment.extract::<EvmOpts>()?;
         let config = Config::from_provider(figment).sanitized();
-
-        let TestArgs { json, filter, allow_failure, .. } = self;
 
         // Setup the fuzzer
         // TODO: Add CLI Options to modify the persistence
@@ -189,23 +176,78 @@ impl Cmd for TestArgs {
         let project = config.project()?;
         let output = super::compile(&project, false, false)?;
 
-        // prepare the test builder
+        // Determine print verbosity and executor verbosity
+        let verbosity = evm_opts.verbosity;
+        if self.gas_report && evm_opts.verbosity < 3 {
+            evm_opts.verbosity = 3;
+        }
+
+        // Prepare the test builder
         let evm_spec = crate::utils::evm_spec(&config.evm_version);
-        let builder = MultiContractRunnerBuilder::default()
+        let mut runner = MultiContractRunnerBuilder::default()
             .fuzzer(fuzzer)
             .initial_balance(evm_opts.initial_balance)
             .evm_spec(evm_spec)
-            .sender(evm_opts.sender);
+            .sender(evm_opts.sender)
+            .build(output, evm_opts)?;
 
-        test(
-            builder,
-            output,
-            evm_opts,
-            filter,
-            json,
-            allow_failure,
-            (self.gas_report, config.gas_reports),
-        )
+        if self.debug.is_some() {
+            self.filter.test_pattern = self.debug;
+            match runner.count_filtered_tests(&self.filter) {
+                1 => {
+                    // Run the test
+                    let results = runner.test(&self.filter, None)?;
+
+                    // Get the result of the single test
+                    let (id, sig, test_kind, counterexample) = results.iter().map(|(id, results)| {
+                        let (sig, result) = results.iter().next().unwrap();
+
+                        (id.clone(), sig.clone(), result.kind.clone(), result.counterexample.clone())
+                    }).next().unwrap();
+
+                    // Build debugger args if this is a fuzz test
+                    let sig = match test_kind {
+                        TestKind::Fuzz(cases) => {
+                            if let Some(counterexample) = counterexample {
+                                counterexample.calldata.to_string()
+                            } else {
+                                cases.cases().first().expect("no fuzz cases run").calldata.to_string()
+                            }
+                        },
+                        _ => sig,
+                    };
+
+                    // Run the debugger
+                    let debugger = RunArgs {
+                        path: PathBuf::from(runner.source_paths.get(&id).unwrap()),
+                        target_contract: Some(utils::get_contract_name(&id).to_string()),
+                        sig,
+                        args: Vec::new(),
+                        debug: true,
+                        opts: self.opts,
+                        evm_opts: self.evm_opts,
+                    };
+                    debugger.run()?;
+
+                    Ok(TestOutcome::new(results, self.allow_failure))
+                }
+                n =>
+                    Err(
+                    eyre::eyre!("{} tests matched your criteria, but exactly 1 test must match in order to run the debugger.\n
+                        \n
+                        Use --match-contract and --match-path to further limit the search.", n))
+            }
+        } else {
+            let TestArgs { filter, .. } = self;
+            test(
+                runner,
+                verbosity,
+                filter,
+                self.json,
+                self.allow_failure,
+                (self.gas_report, config.gas_reports),
+            )
+        }
     }
 }
 
@@ -324,22 +366,14 @@ fn short_test_result(name: &str, result: &forge::TestResult) {
 }
 
 /// Runs all the tests
-fn test<A: ArtifactOutput + 'static>(
-    builder: MultiContractRunnerBuilder,
-    output: ProjectCompileOutput<A>,
-    mut evm_opts: EvmOpts,
+fn test(
+    mut runner: MultiContractRunner,
+    verbosity: u8,
     filter: Filter,
     json: bool,
     allow_failure: bool,
     (gas_reporting, gas_reports): (bool, Vec<String>),
 ) -> eyre::Result<TestOutcome> {
-    let verbosity = evm_opts.verbosity;
-    if gas_reporting && evm_opts.verbosity < 3 {
-        // Enable tracing without hitting the verbosity print path
-        evm_opts.verbosity = 3;
-    }
-    let mut runner = builder.build(output, evm_opts)?;
-
     if json {
         let results = runner.test(&filter, None)?;
         println!("{}", serde_json::to_string(&results)?);

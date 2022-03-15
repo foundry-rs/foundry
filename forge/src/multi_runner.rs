@@ -169,10 +169,23 @@ pub struct MultiContractRunner {
     /// The address which will be used as the `from` field in all EVM calls
     sender: Option<Address>,
     /// A map of contract names to absolute source file paths
-    source_paths: BTreeMap<String, String>,
+    pub source_paths: BTreeMap<String, String>,
 }
 
 impl MultiContractRunner {
+    pub fn count_filtered_tests(&self, filter: &(impl TestFilter + Send + Sync)) -> usize {
+        self.contracts
+            .iter()
+            .filter(|(name, _)| {
+                filter.matches_path(&self.source_paths.get(*name).unwrap()) &&
+                    filter.matches_contract(name)
+            })
+            .flat_map(|(_, (abi, _, _))| {
+                abi.functions().filter(|func| filter.matches_test(&func.name))
+            })
+            .count()
+    }
+
     pub fn test(
         &mut self,
         filter: &(impl TestFilter + Send + Sync),
