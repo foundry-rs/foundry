@@ -1,6 +1,9 @@
 use crate::{
     debugger::{DebugArena, DebugNode, DebugStep, Instruction},
-    executor::{inspector::utils::get_create_address, CHEATCODE_ADDRESS},
+    executor::{
+        inspector::utils::{gas_used, get_create_address},
+        CHEATCODE_ADDRESS,
+    },
 };
 use bytes::Bytes;
 use ethers::types::Address;
@@ -70,35 +73,6 @@ impl Debugger {
                 self.arena.push_node(DebugNode { depth, address, creation, ..Default::default() });
         }
     }
-
-    /// Records a debug step in the current execution context.
-    // TODO: Interpreter is only taken as a mutable borrow here because `Interpreter::gas` takes
-    // `&mut self` by mistake.
-    pub fn record_debug_step(&mut self, interpreter: &mut Interpreter) {
-        let pc = interpreter.program_counter();
-        let push_size = OpCode::is_push(interpreter.contract.code[pc]).map(|size| size as usize);
-        let push_bytes = push_size.as_ref().map(|push_size| {
-            let start = pc + 1;
-            let end = start + push_size;
-            interpreter.contract.code[start..end].to_vec()
-        });
-
-        self.arena.arena[self.head].steps.push(DebugStep {
-            pc,
-            stack: interpreter.stack().data().clone(),
-            memory: interpreter.memory.clone(),
-            instruction: Instruction::OpCode(interpreter.contract.code[pc]),
-            push_bytes,
-            ic: *self
-                .ic_map
-                .get(&interpreter.contract().address)
-                .expect("no instruction counter map")
-                .get(&pc)
-                .expect("unknown ic for pc"),
-            // TODO: The number reported here is off
-            total_gas_used: interpreter.gas().spend(),
-        });
-    }
 }
 
 impl<DB> Inspector<DB> for Debugger
@@ -141,10 +115,32 @@ where
     fn step(
         &mut self,
         interpreter: &mut Interpreter,
-        _: &mut EVMData<'_, DB>,
+        data: &mut EVMData<'_, DB>,
         _is_static: bool,
     ) -> Return {
-        self.record_debug_step(interpreter);
+        let pc = interpreter.program_counter();
+        let push_size = OpCode::is_push(interpreter.contract.code[pc]).map(|size| size as usize);
+        let push_bytes = push_size.as_ref().map(|push_size| {
+            let start = pc + 1;
+            let end = start + push_size;
+            interpreter.contract.code[start..end].to_vec()
+        });
+
+        self.arena.arena[self.head].steps.push(DebugStep {
+            pc,
+            stack: interpreter.stack().data().clone(),
+            memory: interpreter.memory.clone(),
+            instruction: Instruction::OpCode(interpreter.contract.code[pc]),
+            push_bytes,
+            ic: *self
+                .ic_map
+                .get(&interpreter.contract().address)
+                .expect("no instruction counter map")
+                .get(&pc)
+                .expect("unknown ic for pc"),
+            total_gas_used: gas_used(data.env.cfg.spec_id, interpreter.gas()),
+        });
+
         Return::Continue
     }
 

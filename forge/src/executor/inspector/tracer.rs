@@ -1,6 +1,9 @@
 use super::logs::extract_log;
 use crate::{
-    executor::{inspector::utils::get_create_address, HARDHAT_CONSOLE_ADDRESS},
+    executor::{
+        inspector::utils::{gas_used, get_create_address},
+        HARDHAT_CONSOLE_ADDRESS,
+    },
     trace::{
         CallTrace, CallTraceArena, LogCallOrder, RawOrDecodedCall, RawOrDecodedLog,
         RawOrDecodedReturnData,
@@ -95,7 +98,7 @@ where
 
     fn call_end(
         &mut self,
-        _: &mut EVMData<'_, DB>,
+        data: &mut EVMData<'_, DB>,
         call: &CallInputs,
         gas: Gas,
         status: Return,
@@ -103,7 +106,11 @@ where
         _: bool,
     ) -> (Return, Gas, Bytes) {
         if call.contract != *HARDHAT_CONSOLE_ADDRESS {
-            self.fill_trace(matches!(status, return_ok!()), gas.spend(), retdata.to_vec());
+            self.fill_trace(
+                matches!(status, return_ok!()),
+                gas_used(data.env.cfg.spec_id, &gas),
+                retdata.to_vec(),
+            );
         }
 
         (status, gas, retdata)
@@ -147,7 +154,7 @@ where
                 .map_or(vec![], |code| code.to_vec()),
             None => vec![],
         };
-        self.fill_trace(matches!(status, return_ok!()), gas.spend(), code);
+        self.fill_trace(matches!(status, return_ok!()), gas_used(data.env.cfg.spec_id, &gas), code);
 
         (status, address, gas, retdata)
     }
