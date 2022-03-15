@@ -272,7 +272,7 @@ where
             TransactOut::Call(data) => data,
             _ => Bytes::default(),
         };
-        let (logs, labels, traces, debug) = collect_inspector_states(inspector);
+        let InspectorData { logs, labels, traces, debug } = collect_inspector_states(inspector);
 
         Ok(RawCallResult {
             status,
@@ -365,7 +365,7 @@ where
             _ => Bytes::default(),
         };
 
-        let (logs, labels, traces, debug) = collect_inspector_states(inspector);
+        let InspectorData { logs, labels, traces, debug } = collect_inspector_states(inspector);
         Ok(RawCallResult {
             status,
             reverted: !matches!(status, return_ok!()),
@@ -393,7 +393,7 @@ where
             // regarding deployments in general
             _ => eyre::bail!("deployment failed: {:?}", status),
         };
-        let (logs, _, traces, debug) = collect_inspector_states(inspector);
+        let InspectorData { logs, traces, debug, .. } = collect_inspector_states(inspector);
 
         Ok(DeployResult { address, gas, logs, traces, debug })
     }
@@ -448,14 +448,18 @@ where
     }
 }
 
-fn collect_inspector_states(
-    stack: InspectorStack,
-) -> (Vec<RawLog>, BTreeMap<Address, String>, Option<CallTraceArena>, Option<DebugArena>) {
-    let logs = if let Some(logs) = stack.logs { logs.logs } else { Vec::new() };
-    let labels =
-        if let Some(cheatcodes) = stack.cheatcodes { cheatcodes.labels } else { BTreeMap::new() };
-    let traces = stack.tracer.map(|tracer| tracer.traces);
-    let debug = stack.debugger.map(|debugger| debugger.arena);
+struct InspectorData {
+    logs: Vec<RawLog>,
+    labels: BTreeMap<Address, String>,
+    traces: Option<CallTraceArena>,
+    debug: Option<DebugArena>,
+}
 
-    (logs, labels, traces, debug)
+fn collect_inspector_states(stack: InspectorStack) -> InspectorData {
+    InspectorData {
+        logs: stack.logs.map(|logs| logs.logs).unwrap_or_default(),
+        labels: stack.cheatcodes.map(|cheatcodes| cheatcodes.labels).unwrap_or_default(),
+        traces: stack.tracer.map(|tracer| tracer.traces),
+        debug: stack.debugger.map(|debugger| debugger.arena),
+    }
 }
