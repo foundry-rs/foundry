@@ -1,4 +1,4 @@
-use crate::cmd::{build::BuildArgs, compile_files, Cmd};
+use crate::cmd::{compile_files, forge::build::BuildArgs, Cmd};
 use clap::{Parser, ValueHint};
 use evm_adapters::sputnik::cheatcodes::{CONSOLE_ABI, HEVMCONSOLE_ABI, HEVM_ABI};
 

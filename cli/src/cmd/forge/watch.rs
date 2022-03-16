@@ -1,7 +1,7 @@
 //! Watch mode support
 
 use crate::{
-    cmd::{build::BuildArgs, test::TestArgs},
+    cmd::forge::{build::BuildArgs, test::TestArgs},
     utils::{self, FoundryPathExt},
 };
 use clap::Parser;

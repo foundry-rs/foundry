@@ -2,7 +2,7 @@ use std::{fmt, str::FromStr};
 
 use crate::{
     cmd::{
-        build::{self, BuildArgs},
+        forge::build::{self, BuildArgs},
         Cmd,
     },
     opts::forge::CompilerArgs,
@@ -156,7 +156,7 @@ impl Cmd for InspectArgs {
 
         // Build the project
         let project = modified_build_args.project()?;
-        let outcome = super::suppress_compile(&project)?;
+        let outcome = crate::cmd::suppress_compile(&project)?;
 
         // Find the artifact
         let found_artifact = outcome.find(&contract);

@@ -1,7 +1,7 @@
 //! Test command
 
 use crate::{
-    cmd::{build::BuildArgs, Cmd},
+    cmd::{forge::build::BuildArgs, Cmd},
     opts::evm::EvmArgs,
 };
 use ansi_term::Colour;
@@ -183,7 +183,7 @@ impl Cmd for TestArgs {
 
         // Set up the project
         let project = config.project()?;
-        let output = super::compile(&project, false, false)?;
+        let output = crate::cmd::compile(&project, false, false)?;
 
         // prepare the test builder
         let mut evm_cfg = crate::utils::sputnik_cfg(&config.evm_version);

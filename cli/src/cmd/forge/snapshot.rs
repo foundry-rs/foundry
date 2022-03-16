@@ -2,8 +2,10 @@
 
 use crate::{
     cmd::{
-        test,
-        test::{Test, TestOutcome},
+        forge::{
+            test,
+            test::{Test, TestOutcome},
+        },
         Cmd,
     },
     utils,

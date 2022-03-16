@@ -3,12 +3,11 @@ use clap::{Parser, Subcommand, ValueHint};
 use ethers::solc::{artifacts::output_selection::ContractOutputSelection, EvmVersion};
 use std::{path::PathBuf, str::FromStr};
 
-use crate::cmd::{
+use crate::cmd::forge::{
     bind::BindArgs,
     build::BuildArgs,
     config,
     create::CreateArgs,
-    exec::ExecArgs,
     flatten,
     init::InitArgs,
     inspect,
@@ -89,9 +88,8 @@ pub enum Subcommands {
     #[clap(alias = "c", about = "Deploy a compiled contract")]
     Create(CreateArgs),
 
-    #[clap(alias = "e", about = "Executes Arbitrary Bytecode")]
-    Exec(ExecArgs),
-
+    // #[clap(alias = "e", about = "Executes Arbitrary Bytecode")]
+    // Exec(ExecArgs),
     #[clap(alias = "i", about = "Initializes a new forge sample project")]
     Init(InitArgs),
 

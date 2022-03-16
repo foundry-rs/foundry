@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use crate::{cmd::Cmd, opts::forge::CompilerArgs};
 
-use crate::cmd::watch::WatchArgs;
+use crate::cmd::forge::watch::WatchArgs;
 use clap::{Parser, ValueHint};
 use ethers::solc::remappings::Remapping;
 use foundry_config::{
@@ -184,7 +184,7 @@ impl Cmd for BuildArgs {
     type Output = ProjectCompileOutput;
     fn run(self) -> eyre::Result<Self::Output> {
         let project = self.project()?;
-        super::compile(&project, self.names, self.sizes)
+        crate::cmd::compile(&project, self.names, self.sizes)
     }
 }
 
@@ -207,7 +207,7 @@ impl BuildArgs {
     /// Returns the [`watchexec::InitConfig`] and [`watchexec::RuntimeConfig`] necessary to
     /// bootstrap a new [`watchexe::Watchexec`] loop.
     pub(crate) fn watchexec_config(&self) -> eyre::Result<(InitConfig, RuntimeConfig)> {
-        use crate::cmd::watch;
+        use crate::cmd::forge::watch;
         let init = watch::init()?;
         let mut runtime = watch::runtime(&self.watch)?;
 
