@@ -288,7 +288,7 @@ mod tests {
         let mut runner = runner();
         let results = runner.test(&Filter::matches_all(), None).unwrap();
 
-        // 9 contracts being built
+        // 10 contracts being built
         assert_eq!(results.keys().len(), 10);
         for (key, contract_tests) in results {
             // for a bad setup, we dont want a successful test
