@@ -341,6 +341,9 @@ where
         calldata: Bytes,
         value: U256,
     ) -> Result<RawCallResult> {
+        let stipend = stipend(&calldata, self.env.cfg.spec_id);
+
+        // Build VM
         let mut evm = EVM::new();
         evm.env = self.build_env(from, TransactTo::Call(to), calldata, value);
         evm.database(&self.db);
@@ -358,7 +361,7 @@ where
             status,
             reverted: !matches!(status, return_ok!()),
             result,
-            gas,
+            gas: gas.saturating_sub(stipend),
             logs: logs.to_vec(),
             labels,
             traces,
@@ -450,4 +453,10 @@ fn collect_inspector_states(stack: InspectorStack) -> InspectorData {
         traces: stack.tracer.map(|tracer| tracer.traces),
         debug: stack.debugger.map(|debugger| debugger.arena),
     }
+}
+
+/// Calculates the initial gas stipend for a transaction
+fn stipend(calldata: &[u8], spec: SpecId) -> u64 {
+    let non_zero_data_cost = if SpecId::enabled(spec, SpecId::ISTANBUL) { 16 } else { 68 };
+    calldata.iter().fold(21000, |sum, byte| sum + if *byte == 0 { 4 } else { non_zero_data_cost })
 }
