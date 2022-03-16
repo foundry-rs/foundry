@@ -1,10 +1,14 @@
 use crate::TestFilter;
 use evm_adapters::{
     evm_opts::EvmOpts,
-    sputnik::{helpers::TestSputnikVM, Executor, PRECOMPILES_MAP},
+    sputnik::{helpers::TestSputnikVM, Executor, SputnikExecutor, PRECOMPILES_MAP},
 };
 use rayon::iter::ParallelIterator;
-use sputnik::{backend::Backend, Config};
+use sputnik::{
+    backend::Backend,
+    executor::stack::{StackState, StackSubstateMetadata},
+    Config,
+};
 
 use ethers::{
     abi::{Abi, Event, Function, Token},
@@ -345,6 +349,14 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
                 }
             };
             logs.extend_from_slice(&setup_logs);
+            // this is dumb, but resetting metadata is the only way to reset access list, which
+            // affects setup -> call gas costs because setUp can make addresses and slots warm
+            //
+            // long live REVM. This is totally unnecessary once we switch.
+            let state = evm.executor.state_mut();
+            let metadata = StackSubstateMetadata::new(self.evm_opts.env.gas_limit, self.evm_cfg);
+            let meta = state.metadata_mut();
+            *meta = metadata;
         }
 
         let (status, reason, gas_used, logs) = match evm.call::<(), _, _>(
