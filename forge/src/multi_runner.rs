@@ -288,8 +288,8 @@ mod tests {
         let mut runner = runner();
         let results = runner.test(&Filter::matches_all(), None).unwrap();
 
-        // 9 contracts being built
-        assert_eq!(results.keys().len(), 9);
+        // 10 contracts being built
+        assert_eq!(results.keys().len(), 10);
         for (key, contract_tests) in results {
             // for a bad setup, we dont want a successful test
             if key == "SetupTest.json:SetupTest" {
@@ -351,6 +351,19 @@ mod tests {
                 reasons[&"testFailWithRequire()".to_owned()],
                 vec!["constructor".to_owned(), "setUp".to_owned(), "four".to_owned()]
             );
+        }
+
+        #[test]
+        fn test_access_list_reset() {
+            let mut runner = runner();
+            let results = runner.test(&Filter::matches_all(), None).unwrap();
+            let results = &results["WhichTest.json:WhichTest"];
+            assert!(results["testA()"].success);
+            assert_eq!(results["testA()"].gas_used, 65577);
+            assert!(results["testB()"].success);
+            assert_eq!(results["testB()"].gas_used, 68263);
+            assert!(results["testC()"].success);
+            assert_eq!(results["testC()"].gas_used, 63611);
         }
 
         #[test]
