@@ -36,7 +36,7 @@ use std::{
 use clap::{IntoApp, Parser};
 use clap_complete::generate;
 
-use crate::utils::read_secret;
+use crate::{cmd::Cmd, utils::read_secret};
 use eyre::WrapErr;
 use futures::join;
 
@@ -307,6 +307,7 @@ async fn main() -> eyre::Result<()> {
                 eyre::bail!("No wallet or sender address provided.")
             }
         }
+        Subcommands::Exec(cmd) => cmd.run()?,
         Subcommands::PublishTx { eth, raw_tx, cast_async } => {
             let provider = Provider::try_from(eth.rpc_url()?)?;
             let cast = Cast::new(&provider);

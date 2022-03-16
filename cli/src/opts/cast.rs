@@ -7,7 +7,7 @@ use ethers::{
 };
 
 use super::{ClapChain, EthereumOpts, Wallet};
-use crate::utils::parse_u256;
+use crate::{cmd::cast::exec::ExecArgs, utils::parse_u256};
 
 #[derive(Debug, Subcommand)]
 #[clap(about = "Perform Ethereum RPC calls from the comfort of your command line.")]
@@ -241,6 +241,8 @@ pub enum Subcommands {
         #[clap(long = "json", short = 'j')]
         to_json: bool,
     },
+    #[clap(alias = "e", about = "Executes arbitrary bytecode in hex format")]
+    Exec(ExecArgs),
     #[clap(name = "publish")]
     #[clap(about = "Publish a raw transaction to the network")]
     PublishTx {

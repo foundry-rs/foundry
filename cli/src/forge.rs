@@ -42,9 +42,6 @@ fn main() -> eyre::Result<()> {
         Subcommands::Run(cmd) => {
             cmd.run()?;
         }
-        // Subcommands::Exec(cmd) => {
-        //     cmd.run()?;
-        // }
         Subcommands::VerifyContract(args) => {
             utils::block_on(verify::run_verify(&args))?;
         }
