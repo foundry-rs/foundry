@@ -2,7 +2,11 @@
 
 use ansi_term::Colour;
 use atty::{self, Stream};
-use ethers::solc::{remappings::Remapping, report::Reporter, CompilerInput, Solc};
+use ethers::solc::{
+    remappings::Remapping,
+    report::{BasicStdoutReporter, Reporter},
+    CompilerInput, Solc,
+};
 use once_cell::sync::Lazy;
 use semver::Version;
 use std::{
@@ -146,9 +150,9 @@ impl SpinnerReporter {
     ///
     /// On drop the channel will disconnect and the thread will terminate
     pub fn spawn() -> Self {
+        let mut spinner = Spinner::new("Compiling...");
         let (sender, rx) = mpsc::channel::<SpinnerMsg>();
         std::thread::spawn(move || {
-            let mut spinner = Spinner::new("Compiling...");
             loop {
                 spinner.tick();
                 match rx.try_recv() {
@@ -242,13 +246,17 @@ impl Reporter for SpinnerReporter {
     }
 }
 
-/// Calls `f` within the [`SpinnerReporter`] that displays a spinning cursor to display solc
-/// progress
+/// If the output medium is terminal, this calls `f` within the [`SpinnerReporter`] that displays a
+/// spinning cursor to display solc progress.
+///
+/// If no terminal is available this falls back to common `println!` in [`BasicStdoutReporter`].
 pub fn with_spinner_reporter<T>(f: impl FnOnce() -> T) -> T {
-    ethers::solc::report::with_scoped(
-        &ethers::solc::report::Report::new(SpinnerReporter::spawn()),
-        f,
-    )
+    let reporter = if TERM_SETTINGS.indicate_progress {
+        ethers::solc::report::Report::new(SpinnerReporter::spawn())
+    } else {
+        ethers::solc::report::Report::new(BasicStdoutReporter::default())
+    };
+    ethers::solc::report::with_scoped(&reporter, f)
 }
 
 #[cfg(test)]
