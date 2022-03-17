@@ -41,8 +41,9 @@ fn prank(
         new_caller,
         new_origin,
         // Note: When calling a cheatcode, the depth is not increased. Because of that, the depth
-        // we actually want to prank at is 1 level deeper.
-        depth: depth + 1,
+        // we actually want to prank at is 1 level deeper. However, because pranks are applied
+        // *before* the depth is increased, we need to go a whole TWO levels deeper!
+        depth: depth + 2,
         single_call,
     };
 
