@@ -103,8 +103,8 @@ impl TestKind {
             TestKind::Standard(gas) => TestKindGas::Standard(*gas),
             TestKind::Fuzz(fuzzed) => TestKindGas::Fuzz {
                 runs: fuzzed.cases().len(),
-                median: fuzzed.median_gas(),
-                mean: fuzzed.mean_gas(),
+                median: fuzzed.median_gas(false),
+                mean: fuzzed.mean_gas(false),
             },
         }
     }
@@ -305,13 +305,14 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
 
         // Run unit test
         let start = Instant::now();
-        let (reverted, reason, gas_used, execution_traces, state_changeset) = match self
+        let (reverted, reason, gas, stipend, execution_traces, state_changeset) = match self
             .executor
             .call::<(), _, _>(self.sender, address, func.clone(), (), 0.into(), self.errors)
         {
             Ok(CallResult {
                 reverted,
                 gas,
+                stipend,
                 logs: execution_logs,
                 traces: execution_trace,
                 labels: new_labels,
@@ -320,12 +321,13 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
             }) => {
                 labeled_addresses.extend(new_labels);
                 logs.extend(execution_logs);
-                (reverted, None, gas, execution_trace, state_changeset)
+                (reverted, None, gas, stipend, execution_trace, state_changeset)
             }
             Err(EvmError::Execution {
                 reverted,
                 reason,
                 gas,
+                stipend,
                 logs: execution_logs,
                 traces: execution_trace,
                 labels: new_labels,
@@ -334,7 +336,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
             }) => {
                 labeled_addresses.extend(new_labels);
                 logs.extend(execution_logs);
-                (reverted, Some(reason), gas, execution_trace, state_changeset)
+                (reverted, Some(reason), gas, stipend, execution_trace, state_changeset)
             }
             Err(err) => {
                 tracing::error!(?err);
@@ -350,7 +352,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         tracing::debug!(
             duration = ?Instant::now().duration_since(start),
             %success,
-            %gas_used
+            %gas
         );
 
         Ok(TestResult {
@@ -358,7 +360,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
             reason,
             counterexample: None,
             logs,
-            kind: TestKind::Standard(gas_used),
+            kind: TestKind::Standard(gas - stipend),
             traces,
             labeled_addresses,
         })

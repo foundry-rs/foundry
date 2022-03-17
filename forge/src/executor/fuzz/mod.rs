@@ -83,7 +83,11 @@ where
             );
 
             if success {
-                cases.borrow_mut().push(FuzzCase { calldata, gas: call.gas });
+                cases.borrow_mut().push(FuzzCase {
+                    calldata,
+                    gas: call.gas,
+                    stipend: call.stipend,
+                });
                 Ok(())
             } else {
                 Err(TestCaseError::fail(
@@ -192,18 +196,26 @@ impl FuzzedCases {
     }
 
     /// Returns the median gas of all test cases
-    pub fn median_gas(&self) -> u64 {
+    pub fn median_gas(&self, with_stipend: bool) -> u64 {
         let mid = self.cases.len() / 2;
-        self.cases.get(mid).map(|c| c.gas).unwrap_or_default()
+        self.cases
+            .get(mid)
+            .map(|c| if with_stipend { c.gas } else { c.gas - c.stipend })
+            .unwrap_or_default()
     }
 
     /// Returns the average gas use of all test cases
-    pub fn mean_gas(&self) -> u64 {
+    pub fn mean_gas(&self, with_stipend: bool) -> u64 {
         if self.cases.is_empty() {
             return 0
         }
 
-        (self.cases.iter().map(|c| c.gas as u128).sum::<u128>() / self.cases.len() as u128) as u64
+        (self
+            .cases
+            .iter()
+            .map(|c| if with_stipend { c.gas as u128 } else { (c.gas - c.stipend) as u128 })
+            .sum::<u128>() /
+            self.cases.len() as u128) as u64
     }
 
     /// Returns the case with the highest gas usage
@@ -217,8 +229,10 @@ impl FuzzedCases {
     }
 
     /// Returns the highest amount of gas spent on a fuzz case
-    pub fn highest_gas(&self) -> u64 {
-        self.highest().map(|c| c.gas).unwrap_or_default()
+    pub fn highest_gas(&self, with_stipend: bool) -> u64 {
+        self.highest()
+            .map(|c| if with_stipend { c.gas } else { c.gas - c.stipend })
+            .unwrap_or_default()
     }
 
     /// Returns the lowest amount of gas spent on a fuzz case
@@ -234,6 +248,8 @@ pub struct FuzzCase {
     pub calldata: Bytes,
     /// Consumed gas
     pub gas: u64,
+    /// The initial gas stipend for the transaction
+    pub stipend: u64,
 }
 
 #[cfg(test)]

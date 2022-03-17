@@ -52,6 +52,7 @@ pub enum EvmError {
         reverted: bool,
         reason: String,
         gas: u64,
+        stipend: u64,
         logs: Vec<RawLog>,
         traces: Option<CallTraceArena>,
         debug: Option<DebugArena>,
@@ -90,6 +91,8 @@ pub struct CallResult<D: Detokenize> {
     pub result: D,
     /// The gas used for the call
     pub gas: u64,
+    /// The initial gas stipend for the transaction
+    pub stipend: u64,
     /// The logs emitted during the call
     pub logs: Vec<RawLog>,
     /// The labels assigned to addresses during the call
@@ -116,6 +119,8 @@ pub struct RawCallResult {
     pub result: Bytes,
     /// The gas used for the call
     pub gas: u64,
+    /// The initial gas stipend for the transaction
+    pub stipend: u64,
     /// The logs emitted during the call
     pub logs: Vec<RawLog>,
     /// The labels assigned to addresses during the call
@@ -138,6 +143,7 @@ impl Default for RawCallResult {
             reverted: false,
             result: Bytes::new(),
             gas: 0,
+            stipend: 0,
             logs: Vec::new(),
             labels: BTreeMap::new(),
             traces: None,
@@ -223,6 +229,7 @@ where
             status,
             reverted,
             gas,
+            stipend,
             logs,
             labels,
             traces,
@@ -236,6 +243,7 @@ where
                     reverted,
                     result,
                     gas,
+                    stipend,
                     logs,
                     labels,
                     traces,
@@ -250,6 +258,7 @@ where
                     reverted,
                     reason,
                     gas,
+                    stipend,
                     logs,
                     traces,
                     debug,
@@ -294,6 +303,7 @@ where
             status,
             reverted,
             gas,
+            stipend,
             logs,
             labels,
             traces,
@@ -307,6 +317,7 @@ where
                     reverted,
                     result,
                     gas,
+                    stipend,
                     logs,
                     labels,
                     traces,
@@ -321,6 +332,7 @@ where
                     reverted,
                     reason,
                     gas,
+                    stipend,
                     logs,
                     traces,
                     debug,
@@ -361,7 +373,8 @@ where
             status,
             reverted: !matches!(status, return_ok!()),
             result,
-            gas: gas.saturating_sub(stipend),
+            gas,
+            stipend,
             logs: logs.to_vec(),
             labels,
             traces,
