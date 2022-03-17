@@ -155,10 +155,11 @@ pub fn apply<DB: Database>(
     call: &HEVMCalls,
 ) -> Option<Result<Bytes, Bytes>> {
     Some(match call {
-        HEVMCalls::ExpectRevert0(inner) => {
+        HEVMCalls::ExpectRevert0(_) => expect_revert(state, Bytes::new(), data.subroutine.depth()),
+        HEVMCalls::ExpectRevert1(inner) => {
             expect_revert(state, inner.0.to_vec().into(), data.subroutine.depth())
         }
-        HEVMCalls::ExpectRevert1(inner) => {
+        HEVMCalls::ExpectRevert2(inner) => {
             expect_revert(state, inner.0.to_vec().into(), data.subroutine.depth())
         }
         HEVMCalls::ExpectEmit(inner) => {

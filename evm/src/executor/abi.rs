@@ -28,6 +28,7 @@ ethers::contract::abigen!(
             stopPrank()
             deal(address,uint256)
             etch(address,bytes)
+            expectRevert()
             expectRevert(bytes)
             expectRevert(bytes4)
             record()
