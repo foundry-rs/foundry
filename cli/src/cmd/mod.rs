@@ -71,7 +71,7 @@ pub trait Cmd: clap::Parser + Sized {
     fn run(self) -> eyre::Result<Self::Output>;
 }
 
-use ethers::solc::{artifacts::CompactContractBytecode, Project, ProjectCompileOutput};
+use ethers::solc::{artifacts::CompactContractBytecode, Artifact, Project, ProjectCompileOutput};
 
 use foundry_utils::to_table;
 
@@ -125,16 +125,10 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
             let mut sizes = BTreeMap::new();
             for (_, contracts) in compiled_contracts.into_iter() {
                 for (name, contract) in contracts {
-                    let bytecode: CompactContractBytecode = contract.into();
-                    let size = if let Some(code) = bytecode.bytecode {
-                        if let Some(object) = code.object.as_bytes() {
-                            object.to_vec().len()
-                        } else {
-                            0
-                        }
-                    } else {
-                        0
-                    };
+                    let size = contract
+                        .get_bytecode_bytes()
+                        .map(|bytes| bytes.0.len())
+                        .unwrap_or_default();
                     sizes.insert(name, size);
                 }
             }
