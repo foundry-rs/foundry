@@ -5,10 +5,8 @@ use ethers::{
 };
 use eyre::Result;
 use foundry_evm::{
-    executor::{
-        fuzz::{CounterExample, FuzzedCases, FuzzedExecutor},
-        CallResult, DatabaseRef, DeployResult, EvmError, Executor,
-    },
+    executor::{CallResult, DatabaseRef, DeployResult, EvmError, Executor},
+    fuzz::{CounterExample, FuzzedCases, FuzzedExecutor},
     trace::{CallTraceArena, TraceKind},
     CALLER,
 };
@@ -412,7 +410,10 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
 mod tests {
     use super::*;
     use crate::test_helpers::{filter::Filter, fuzz_executor, test_executor, COMPILED, EVM_OPTS};
-    use foundry_evm::executor::{builder::Backend, fuzz::FuzzTestResult, DeployResult};
+    use foundry_evm::{
+        executor::{builder::Backend, DeployResult},
+        fuzz::FuzzTestResult,
+    };
     use proptest::test_runner::Config as FuzzConfig;
 
     pub fn runner<'a>(

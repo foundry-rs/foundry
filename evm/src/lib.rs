@@ -11,6 +11,9 @@ pub mod debugger;
 pub mod executor;
 pub use executor::abi;
 
+/// Fuzzing wrapper for executors
+pub mod fuzz;
+
 // Re-exports
 pub use ethers::types::Address;
 pub use hashbrown::HashMap;

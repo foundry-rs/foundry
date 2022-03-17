@@ -15,6 +15,7 @@ pub trait TestFilter {
     fn matches_path(&self, path: impl AsRef<str>) -> bool;
 }
 
+/// The Forge EVM backend
 pub use foundry_evm::*;
 
 #[cfg(test)]
@@ -28,10 +29,10 @@ pub mod test_helpers {
     use foundry_evm::{
         executor::{
             builder::Backend,
-            fuzz::FuzzedExecutor,
             opts::{Env, EvmOpts},
             DatabaseRef, Executor, ExecutorBuilder,
         },
+        fuzz::FuzzedExecutor,
         CALLER,
     };
 

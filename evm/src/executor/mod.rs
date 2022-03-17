@@ -18,9 +18,6 @@ pub mod fork;
 pub mod builder;
 pub use builder::{ExecutorBuilder, Fork};
 
-/// Fuzzing wrapper for executors
-pub mod fuzz;
-
 /// Executor EVM spec identifiers
 pub use revm::SpecId;
 
