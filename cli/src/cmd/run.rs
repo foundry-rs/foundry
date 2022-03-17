@@ -429,11 +429,11 @@ impl<DB: DatabaseRef> Runner<DB> {
     }
 
     pub fn run(&mut self, address: Address, calldata: Bytes) -> eyre::Result<RunResult> {
-        let RawCallResult { reverted, gas, logs, traces, labels, debug, .. } =
+        let RawCallResult { reverted, gas, stipend, logs, traces, labels, debug, .. } =
             self.executor.call_raw(self.sender, address, calldata.0, 0.into())?;
         Ok(RunResult {
             success: !reverted,
-            gas,
+            gas: gas - stipend,
             logs,
             traces: traces.map(|traces| vec![(TraceKind::Execution, traces)]).unwrap_or_default(),
             debug: vec![debug].into_iter().collect(),
