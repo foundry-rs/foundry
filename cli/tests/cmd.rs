@@ -409,11 +409,11 @@ contract Foo {}
     cmd.args(["build", "--use", "0.8.11"]);
 
     let stdout = cmd.stdout_lossy();
-    assert!(stdout.ends_with("\n\nCompiler run successful\n"));
+    assert!(stdout.contains("Compiler run successful"));
 
     cmd.fuse().args(["build", "--force", "--use", "solc:0.8.11"]).root_arg();
 
-    assert!(stdout.ends_with("\n\nCompiler run successful\n"));
+    assert!(stdout.contains("Compiler run successful"));
 
     // fails to use solc that does not exist
     cmd.fuse().args(["build", "--use", "this/solc/does/not/exist"]);
@@ -422,7 +422,7 @@ contract Foo {}
     // 0.8.11 was installed in previous step, so we can use the path to this directly
     let local_solc = ethers::solc::Solc::find_svm_installed_version("0.8.11").unwrap().unwrap();
     cmd.fuse().args(["build", "--force", "--use"]).arg(local_solc.solc).root_arg();
-    assert!(stdout.ends_with("\n\nCompiler run successful\n"));
+    assert!(stdout.contains("Compiler run successful"));
 });
 
 // test to ensure yul optimizer can be set as intended
@@ -614,15 +614,15 @@ contract A {
     cmd.args(["build", "--force"]);
     let out = cmd.stdout();
     // no warnings
-    assert!(out.trim().starts_with("Compiler run successful"));
-    assert!(!out.trim().starts_with("Compiler run successful (with warnings)"));
+    assert!(out.trim().contains("Compiler run successful"));
+    assert!(!out.trim().contains("Compiler run successful (with warnings)"));
 
     // don't ignore errors
     let config = Config { ignored_error_codes: vec![], ..Default::default() };
     prj.write_config(config);
     let out = cmd.stdout();
 
-    assert!(out.trim().starts_with("Compiler run successful (with warnings)"));
+    assert!(out.trim().contains("Compiler run successful (with warnings)"));
     assert!(
       out.contains(
                     r#"Warning: SPDX license identifier not provided in source file. Before publishing, consider adding a comment containing "SPDX-License-Identifier: <SPDX-License>" to each source file. Use "SPDX-License-Identifier: UNLICENSED" for non-open-source code. Please see https://spdx.org for more information."#
