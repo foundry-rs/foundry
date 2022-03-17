@@ -61,7 +61,7 @@ where
     fn call(
         &mut self,
         _: &mut EVMData<'_, DB>,
-        call: &CallInputs,
+        call: &mut CallInputs,
         _: bool,
     ) -> (Return, Gas, Bytes) {
         if call.contract == *HARDHAT_CONSOLE_ADDRESS {

@@ -109,7 +109,7 @@ where
     fn call(
         &mut self,
         data: &mut EVMData<'_, DB>,
-        call: &CallInputs,
+        call: &mut CallInputs,
         is_static: bool,
     ) -> (Return, Gas, Bytes) {
         call_inspectors!(
@@ -164,7 +164,7 @@ where
     fn create(
         &mut self,
         data: &mut EVMData<'_, DB>,
-        call: &CreateInputs,
+        call: &mut CreateInputs,
     ) -> (Return, Option<Address>, Gas, Bytes) {
         call_inspectors!(
             inspector,
