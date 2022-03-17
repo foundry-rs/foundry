@@ -288,7 +288,7 @@ mod tests {
         let results = runner.test(&Filter::new(".*", ".*", ".*"), None).unwrap();
 
         // 9 contracts being built
-        assert_eq!(results.keys().len(), 11);
+        assert_eq!(results.keys().len(), 12);
         for (key, contract_tests) in results {
             match key.as_str() {
                 // Tests that should revert
