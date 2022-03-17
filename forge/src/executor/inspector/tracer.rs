@@ -108,7 +108,7 @@ where
         if call.contract != *HARDHAT_CONSOLE_ADDRESS {
             self.fill_trace(
                 matches!(status, return_ok!()),
-                gas_used(data.env.cfg.spec_id, &gas),
+                gas_used(data.env.cfg.spec_id, gas.spend(), gas.refunded() as u64),
                 retdata.to_vec(),
             );
         }
@@ -154,7 +154,11 @@ where
                 .map_or(vec![], |code| code.to_vec()),
             None => vec![],
         };
-        self.fill_trace(matches!(status, return_ok!()), gas_used(data.env.cfg.spec_id, &gas), code);
+        self.fill_trace(
+            matches!(status, return_ok!()),
+            gas_used(data.env.cfg.spec_id, gas.spend(), gas.refunded() as u64),
+            code,
+        );
 
         (status, address, gas, retdata)
     }

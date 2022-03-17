@@ -8,8 +8,8 @@ use crate::{
 use bytes::Bytes;
 use ethers::types::Address;
 use revm::{
-    CallInputs, CreateInputs, Database, EVMData, Gas, Inspector, Interpreter, Memory, OpCode,
-    Return,
+    spec_opcode_gas, CallInputs, CreateInputs, Database, EVMData, Gas, Inspector, Interpreter,
+    Memory, OpCode, Return,
 };
 use std::collections::BTreeMap;
 
@@ -27,6 +27,21 @@ pub struct Debugger {
     ///
     /// The instruction counter is used in Solidity source maps.
     pub ic_map: BTreeMap<Address, BTreeMap<usize, usize>>,
+    /// The amount of gas spent in the current gas block.
+    ///
+    /// REVM adds gas in blocks, so we need to keep track of this separately to get accurate gas
+    /// numbers on an opcode level.
+    ///
+    /// Gas blocks contain the gas costs of opcodes with a fixed cost. Dynamic costs are not
+    /// included in the gas block, and are instead added during execution of the contract.
+    pub current_gas_block: u64,
+    /// The amount of gas spent in the previous gas block.
+    ///
+    /// Costs for gas blocks are accounted for when *entering* the gas block, which also means that
+    /// every run of the interpreter will always start with a non-zero `gas.spend()`.
+    ///
+    /// For more information on gas blocks, see [current_gas_block].
+    pub previous_gas_block: u64,
 }
 
 impl Debugger {
@@ -109,6 +124,7 @@ where
         // map for a given address does not exist, *but* we need to account for the fact that the
         // code given by the interpreter may either be the contract init code, or the runtime code.
         self.build_ic_map(&interp.contract().address, &interp.contract().code);
+        self.previous_gas_block = interp.contract.first_gas_block();
         Return::Continue
     }
 
@@ -119,6 +135,9 @@ where
         _is_static: bool,
     ) -> Return {
         let pc = interpreter.program_counter();
+        let op = interpreter.contract.code[pc];
+
+        // Extract the push bytes
         let push_size = OpCode::is_push(interpreter.contract.code[pc]).map(|size| size as usize);
         let push_bytes = push_size.as_ref().map(|push_size| {
             let start = pc + 1;
@@ -126,11 +145,26 @@ where
             interpreter.contract.code[start..end].to_vec()
         });
 
+        // Get opcode information (for use in gas calculations)
+        let opcode_infos = spec_opcode_gas(data.env.cfg.spec_id);
+        let opcode_info = &opcode_infos[op as usize];
+
+        // Calculate the current amount of gas used
+        // TODO: The copy here is only because `gas` takes `&mut self`
+        let gas = *interpreter.gas();
+        let total_gas_spent = gas.spend() - self.previous_gas_block + self.current_gas_block;
+        if opcode_info.gas_block_end {
+            self.previous_gas_block = interpreter.contract.gas_block(pc);
+            self.current_gas_block = 0;
+        } else {
+            self.current_gas_block += opcode_info.gas;
+        }
+
         self.arena.arena[self.head].steps.push(DebugStep {
             pc,
             stack: interpreter.stack().data().clone(),
             memory: interpreter.memory.clone(),
-            instruction: Instruction::OpCode(interpreter.contract.code[pc]),
+            instruction: Instruction::OpCode(op),
             push_bytes,
             ic: *self
                 .ic_map
@@ -138,7 +172,7 @@ where
                 .expect("no instruction counter map")
                 .get(&pc)
                 .expect("unknown ic for pc"),
-            total_gas_used: gas_used(data.env.cfg.spec_id, interpreter.gas()),
+            total_gas_used: gas_used(data.env.cfg.spec_id, total_gas_spent, gas.refunded() as u64),
         });
 
         Return::Continue
