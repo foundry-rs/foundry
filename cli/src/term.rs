@@ -4,7 +4,7 @@ use ansi_term::Colour;
 use atty::{self, Stream};
 use ethers::solc::{
     remappings::Remapping,
-    report::{Reporter, SolcCompilerIoReporter, BasicStdoutReporter},
+    report::{BasicStdoutReporter, Reporter, SolcCompilerIoReporter},
     CompilerInput, CompilerOutput, Solc,
 };
 use once_cell::sync::Lazy;
