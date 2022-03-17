@@ -4,8 +4,8 @@ pub mod decode;
 /// Call trace arena, decoding and formatting
 pub mod trace;
 
-/// Debugger arena
-pub mod debugger;
+/// Debugger data structures
+pub mod debug;
 
 /// Forge test execution backends
 pub mod executor;
