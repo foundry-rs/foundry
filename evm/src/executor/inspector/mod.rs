@@ -16,7 +16,7 @@ pub use stack::InspectorStack;
 mod cheatcodes;
 pub use cheatcodes::Cheatcodes;
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub struct InspectorStackConfig {
     /// Whether or not cheatcodes are enabled
     pub cheatcodes: bool,
