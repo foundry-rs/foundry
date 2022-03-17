@@ -141,6 +141,14 @@ fn install_as_submodule(dep: &Dependency, libs: &Path, no_commit: bool) -> eyre:
         )
     } else if stderr.contains("not a git repository") {
         eyre::bail!("\"{}\" is not a git repository", &dep.url)
+    } else if stderr.contains("paths are ignored by one of your .gitignore files") {
+        let error = stderr
+            .trim()
+            .split('\n')
+            .filter(|l| !l.starts_with("hint:"))
+            .collect::<Vec<&str>>()
+            .join("\n");
+        eyre::bail!("{}", error)
     }
 
     // call update on it
