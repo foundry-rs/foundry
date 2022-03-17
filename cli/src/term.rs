@@ -4,7 +4,7 @@ use ansi_term::Colour;
 use atty::{self, Stream};
 use ethers::solc::{
     remappings::Remapping,
-    report::{Reporter, SolcCompilerIoReporter},
+    report::{Reporter, SolcCompilerIoReporter, BasicStdoutReporter},
     CompilerInput, CompilerOutput, Solc,
 };
 use once_cell::sync::Lazy;
@@ -257,13 +257,17 @@ impl Reporter for SpinnerReporter {
     }
 }
 
-/// Calls `f` within the [`SpinnerReporter`] that displays a spinning cursor to display solc
-/// progress
+/// If the output medium is terminal, this calls `f` within the [`SpinnerReporter`] that displays a
+/// spinning cursor to display solc progress.
+///
+/// If no terminal is available this falls back to common `println!` in [`BasicStdoutReporter`].
 pub fn with_spinner_reporter<T>(f: impl FnOnce() -> T) -> T {
-    ethers::solc::report::with_scoped(
-        &ethers::solc::report::Report::new(SpinnerReporter::spawn()),
-        f,
-    )
+    let reporter = if TERM_SETTINGS.indicate_progress {
+        ethers::solc::report::Report::new(SpinnerReporter::spawn())
+    } else {
+        ethers::solc::report::Report::new(BasicStdoutReporter::default())
+    };
+    ethers::solc::report::with_scoped(&reporter, f)
 }
 
 #[cfg(test)]
