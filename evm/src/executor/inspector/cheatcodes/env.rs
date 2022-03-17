@@ -35,17 +35,7 @@ fn prank(
     depth: u64,
     single_call: bool,
 ) -> Result<Bytes, Bytes> {
-    let prank = Prank {
-        prank_caller,
-        prank_origin,
-        new_caller,
-        new_origin,
-        // Note: When calling a cheatcode, the depth is not increased. Because of that, the depth
-        // we actually want to prank at is 1 level deeper. However, because pranks are applied
-        // *before* the depth is increased, we need to go a whole TWO levels deeper!
-        depth: depth + 2,
-        single_call,
-    };
+    let prank = Prank { prank_caller, prank_origin, new_caller, new_origin, depth, single_call };
 
     if state.prank.is_some() {
         return Err("You have an active prank already.".to_string().encode().into())
