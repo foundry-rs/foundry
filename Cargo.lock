@@ -1574,27 +1574,21 @@ checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
 name = "forge"
 version = "0.1.0"
 dependencies = [
- "ansi_term",
- "bytes",
  "comfy-table",
  "ethers",
  "eyre",
+ "foundry-evm",
  "foundry-utils",
- "futures",
  "glob",
- "hashbrown 0.12.0",
  "hex",
  "once_cell",
- "parking_lot 0.12.0",
  "proptest",
  "rayon",
  "regex",
- "revm",
  "rlp",
  "semver",
  "serde",
  "serde_json",
- "thiserror",
  "tokio",
  "tracing",
  "tracing-subscriber 0.2.25",
@@ -1692,6 +1686,30 @@ dependencies = [
  "serde",
  "serde_json",
  "toml",
+]
+
+[[package]]
+name = "foundry-evm"
+version = "0.1.0"
+dependencies = [
+ "ansi_term",
+ "bytes",
+ "ethers",
+ "eyre",
+ "foundry-utils",
+ "futures",
+ "hashbrown 0.12.0",
+ "hex",
+ "once_cell",
+ "parking_lot 0.12.0",
+ "proptest",
+ "revm",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-subscriber 0.2.25",
 ]
 
 [[package]]

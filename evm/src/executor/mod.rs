@@ -18,9 +18,6 @@ pub mod fork;
 pub mod builder;
 pub use builder::{ExecutorBuilder, Fork};
 
-/// Fuzzing wrapper for executors
-pub mod fuzz;
-
 /// Executor EVM spec identifiers
 pub use revm::SpecId;
 
@@ -28,7 +25,7 @@ pub use revm::SpecId;
 pub use revm::db::DatabaseRef;
 
 use self::inspector::InspectorStackConfig;
-use crate::{debugger::DebugArena, trace::CallTraceArena, CALLER};
+use crate::{debug::DebugArena, trace::CallTraceArena, CALLER};
 use bytes::Bytes;
 use ethers::{
     abi::{Abi, Detokenize, RawLog, Tokenize},
