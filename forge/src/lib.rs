@@ -22,8 +22,8 @@ pub use foundry_evm::*;
 pub mod test_helpers {
     use crate::TestFilter;
     use ethers::{
-        prelude::Lazy,
-        solc::{AggregatedCompilerOutput, Project, ProjectPathsConfig},
+        prelude::{Lazy, ProjectCompileOutput},
+        solc::{Project, ProjectPathsConfig},
         types::{Address, U256},
     };
     use foundry_evm::{
@@ -37,11 +37,14 @@ pub mod test_helpers {
     };
     use std::str::FromStr;
 
-    pub static COMPILED: Lazy<AggregatedCompilerOutput> = Lazy::new(|| {
-        let paths =
-            ProjectPathsConfig::builder().root("testdata").sources("testdata").build().unwrap();
+    pub static COMPILED: Lazy<ProjectCompileOutput> = Lazy::new(|| {
+        let paths = ProjectPathsConfig::builder()
+            .root("../testdata")
+            .sources("../testdata")
+            .build()
+            .unwrap();
         let project = Project::builder().paths(paths).ephemeral().no_artifacts().build().unwrap();
-        project.compile().unwrap().output()
+        project.compile().unwrap()
     });
 
     pub static EVM_OPTS: Lazy<EvmOpts> = Lazy::new(|| EvmOpts {

@@ -264,21 +264,9 @@ mod tests {
     use super::*;
     use crate::{
         decode::decode_console_logs,
-        test_helpers::{filter::Filter, EVM_OPTS},
+        test_helpers::{filter::Filter, COMPILED, EVM_OPTS},
     };
-    use ethers::solc::{Project, ProjectPathsConfig};
     use foundry_evm::trace::TraceKind;
-
-    /// Builds the testdata project
-    fn project() -> Project {
-        let paths = ProjectPathsConfig::builder()
-            .root("../testdata")
-            .sources("../testdata")
-            .build()
-            .unwrap();
-
-        Project::builder().paths(paths).ephemeral().no_artifacts().build().unwrap()
-    }
 
     /// Builds a base runner
     fn base_runner() -> MultiContractRunnerBuilder {
@@ -287,14 +275,14 @@ mod tests {
 
     /// Builds a non-tracing runner
     fn runner() -> MultiContractRunner {
-        base_runner().build(project().compile().unwrap(), EVM_OPTS.clone()).unwrap()
+        base_runner().build((*COMPILED).clone(), EVM_OPTS.clone()).unwrap()
     }
 
     /// Builds a tracing runner
     fn tracing_runner() -> MultiContractRunner {
         let mut opts = EVM_OPTS.clone();
         opts.verbosity = 5;
-        base_runner().build(project().compile().unwrap(), opts).unwrap()
+        base_runner().build((*COMPILED).clone(), opts).unwrap()
     }
 
     /// A helper to assert the outcome of multiple tests with helpful assert messages
