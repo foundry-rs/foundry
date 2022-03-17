@@ -1,8 +1,4 @@
-use crate::{
-    executor::{opts::EvmOpts, Executor, ExecutorBuilder, Fork, SpecId},
-    runner::TestResult,
-    ContractRunner, TestFilter,
-};
+use crate::{ContractRunner, TestFilter, TestResult};
 use ethers::{
     abi::Abi,
     prelude::{artifacts::CompactContractBytecode, ArtifactId, ArtifactOutput},
@@ -10,10 +6,10 @@ use ethers::{
     types::{Address, Bytes, U256},
 };
 use eyre::Result;
+use foundry_evm::executor::{opts::EvmOpts, DatabaseRef, Executor, ExecutorBuilder, Fork, SpecId};
 use foundry_utils::PostLinkInput;
 use proptest::test_runner::TestRunner;
 use rayon::prelude::*;
-use revm::db::DatabaseRef;
 use std::{collections::BTreeMap, marker::Sync, sync::mpsc::Sender};
 
 /// Builder used for instantiating the multi-contract runner

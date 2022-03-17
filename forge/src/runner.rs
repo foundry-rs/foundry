@@ -1,19 +1,19 @@
-use crate::{
-    executor::{
-        fuzz::{CounterExample, FuzzedCases, FuzzedExecutor},
-        CallResult, DeployResult, EvmError, Executor,
-    },
-    trace::{CallTraceArena, TraceKind},
-    TestFilter, CALLER,
-};
+use crate::TestFilter;
 use ethers::{
     abi::{Abi, Function, RawLog},
     types::{Address, Bytes, U256},
 };
 use eyre::Result;
+use foundry_evm::{
+    executor::{
+        fuzz::{CounterExample, FuzzedCases, FuzzedExecutor},
+        CallResult, DatabaseRef, DeployResult, EvmError, Executor,
+    },
+    trace::{CallTraceArena, TraceKind},
+    CALLER,
+};
 use proptest::test_runner::TestRunner;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
-use revm::db::DatabaseRef;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt, time::Instant};
 
@@ -411,10 +411,8 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        executor::builder::Backend,
-        test_helpers::{filter::Filter, test_executor, COMPILED, EVM_OPTS},
-    };
+    use crate::test_helpers::{filter::Filter, fuzz_executor, test_executor, COMPILED, EVM_OPTS};
+    use foundry_evm::executor::{builder::Backend, fuzz::FuzzTestResult, DeployResult};
     use proptest::test_runner::Config as FuzzConfig;
 
     pub fn runner<'a>(
@@ -530,5 +528,22 @@ mod tests {
             counterexample.args.into_iter().map(|x| x.into_uint().unwrap()).collect::<Vec<_>>();
         let product_without_shrinking = args[0].saturating_mul(args[1]);
         assert!(product_without_shrinking > product_with_shrinking.into());
+    }
+
+    #[test]
+    fn prints_fuzzed_revert_reasons() {
+        let mut executor = test_executor();
+
+        let compiled = COMPILED.find("FuzzTests").expect("could not find contract");
+        let DeployResult { address, .. } =
+            executor.deploy(*CALLER, compiled.bytecode().unwrap().0.clone(), 0.into()).unwrap();
+
+        let executor = fuzz_executor(&executor);
+
+        let func = compiled.abi.unwrap().function("testFuzzedRevert").unwrap();
+        let FuzzTestResult { reason, success, .. } =
+            executor.fuzz(func, address, false, compiled.abi);
+        assert!(!success, "test did not revert");
+        assert_eq!(reason, Some("fuzztest-revert".to_string()));
     }
 }
