@@ -21,7 +21,7 @@ takes place and the absolute path is used directly.
 In `foundry.toml` you can define multiple profiles, therefore the file is assumed to be _nested_, so each top-level key
 declares a profile and its values configure the profile.
 
-The following is an example of what such a file might look like:
+The following is an example of what such a file might look like. This can also be obtained with `forge config`
 
 ```toml
 ## defaults for _all_ profiles
@@ -78,6 +78,7 @@ auto_detect_solc = true
 offline = false
 optimizer = true
 optimizer_runs = 200
+via_ir = false
 verbosity = 0
 ignored_error_codes = []
 fuzz_runs = 256
@@ -100,7 +101,8 @@ Optimizer components can be tweaked with the `OptimizerDetails` object:
 
 See [Compiler Input Description `settings.optimizer.details`](https://docs.soliditylang.org/en/latest/using-the-compiler.html#compiler-input-and-output-json-description)
 
-The `optimizer_details` (`optimizerDetails` also works) settings must be prefixed with the profile they correspond to: `[default.optimizer_details]`
+The `optimizer_details` (`optimizerDetails` also works) settings must be prefixed with the profile they correspond
+to: `[default.optimizer_details]`
 belongs to the `[default]` profile
 
 ```toml
