@@ -102,6 +102,8 @@ fn install_as_folder(dep: &Dependency, libs: &Path) -> eyre::Result<()> {
             "Destination path \"{}\" already exists and is not an empty directory.",
             &dep.name
         )
+    } else if !stderr.trim().is_empty() {
+        eyre::bail!("{}", stderr.trim())
     }
 
     if let Some(ref tag) = dep.tag {
@@ -149,6 +151,8 @@ fn install_as_submodule(dep: &Dependency, libs: &Path, no_commit: bool) -> eyre:
             .collect::<Vec<&str>>()
             .join("\n");
         eyre::bail!("{}", error)
+    } else if !stderr.trim().is_empty() {
+        eyre::bail!("{}", stderr.trim())
     }
 
     // call update on it
