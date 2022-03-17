@@ -1,39 +1,39 @@
-pragma solidity 0.8.0;
+pragma solidity >=0.8.0;
 
-import "./DsTest.sol";
+import "ds-test/test.sol";
 
 contract DebugLogsTest is DSTest {
-    constructor() public {
-        emit log("constructor");
+    constructor() {
+        emit log_uint(0);
     }
 
     function setUp() public {
-        emit log("setUp");
+        emit log_uint(1);
     }
 
     function test1() public {
-        emit log("one");
+        emit log_uint(2);
     }
 
     function test2() public {
-        emit log("two");
+        emit log_uint(3);
     }
 
     function testFailWithRevert() public {
         Fails fails = new Fails();
-        emit log("three");
+        emit log_uint(4);
         fails.failure();
     }
 
     function testFailWithRequire() public {
-        emit log("four");
+        emit log_uint(5);
         require(false);
     }
 }
 
 contract Fails is DSTest {
     function failure() public {
-        emit log("failure");
+        emit log_uint(100);
         revert();
     }
 }

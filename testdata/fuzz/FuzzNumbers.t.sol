@@ -1,8 +1,10 @@
-pragma solidity ^0.8.0;
+// SPDX-License-Identifier: Unlicense
+pragma solidity >=0.8.0;
 
-import "./DsTest.sol";
+import "ds-test/test.sol";
 
-contract TestNumbers is DSTest {
+// See https://github.com/gakonst/foundry/pull/735 for context
+contract FuzzNumbersTest is DSTest {
     function testPositive(uint256) public {
         assertTrue(true);
     }

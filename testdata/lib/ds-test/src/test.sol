@@ -1,4 +1,3 @@
-// Taken from: https://github.com/dapphub/ds-test/blob/0a5da56b0d65960e6a994d2ec8245e6edd38c248/src/test.sol
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // This program is free software: you can redistribute it and/or modify

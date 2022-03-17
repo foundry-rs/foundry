@@ -267,88 +267,283 @@ mod tests {
         test_helpers::{filter::Filter, EVM_OPTS},
     };
     use ethers::solc::{Project, ProjectPathsConfig};
-    use std::collections::HashMap;
+    use foundry_evm::trace::TraceKind;
 
+    /// Builds the testdata project
     fn project() -> Project {
-        let paths =
-            ProjectPathsConfig::builder().root("testdata").sources("testdata").build().unwrap();
+        let paths = ProjectPathsConfig::builder()
+            .root("../testdata")
+            .sources("../testdata")
+            .build()
+            .unwrap();
 
         Project::builder().paths(paths).ephemeral().no_artifacts().build().unwrap()
     }
 
-    fn runner() -> MultiContractRunner {
-        MultiContractRunnerBuilder::default()
-            .build(project().compile().unwrap(), EVM_OPTS.clone())
-            .unwrap()
+    /// Builds a base runner
+    fn base_runner() -> MultiContractRunnerBuilder {
+        MultiContractRunnerBuilder::default().sender(EVM_OPTS.sender)
     }
 
-    #[test]
-    fn test_multi_runner() {
-        let mut runner = runner();
-        let results = runner.test(&Filter::new(".*", ".*", ".*"), None).unwrap();
+    /// Builds a non-tracing runner
+    fn runner() -> MultiContractRunner {
+        base_runner().build(project().compile().unwrap(), EVM_OPTS.clone()).unwrap()
+    }
 
-        // 9 contracts being built
-        assert_eq!(results.keys().len(), 12);
-        for (key, contract_tests) in results {
-            match key.as_str() {
-                // Tests that should revert
-                "SetupTest.json:SetupTest" | "FuzzTests.json:FuzzTests" => {
-                    assert!(contract_tests.iter().all(|(_, result)| !result.success))
+    /// Builds a tracing runner
+    fn tracing_runner() -> MultiContractRunner {
+        let mut opts = EVM_OPTS.clone();
+        opts.verbosity = 5;
+        base_runner().build(project().compile().unwrap(), opts).unwrap()
+    }
+
+    /// A helper to assert the outcome of multiple tests with helpful assert messages
+    fn assert_multiple(
+        actuals: &BTreeMap<String, BTreeMap<String, TestResult>>,
+        expecteds: BTreeMap<&str, Vec<(&str, bool, Option<String>, Option<Vec<String>>)>>,
+    ) {
+        assert_eq!(
+            actuals.len(),
+            expecteds.len(),
+            "We did not run as many contracts as we expected"
+        );
+        for (contract_name, tests) in &expecteds {
+            assert_eq!(
+                actuals[*contract_name].len(),
+                expecteds[contract_name].len(),
+                "We did not run as many test functions as we expected for {}",
+                contract_name
+            );
+            for (test_name, should_pass, reason, expected_logs) in tests {
+                let logs = decode_console_logs(&actuals[*contract_name][*test_name].logs);
+
+                if *should_pass {
+                    assert!(
+                        actuals[*contract_name][*test_name].success,
+                        "Test {} did not pass as expected.\nReason: {:?}\nLogs:\n{}",
+                        test_name,
+                        actuals[*contract_name][*test_name].reason,
+                        logs.join("\n")
+                    );
+                } else {
+                    assert!(
+                        !actuals[*contract_name][*test_name].success,
+                        "Test {} did not fail as expected.\nLogs:\n{}",
+                        test_name,
+                        logs.join("\n")
+                    );
+                    assert_eq!(
+                        actuals[*contract_name][*test_name].reason, *reason,
+                        "Failure reason for test {} did not match what we expected.",
+                        test_name
+                    );
                 }
-                // The rest should pass
-                _ => {
-                    assert_ne!(contract_tests.keys().len(), 0);
-                    assert!(contract_tests.iter().all(|(_, result)| { result.success }))
+
+                if let Some(expected_logs) = expected_logs {
+                    assert!(
+                        logs.iter().eq(expected_logs.iter()),
+                        "Logs did not match for test {}.\nExpected:\n{}\n\nGot:\n{}",
+                        test_name,
+                        logs.join("\n"),
+                        expected_logs.join("\n")
+                    );
                 }
             }
         }
-
-        // can also filter
-        let only_gm = runner.test(&Filter::new("testGm.*", ".*", ".*"), None).unwrap();
-        assert_eq!(only_gm.len(), 1);
-
-        assert_eq!(only_gm["GmTest.json:GmTest"].len(), 1);
-        assert!(only_gm["GmTest.json:GmTest"]["testGm()"].success);
     }
 
     #[test]
-    fn test_abstract_contract() {
+    fn test_core() {
         let mut runner = runner();
-        let results = runner.test(&Filter::new(".*", ".*", ".*"), None).unwrap();
-        assert!(results.get("Tests.json:Tests").is_none());
-        assert!(results.get("ATests.json:ATests").is_some());
-        assert!(results.get("BTests.json:BTests").is_some());
+        let results = runner.test(&Filter::new(".*", ".*", ".*core"), None).unwrap();
+
+        assert_multiple(
+            &results,
+            BTreeMap::from([
+                (
+                    "FailingSetupTest.json:FailingSetupTest",
+                    vec![(
+                        "setUp()",
+                        false,
+                        Some("Setup failed: setup failed predictably".to_string()),
+                        None,
+                    )],
+                ),
+                ("RevertingTest.json:RevertingTest", vec![("testFailRevert()", true, None, None)]),
+                (
+                    "SetupConsistencyCheck.json:SetupConsistencyCheck",
+                    vec![("testAdd()", true, None, None), ("testMultiply()", true, None, None)],
+                ),
+                (
+                    "DSStyleTest.json:DSStyleTest",
+                    vec![
+                        ("testAddresses()", true, None, None),
+                        ("testEnvironment()", true, None, None),
+                    ],
+                ),
+                (
+                    "PaymentFailureTest.json:PaymentFailureTest",
+                    vec![("testCantPay()", false, Some("Revert".to_string()), None)],
+                ),
+                (
+                    "LibraryLinkingTest.json:LibraryLinkingTest",
+                    vec![("testDirect()", true, None, None), ("testNested()", true, None, None)],
+                ),
+                ("AbstractTest.json:AbstractTest", vec![("testSomething()", true, None, None)]),
+            ]),
+        );
     }
 
     #[test]
-    fn test_debug_logs() {
+    fn test_logs() {
         let mut runner = runner();
-        let results = runner.test(&Filter::new(".*", ".*", ".*"), None).unwrap();
+        let results = runner.test(&Filter::new(".*", ".*", ".*logs"), None).unwrap();
 
-        let reasons = results["DebugLogsTest.json:DebugLogsTest"]
-            .iter()
-            .map(|(name, res)| (name, decode_console_logs(&res.logs)))
-            .collect::<HashMap<_, _>>();
-        assert_eq!(
-            reasons[&"test1()".to_owned()],
-            vec!["constructor".to_owned(), "setUp".to_owned(), "one".to_owned()]
+        assert_multiple(
+            &results,
+            BTreeMap::from([
+                (
+                    "DebugLogsTest.json:DebugLogsTest",
+                    vec![
+                        ("test1()", true, None, Some(vec!["0".into(), "1".into(), "2".into()])),
+                        ("test2()", true, None, Some(vec!["0".into(), "1".into(), "3".into()])),
+                        (
+                            "testFailWithRequire()",
+                            true,
+                            None,
+                            Some(vec!["0".into(), "1".into(), "5".into()]),
+                        ),
+                        (
+                            "testFailWithRevert()",
+                            true,
+                            None,
+                            Some(vec!["0".into(), "1".into(), "4".into(), "100".into()]),
+                        ),
+                    ],
+                ),
+                (
+                    "HardhatLogsTest.json:HardhatLogsTest",
+                    vec![
+                        (
+                            "testInts()",
+                            true,
+                            None,
+                            Some(vec![
+                                "constructor".into(),
+                                "0".into(),
+                                "1".into(),
+                                "2".into(),
+                                "3".into(),
+                            ]),
+                        ),
+                        (
+                            "testMisc()",
+                            true,
+                            None,
+                            Some(vec![
+                                "constructor".into(),
+                                "testMisc, 0x0000000000000000000000000000000000000001".into(),
+                                "testMisc, 42".into(),
+                            ]),
+                        ),
+                        (
+                            "testStrings()",
+                            true,
+                            None,
+                            Some(vec!["constructor".into(), "testStrings".into()]),
+                        ),
+                    ],
+                ),
+            ]),
         );
-        assert_eq!(
-            reasons[&"test2()".to_owned()],
-            vec!["constructor".to_owned(), "setUp".to_owned(), "two".to_owned()]
-        );
-        assert_eq!(
-            reasons[&"testFailWithRevert()".to_owned()],
-            vec![
-                "constructor".to_owned(),
-                "setUp".to_owned(),
-                "three".to_owned(),
-                "failure".to_owned()
-            ]
-        );
-        assert_eq!(
-            reasons[&"testFailWithRequire()".to_owned()],
-            vec!["constructor".to_owned(), "setUp".to_owned(), "four".to_owned()]
-        );
+    }
+
+    #[test]
+    fn test_cheats() {
+        let mut runner = runner();
+        let results = runner.test(&Filter::new(".*", ".*", ".*cheats"), None).unwrap();
+
+        for (_, tests) in results {
+            for (test_name, result) in tests {
+                assert!(
+                    result.success,
+                    "Test {} did not pass as expected.\nReason: {:?}",
+                    test_name, result.reason
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_fuzz() {
+        let mut runner = runner();
+        let results = runner.test(&Filter::new(".*", ".*", ".*fuzz"), None).unwrap();
+
+        for (_, tests) in results {
+            for (test_name, result) in tests {
+                match test_name.as_ref() {
+                    "testPositive(uint256)" | "testSuccessfulFuzz(uint128,uint128)" => assert!(
+                        result.success,
+                        "Test {} did not pass as expected.\nReason: {:?}",
+                        test_name, result.reason
+                    ),
+                    _ => assert!(
+                        !result.success,
+                        "Test {} did not fail as expected.\nReason: {:?}",
+                        test_name, result.reason
+                    ),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_trace() {
+        let mut runner = tracing_runner();
+        let results = runner.test(&Filter::new(".*", ".*", ".*trace"), None).unwrap();
+
+        // TODO: This trace test is very basic - it is probably a good candidate for snapshot
+        // testing.
+        for (_, tests) in results {
+            for (test_name, result) in tests {
+                let deployment_traces = result
+                    .traces
+                    .iter()
+                    .filter(|(kind, _)| *kind == TraceKind::Deployment)
+                    .collect::<Vec<_>>();
+                let setup_traces = result
+                    .traces
+                    .iter()
+                    .filter(|(kind, _)| *kind == TraceKind::Setup)
+                    .collect::<Vec<_>>();
+                let execution_traces = result
+                    .traces
+                    .iter()
+                    .filter(|(kind, _)| *kind == TraceKind::Deployment)
+                    .collect::<Vec<_>>();
+
+                assert_eq!(
+                    deployment_traces.len(),
+                    1,
+                    "Test {} did not have exactly 1 deployment trace.",
+                    test_name
+                );
+                assert!(setup_traces.len() <= 1, "Test {} had more than 1 setup trace.", test_name);
+                assert_eq!(
+                    execution_traces.len(),
+                    1,
+                    "Test {} did not not have exactly 1 execution trace.",
+                    test_name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_doesnt_run_abstract_contract() {
+        let mut runner = runner();
+        let results = runner.test(&Filter::new(".*", ".*", ".*core/Abstract.t.sol"), None).unwrap();
+        assert!(results.get("AbstractTestBase.json:AbstractTestBase").is_none());
+        assert!(results.get("AbstractTest.json:AbstractTest").is_some());
     }
 }

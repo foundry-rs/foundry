@@ -354,7 +354,7 @@ impl fmt::Display for CallTrace {
 }
 
 /// Specifies the kind of trace.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TraceKind {
     Deployment,
     Setup,
