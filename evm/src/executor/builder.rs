@@ -10,7 +10,7 @@ use super::{
     Executor,
 };
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct ExecutorBuilder {
     /// The execution environment configuration.
     env: Env,
