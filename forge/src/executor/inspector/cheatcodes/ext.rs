@@ -14,7 +14,8 @@ fn ffi(args: &[String]) -> Result<Bytes, Bytes> {
         .map_err(|err| err.to_string().encode())?
         .stdout;
     let output = unsafe { std::str::from_utf8_unchecked(&output) };
-    let decoded = hex::decode(&output.trim()[2..]).map_err(|err| err.to_string().encode())?;
+    let decoded = hex::decode(&output.trim().strip_prefix("0x").unwrap_or(output))
+        .map_err(|err| err.to_string().encode())?;
 
     Ok(abi::encode(&[Token::Bytes(decoded.to_vec())]).into())
 }
