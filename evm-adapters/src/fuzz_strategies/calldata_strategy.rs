@@ -1,11 +1,12 @@
-use crate::fuzz_strategies::uint_strategy::*;
+use crate::fuzz_strategies::{random_selector::*, uint_strategy::*};
 use ethers::{
     abi::{Function, ParamType, Token, Tokenizable},
     types::{Address, Bytes, I256, U256},
 };
 use proptest::prelude::{Strategy, *};
-use std::{cell::RefCell, collections::HashSet, rc::Rc};
+use std::{cell::RefCell, rc::Rc};
 
+use fnv::{FnvHashSet as HashSet};
 /// Given a function, it returns a proptest strategy which generates valid abi-encoded calldata
 /// for that function's input types.
 pub fn fuzz_state_calldata(
@@ -101,30 +102,30 @@ fn fuzz_param_with_input(
 }
 
 fn state_fuzz(param: &ParamType, state: Rc<RefCell<HashSet<[u8; 32]>>>) -> BoxedStrategy<Token> {
-    let selectors = any::<prop::sample::Selector>();
+    let selectors = any::<Selector>();
     match param {
         ParamType::Address => selectors
             .prop_map(move |selector| {
-                let x = *selector.select(&*state.borrow());
+                let x = *selector.select(state.borrow().iter());
                 Address::from_slice(&x[12..]).into_token()
             })
             .boxed(),
         ParamType::Bytes => selectors
             .prop_map(move |selector| {
-                let x = *selector.select(&*state.borrow());
+                let x = *selector.select(state.borrow().iter());
                 Bytes::from(x).into_token()
             })
             .boxed(),
         ParamType::Int(n) => match n / 8 {
             32 => selectors
                 .prop_map(move |selector| {
-                    let x = *selector.select(&*state.borrow());
+                    let x = *selector.select(state.borrow().iter());
                     I256::from_raw(U256::from(x)).into_token()
                 })
                 .boxed(),
             y @ 1..=31 => selectors
                 .prop_map(move |selector| {
-                    let x = *selector.select(&*state.borrow());
+                    let x = *selector.select(state.borrow().iter());
                     // Generate a uintN in the correct range, then shift it to the range of intN
                     // by subtracting 2^(N-1)
                     let uint = U256::from(x) % U256::from(2).pow(U256::from(y * 8));
@@ -138,13 +139,13 @@ fn state_fuzz(param: &ParamType, state: Rc<RefCell<HashSet<[u8; 32]>>>) -> Boxed
         ParamType::Uint(n) => match n / 8 {
             32 => selectors
                 .prop_map(move |selector| {
-                    let x = *selector.select(&*state.borrow());
+                    let x = *selector.select(state.borrow().iter());
                     U256::from(x).into_token()
                 })
                 .boxed(),
             y @ 1..=31 => selectors
                 .prop_map(move |selector| {
-                    let x = *selector.select(&*state.borrow());
+                    let x = *selector.select(state.borrow().iter());
                     (U256::from(x) % (U256::from(2).pow(U256::from(y * 8)))).into_token()
                 })
                 .boxed(),
@@ -152,14 +153,14 @@ fn state_fuzz(param: &ParamType, state: Rc<RefCell<HashSet<[u8; 32]>>>) -> Boxed
         },
         ParamType::Bool => selectors
             .prop_map(move |selector| {
-                let x = *selector.select(&*state.borrow());
+                let x = *selector.select(state.borrow().iter());
                 Token::Bool(x[31] == 1)
             })
             .boxed(),
         ParamType::String => selectors
             .prop_map(move |selector| {
-                let x = *selector.select(&*state.borrow());
-                Token::String(unsafe { std::str::from_utf8_unchecked(&x).to_string() })
+                let x = *selector.select(state.borrow().iter());
+                Token::String(unsafe { std::str::from_utf8_unchecked(&x[..]).to_string() })
             })
             .boxed(),
         ParamType::Array(param) => {
@@ -172,7 +173,7 @@ fn state_fuzz(param: &ParamType, state: Rc<RefCell<HashSet<[u8; 32]>>>) -> Boxed
             let v = *size;
             selectors
                 .prop_map(move |selector| {
-                    let x = *selector.select(&*state.borrow());
+                    let x = *selector.select(state.borrow().iter());
                     let val = x[32 - v..].to_vec();
                     Token::FixedBytes(val)
                 })

@@ -1,4 +1,5 @@
 //! Fuzzing support abstracted over the [`Evm`](crate::Evm) used
+
 use crate::{
     fuzz_strategies::calldata_strategy::fuzz_state_calldata, Evm, ASSUME_MAGIC_RETURN_CODE,
 };
@@ -88,7 +89,6 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
 
         // Snapshot the state before the test starts running
         let pre_test_state = self.evm.borrow().state().clone();
-
         let flattened_state = Rc::new(RefCell::new(self.evm.borrow().flatten_state()));
 
         // we dont shrink for state strategy
@@ -117,6 +117,8 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
 
         let mut runner = self.runner.clone();
         tracing::debug!(func = ?func.name, should_fail, "fuzzing");
+        let ret_calldata = RefCell::new(None);
+
         let test_error = runner
             .run(&combined_strat, |calldata| {
                 let mut evm = self.evm.borrow_mut();
@@ -146,6 +148,13 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
                     let revert =
                         foundry_utils::decode_revert(returndata.as_ref(), abi).unwrap_or_default();
                     let _ = revert_reason.borrow_mut().insert(revert);
+                    
+                    // because of how we do state selector, (totally random)
+                    // we have to manually set the test_error data. Otherwise
+                    // the way proptest works, makes it so the failing calldata wouldnt be the same
+                    // as the test_error calldata. so we do this instead
+                    let mut cd = ret_calldata.borrow_mut();
+                    *cd = Some(calldata.clone());
                 }
 
                 // This will panic and get caught by the executor
@@ -161,9 +170,9 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
                 );
 
                 {
-                    let new_flattened = evm.flatten_state();
                     let mut t = flattened_state.borrow_mut();
-                    (*t).extend(new_flattened);
+                    (*t).extend(evm.flatten_state());
+                    
                     returndata.as_ref().chunks(32).for_each(|chunk| {
                         let mut to_fill: [u8; 32] = [0; 32];
                         let _ = (&mut to_fill[..])
@@ -180,7 +189,13 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
             })
             .err()
             .map(|test_error| FuzzError {
-                test_error,
+                // selector strategy isnt reproducible, so we hack around that by using a refcell
+                test_error:  match test_error {
+                    TestError::Abort(msg) => TestError::Abort(msg),
+                    TestError::Fail(msg, _cd) => {
+                        TestError::Fail(msg, ret_calldata.into_inner().expect("Calldata must be set"))
+                    }
+                },
                 return_reason: return_reason.into_inner().expect("Reason must be set"),
                 revert_reason: revert_reason.into_inner().expect("Revert error string must be set"),
             });

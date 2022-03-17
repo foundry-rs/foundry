@@ -8,7 +8,9 @@ use crate::{
     sputnik::{cheatcodes::memory_stackstate_owned::ExpectedEmit, Executor, SputnikExecutor},
     Evm, ASSUME_MAGIC_RETURN_CODE,
 };
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap};
+
+use fnv::{FnvHashSet as HashSet};
 
 use std::{fs::File, io::Read, path::Path};
 

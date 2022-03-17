@@ -16,9 +16,11 @@ use ethers::{
 
 use std::{
     cell::RefCell,
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap},
     rc::Rc,
 };
+
+use fnv::{FnvHashSet as HashSet};
 
 #[derive(Clone, Default)]
 pub struct RecordAccess {
@@ -161,7 +163,7 @@ impl<'config, B: Backend> FuzzState for MemoryStackStateOwned<'config, B> {
     fn flatten_state(&self) -> HashSet<[u8; 32]> {
         use std::io::Write;
 
-        let mut flattened: HashSet<[u8; 32]> = HashSet::new();
+        let mut flattened = HashSet::default();
         let (applies, logs) = self.substate.clone().deconstruct(&self.backend);
         for apply in applies {
             if let Apply::Modify { address, basic, storage, code, .. } = apply {

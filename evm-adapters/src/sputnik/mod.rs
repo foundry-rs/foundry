@@ -23,7 +23,8 @@ use crate::{call_tracing::CallTraceArena, sputnik::cheatcodes::debugger::DebugAr
 
 pub use sputnik as sputnik_evm;
 use sputnik_evm::executor::stack::PrecompileSet;
-use std::collections::HashSet;
+
+use fnv::{FnvHashSet as HashSet};
 
 /// Given an ethers provider and a block, it proceeds to construct a [`MemoryVicinity`] from
 /// the live chain data returned by the provider.
@@ -204,7 +205,7 @@ impl<'a, 'b, S: StackState<'a>, P: PrecompileSet> SputnikExecutor<S>
     fn clear_logs(&mut self) {}
 
     fn flatten_state(&self) -> HashSet<[u8; 32]> {
-        HashSet::new()
+        HashSet::default()
     }
 }
 

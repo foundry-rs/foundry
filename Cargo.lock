@@ -1519,6 +1519,7 @@ dependencies = [
  "ethers-core",
  "evm",
  "eyre",
+ "fnv",
  "foundry-utils",
  "futures",
  "hex",

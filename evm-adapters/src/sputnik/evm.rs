@@ -11,9 +11,12 @@ use sputnik::{
     Config, CreateScheme, ExitReason, ExitRevert, Transfer,
 };
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap},
     marker::PhantomData,
 };
+
+
+use fnv::{FnvHashSet as HashSet};
 
 use eyre::Result;
 

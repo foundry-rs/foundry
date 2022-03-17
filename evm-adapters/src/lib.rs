@@ -7,7 +7,8 @@ use crate::sputnik::cheatcodes::debugger::DebugArena;
 
 mod blocking_provider;
 use crate::call_tracing::CallTraceArena;
-use std::collections::HashSet;
+
+use fnv::{FnvHashSet as HashSet};
 
 pub use blocking_provider::BlockingProvider;
 
