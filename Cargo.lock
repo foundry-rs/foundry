@@ -3572,7 +3572,7 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "1.2.0"
-source = "git+https://github.com/onbjerg/revm?branch=onbjerg/tracer-ends#7a243f84a4ea9f5a969e9546bbf3d6b6096c845e"
+source = "git+https://github.com/bluealloy/revm#db1812f5f53b1b00c9f1bc4a0b7484dd291b4b9c"
 dependencies = [
  "arrayref",
  "auto_impl",
@@ -3588,7 +3588,7 @@ dependencies = [
 [[package]]
 name = "revm_precompiles"
 version = "0.4.0"
-source = "git+https://github.com/onbjerg/revm?branch=onbjerg/tracer-ends#7a243f84a4ea9f5a969e9546bbf3d6b6096c845e"
+source = "git+https://github.com/bluealloy/revm#db1812f5f53b1b00c9f1bc4a0b7484dd291b4b9c"
 dependencies = [
  "bytes",
  "k256",
