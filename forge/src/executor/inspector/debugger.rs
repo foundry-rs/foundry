@@ -155,8 +155,7 @@ where
         };
 
         // Calculate the current amount of gas used
-        // TODO: The copy here is only because `gas` takes `&mut self`
-        let gas = *interpreter.gas();
+        let gas = interpreter.gas();
         let total_gas_spent = gas.spend() - self.previous_gas_block + self.current_gas_block;
         if opcode_info.gas_block_end {
             self.previous_gas_block = interpreter.contract.gas_block(pc);
