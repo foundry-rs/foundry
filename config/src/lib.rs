@@ -1806,7 +1806,7 @@ mod tests {
 
     // a test to print the config, mainly used to update the example config in the README
     #[test]
-    // #[ignore]
+    #[ignore]
     fn print_config() {
         let config = Config {
             optimizer_details: Some(OptimizerDetails {
