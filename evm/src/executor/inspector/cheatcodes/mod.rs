@@ -87,7 +87,7 @@ where
     fn call(
         &mut self,
         data: &mut EVMData<'_, DB>,
-        call: &CallInputs,
+        call: &mut CallInputs,
         _: bool,
     ) -> (Return, Gas, Bytes) {
         if call.contract == *CHEATCODE_ADDRESS {
@@ -116,34 +116,26 @@ where
                 }
             }
 
-            (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
-        }
-    }
+            // Apply our prank
+            if let Some(prank) = &self.prank {
+                if data.subroutine.depth() >= prank.depth &&
+                    call.context.caller == prank.prank_caller
+                {
+                    // At the target depth we set `msg.sender`
+                    if data.subroutine.depth() == prank.depth {
+                        call.context.caller = prank.new_caller;
+                        call.transfer.source = prank.new_caller;
+                    }
 
-    fn initialize_interp(
-        &mut self,
-        interpreter: &mut Interpreter,
-        data: &mut EVMData<'_, DB>,
-        _: bool,
-    ) -> Return {
-        // Apply our prank
-        if let Some(prank) = &self.prank {
-            if data.subroutine.depth() >= prank.depth &&
-                interpreter.contract.caller == prank.prank_caller
-            {
-                // At the target depth we set `msg.sender`
-                if data.subroutine.depth() == prank.depth {
-                    interpreter.contract.caller = prank.new_caller;
-                }
-
-                // At the target depth, or deeper, we set `tx.origin`
-                if let Some(new_origin) = prank.new_origin {
-                    data.env.tx.caller = new_origin;
+                    // At the target depth, or deeper, we set `tx.origin`
+                    if let Some(new_origin) = prank.new_origin {
+                        data.env.tx.caller = new_origin;
+                    }
                 }
             }
-        }
 
-        Return::Continue
+            (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
+        }
     }
 
     fn step(&mut self, interpreter: &mut Interpreter, _: &mut EVMData<'_, DB>, _: bool) -> Return {
@@ -269,6 +261,29 @@ where
         }
 
         (status, remaining_gas, retdata)
+    }
+
+    fn create(
+        &mut self,
+        data: &mut EVMData<'_, DB>,
+        call: &mut CreateInputs,
+    ) -> (Return, Option<Address>, Gas, Bytes) {
+        // Apply our prank
+        if let Some(prank) = &self.prank {
+            if data.subroutine.depth() >= prank.depth && call.caller == prank.prank_caller {
+                // At the target depth we set `msg.sender`
+                if data.subroutine.depth() == prank.depth {
+                    call.caller = prank.new_caller;
+                }
+
+                // At the target depth, or deeper, we set `tx.origin`
+                if let Some(new_origin) = prank.new_origin {
+                    data.env.tx.caller = new_origin;
+                }
+            }
+        }
+
+        (Return::Continue, None, Gas::new(call.gas_limit), Bytes::new())
     }
 
     fn create_end(

@@ -65,7 +65,7 @@ where
     fn call(
         &mut self,
         data: &mut EVMData<'_, DB>,
-        call: &CallInputs,
+        call: &mut CallInputs,
         _: bool,
     ) -> (Return, Gas, Bytes) {
         if call.contract != *HARDHAT_CONSOLE_ADDRESS {
@@ -119,7 +119,7 @@ where
     fn create(
         &mut self,
         data: &mut EVMData<'_, DB>,
-        call: &CreateInputs,
+        call: &mut CreateInputs,
     ) -> (Return, Option<Address>, Gas, Bytes) {
         // TODO: Does this increase gas cost?
         data.subroutine.load_account(call.caller, data.db);
