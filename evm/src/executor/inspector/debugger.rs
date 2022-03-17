@@ -1,5 +1,5 @@
 use crate::{
-    debugger::{DebugArena, DebugNode, DebugStep, Instruction},
+    debug::{DebugArena, DebugNode, DebugStep, Instruction},
     executor::{
         inspector::utils::{gas_used, get_create_address},
         CHEATCODE_ADDRESS,

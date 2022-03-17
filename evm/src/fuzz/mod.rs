@@ -251,30 +251,3 @@ pub struct FuzzCase {
     /// The initial gas stipend for the transaction
     pub stipend: u64,
 }
-
-#[cfg(test)]
-mod tests {
-    use super::FuzzTestResult;
-    use crate::{
-        executor::DeployResult,
-        test_helpers::{fuzz_executor, test_executor, COMPILED},
-        CALLER,
-    };
-
-    #[test]
-    fn prints_fuzzed_revert_reasons() {
-        let mut executor = test_executor();
-
-        let compiled = COMPILED.find("FuzzTests").expect("could not find contract");
-        let DeployResult { address, .. } =
-            executor.deploy(*CALLER, compiled.bytecode().unwrap().0.clone(), 0.into()).unwrap();
-
-        let executor = fuzz_executor(&executor);
-
-        let func = compiled.abi.unwrap().function("testFuzzedRevert").unwrap();
-        let FuzzTestResult { reason, success, .. } =
-            executor.fuzz(func, address, false, compiled.abi);
-        assert!(!success, "test did not revert");
-        assert_eq!(reason, Some("fuzztest-revert".to_string()));
-    }
-}
