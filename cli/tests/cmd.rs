@@ -467,7 +467,6 @@ Compiler run successful
 });
 
 // Tests that the `run` command works correctly
-// TODO: The original gas usage was "1751" before the REVM port. It should be changed back
 forgetest!(can_execute_run_command, |prj: TestProject, mut cmd: TestCommand| {
     let script = prj
         .inner()
@@ -491,7 +490,7 @@ contract Demo {
     assert!(output.ends_with(&format!(
         "Compiler run successful
 {}
-Gas used: 22815
+Gas used: 1751
 == Logs ==
   script ran
 ",
@@ -523,7 +522,7 @@ contract Demo {
     assert!(output.ends_with(&format!(
         "Compiler run successful
 {}
-Gas used: 22815
+Gas used: 1751
 == Logs ==
   script ran
 ",
@@ -558,7 +557,7 @@ contract Demo {
     assert!(output.ends_with(&format!(
         "Compiler run successful
 {}
-Gas used: 25301
+Gas used: 3957
 == Logs ==
   script ran
   1
