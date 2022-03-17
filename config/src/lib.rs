@@ -197,6 +197,9 @@ pub struct Config {
     pub names: bool,
     /// Print the sizes of the compiled contracts
     pub sizes: bool,
+    /// If set to true, changes compilation pipeline to go through the Yul intermediate
+    /// representation.
+    pub via_ir: bool,
     /// The root path where the config detection started from, `Config::with_root`
     #[doc(hidden)]
     //  We're skipping serialization here, so it won't be included in the [`Config::to_string()`]
@@ -531,7 +534,7 @@ impl Config {
         let libraries = parse_libraries(&self.libraries)?;
         let optimizer = self.optimizer();
 
-        let settings = Settings {
+        let mut settings = Settings {
             optimizer,
             evm_version: Some(self.evm_version),
             libraries,
@@ -539,6 +542,10 @@ impl Config {
         }
         .with_extra_output(self.configured_artifacts_handler().output_selection())
         .with_ast();
+
+        if self.via_ir {
+            settings = settings.with_via_ir();
+        }
 
         Ok(settings)
     }
@@ -863,6 +870,7 @@ impl Default for Config {
             libraries: vec![],
             ignored_error_codes: vec![SolidityErrorCode::SpdxLicenseNotProvided],
             __non_exhaustive: (),
+            via_ir: false,
         }
     }
 }
@@ -1457,6 +1465,7 @@ mod tests {
                 eth_rpc_url = "https://example.com/"
                 verbosity = 3
                 remappings = ["ds-test=lib/ds-test/"]
+                via_ir = true
             "#,
             )?;
 
@@ -1470,6 +1479,7 @@ mod tests {
                     eth_rpc_url: Some("https://example.com/".to_string()),
                     remappings: vec![Remapping::from_str("ds-test=lib/ds-test/").unwrap().into()],
                     verbosity: 3,
+                    via_ir: true,
                     ..Config::default()
                 }
             );

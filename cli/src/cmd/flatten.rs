@@ -89,6 +89,7 @@ impl Cmd for FlattenArgs {
             hardhat: core_flatten_args.hardhat,
             libraries: vec![],
             watch: Default::default(),
+            via_ir: false,
         };
 
         let config = Config::from(&build_args);

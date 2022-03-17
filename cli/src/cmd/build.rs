@@ -178,6 +178,13 @@ pub struct BuildArgs {
     #[clap(flatten)]
     #[serde(skip)]
     pub watch: WatchArgs,
+
+    #[clap(
+        help = "if set to true, changes compilation pipeline to go through the Yul intermediate representation.",
+        long
+    )]
+    #[serde(skip)]
+    pub via_ir: bool,
 }
 
 impl Cmd for BuildArgs {
@@ -267,6 +274,10 @@ impl Provider for BuildArgs {
 
         if self.offline {
             dict.insert("offline".to_string(), true.into());
+        }
+
+        if self.via_ir {
+            dict.insert("via_ir".to_string(), true.into());
         }
 
         if self.force {

@@ -252,6 +252,12 @@ forgetest_init!(can_get_evm_opts, |prj: TestProject, mut cmd: TestCommand| {
     assert_eq!(evm_opts.fork_url, Some(url.to_string()));
 });
 
+// checks that we can set various config values
+forgetest_init!(can_set_config_values, |prj: TestProject, _cmd: TestCommand| {
+    let config = prj.config_from_output(["--via-ir"]);
+    assert!(config.via_ir);
+});
+
 // checks that `clean` removes dapptools style paths
 forgetest!(can_clean, |prj: TestProject, mut cmd: TestCommand| {
     prj.assert_create_dirs_exists();
