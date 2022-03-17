@@ -22,9 +22,9 @@ pub use foundry_evm::*;
 pub mod test_helpers {
     use crate::TestFilter;
     use ethers::{
-        prelude::Lazy,
-        solc::{AggregatedCompilerOutput, Project, ProjectPathsConfig},
-        types::U256,
+        prelude::{Lazy, ProjectCompileOutput},
+        solc::{Project, ProjectPathsConfig},
+        types::{Address, U256},
     };
     use foundry_evm::{
         executor::{
@@ -35,17 +35,28 @@ pub mod test_helpers {
         fuzz::FuzzedExecutor,
         CALLER,
     };
+    use std::str::FromStr;
 
-    pub static COMPILED: Lazy<AggregatedCompilerOutput> = Lazy::new(|| {
-        let paths =
-            ProjectPathsConfig::builder().root("testdata").sources("testdata").build().unwrap();
+    pub static COMPILED: Lazy<ProjectCompileOutput> = Lazy::new(|| {
+        let paths = ProjectPathsConfig::builder()
+            .root("../testdata")
+            .sources("../testdata")
+            .build()
+            .unwrap();
         let project = Project::builder().paths(paths).ephemeral().no_artifacts().build().unwrap();
-        project.compile().unwrap().output()
+        project.compile().unwrap()
     });
 
     pub static EVM_OPTS: Lazy<EvmOpts> = Lazy::new(|| EvmOpts {
-        env: Env { gas_limit: 18446744073709551615, chain_id: Some(99), ..Default::default() },
+        env: Env {
+            gas_limit: 18446744073709551615,
+            chain_id: Some(99),
+            tx_origin: Address::from_str("00a329c0648769a73afac7f9381e08fb43dbea72").unwrap(),
+            ..Default::default()
+        },
+        sender: Address::from_str("00a329c0648769a73afac7f9381e08fb43dbea72").unwrap(),
         initial_balance: U256::MAX,
+        ffi: true,
         ..Default::default()
     });
 
