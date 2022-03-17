@@ -62,7 +62,9 @@ impl Debugger {
             let op = code[i];
             ic_map.insert(i, i - cumulative_push_size);
             if opcode_infos[op as usize].is_push {
-                // Skip the push bytes
+                // Skip the push bytes.
+                //
+                // For more context on the math, see: https://github.com/bluealloy/revm/blob/007b8807b5ad7705d3cacce4d92b89d880a83301/crates/revm/src/interpreter/contract.rs#L114-L115
                 i += (op - opcode::PUSH1 + 1) as usize;
                 cumulative_push_size += (op - opcode::PUSH1 + 1) as usize;
             }
