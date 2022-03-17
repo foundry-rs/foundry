@@ -149,8 +149,6 @@ pub fn recurse_link<'a>(
     }
 }
 
-const BASE_TX_COST: u64 = 21000;
-
 /// Helper trait for converting types to Functions. Helpful for allowing the `call`
 /// function on the EVM to be generic over `String`, `&str` and `Function`.
 pub trait IntoFunction {
@@ -181,23 +179,6 @@ impl<'a> IntoFunction for &'a str {
             .parse_function(self)
             .unwrap_or_else(|_| panic!("could not convert {} to function", self))
     }
-}
-
-/// Given a gas value and a calldata array, it subtracts the calldata cost from the
-/// gas value, as well as the 21k base gas cost for all transactions.
-pub fn remove_extra_costs(gas: U256, calldata: &[u8]) -> U256 {
-    let mut calldata_cost = 0;
-    for i in calldata {
-        if *i != 0 {
-            // TODO: Check if EVM pre-eip2028 and charge 64
-            // GTXDATANONZERO = 16
-            calldata_cost += 16
-        } else {
-            // GTXDATAZERO = 4
-            calldata_cost += 4;
-        }
-    }
-    gas.saturating_sub(calldata_cost.into()).saturating_sub(BASE_TX_COST.into())
 }
 
 /// Flattens a group of contracts into maps of all events and functions
