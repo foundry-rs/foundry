@@ -8,7 +8,7 @@ use crossterm::{
 };
 use ethers::{solc::artifacts::ContractBytecodeSome, types::Address};
 use eyre::Result;
-use forge::debugger::DebugStep;
+use forge::debug::DebugStep;
 use std::{
     cmp::{max, min},
     collections::{BTreeMap, VecDeque},

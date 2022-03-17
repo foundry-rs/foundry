@@ -1,11 +1,3 @@
-pub mod decode;
-
-/// Call trace arena, decoding and formatting
-pub mod trace;
-
-/// Debugger arena
-pub mod debugger;
-
 /// Gas reports
 pub mod gas_report;
 
@@ -17,39 +9,32 @@ pub use runner::{ContractRunner, TestKind, TestKindGas, TestResult};
 mod multi_runner;
 pub use multi_runner::{MultiContractRunner, MultiContractRunnerBuilder};
 
-/// Forge test execution backends
-pub mod executor;
-pub use executor::abi;
-
 pub trait TestFilter {
     fn matches_test(&self, test_name: impl AsRef<str>) -> bool;
     fn matches_contract(&self, contract_name: impl AsRef<str>) -> bool;
     fn matches_path(&self, path: impl AsRef<str>) -> bool;
 }
 
-pub static CALLER: Lazy<Address> = Lazy::new(Address::random);
-
-use ethers::types::Address;
-use once_cell::sync::Lazy;
+/// The Forge EVM backend
+pub use foundry_evm::*;
 
 #[cfg(test)]
 pub mod test_helpers {
-    use crate::executor::fuzz::FuzzedExecutor;
-
-    use super::{
-        executor::{
-            builder::Backend,
-            opts::{Env, EvmOpts},
-            Executor, ExecutorBuilder,
-        },
-        *,
-    };
+    use crate::TestFilter;
     use ethers::{
         prelude::Lazy,
         solc::{AggregatedCompilerOutput, Project, ProjectPathsConfig},
         types::U256,
     };
-    use revm::db::DatabaseRef;
+    use foundry_evm::{
+        executor::{
+            builder::Backend,
+            opts::{Env, EvmOpts},
+            DatabaseRef, Executor, ExecutorBuilder,
+        },
+        fuzz::FuzzedExecutor,
+        CALLER,
+    };
 
     pub static COMPILED: Lazy<AggregatedCompilerOutput> = Lazy::new(|| {
         let paths =

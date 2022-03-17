@@ -13,7 +13,7 @@ use ethers::{
     types::{Address, Bytes, U256},
 };
 use forge::{
-    debugger::DebugArena,
+    debug::DebugArena,
     decode::decode_console_logs,
     executor::{
         opts::EvmOpts, CallResult, DatabaseRef, DeployResult, EvmError, Executor, ExecutorBuilder,
