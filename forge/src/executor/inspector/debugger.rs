@@ -8,8 +8,8 @@ use crate::{
 use bytes::Bytes;
 use ethers::types::Address;
 use revm::{
-    spec_opcode_gas, CallInputs, CreateInputs, Database, EVMData, Gas, Inspector, Interpreter,
-    Memory, OpCode, Return,
+    opcode, spec_opcode_gas, CallInputs, CreateInputs, Database, EVMData, Gas, Inspector,
+    Interpreter, Memory, Return, SpecId,
 };
 use std::collections::BTreeMap;
 
@@ -52,7 +52,8 @@ impl Debugger {
     /// Builds the instruction counter map for the given bytecode.
     // TODO: Some of the same logic is performed in REVM, but then later discarded. We should
     // investigate if we can reuse it
-    pub fn build_ic_map(&mut self, address: &Address, code: &Bytes) {
+    pub fn build_ic_map(&mut self, spec: SpecId, address: &Address, code: &Bytes) {
+        let opcode_infos = spec_opcode_gas(spec);
         let mut ic_map: BTreeMap<usize, usize> = BTreeMap::new();
 
         let mut i = 0;
@@ -60,13 +61,10 @@ impl Debugger {
         while i < code.len() {
             let op = code[i];
             ic_map.insert(i, i - cumulative_push_size);
-            match OpCode::is_push(op) {
-                Some(push_size) => {
-                    // Skip the push bytes
-                    i += push_size as usize;
-                    cumulative_push_size += push_size as usize;
-                }
-                None => (),
+            if opcode_infos[op as usize].is_push {
+                // Skip the push bytes
+                i += (op - opcode::PUSH1 + 1) as usize;
+                cumulative_push_size += (op - opcode::PUSH1 + 1) as usize;
             }
             i += 1;
         }
@@ -117,13 +115,17 @@ where
     fn initialize_interp(
         &mut self,
         interp: &mut Interpreter,
-        _: &mut EVMData<'_, DB>,
+        data: &mut EVMData<'_, DB>,
         _: bool,
     ) -> Return {
         // TODO: This is rebuilt for all contracts every time. We should only run this if the IC
         // map for a given address does not exist, *but* we need to account for the fact that the
         // code given by the interpreter may either be the contract init code, or the runtime code.
-        self.build_ic_map(&interp.contract().address, &interp.contract().code);
+        self.build_ic_map(
+            data.env.cfg.spec_id,
+            &interp.contract().address,
+            &interp.contract().code,
+        );
         self.previous_gas_block = interp.contract.first_gas_block();
         Return::Continue
     }
@@ -137,17 +139,20 @@ where
         let pc = interpreter.program_counter();
         let op = interpreter.contract.code[pc];
 
-        // Extract the push bytes
-        let push_size = OpCode::is_push(interpreter.contract.code[pc]).map(|size| size as usize);
-        let push_bytes = push_size.as_ref().map(|push_size| {
-            let start = pc + 1;
-            let end = start + push_size;
-            interpreter.contract.code[start..end].to_vec()
-        });
-
-        // Get opcode information (for use in gas calculations)
+        // Get opcode information
         let opcode_infos = spec_opcode_gas(data.env.cfg.spec_id);
         let opcode_info = &opcode_infos[op as usize];
+
+        // Extract the push bytes
+        let push_size = if opcode_info.is_push { (op - opcode::PUSH1 + 1) as usize } else { 0 };
+        let push_bytes = match push_size {
+            0 => None,
+            n => {
+                let start = pc + 1;
+                let end = start + n;
+                Some(interpreter.contract.code[start..end].to_vec())
+            }
+        };
 
         // Calculate the current amount of gas used
         // TODO: The copy here is only because `gas` takes `&mut self`
