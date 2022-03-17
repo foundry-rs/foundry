@@ -184,9 +184,6 @@ impl<'config, B: Backend> FuzzState for MemoryStackStateOwned<'config, B> {
                                     .write(&code[push_start..i])
                                     .expect("PUSH cannot be greater than 32 bytes");
                                 flattened.insert(to_fill);
-                            } else {
-                                // because of metadata bs, we may hit this codepath. just ignore it
-                                // and continue on
                             }
                         } else {
                             i += 1;
