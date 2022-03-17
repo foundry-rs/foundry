@@ -4,8 +4,8 @@ use ansi_term::Colour;
 use atty::{self, Stream};
 use ethers::solc::{
     remappings::Remapping,
-    report::{BasicStdoutReporter, Reporter},
-    CompilerInput, Solc,
+    report::{BasicStdoutReporter, Reporter, SolcCompilerIoReporter},
+    CompilerInput, CompilerOutput, Solc,
 };
 use once_cell::sync::Lazy;
 use semver::Version;
@@ -142,6 +142,9 @@ impl Spinner {
 pub struct SpinnerReporter {
     /// the timeout in ms
     sender: Arc<Mutex<mpsc::Sender<SpinnerMsg>>>,
+    /// A reporter that logs solc compiler input and output to separate files if configured via env
+    /// var
+    solc_io_report: SolcCompilerIoReporter,
 }
 impl SpinnerReporter {
     /// Spawns the [`Spinner`] on a new thread
@@ -150,9 +153,9 @@ impl SpinnerReporter {
     ///
     /// On drop the channel will disconnect and the thread will terminate
     pub fn spawn() -> Self {
-        let mut spinner = Spinner::new("Compiling...");
         let (sender, rx) = mpsc::channel::<SpinnerMsg>();
         std::thread::spawn(move || {
+            let mut spinner = Spinner::new("Compiling...");
             loop {
                 spinner.tick();
                 match rx.try_recv() {
@@ -178,7 +181,10 @@ impl SpinnerReporter {
                 }
             }
         });
-        SpinnerReporter { sender: Arc::new(Mutex::new(sender)) }
+        SpinnerReporter {
+            sender: Arc::new(Mutex::new(sender)),
+            solc_io_report: SolcCompilerIoReporter::from_default_env(),
+        }
     }
 
     fn send_msg(&self, msg: impl Into<String>) {
@@ -209,7 +215,7 @@ impl Reporter for SpinnerReporter {
         &self,
         _solc: &Solc,
         version: &Version,
-        _input: &CompilerInput,
+        input: &CompilerInput,
         dirty_files: &[PathBuf],
     ) {
         self.send_msg(format!(
@@ -218,7 +224,12 @@ impl Reporter for SpinnerReporter {
             version.major,
             version.minor,
             version.patch
-        ))
+        ));
+        self.solc_io_report.log_compiler_input(input);
+    }
+
+    fn on_solc_success(&self, _solc: &Solc, _version: &Version, output: &CompilerOutput) {
+        self.solc_io_report.log_compiler_output(output);
     }
 
     /// Invoked before a new [`Solc`] bin is installed
