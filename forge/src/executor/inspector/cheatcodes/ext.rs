@@ -4,6 +4,7 @@ use ethers::{
     abi::{self, AbiEncode, Token},
     prelude::{artifacts::CompactContractBytecode, ProjectPathsConfig},
 };
+use serde::Deserialize;
 use std::{fs::File, io::Read, path::Path, process::Command};
 
 fn ffi(args: &[String]) -> Result<Bytes, Bytes> {
@@ -16,6 +17,34 @@ fn ffi(args: &[String]) -> Result<Bytes, Bytes> {
     let decoded = hex::decode(&output.trim()[2..]).map_err(|err| err.to_string().encode())?;
 
     Ok(abi::encode(&[Token::Bytes(decoded.to_vec())]).into())
+}
+
+/// An enum which unifies the deserialization of Hardhat-style artifacts with Forge-style artifacts
+/// to get their bytecode.
+#[derive(Deserialize)]
+#[serde(untagged)]
+#[allow(clippy::large_enum_variant)]
+enum ArtifactBytecode {
+    Hardhat(HardhatArtifact),
+    Forge(CompactContractBytecode),
+}
+
+impl ArtifactBytecode {
+    fn into_inner(self) -> Option<ethers::types::Bytes> {
+        match self {
+            ArtifactBytecode::Hardhat(inner) => Some(inner.bytecode),
+            ArtifactBytecode::Forge(inner) => {
+                inner.bytecode.and_then(|bytecode| bytecode.object.into_bytes())
+            }
+        }
+    }
+}
+
+/// A thin wrapper around a Hardhat-style artifact that only extracts the bytecode.
+#[derive(Deserialize)]
+struct HardhatArtifact {
+    #[serde(deserialize_with = "ethers::solc::artifacts::deserialize_bytes")]
+    bytecode: ethers::types::Bytes,
 }
 
 fn get_code(path: &str) -> Result<Bytes, Bytes> {
@@ -37,10 +66,10 @@ fn get_code(path: &str) -> Result<Bytes, Bytes> {
         .read_to_string(&mut buffer)
         .map_err(|err| err.to_string().encode())?;
 
-    let artifact = serde_json::from_str::<CompactContractBytecode>(&buffer)
+    let bytecode = serde_json::from_str::<ArtifactBytecode>(&buffer)
         .map_err(|err| err.to_string().encode())?;
 
-    if let Some(bin) = artifact.bytecode.and_then(|bytecode| bytecode.object.into_bytes()) {
+    if let Some(bin) = bytecode.into_inner() {
         Ok(abi::encode(&[Token::Bytes(bin.to_vec())]).into())
     } else {
         Err("No bytecode for contract. Is it abstract or unlinked?".to_string().encode().into())
