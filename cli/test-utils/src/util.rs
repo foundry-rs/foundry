@@ -161,6 +161,12 @@ impl TestProject {
         path
     }
 
+    /// Adds DSTest as a source under "test.sol"
+    pub fn insert_ds_test(&self) -> PathBuf {
+        let s = include_str!("../../../evm-adapters/testdata/DsTest.sol");
+        self.inner().add_source("test.sol", s).unwrap()
+    }
+
     /// Asserts all project paths exist
     ///
     ///   - sources
@@ -308,6 +314,12 @@ impl TestCommand {
         self
     }
 
+    /// Convenience function to add `--root project.root()` argument
+    pub fn root_arg(&mut self) -> &mut TestCommand {
+        let root = self.project.root().to_path_buf();
+        self.arg("--root").arg(root)
+    }
+
     /// Set the environment variable `k` to value `v`. The variable will be
     /// removed when the command is dropped.
     pub fn set_env(&mut self, k: impl AsRef<str>, v: impl Display) {
@@ -334,6 +346,16 @@ impl TestCommand {
     pub fn current_dir<P: AsRef<Path>>(&mut self, dir: P) -> &mut TestCommand {
         self.cmd.current_dir(dir);
         self
+    }
+
+    /// Returns the `Config` as spit out by `forge config`
+    pub fn config(&mut self) -> Config {
+        self.fuse().args(["config", "--json"]);
+        let output = self.output();
+        let c = String::from_utf8_lossy(&output.stdout);
+        let config = serde_json::from_str(c.as_ref()).unwrap();
+        self.fuse();
+        config
     }
 
     /// Runs and captures the stdout of the given command.
@@ -368,8 +390,8 @@ impl TestCommand {
     /// Runs the command and prints its output
     pub fn print_output(&mut self) {
         let output = self.cmd.output().unwrap();
-        println!("{}", String::from_utf8_lossy(&output.stdout));
-        println!("{}", String::from_utf8_lossy(&output.stderr));
+        println!("stdout: {}", String::from_utf8_lossy(&output.stdout));
+        println!("stderr: {}", String::from_utf8_lossy(&output.stderr));
     }
 
     /// Runs the command and asserts that it resulted in an error exit code.

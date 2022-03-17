@@ -44,18 +44,23 @@ pub mod create;
 pub mod flatten;
 pub mod fmt;
 pub mod init;
+pub mod inspect;
 pub mod install;
 pub mod remappings;
 pub mod run;
 pub mod snapshot;
 pub mod test;
+pub mod tree;
 pub mod verify;
 pub mod watch;
 
-use crate::opts::forge::ContractInfo;
+use crate::{opts::forge::ContractInfo, term};
 use ethers::{
     abi::Abi,
-    prelude::artifacts::{CompactBytecode, CompactDeployedBytecode},
+    prelude::{
+        artifacts::{CompactBytecode, CompactDeployedBytecode},
+        report::NoReporter,
+    },
     solc::cache::SolFilesCache,
 };
 use std::{collections::BTreeMap, path::PathBuf};
@@ -66,7 +71,7 @@ pub trait Cmd: clap::Parser + Sized {
     fn run(self) -> eyre::Result<Self::Output>;
 }
 
-use ethers::solc::{artifacts::CompactContractBytecode, Project, ProjectCompileOutput};
+use ethers::solc::{artifacts::CompactContractBytecode, Artifact, Project, ProjectCompileOutput};
 
 use foundry_utils::to_table;
 
@@ -88,8 +93,8 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
         );
     }
 
-    println!("Compiling...");
-    let output = project.compile()?;
+    let output = term::with_spinner_reporter(|| project.compile())?;
+
     if output.has_compiler_errors() {
         eyre::bail!(output.to_string())
     } else if output.is_unchanged() {
@@ -120,16 +125,10 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
             let mut sizes = BTreeMap::new();
             for (_, contracts) in compiled_contracts.into_iter() {
                 for (name, contract) in contracts {
-                    let bytecode: CompactContractBytecode = contract.into();
-                    let size = if let Some(code) = bytecode.bytecode {
-                        if let Some(object) = code.object.as_bytes() {
-                            object.to_vec().len()
-                        } else {
-                            0
-                        }
-                    } else {
-                        0
-                    };
+                    let size = contract
+                        .get_bytecode_bytes()
+                        .map(|bytes| bytes.0.len())
+                        .unwrap_or_default();
                     sizes.insert(name, size);
                 }
             }
@@ -143,10 +142,37 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
     Ok(output)
 }
 
+/// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
+/// compilation was successful or if there was a cache hit.
+/// Doesn't print anything to stdout, thus is "suppressed".
+pub fn suppress_compile(project: &Project) -> eyre::Result<ProjectCompileOutput> {
+    if !project.paths.sources.exists() {
+        eyre::bail!(
+            r#"no contracts to compile, contracts folder "{}" does not exist.
+Check the configured workspace settings:
+{}
+If you are in a subdirectory in a Git repository, try adding `--root .`"#,
+            project.paths.sources.display(),
+            project.paths
+        );
+    }
+
+    let output = ethers::solc::report::with_scoped(
+        &ethers::solc::report::Report::new(NoReporter::default()),
+        || project.compile(),
+    )?;
+
+    if output.has_compiler_errors() {
+        eyre::bail!(output.to_string())
+    }
+
+    Ok(output)
+}
+
 /// Compile a set of files not necessarily included in the `project`'s source dir
 pub fn compile_files(project: &Project, files: Vec<PathBuf>) -> eyre::Result<ProjectCompileOutput> {
-    println!("Compiling...");
-    let output = project.compile_files(files)?;
+    let output = term::with_spinner_reporter(|| project.compile_files(files))?;
+
     if output.has_compiler_errors() {
         eyre::bail!(output.to_string())
     }

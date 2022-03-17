@@ -1,10 +1,11 @@
 pub mod cmd;
 mod opts;
+mod term;
 mod utils;
 
 use crate::cmd::{watch, Cmd};
 
-use ethers::solc::{self, report::BasicStdoutReporter, Project, ProjectPathsConfig};
+use ethers::solc::{Project, ProjectPathsConfig};
 use opts::forge::{Dependency, Opts, Subcommands};
 use std::process::Command;
 
@@ -14,7 +15,6 @@ use clap_complete::generate;
 fn main() -> eyre::Result<()> {
     color_eyre::install()?;
     utils::subscriber();
-    solc::report::init(BasicStdoutReporter::default());
 
     let opts = Opts::parse();
     match opts.sub {
@@ -74,7 +74,7 @@ fn main() -> eyre::Result<()> {
             cmd.run()?;
         }
         Subcommands::Completions { shell } => {
-            generate(shell, &mut Opts::into_app(), "forge", &mut std::io::stdout())
+            generate(shell, &mut Opts::command(), "forge", &mut std::io::stdout())
         }
         Subcommands::Clean { root } => {
             let root = root.unwrap_or_else(|| std::env::current_dir().unwrap());
@@ -92,6 +92,12 @@ fn main() -> eyre::Result<()> {
             cmd.run()?;
         }
         Subcommands::Flatten(cmd) => {
+            cmd.run()?;
+        }
+        Subcommands::Inspect(cmd) => {
+            cmd.run()?;
+        }
+        Subcommands::Tree(cmd) => {
             cmd.run()?;
         }
     }

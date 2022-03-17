@@ -7,7 +7,9 @@ use foundry_cli_test_utils::{
     forgetest, forgetest_ignore, forgetest_init, pretty_eq,
     util::{pretty_err, read_string, TestCommand, TestProject},
 };
-use foundry_config::{parse_with_profile, BasicConfig, Config, OptimizerDetails};
+use foundry_config::{
+    parse_with_profile, BasicConfig, Config, OptimizerDetails, SolidityErrorCode,
+};
 use pretty_assertions::assert_eq;
 use std::{
     env::{self},
@@ -124,6 +126,30 @@ forgetest!(can_init_non_empty, |prj: TestProject, mut cmd: TestCommand| {
     assert!(prj.root().join("lib/ds-test").exists());
 });
 
+// Checks that remappings.txt and .vscode/settings.json is generated
+forgetest!(can_init_vscode, |prj: TestProject, mut cmd: TestCommand| {
+    prj.wipe();
+
+    cmd.arg("init").arg(prj.root()).arg("--vscode");
+    cmd.assert_non_empty_stdout();
+
+    let settings = prj.root().join(".vscode/settings.json");
+    assert!(settings.is_file());
+    let settings: serde_json::Value = ethers::solc::utils::read_json_file(&settings).unwrap();
+    assert_eq!(
+        settings,
+        serde_json::json!({
+             "solidity.packageDefaultDependenciesContractsDirectory": "src",
+            "solidity.packageDefaultDependenciesDirectory": "lib"
+        })
+    );
+
+    let remappings = prj.root().join("remappings.txt");
+    assert!(remappings.is_file());
+    let content = std::fs::read_to_string(remappings).unwrap();
+    assert_eq!(content, "ds-test/=lib/ds-test/src/");
+});
+
 // checks that config works
 // - foundry.toml is properly generated
 // - paths are resolved properly
@@ -226,6 +252,12 @@ forgetest_init!(can_get_evm_opts, |prj: TestProject, mut cmd: TestCommand| {
     assert_eq!(evm_opts.fork_url, Some(url.to_string()));
 });
 
+// checks that we can set various config values
+forgetest_init!(can_set_config_values, |prj: TestProject, _cmd: TestCommand| {
+    let config = prj.config_from_output(["--via-ir"]);
+    assert!(config.via_ir);
+});
+
 // checks that `clean` removes dapptools style paths
 forgetest!(can_clean, |prj: TestProject, mut cmd: TestCommand| {
     prj.assert_create_dirs_exists();
@@ -254,9 +286,7 @@ forgetest_init!(can_emit_extra_output, |prj: TestProject, mut cmd: TestCommand| 
         ethers::solc::utils::read_json_file(artifact_path).unwrap();
     assert!(artifact.metadata.is_some());
 
-    cmd.fuse()
-        .args(["build", "--extra-output-files", "metadata", "--force", "--root"])
-        .arg(prj.root());
+    cmd.fuse().args(["build", "--extra-output-files", "metadata", "--force"]).root_arg();
     cmd.assert_non_empty_stdout();
 
     let metadata_path = prj.paths().artifacts.join("Contract.sol/Contract.metadata.json");
@@ -276,14 +306,13 @@ contract Greeter {}
         .unwrap();
 
     // explicitly set to run with 0.8.10
-    let config = Config { solc_version: Some("0.8.10".parse().unwrap()), ..Default::default() };
+    let config = Config { solc: Some("0.8.10".into()), ..Default::default() };
     prj.write_config(config);
 
     cmd.arg("build");
 
     assert!(cmd.stdout_lossy().ends_with(
-        "Compiling...
-Compiling 1 files with 0.8.10
+        "
 Compiler run successful
 ",
     ));
@@ -306,15 +335,14 @@ contract Greeter {
         .unwrap();
 
     // explicitly set to run with 0.8.10
-    let config = Config { solc_version: Some("0.8.10".parse().unwrap()), ..Default::default() };
+    let config = Config { solc: Some("0.8.10".into()), ..Default::default() };
     prj.write_config(config);
 
     cmd.arg("build");
 
     let output = cmd.stdout_lossy();
     assert!(output.contains(
-        "Compiling...
-Compiling 1 files with 0.8.10
+        "
 Compiler run successful (with warnings)
 Warning: Unused function parameter. Remove or comment out the variable name to silence this warning.
 ",
@@ -364,13 +392,43 @@ library FooLib {
 
     cmd.arg("build");
 
-    assert_eq!(
-        "Compiling...
-Compiling 2 files with 0.8.10
+    assert!(cmd.stdout_lossy().ends_with(
+        "
 Compiler run successful
-",
-        cmd.stdout_lossy()
-    );
+"
+    ));
+});
+
+// tests that `--use <solc>` works
+forgetest!(can_use_solc, |prj: TestProject, mut cmd: TestCommand| {
+    prj.inner()
+        .add_source(
+            "Foo",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity >=0.8.10;
+contract Foo {}
+   "#,
+        )
+        .unwrap();
+
+    cmd.args(["build", "--use", "0.8.11"]);
+
+    let stdout = cmd.stdout_lossy();
+    assert!(stdout.contains("Compiler run successful"));
+
+    cmd.fuse().args(["build", "--force", "--use", "solc:0.8.11"]).root_arg();
+
+    assert!(stdout.contains("Compiler run successful"));
+
+    // fails to use solc that does not exist
+    cmd.fuse().args(["build", "--use", "this/solc/does/not/exist"]);
+    assert!(cmd.stderr_lossy().contains("this/solc/does/not/exist does not exist"));
+
+    // 0.8.11 was installed in previous step, so we can use the path to this directly
+    let local_solc = ethers::solc::Solc::find_svm_installed_version("0.8.11").unwrap().unwrap();
+    cmd.fuse().args(["build", "--force", "--use"]).arg(local_solc.solc).root_arg();
+    assert!(stdout.contains("Compiler run successful"));
 });
 
 // test to ensure yul optimizer can be set as intended
@@ -408,8 +466,7 @@ contract Foo {
     prj.write_config(config);
 
     assert!(cmd.stdout_lossy().ends_with(
-        "Compiling...
-Compiling 1 files with 0.8.10
+        "
 Compiler run successful
 ",
     ));
@@ -436,20 +493,49 @@ contract Demo {
 
     cmd.arg("run").arg(script);
     let output = cmd.stdout_lossy();
-    assert_eq!(
-        format!(
-            "Compiling...
-Compiling 1 files with 0.8.10
+    assert!(output.ends_with(&format!(
+        "
 Compiler run successful
 {}
 Gas Used: 1751
 == Logs ==
 script ran
 ",
-            Colour::Green.paint("Script ran successfully.")
-        ),
-        output
-    );
+        Colour::Green.paint("Script ran successfully.")
+    ),));
+});
+
+// tests that the `inspect` command works correctly
+forgetest!(can_execute_inspect_command, |prj: TestProject, mut cmd: TestCommand| {
+    let contract_name = "Foo";
+    let _ = prj
+        .inner()
+        .add_source(
+            contract_name,
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+contract Foo {
+    event log_string(string);
+    function run() external {
+        emit log_string("script ran");
+    }
+}
+    "#,
+        )
+        .unwrap();
+
+    // Remove the ipfs hash from the metadata
+    let mut dynamic_bytecode = "0x608060405234801561001057600080fd5b5060c08061001f6000396000f3fe6080604052348015600f57600080fd5b506004361060285760003560e01c8063c040622614602d575b600080fd5b60336035565b005b7f0b2e13ff20ac7b474198655583edf70dedd2c1dc980e329c4fbb2fc0748b796b6040516080906020808252600a908201526939b1b934b83a103930b760b11b604082015260600190565b60405180910390a156fea264697066735822122065c066d19101ad1707272b9a884891af8ab0cf5a0e0bba70c4650594492c14be64736f6c634300080a0033\n".to_string();
+    let ipfs_start = dynamic_bytecode.len() - (24 + 64);
+    let ipfs_end = ipfs_start + 65;
+    dynamic_bytecode.replace_range(ipfs_start..ipfs_end, "");
+    cmd.arg("inspect").arg(contract_name).arg("bytecode");
+    let mut output = cmd.stdout_lossy();
+    output.replace_range(ipfs_start..ipfs_end, "");
+
+    // Compare the static bytecode
+    assert_eq!(dynamic_bytecode, output);
 });
 
 forgetest_init!(can_parse_dapp_libraries, |prj: TestProject, mut cmd: TestCommand| {
@@ -458,10 +544,95 @@ forgetest_init!(can_parse_dapp_libraries, |prj: TestProject, mut cmd: TestComman
         "DAPP_LIBRARIES",
         "src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6",
     );
-    let config = prj.config_from_output(std::iter::empty::<String>());
+    let config = cmd.config();
     assert_eq!(
         config.libraries,
         vec!["src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6".to_string(),]
+    );
+});
+
+// test that `forge snapshot` commands work
+forgetest!(can_check_snapshot, |prj: TestProject, mut cmd: TestCommand| {
+    prj.insert_ds_test();
+
+    prj.inner()
+        .add_source(
+            "ATest.t.sol",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+import "./test.sol";
+contract ATest is DSTest {
+    function testExample() public {
+        assertTrue(true);
+    }
+}
+   "#,
+        )
+        .unwrap();
+    prj.inner()
+        .add_source(
+            "BTest.t.sol",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+import "./test.sol";
+contract BTest is DSTest {
+    function testExample() public {
+        assertTrue(true);
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    cmd.arg("snapshot");
+
+    let out = cmd.stdout();
+    assert!(
+        out.contains("Running 1 test for BTest.json:BTest") &&
+            out.contains("Running 1 test for ATest.json:ATest")
+    );
+
+    cmd.arg("--check");
+    let _ = cmd.output();
+});
+
+// test that `forge build` does not print `(with warnings)` if there arent any
+forgetest!(can_compile_without_warnings, |prj: TestProject, mut cmd: TestCommand| {
+    let config = Config {
+        ignored_error_codes: vec![SolidityErrorCode::SpdxLicenseNotProvided],
+        ..Default::default()
+    };
+    prj.write_config(config);
+    prj.inner()
+        .add_source(
+            "A",
+            r#"
+pragma solidity 0.8.10;
+contract A {
+    function testExample() public {}
+}
+   "#,
+        )
+        .unwrap();
+
+    cmd.args(["build", "--force"]);
+    let out = cmd.stdout();
+    // no warnings
+    assert!(out.trim().contains("Compiler run successful"));
+    assert!(!out.trim().contains("Compiler run successful (with warnings)"));
+
+    // don't ignore errors
+    let config = Config { ignored_error_codes: vec![], ..Default::default() };
+    prj.write_config(config);
+    let out = cmd.stdout();
+
+    assert!(out.trim().contains("Compiler run successful (with warnings)"));
+    assert!(
+      out.contains(
+                    r#"Warning: SPDX license identifier not provided in source file. Before publishing, consider adding a comment containing "SPDX-License-Identifier: <SPDX-License>" to each source file. Use "SPDX-License-Identifier: UNLICENSED" for non-open-source code. Please see https://spdx.org for more information."#
+        )
     );
 });
 

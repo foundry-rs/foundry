@@ -10,10 +10,11 @@ use crate::cmd::{
     create::CreateArgs,
     flatten,
     init::InitArgs,
+    inspect,
     install::InstallArgs,
     remappings::RemappingArgs,
     run::RunArgs,
-    snapshot, test,
+    snapshot, test, tree,
     verify::{VerifyArgs, VerifyCheckArgs},
 };
 use serde::Serialize;
@@ -116,6 +117,10 @@ pub enum Subcommands {
     Flatten(flatten::FlattenArgs),
     // #[clap(about = "formats Solidity source files")]
     // Fmt(FmtArgs),
+    #[clap(about = "Outputs a contract in a specified format (ir, assembly, ...)")]
+    Inspect(inspect::InspectArgs),
+    #[clap(about = "Display a tree visualization of the project's dependency graph")]
+    Tree(tree::TreeArgs),
 }
 
 // A set of solc compiler settings that can be set via command line arguments, which are intended
@@ -166,14 +171,13 @@ impl FromStr for ContractInfo {
     type Err = eyre::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let err = "contract source info format must be `<path>:<contractname>` or `<contractname>`";
         let mut iter = s.rsplit(':');
-        let name = iter.next().unwrap().to_string();
+        let name = iter.next().ok_or_else(|| eyre::eyre!(err))?.trim().to_string();
         let path = iter.next().map(str::to_string);
 
         if name.ends_with(".sol") || name.contains('/') {
-            return Err(eyre::eyre!(
-                "contract source info format must be `<path>:<contractname>` or `<contractname>`"
-            ))
+            eyre::bail!(err)
         }
 
         Ok(Self { path, name })
@@ -196,7 +200,7 @@ impl FromStr for FullContractInfo {
         let (path, name) = s
             .split_once(':')
             .ok_or_else(|| eyre::eyre!("Expected `<path>:<contractname>`, got `{}`", s))?;
-        Ok(Self { path: path.to_string(), name: name.to_string() })
+        Ok(Self { path: path.to_string(), name: name.trim().to_string() })
     }
 }
 

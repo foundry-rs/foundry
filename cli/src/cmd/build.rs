@@ -95,6 +95,14 @@ pub struct BuildArgs {
     pub remappings_env: Option<String>,
 
     #[clap(
+        help = "the path where cached compiled contracts are stored",
+        long = "cache-path",
+        value_hint = ValueHint::DirPath
+    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_path: Option<PathBuf>,
+
+    #[clap(
         help = "the paths where your libraries are installed",
         long,
         value_hint = ValueHint::DirPath
@@ -133,6 +141,15 @@ pub struct BuildArgs {
     pub no_auto_detect: bool,
 
     #[clap(
+        help = "specify the solc version or path to a local solc to run with.\
+        This accepts values of the form `x.y.z`, `solc:x.y.z` or `path/to/existing/solc`",
+        value_name = "use",
+        long = "use"
+    )]
+    #[serde(skip)]
+    pub use_solc: Option<String>,
+
+    #[clap(
         help = "if set to true, runs without accessing the network (missing solc versions will not be installed)",
         long
     )]
@@ -161,6 +178,13 @@ pub struct BuildArgs {
     #[clap(flatten)]
     #[serde(skip)]
     pub watch: WatchArgs,
+
+    #[clap(
+        help = "if set to true, changes compilation pipeline to go through the Yul intermediate representation.",
+        long
+    )]
+    #[serde(skip)]
+    pub via_ir: bool,
 }
 
 impl Cmd for BuildArgs {
@@ -244,8 +268,16 @@ impl Provider for BuildArgs {
             dict.insert("auto_detect_solc".to_string(), false.into());
         }
 
+        if let Some(ref solc) = self.use_solc {
+            dict.insert("solc".to_string(), solc.trim_start_matches("solc:").into());
+        }
+
         if self.offline {
             dict.insert("offline".to_string(), true.into());
+        }
+
+        if self.via_ir {
+            dict.insert("via_ir".to_string(), true.into());
         }
 
         if self.force {

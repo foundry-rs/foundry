@@ -506,21 +506,15 @@ struct SharedBackendInner {
 #[cfg(test)]
 mod tests {
     use crate::sputnik::vicinity;
-    use ethers::{
-        providers::{Http, Provider},
-        types::Address,
-    };
-    use std::convert::TryFrom;
+    use ethers::types::Address;
+
     use tokio::runtime::Runtime;
 
     use super::*;
 
     #[test]
     fn shared_backend() {
-        let provider = Provider::<Http>::try_from(
-            "https://mainnet.infura.io/v3/c60b0bb42f8a4c6481ecd229eddaca27",
-        )
-        .unwrap();
+        let provider = ethers::providers::MAINNET.provider();
         // some rng contract from etherscan
         let address: Address = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();
 

@@ -2,6 +2,7 @@
 use std::{
     borrow::Cow,
     path::{Path, PathBuf},
+    str::FromStr,
 };
 
 use figment::{
@@ -12,12 +13,13 @@ use figment::{
 // reexport so cli types can implement `figment::Provider` to easily merge compiler arguments
 pub use figment;
 use semver::Version;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use ethers_core::types::{Address, U256};
 pub use ethers_solc::artifacts::OptimizerDetails;
 use ethers_solc::{
     artifacts::{output_selection::ContractOutputSelection, Optimizer, Settings},
+    cache::SOLIDITY_FILES_CACHE_FILENAME,
     error::SolcError,
     remappings::{RelativeRemapping, Remapping},
     ConfigurableArtifacts, EvmVersion, Project, ProjectPathsConfig, Solc, SolcConfig,
@@ -87,6 +89,8 @@ pub struct Config {
     pub libraries: Vec<String>,
     /// whether to enable cache
     pub cache: bool,
+    /// where the cache is stored if enabled
+    pub cache_path: PathBuf,
     /// whether to force a `project.clean()`
     pub force: bool,
     /// evm version to use
@@ -94,11 +98,14 @@ pub struct Config {
     pub evm_version: EvmVersion,
     /// list of contracts to report gas of
     pub gas_reports: Vec<String>,
-    /// Concrete solc version to use if any.
+    /// The Solc instance to use if any.
     ///
     /// This takes precedence over `auto_detect_solc`, if a version is set then this overrides
     /// auto-detection.
-    pub solc_version: Option<Version>,
+    ///
+    /// **Note** for backwards compatibility reasons this also accepts solc_version from the toml
+    /// file, see [`BackwardsCompatProvider`]
+    pub solc: Option<SolcReq>,
     /// whether to autodetect the solc compiler version to use
     pub auto_detect_solc: bool,
     /// Offline mode, if set, network access (downloading solc) is disallowed.
@@ -120,8 +127,8 @@ pub struct Config {
     pub verbosity: u8,
     /// url of the rpc server that should be used for any rpc calls
     pub eth_rpc_url: Option<String>,
-    /// list of solidity error codes to always silence
-    pub ignored_error_codes: Vec<u64>,
+    /// list of solidity error codes to always silence in the compiler output
+    pub ignored_error_codes: Vec<SolidityErrorCode>,
     /// The number of test cases that must execute for each property test
     pub fuzz_runs: u32,
     /// Whether to allow ffi cheatcodes in test
@@ -190,6 +197,9 @@ pub struct Config {
     pub names: bool,
     /// Print the sizes of the compiled contracts
     pub sizes: bool,
+    /// If set to true, changes compilation pipeline to go through the Yul intermediate
+    /// representation.
+    pub via_ir: bool,
     /// The root path where the config detection started from, `Config::with_root`
     #[doc(hidden)]
     //  We're skipping serialization here, so it won't be included in the [`Config::to_string()`]
@@ -330,6 +340,8 @@ impl Config {
         self.remappings =
             self.remappings.into_iter().map(|r| RelativeRemapping::new(r.into(), &root)).collect();
 
+        self.cache_path = p(&root, &self.cache_path);
+
         self
     }
 
@@ -381,7 +393,7 @@ impl Config {
             .allowed_path(&self.__root.0)
             .allowed_paths(&self.libs)
             .solc_config(SolcConfig::builder().settings(self.solc_settings()?).build())
-            .ignore_error_codes(self.ignored_error_codes.clone())
+            .ignore_error_codes(self.ignored_error_codes.iter().copied().map(Into::into))
             .set_auto_detect(self.is_auto_detect())
             .set_offline(self.offline)
             .set_cached(cached)
@@ -392,7 +404,7 @@ impl Config {
             project.cleanup()?;
         }
 
-        if let Some(solc) = self.ensure_solc_version()? {
+        if let Some(solc) = self.ensure_solc()? {
             project.solc = solc;
         }
 
@@ -400,18 +412,37 @@ impl Config {
     }
 
     /// Ensures that the configured version is installed if explicitly set
-    fn ensure_solc_version(&self) -> Result<Option<Solc>, SolcError> {
-        if let Some(ref version) = self.solc_version {
-            let v = version.to_string();
-            let mut solc = Solc::find_svm_installed_version(&v)?;
-            if solc.is_none() {
-                Solc::blocking_install(version)?;
-                solc = Solc::find_svm_installed_version(&v)?;
-            }
-            Ok(solc)
-        } else {
-            Ok(None)
+    ///
+    /// If `solc` is [`SolcReq::Version`] then this will download and install the solc version if
+    /// it's missing.
+    ///
+    /// If `solc` is [`SolcReq::Local`] then this will ensure that the path exists.
+    fn ensure_solc(&self) -> Result<Option<Solc>, SolcError> {
+        if let Some(ref solc) = self.solc {
+            let solc = match solc {
+                SolcReq::Version(version) => {
+                    let v = version.to_string();
+                    let mut solc = Solc::find_svm_installed_version(&v)?;
+                    if solc.is_none() {
+                        Solc::blocking_install(version)?;
+                        solc = Solc::find_svm_installed_version(&v)?;
+                    }
+                    solc
+                }
+                SolcReq::Local(solc) => {
+                    if !solc.is_file() {
+                        return Err(SolcError::msg(format!(
+                            "`solc` {} does not exist",
+                            solc.display()
+                        )))
+                    }
+                    Some(Solc::new(solc))
+                }
+            };
+            return Ok(solc)
         }
+
+        Ok(None)
     }
 
     /// Returns whether the compiler version should be auto-detected
@@ -419,7 +450,7 @@ impl Config {
     /// Returns `false` if `solc_version` is explicitly set, otherwise returns the value of
     /// `auto_detect_solc`
     pub fn is_auto_detect(&self) -> bool {
-        if self.solc_version.is_some() {
+        if self.solc.is_some() {
             return false
         }
         self.auto_detect_solc
@@ -439,6 +470,7 @@ impl Config {
     /// ```
     pub fn project_paths(&self) -> ProjectPathsConfig {
         ProjectPathsConfig::builder()
+            .cache(&self.cache_path.join(SOLIDITY_FILES_CACHE_FILENAME))
             .sources(&self.src)
             .artifacts(&self.out)
             .libs(self.libs.clone())
@@ -502,7 +534,7 @@ impl Config {
         let libraries = parse_libraries(&self.libraries)?;
         let optimizer = self.optimizer();
 
-        let settings = Settings {
+        let mut settings = Settings {
             optimizer,
             evm_version: Some(self.evm_version),
             libraries,
@@ -510,6 +542,10 @@ impl Config {
         }
         .with_extra_output(self.configured_artifacts_handler().output_selection())
         .with_ast();
+
+        if self.via_ir {
+            settings = settings.with_via_ir();
+        }
 
         Ok(settings)
     }
@@ -698,13 +734,15 @@ impl From<Config> for Figment {
 
         // check global foundry.toml file
         if let Some(global_toml) = Config::foundry_dir_toml().filter(|p| p.exists()) {
-            figment = figment.merge(ForcedSnakeCaseData(Toml::file(global_toml).nested()))
+            figment = figment.merge(BackwardsCompatProvider(ForcedSnakeCaseData(
+                Toml::file(global_toml).nested(),
+            )))
         }
 
         figment = figment
-            .merge(ForcedSnakeCaseData(
+            .merge(BackwardsCompatProvider(ForcedSnakeCaseData(
                 Toml::file(Env::var_or("FOUNDRY_CONFIG", Config::FILE_NAME)).nested(),
-            ))
+            )))
             .merge(Env::prefixed("DAPP_").ignore(&["REMAPPINGS", "LIBRARIES"]).global())
             .merge(Env::prefixed("DAPP_TEST_").global())
             .merge(DappEnvCompatProvider)
@@ -793,10 +831,11 @@ impl Default for Config {
             out: "out".into(),
             libs: vec!["lib".into()],
             cache: true,
+            cache_path: "cache".into(),
             force: false,
             evm_version: Default::default(),
             gas_reports: vec!["*".to_string()],
-            solc_version: None,
+            solc: None,
             auto_detect_solc: true,
             offline: false,
             optimizer: true,
@@ -829,8 +868,74 @@ impl Default for Config {
             verbosity: 0,
             remappings: vec![],
             libraries: vec![],
-            ignored_error_codes: vec![],
+            ignored_error_codes: vec![SolidityErrorCode::SpdxLicenseNotProvided],
             __non_exhaustive: (),
+            via_ir: false,
+        }
+    }
+}
+/// A non-exhaustive list of solidity error codes
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum SolidityErrorCode {
+    /// Warning that SPDX license identifier not provided in source file
+    SpdxLicenseNotProvided,
+    Other(u64),
+}
+
+impl From<SolidityErrorCode> for u64 {
+    fn from(code: SolidityErrorCode) -> u64 {
+        match code {
+            SolidityErrorCode::SpdxLicenseNotProvided => 1878,
+            SolidityErrorCode::Other(code) => code,
+        }
+    }
+}
+
+impl From<u64> for SolidityErrorCode {
+    fn from(code: u64) -> Self {
+        match code {
+            1878 => SolidityErrorCode::SpdxLicenseNotProvided,
+            other => SolidityErrorCode::Other(other),
+        }
+    }
+}
+
+impl Serialize for SolidityErrorCode {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_u64((*self).into())
+    }
+}
+
+impl<'de> Deserialize<'de> for SolidityErrorCode {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        u64::deserialize(deserializer).map(Into::into)
+    }
+}
+
+/// Variants for selecting the [`Solc`] instance
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum SolcReq {
+    /// Requires a specific solc version, that's either already installed (via `svm`) or will be
+    /// auto installed (via `svm`)
+    Version(Version),
+    /// Path to an existing local solc installation
+    Local(PathBuf),
+}
+
+impl<T: AsRef<str>> From<T> for SolcReq {
+    fn from(s: T) -> Self {
+        let s = s.as_ref();
+        if let Ok(v) = Version::from_str(s) {
+            SolcReq::Version(v)
+        } else {
+            SolcReq::Local(s.into())
         }
     }
 }
@@ -847,6 +952,26 @@ impl<F: Format> Provider for ForcedSnakeCaseData<F> {
         let mut map = Map::new();
         for (profile, dict) in self.0.data()? {
             map.insert(profile, dict.into_iter().map(|(k, v)| (k.to_snake_case(), v)).collect());
+        }
+        Ok(map)
+    }
+}
+
+/// A Provider that handles breaking changes
+struct BackwardsCompatProvider<P>(P);
+
+impl<P: Provider> Provider for BackwardsCompatProvider<P> {
+    fn metadata(&self) -> Metadata {
+        Metadata::named("Backwards compat provider")
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+        let mut map = Map::new();
+        for (profile, mut dict) in self.0.data()? {
+            if let Some(v) = dict.remove("solc_version") {
+                dict.insert("solc".to_string(), v);
+            }
+            map.insert(profile, dict);
         }
         Ok(map)
     }
@@ -1194,6 +1319,20 @@ mod tests {
             jail.set_env("FOUNDRY_PROFILE", "hardhat");
             let figment: Figment = Config::hardhat().into();
             assert_eq!(figment.profile(), "hardhat");
+
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                libs = ['lib']
+                [local]
+                libs = ['modules']
+            "#,
+            )?;
+            jail.set_env("FOUNDRY_PROFILE", "local");
+            let config = Config::load();
+            assert_eq!(config.libs, vec![PathBuf::from("modules")]);
+
             Ok(())
         });
     }
@@ -1326,6 +1465,7 @@ mod tests {
                 eth_rpc_url = "https://example.com/"
                 verbosity = 3
                 remappings = ["ds-test=lib/ds-test/"]
+                via_ir = true
             "#,
             )?;
 
@@ -1339,9 +1479,50 @@ mod tests {
                     eth_rpc_url: Some("https://example.com/".to_string()),
                     remappings: vec![Remapping::from_str("ds-test=lib/ds-test/").unwrap().into()],
                     verbosity: 3,
+                    via_ir: true,
                     ..Config::default()
                 }
             );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_solc_req() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                solc_version = "0.8.12"
+            "#,
+            )?;
+
+            let config = Config::load();
+            assert_eq!(config.solc, Some(SolcReq::Version("0.8.12".parse().unwrap())));
+
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                solc = "0.8.12"
+            "#,
+            )?;
+
+            let config = Config::load();
+            assert_eq!(config.solc, Some(SolcReq::Version("0.8.12".parse().unwrap())));
+
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                solc = "path/to/local/solc"
+            "#,
+            )?;
+
+            let config = Config::load();
+            assert_eq!(config.solc, Some(SolcReq::Local("path/to/local/solc".into())));
 
             Ok(())
         });

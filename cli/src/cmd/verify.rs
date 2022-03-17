@@ -59,14 +59,22 @@ pub async fn run_verify(args: &VerifyArgs) -> eyre::Result<()> {
         eyre::bail!("Contract info must be provided in the format <path>:<name>")
     }
 
-    let CoreFlattenArgs { root, contracts, remappings, remappings_env, lib_paths, hardhat } =
-        args.opts.clone();
+    let CoreFlattenArgs {
+        root,
+        contracts,
+        remappings,
+        remappings_env,
+        cache_path,
+        lib_paths,
+        hardhat,
+    } = args.opts.clone();
 
     let build_args = BuildArgs {
         root,
         contracts,
         remappings,
         remappings_env,
+        cache_path,
         lib_paths,
         out_path: None,
         compiler: Default::default(),
@@ -74,11 +82,13 @@ pub async fn run_verify(args: &VerifyArgs) -> eyre::Result<()> {
         sizes: false,
         ignored_error_codes: vec![],
         no_auto_detect: false,
+        use_solc: None,
         offline: false,
         force: false,
         hardhat,
         libraries: vec![],
         watch: Default::default(),
+        via_ir: false,
     };
 
     let project = build_args.project()?;

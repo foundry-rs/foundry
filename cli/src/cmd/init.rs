@@ -8,7 +8,7 @@ use crate::{
 use clap::{Parser, ValueHint};
 use foundry_config::Config;
 
-use crate::cmd::install::DependencyInstallOpts;
+use crate::cmd::{install::DependencyInstallOpts, remappings};
 use ansi_term::Colour;
 use ethers::solc::remappings::Remapping;
 use std::{
@@ -46,13 +46,19 @@ pub struct InitArgs {
     offline: bool,
     #[clap(help = "force init if project dir is not empty", conflicts_with = "template", long)]
     force: bool,
+    #[clap(
+        help = "initialize .vscode/settings.json file with solidity settings and generate a remappings.txt file.",
+        conflicts_with = "template",
+        long
+    )]
+    vscode: bool,
 }
 
 impl Cmd for InitArgs {
     type Output = ();
 
     fn run(self) -> eyre::Result<Self::Output> {
-        let InitArgs { root, template, no_git, no_commit, quiet, offline, force } = self;
+        let InitArgs { root, template, no_git, no_commit, quiet, offline, force, vscode } = self;
 
         let root = root.unwrap_or_else(|| std::env::current_dir().unwrap());
         // create the root dir if it does not exist
@@ -122,13 +128,17 @@ impl Cmd for InitArgs {
             if !offline {
                 let opts = DependencyInstallOpts { no_git, no_commit, quiet };
 
-                if Path::new(&root.join("lib/ds-test")).exists() {
+                if root.join("lib/ds-test").exists() {
                     println!("\"lib/ds-test\" already exists, skipping install....");
                     install(&root, vec![], opts)?;
                 } else {
                     Dependency::from_str("https://github.com/dapphub/ds-test")
                         .and_then(|dependency| install(&root, vec![dependency], opts))?;
                 }
+            }
+            // vscode init
+            if vscode {
+                init_vscode(&root)?;
             }
         }
 
@@ -169,6 +179,48 @@ fn init_git_repo(root: &Path, no_commit: bool) -> eyre::Result<()> {
                 .wait()?;
         }
     }
+
+    Ok(())
+}
+
+/// initializes the `.vscode/settings.json` file
+fn init_vscode(root: &Path) -> eyre::Result<()> {
+    let remappings_file = root.join("remappings.txt");
+    if !remappings_file.exists() {
+        let remappings = remappings::relative_remappings(&root.join("lib"), root)
+            .into_iter()
+            .map(|r| r.to_string())
+            .collect::<Vec<_>>();
+        if !remappings.is_empty() {
+            let content = remappings.join("\n");
+            std::fs::write(remappings_file, content)?;
+        }
+    }
+
+    let vscode_dir = root.join(".vscode");
+    let settings_file = vscode_dir.join("settings.json");
+    let mut settings = if !vscode_dir.is_dir() {
+        std::fs::create_dir_all(&vscode_dir)?;
+        serde_json::json!({})
+    } else if settings_file.exists() {
+        ethers::solc::utils::read_json_file(&settings_file)?
+    } else {
+        serde_json::json!({})
+    };
+
+    let obj = settings.as_object_mut().expect("Expected settings object");
+    // insert [vscode-solidity settings](https://github.com/juanfranblanco/vscode-solidity)
+    let src_key = "solidity.packageDefaultDependenciesContractsDirectory";
+    if !obj.contains_key(src_key) {
+        obj.insert(src_key.to_string(), serde_json::Value::String("src".to_string()));
+    }
+    let lib_key = "solidity.packageDefaultDependenciesDirectory";
+    if !obj.contains_key(lib_key) {
+        obj.insert(lib_key.to_string(), serde_json::Value::String("lib".to_string()));
+    }
+
+    let content = serde_json::to_string_pretty(&settings)?;
+    std::fs::write(settings_file, content)?;
 
     Ok(())
 }

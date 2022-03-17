@@ -1,5 +1,6 @@
 pub mod cmd;
 
+mod term;
 mod utils;
 
 use cast::{Cast, SimpleCast};
@@ -150,6 +151,22 @@ async fn main() -> eyre::Result<()> {
                 )?
             );
         }
+        Subcommands::AccessList { eth, address, sig, args, block, to_json } => {
+            let provider = Provider::try_from(eth.rpc_url()?)?;
+            println!(
+                "{}",
+                Cast::new(provider)
+                    .access_list(
+                        eth.from.unwrap_or(Address::zero()),
+                        address,
+                        (&sig, args),
+                        eth.chain,
+                        block,
+                        to_json,
+                    )
+                    .await?
+            );
+        }
         Subcommands::Block { rpc_url, block, full, field, to_json } => {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).block(block, full, field, to_json).await?);
@@ -224,7 +241,7 @@ async fn main() -> eyre::Result<()> {
             let chain_id = Cast::new(&provider).chain_id().await?;
             let sig = sig.unwrap_or_default();
 
-            if let Some(signer) = eth.signer_with(chain_id, provider.clone()).await? {
+            if let Ok(Some(signer)) = eth.signer_with(chain_id, provider.clone()).await {
                 match signer {
                     WalletType::Ledger(signer) => {
                         cast_send(
@@ -284,8 +301,7 @@ async fn main() -> eyre::Result<()> {
                         .await?;
                     }
                 }
-            } else {
-                let from = eth.from.expect("No ETH_FROM or signer specified");
+            } else if let Some(from) = eth.from {
                 cast_send(
                     provider,
                     from,
@@ -303,6 +319,8 @@ async fn main() -> eyre::Result<()> {
                     to_json,
                 )
                 .await?;
+            } else {
+                eyre::bail!("No wallet or sender address provided.")
             }
         }
         Subcommands::PublishTx { eth, raw_tx, cast_async } => {
@@ -722,7 +740,7 @@ async fn main() -> eyre::Result<()> {
             }
         },
         Subcommands::Completions { shell } => {
-            generate(shell, &mut Opts::into_app(), "cast", &mut std::io::stdout())
+            generate(shell, &mut Opts::command(), "cast", &mut std::io::stdout())
         }
     };
     Ok(())

@@ -225,17 +225,13 @@ mod tests {
         forked_backend::MemCache, helpers::new_vicinity, new_shared_cache, SharedBackend,
         SharedCache,
     };
-    use ethers::{
-        abi::Address,
-        prelude::{Http, Provider},
-    };
+    use ethers::abi::Address;
     use once_cell::sync::Lazy;
     use sputnik::{
         backend::{MemoryBackend, MemoryVicinity},
         executor::stack::MemoryStackState,
         Config,
     };
-    use std::convert::TryFrom;
 
     // We need a bunch of global static values in order to satisfy sputnik's lifetime requirements
     // for `'static` so that we can Send them
@@ -256,10 +252,7 @@ mod tests {
     // shareable
     static G_FORKED_BACKEND: Lazy<GlobalBackend> = Lazy::new(|| {
         let cache = new_shared_cache(MemCache::default());
-        let provider = Provider::<Http>::try_from(
-            "https://mainnet.infura.io/v3/c60b0bb42f8a4c6481ecd229eddaca27",
-        )
-        .unwrap();
+        let provider = ethers::providers::MAINNET.provider();
         let vicinity = G_VICINITY.clone();
         let backend = SharedBackend::new(Arc::new(provider), cache.clone(), vicinity, None);
         GlobalBackend { cache, backend }

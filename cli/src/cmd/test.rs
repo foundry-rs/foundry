@@ -3,10 +3,11 @@
 use crate::{
     cmd::{build::BuildArgs, Cmd},
     opts::evm::EvmArgs,
+    utils,
 };
 use ansi_term::Colour;
 use clap::{AppSettings, Parser};
-use ethers::solc::{ArtifactOutput, Project};
+use ethers::solc::{ArtifactOutput, ProjectCompileOutput};
 use evm_adapters::{
     call_tracing::ExecutionInfo, evm_opts::EvmOpts, gas_report::GasReport, sputnik::helpers::vm,
 };
@@ -183,6 +184,7 @@ impl Cmd for TestArgs {
 
         // Set up the project
         let project = config.project()?;
+        let output = super::compile(&project, false, false)?;
 
         // prepare the test builder
         let mut evm_cfg = crate::utils::sputnik_cfg(&config.evm_version);
@@ -196,7 +198,7 @@ impl Cmd for TestArgs {
 
         test(
             builder,
-            project,
+            output,
             evm_opts,
             filter,
             json,
@@ -221,6 +223,16 @@ pub struct Test {
 impl Test {
     pub fn gas_used(&self) -> u64 {
         self.result.gas_used
+    }
+
+    /// Returns the contract name of the artifact id
+    pub fn contract_name(&self) -> &str {
+        utils::get_contract_name(&self.artifact_id)
+    }
+
+    /// Returns the file name of the artifact id
+    pub fn file_name(&self) -> &str {
+        utils::get_file_name(&self.artifact_id)
     }
 }
 
@@ -314,7 +326,7 @@ fn short_test_result(name: &str, result: &forge::TestResult) {
 /// Runs all the tests
 fn test<A: ArtifactOutput + 'static>(
     builder: MultiContractRunnerBuilder,
-    project: Project<A>,
+    output: ProjectCompileOutput<A>,
     mut evm_opts: EvmOpts,
     filter: Filter,
     json: bool,
@@ -324,10 +336,10 @@ fn test<A: ArtifactOutput + 'static>(
     let verbosity = evm_opts.verbosity;
     let gas_reporting = gas_reports.0;
     if gas_reporting && evm_opts.verbosity < 3 {
-        // force evm to do tracing, but dont hit the verbosity print path
+        // force evm to do tracing, but don't hit the verbosity print path
         evm_opts.verbosity = 3;
     }
-    let mut runner = builder.build(project, evm_opts)?;
+    let mut runner = builder.build(output, evm_opts)?;
 
     if json {
         let results = runner.test(&filter, None)?;

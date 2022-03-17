@@ -1,12 +1,9 @@
 //! Snapshot command
 
-use crate::{
-    cmd::{
-        test,
-        test::{Test, TestOutcome},
-        Cmd,
-    },
-    utils,
+use crate::cmd::{
+    test,
+    test::{Test, TestOutcome},
+    Cmd,
 };
 use ansi_term::Colour;
 use clap::{Parser, ValueHint};
@@ -42,19 +39,26 @@ pub struct SnapshotArgs {
         help = "Compare against a snapshot and display changes from the snapshot. Takes an optional snapshot file, [default: .gas-snapshot]",
         conflicts_with = "snap",
         long,
-        value_hint = ValueHint::FilePath
+        value_hint = ValueHint::FilePath,
+        value_name = "SNAPSHOT_FILE",
     )]
     diff: Option<Option<PathBuf>>,
     #[clap(
         help = "Run snapshot in 'check' mode and compares against an existing snapshot file, [default: .gas-snapshot]. Exits with 0 if snapshots match. Exits with 1 and prints a diff otherwise",
         conflicts_with = "diff",
         long,
-        value_hint = ValueHint::FilePath
+        value_hint = ValueHint::FilePath,
+        value_name = "SNAPSHOT_FILE",
     )]
     check: Option<Option<PathBuf>>,
     #[clap(help = "How to format the output.", long)]
     format: Option<Format>,
-    #[clap(help = "Output file for the snapshot.", default_value = ".gas-snapshot", long)]
+    #[clap(
+        help = "Output file for the snapshot.",
+        default_value = ".gas-snapshot",
+        long,
+        value_name = "SNAPSHOT_FILE"
+    )]
     snap: PathBuf,
 }
 
@@ -151,7 +155,7 @@ impl SnapshotConfig {
 /// Has the form `<signature>(gas:? 40181)`
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct SnapshotEntry {
-    pub file_name: String,
+    pub contract_name: String,
     pub signature: String,
     pub gas_used: TestKindGas,
 }
@@ -167,7 +171,7 @@ impl FromStr for SnapshotEntry {
                     cap.name("sig").and_then(|sig| {
                         if let Some(gas) = cap.name("gas") {
                             Some(SnapshotEntry {
-                                file_name: file.as_str().to_string(),
+                                contract_name: file.as_str().to_string(),
                                 signature: sig.as_str().to_string(),
                                 gas_used: TestKindGas::Standard(gas.as_str().parse().unwrap()),
                             })
@@ -178,7 +182,7 @@ impl FromStr for SnapshotEntry {
                                         .and_then(|avg| cap.name("med").map(|med| (runs, avg, med)))
                                 })
                                 .map(|(runs, avg, med)| SnapshotEntry {
-                                    file_name: file.as_str().to_string(),
+                                    contract_name: file.as_str().to_string(),
                                     signature: sig.as_str().to_string(),
                                     gas_used: TestKindGas::Fuzz {
                                         runs: runs.as_str().parse().unwrap(),
@@ -221,7 +225,7 @@ fn write_to_snapshot_file(
         writeln!(
             out,
             "{}:{} {}",
-            utils::get_contract_name(&test.artifact_id),
+            test.contract_name(),
             test.signature,
             test.result.kind.gas_used()
         )?;
@@ -256,22 +260,30 @@ impl SnapshotDiff {
 ///
 /// Returns true all tests match
 fn check(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> bool {
-    let snaps = snaps.into_iter().map(|s| (s.signature, s.gas_used)).collect::<HashMap<_, _>>();
+    let snaps = snaps
+        .into_iter()
+        .map(|s| ((s.contract_name, s.signature), s.gas_used))
+        .collect::<HashMap<_, _>>();
     let mut has_diff = false;
-
     for test in tests {
-        if let Some(target_gas) = snaps.get(&test.signature).cloned() {
+        if let Some(target_gas) =
+            snaps.get(&(test.contract_name().to_string(), test.signature.clone())).cloned()
+        {
             let source_gas = test.result.kind.gas_used();
             if source_gas.gas() != target_gas.gas() {
-                println!(
-                    "Diff in \"{}\": consumed \"{}\" gas, expected \"{}\" gas ",
-                    test.signature, source_gas, target_gas
+                eprintln!(
+                    "Diff in \"{}::{}\": consumed \"{}\" gas, expected \"{}\" gas ",
+                    test.contract_name(),
+                    test.signature,
+                    source_gas,
+                    target_gas
                 );
                 has_diff = true;
             }
         } else {
-            println!(
-                "No matching snapshot entry found for \"{}\" in snapshot file",
+            eprintln!(
+                "No matching snapshot entry found for \"{}::{}\" in snapshot file",
+                test.contract_name(),
                 test.signature
             );
             has_diff = true;
@@ -282,15 +294,21 @@ fn check(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> bool {
 
 /// Compare the set of tests with an existing snapshot
 fn diff(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> eyre::Result<()> {
-    let snaps = snaps.into_iter().map(|s| (s.signature, s.gas_used)).collect::<HashMap<_, _>>();
+    let snaps = snaps
+        .into_iter()
+        .map(|s| ((s.contract_name, s.signature), s.gas_used))
+        .collect::<HashMap<_, _>>();
     let mut diffs = Vec::with_capacity(tests.len());
     for test in tests.into_iter() {
-        let target_gas_used = snaps.get(&test.signature).cloned().ok_or_else(|| {
-            eyre::eyre!(
-                "No matching snapshot entry found for \"{}\" in snapshot file",
-                test.signature
-            )
-        })?;
+        let target_gas_used = snaps
+            .get(&(test.contract_name().to_string(), test.signature.clone()))
+            .cloned()
+            .ok_or_else(|| {
+                eyre::eyre!(
+                    "No matching snapshot entry found for \"{}\" in snapshot file",
+                    test.signature
+                )
+            })?;
 
         diffs.push(SnapshotDiff {
             source_gas_used: test.result.kind.gas_used(),
@@ -357,7 +375,7 @@ mod tests {
         assert_eq!(
             entry,
             SnapshotEntry {
-                file_name: "Test".to_string(),
+                contract_name: "Test".to_string(),
                 signature: "deposit()".to_string(),
                 gas_used: TestKindGas::Standard(7222)
             }
@@ -371,7 +389,7 @@ mod tests {
         assert_eq!(
             entry,
             SnapshotEntry {
-                file_name: "Test".to_string(),
+                contract_name: "Test".to_string(),
                 signature: "deposit()".to_string(),
                 gas_used: TestKindGas::Fuzz { runs: 256, median: 200, mean: 100 }
             }
