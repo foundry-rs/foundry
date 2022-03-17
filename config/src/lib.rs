@@ -1479,7 +1479,7 @@ mod tests {
                     eth_rpc_url: Some("https://example.com/".to_string()),
                     remappings: vec![Remapping::from_str("ds-test=lib/ds-test/").unwrap().into()],
                     verbosity: 3,
-                    via_ir :true,
+                    via_ir: true,
                     ..Config::default()
                 }
             );
