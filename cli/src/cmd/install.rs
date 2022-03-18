@@ -88,8 +88,7 @@ pub(crate) fn install(
 /// installs the dependency as an ordinary folder instead of a submodule
 fn install_as_folder(dep: &Dependency, libs: &Path) -> eyre::Result<()> {
     let output = Command::new("git")
-        // --quiet prevents git from sending info messages to stderr
-        .args(&["clone", "--quiet", &dep.url, &dep.name])
+        .args(&["clone", &dep.url, &dep.name])
         .current_dir(&libs)
         .stdout(Stdio::piped())
         .output()?;
@@ -127,8 +126,7 @@ fn install_as_folder(dep: &Dependency, libs: &Path) -> eyre::Result<()> {
 fn install_as_submodule(dep: &Dependency, libs: &Path, no_commit: bool) -> eyre::Result<()> {
     // install the dep
     let output = Command::new("git")
-        // --quiet prevents git from sending info messages to stderr
-        .args(&["submodule", "add", "--quiet", &dep.url, &dep.name])
+        .args(&["submodule", "add", &dep.url, &dep.name])
         .current_dir(&libs)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
