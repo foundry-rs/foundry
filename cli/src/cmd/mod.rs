@@ -71,7 +71,9 @@ pub trait Cmd: clap::Parser + Sized {
     fn run(self) -> eyre::Result<Self::Output>;
 }
 
-use ethers::solc::{artifacts::CompactContractBytecode, Artifact, Project, ProjectCompileOutput};
+use ethers::solc::{
+    artifacts::CompactContractBytecode, Artifact, FileFilter, Project, ProjectCompileOutput,
+};
 
 use foundry_utils::to_table;
 
@@ -86,6 +88,9 @@ pub fn compile(
 }
 
 /// Helper type to configure how to compile a project
+///
+/// This is merely a wrapper for [Project::compile()] which also prints to stdout dependent on its
+/// settings
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ProjectCompiler {
     /// whether to also print the contract names
@@ -103,6 +108,15 @@ impl ProjectCompiler {
     /// Compiles the project with [`Project::compile()`]
     pub fn compile(self, project: &Project) -> eyre::Result<ProjectCompileOutput> {
         self.compile_with(project, |prj| Ok(prj.compile()?))
+    }
+
+    /// Compiles the project with [`Project::compile_parse()`] and the given filter
+    pub fn compile_parse<F: FileFilter + 'static>(
+        self,
+        project: &Project,
+        filter: F,
+    ) -> eyre::Result<ProjectCompileOutput> {
+        self.compile_with(project, |prj| Ok(prj.compile_sparse(filter)?))
     }
 
     /// Compiles the project with the given closure
@@ -130,7 +144,7 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
             );
         }
 
-        let output = term::with_spinner_reporter(|| f(&project))?;
+        let output = term::with_spinner_reporter(|| f(project))?;
 
         if output.has_compiler_errors() {
             eyre::bail!(output.to_string())

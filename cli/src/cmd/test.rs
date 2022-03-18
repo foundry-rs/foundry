@@ -4,6 +4,7 @@ use crate::{
     cmd::{build::BuildArgs, Cmd, ProjectCompiler},
     opts::evm::EvmArgs,
     utils,
+    utils::FoundryPathExt,
 };
 use ansi_term::Colour;
 use clap::{AppSettings, Parser};
@@ -71,15 +72,27 @@ pub struct Filter {
         alias = "nmp",
         help = "only run test methods in source files at path not matching regex. Requires absolute path",
         conflicts_with = "pattern",
+        conflicts_with = "match-path",
         parse(try_from_str = parse_line_matching_regex)
     )]
     pub path_pattern_inverse: Option<regex::Regex>,
 }
 
 impl FileFilter for Filter {
+    /// Returns true if the file regex pattern match the `file`
+    ///
+    /// If no file regex is set this returns true if the file ends with `.t.sol`, see
+    /// [FoundryPathExr::is_sol_test()]
     fn is_match(&self, file: &Path) -> bool {
-        if let Some(ref re_path) = self.path_pattern {}
-        todo!()
+        if let Some(file) = file.as_os_str().to_str() {
+            if let Some(ref re_path) = self.path_pattern {
+                return re_path.is_match(file)
+            }
+            if let Some(ref re_path) = self.test_pattern_inverse {
+                return !re_path.is_match(file)
+            }
+        }
+        file.is_sol_test()
     }
 }
 
@@ -101,15 +114,14 @@ impl TestFilter for Filter {
     }
 
     fn matches_contract(&self, contract_name: impl AsRef<str>) -> bool {
-        let mut ok = true;
         let contract_name = contract_name.as_ref();
         if let Some(re) = &self.contract_pattern {
-            ok &= re.is_match(contract_name);
+            return re.is_match(contract_name)
         }
         if let Some(re) = &self.contract_pattern_inverse {
-            ok &= !re.is_match(contract_name);
+            return !re.is_match(contract_name)
         }
-        ok
+        true
     }
 
     fn matches_path(&self, path: impl AsRef<str>) -> bool {
@@ -197,7 +209,7 @@ impl Cmd for TestArgs {
         // Set up the project
         let project = config.project()?;
 
-        let output = ProjectCompiler::default().compile_with(&project, |prj| todo!())?;
+        let output = ProjectCompiler::default().compile_parse(&project, filter.clone())?;
 
         // prepare the test builder
         let mut evm_cfg = crate::utils::sputnik_cfg(&config.evm_version);
