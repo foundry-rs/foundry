@@ -158,17 +158,22 @@ impl TestArgs {
     pub fn filter(&self) -> &Filter {
         &self.filter
     }
+
+    /// Returns the currently configured [Config] and the extracted [EvmOpts] from that config
+    pub fn config_and_evm_opts(&self) -> eyre::Result<(Config, EvmOpts)> {
+        // merge all configs
+        let figment: Figment = self.into();
+        let evm_opts = figment.extract()?;
+        let config = Config::from_provider(figment).sanitized();
+        Ok((config, evm_opts))
+    }
 }
 
 impl Cmd for TestArgs {
     type Output = TestOutcome;
 
     fn run(self) -> eyre::Result<Self::Output> {
-        // merge all configs
-        let figment: Figment = From::from(&self);
-        let evm_opts = figment.extract::<EvmOpts>()?;
-        let config = Config::from_provider(figment).sanitized();
-
+        let (config, evm_opts) = self.config_and_evm_opts()?;
         let TestArgs { json, filter, allow_failure, .. } = self;
 
         // Setup the fuzzer
