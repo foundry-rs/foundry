@@ -38,7 +38,11 @@ impl ProjectCompiler {
         self.compile_with(project, |prj| Ok(prj.compile()?))
     }
 
-    /// Compiles the project with [`Project::compile_parse()`] and the given filter
+    /// Compiles the project with [`Project::compile_parse()`] and the given filter.
+    ///
+    /// This will emit artifacts only for files that match the given filter.
+    /// Files that do _not_ match the filter are given a pruned output selection and do not generate
+    /// artifacts.
     pub fn compile_parse<F: FileFilter + 'static>(
         self,
         project: &Project,
