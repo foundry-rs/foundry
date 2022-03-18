@@ -237,8 +237,7 @@ contract ExpectEmit {
 A full interface for all cheatcodes is here:
 ```solidity
 interface Hevm {
-    interface CheatCodes {
-      function warp(uint256) external;
+    function warp(uint256) external;
     // Set block.timestamp
 
     function roll(uint256) external;
