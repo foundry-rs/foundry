@@ -54,16 +54,13 @@ pub mod tree;
 pub mod verify;
 pub mod watch;
 
-use crate::{opts::forge::ContractInfo, term};
+use crate::opts::forge::ContractInfo;
 use ethers::{
     abi::Abi,
-    prelude::{
-        artifacts::{CompactBytecode, CompactDeployedBytecode},
-        report::NoReporter,
-    },
+    prelude::artifacts::{CompactBytecode, CompactDeployedBytecode},
     solc::cache::SolFilesCache,
 };
-use std::{collections::BTreeMap, path::PathBuf};
+use std::path::PathBuf;
 
 /// Common trait for all cli commands
 pub trait Cmd: clap::Parser + Sized {
@@ -71,11 +68,7 @@ pub trait Cmd: clap::Parser + Sized {
     fn run(self) -> eyre::Result<Self::Output>;
 }
 
-use ethers::solc::{
-    artifacts::CompactContractBytecode, Artifact, FileFilter, Project, ProjectCompileOutput,
-};
-
-use foundry_utils::to_table;
+use ethers::solc::{artifacts::CompactContractBytecode, Project, ProjectCompileOutput};
 
 /// Given a project and its compiled artifacts, proceeds to return the ABI, Bytecode and
 /// Runtime Bytecode of the given contract.

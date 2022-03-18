@@ -9,7 +9,7 @@ use ui::{TUIExitReason, Tui, Ui};
 
 use ethers::solc::Project;
 
-use crate::{compile::compile_files, opts::evm::EvmArgs};
+use crate::{compile, opts::evm::EvmArgs};
 use ansi_term::Colour;
 use ethers::{
     abi::Abi,
@@ -276,7 +276,7 @@ impl RunArgs {
     pub fn build(&self, config: Config, evm_opts: &EvmOpts) -> eyre::Result<BuildOutput> {
         let target_contract = dunce::canonicalize(&self.path)?;
         let project = config.ephemeral_no_artifacts_project()?;
-        let output = compile_files(&project, vec![target_contract])?;
+        let output = compile::compile_files(&project, vec![target_contract])?;
 
         let (sources, all_contracts) = output.output().split();
 
