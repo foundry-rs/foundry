@@ -518,7 +518,6 @@ impl CallTrace {
 
                     #[cfg(feature = "sputnik")]
                     if self.addr == *CHEATCODE_ADDRESS && func.name == "expectRevert" {
-                        // try to decode better than just `bytes` for `expectRevert`
                         if let Ok(decoded) =
                             foundry_utils::decode_revert(&self.data, Some(exec_info.errors))
                         {
