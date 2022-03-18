@@ -1,7 +1,8 @@
 //! Test command
 
 use crate::{
-    cmd::{build::BuildArgs, Cmd, ProjectCompiler},
+    cmd::{build::BuildArgs, Cmd},
+    compile::ProjectCompiler,
     opts::evm::EvmArgs,
     utils,
     utils::FoundryPathExt,

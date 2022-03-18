@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use crate::{cmd::Cmd, opts::forge::CompilerArgs};
 
-use crate::cmd::watch::WatchArgs;
+use crate::{cmd::watch::WatchArgs, compile};
 use clap::{Parser, ValueHint};
 use ethers::solc::remappings::Remapping;
 use foundry_config::{
@@ -191,7 +191,7 @@ impl Cmd for BuildArgs {
     type Output = ProjectCompileOutput;
     fn run(self) -> eyre::Result<Self::Output> {
         let project = self.project()?;
-        super::compile(&project, self.names, self.sizes)
+        compile::compile(&project, self.names, self.sizes)
     }
 }
 

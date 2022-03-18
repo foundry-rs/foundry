@@ -1,4 +1,5 @@
 pub mod cmd;
+pub mod compile;
 
 mod term;
 mod utils;

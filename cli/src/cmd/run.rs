@@ -1,4 +1,4 @@
-use crate::cmd::{build::BuildArgs, compile_files, Cmd};
+use crate::cmd::{build::BuildArgs, Cmd};
 use clap::{Parser, ValueHint};
 use evm_adapters::sputnik::cheatcodes::{CONSOLE_ABI, HEVMCONSOLE_ABI, HEVM_ABI};
 
@@ -9,7 +9,7 @@ use ui::{TUIExitReason, Tui, Ui};
 
 use ethers::solc::Project;
 
-use crate::opts::evm::EvmArgs;
+use crate::{compile::compile_files, opts::evm::EvmArgs};
 use ansi_term::Colour;
 use ethers::{
     abi::Abi,
