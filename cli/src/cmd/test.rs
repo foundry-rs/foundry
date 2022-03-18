@@ -60,20 +60,24 @@ pub struct Filter {
     contract_pattern_inverse: Option<regex::Regex>,
 
     #[clap(
+        name = "match-path",
+        value_name = "PATH_REGEX",
         long = "match-path",
         alias = "mp",
         help = "only run test methods in source files at path matching regex. Requires absolute path",
         conflicts_with = "pattern",
+        conflicts_with = "no-match-path",
         parse(try_from_str = parse_line_matching_regex)
     )]
     pub path_pattern: Option<regex::Regex>,
 
     #[clap(
+        name = "no-match-path",
+        value_name = "PATH_REGEX",
         long = "no-match-path",
         alias = "nmp",
         help = "only run test methods in source files at path not matching regex. Requires absolute path",
         conflicts_with = "pattern",
-        conflicts_with = "match-path",
         parse(try_from_str = parse_line_matching_regex)
     )]
     pub path_pattern_inverse: Option<regex::Regex>,
