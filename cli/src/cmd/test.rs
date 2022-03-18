@@ -1,20 +1,20 @@
 //! Test command
 
 use crate::{
-    cmd::{build::BuildArgs, Cmd},
+    cmd::{build::BuildArgs, Cmd, ProjectCompiler},
     opts::evm::EvmArgs,
     utils,
 };
 use ansi_term::Colour;
 use clap::{AppSettings, Parser};
-use ethers::solc::{ArtifactOutput, ProjectCompileOutput};
+use ethers::solc::{ArtifactOutput, FileFilter, ProjectCompileOutput};
 use evm_adapters::{
     call_tracing::ExecutionInfo, evm_opts::EvmOpts, gas_report::GasReport, sputnik::helpers::vm,
 };
 use forge::{MultiContractRunnerBuilder, TestFilter, TestResult};
 use foundry_config::{figment::Figment, Config};
 use regex::Regex;
-use std::{collections::BTreeMap, str::FromStr, sync::mpsc::channel, thread};
+use std::{collections::BTreeMap, path::Path, sync::mpsc::channel, thread};
 
 #[derive(Debug, Clone, Parser)]
 pub struct Filter {
@@ -61,7 +61,8 @@ pub struct Filter {
         long = "match-path",
         alias = "mp",
         help = "only run test methods in source files at path matching regex. Requires absolute path",
-        conflicts_with = "pattern"
+        conflicts_with = "pattern",
+        parse(try_from_str = parse_line_matching_regex)
     )]
     pub path_pattern: Option<regex::Regex>,
 
@@ -69,9 +70,17 @@ pub struct Filter {
         long = "no-match-path",
         alias = "nmp",
         help = "only run test methods in source files at path not matching regex. Requires absolute path",
-        conflicts_with = "pattern"
+        conflicts_with = "pattern",
+        parse(try_from_str = parse_line_matching_regex)
     )]
     pub path_pattern_inverse: Option<regex::Regex>,
+}
+
+impl FileFilter for Filter {
+    fn is_match(&self, file: &Path) -> bool {
+        if let Some(ref re_path) = self.path_pattern {}
+        todo!()
+    }
 }
 
 impl TestFilter for Filter {
@@ -106,12 +115,10 @@ impl TestFilter for Filter {
     fn matches_path(&self, path: impl AsRef<str>) -> bool {
         let mut ok = true;
         let path = path.as_ref();
-        if let Some(re) = &self.path_pattern {
-            let re = Regex::from_str(&format!("^{}", re.as_str())).unwrap();
+        if let Some(ref re) = self.path_pattern {
             ok &= re.is_match(path);
         }
-        if let Some(re) = &self.path_pattern_inverse {
-            let re = Regex::from_str(&format!("^{}", re.as_str())).unwrap();
+        if let Some(ref re) = self.path_pattern_inverse {
             ok &= !re.is_match(path);
         }
         ok
@@ -189,7 +196,8 @@ impl Cmd for TestArgs {
 
         // Set up the project
         let project = config.project()?;
-        let output = super::compile(&project, false, false)?;
+
+        let output = ProjectCompiler::default().compile_with(&project, |prj| todo!())?;
 
         // prepare the test builder
         let mut evm_cfg = crate::utils::sputnik_cfg(&config.evm_version);
@@ -459,4 +467,11 @@ fn test<A: ArtifactOutput + 'static>(
         }
         Ok(TestOutcome::new(results, allow_failure))
     }
+}
+
+/// prefixes the `re` [Regex] argument with a caret (`^`).
+/// If a caret is at the beginning of the entire regular expression, it matches the beginning of a
+/// line.
+fn parse_line_matching_regex(re: &str) -> Result<Regex, regex::Error> {
+    format!("^{}", re).parse()
 }
