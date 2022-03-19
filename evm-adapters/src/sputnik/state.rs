@@ -225,17 +225,13 @@ mod tests {
         forked_backend::MemCache, helpers::new_vicinity, new_shared_cache, SharedBackend,
         SharedCache,
     };
-    use ethers::{
-        abi::Address,
-        prelude::{Http, Provider},
-    };
+    use ethers::abi::Address;
     use once_cell::sync::Lazy;
     use sputnik::{
         backend::{MemoryBackend, MemoryVicinity},
         executor::stack::MemoryStackState,
         Config,
     };
-    use std::convert::TryFrom;
 
     // We need a bunch of global static values in order to satisfy sputnik's lifetime requirements
     // for `'static` so that we can Send them

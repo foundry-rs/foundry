@@ -2,13 +2,17 @@
 
 use ansi_term::Colour;
 use atty::{self, Stream};
-use ethers::solc::{remappings::Remapping, report::Reporter, CompilerInput, Solc};
+use ethers::solc::{
+    remappings::Remapping,
+    report::{BasicStdoutReporter, Reporter, SolcCompilerIoReporter},
+    CompilerInput, CompilerOutput, Solc,
+};
 use once_cell::sync::Lazy;
 use semver::Version;
 use std::{
     io,
     io::prelude::*,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         mpsc::{self, TryRecvError},
         Arc, Mutex,
@@ -138,6 +142,9 @@ impl Spinner {
 pub struct SpinnerReporter {
     /// the timeout in ms
     sender: Arc<Mutex<mpsc::Sender<SpinnerMsg>>>,
+    /// A reporter that logs solc compiler input and output to separate files if configured via env
+    /// var
+    solc_io_report: SolcCompilerIoReporter,
 }
 impl SpinnerReporter {
     /// Spawns the [`Spinner`] on a new thread
@@ -174,7 +181,10 @@ impl SpinnerReporter {
                 }
             }
         });
-        SpinnerReporter { sender: Arc::new(Mutex::new(sender)) }
+        SpinnerReporter {
+            sender: Arc::new(Mutex::new(sender)),
+            solc_io_report: SolcCompilerIoReporter::from_default_env(),
+        }
     }
 
     fn send_msg(&self, msg: impl Into<String>) {
@@ -201,14 +211,25 @@ impl Drop for SpinnerReporter {
 }
 
 impl Reporter for SpinnerReporter {
-    fn on_solc_spawn(&self, _solc: &Solc, version: &Version, input: &CompilerInput) {
+    fn on_solc_spawn(
+        &self,
+        _solc: &Solc,
+        version: &Version,
+        input: &CompilerInput,
+        dirty_files: &[PathBuf],
+    ) {
         self.send_msg(format!(
             "Compiling {} files with {}.{}.{}",
-            input.sources.len(),
+            dirty_files.len(),
             version.major,
             version.minor,
             version.patch
-        ))
+        ));
+        self.solc_io_report.log_compiler_input(input);
+    }
+
+    fn on_solc_success(&self, _solc: &Solc, _version: &Version, output: &CompilerOutput) {
+        self.solc_io_report.log_compiler_output(output);
     }
 
     /// Invoked before a new [`Solc`] bin is installed
@@ -236,13 +257,17 @@ impl Reporter for SpinnerReporter {
     }
 }
 
-/// Calls `f` within the [`SpinnerReporter`] that displays a spinning cursor to display solc
-/// progress
+/// If the output medium is terminal, this calls `f` within the [`SpinnerReporter`] that displays a
+/// spinning cursor to display solc progress.
+///
+/// If no terminal is available this falls back to common `println!` in [`BasicStdoutReporter`].
 pub fn with_spinner_reporter<T>(f: impl FnOnce() -> T) -> T {
-    ethers::solc::report::with_scoped(
-        &ethers::solc::report::Report::new(SpinnerReporter::spawn()),
-        f,
-    )
+    let reporter = if TERM_SETTINGS.indicate_progress {
+        ethers::solc::report::Report::new(SpinnerReporter::spawn())
+    } else {
+        ethers::solc::report::Report::new(BasicStdoutReporter::default())
+    };
+    ethers::solc::report::with_scoped(&reporter, f)
 }
 
 #[cfg(test)]

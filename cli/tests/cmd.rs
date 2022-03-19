@@ -7,7 +7,9 @@ use foundry_cli_test_utils::{
     forgetest, forgetest_ignore, forgetest_init, pretty_eq,
     util::{pretty_err, read_string, TestCommand, TestProject},
 };
-use foundry_config::{parse_with_profile, BasicConfig, Config, OptimizerDetails};
+use foundry_config::{
+    parse_with_profile, BasicConfig, Config, OptimizerDetails, SolidityErrorCode,
+};
 use pretty_assertions::assert_eq;
 use std::{
     env::{self},
@@ -250,6 +252,12 @@ forgetest_init!(can_get_evm_opts, |prj: TestProject, mut cmd: TestCommand| {
     assert_eq!(evm_opts.fork_url, Some(url.to_string()));
 });
 
+// checks that we can set various config values
+forgetest_init!(can_set_config_values, |prj: TestProject, _cmd: TestCommand| {
+    let config = prj.config_from_output(["--via-ir"]);
+    assert!(config.via_ir);
+});
+
 // checks that `clean` removes dapptools style paths
 forgetest!(can_clean, |prj: TestProject, mut cmd: TestCommand| {
     prj.assert_create_dirs_exists();
@@ -407,11 +415,11 @@ contract Foo {}
     cmd.args(["build", "--use", "0.8.11"]);
 
     let stdout = cmd.stdout_lossy();
-    assert!(stdout.ends_with("\n\nCompiler run successful\n"));
+    assert!(stdout.contains("Compiler run successful"));
 
     cmd.fuse().args(["build", "--force", "--use", "solc:0.8.11"]).root_arg();
 
-    assert!(stdout.ends_with("\n\nCompiler run successful\n"));
+    assert!(stdout.contains("Compiler run successful"));
 
     // fails to use solc that does not exist
     cmd.fuse().args(["build", "--use", "this/solc/does/not/exist"]);
@@ -420,7 +428,7 @@ contract Foo {}
     // 0.8.11 was installed in previous step, so we can use the path to this directly
     let local_solc = ethers::solc::Solc::find_svm_installed_version("0.8.11").unwrap().unwrap();
     cmd.fuse().args(["build", "--force", "--use"]).arg(local_solc.solc).root_arg();
-    assert!(stdout.ends_with("\n\nCompiler run successful\n"));
+    assert!(stdout.contains("Compiler run successful"));
 });
 
 // test to ensure yul optimizer can be set as intended
@@ -588,6 +596,44 @@ contract BTest is DSTest {
 
     cmd.arg("--check");
     let _ = cmd.output();
+});
+
+// test that `forge build` does not print `(with warnings)` if there arent any
+forgetest!(can_compile_without_warnings, |prj: TestProject, mut cmd: TestCommand| {
+    let config = Config {
+        ignored_error_codes: vec![SolidityErrorCode::SpdxLicenseNotProvided],
+        ..Default::default()
+    };
+    prj.write_config(config);
+    prj.inner()
+        .add_source(
+            "A",
+            r#"
+pragma solidity 0.8.10;
+contract A {
+    function testExample() public {}
+}
+   "#,
+        )
+        .unwrap();
+
+    cmd.args(["build", "--force"]);
+    let out = cmd.stdout();
+    // no warnings
+    assert!(out.trim().contains("Compiler run successful"));
+    assert!(!out.trim().contains("Compiler run successful (with warnings)"));
+
+    // don't ignore errors
+    let config = Config { ignored_error_codes: vec![], ..Default::default() };
+    prj.write_config(config);
+    let out = cmd.stdout();
+
+    assert!(out.trim().contains("Compiler run successful (with warnings)"));
+    assert!(
+      out.contains(
+                    r#"Warning: SPDX license identifier not provided in source file. Before publishing, consider adding a comment containing "SPDX-License-Identifier: <SPDX-License>" to each source file. Use "SPDX-License-Identifier: UNLICENSED" for non-open-source code. Please see https://spdx.org for more information."#
+        )
+    );
 });
 
 // test against a local checkout, useful to debug with local ethers-rs patch

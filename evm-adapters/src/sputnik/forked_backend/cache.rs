@@ -506,11 +506,8 @@ struct SharedBackendInner {
 #[cfg(test)]
 mod tests {
     use crate::sputnik::vicinity;
-    use ethers::{
-        providers::{Http, Provider},
-        types::Address,
-    };
-    use std::convert::TryFrom;
+    use ethers::types::Address;
+
     use tokio::runtime::Runtime;
 
     use super::*;

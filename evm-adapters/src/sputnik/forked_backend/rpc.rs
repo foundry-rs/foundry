@@ -196,12 +196,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::convert::TryFrom;
 
-    use ethers::{
-        providers::{Http, Provider},
-        types::Address,
-    };
+    use ethers::types::Address;
     use sputnik::Config;
     use tokio::runtime::Runtime;
 
