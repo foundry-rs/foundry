@@ -58,10 +58,10 @@ if [[ -n "$FOUNDRYUP_LOCAL_REPO" ]]; then
   fi
 
   # Enter local repo and build
-  FOUNDRY_REPO="$PWD/$FOUNDRYUP_LOCAL_REPO"
-  echo "foundryup: installing from $FOUNDRY_REPO"
-  cd $FOUNDRY_REPO
-  RUSTFLAGS="-C target-cpu=native" cargo build --release  # need 4 speed
+  echo "foundryup: installing from $FOUNDRYUP_LOCAL_REPO"
+  cd $FOUNDRYUP_LOCAL_REPO
+  RUSTFLAGS="-C target-cpu=native" cargo build --release # need 4 speed
+
 
   # Remove prior installations if they exist
   rm -f "$FOUNDRY_BIN_DIR/forge"
