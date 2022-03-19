@@ -14,7 +14,9 @@ use proptest::test_runner::{TestCaseError, TestError, TestRunner};
 use revm::db::DatabaseRef;
 use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, collections::BTreeMap, fmt};
-use strategies::fuzz_calldata;
+use strategies::{
+    collect_state_from_changeset, fuzz_calldata, fuzz_calldata_from_state, EvmFuzzState,
+};
 
 /// Magic return code for the `assume` cheatcode
 pub const ASSUME_MAGIC_RETURN_CODE: &[u8] = "FOUNDRY::ASSUME".as_bytes();
@@ -54,14 +56,21 @@ where
         should_fail: bool,
         errors: Option<&Abi>,
     ) -> FuzzTestResult {
-        let strat = fuzz_calldata(func);
-
         // Stores the consumed gas and calldata of every successful fuzz call
         let cases: RefCell<Vec<FuzzCase>> = RefCell::new(Default::default());
 
         // Stores the result of the last call
         let call: RefCell<RawCallResult> = RefCell::new(Default::default());
 
+        // Stores fuzz state for use with [fuzz_calldata_from_state]
+        let state: EvmFuzzState = EvmFuzzState::default();
+
+        // TODO: We should have a `FuzzerOpts` struct where we can configure the fuzzer. When we
+        // have that, we should add a way to configure strategy weights
+        let strat = proptest::strategy::Union::new_weighted(vec![
+            (60, fuzz_calldata(func.clone())),
+            (40, fuzz_calldata_from_state(func.clone(), state.clone())),
+        ]);
         tracing::debug!(func = ?func.name, should_fail, "fuzzing");
         let run_result = self.runner.clone().run(&strat, |calldata| {
             *call.borrow_mut() = self
@@ -69,6 +78,9 @@ where
                 .call_raw(self.sender, address, calldata.0.clone(), 0.into())
                 .expect("could not make raw evm call");
             let call = call.borrow();
+
+            // Build fuzzer state
+            collect_state_from_changeset(&call.state_changeset, state.clone());
 
             // When assume cheat code is triggered return a special string "FOUNDRY::ASSUME"
             if call.result.as_ref() == ASSUME_MAGIC_RETURN_CODE {
