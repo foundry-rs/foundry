@@ -61,7 +61,7 @@ if [[ -n "$FOUNDRYUP_LOCAL_REPO" ]]; then
   FOUNDRY_REPO="$PWD/$FOUNDRYUP_LOCAL_REPO"
   echo "foundryup: installing from $FOUNDRY_REPO"
   cd $FOUNDRY_REPO
-  cargo build --release
+  RUSTFLAGS="-C target-cpu=native" cargo build --release  # need 4 speed
 
   # Remove prior installations if they exist
   rm -f "$FOUNDRY_BIN_DIR/forge"
