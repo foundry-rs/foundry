@@ -214,7 +214,7 @@ impl Cmd for TestArgs {
         // Set up the project
         let project = config.project()?;
 
-        let output = ProjectCompiler::default().compile_parse(&project, filter.clone())?;
+        let output = ProjectCompiler::default().compile_sparse(&project, filter.clone())?;
 
         // prepare the test builder
         let mut evm_cfg = crate::utils::sputnik_cfg(&config.evm_version);

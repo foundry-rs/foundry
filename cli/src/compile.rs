@@ -43,7 +43,7 @@ impl ProjectCompiler {
     /// This will emit artifacts only for files that match the given filter.
     /// Files that do _not_ match the filter are given a pruned output selection and do not generate
     /// artifacts.
-    pub fn compile_parse<F: FileFilter + 'static>(
+    pub fn compile_sparse<F: FileFilter + 'static>(
         self,
         project: &Project,
         filter: F,
