@@ -309,6 +309,18 @@ pub fn decode_revert(error: &[u8], maybe_abi: Option<&Abi>) -> Result<String> {
                 }
                 Err(eyre::Error::msg("Non-native error and not string"))
             }
+            // keccak(expectRevert(bytes4))
+            [195, 30, 176, 224] => {
+                let err_data = &error[4..];
+                if err_data.len() == 32 {
+                    let actual_err = &err_data[..4];
+                    if let Ok(decoded) = decode_revert(actual_err, maybe_abi) {
+                        // it's a known selector
+                        return Ok(decoded)
+                    }
+                }
+                Err(eyre::Error::msg("Unknown error selector"))
+            }
             _ => {
                 // try to decode a custom error if provided an abi
                 if error.len() >= 4 {
