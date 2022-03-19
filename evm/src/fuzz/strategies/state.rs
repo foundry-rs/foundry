@@ -78,6 +78,12 @@ fn collect_push_bytes(code: Bytes) -> Vec<[u8; 32]> {
             let push_start = i + 1;
             let push_end = push_start + push_size;
 
+            // As a precaution, if a fuzz test deploys malformed bytecode (such as using `CREATE2`)
+            // this will terminate the loop early.
+            if push_start > code.len() || push_end > code.len() {
+                return bytes
+            }
+
             let mut buffer: [u8; 32] = [0; 32];
             let _ = (&mut buffer[..])
                 .write(&code[push_start..push_end])
