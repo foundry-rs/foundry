@@ -1,7 +1,6 @@
 //! Cast
 //!
 //! TODO
-use async_trait::async_trait;
 use chrono::NaiveDateTime;
 use ethers_core::{
     abi::{
@@ -11,16 +10,18 @@ use ethers_core::{
     types::{transaction::eip2718::TypedTransaction, Chain, *},
     utils::{self, keccak256, parse_units},
 };
-use ethers_providers::{FilterWatcher, StreamExt};
+use ethers_providers::{FilterWatcher, Provider, StreamExt};
 
+use async_stream::stream;
 use ethers_etherscan::Client;
 use ethers_providers::{Middleware, PendingTransaction};
 use eyre::{Context, Result};
+use foundry_utils::{encode_args, get_func, get_func_etherscan, to_table};
 use futures::future::join_all;
+use futures_core::stream::Stream;
+use futures_util::pin_mut;
 use rustc_hex::{FromHexIter, ToHex};
 use std::str::FromStr;
-
-use foundry_utils::{encode_args, get_func, get_func_etherscan, to_table};
 
 // TODO: CastContract with common contract initializers? Same for CastProviders?
 
@@ -385,12 +386,12 @@ where
         &self,
         specific_block: Option<T>,
         contract: A,
-    ) -> Result<RawLogStream<'_, M, T, H256>> {
+    ) -> Result<impl Stream<Item = Result<Vec<Log>>> + '_> {
         let address = match contract.into() {
             NameOrAddress::Name(ref ens_name) => self.provider.resolve_name(ens_name).await?,
             NameOrAddress::Address(addr) => addr,
         };
-        match specific_block {
+        let filter = match specific_block {
             Some(block_id) => {
                 let filter: Filter = match block_id.into() {
                     BlockId::Hash(hash) => Filter::new()
@@ -400,13 +401,26 @@ where
                         .address(ValueOrArray::Value(address.into()))
                         .from_block(number),
                 };
-                Ok(RawLogStream::new(filter, self.provider, None))
+                filter
             }
             None => {
-                let mut stream = self.provider.watch_blocks().await?;
                 let mut filter = Filter::new().address(ValueOrArray::Value(address.into()));
-                Ok(RawLogStream::new(filter, self.provider, Some(stream)))
+                filter
             }
+        };
+        Ok(self.create_raw_log_tream(filter))
+    }
+    fn create_raw_log_tream(
+        &self,
+        mut filter: Filter,
+    ) -> impl Stream<Item = Result<Vec<Log>>> + '_ {
+        stream! {
+        let mut stream = self.provider.watch_blocks().await?;
+            if let Some(block) = stream.next().await {
+                filter = filter.at_block_hash(block);
+            }
+        let logs = self.provider.get_logs(&filter).await?;
+        yield(Ok(logs));
         }
     }
 
@@ -651,31 +665,6 @@ where
 
         let receipt = if to_json { serde_json::to_string(&receipt)? } else { to_table(receipt) };
         Ok(receipt)
-    }
-}
-
-pub struct RawLogStream<'a, M, R, T> {
-    provider: M,
-    stream: Option<FilterWatcher<'a, T, R>>,
-    logs_filter: Filter,
-}
-
-impl<'a, M: Middleware, R, T> RawLogStream<'a, M, R, T>
-where
-    M::Error: 'static,
-{
-    pub fn new(logs_filter: Filter, provider: M, stream: Option<FilterWatcher<'a, T, R>>) -> Self {
-        Self { provider, logs_filter, stream }
-    }
-
-    pub async fn next(&self) -> Result<Option<Vec<Log>>> {
-        if let Some(stream) = self.stream {
-            if let Some(block) = stream.next().await {
-                self.logs_filter = self.logs_filter.at_block_hash(block);
-            }
-        }
-        let logs = self.provider.get_logs(&self.logs_filter).await?;
-        Ok(Some(logs))
     }
 }
 

@@ -1,7 +1,7 @@
 pub mod cmd;
 
 mod utils;
-
+use futures::StreamExt;
 use cast::{Cast, SimpleCast};
 mod opts;
 use cast::InterfacePath;
@@ -160,7 +160,10 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::Logs { block, address, rpc_url } => {
             let provider = Provider::try_from(rpc_url)?;
-            Cast::new(provider).print_raw_logs(block, address).await?
+            let log_stream = Cast::new(provider).raw_logs(block, address).await?;
+            while Some(logs) = log_stream.next().await{
+                println!("{:?}", logs?);
+            }
         }
         Subcommands::Call { eth, address, sig, args, block } => {
             let provider = Provider::try_from(eth.rpc_url()?)?;
