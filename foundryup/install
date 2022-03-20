@@ -21,6 +21,7 @@ while [[ $1 ]]; do
     -r|--repo)        shift; FOUNDRYUP_REPO=$1;;
     -b|--branch)      shift; FOUNDRYUP_BRANCH=$1;;
     -v|--version)     shift; FOUNDRYUP_VERSION=$1;;
+    -p|--path)        shift; FOUNDRYUP_LOCAL_REPO=$1;;
     -h|--help)        FOUNDRYUP_HELP="1";;
 
     *) printf "foundryup: internal error: %q\\n" "$1"; exit 1
@@ -37,8 +38,40 @@ OPTIONS:
     -h, --help      Print help information
     -v, --version   Install a specific version
     -b, --branch    Install a specific branch
-    -r, --repo      Install a forks main branch"
+    -r, --repo      Install a forks main branch
+    -p, --path      Install a local repository"
     exit 0
+fi
+
+# Installs foundry from a local repository if --path parameter is provided
+if [[ -n "$FOUNDRYUP_LOCAL_REPO" ]]; then
+
+  # Ignore branches/versions as we do not want to modify local git state
+  if [ -n "$FOUNDRYUP_REPO" ] || [ -n "$FOUNDRY_BRANCH" ] || [ -n "$FOUNDRY_VERSION" ]; then
+    echo "foundryup: !WARN! --branch, --version, and --repo arguments are ignored during local install"
+  fi
+
+  if ! command -v cargo &> /dev/null ; then
+    # Error if cargo is not already installed.
+    echo "foundryup: cargo is not installed. Please install it first."
+    exit 1
+  fi
+
+  # Enter local repo and build
+  echo "foundryup: installing from $FOUNDRYUP_LOCAL_REPO"
+  cd $FOUNDRYUP_LOCAL_REPO
+  RUSTFLAGS="-C target-cpu=native" cargo build --release # need 4 speed
+
+
+  # Remove prior installations if they exist
+  rm -f "$FOUNDRY_BIN_DIR/forge"
+  rm -f "$FOUNDRY_BIN_DIR/cast"
+
+  # Symlink from local repo binaries to bin dir
+  ln -s "$PWD/target/release/forge" "$FOUNDRY_BIN_DIR/forge"
+  ln -s "$PWD/target/release/cast" "$FOUNDRY_BIN_DIR/cast"
+  echo foundryup: done!
+  exit 0
 fi
 
 FOUNDRYUP_REPO=${FOUNDRYUP_REPO-gakonst/foundry}
