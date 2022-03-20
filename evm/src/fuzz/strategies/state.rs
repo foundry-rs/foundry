@@ -62,6 +62,12 @@ pub fn collect_state_from_changeset(state_changeset: &StateChangeset, state: Evm
     }
 }
 
+/// The maximum number of bytes we will look at in bytecodes to find push bytes (24 KiB).
+///
+/// This is to limit the performance impact of fuzz tests that might deploy arbitrarily sized
+/// bytecode (as is the case with Solmate).
+const PUSH_BYTE_ANALYSIS_LIMIT: usize = 24 * 1024;
+
 /// Collects all push bytes from the given bytecode.
 fn collect_push_bytes(code: Bytes) -> Vec<[u8; 32]> {
     let mut bytes: Vec<[u8; 32]> = Vec::new();
@@ -71,7 +77,7 @@ fn collect_push_bytes(code: Bytes) -> Vec<[u8; 32]> {
     let opcode_infos = spec_opcode_gas(SpecId::LATEST);
 
     let mut i = 0;
-    while i < code.len() {
+    while i < code.len().min(PUSH_BYTE_ANALYSIS_LIMIT) {
         let op = code[i];
         if opcode_infos[op as usize].is_push {
             let push_size = (op - opcode::PUSH1 + 1) as usize;
