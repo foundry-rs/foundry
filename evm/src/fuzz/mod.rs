@@ -14,7 +14,10 @@ use proptest::test_runner::{TestCaseError, TestError, TestRunner};
 use revm::db::DatabaseRef;
 use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, collections::BTreeMap, fmt};
-use strategies::{collect_state_from_call, fuzz_calldata, fuzz_calldata_from_state, EvmFuzzState};
+use strategies::{
+    build_initial_state, collect_state_from_call, fuzz_calldata, fuzz_calldata_from_state,
+    EvmFuzzState,
+};
 
 /// Magic return code for the `assume` cheatcode
 pub const ASSUME_MAGIC_RETURN_CODE: &[u8] = "FOUNDRY::ASSUME".as_bytes();
@@ -61,7 +64,7 @@ where
         let call: RefCell<RawCallResult> = RefCell::new(Default::default());
 
         // Stores fuzz state for use with [fuzz_calldata_from_state]
-        let state: EvmFuzzState = EvmFuzzState::default();
+        let state: EvmFuzzState = build_initial_state(&self.executor.db);
 
         // TODO: We should have a `FuzzerOpts` struct where we can configure the fuzzer. When we
         // have that, we should add a way to configure strategy weights

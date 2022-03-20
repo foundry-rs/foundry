@@ -8,4 +8,6 @@ mod calldata;
 pub use calldata::fuzz_calldata;
 
 mod state;
-pub use state::{collect_state_from_call, fuzz_calldata_from_state, EvmFuzzState};
+pub use state::{
+    build_initial_state, collect_state_from_call, fuzz_calldata_from_state, EvmFuzzState,
+};

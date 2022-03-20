@@ -162,7 +162,7 @@ pub struct Executor<DB: DatabaseRef> {
     // Also, if we stored the VM here we would still need to
     // take `&mut self` when we are not committing to the database, since
     // we need to set `evm.env`.
-    db: CacheDB<DB>,
+    pub(crate) db: CacheDB<DB>,
     env: Env,
     inspector_config: InspectorStackConfig,
 }

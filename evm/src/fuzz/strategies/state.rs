@@ -6,7 +6,10 @@ use ethers::{
     types::{H256, U256},
 };
 use proptest::prelude::{BoxedStrategy, Strategy};
-use revm::{opcode, spec_opcode_gas, SpecId};
+use revm::{
+    db::{CacheDB, DatabaseRef},
+    opcode, spec_opcode_gas, SpecId,
+};
 use std::{cell::RefCell, collections::HashSet, io::Write, rc::Rc};
 
 /// A set of arbitrary 32 byte data from the VM used to generate values for the strategy.
@@ -35,6 +38,27 @@ pub fn fuzz_calldata_from_state(
         .boxed()
 }
 
+/// Builds the initial [EvmFuzzState] from a database.
+pub fn build_initial_state<DB: DatabaseRef>(db: &CacheDB<DB>) -> EvmFuzzState {
+    let mut state: HashSet<[u8; 32]> = HashSet::new();
+    for (address, storage) in db.storage() {
+        let info = db.basic(*address);
+
+        // Insert basic account information
+        state.insert(H256::from(*address).into());
+        state.insert(u256_to_h256(info.balance).into());
+        state.insert(u256_to_h256(U256::from(info.nonce)).into());
+
+        // Insert storage
+        for (slot, value) in storage {
+            state.insert(u256_to_h256(*slot).into());
+            state.insert(u256_to_h256(*value).into());
+        }
+    }
+
+    Rc::new(RefCell::new(state))
+}
+
 /// Collects state changes from a [StateChangeset] and logs into an [EvmFuzzState].
 pub fn collect_state_from_call(
     logs: &[RawLog],
@@ -43,7 +67,6 @@ pub fn collect_state_from_call(
 ) {
     let state = &mut *state.borrow_mut();
 
-    // TODO: Old values
     for (address, account) in state_changeset {
         // Insert basic account information
         state.insert(H256::from(*address).into());
