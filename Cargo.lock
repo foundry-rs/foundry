@@ -1281,7 +1281,7 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#1788f05ab0358cf08e883d3bb0c9f768a72d2d16"
+source = "git+https://github.com/gakonst/ethers-rs#679ba09b92dc8b61963721354fea8490d9d9e04b"
 dependencies = [
  "ethers-addressbook",
  "ethers-contract",
@@ -1296,7 +1296,7 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "0.1.0"
-source = "git+https://github.com/gakonst/ethers-rs#1788f05ab0358cf08e883d3bb0c9f768a72d2d16"
+source = "git+https://github.com/gakonst/ethers-rs#679ba09b92dc8b61963721354fea8490d9d9e04b"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -1307,7 +1307,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#1788f05ab0358cf08e883d3bb0c9f768a72d2d16"
+source = "git+https://github.com/gakonst/ethers-rs#679ba09b92dc8b61963721354fea8490d9d9e04b"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1325,7 +1325,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#1788f05ab0358cf08e883d3bb0c9f768a72d2d16"
+source = "git+https://github.com/gakonst/ethers-rs#679ba09b92dc8b61963721354fea8490d9d9e04b"
 dependencies = [
  "Inflector",
  "cfg-if 1.0.0",
@@ -1334,7 +1334,6 @@ dependencies = [
  "eyre",
  "getrandom 0.2.5",
  "hex",
- "once_cell",
  "proc-macro2",
  "quote",
  "reqwest",
@@ -1348,7 +1347,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#1788f05ab0358cf08e883d3bb0c9f768a72d2d16"
+source = "git+https://github.com/gakonst/ethers-rs#679ba09b92dc8b61963721354fea8490d9d9e04b"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -1362,13 +1361,12 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#1788f05ab0358cf08e883d3bb0c9f768a72d2d16"
+source = "git+https://github.com/gakonst/ethers-rs#679ba09b92dc8b61963721354fea8490d9d9e04b"
 dependencies = [
  "arrayvec 0.7.2",
  "bytes",
  "cargo_metadata",
  "convert_case",
- "ecdsa",
  "elliptic-curve",
  "ethabi",
  "generic-array 0.14.5",
@@ -1376,7 +1374,6 @@ dependencies = [
  "k256",
  "once_cell",
  "proc-macro2",
- "quote",
  "rand 0.8.5",
  "rlp",
  "rlp-derive",
@@ -1390,7 +1387,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "0.2.0"
-source = "git+https://github.com/gakonst/ethers-rs#1788f05ab0358cf08e883d3bb0c9f768a72d2d16"
+source = "git+https://github.com/gakonst/ethers-rs#679ba09b92dc8b61963721354fea8490d9d9e04b"
 dependencies = [
  "ethers-core",
  "ethers-solc",
@@ -1404,7 +1401,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#1788f05ab0358cf08e883d3bb0c9f768a72d2d16"
+source = "git+https://github.com/gakonst/ethers-rs#679ba09b92dc8b61963721354fea8490d9d9e04b"
 dependencies = [
  "async-trait",
  "ethers-contract",
@@ -1427,13 +1424,12 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#1788f05ab0358cf08e883d3bb0c9f768a72d2d16"
+source = "git+https://github.com/gakonst/ethers-rs#679ba09b92dc8b61963721354fea8490d9d9e04b"
 dependencies = [
  "async-trait",
  "auto_impl",
  "base64 0.13.0",
  "ethers-core",
- "futures-channel",
  "futures-core",
  "futures-timer",
  "futures-util",
@@ -1460,7 +1456,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#1788f05ab0358cf08e883d3bb0c9f768a72d2d16"
+source = "git+https://github.com/gakonst/ethers-rs#679ba09b92dc8b61963721354fea8490d9d9e04b"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1483,7 +1479,7 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "0.3.0"
-source = "git+https://github.com/gakonst/ethers-rs#1788f05ab0358cf08e883d3bb0c9f768a72d2d16"
+source = "git+https://github.com/gakonst/ethers-rs#679ba09b92dc8b61963721354fea8490d9d9e04b"
 dependencies = [
  "colored",
  "dunce",
@@ -4335,7 +4331,7 @@ checksum = "6bdef32e8150c2a081110b42772ffe7d7c9032b606bc226c8260fd97e0976601"
 [[package]]
 name = "svm-rs"
 version = "0.2.9"
-source = "git+https://github.com/roynalnaruto/svm-rs#496888fdcd9d2316a52020a09e281414755de3f8"
+source = "git+https://github.com/roynalnaruto/svm-rs#c32014f34308629cb1d98a8fdad29e527a8066d7"
 dependencies = [
  "anyhow",
  "cfg-if 1.0.0",
@@ -4363,7 +4359,7 @@ dependencies = [
 [[package]]
 name = "svm-rs-builds"
 version = "0.1.0"
-source = "git+https://github.com/roynalnaruto/svm-rs#496888fdcd9d2316a52020a09e281414755de3f8"
+source = "git+https://github.com/roynalnaruto/svm-rs#c32014f34308629cb1d98a8fdad29e527a8066d7"
 dependencies = [
  "build_const",
  "hex",
