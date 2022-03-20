@@ -72,28 +72,30 @@ pub fn fuzz_param(param: &ParamType) -> impl Strategy<Value = Token> {
 ///
 /// Works with ABI Encoder v2 tuples.
 pub fn fuzz_param_from_state(param: &ParamType, state: EvmFuzzState) -> BoxedStrategy<Token> {
-    let selectors = any::<prop::sample::Selector>();
+    // These are to comply with lifetime requirements
+    let state_len = state.borrow().len();
+    let s = state.clone();
+
+    // Select a value from the state
+    let value = any::<prop::sample::Index>()
+        .prop_map(move |index| index.index(state_len))
+        .prop_map(move |index| *s.borrow().iter().nth(index).unwrap());
+
+    // Convert the value based on the parameter type
     match param {
-        ParamType::Address => selectors
-            .prop_map(move |selector| {
-                Address::from_slice(&selector.select(&*state.borrow())[12..]).into_token()
-            })
-            .boxed(),
-        ParamType::Bytes => selectors
-            .prop_map(move |selector| Bytes::from(*selector.select(&*state.borrow())).into_token())
-            .boxed(),
+        ParamType::Address => {
+            value.prop_map(move |value| Address::from_slice(&value[12..]).into_token()).boxed()
+        }
+        ParamType::Bytes => value.prop_map(move |value| Bytes::from(value).into_token()).boxed(),
         ParamType::Int(n) => match n / 8 {
-            32 => selectors
-                .prop_map(move |selector| {
-                    I256::from_raw(U256::from(*selector.select(&*state.borrow()))).into_token()
-                })
-                .boxed(),
-            y @ 1..=31 => selectors
-                .prop_map(move |selector| {
+            32 => {
+                value.prop_map(move |value| I256::from_raw(U256::from(value)).into_token()).boxed()
+            }
+            y @ 1..=31 => value
+                .prop_map(move |value| {
                     // Generate a uintN in the correct range, then shift it to the range of intN
                     // by subtracting 2^(N-1)
-                    let uint = U256::from(*selector.select(&*state.borrow())) %
-                        U256::from(2usize).pow(U256::from(y * 8));
+                    let uint = U256::from(value) % U256::from(2usize).pow(U256::from(y * 8));
                     let max_int_plus1 = U256::from(2usize).pow(U256::from(y * 8 - 1));
                     let num = I256::from_raw(uint.overflowing_sub(max_int_plus1).0);
                     num.into_token()
@@ -102,28 +104,18 @@ pub fn fuzz_param_from_state(param: &ParamType, state: EvmFuzzState) -> BoxedStr
             _ => panic!("unsupported solidity type int{}", n),
         },
         ParamType::Uint(n) => match n / 8 {
-            32 => selectors
-                .prop_map(move |selector| {
-                    U256::from(*selector.select(&*state.borrow())).into_token()
-                })
-                .boxed(),
-            y @ 1..=31 => selectors
-                .prop_map(move |selector| {
-                    (U256::from(*selector.select(&*state.borrow())) %
-                        (U256::from(2usize).pow(U256::from(y * 8))))
-                    .into_token()
+            32 => value.prop_map(move |value| U256::from(value).into_token()).boxed(),
+            y @ 1..=31 => value
+                .prop_map(move |value| {
+                    (U256::from(value) % (U256::from(2usize).pow(U256::from(y * 8)))).into_token()
                 })
                 .boxed(),
             _ => panic!("unsupported solidity type uint{}", n),
         },
-        ParamType::Bool => selectors
-            .prop_map(move |selector| Token::Bool(selector.select(&*state.borrow())[31] == 1))
-            .boxed(),
-        ParamType::String => selectors
-            .prop_map(move |selector| {
-                Token::String(unsafe {
-                    std::str::from_utf8_unchecked(selector.select(&*state.borrow())).to_string()
-                })
+        ParamType::Bool => value.prop_map(move |value| Token::Bool(value[31] == 1)).boxed(),
+        ParamType::String => value
+            .prop_map(move |value| {
+                Token::String(unsafe { std::str::from_utf8_unchecked(&value[..]).to_string() })
             })
             .boxed(),
         ParamType::Array(param) => {
@@ -133,20 +125,13 @@ pub fn fuzz_param_from_state(param: &ParamType, state: EvmFuzzState) -> BoxedStr
         }
         ParamType::FixedBytes(size) => {
             let size = *size;
-            selectors
-                .prop_map(move |selector| {
-                    let val = selector.select(&*state.borrow())[32 - size..].to_vec();
-                    Token::FixedBytes(val)
-                })
+            value.prop_map(move |value| Token::FixedBytes(value[32 - size..].to_vec())).boxed()
+        }
+        ParamType::FixedArray(param, size) => {
+            proptest::collection::vec(fuzz_param_from_state(param, state), 0..*size)
+                .prop_map(Token::FixedArray)
                 .boxed()
         }
-        ParamType::FixedArray(param, size) => (0..*size as u64)
-            .map(|_| {
-                fuzz_param_from_state(param, state.clone()).prop_map(|param| param.into_token())
-            })
-            .collect::<Vec<_>>()
-            .prop_map(Token::FixedArray)
-            .boxed(),
         ParamType::Tuple(params) => params
             .iter()
             .map(|p| fuzz_param_from_state(p, state.clone()))
