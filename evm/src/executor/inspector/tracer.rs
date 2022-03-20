@@ -1,4 +1,3 @@
-use super::logs::extract_log;
 use crate::{
     executor::{
         inspector::utils::{gas_used, get_create_address},
@@ -10,10 +9,11 @@ use crate::{
     },
 };
 use bytes::Bytes;
-use ethers::types::{Address, U256};
-use revm::{
-    return_ok, CallInputs, CreateInputs, Database, EVMData, Gas, Inspector, Interpreter, Return,
+use ethers::{
+    abi::RawLog,
+    types::{Address, H256, U256},
 };
+use revm::{return_ok, CallInputs, CreateInputs, Database, EVMData, Gas, Inspector, Return};
 
 /// An inspector that collects call traces.
 #[derive(Default, Debug)]
@@ -81,19 +81,11 @@ where
         (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
     }
 
-    fn step(
-        &mut self,
-        interpreter: &mut Interpreter,
-        _: &mut EVMData<'_, DB>,
-        _is_static: bool,
-    ) -> Return {
-        if let Some(log) = extract_log(interpreter) {
-            let node = &mut self.traces.arena[*self.trace_stack.last().expect("no ongoing trace")];
-            node.ordering.push(LogCallOrder::Log(node.logs.len()));
-            node.logs.push(RawOrDecodedLog::Raw(log));
-        }
-
-        Return::Continue
+    fn log(&mut self, _: &mut EVMData<'_, DB>, _: &Address, topics: &[H256], data: &Bytes) {
+        let node = &mut self.traces.arena[*self.trace_stack.last().expect("no ongoing trace")];
+        node.ordering.push(LogCallOrder::Log(node.logs.len()));
+        node.logs
+            .push(RawOrDecodedLog::Raw(RawLog { topics: topics.to_vec(), data: data.to_vec() }));
     }
 
     fn call_end(

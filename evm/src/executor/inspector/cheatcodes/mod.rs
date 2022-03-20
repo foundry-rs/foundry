@@ -15,15 +15,13 @@ use self::expect::{handle_expect_emit, handle_expect_revert};
 use crate::{abi::HEVMCalls, executor::CHEATCODE_ADDRESS};
 use bytes::Bytes;
 use ethers::{
-    abi::{AbiDecode, AbiEncode},
-    types::Address,
+    abi::{AbiDecode, AbiEncode, RawLog},
+    types::{Address, H256},
 };
 use revm::{
     opcode, CallInputs, CreateInputs, Database, EVMData, Gas, Inspector, Interpreter, Return,
 };
 use std::collections::BTreeMap;
-
-use super::logs::extract_log;
 
 /// An inspector that handles calls to various cheatcodes, each with their own behavior.
 ///
@@ -169,14 +167,14 @@ where
             }
         }
 
+        Return::Continue
+    }
+
+    fn log(&mut self, _: &mut EVMData<'_, DB>, _: &Address, topics: &[H256], data: &Bytes) {
         // Match logs if `expectEmit` has been called
         if !self.expected_emits.is_empty() {
-            if let Some(log) = extract_log(interpreter) {
-                handle_expect_emit(self, log)
-            }
+            handle_expect_emit(self, RawLog { topics: topics.to_vec(), data: data.to_vec() });
         }
-
-        Return::Continue
     }
 
     fn call_end(

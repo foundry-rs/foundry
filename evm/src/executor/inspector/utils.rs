@@ -17,27 +17,6 @@ macro_rules! try_or_continue {
     };
 }
 
-/// Tries to convert a U256 to a usize and returns from the function on an error.
-///
-/// This is useful for opcodes that deal with the stack where parameters might be invalid and you
-/// want to defer error handling to the VM itself.
-macro_rules! as_usize_or_return {
-    ($v:expr) => {
-        if $v.0[1] != 0 || $v.0[2] != 0 || $v.0[3] != 0 {
-            return
-        } else {
-            $v.0[0] as usize
-        }
-    };
-    ($v:expr, $r:expr) => {
-        if $v.0[1] != 0 || $v.0[2] != 0 || $v.0[3] != 0 {
-            return $r
-        } else {
-            $v.0[0] as usize
-        }
-    };
-}
-
 /// Get the address of a contract creation
 pub fn get_create_address(call: &CreateInputs, nonce: u64) -> Address {
     match call.scheme {
