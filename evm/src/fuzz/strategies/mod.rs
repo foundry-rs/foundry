@@ -8,4 +8,4 @@ mod calldata;
 pub use calldata::fuzz_calldata;
 
 mod state;
-pub use state::{collect_state_from_changeset, fuzz_calldata_from_state, EvmFuzzState};
+pub use state::{collect_state_from_call, fuzz_calldata_from_state, EvmFuzzState};

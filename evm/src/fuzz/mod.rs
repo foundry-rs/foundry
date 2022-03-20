@@ -14,9 +14,7 @@ use proptest::test_runner::{TestCaseError, TestError, TestRunner};
 use revm::db::DatabaseRef;
 use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, collections::BTreeMap, fmt};
-use strategies::{
-    collect_state_from_changeset, fuzz_calldata, fuzz_calldata_from_state, EvmFuzzState,
-};
+use strategies::{collect_state_from_call, fuzz_calldata, fuzz_calldata_from_state, EvmFuzzState};
 
 /// Magic return code for the `assume` cheatcode
 pub const ASSUME_MAGIC_RETURN_CODE: &[u8] = "FOUNDRY::ASSUME".as_bytes();
@@ -80,7 +78,7 @@ where
             let call = call.borrow();
 
             // Build fuzzer state
-            collect_state_from_changeset(&call.state_changeset, state.clone());
+            collect_state_from_call(&call.logs, &call.state_changeset, state.clone());
 
             // When assume cheat code is triggered return a special string "FOUNDRY::ASSUME"
             if call.result.as_ref() == ASSUME_MAGIC_RETURN_CODE {

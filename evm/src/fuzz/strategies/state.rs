@@ -2,7 +2,7 @@ use super::fuzz_param_from_state;
 use crate::executor::StateChangeset;
 use bytes::Bytes;
 use ethers::{
-    abi::Function,
+    abi::{Function, RawLog},
     types::{H256, U256},
 };
 use proptest::prelude::{BoxedStrategy, Strategy};
@@ -35,12 +35,15 @@ pub fn fuzz_calldata_from_state(
         .boxed()
 }
 
-/// Collects state changes from a [StateChangeset] into an [EvmFuzzState].
-pub fn collect_state_from_changeset(state_changeset: &StateChangeset, state: EvmFuzzState) {
+/// Collects state changes from a [StateChangeset] and logs into an [EvmFuzzState].
+pub fn collect_state_from_call(
+    logs: &[RawLog],
+    state_changeset: &StateChangeset,
+    state: EvmFuzzState,
+) {
     let state = &mut *state.borrow_mut();
 
     // TODO: Old values
-    // TODO: Logs
     for (address, account) in state_changeset {
         // Insert basic account information
         state.insert(H256::from(*address).into());
@@ -58,6 +61,20 @@ pub fn collect_state_from_changeset(state_changeset: &StateChangeset, state: Evm
             for push_byte in collect_push_bytes(code.clone()) {
                 state.insert(push_byte);
             }
+        }
+
+        // Insert log topics and data
+        for log in logs {
+            log.topics.iter().for_each(|topic| {
+                state.insert(topic.0);
+            });
+            log.data.chunks(32).for_each(|chunk| {
+                let mut buffer: [u8; 32] = [0; 32];
+                let _ = (&mut buffer[..])
+                    .write(chunk)
+                    .expect("log data chunk was larger than 32 bytes");
+                state.insert(buffer);
+            });
         }
     }
 }
