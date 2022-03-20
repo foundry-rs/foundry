@@ -4,9 +4,9 @@ use crate::executor::{
 use bytes::Bytes;
 use ethers::{
     abi::{AbiDecode, RawLog, Token},
-    types::H256,
+    types::{Address, H256},
 };
-use revm::{db::Database, opcode, CallInputs, EVMData, Gas, Inspector, Interpreter, Return};
+use revm::{db::Database, CallInputs, EVMData, Gas, Inspector, Return};
 
 /// An inspector that collects logs during execution.
 ///
@@ -45,17 +45,8 @@ impl<DB> Inspector<DB> for LogCollector
 where
     DB: Database,
 {
-    fn step(
-        &mut self,
-        interpreter: &mut Interpreter,
-        _: &mut EVMData<'_, DB>,
-        _is_static: bool,
-    ) -> Return {
-        if let Some(log) = extract_log(interpreter) {
-            self.logs.push(log);
-        }
-
-        Return::Continue
+    fn log(&mut self, _: &mut EVMData<'_, DB>, _: &Address, topics: &[H256], data: &Bytes) {
+        self.logs.push(RawLog { topics: topics.to_vec(), data: data.to_vec() });
     }
 
     fn call(
@@ -84,47 +75,4 @@ fn convert_hh_log_to_event(call: HardhatConsoleCalls) -> RawLog {
         // Convert the parameters of the call to their string representation for the log
         data: ethers::abi::encode(&[Token::String(call.to_string())]),
     }
-}
-
-/// Extracts a log from the interpreter if there is any.
-pub fn extract_log(interpreter: &Interpreter) -> Option<RawLog> {
-    let num_topics = match interpreter.contract.code[interpreter.program_counter()] {
-        opcode::LOG0 => 0,
-        opcode::LOG1 => 1,
-        opcode::LOG2 => 2,
-        opcode::LOG3 => 3,
-        opcode::LOG4 => 4,
-        _ => return None,
-    };
-
-    let (offset, len) = (
-        as_usize_or_return!(interpreter.stack().peek(0).ok()?, None),
-        as_usize_or_return!(interpreter.stack().peek(1).ok()?, None),
-    );
-    let data = if len == 0 {
-        Vec::new()
-    } else {
-        // If we're trying to access more memory than exists, we will pretend like that memory is
-        // zeroed. We could resize the memory here, but it would mess up the gas accounting REVM
-        // does for memory resizes.
-        if offset > interpreter.memory.len() {
-            vec![0; len]
-        } else if offset + len > interpreter.memory.len() {
-            let mut data =
-                Vec::from(interpreter.memory.get_slice(offset, interpreter.memory.len()));
-            data.resize(offset + len, 0);
-            data
-        } else {
-            interpreter.memory.get_slice(offset, len).to_vec()
-        }
-    };
-
-    let mut topics = Vec::with_capacity(num_topics);
-    for i in 0..num_topics {
-        let mut topic = H256::zero();
-        interpreter.stack.peek(2 + i).ok()?.to_big_endian(topic.as_bytes_mut());
-        topics.push(topic);
-    }
-
-    Some(RawLog { topics, data })
 }

@@ -1,6 +1,6 @@
 use super::{Cheatcodes, Debugger, LogCollector, Tracer};
 use bytes::Bytes;
-use ethers::types::Address;
+use ethers::types::{Address, H256};
 use revm::{db::Database, CallInputs, CreateInputs, EVMData, Gas, Inspector, Interpreter, Return};
 
 /// Helper macro to call the same method on multiple inspectors without resorting to dynamic
@@ -81,6 +81,18 @@ where
         );
 
         Return::Continue
+    }
+
+    fn log(
+        &mut self,
+        evm_data: &mut EVMData<'_, DB>,
+        address: &Address,
+        topics: &[H256],
+        data: &Bytes,
+    ) {
+        call_inspectors!(inspector, [&mut self.tracer, &mut self.logs, &mut self.cheatcodes], {
+            inspector.log(evm_data, address, topics, data);
+        });
     }
 
     fn step_end(
