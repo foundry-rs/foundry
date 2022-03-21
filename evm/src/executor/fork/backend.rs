@@ -16,6 +16,7 @@ use futures::{
 use parking_lot::RwLock;
 use std::{
     collections::{hash_map::Entry, BTreeMap, HashMap},
+    path::PathBuf,
     pin::Pin,
     sync::{
         mpsc::{channel as oneshot_channel, Sender as OneshotSender},
@@ -23,18 +24,35 @@ use std::{
     },
 };
 
+use crate::storage::StorageMap;
 use foundry_utils::RuntimeOrHandle;
 
 type StorageInfo = BTreeMap<U256, U256>;
 
-// TODO: Add disk flushing on Drop.
 /// In Memory cache containing all fetched accounts and storage slots
 /// and their values from RPC
 #[derive(Clone, Debug, Default)]
 pub struct SharedMemCache {
-    pub accounts: Arc<RwLock<BTreeMap<H160, AccountInfo>>>,
-    pub storage: Arc<RwLock<BTreeMap<H160, StorageInfo>>>,
+    pub accounts: Arc<RwLock<BTreeMap<Address, AccountInfo>>>,
+    pub storage: Arc<RwLock<BTreeMap<Address, StorageInfo>>>,
     pub block_hashes: Arc<RwLock<BTreeMap<u64, H256>>>,
+}
+
+/// A type that's used to write the storage to the path once dropped
+struct FlushStorageCacheOnDrop {
+    /// Where to write the data on drop
+    storage_dir: PathBuf,
+    /// access to the storage to write when this type is dropped
+    storage: Arc<RwLock<BTreeMap<Address, StorageInfo>>>,
+}
+
+impl Drop for FlushStorageCacheOnDrop {
+    fn drop(&mut self) {
+        let lock = self.storage.read();
+        let data = lock.clone();
+        drop(lock);
+        StorageMap::with_data(self.storage_dir.clone(), data).save()
+    }
 }
 
 type AccountFuture<Err> =
@@ -378,14 +396,14 @@ impl SharedBackend {
         Self { backend: tx }
     }
 
-    fn do_get_basic(&self, address: H160) -> eyre::Result<AccountInfo> {
+    fn do_get_basic(&self, address: Address) -> eyre::Result<AccountInfo> {
         let (sender, rx) = oneshot_channel();
         let req = BackendRequest::Basic(address, sender);
         self.backend.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
         Ok(rx.recv()?)
     }
 
-    fn do_get_storage(&self, address: H160, index: U256) -> eyre::Result<U256> {
+    fn do_get_storage(&self, address: Address, index: U256) -> eyre::Result<U256> {
         let (sender, rx) = oneshot_channel();
         let req = BackendRequest::Storage(address, index, sender);
         self.backend.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
