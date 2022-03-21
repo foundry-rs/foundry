@@ -41,6 +41,9 @@ use revm::{
 };
 use std::collections::BTreeMap;
 
+/// A mapping of addresses to their changed state.
+pub type StateChangeset = HashMap<Address, Account>;
+
 #[derive(thiserror::Error, Debug)]
 pub enum EvmError {
     /// Error which occurred during execution of a transaction
@@ -54,7 +57,7 @@ pub enum EvmError {
         traces: Option<CallTraceArena>,
         debug: Option<DebugArena>,
         labels: BTreeMap<Address, String>,
-        state_changeset: HashMap<Address, Account>,
+        state_changeset: StateChangeset,
     },
     /// Error which occurred during ABI encoding/decoding
     #[error(transparent)]
@@ -102,7 +105,7 @@ pub struct CallResult<D: Detokenize> {
     ///
     /// This is only present if the changed state was not committed to the database (i.e. if you
     /// used `call` and `call_raw` not `call_committing` or `call_raw_committing`).
-    pub state_changeset: HashMap<Address, Account>,
+    pub state_changeset: StateChangeset,
 }
 
 /// The result of a raw call.
@@ -130,7 +133,7 @@ pub struct RawCallResult {
     ///
     /// This is only present if the changed state was not committed to the database (i.e. if you
     /// used `call` and `call_raw` not `call_committing` or `call_raw_committing`).
-    pub state_changeset: HashMap<Address, Account>,
+    pub state_changeset: StateChangeset,
 }
 
 impl Default for RawCallResult {
@@ -145,7 +148,7 @@ impl Default for RawCallResult {
             labels: BTreeMap::new(),
             traces: None,
             debug: None,
-            state_changeset: HashMap::new(),
+            state_changeset: StateChangeset::new(),
         }
     }
 }
@@ -159,7 +162,7 @@ pub struct Executor<DB: DatabaseRef> {
     // Also, if we stored the VM here we would still need to
     // take `&mut self` when we are not committing to the database, since
     // we need to set `evm.env`.
-    db: CacheDB<DB>,
+    pub(crate) db: CacheDB<DB>,
     env: Env,
     inspector_config: InspectorStackConfig,
 }
@@ -411,7 +414,7 @@ where
         &self,
         address: Address,
         reverted: bool,
-        state_changeset: HashMap<Address, Account>,
+        state_changeset: StateChangeset,
         should_fail: bool,
     ) -> bool {
         // Construct a new VM with the state changeset
