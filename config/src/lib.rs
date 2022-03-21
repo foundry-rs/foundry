@@ -27,6 +27,7 @@ use ethers_solc::{
     remappings::{RelativeRemapping, Remapping},
     ConfigurableArtifacts, EvmVersion, Project, ProjectPathsConfig, Solc, SolcConfig,
 };
+use eyre::{ContextCompat, WrapErr};
 use figment::{providers::Data, value::Value};
 use inflector::Inflector;
 
@@ -703,6 +704,19 @@ impl Config {
     /// Returns the path to foundry's config dir `~/.foundry/`
     pub fn foundry_dir() -> Option<PathBuf> {
         dirs_next::home_dir().map(|p| p.join(Config::FOUNDRY_DIR_NAME))
+    }
+
+    /// Returns the path to `foundry`'s data directory inside the user's data directory
+    /// |Platform | Value                                 | Example                          |
+    /// | ------- | ------------------------------------- | -------------------------------- |
+    /// | Linux   | `$XDG_CONFIG_HOME` or `$HOME`/.config/foundry | /home/alice/.config/foundry
+    /// | | macOS   | `$HOME`/Library/Application Support/foundry   |
+    /// /Users/Alice/Library/Application Support/foundry | | Windows |
+    /// `{FOLDERID_RoamingAppData}/foundry`           | C:\Users\Alice\AppData\Roaming/foundry   |
+    pub fn data_dir() -> eyre::Result<PathBuf> {
+        let path = dirs_next::data_dir().wrap_err("Failed to find data directory")?.join("foundry");
+        std::fs::create_dir_all(&path).wrap_err("Failed to create module directory")?;
+        Ok(path)
     }
 
     /// Returns the path to the `foundry.toml` file, the file is searched for in
