@@ -1,5 +1,5 @@
 use ethers::{providers::Middleware, types::Address};
-use revm::{BlockEnv, Env, TxEnv};
+use revm::{BlockEnv, CfgEnv, Env, TxEnv};
 
 /// Initializes a REVM block environment based on a forked
 /// ethereum provider.
@@ -22,6 +22,10 @@ pub async fn environment<M: Middleware>(
     let block = block.expect("block not found");
 
     Ok(Env {
+        cfg: CfgEnv {
+            chain_id: override_chain_id.unwrap_or(rpc_chain_id.as_u64()).into(),
+            ..Default::default()
+        },
         block: BlockEnv {
             number: block.number.expect("block number not found").as_u64().into(),
             timestamp: block.timestamp,
