@@ -1,14 +1,14 @@
 //! init command
 
 use crate::{
-    cmd::{install::install, Cmd},
+    cmd::{forge::install::install, Cmd},
     opts::forge::Dependency,
     utils::p_println,
 };
 use clap::{Parser, ValueHint};
 use foundry_config::Config;
 
-use crate::cmd::{install::DependencyInstallOpts, remappings};
+use crate::cmd::forge::{install::DependencyInstallOpts, remappings};
 use ansi_term::Colour;
 use ethers::solc::remappings::Remapping;
 use std::{
@@ -102,10 +102,13 @@ impl Cmd for InitArgs {
 
             // write the contract file
             let contract_path = src.join("Contract.sol");
-            std::fs::write(contract_path, include_str!("../../../assets/ContractTemplate.sol"))?;
+            std::fs::write(contract_path, include_str!("../../../../assets/ContractTemplate.sol"))?;
             // write the tests
             let contract_path = test.join("Contract.t.sol");
-            std::fs::write(contract_path, include_str!("../../../assets/ContractTemplate.t.sol"))?;
+            std::fs::write(
+                contract_path,
+                include_str!("../../../../assets/ContractTemplate.t.sol"),
+            )?;
 
             let dest = root.join(Config::FILE_NAME);
             if !dest.exists() {
@@ -159,7 +162,7 @@ fn init_git_repo(root: &Path, no_commit: bool) -> eyre::Result<()> {
 
     if !is_git.success() {
         let gitignore_path = root.join(".gitignore");
-        std::fs::write(gitignore_path, include_str!("../../../assets/.gitignoreTemplate"))?;
+        std::fs::write(gitignore_path, include_str!("../../../../assets/.gitignoreTemplate"))?;
 
         Command::new("git")
             .arg("init")
