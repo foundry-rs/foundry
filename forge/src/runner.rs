@@ -362,7 +362,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
             reason,
             counterexample: None,
             logs,
-            kind: TestKind::Standard(gas - stipend),
+            kind: TestKind::Standard(gas.overflowing_sub(stipend).0),
             traces,
             labeled_addresses,
         })

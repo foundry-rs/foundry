@@ -433,7 +433,7 @@ impl<DB: DatabaseRef> Runner<DB> {
             self.executor.call_raw(self.sender, address, calldata.0, 0.into())?;
         Ok(RunResult {
             success: !reverted,
-            gas: gas - stipend,
+            gas: gas.overflowing_sub(stipend).0,
             logs,
             traces: traces.map(|traces| vec![(TraceKind::Execution, traces)]).unwrap_or_default(),
             debug: vec![debug].into_iter().collect(),
