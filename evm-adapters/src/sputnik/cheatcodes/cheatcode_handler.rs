@@ -22,7 +22,7 @@ use sputnik::{
     gasometer, Capture, Config, Context, CreateScheme, ExitError, ExitReason, ExitRevert,
     ExitSucceed, Handler, Memory, Opcode, Runtime, Transfer,
 };
-use std::{process::Command, rc::Rc};
+use std::{process::Command, process::Stdio, rc::Rc};
 
 use ethers::{
     abi::{RawLog, Token},
@@ -671,7 +671,10 @@ impl<'a, 'b, B: Backend, P: PrecompileSet> CheatcodeStackExecutor<'a, 'b, B, P> 
                 }
 
                 // execute the command & get the stdout
-                let output = match Command::new(&args[0]).args(&args[1..]).output() {
+                let output = match Command::new(&args[0])
+                    .args(&args[1..])
+                    .stderr(Stdio::inherit())
+                    .output() {
                     Ok(res) => res.stdout,
                     Err(err) => return evm_error(&err.to_string()),
                 };
