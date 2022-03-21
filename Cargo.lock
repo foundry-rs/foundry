@@ -1803,6 +1803,7 @@ dependencies = [
  "eyre",
  "figment",
  "pretty_assertions",
+ "regex",
  "semver",
  "serde",
  "serde_json",
