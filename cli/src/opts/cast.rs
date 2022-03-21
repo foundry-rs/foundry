@@ -7,7 +7,7 @@ use ethers::{
 };
 
 use super::{ClapChain, EthereumOpts, Wallet};
-use crate::utils::parse_u256;
+use crate::{cmd::cast::find_block::FindBlockArgs, utils::parse_u256};
 
 #[derive(Debug, Subcommand)]
 #[clap(about = "Perform Ethereum RPC calls from the comfort of your command line.")]
@@ -506,12 +506,7 @@ pub enum Subcommands {
         name = "find-block",
         about = "Prints the block number closes to the provided timestamp"
     )]
-    FindBlock {
-        #[clap(help = "The UNIX timestamp to search for (in seconds)")]
-        timestamp: u64,
-        #[clap(long, env = "ETH_RPC_URL")]
-        rpc_url: String,
-    },
+    FindBlock(FindBlockArgs),
     #[clap(about = "Generate shell completions script")]
     Completions {
         #[clap(arg_enum)]
