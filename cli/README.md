@@ -23,21 +23,24 @@ FLAGS:
     -V, --version    Prints version information
 
 SUBCOMMANDS:
-    build              build your smart contracts
-    clean              removes the build artifacts and cache directories
-    completions        generate shell completions script
-    create             deploy a compiled contract
+    bind               Generate rust bindings for your smart contracts
+    build              Build your smart contracts
+    clean              Removes the build artifacts and cache directories
+    completions        Generate shell completions script
+    config             Shows the currently set config values
+    create             Deploy a compiled contract
+    flatten            Concats a file with all of its imports
     help               Print this message or the help of the given subcommand(s)
-    init               initializes a new forge sample repository
-    inspect            Outputs a contract in a specified format (ir, assembly, ...)
-    install            installs one or more dependencies as git submodules
-    remappings         prints the automatically inferred remappings for this repository
-    remove             removes one or more dependencies from git submodules
-    run                run a single smart contract as a script
-    snapshot           creates a snapshot of each test's gas usage
-    test               test your smart contracts
-    update             fetches all upstream lib changes
-    verify-contract    verify your smart contracts source code on Etherscan. Requires `ETHERSCAN_API_KEY` to be set.
+    init               Initializes a new forge sample project
+    install            Installs one or more dependencies as git submodules
+    remappings         Prints the automatically inferred remappings for this repository
+    remove             Removes one or more dependencies from git submodules
+    run                Run a single smart contract as a script
+    snapshot           Creates a snapshot of each test's gas usage
+    test               Test your smart contracts
+    update             Fetches all upstream lib changes
+    verify-check       Check verification status on Etherscan. Requires `ETHERSCAN_API_KEY` to be set.
+    verify-contract    Verify your smart contracts source code on Etherscan. Requires `ETHERSCAN_API_KEY` to be set.
 ```
 
 The subcommands are also aliased to their first letter, e.g. you can do
