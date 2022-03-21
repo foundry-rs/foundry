@@ -17,7 +17,7 @@ toml = "0.5"
 figment = { version = "0.10", features = ["toml", "env"] }
 eyre = "0.6.5"
 ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
-ethers-solc = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["async", "svm"] }
+ethers-solc = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["async", "svm-solc"] }
 Inflector = "0.11.4"
 
 [dev-dependencies]
