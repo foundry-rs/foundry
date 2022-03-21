@@ -62,7 +62,7 @@ pub enum Subcommands {
 
     #[clap(
         alias = "i",
-        about = "installs one or more dependencies as git submodules (will install existing dependencies if no arguments are provided)"
+        about = "Installs one or more dependencies as git submodules (will install existing dependencies if no arguments are provided)"
     )]
     Install(InstallArgs),
 

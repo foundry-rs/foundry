@@ -166,6 +166,10 @@ which implements the following methods:
 
 - `function getCode(string calldata) external returns (bytes memory)`: Fetches bytecode from a contract artifact. The parameter can either be in the form `ContractFile.sol` (if the filename and contract name are the same), `ContractFile.sol:ContractName`, or `./path/to/artifact.json`.
 
+- `function label(address addr, string calldata label) external`: Label an address in test traces.
+
+- `function assume(bool) external`: When fuzzing, generate new inputs if conditional not met
+
 The below example uses the `warp` cheatcode to override the timestamp & `expectRevert` to expect a specific revert string:
 
 ```solidity
@@ -286,6 +290,10 @@ interface Hevm {
     function expectCall(address,bytes calldata) external;
     // Fetches the contract bytecode from its artifact file
     function getCode(string calldata) external returns (bytes memory);
+    // Label an address in test traces
+    function label(address addr, string calldata label) external;
+    // When fuzzing, generate new inputs if conditional not met
+    function assume(bool) external;
 }
 ```
 ### `console.log`

@@ -15,7 +15,7 @@ use std::{
 #[derive(Debug, Clone, Parser)]
 pub struct InstallArgs {
     #[clap(
-        help = "installs one or more dependencies as git submodules (will install existing dependencies if no arguments are provided)"
+        help = "Installs one or more dependencies as git submodules (will install existing dependencies if no arguments are provided)"
     )]
     dependencies: Vec<Dependency>,
     #[clap(flatten)]
