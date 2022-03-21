@@ -41,6 +41,5 @@ pub async fn environment<M: Middleware>(
             gas_limit: block.gas_limit.as_u64(),
             ..Default::default()
         },
-        ..Default::default()
     })
 }
