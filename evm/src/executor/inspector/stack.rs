@@ -1,9 +1,7 @@
 use super::{Cheatcodes, Debugger, LogCollector, Tracer};
 use bytes::Bytes;
 use ethers::types::{Address, H256};
-use revm::{
-    db::Database, BlockEnv, CallInputs, CreateInputs, EVMData, Gas, Inspector, Interpreter, Return,
-};
+use revm::{db::Database, CallInputs, CreateInputs, EVMData, Gas, Inspector, Interpreter, Return};
 
 /// Helper macro to call the same method on multiple inspectors without resorting to dynamic
 /// dispatch
@@ -41,13 +39,6 @@ impl<DB> Inspector<DB> for InspectorStack
 where
     DB: Database,
 {
-    fn block_env(&self) -> Option<&BlockEnv> {
-        match &self.cheatcodes {
-            Some(cheatcodes) => Inspector::<DB>::block_env(cheatcodes),
-            None => None,
-        }
-    }
-
     fn initialize_interp(
         &mut self,
         interpreter: &mut Interpreter,

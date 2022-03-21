@@ -37,7 +37,7 @@ pub struct Cheatcodes {
     ///
     /// Used in the cheatcode handler to overwrite the block environment separately from the
     /// execution block environment.
-    pub block: BlockEnv,
+    pub block: Option<BlockEnv>,
 
     /// Address labels
     pub labels: BTreeMap<Address, String>,
@@ -63,7 +63,7 @@ pub struct Cheatcodes {
 
 impl Cheatcodes {
     pub fn new(ffi: bool, block: BlockEnv) -> Self {
-        Self { ffi, block, ..Default::default() }
+        Self { ffi, block: Some(block), ..Default::default() }
     }
 
     fn apply_cheatcode<DB: Database>(
@@ -89,10 +89,6 @@ impl<DB> Inspector<DB> for Cheatcodes
 where
     DB: Database,
 {
-    fn block_env(&self) -> Option<&BlockEnv> {
-        Some(&self.block)
-    }
-
     fn call(
         &mut self,
         data: &mut EVMData<'_, DB>,
@@ -145,6 +141,21 @@ where
 
             (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
         }
+    }
+
+    fn initialize_interp(
+        &mut self,
+        _: &mut Interpreter,
+        data: &mut EVMData<'_, DB>,
+        _: bool,
+    ) -> Return {
+        // When the first interpreter is initialized we've circumvented the balance and gas checks,
+        // so we apply our actual block data with the correct fees and all.
+        if let Some(block) = self.block.take() {
+            data.env.block = block;
+        }
+
+        Return::Continue
     }
 
     fn step(&mut self, interpreter: &mut Interpreter, _: &mut EVMData<'_, DB>, _: bool) -> Return {

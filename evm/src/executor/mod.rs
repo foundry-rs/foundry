@@ -295,9 +295,7 @@ where
         };
 
         // Persist the changed block environment
-        if let Some(ref cheats) = inspector.cheatcodes {
-            self.inspector_config.block = cheats.block.clone();
-        }
+        self.inspector_config.block = evm.env.block.clone();
 
         let InspectorData { logs, labels, traces, debug } = collect_inspector_states(inspector);
         Ok(RawCallResult {
