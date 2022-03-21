@@ -50,6 +50,18 @@ pub struct EvmArgs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_block_number: Option<u64>,
 
+    /// Disables storage caching entirely. This overrides any settings made in
+    /// [foundry_config::caching::StorageCachingConfig]
+    ///
+    /// See --fork-url.
+    #[clap(
+        long,
+        requires = "fork-url",
+        help = "Explicitly disables the use of storage. All Storage slots are read entirely from the endpoint."
+    )]
+    #[serde(skip)]
+    pub no_storage_cache: bool,
+
     /// The initial balance of deployed test contracts.
     #[clap(long)]
     #[serde(skip_serializing_if = "Option::is_none")]

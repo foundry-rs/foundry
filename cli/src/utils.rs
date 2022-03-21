@@ -1,8 +1,19 @@
-use std::{future::Future, path::Path, str::FromStr, time::Duration};
+use std::{
+    future::Future,
+    path::{Path, PathBuf},
+    str::FromStr,
+    time::Duration,
+};
 
-use ethers::{solc::EvmVersion, types::U256};
+use ethers::{
+    providers::{Middleware, Provider},
+    solc::EvmVersion,
+    types::U256,
+};
+use forge::executor::opts::EvmOpts;
 
-use forge::executor::SpecId;
+use forge::executor::{Fork, SpecId};
+use foundry_config::{caching::StorageCachingConfig, Config};
 // reexport all `foundry_config::utils`
 #[doc(hidden)]
 pub use foundry_config::utils::*;
@@ -139,6 +150,48 @@ pub fn parse_delay(delay: &str) -> eyre::Result<Duration> {
 pub fn block_on<F: Future>(future: F) -> F::Output {
     let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
     rt.block_on(future)
+}
+
+/// Helper function that returns the [Fork] to use, if any.
+pub fn get_fork(evm_opts: &EvmOpts, config: &StorageCachingConfig) -> Option<Fork> {
+    fn get_cache_storage_path(
+        evm_opts: &EvmOpts,
+        config: &StorageCachingConfig,
+    ) -> Option<PathBuf> {
+        let url = evm_opts.fork_url.as_ref()?;
+        // cache only if block explicitly pinned
+        let block = evm_opts.fork_block_number?;
+        if config.enable_for_endpoint(url) {
+            // also need to get the chain id to compute the cache path
+            let provider = Provider::try_from(url.as_str()).expect("Failed to establish provider");
+            match block_on(provider.get_chainid()) {
+                Ok(chain_id) => {
+                    let chain_id: u64 = chain_id.try_into().ok()?;
+                    if config.enable_for_chain_id(chain_id) {
+                        let chain = if let Ok(chain) = ethers::types::Chain::try_from(chain_id) {
+                            chain.to_string()
+                        } else {
+                            format!("{}", chain_id)
+                        };
+                        return Some(Config::data_dir().ok()?.join(chain).join(format!("{}", block)))
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!("Failed to get chain id for {}: {:?}", url, err);
+                }
+            }
+        }
+
+        None
+    }
+
+    if let Some(ref url) = evm_opts.fork_url {
+        let cache_storage = get_cache_storage_path(evm_opts, config);
+        let fork = Fork { url: url.clone(), pin_block: evm_opts.fork_block_number, cache_storage };
+        return Some(fork)
+    }
+
+    None
 }
 
 /// Conditionally print a message

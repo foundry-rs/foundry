@@ -13,6 +13,22 @@ pub struct StorageCachingConfig {
     pub endpoints: CachedEndpoints,
 }
 
+impl StorageCachingConfig {
+    /// Whether caching should be enabled for the endpoint
+    pub fn enable_for_endpoint(&self, endpoint: impl AsRef<str>) -> bool {
+        self.endpoints.is_match(endpoint)
+    }
+
+    /// Whether caching should be enabled for the chain id
+    pub fn enable_for_chain_id(&self, chain_id: u64) -> bool {
+        // ignore dev chain
+        if chain_id == 1337 {
+            return false
+        }
+        self.chains.is_match(chain_id)
+    }
+}
+
 /// What chains to cache
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CachedChains {
@@ -22,6 +38,16 @@ pub enum CachedChains {
     None,
     /// Only cache these chains
     Chains(Vec<Chain>),
+}
+impl CachedChains {
+    /// Whether the `endpoint` matches
+    pub fn is_match(&self, chain: u64) -> bool {
+        match self {
+            CachedChains::All => true,
+            CachedChains::None => false,
+            CachedChains::Chains(chains) => chains.iter().any(|c| c.id() == chain),
+        }
+    }
 }
 
 impl Serialize for CachedChains {
@@ -75,6 +101,20 @@ pub enum CachedEndpoints {
     Remote,
     /// Only cache these chains
     Pattern(regex::Regex),
+}
+
+impl CachedEndpoints {
+    /// Whether the `endpoint` matches
+    pub fn is_match(&self, endpoint: impl AsRef<str>) -> bool {
+        let endpoint = endpoint.as_ref();
+        match self {
+            CachedEndpoints::All => true,
+            CachedEndpoints::Remote => {
+                !endpoint.contains("localhost:") && !endpoint.contains("127.0.0.1:")
+            }
+            CachedEndpoints::Pattern(re) => re.is_match(endpoint),
+        }
+    }
 }
 
 impl PartialEq for CachedEndpoints {

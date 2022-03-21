@@ -16,7 +16,6 @@ use futures::{
 use parking_lot::RwLock;
 use std::{
     collections::{hash_map::Entry, BTreeMap, HashMap},
-    path::PathBuf,
     pin::Pin,
     sync::{
         mpsc::{channel as oneshot_channel, Sender as OneshotSender},
@@ -41,17 +40,21 @@ pub struct SharedMemCache {
 /// A type that's used to write the storage to the path once dropped
 struct FlushStorageCacheOnDrop {
     /// Where to write the data on drop
-    storage_dir: PathBuf,
+    storage_map: StorageMap,
     /// access to the storage to write when this type is dropped
     storage: Arc<RwLock<BTreeMap<Address, StorageInfo>>>,
 }
 
 impl Drop for FlushStorageCacheOnDrop {
     fn drop(&mut self) {
-        let lock = self.storage.read();
-        let data = lock.clone();
-        drop(lock);
-        StorageMap::with_data(self.storage_dir.clone(), data).save()
+        // only flush if map is not transient
+        if !self.storage_map.is_transient() {
+            let lock = self.storage.read();
+            let data = lock.clone();
+            drop(lock);
+            self.storage_map.set_storage(data);
+            self.storage_map.save();
+        }
     }
 }
 
@@ -97,6 +100,9 @@ struct BackendHandler<M: Middleware> {
     /// The block to fetch data from.
     // This is an `Option` so that we can have less code churn in the functions below
     block_id: Option<BlockId>,
+    /// If storage caching is enabled, this will flush the data to the configured file once the
+    /// handler is dropped
+    _flush_storage: FlushStorageCacheOnDrop,
 }
 
 impl<M> BackendHandler<M>
@@ -108,8 +114,13 @@ where
         cache: SharedMemCache,
         rx: Receiver<BackendRequest>,
         block_id: Option<BlockId>,
+        storage_map: StorageMap,
     ) -> Self {
         Self {
+            _flush_storage: FlushStorageCacheOnDrop {
+                storage_map,
+                storage: Arc::clone(&cache.storage),
+            },
             provider,
             cache,
             pending_requests: Default::default(),
@@ -379,13 +390,19 @@ impl SharedBackend {
     /// Spawns a new `BackendHandler` on a background thread that listens for requests from any
     /// `SharedBackend`. Missing values get inserted in the `cache`.
     ///
+    ///
     /// NOTE: this should be called with `Arc<Provider>`
-    pub fn new<M>(provider: M, cache: SharedMemCache, pin_block: Option<BlockId>) -> Self
+    pub fn new<M>(
+        provider: M,
+        cache: SharedMemCache,
+        pin_block: Option<BlockId>,
+        storage_map: StorageMap,
+    ) -> Self
     where
         M: Middleware + Unpin + 'static + Clone,
     {
         let (tx, rx) = channel(1);
-        let handler = BackendHandler::new(provider, cache, rx, pin_block);
+        let handler = BackendHandler::new(provider, cache, rx, pin_block, storage_map);
         // spawn the provider handler to background
         let rt = RuntimeOrHandle::new();
         std::thread::spawn(move || match rt {
@@ -419,17 +436,6 @@ impl SharedBackend {
 }
 
 impl DatabaseRef for SharedBackend {
-    fn block_hash(&self, number: U256) -> H256 {
-        if number > U256::from(u64::MAX) {
-            return KECCAK_EMPTY
-        }
-        let number = number.as_u64();
-        self.do_get_block_hash(number).unwrap_or_else(|_| {
-            tracing::trace!("Failed to send/recv `block_hash` for {}", number);
-            Default::default()
-        })
-    }
-
     fn basic(&self, address: H160) -> AccountInfo {
         self.do_get_basic(address).unwrap_or_else(|_| {
             tracing::trace!("Failed to send/recv `basic` for {}", address);
@@ -444,6 +450,17 @@ impl DatabaseRef for SharedBackend {
     fn storage(&self, address: H160, index: U256) -> U256 {
         self.do_get_storage(address, index).unwrap_or_else(|_| {
             tracing::trace!("Failed to send/recv `storage` for {} at {}", address, index);
+            Default::default()
+        })
+    }
+
+    fn block_hash(&self, number: U256) -> H256 {
+        if number > U256::from(u64::MAX) {
+            return KECCAK_EMPTY
+        }
+        let number = number.as_u64();
+        self.do_get_block_hash(number).unwrap_or_else(|_| {
+            tracing::trace!("Failed to send/recv `block_hash` for {}", number);
             Default::default()
         })
     }
@@ -469,7 +486,8 @@ mod tests {
         let address: Address = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();
 
         let cache = SharedMemCache::default();
-        let backend = SharedBackend::new(Arc::new(provider), cache.clone(), None);
+        let backend =
+            SharedBackend::new(Arc::new(provider), cache.clone(), None, StorageMap::transient());
 
         let idx = U256::from(0u64);
         let value = backend.storage(address, idx);
@@ -484,10 +502,10 @@ mod tests {
 
         let num = U256::from(10u64);
         let hash = backend.block_hash(num);
-        let mem_hash = cache.block_hashes.read().get(&num.as_u64()).unwrap().clone();
+        let mem_hash = *cache.block_hashes.read().get(&num.as_u64()).unwrap();
         assert_eq!(hash, mem_hash);
 
-        let backend = backend.clone();
+        let backend = backend;
         let max_slots = 5;
         let handle = std::thread::spawn(move || {
             for i in 1..max_slots {

@@ -58,6 +58,11 @@ impl<K: hash::Hash + Eq, V> DiskMap<K, V> {
         &self.file_path
     }
 
+    /// Whether this is a transient disk map
+    pub fn is_transient(&self) -> bool {
+        self.transient
+    }
+
     /// Consumes the type and returns the underlying map
     pub fn into_inner(self) -> BTreeMap<K, V> {
         self.cache

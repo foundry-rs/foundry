@@ -189,6 +189,7 @@ impl Cmd for TestArgs {
             .initial_balance(evm_opts.initial_balance)
             .evm_spec(evm_spec)
             .sender(evm_opts.sender)
+            .with_fork(utils::get_fork(&evm_opts, &config.rpc_storage_caching))
             .build(output, evm_opts)?;
 
         if self.debug.is_some() {

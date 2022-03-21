@@ -34,13 +34,28 @@ impl StorageMap {
     }
 
     /// Creates a new, `DiskMap` filled with the cache data
-    pub fn with_data(path: impl Into<PathBuf>, cache: AccountStorage) -> Self {
+    pub fn with_data(path: impl AsRef<Path>, cache: AccountStorage) -> Self {
         StorageMap { cache: diskmap::DiskMap::with_data(path.as_ref().join("storage.json"), cache) }
     }
 
     /// Creates transient storage map (no changes are saved to disk).
     pub fn transient() -> Self {
         StorageMap { cache: diskmap::DiskMap::new("storage.json").transient() }
+    }
+
+    /// Whether this cache is transient
+    pub fn is_transient(&self) -> bool {
+        self.cache.is_transient()
+    }
+
+    /// Sets the given data as the content of this cache
+    pub fn set_storage(&mut self, data: AccountStorage) {
+        *self.cache = data;
+    }
+
+    /// Returns the storage data and replaces it with an empty map
+    pub fn take_storage(&mut self) -> AccountStorage {
+        std::mem::take(&mut *self.cache)
     }
 
     /// The path where the diskmap is (will be) stored

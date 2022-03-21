@@ -1261,6 +1261,16 @@ pub enum Chain {
     Id(u64),
 }
 
+impl Chain {
+    /// The id of the chain
+    pub fn id(&self) -> u64 {
+        match self {
+            Chain::Named(chain) => *chain as u64,
+            Chain::Id(id) => *id,
+        }
+    }
+}
+
 impl<'de> Deserialize<'de> for Chain {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
