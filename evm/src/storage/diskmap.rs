@@ -84,13 +84,12 @@ impl<K: hash::Hash + Eq, V> DiskMap<K, V> {
         if self.transient {
             return
         }
-        trace!("reverting diskmap {:?}", self.path);
+        trace!("reloading diskmap {:?}", self.path);
         let _ = fs::File::open(self.path.clone())
             .map_err(|e| trace!("Failed to open disk map: {}", e))
             .and_then(|f| read(f).map_err(|e| warn!("Failed to read disk map: {}", e)))
-            .and_then(|m| {
+            .map(|m| {
                 self.cache = m;
-                Ok(())
             });
     }
 

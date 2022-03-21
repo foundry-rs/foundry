@@ -15,6 +15,15 @@ pub struct StorageMap {
 
 impl StorageMap {
     /// Creates new storage map at given _directory_.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    ///  use foundry_evm::storage::StorageMap;
+    /// let mut map = StorageMap::read("data dir");
+    /// map.insert(100u64.into(), 99u64.into());
+    /// map.save();
+    /// ```
     pub fn read(path: impl AsRef<Path>) -> Self {
         StorageMap { cache: diskmap::DiskMap::read(path.as_ref().join("storage.json"), read_u256) }
     }
@@ -77,7 +86,7 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn should_save_and_reload_storage_map() {
+    fn can_save_and_reload_storage_map() {
         let tempdir = tempdir().unwrap();
         let mut map = StorageMap::read(tempdir.path());
         map.set_value(100u64.into(), 300u64.into());
