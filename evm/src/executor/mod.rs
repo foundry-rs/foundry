@@ -454,14 +454,8 @@ where
         let mut success = !reverted;
         if success {
             // Check if a DSTest assertion failed
-            let call = executor.call::<bool, _, _>(
-                Address::zero(),
-                address,
-                "failed()(bool)",
-                (),
-                0.into(),
-                None,
-            );
+            let call =
+                executor.call::<bool, _, _>(*CALLER, address, "failed()(bool)", (), 0.into(), None);
 
             if let Ok(CallResult { result: failed, .. }) = call {
                 success = !failed;
