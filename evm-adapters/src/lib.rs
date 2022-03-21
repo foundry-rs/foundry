@@ -210,20 +210,8 @@ pub trait Evm<State> {
         }
 
         // Check Success output: Should Fail vs Success
-        //
-        //                           Success
-        //                -----------------------
-        //               |       | false | true  |
-        //               | ----------------------|
-        // Should Fail   | false | false | true  |
-        //               | ----------------------|
-        //               | true  | true  | false |
-        //                -----------------------
-        (should_fail && !success) || (!should_fail && success)
+        should_fail ^ success
     }
-
-    // TODO: Should we add a "deploy contract" function as well, or should we assume that
-    // the EVM is instantiated with a DB that includes any needed contracts?
 }
 
 // Test helpers which are generic over EVM implementation

@@ -4,11 +4,16 @@ use clap::Parser;
 use forge::ContractRunner;
 use foundry_utils::IntoFunction;
 
-use ethers::prelude::Bytes;
+use ethers::types::{Address, Bytes, U256};
+use sputnik::ExitReason;
 
 use crate::opts::evm::EvmArgs;
 use ansi_term::Colour;
-use evm_adapters::evm_opts::{BackendKind, EvmOpts};
+use evm_adapters::{
+    evm_opts::{BackendKind, EvmOpts},
+    sputnik::helpers::vm,
+    Evm,
+};
 use foundry_config::{figment::Figment, Config};
 
 // Loads project's figment and merges the build cli arguments into it
@@ -51,51 +56,41 @@ impl Cmd for ExecArgs {
         let bytecode_vec = self.bytecode.strip_prefix("0x").unwrap_or(&self.bytecode);
         let parsed_bytecode = Bytes::from(hex::decode(bytecode_vec)?);
 
-        // need to match on the backend type
-        let func = IntoFunction::into("test()");
-        let contract = Default::default();
-        let predeploy_libs = Vec::new();
-        let result = match backend {
-            BackendKind::Simple(ref backend) => {
-                let runner = ContractRunner::new(
-                    &evm_opts,
-                    &cfg,
-                    backend,
-                    &contract,
-                    parsed_bytecode,
-                    Some(evm_opts.sender),
-                    None,
-                    &predeploy_libs,
-                );
-                runner.run_test(&func, false, None)?
-            }
-            BackendKind::Shared(ref backend) => {
-                let runner = ContractRunner::new(
-                    &evm_opts,
-                    &cfg,
-                    backend,
-                    &contract,
-                    parsed_bytecode,
-                    Some(evm_opts.sender),
-                    None,
-                    &predeploy_libs,
-                );
-                runner.run_test(&func, false, None)?
-            }
-        };
+        // Create the evm executor
+        let mut evm = vm();
 
-        // TODO: support evm_opts.debug and tracing
-        println!("Full result: {:?}", result);
+        // Deploy our bytecode
+        let custVal = U256::from(0);
+        let (addr, _, _, _) = evm.deploy(Address::zero(), parsed_bytecode, custVal).unwrap();
 
-        if result.success {
-            println!("{}", Colour::Green.paint("Bytecode executed successfully."));
-        } else {
-            println!("{}", Colour::Red.paint("Bytecode failed."));
+        // Configure EVM
+        evm.gas_limit = u64::MAX;
+
+        // TODO: support arbitrary input
+        // let sig = ethers::utils::id("foo()").to_vec();
+
+        // Call the address with an empty input
+        let (retBytes, retReason, retU64, retVecStr) =
+            evm.call_raw(Address::zero(), addr, Default::default(), custVal, true)?;
+
+        // Match on the return exit reason
+        match retReason {
+            ExitReason::Succeed(s) => {
+                println!("{}", Colour::Green.paint(format!("SUCCESS [{:?}]", s)));
+                println!("");
+                println!("==== Execution Return Bytes ====");
+                println!("{}", retBytes);
+            }
+            ExitReason::Error(e) => {
+                println!("{}", Colour::Red.paint(format!("ERROR [{:?}]", e)));
+            }
+            ExitReason::Revert(r) => {
+                println!("{}", Colour::Yellow.paint(format!("REVERT [{:?}]", r)));
+            }
+            ExitReason::Fatal(f) => {
+                println!("{}", Colour::Red.paint(format!("FATAL [{:?}]", f)));
+            }
         }
-
-        println!("Gas Used: {}", result.gas_used);
-        println!("== Logs ==");
-        result.logs.iter().for_each(|log| println!("{}", log));
 
         Ok(())
     }
