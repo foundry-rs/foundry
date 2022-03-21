@@ -17,10 +17,10 @@ use evm_adapters::{
 use foundry_config::{figment::Figment, Config};
 
 // Loads project's figment and merges the build cli arguments into it
-foundry_config::impl_figment_convert!(ExecArgs, opts, evm_opts);
+foundry_config::impl_figment_convert!(RunArgs, opts, evm_opts);
 
 #[derive(Debug, Clone, Parser)]
-pub struct ExecArgs {
+pub struct RunArgs {
     #[clap(help = "the bytecode to execute")]
     pub bytecode: String,
 
@@ -31,7 +31,7 @@ pub struct ExecArgs {
     opts: BuildArgs,
 }
 
-impl Cmd for ExecArgs {
+impl Cmd for RunArgs {
     type Output = ();
 
     fn run(self) -> eyre::Result<Self::Output> {
@@ -96,7 +96,7 @@ impl Cmd for ExecArgs {
     }
 }
 
-impl ExecArgs {
+impl RunArgs {
     pub fn build(&self, _: Config, _: &EvmOpts) -> eyre::Result<()> {
         Ok(())
     }

@@ -307,7 +307,7 @@ async fn main() -> eyre::Result<()> {
                 eyre::bail!("No wallet or sender address provided.")
             }
         }
-        Subcommands::Exec(cmd) => cmd.run()?,
+        Subcommands::Run(cmd) => cmd.run()?,
         Subcommands::PublishTx { eth, raw_tx, cast_async } => {
             let provider = Provider::try_from(eth.rpc_url()?)?;
             let cast = Cast::new(&provider);

@@ -37,4 +37,4 @@
 //! let config: Config = From::from(&args);
 //! ```
 
-pub mod exec;
+pub mod run;
