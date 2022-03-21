@@ -57,7 +57,7 @@ pub enum EvmError {
         traces: Option<CallTraceArena>,
         debug: Option<DebugArena>,
         labels: BTreeMap<Address, String>,
-        state_changeset: StateChangeset,
+        state_changeset: Option<StateChangeset>,
     },
     /// Error which occurred during ABI encoding/decoding
     #[error(transparent)]
@@ -105,7 +105,7 @@ pub struct CallResult<D: Detokenize> {
     ///
     /// This is only present if the changed state was not committed to the database (i.e. if you
     /// used `call` and `call_raw` not `call_committing` or `call_raw_committing`).
-    pub state_changeset: StateChangeset,
+    pub state_changeset: Option<StateChangeset>,
 }
 
 /// The result of a raw call.
@@ -133,7 +133,7 @@ pub struct RawCallResult {
     ///
     /// This is only present if the changed state was not committed to the database (i.e. if you
     /// used `call` and `call_raw` not `call_committing` or `call_raw_committing`).
-    pub state_changeset: StateChangeset,
+    pub state_changeset: Option<StateChangeset>,
 }
 
 impl Default for RawCallResult {
@@ -148,7 +148,7 @@ impl Default for RawCallResult {
             labels: BTreeMap::new(),
             traces: None,
             debug: None,
-            state_changeset: StateChangeset::new(),
+            state_changeset: None,
         }
     }
 }
@@ -279,9 +279,37 @@ where
         calldata: Bytes,
         value: U256,
     ) -> Result<RawCallResult> {
-        let result = self.call_raw(from, to, calldata, value)?;
-        self.db.commit(result.state_changeset.clone());
-        Ok(result)
+        let stipend = stipend(&calldata, self.env.cfg.spec_id);
+
+        // Build VM
+        let mut evm = EVM::new();
+        evm.env = self.build_env(from, TransactTo::Call(to), calldata, value);
+        evm.database(&mut self.db);
+
+        // Run the call
+        let mut inspector = self.inspector_config.stack();
+        let (status, out, gas, _) = evm.inspect_commit(&mut inspector);
+        let result = match out {
+            TransactOut::Call(data) => data,
+            _ => Bytes::default(),
+        };
+
+        // Persist the environment since it might have been changed by cheatcodes
+        self.env = evm.env;
+
+        let InspectorData { logs, labels, traces, debug } = collect_inspector_states(inspector);
+        Ok(RawCallResult {
+            status,
+            reverted: !matches!(status, return_ok!()),
+            result,
+            gas,
+            stipend,
+            logs: logs.to_vec(),
+            labels,
+            traces,
+            debug,
+            state_changeset: None,
+        })
     }
 
     /// Performs a call to an account on the current state of the VM.
@@ -379,7 +407,7 @@ where
             labels,
             traces,
             debug,
-            state_changeset,
+            state_changeset: Some(state_changeset),
         })
     }
 

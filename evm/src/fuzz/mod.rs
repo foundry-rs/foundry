@@ -79,9 +79,11 @@ where
                 .call_raw(self.sender, address, calldata.0.clone(), 0.into())
                 .expect("could not make raw evm call");
             let call = call.borrow();
+            let state_changeset =
+                call.state_changeset.as_ref().expect("we should have a state changeset");
 
             // Build fuzzer state
-            collect_state_from_call(&call.logs, &call.state_changeset, state.clone());
+            collect_state_from_call(&call.logs, state_changeset, state.clone());
 
             // When assume cheat code is triggered return a special string "FOUNDRY::ASSUME"
             if call.result.as_ref() == ASSUME_MAGIC_RETURN_CODE {
@@ -91,7 +93,7 @@ where
             let success = self.executor.is_success(
                 address,
                 call.reverted,
-                call.state_changeset.clone(),
+                state_changeset.clone(),
                 should_fail,
             );
 
