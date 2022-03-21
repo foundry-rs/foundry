@@ -10,10 +10,12 @@ contract CheatsSetupTest is DSTest {
     function setUp() public {
       cheats.warp(10);
       cheats.roll(100);
+      cheats.fee(1000);
     }
 
     function testCheatEnvironment() public {
         assertEq(block.timestamp, 10, "block timestamp was not persisted from setup");
         assertEq(block.number, 100, "block number was not persisted from setup");
+        assertEq(block.basefee, 1000, "basefee was not persisted from setup");
     }
 }

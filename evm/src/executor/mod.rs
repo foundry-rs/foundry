@@ -475,7 +475,14 @@ where
         Env {
             cfg: self.env.cfg.clone(),
             block: self.env.block.clone(),
-            tx: TxEnv { caller, transact_to, data, value, ..self.env.tx.clone() },
+            tx: TxEnv {
+                caller,
+                transact_to,
+                data,
+                value,
+                gas_price: self.env.block.basefee,
+                ..self.env.tx.clone()
+            },
         }
     }
 }
