@@ -18,6 +18,8 @@ pub struct StorageCachingConfig {
 pub enum CachedChains {
     /// Cache all chains
     All,
+    /// Don't cache anything
+    None,
     /// Only cache these chains
     Chains(Vec<Chain>),
 }
@@ -29,6 +31,7 @@ impl Serialize for CachedChains {
     {
         match self {
             CachedChains::All => serializer.serialize_str("all"),
+            CachedChains::None => serializer.serialize_str("none"),
             CachedChains::Chains(chains) => chains.serialize(serializer),
         }
     }
@@ -47,7 +50,11 @@ impl<'de> Deserialize<'de> for CachedChains {
         }
 
         match Chains::deserialize(deserializer)? {
-            Chains::All(_) => Ok(CachedChains::All),
+            Chains::All(s) => match s.as_str() {
+                "all" => Ok(CachedChains::All),
+                "none" => Ok(CachedChains::None),
+                s => Err(serde::de::Error::unknown_variant(s, &["all", "none"])),
+            },
             Chains::Chains(chains) => Ok(CachedChains::Chains(chains)),
         }
     }
