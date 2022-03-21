@@ -19,7 +19,8 @@ use ethers::{
     types::{Address, H256},
 };
 use revm::{
-    opcode, CallInputs, CreateInputs, Database, EVMData, Gas, Inspector, Interpreter, Return,
+    opcode, BlockEnv, CallInputs, CreateInputs, Database, EVMData, Gas, Inspector, Interpreter,
+    Return,
 };
 use std::collections::BTreeMap;
 
@@ -31,6 +32,12 @@ use std::collections::BTreeMap;
 pub struct Cheatcodes {
     /// Whether FFI is enabled or not
     ffi: bool,
+
+    /// The block environment
+    ///
+    /// Used in the cheatcode handler to overwrite the block environment separately from the
+    /// execution block environment.
+    pub block: BlockEnv,
 
     /// Address labels
     pub labels: BTreeMap<Address, String>,
@@ -55,8 +62,8 @@ pub struct Cheatcodes {
 }
 
 impl Cheatcodes {
-    pub fn new(ffi: bool) -> Self {
-        Self { ffi, ..Default::default() }
+    pub fn new(ffi: bool, block: BlockEnv) -> Self {
+        Self { ffi, block, ..Default::default() }
     }
 
     fn apply_cheatcode<DB: Database>(
@@ -82,6 +89,10 @@ impl<DB> Inspector<DB> for Cheatcodes
 where
     DB: Database,
 {
+    fn block_env(&self) -> Option<&BlockEnv> {
+        Some(&self.block)
+    }
+
     fn call(
         &mut self,
         data: &mut EVMData<'_, DB>,

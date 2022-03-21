@@ -3591,7 +3591,7 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "1.2.0"
-source = "git+https://github.com/bluealloy/revm#cb5fbb9adc36c8ee127dce92259356cecbb829b8"
+source = "git+https://github.com/onbjerg/revm?branch=onbjerg/override-block-env#c364806efa6070b94b803380fb7f71e870e6898f"
 dependencies = [
  "arrayref",
  "auto_impl",
@@ -3607,7 +3607,7 @@ dependencies = [
 [[package]]
 name = "revm_precompiles"
 version = "0.4.0"
-source = "git+https://github.com/bluealloy/revm#cb5fbb9adc36c8ee127dce92259356cecbb829b8"
+source = "git+https://github.com/onbjerg/revm?branch=onbjerg/override-block-env#c364806efa6070b94b803380fb7f71e870e6898f"
 dependencies = [
  "bytes",
  "k256",

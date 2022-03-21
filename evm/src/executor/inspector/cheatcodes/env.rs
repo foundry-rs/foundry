@@ -75,15 +75,15 @@ pub fn apply<DB: Database>(
 ) -> Option<Result<Bytes, Bytes>> {
     Some(match call {
         HEVMCalls::Warp(inner) => {
-            data.env.block.timestamp = inner.0;
+            state.block.timestamp = inner.0;
             Ok(Bytes::new())
         }
         HEVMCalls::Roll(inner) => {
-            data.env.block.number = inner.0;
+            state.block.number = inner.0;
             Ok(Bytes::new())
         }
         HEVMCalls::Fee(inner) => {
-            data.env.block.basefee = inner.0;
+            state.block.basefee = inner.0;
             Ok(Bytes::new())
         }
         HEVMCalls::Store(inner) => {

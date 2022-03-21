@@ -19,6 +19,9 @@ codegen-units = 1
 panic = "abort"
 debug = true
 
+[patch."https://github.com/bluealloy/revm"]
+revm = { git = "https://github.com/onbjerg/revm", branch = "onbjerg/override-block-env" }
+
 ## Patch ethers-rs with a local checkout then run `cargo update -p ethers`
 #[patch."https://github.com/gakonst/ethers-rs"]
 #ethers = { path = "../ethers-rs" }
