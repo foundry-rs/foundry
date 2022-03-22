@@ -1,6 +1,5 @@
 [workspace]
 members = [
-    "evm-adapters",
     "utils",
     "cast",
     "forge",
@@ -8,6 +7,8 @@ members = [
     "cli/test-utils",
     "config",
     "fmt",
+    "ui",
+    "evm"
 ]
 
 # Binary size optimizations
@@ -17,11 +18,6 @@ lto = true
 codegen-units = 1
 panic = "abort"
 debug = true
-
-## Patch sputnik with more recent primitive types
-# https://github.com/rust-blockchain/evm/pulls
-[patch."https://github.com/rust-blockchain/evm"]
-evm = { git = "https://github.com/gakonst/evm", branch = "bump-primitive-types" }
 
 ## Patch ethers-rs with a local checkout then run `cargo update -p ethers`
 #[patch."https://github.com/gakonst/ethers-rs"]
