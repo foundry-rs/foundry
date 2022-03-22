@@ -19,12 +19,6 @@ use std::{collections::BTreeMap, str::FromStr};
 
 use super::Cmd;
 
-use crate::opts::evm::EvmArgs;
-#[cfg(feature = "evmodin-evm")]
-use crate::utils::evmodin_cfg;
-#[cfg(feature = "sputnik-evm")]
-use crate::utils::sputnik_cfg;
-
 #[cfg(feature = "sputnik-evm")]
 static SPUTNIK_CONFIG: OnceCell<sputnik::Config> = OnceCell::new();
 #[cfg(feature = "sputnik-evm")]
@@ -108,27 +102,6 @@ impl Cmd for NodeArgs {
                 tokio::runtime::Runtime::new()
                     .unwrap()
                     .block_on(Node::init_and_run(evm, node_config));
-            }
-            #[cfg(feature = "evmodin-evm")]
-            EvmType::EvmOdin => {
-                use evm_adapters::evmodin::EvmOdin;
-                use evmodin::tracing::NoopTracer;
-
-                let revision = evmodin_cfg(&self.evm_version);
-
-                // TODO: Replace this with a proper host. We'll want this to also be
-                // provided generically when we add the Forking host(s).
-                let host = self.evm_opts.env.evmodin_state();
-
-                let evm = EvmOdin::new(
-                    host,
-                    self.evm_opts.env.gas_limit.unwrap_or_default(),
-                    revision,
-                    NoopTracer,
-                );
-                tokio::runtime::Runtime::new()
-                    .unwrap()
-                    .block_on(forge_node::Node::init_and_run(evm, node_config));
             }
         }
         Ok(())

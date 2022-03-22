@@ -25,7 +25,6 @@ forge-fmt = { path = "../fmt" }
 foundry-utils = { path = "../utils" }
 forge = { path = "../forge" }
 forge-node = { path = "../forge-node" }
-foundry-config = { path = "../config" }
 cast = { path = "../cast" }
 ui = { path = "../ui" }
 dunce = "1.0.2"
