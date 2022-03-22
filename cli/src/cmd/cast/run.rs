@@ -32,7 +32,7 @@ pub struct RunArgs {
     pub calldata: Option<String>,
 
     /// Open the bytecode execution in debug mode
-    #[clap(long, help="debug the bytecode execution")]
+    #[clap(long, help = "debug the bytecode execution")]
     pub debug: bool,
 
     #[clap(flatten)]
