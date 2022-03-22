@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use ethers::solc::remappings::Remapping;
 
-use crate::cmd::{build::BuildArgs, Cmd};
+use crate::cmd::{forge::build::BuildArgs, Cmd};
 use clap::{Parser, ValueHint};
 use foundry_config::Config;
 

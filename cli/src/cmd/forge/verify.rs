@@ -1,7 +1,7 @@
 //! Verify contract source on etherscan
 
 use crate::{
-    cmd::{build::BuildArgs, flatten::CoreFlattenArgs},
+    cmd::forge::{build::BuildArgs, flatten::CoreFlattenArgs},
     opts::forge::ContractInfo,
 };
 use clap::Parser;

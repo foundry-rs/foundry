@@ -1,5 +1,5 @@
 use crate::{
-    cmd::{build::BuildArgs, compile_files, Cmd},
+    cmd::{compile_files, forge::build::BuildArgs, Cmd},
     opts::evm::EvmArgs,
 };
 use ansi_term::Colour;

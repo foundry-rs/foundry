@@ -1,7 +1,7 @@
 //! config command
 
 use crate::{
-    cmd::{build::BuildArgs, Cmd},
+    cmd::{forge::build::BuildArgs, utils::Cmd},
     opts::evm::EvmArgs,
 };
 use clap::Parser;
