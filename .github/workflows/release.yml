@@ -124,8 +124,6 @@ jobs:
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
 
       - name: Build binaries
-        env:
-          RUSTFLAGS: -C link-args=-s
         uses: actions-rs/cargo@v1
         with:
           command: build

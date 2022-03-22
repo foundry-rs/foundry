@@ -1757,7 +1757,6 @@ dependencies = [
  "futures",
  "glob",
  "hex",
- "locate-cargo-manifest",
  "once_cell",
  "pretty_assertions",
  "proptest",
@@ -2429,12 +2428,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "json"
-version = "0.12.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "078e285eafdfb6c4b434e0d31e8cfcb5115b651496faca5749b88fafd4f23bfd"
-
-[[package]]
 name = "k256"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2555,15 +2548,6 @@ dependencies = [
  "libc",
  "pkg-config",
  "vcpkg",
-]
-
-[[package]]
-name = "locate-cargo-manifest"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "db985b63431fe09e8d71f50aeceffcc31e720cb86be8dad2f38d084c5a328466"
-dependencies = [
- "json",
 ]
 
 [[package]]

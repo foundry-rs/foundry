@@ -10,13 +10,22 @@ members = [
     "fmt",
 ]
 
-# Binary size optimizations
+[profile.test]
+# Speeds up build
+debug = 0
+# Speeds up tests
+opt-level = 3
+
 [profile.release]
-opt-level = "z"
-lto = true
+# Optimize for binary size, but keep loop vectorization
+opt-level = "s"
+strip = true
+# Performance optimizations
+lto = "fat"
 codegen-units = 1
 panic = "abort"
-debug = true
+# We end up stripping away these symbols anyway
+debug = 0
 
 ## Patch sputnik with more recent primitive types
 # https://github.com/rust-blockchain/evm/pulls

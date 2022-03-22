@@ -4,11 +4,11 @@ on:
       - master
   pull_request:
 
-name: Tests
+name: test
 
 jobs:
-  tests-stable:
-    name: Tests (Stable)
+  unit:
+    name: unit tests
     runs-on: ubuntu-latest
     env:
       ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf
@@ -25,13 +25,52 @@ jobs:
           toolchain: stable
           profile: minimal
           override: true
-
       - uses: Swatinem/rust-cache@v1
         with:
           cache-on-failure: true
 
       - name: cargo test
-        run: cargo test --all --all-features
+        run: cargo test --locked --workspace --all-features --lib --bins
+
+  doc:
+    name: doc tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+      - name: Install toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+      - uses: Swatinem/rust-cache@v1
+        with:
+          cache-on-failure: true
+
+      - name: cargo test
+        run: cargo test --locked --workspace --all-features --doc
+
+  integration:
+    name: integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+      - name: Clone testdata for fmt tests
+        run: make fmt-testdata
+      - name: Install toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+      - uses: Swatinem/rust-cache@v1
+        with:
+          cache-on-failure: true
+
+      - name: cargo test
+        run: cargo test --locked --workspace --all-features --test '*'
 
   lint:
     runs-on: ubuntu-latest
