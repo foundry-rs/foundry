@@ -343,8 +343,12 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         };
         traces.extend(execution_traces.map(|traces| (TraceKind::Execution, traces)).into_iter());
 
-        let success =
-            self.executor.is_success(setup.address, reverted, state_changeset, should_fail);
+        let success = self.executor.is_success(
+            setup.address,
+            reverted,
+            state_changeset.expect("we should have a state changeset"),
+            should_fail,
+        );
 
         // Record test execution time
         tracing::debug!(
@@ -358,7 +362,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
             reason,
             counterexample: None,
             logs,
-            kind: TestKind::Standard(gas - stipend),
+            kind: TestKind::Standard(gas.overflowing_sub(stipend).0),
             traces,
             labeled_addresses,
         })

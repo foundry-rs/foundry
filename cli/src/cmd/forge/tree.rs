@@ -1,6 +1,6 @@
 //! tree command
 
-use crate::cmd::{build::BuildArgs, Cmd};
+use crate::cmd::{forge::build::BuildArgs, Cmd};
 use clap::Parser;
 use ethers::solc::Graph;
 use foundry_config::Config;

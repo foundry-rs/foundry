@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand, ValueHint};
 use ethers::solc::{artifacts::output_selection::ContractOutputSelection, EvmVersion};
 use std::{path::PathBuf, str::FromStr};
 
-use crate::cmd::{
+use crate::cmd::forge::{
     bind::BindArgs,
     build::BuildArgs,
     config,

@@ -1,6 +1,9 @@
 //! Test command
 use crate::{
-    cmd::{build::BuildArgs, run::RunArgs, Cmd},
+    cmd::{
+        forge::{build::BuildArgs, run::RunArgs},
+        Cmd,
+    },
     opts::evm::EvmArgs,
     utils,
 };
@@ -174,7 +177,7 @@ impl Cmd for TestArgs {
 
         // Set up the project
         let project = config.project()?;
-        let output = super::compile(&project, false, false)?;
+        let output = crate::cmd::compile(&project, false, false)?;
 
         // Determine print verbosity and executor verbosity
         let verbosity = evm_opts.verbosity;

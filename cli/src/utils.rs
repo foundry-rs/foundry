@@ -10,9 +10,7 @@ use ethers::{
     solc::EvmVersion,
     types::U256,
 };
-use forge::executor::opts::EvmOpts;
-
-use forge::executor::{Fork, SpecId};
+use forge::executor::{opts::EvmOpts, Fork, SpecId};
 use foundry_config::{caching::StorageCachingConfig, Config};
 // reexport all `foundry_config::utils`
 #[doc(hidden)]

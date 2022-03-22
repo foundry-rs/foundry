@@ -19,7 +19,8 @@ use ethers::{
     types::{Address, H256},
 };
 use revm::{
-    opcode, CallInputs, CreateInputs, Database, EVMData, Gas, Inspector, Interpreter, Return,
+    opcode, BlockEnv, CallInputs, CreateInputs, Database, EVMData, Gas, Inspector, Interpreter,
+    Return,
 };
 use std::collections::BTreeMap;
 
@@ -31,6 +32,12 @@ use std::collections::BTreeMap;
 pub struct Cheatcodes {
     /// Whether FFI is enabled or not
     ffi: bool,
+
+    /// The block environment
+    ///
+    /// Used in the cheatcode handler to overwrite the block environment separately from the
+    /// execution block environment.
+    pub block: Option<BlockEnv>,
 
     /// Address labels
     pub labels: BTreeMap<Address, String>,
@@ -55,8 +62,8 @@ pub struct Cheatcodes {
 }
 
 impl Cheatcodes {
-    pub fn new(ffi: bool) -> Self {
-        Self { ffi, ..Default::default() }
+    pub fn new(ffi: bool, block: BlockEnv) -> Self {
+        Self { ffi, block: Some(block), ..Default::default() }
     }
 
     fn apply_cheatcode<DB: Database>(
@@ -134,6 +141,21 @@ where
 
             (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
         }
+    }
+
+    fn initialize_interp(
+        &mut self,
+        _: &mut Interpreter,
+        data: &mut EVMData<'_, DB>,
+        _: bool,
+    ) -> Return {
+        // When the first interpreter is initialized we've circumvented the balance and gas checks,
+        // so we apply our actual block data with the correct fees and all.
+        if let Some(block) = self.block.take() {
+            data.env.block = block;
+        }
+
+        Return::Continue
     }
 
     fn step(&mut self, interpreter: &mut Interpreter, _: &mut EVMData<'_, DB>, _: bool) -> Return {

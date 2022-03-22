@@ -14,7 +14,7 @@ use std::{
     fs::File,
     io::{BufWriter, Write},
     path::{Path, PathBuf},
-    process::{self, Command, Stdio},
+    process::{self, Command},
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc, Mutex,
@@ -40,7 +40,10 @@ pub fn initialize(target: impl AsRef<Path>) {
 }
 
 /// Clones a remote repository into the specified directory.
-pub fn clone_remote(repo_url: &str, target_dir: impl AsRef<Path>) -> bool {
+pub fn clone_remote(
+    repo_url: &str,
+    target_dir: impl AsRef<Path>,
+) -> std::io::Result<process::Output> {
     Command::new("git")
         .args([
             "clone",
@@ -50,11 +53,7 @@ pub fn clone_remote(repo_url: &str, target_dir: impl AsRef<Path>) -> bool {
             repo_url,
             target_dir.as_ref().to_str().expect("Target path for git clone does not exist"),
         ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .expect("Could not clone repository. Is git installed?")
-        .success()
+        .output()
 }
 
 /// Setup an empty test project and return a command pointing to the forge
