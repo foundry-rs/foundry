@@ -37,17 +37,17 @@ pub struct InspectorStackConfig {
 
 impl InspectorStackConfig {
     pub fn stack(&self) -> InspectorStack {
-        let mut stack = InspectorStack::new();
+        let mut stack =
+            InspectorStack { logs: Some(LogCollector::default()), ..Default::default() };
 
-        stack.logs = Some(LogCollector::new());
         if self.cheatcodes {
             stack.cheatcodes = Some(Cheatcodes::new(self.ffi, self.block.clone()));
         }
         if self.tracing {
-            stack.tracer = Some(Tracer::new());
+            stack.tracer = Some(Tracer::default());
         }
         if self.debugger {
-            stack.debugger = Some(Debugger::new());
+            stack.debugger = Some(Debugger::default());
         }
         stack
     }

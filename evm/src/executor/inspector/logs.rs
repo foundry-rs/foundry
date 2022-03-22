@@ -17,10 +17,6 @@ pub struct LogCollector {
 }
 
 impl LogCollector {
-    pub fn new() -> Self {
-        Default::default()
-    }
-
     fn hardhat_log(&mut self, input: Vec<u8>) -> (Return, Bytes) {
         // Patch the Hardhat-style selectors
         let input = patch_hardhat_console_selector(input.to_vec());

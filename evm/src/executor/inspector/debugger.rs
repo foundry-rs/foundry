@@ -45,10 +45,6 @@ pub struct Debugger {
 }
 
 impl Debugger {
-    pub fn new() -> Self {
-        Default::default()
-    }
-
     /// Builds the instruction counter map for the given bytecode.
     // TODO: Some of the same logic is performed in REVM, but then later discarded. We should
     // investigate if we can reuse it

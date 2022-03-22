@@ -17,8 +17,6 @@ macro_rules! call_inspectors {
 
 /// An inspector that calls multiple inspectors in sequence.
 ///
-/// The order in which inspectors are called match the order in which they were added to the stack.
-///
 /// If a call to an inspector returns a value other than [Return::Continue] (or equivalent) the
 /// remaining inspectors are not called.
 #[derive(Default)]
@@ -27,12 +25,6 @@ pub struct InspectorStack {
     pub logs: Option<LogCollector>,
     pub cheatcodes: Option<Cheatcodes>,
     pub debugger: Option<Debugger>,
-}
-
-impl InspectorStack {
-    pub fn new() -> Self {
-        Default::default()
-    }
 }
 
 impl<DB> Inspector<DB> for InspectorStack

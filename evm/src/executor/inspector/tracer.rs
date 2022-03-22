@@ -23,10 +23,6 @@ pub struct Tracer {
 }
 
 impl Tracer {
-    pub fn new() -> Self {
-        Default::default()
-    }
-
     pub fn start_trace(
         &mut self,
         depth: usize,
