@@ -259,7 +259,7 @@ pub enum Subcommands {
         to_json: bool,
     },
     #[clap(alias = "r", about = "Executes arbitrary bytecode in hex format")]
-    Run(RunArgs),
+    Run(Box<RunArgs>),
     #[clap(name = "publish")]
     #[clap(about = "Publish a raw transaction to the network")]
     PublishTx {

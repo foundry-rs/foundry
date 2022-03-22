@@ -57,13 +57,14 @@ impl Cmd for RunArgs {
         let parsed_bytecode = Bytes::from(hex::decode(bytecode_vec)?);
 
         // Parse Calldata
-        let calldata: Bytes =
-            if let Some(calldata) = self.calldata.unwrap_or("0x".to_string()).strip_prefix("0x") {
-                hex::decode(calldata)?.into()
-            } else {
-                let args: Vec<String> = vec![];
-                encode_args(&IntoFunction::into("".to_string()), &args)?.into()
-            };
+        let calldata: Bytes = if let Some(calldata) =
+            self.calldata.unwrap_or_else(|| "0x".to_string()).strip_prefix("0x")
+        {
+            hex::decode(calldata)?.into()
+        } else {
+            let args: Vec<String> = vec![];
+            encode_args(&IntoFunction::into("".to_string()), &args)?.into()
+        };
 
         // Create executor
         let mut builder = ExecutorBuilder::new()
@@ -124,7 +125,7 @@ impl Cmd for RunArgs {
         } else {
             println!("{}", Colour::Green.paint("[SUCCESS]"));
             let o = rcr.result.encode_hex::<String>();
-            if o.len() > 0 {
+            if !o.is_empty() {
                 println!("Output: {}", o);
             } else {
                 println!("{}", Colour::Yellow.paint("No Output"));
@@ -159,6 +160,6 @@ impl<DB: DatabaseRef> Runner<DB> {
     }
 
     pub fn run(&mut self, address: Address, calldata: Bytes) -> eyre::Result<RawCallResult> {
-        Ok(self.executor.call_raw(self.sender, address, calldata.0, 0_u64.into())?)
+        self.executor.call_raw(self.sender, address, calldata.0, 0_u64.into())
     }
 }
