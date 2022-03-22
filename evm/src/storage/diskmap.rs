@@ -1,4 +1,10 @@
-use std::{collections::BTreeMap, fmt, fs, hash, ops, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    fmt, fs, hash,
+    io::{BufReader, BufWriter},
+    ops,
+    path::PathBuf,
+};
 
 use tracing::{trace, warn};
 
@@ -44,11 +50,11 @@ impl<K: hash::Hash + Eq, V> DiskMap<K, V> {
     /// Reads the contents of the diskmap file and returns the read cache
     pub fn read<F, E>(path: impl Into<PathBuf>, read: F) -> Self
     where
-        F: Fn(fs::File) -> Result<BTreeMap<K, V>, E>,
+        F: Fn(BufReader<fs::File>) -> Result<BTreeMap<K, V>, E>,
         E: fmt::Display,
     {
         let mut map = Self::new(path);
-        trace!("reading diskmap path={:?}", map.file_path);
+        trace!(target: "diskmap" ,"reading diskmap path={:?}", map.file_path);
         map.reload(read);
         map
     }
@@ -87,7 +93,7 @@ impl<K: hash::Hash + Eq, V> DiskMap<K, V> {
     /// overwriting all changes
     fn reload<F, E>(&mut self, read: F)
     where
-        F: Fn(fs::File) -> Result<BTreeMap<K, V>, E>,
+        F: Fn(BufReader<fs::File>) -> Result<BTreeMap<K, V>, E>,
         E: fmt::Display,
     {
         if self.transient {
@@ -95,8 +101,11 @@ impl<K: hash::Hash + Eq, V> DiskMap<K, V> {
         }
         trace!("reloading diskmap {:?}", self.file_path);
         let _ = fs::File::open(self.file_path.clone())
-            .map_err(|e| trace!("Failed to open disk map: {}", e))
-            .and_then(|f| read(f).map_err(|e| warn!("Failed to read disk map: {}", e)))
+            .map_err(|e| trace!(target: "diskmap" , "Failed to open disk map: {}", e))
+            .and_then(|f| {
+                read(BufReader::new(f))
+                    .map_err(|e| warn!(target: "diskmap" ,"Failed to read disk map: {}", e))
+            })
             .map(|m| {
                 self.cache = m;
             });
@@ -107,20 +116,22 @@ impl<K: hash::Hash + Eq, V> DiskMap<K, V> {
     /// The closure is expected to do the actual writing
     pub fn save<F, E>(&self, write: F)
     where
-        F: Fn(&BTreeMap<K, V>, &mut fs::File) -> Result<(), E>,
+        F: Fn(&BTreeMap<K, V>, &mut BufWriter<fs::File>) -> Result<(), E>,
         E: fmt::Display,
     {
         if self.transient {
             return
         }
-        trace!("saving diskmap {:?}", self.file_path);
+        trace!(target: "diskmap", "saving diskmap {:?}", self.file_path);
         if let Some(parent) = self.file_path.parent() {
             let _ = fs::create_dir_all(parent);
         }
         let _ = fs::File::create(&self.file_path)
-            .map_err(|e| warn!("Failed to open disk map for writing: {}", e))
-            .and_then(|mut f| {
-                write(&self.cache, &mut f).map_err(|e| warn!("Failed to write to disk map: {}", e))
+            .map_err(|e| warn!(target: "diskmap", "Failed to open disk map for writing: {}", e))
+            .and_then(|f| {
+                let mut f = BufWriter::new(f);
+                write(&self.cache, &mut f)
+                    .map_err(|e| warn!(target: "diskmap" ,"Failed to write to disk map: {}", e))
             });
     }
 }
