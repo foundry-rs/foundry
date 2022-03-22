@@ -661,7 +661,7 @@ contract BTest is DSTest {
 });
 
 // test that `forge build` does not print `(with warnings)` if there arent any
-forgetest!(can_compile_without_warnings, |prj: TestProject, mut cmd: TestCommand| {
+forgetest_ignore!(can_compile_without_warnings, |prj: TestProject, mut cmd: TestCommand| {
     let config = Config {
         ignored_error_codes: vec![SolidityErrorCode::SpdxLicenseNotProvided],
         ..Default::default()
@@ -699,7 +699,7 @@ contract A {
 });
 
 // test against a local checkout, useful to debug with local ethers-rs patch
-forgetest_ignore!(can_compile_local_spells, |_: TestProject, mut cmd: TestCommand| {
+forgetest!(can_compile_local_spells, |_: TestProject, mut cmd: TestCommand| {
     let current_dir = std::env::current_dir().unwrap();
     let root = current_dir
         .join("../../foundry-integration-tests/testdata/spells-mainnet")
@@ -711,15 +711,16 @@ forgetest_ignore!(can_compile_local_spells, |_: TestProject, mut cmd: TestComman
     let dss_exec_lib = "src/DssSpell.sol:DssExecLib:0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4";
 
     cmd.args([
-        "build",
+        "test",
         "--root",
         root.as_str(),
         "--fork-url",
         eth_rpc_url.as_str(),
+        "--fork-block-number",
+        "14435000",
         "--libraries",
         dss_exec_lib,
         "-vvv",
-        "--force",
     ]);
     cmd.print_output();
 });

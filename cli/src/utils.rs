@@ -151,6 +151,18 @@ pub fn block_on<F: Future>(future: F) -> F::Output {
 }
 
 /// Helper function that returns the [Fork] to use, if any.
+///
+/// storage caching for the [Fork] will be enabled if
+///   - `fork_url` is present
+///   - `fork_block_number` is present
+///   - [StorageCachingConfig] allows the `fork_url` +  chain id pair
+///   - storage is allowed (`no_storage_caching = false`)
+///
+/// If all these criteria are met, then storage caching is enabled and storage info will be written
+/// to [Config::data_dir()]/<str(chainid)>/block/storage.json
+///
+/// for `mainnet` and `--fork-block-number 14435000` on mac the corresponding storage cache will be
+/// at `$HOME`/Library/Application Support/foundry/mainnet/14435000/storage.json`
 pub fn get_fork(evm_opts: &EvmOpts, config: &StorageCachingConfig) -> Option<Fork> {
     fn get_cache_storage_path(
         evm_opts: &EvmOpts,
