@@ -30,7 +30,7 @@ jobs:
           cache-on-failure: true
 
       - name: cargo test
-        run: cargo test --workspace --all-features --lib --bins
+        run: cargo test --locked --workspace --all-features --lib --bins
 
   doc:
     name: doc tests
@@ -49,7 +49,7 @@ jobs:
           cache-on-failure: true
 
       - name: cargo test
-        run: cargo test --workspace --all-features --doc
+        run: cargo test --locked --workspace --all-features --doc
 
   integration:
     name: integration tests
@@ -70,7 +70,7 @@ jobs:
           cache-on-failure: true
 
       - name: cargo test
-        run: cargo test --workspace --all-features --test '*'
+        run: cargo test --locked --workspace --all-features --test '*'
 
   lint:
     runs-on: ubuntu-latest
@@ -91,7 +91,7 @@ jobs:
           cache-on-failure: true
 
       - name: cargo fmt
-        run: cargo +nightly fmt --all -- --check
+        run: cargo +nightly fmt --workspace -- --check
 
       - name: cargo clippy
-        run: cargo +nightly clippy --all --all-features -- -D warnings
+        run: cargo +nightly clippy --workspace --all-features -- -D warnings
