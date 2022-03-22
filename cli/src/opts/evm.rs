@@ -39,7 +39,6 @@ pub struct EvmArgs {
     ///
     /// If you want to fetch state from a specific block number, see --fork-block-number.
     #[clap(long, short, alias = "rpc-url")]
-    #[clap(alias = "rpc-url")]
     #[serde(rename = "eth_rpc_url", skip_serializing_if = "Option::is_none")]
     pub fork_url: Option<String>,
 

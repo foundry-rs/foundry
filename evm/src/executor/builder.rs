@@ -122,6 +122,7 @@ impl ExecutorBuilder {
     /// Configure the execution environment (gas limit, chain spec, ...)
     #[must_use]
     pub fn with_config(mut self, env: Env) -> Self {
+        self.inspector_config.block = env.block.clone();
         self.env = env;
         self
     }
