@@ -20,6 +20,9 @@ pub struct EvmOpts {
     /// pins the block number for the state fork
     pub fork_block_number: Option<u64>,
 
+    /// Disables storage caching entirely.
+    pub no_storage_cache: bool,
+
     /// the initial balance of each deployed test contract
     pub initial_balance: U256,
 

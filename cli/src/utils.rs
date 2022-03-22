@@ -156,6 +156,10 @@ pub fn get_fork(evm_opts: &EvmOpts, config: &StorageCachingConfig) -> Option<For
         evm_opts: &EvmOpts,
         config: &StorageCachingConfig,
     ) -> Option<PathBuf> {
+        if evm_opts.no_storage_cache {
+            // storage caching explicitly opted out of
+            return None
+        }
         let url = evm_opts.fork_url.as_ref()?;
         // cache only if block explicitly pinned
         let block = evm_opts.fork_block_number?;

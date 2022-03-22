@@ -208,6 +208,9 @@ pub struct Config {
     pub via_ir: bool,
     /// RPC storage caching settings determines what chains and endpoints to cache
     pub rpc_storage_caching: StorageCachingConfig,
+    /// Disables storage caching entirely. This overrides any settings made in
+    /// `rpc_storage_caching`
+    pub no_storage_cache: bool,
     /// The root path where the config detection started from, `Config::with_root`
     #[doc(hidden)]
     //  We're skipping serialization here, so it won't be included in the [`Config::to_string()`]
@@ -893,6 +896,7 @@ impl Default for Config {
             __non_exhaustive: (),
             via_ir: false,
             rpc_storage_caching: Default::default(),
+            no_storage_cache: false,
         }
     }
 }

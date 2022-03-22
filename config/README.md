@@ -96,8 +96,10 @@ block_difficulty = 0
 # caches storage retrieved locally for certain chains and endpoints
 # can also be restrictied to `chains = ["optimism", "mainnet"]`
 # by default only remote endpoints will be cached (no `localhost` or `127.0.0.1`)
-# to disable storage caching entirely set `chains = "none"`
+# to disable storage caching entirely set `no_storage_cache = true`
 rpc_storage_caching = { chains = "all", endpoints = "remote"}
+# this overrides `rpc_storage_caching` entirely
+no_storage_cache = false
 ```
 
 ##### Additional Optimizer settings

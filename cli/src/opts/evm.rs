@@ -114,6 +114,10 @@ impl Provider for EvmArgs {
             dict.insert("ffi".to_string(), self.ffi.into());
         }
 
+        if self.no_storage_cache {
+            dict.insert("ffi".to_string(), self.no_storage_cache.into());
+        }
+
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }
