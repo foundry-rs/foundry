@@ -3,12 +3,19 @@ use revm::{
     db::{DatabaseRef, EmptyDB},
     Env, SpecId,
 };
+use std::{path::PathBuf, sync::Arc};
 
 use super::{
     fork::{SharedBackend, SharedMemCache},
     inspector::InspectorStackConfig,
     Executor,
 };
+
+use crate::storage::StorageMap;
+use ethers::types::{H160, H256, U256};
+
+use parking_lot::lock_api::RwLock;
+use revm::AccountInfo;
 
 #[derive(Default, Debug)]
 pub struct ExecutorBuilder {
@@ -21,11 +28,38 @@ pub struct ExecutorBuilder {
 
 #[derive(Clone, Debug)]
 pub struct Fork {
-    // todo: cache path
+    /// Where to read the cached storage from
+    pub cache_storage: Option<PathBuf>,
     /// The URL to a node for fetching remote state
     pub url: String,
     /// The block to fork against
     pub pin_block: Option<u64>,
+}
+
+impl Fork {
+    /// Initialises the Storage Backend
+    ///
+    /// If configured, then this will initialise the backend with the storage cahce
+    fn into_backend(self) -> SharedBackend {
+        let Fork { cache_storage, url, pin_block } = self;
+        let provider = Provider::try_from(url).expect("Failed to establish provider");
+
+        let mut storage_map = if let Some(cached_storage) = cache_storage {
+            StorageMap::read(cached_storage)
+        } else {
+            StorageMap::transient()
+        };
+
+        SharedBackend::new(
+            provider,
+            SharedMemCache {
+                storage: Arc::new(RwLock::new(storage_map.take_storage())),
+                ..Default::default()
+            },
+            pin_block.map(Into::into),
+            storage_map,
+        )
+    }
 }
 
 pub enum Backend {
@@ -37,31 +71,14 @@ impl Backend {
     /// Instantiates a new backend union based on whether there was or not a fork url specified
     fn new(fork: Option<Fork>) -> Self {
         if let Some(fork) = fork {
-            let provider = Provider::try_from(fork.url).unwrap();
-            // TOOD: Add reading cache from disk
-            let backend = SharedBackend::new(
-                provider,
-                SharedMemCache::default(),
-                fork.pin_block.map(Into::into),
-            );
-            Backend::Forked(backend)
+            Backend::Forked(fork.into_backend())
         } else {
             Backend::Simple(EmptyDB())
         }
     }
 }
 
-use ethers::types::{H160, H256, U256};
-use revm::AccountInfo;
-
 impl DatabaseRef for Backend {
-    fn block_hash(&self, number: U256) -> H256 {
-        match self {
-            Backend::Simple(inner) => inner.block_hash(number),
-            Backend::Forked(inner) => inner.block_hash(number),
-        }
-    }
-
     fn basic(&self, address: H160) -> AccountInfo {
         match self {
             Backend::Simple(inner) => inner.basic(address),
@@ -80,6 +97,13 @@ impl DatabaseRef for Backend {
         match self {
             Backend::Simple(inner) => inner.storage(address, index),
             Backend::Forked(inner) => inner.storage(address, index),
+        }
+    }
+
+    fn block_hash(&self, number: U256) -> H256 {
+        match self {
+            Backend::Simple(inner) => inner.block_hash(number),
+            Backend::Forked(inner) => inner.block_hash(number),
         }
     }
 }
@@ -129,8 +153,8 @@ impl ExecutorBuilder {
 
     /// Configure the executor's forking mode
     #[must_use]
-    pub fn with_fork(mut self, fork: Fork) -> Self {
-        self.fork = Some(fork);
+    pub fn with_fork(mut self, fork: Option<Fork>) -> Self {
+        self.fork = fork;
         self
     }
 

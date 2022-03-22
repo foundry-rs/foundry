@@ -118,6 +118,7 @@ impl MultiContractRunnerBuilder {
             fuzzer: self.fuzzer,
             errors: Some(execution_info.2),
             source_paths,
+            fork: self.fork,
         })
     }
 
@@ -144,6 +145,12 @@ impl MultiContractRunnerBuilder {
         self.evm_spec = Some(spec);
         self
     }
+
+    #[must_use]
+    pub fn with_fork(mut self, fork: Option<Fork>) -> Self {
+        self.fork = fork;
+        self
+    }
 }
 
 /// A multi contract runner receives a set of contracts deployed in an EVM instance and proceeds
@@ -166,6 +173,8 @@ pub struct MultiContractRunner {
     sender: Option<Address>,
     /// A map of contract names to absolute source file paths
     pub source_paths: BTreeMap<String, String>,
+    /// The fork config
+    pub fork: Option<Fork>,
 }
 
 impl MultiContractRunner {
@@ -200,13 +209,8 @@ impl MultiContractRunner {
                 let mut builder = ExecutorBuilder::new()
                     .with_cheatcodes(self.evm_opts.ffi)
                     .with_config(env.clone())
-                    .with_spec(self.evm_spec);
-
-                if let Some(ref url) = self.evm_opts.fork_url {
-                    let fork =
-                        Fork { url: url.clone(), pin_block: self.evm_opts.fork_block_number };
-                    builder = builder.with_fork(fork);
-                }
+                    .with_spec(self.evm_spec)
+                    .with_fork(self.fork.clone());
 
                 if self.evm_opts.verbosity >= 3 {
                     builder = builder.with_tracing();

@@ -114,9 +114,9 @@ dependencies = [
 
 [[package]]
 name = "async-stream"
-version = "0.3.3"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dad5c83079eae9969be7fadefe640a1c566901f05ff91ab221de4b6f68d9507e"
+checksum = "171374e7e3b2504e0e5236e3b59260560f9fe94bfe9ac39ba5e4e929c5590625"
 dependencies = [
  "async-stream-impl",
  "futures-core",
@@ -124,9 +124,9 @@ dependencies = [
 
 [[package]]
 name = "async-stream-impl"
-version = "0.3.3"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "10f203db73a71dfa2fb6dd22763990fa26f3d2625a6da2da900d23b87d26be27"
+checksum = "648ed8c8d2ce5409ccd57453d9d1b214b342a0d69376a6feda1fd6cae3299308"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -720,7 +720,7 @@ version = "5.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b103d85ca6e209388771bfb7aa6b68a7aeec4afbf6f0a0264bfbf50360e5212e"
 dependencies = [
- "crossterm 0.23.1",
+ "crossterm 0.23.0",
  "strum",
  "strum_macros",
  "unicode-width",
@@ -804,18 +804,18 @@ checksum = "5827cebf4670468b8772dd191856768aedcb1b0278a04f989f7766351917b9dc"
 
 [[package]]
 name = "cpufeatures"
-version = "0.2.2"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "59a6001667ab124aebae2a495118e11d30984c3a653e99d86d58971708cf5e4b"
+checksum = "95059428f66df56b63431fdb4e1947ed2190586af5c5a8a8b71122bdf5a7f469"
 dependencies = [
  "libc",
 ]
 
 [[package]]
 name = "crossbeam-channel"
-version = "0.5.4"
+version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5aaa7bd5fb665c6864b5f963dd9097905c54125909c7aa94c9e18507cdbe6c53"
+checksum = "e54ea8bc3fb1ee042f5aace6e3c6e025d3874866da222930f70ce62aceba0bfa"
 dependencies = [
  "cfg-if 1.0.0",
  "crossbeam-utils",
@@ -834,11 +834,10 @@ dependencies = [
 
 [[package]]
 name = "crossbeam-epoch"
-version = "0.9.8"
+version = "0.9.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1145cf131a2c6ba0615079ab6a638f7e1973ac9c2634fcbeaaad6114246efe8c"
+checksum = "c00d6d2ea26e8b151d99093005cb442fb9a37aeaca582a03ec70946f49ab5ed9"
 dependencies = [
- "autocfg",
  "cfg-if 1.0.0",
  "crossbeam-utils",
  "lazy_static",
@@ -848,9 +847,9 @@ dependencies = [
 
 [[package]]
 name = "crossbeam-utils"
-version = "0.8.8"
+version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0bf124c720b7686e3c2663cf54062ab0f68a88af2fb6a030e87e30bf721fcb38"
+checksum = "b5e5bed1f1c269533fa816a0a5492b3545209a205ca1a54842be180eb63a16a6"
 dependencies = [
  "cfg-if 1.0.0",
  "lazy_static",
@@ -890,9 +889,9 @@ dependencies = [
 
 [[package]]
 name = "crossterm"
-version = "0.23.1"
+version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1fd7173631a4e9e2ca8b32ae2fad58aab9843ea5aaf56642661937d87e28a3e"
+checksum = "77b75a27dc8d220f1f8521ea69cd55a34d720a200ebb3a624d9aa19193d3b432"
 dependencies = [
  "bitflags",
  "crossterm_winapi 0.9.0",
@@ -972,9 +971,9 @@ dependencies = [
 
 [[package]]
 name = "ctor"
-version = "0.1.22"
+version = "0.1.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f877be4f7c9f246b183111634f75baa039715e3f46ce860677d3b19a69fb229c"
+checksum = "ccc0a48a9b826acdf4028595adc9db92caea352f7af011a3034acd172a52a0aa"
 dependencies = [
  "quote",
  "syn",
@@ -1067,9 +1066,9 @@ dependencies = [
 
 [[package]]
 name = "dirs-sys"
-version = "0.3.7"
+version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b1d1d91c932ef41c0f2663aa8b0ca0342d444d842c06914aa0a7e352d0bada6"
+checksum = "03d86534ed367a67548dc68113a0f5db55432fdfbb6e6f9d77704397d95d5780"
 dependencies = [
  "libc",
  "redox_users",
@@ -1242,7 +1241,7 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#4ce373b8569c927f64af2074b495de92a73bd419"
+source = "git+https://github.com/gakonst/ethers-rs#95a384b1218d9a83eac8c14362086e56f5bacc5a"
 dependencies = [
  "ethers-addressbook",
  "ethers-contract",
@@ -1257,7 +1256,7 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "0.1.0"
-source = "git+https://github.com/gakonst/ethers-rs#4ce373b8569c927f64af2074b495de92a73bd419"
+source = "git+https://github.com/gakonst/ethers-rs#95a384b1218d9a83eac8c14362086e56f5bacc5a"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -1268,7 +1267,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#4ce373b8569c927f64af2074b495de92a73bd419"
+source = "git+https://github.com/gakonst/ethers-rs#95a384b1218d9a83eac8c14362086e56f5bacc5a"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1286,7 +1285,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#4ce373b8569c927f64af2074b495de92a73bd419"
+source = "git+https://github.com/gakonst/ethers-rs#95a384b1218d9a83eac8c14362086e56f5bacc5a"
 dependencies = [
  "Inflector",
  "cfg-if 1.0.0",
@@ -1308,7 +1307,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#4ce373b8569c927f64af2074b495de92a73bd419"
+source = "git+https://github.com/gakonst/ethers-rs#95a384b1218d9a83eac8c14362086e56f5bacc5a"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -1322,7 +1321,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#4ce373b8569c927f64af2074b495de92a73bd419"
+source = "git+https://github.com/gakonst/ethers-rs#95a384b1218d9a83eac8c14362086e56f5bacc5a"
 dependencies = [
  "arrayvec 0.7.2",
  "bytes",
@@ -1348,7 +1347,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "0.2.0"
-source = "git+https://github.com/gakonst/ethers-rs#4ce373b8569c927f64af2074b495de92a73bd419"
+source = "git+https://github.com/gakonst/ethers-rs#95a384b1218d9a83eac8c14362086e56f5bacc5a"
 dependencies = [
  "ethers-core",
  "ethers-solc",
@@ -1362,7 +1361,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#4ce373b8569c927f64af2074b495de92a73bd419"
+source = "git+https://github.com/gakonst/ethers-rs#95a384b1218d9a83eac8c14362086e56f5bacc5a"
 dependencies = [
  "async-trait",
  "ethers-contract",
@@ -1385,7 +1384,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#4ce373b8569c927f64af2074b495de92a73bd419"
+source = "git+https://github.com/gakonst/ethers-rs#95a384b1218d9a83eac8c14362086e56f5bacc5a"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -1417,7 +1416,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#4ce373b8569c927f64af2074b495de92a73bd419"
+source = "git+https://github.com/gakonst/ethers-rs#95a384b1218d9a83eac8c14362086e56f5bacc5a"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1440,7 +1439,7 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "0.3.0"
-source = "git+https://github.com/gakonst/ethers-rs#4ce373b8569c927f64af2074b495de92a73bd419"
+source = "git+https://github.com/gakonst/ethers-rs#95a384b1218d9a83eac8c14362086e56f5bacc5a"
 dependencies = [
  "colored",
  "dunce",
@@ -1686,6 +1685,7 @@ dependencies = [
  "eyre",
  "figment",
  "pretty_assertions",
+ "regex",
  "semver",
  "serde",
  "serde_json",
@@ -1710,6 +1710,7 @@ dependencies = [
  "revm",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
  "tokio",
  "tracing",
@@ -2412,9 +2413,9 @@ dependencies = [
 
 [[package]]
 name = "libc"
-version = "0.2.121"
+version = "0.2.119"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "efaa7b300f3b5fe8eb6bf21ce3895e1751d9665086af2d64b42f19701015ff4f"
+checksum = "1bf2e165bb3457c8e098ea76f3e3bc9db55f87aa90d52d0e6be741470916aaa4"
 
 [[package]]
 name = "libgit2-sys"
@@ -2586,9 +2587,9 @@ dependencies = [
 
 [[package]]
 name = "mio"
-version = "0.8.2"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52da4364ffb0e4fe33a9841a98a3f3014fb964045ce4f7a45a398243c8d6b0c9"
+checksum = "7ba42135c6a5917b9db9cd7b293e5409e1c6b041e6f9825e92e55a894c63b6f8"
 dependencies = [
  "libc",
  "log",
@@ -2669,19 +2670,20 @@ dependencies = [
 
 [[package]]
 name = "nom"
-version = "7.1.1"
+version = "7.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a8903e5a29a317527874d0402f867152a3d21c908bb0b933e416c65e301d4c36"
+checksum = "1b1d11e1ef389c76fe5b81bcaf2ea32cf88b62bc494e19f493d0b30e7a930109"
 dependencies = [
  "memchr",
  "minimal-lexical",
+ "version_check",
 ]
 
 [[package]]
 name = "notify"
-version = "5.0.0-pre.14"
+version = "5.0.0-pre.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d13c22db70a63592e098fb51735bab36646821e6389a0ba171f3549facdf0b74"
+checksum = "245d358380e2352c2d020e8ee62baac09b3420f1f6c012a31326cfced4ad487d"
 dependencies = [
  "bitflags",
  "crossbeam-channel",
@@ -2690,7 +2692,7 @@ dependencies = [
  "inotify",
  "kqueue",
  "libc",
- "mio 0.8.2",
+ "mio 0.7.14",
  "walkdir",
  "winapi",
 ]
@@ -2914,9 +2916,9 @@ checksum = "2386b4ebe91c2f7f51082d4cefa145d030e33a1842a96b12e4885cc3c01f7a55"
 
 [[package]]
 name = "parity-scale-codec"
-version = "3.1.2"
+version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e8b44461635bbb1a0300f100a841e571e7d919c81c73075ef5d152ffdb521066"
+checksum = "8483b84fb12de1dc23bf95d26030d16cea56391d136db0db37f749508104e3e6"
 dependencies = [
  "arrayvec 0.7.2",
  "bitvec 1.0.0",
@@ -2928,9 +2930,9 @@ dependencies = [
 
 [[package]]
 name = "parity-scale-codec-derive"
-version = "3.1.2"
+version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c45ed1f39709f5a89338fab50e59816b2e8815f5bb58276e7ddf9afd495f73f8"
+checksum = "7259388ceb4c23bc09caef272c9e7a732b3b8f9fbd0b41f0009a91d6548cc1d9"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -3503,13 +3505,12 @@ dependencies = [
 
 [[package]]
 name = "redox_users"
-version = "0.4.2"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7776223e2696f1aa4c6b0170e83212f47296a00424305117d013dfe86fb0fe55"
+checksum = "528532f3d801c87aec9def2add9ca802fe569e44a544afe633765267840abe64"
 dependencies = [
  "getrandom 0.2.5",
  "redox_syscall",
- "thiserror",
 ]
 
 [[package]]
@@ -4192,7 +4193,7 @@ checksum = "6bdef32e8150c2a081110b42772ffe7d7c9032b606bc226c8260fd97e0976601"
 [[package]]
 name = "svm-rs"
 version = "0.2.9"
-source = "git+https://github.com/roynalnaruto/svm-rs#a128bea693fcb3c468687dbec4312c4b00d2432e"
+source = "git+https://github.com/roynalnaruto/svm-rs#c32014f34308629cb1d98a8fdad29e527a8066d7"
 dependencies = [
  "anyhow",
  "cfg-if 1.0.0",
@@ -4220,7 +4221,7 @@ dependencies = [
 [[package]]
 name = "svm-rs-builds"
 version = "0.1.0"
-source = "git+https://github.com/roynalnaruto/svm-rs#a128bea693fcb3c468687dbec4312c4b00d2432e"
+source = "git+https://github.com/roynalnaruto/svm-rs#c32014f34308629cb1d98a8fdad29e527a8066d7"
 dependencies = [
  "build_const",
  "hex",
@@ -4385,7 +4386,7 @@ dependencies = [
  "bytes",
  "libc",
  "memchr",
- "mio 0.8.2",
+ "mio 0.8.1",
  "num_cpus",
  "once_cell",
  "parking_lot 0.12.0",
@@ -4419,9 +4420,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-rustls"
-version = "0.23.3"
+version = "0.23.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4151fda0cf2798550ad0b34bcfc9b9dcc2a9d2471c895c68f3a8818e54f2389e"
+checksum = "a27d5f2b839802bd8267fa19b0530f5a08b9c08cd417976be2a65d130fe1c11b"
 dependencies = [
  "rustls",
  "tokio",
@@ -4940,9 +4941,9 @@ dependencies = [
 
 [[package]]
 name = "watchexec"
-version = "2.0.0-pre.13"
+version = "2.0.0-pre.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba93308565f295d9452043c584175f92c8851d60849c3bf0287116ed69ba4b33"
+checksum = "3115ed7db83103ab13d6ada8892372bf596eca52cf2ae06571b906fd7dcba4c6"
 dependencies = [
  "async-recursion",
  "async-stream",
@@ -4956,7 +4957,7 @@ dependencies = [
  "ignore",
  "libc",
  "miette",
- "nom 7.1.1",
+ "nom 7.1.0",
  "notify",
  "once_cell",
  "regex",
@@ -4998,9 +4999,9 @@ dependencies = [
 
 [[package]]
 name = "which"
-version = "4.2.5"
+version = "4.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c4fb54e6113b6a8772ee41c3404fb0301ac79604489467e0a9ce1f3e97c24ae"
+checksum = "2a5a7e487e921cf220206864a94a89b6c6905bfc19f1057fa26a4cb360e5c1d2"
 dependencies = [
  "either",
  "lazy_static",
@@ -5125,6 +5126,6 @@ checksum = "9fc79f4a1e39857fc00c3f662cbf2651c771f00e9c15fe2abc341806bd46bd71"
 
 [[package]]
 name = "zeroize"
-version = "1.5.4"
+version = "1.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7eb5728b8afd3f280a869ce1d4c554ffaed35f45c231fc41bfbd0381bef50317"
+checksum = "50344758e2f40e3a1fcfc8f6f91aa57b5f8ebd8d27919fe6451f15aaaf9ee608"

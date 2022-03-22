@@ -49,6 +49,18 @@ pub struct EvmArgs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_block_number: Option<u64>,
 
+    /// Disables storage caching entirely. This overrides any settings made in
+    /// [foundry_config::caching::StorageCachingConfig]
+    ///
+    /// See --fork-url.
+    #[clap(
+        long,
+        requires = "fork-url",
+        help = "Explicitly disables the use of storage. All storage slots are read entirely from the endpoint."
+    )]
+    #[serde(skip)]
+    pub no_storage_caching: bool,
+
     /// The initial balance of deployed test contracts.
     #[clap(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -100,6 +112,10 @@ impl Provider for EvmArgs {
 
         if self.ffi {
             dict.insert("ffi".to_string(), self.ffi.into());
+        }
+
+        if self.no_storage_caching {
+            dict.insert("no_storage_caching".to_string(), self.no_storage_caching.into());
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
