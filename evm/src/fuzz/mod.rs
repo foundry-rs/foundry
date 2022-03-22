@@ -60,8 +60,8 @@ where
         // Stores the consumed gas and calldata of every successful fuzz call
         let cases: RefCell<Vec<FuzzCase>> = RefCell::new(Default::default());
 
-        // Stores the result of the last call
-        let call: RefCell<RawCallResult> = RefCell::new(Default::default());
+        // Stores the result and calldata of the last failed call, if any.
+        let counterexample: RefCell<(Bytes, RawCallResult)> = RefCell::new(Default::default());
 
         // Stores fuzz state for use with [fuzz_calldata_from_state]
         let state: EvmFuzzState = build_initial_state(&self.executor.db);
@@ -74,11 +74,10 @@ where
         ]);
         tracing::debug!(func = ?func.name, should_fail, "fuzzing");
         let run_result = self.runner.clone().run(&strat, |calldata| {
-            *call.borrow_mut() = self
+            let call = self
                 .executor
                 .call_raw(self.sender, address, calldata.0.clone(), 0.into())
                 .expect("could not make raw evm call");
-            let call = call.borrow();
             let state_changeset =
                 call.state_changeset.as_ref().expect("we should have a state changeset");
 
@@ -105,8 +104,16 @@ where
                 });
                 Ok(())
             } else {
+                // We cannot use the calldata returned by the test runner in `TestError::Fail`,
+                // since that input represents the last run case, which may not correspond with our
+                // failure - when a fuzz case fails, proptest will try to run at least one more
+                // case to find a minimal failure case.
+                *counterexample.borrow_mut() = (calldata, call);
                 Err(TestCaseError::fail(
-                    match foundry_utils::decode_revert(call.result.as_ref(), errors) {
+                    match foundry_utils::decode_revert(
+                        counterexample.borrow().1.result.as_ref(),
+                        errors,
+                    ) {
                         Ok(e) => e,
                         Err(_) => "".to_string(),
                     },
@@ -114,7 +121,7 @@ where
             }
         });
 
-        let call = call.into_inner();
+        let (calldata, call) = counterexample.into_inner();
         let mut result = FuzzTestResult {
             cases: FuzzedCases::new(cases.into_inner()),
             success: run_result.is_ok(),
@@ -129,7 +136,7 @@ where
             Err(TestError::Abort(reason)) => {
                 result.reason = Some(reason.to_string());
             }
-            Err(TestError::Fail(reason, calldata)) => {
+            Err(TestError::Fail(reason, _)) => {
                 let reason = reason.to_string();
                 result.reason = if reason.is_empty() { None } else { Some(reason) };
 
