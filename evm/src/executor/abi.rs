@@ -45,7 +45,7 @@ ethers::contract::abigen!(
 );
 pub use hevm_mod::{HEVMCalls, HEVM_ABI};
 
-/// The Hardhat console address (0x7109709ECfa91a80626fF3989D68f67F5b1DD12D).
+/// The Hardhat console address (0x000000000000000000636F6e736F6c652e6c6f67).
 ///
 /// See: https://github.com/nomiclabs/hardhat/blob/master/packages/hardhat-core/console.sol
 pub static HARDHAT_CONSOLE_ADDRESS: Address = H160([
