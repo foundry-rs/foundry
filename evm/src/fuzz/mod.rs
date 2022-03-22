@@ -60,7 +60,7 @@ where
         // Stores the consumed gas and calldata of every successful fuzz call
         let cases: RefCell<Vec<FuzzCase>> = RefCell::new(Default::default());
 
-        // Stores the result of the last failed call, if any.
+        // Stores the result and calldata of the last failed call, if any.
         let counterexample: RefCell<(Bytes, RawCallResult)> = RefCell::new(Default::default());
 
         // Stores fuzz state for use with [fuzz_calldata_from_state]
