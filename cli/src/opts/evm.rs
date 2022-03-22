@@ -115,7 +115,7 @@ impl Provider for EvmArgs {
         }
 
         if self.no_storage_caching {
-            dict.insert("ffi".to_string(), self.no_storage_caching.into());
+            dict.insert("no_storage_caching".to_string(), self.no_storage_caching.into());
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))

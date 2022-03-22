@@ -505,7 +505,6 @@ mod tests {
         let mem_hash = *cache.block_hashes.read().get(&num.as_u64()).unwrap();
         assert_eq!(hash, mem_hash);
 
-        let backend = backend;
         let max_slots = 5;
         let handle = std::thread::spawn(move || {
             for i in 1..max_slots {

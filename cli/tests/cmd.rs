@@ -661,7 +661,7 @@ contract BTest is DSTest {
 });
 
 // test that `forge build` does not print `(with warnings)` if there arent any
-forgetest_ignore!(can_compile_without_warnings, |prj: TestProject, mut cmd: TestCommand| {
+forgetest!(can_compile_without_warnings, |prj: TestProject, mut cmd: TestCommand| {
     let config = Config {
         ignored_error_codes: vec![SolidityErrorCode::SpdxLicenseNotProvided],
         ..Default::default()
@@ -699,7 +699,7 @@ contract A {
 });
 
 // test against a local checkout, useful to debug with local ethers-rs patch
-forgetest!(can_compile_local_spells, |_: TestProject, mut cmd: TestCommand| {
+forgetest_ignore!(can_compile_local_spells, |_: TestProject, mut cmd: TestCommand| {
     let current_dir = std::env::current_dir().unwrap();
     let root = current_dir
         .join("../../foundry-integration-tests/testdata/spells-mainnet")
