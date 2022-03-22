@@ -91,7 +91,7 @@ jobs:
           cache-on-failure: true
 
       - name: cargo fmt
-        run: cargo +nightly fmt --workspace -- --check
+        run: cargo +nightly fmt --all -- --check
 
       - name: cargo clippy
-        run: cargo +nightly clippy --workspace --all-features -- -D warnings
+        run: cargo +nightly clippy --all --all-features -- -D warnings
