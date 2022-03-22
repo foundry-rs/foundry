@@ -40,7 +40,7 @@ impl CallTraceDecoder {
     pub fn new() -> Self {
         Self {
             contracts: BTreeMap::new(),
-            labels: [(*CHEATCODE_ADDRESS, "VM".to_string())].into(),
+            labels: [(CHEATCODE_ADDRESS, "VM".to_string())].into(),
             functions: HEVM_ABI
                 .functions()
                 .map(|func| (func.short_signature(), vec![func.clone()]))
@@ -130,7 +130,7 @@ impl CallTraceDecoder {
 
                         // Decode inputs
                         let inputs = if !bytes[4..].is_empty() {
-                            if node.trace.address == *CHEATCODE_ADDRESS {
+                            if node.trace.address == CHEATCODE_ADDRESS {
                                 // Try to decode cheatcode inputs in a more custom way
                                 self.decode_cheatcode_inputs(func, bytes).unwrap_or_else(|| {
                                     func.decode_input(&bytes[4..])

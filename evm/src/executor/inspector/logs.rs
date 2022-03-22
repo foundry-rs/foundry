@@ -55,7 +55,7 @@ where
         call: &mut CallInputs,
         _: bool,
     ) -> (Return, Gas, Bytes) {
-        if call.contract == *HARDHAT_CONSOLE_ADDRESS {
+        if call.contract == HARDHAT_CONSOLE_ADDRESS {
             let (status, reason) = self.hardhat_log(call.input.to_vec());
             (status, Gas::new(call.gas_limit), reason)
         } else {

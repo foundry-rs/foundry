@@ -363,7 +363,7 @@ pub enum TraceKind {
 
 /// Chooses the color of the trace depending on the destination address and status of the call.
 fn trace_color(trace: &CallTrace) -> Colour {
-    if trace.address == *CHEATCODE_ADDRESS {
+    if trace.address == CHEATCODE_ADDRESS {
         Colour::Blue
     } else if trace.success {
         Colour::Green

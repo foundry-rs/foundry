@@ -49,7 +49,7 @@ impl GasReport {
         let node = &arena.arena[node_index];
         let trace = &node.trace;
 
-        if trace.address == *CHEATCODE_ADDRESS || trace.address == *HARDHAT_CONSOLE_ADDRESS {
+        if trace.address == CHEATCODE_ADDRESS || trace.address == HARDHAT_CONSOLE_ADDRESS {
             return
         }
 

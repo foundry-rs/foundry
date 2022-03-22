@@ -177,7 +177,7 @@ where
         // Need to create a non-empty contract on the cheatcodes address so `extcodesize` checks
         // does not fail
         db.insert_cache(
-            *CHEATCODE_ADDRESS,
+            CHEATCODE_ADDRESS,
             revm::AccountInfo { code: Some(Bytes::from_static(&[1])), ..Default::default() },
         );
 

@@ -101,7 +101,7 @@ where
         _: bool,
     ) -> (Return, Gas, Bytes) {
         self.enter(data.subroutine.depth() as usize, call.contract, false);
-        if call.contract == *CHEATCODE_ADDRESS {
+        if call.contract == CHEATCODE_ADDRESS {
             self.arena.arena[self.head].steps.push(DebugStep {
                 memory: Memory::new(),
                 instruction: Instruction::Cheatcode(

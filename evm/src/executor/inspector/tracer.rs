@@ -68,7 +68,7 @@ where
         call: &mut CallInputs,
         _: bool,
     ) -> (Return, Gas, Bytes) {
-        if call.contract != *HARDHAT_CONSOLE_ADDRESS {
+        if call.contract != HARDHAT_CONSOLE_ADDRESS {
             self.start_trace(
                 data.subroutine.depth() as usize,
                 call.contract,
@@ -97,7 +97,7 @@ where
         retdata: Bytes,
         _: bool,
     ) -> (Return, Gas, Bytes) {
-        if call.contract != *HARDHAT_CONSOLE_ADDRESS {
+        if call.contract != HARDHAT_CONSOLE_ADDRESS {
             self.fill_trace(
                 matches!(status, return_ok!()),
                 gas_used(data.env.cfg.spec_id, gas.spend(), gas.refunded() as u64),
