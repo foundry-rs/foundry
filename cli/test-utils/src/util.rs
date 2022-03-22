@@ -70,6 +70,15 @@ pub fn setup_project(test: TestProject) -> (TestProject, TestCommand) {
     (test, cmd)
 }
 
+pub fn setup_cast(name: &str, style: PathStyle) -> (TestProject, TestCommand) {
+    setup_cast_project(TestProject::new(name, style))
+}
+
+pub fn setup_cast_project(test: TestProject) -> (TestProject, TestCommand) {
+    let cmd = test.ccommand();
+    (test, cmd)
+}
+
 /// `TestProject` represents a temporary project to run tests against.
 ///
 /// Test projects are created from a global atomic counter to avoid duplicates.
@@ -197,10 +206,29 @@ impl TestProject {
         }
     }
 
+    /// Creates a new command that is set to use the cast executable for this project
+    pub fn ccommand(&self) -> TestCommand {
+        let mut cmd = self.cbin();
+        cmd.current_dir(&self.inner.root());
+        TestCommand {
+            project: self.clone(),
+            cmd,
+            saved_env_vars: HashMap::new(),
+            current_dir_lock: None,
+            saved_cwd: pretty_err(".", std::env::current_dir()),
+        }
+    }
+
     /// Returns the path to the forge executable.
     pub fn bin(&self) -> process::Command {
         let forge = self.root.join(format!("../forge{}", env::consts::EXE_SUFFIX));
         process::Command::new(forge)
+    }
+
+    /// Returns the path to the cast executable.
+    pub fn cbin(&self) -> process::Command {
+        let cast = self.root.join(format!("../cast{}", env::consts::EXE_SUFFIX));
+        process::Command::new(cast)
     }
 
     /// Returns the `Config` as spit out by `forge config`
@@ -286,6 +314,10 @@ impl TestCommand {
     /// Resets the command
     pub fn fuse(&mut self) -> &mut TestCommand {
         self.set_cmd(self.project.bin())
+    }
+
+    pub fn cfuse(&mut self) -> &mut TestCommand {
+        self.set_cmd(self.project.cbin())
     }
 
     /// Sets the current working directory

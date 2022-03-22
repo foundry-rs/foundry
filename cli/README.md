@@ -494,8 +494,36 @@ SUBCOMMANDS:
     namehash                 returns ENS namehash of provided name
     nonce                    Prints the number of transactions sent from <address>
     resolve-name             Returns the address the provided ENS name resolves to
+    run                      Executes arbitrary bytecode in hex format
     send                     Publish a transaction signed by <from> to call <to> with <data>
     storage                  Show the raw value of a contract's storage slot
     tx                       Show information about the transaction <tx-hash>
     wallet                   Set of wallet management utilities
+```
+
+
+### Run
+
+Cast's `run` subcommand executes arbitrary bytecode provided in hex format.
+
+To use the `run` command, run `cast run <BYTECODE> [CALLDATA]`.
+Where `<BYTECODE>` is the bytcode in hex format (eg. `0x604260005260206000F3`) and `<CALLDATA>` is the calldata in hex format (eg. `0x70a08231000000000000000000000000b4c79dab8f259c7aee6e5b2aa729821864227e84`).
+
+To view extensive documentation of `cast run`, run `cast run --help`:
+```
+cast-run
+Executes arbitrary bytecode in hex format
+
+USAGE:
+    cast run [OPTIONS] <BYTECODE> [--] [CALLDATA]
+
+ARGS:
+    <BYTECODE>
+            the bytecode to execute
+
+    <CALLDATA>
+            the calldata to pass to the contract
+
+OPTIONS:
+...
 ```

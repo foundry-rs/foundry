@@ -7,7 +7,10 @@ use ethers::{
 };
 
 use super::{ClapChain, EthereumOpts, Wallet};
-use crate::{cmd::cast::{find_block::FindBlockArgs, run::RunArgs}, utils::parse_u256};
+use crate::{
+    cmd::cast::{find_block::FindBlockArgs, run::RunArgs},
+    utils::parse_u256,
+};
 
 #[derive(Debug, Subcommand)]
 #[clap(about = "Perform Ethereum RPC calls from the comfort of your command line.")]

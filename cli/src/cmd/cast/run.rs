@@ -1,31 +1,23 @@
-use std::collections::BTreeMap;
-
 use crate::{
-  utils,
-  cmd::{forge::build::BuildArgs, Cmd},
-  opts::evm::EvmArgs
+    cmd::{forge::build::BuildArgs, Cmd},
+    opts::evm::EvmArgs,
+    utils,
 };
 
-use clap::Parser;
 use ansi_term::Colour;
-use ethers::{
-  abi::{Abi, RawLog},
-  types::{Address, Bytes, U256}
-};
+use clap::Parser;
+use ethers::types::{Address, Bytes, U256};
 
 use forge::{
-    debug::DebugArena,
-    decode::decode_console_logs,
     executor::{
-        opts::EvmOpts, CallResult, DatabaseRef, DeployResult, EvmError, Executor, ExecutorBuilder,
-        RawCallResult,
+        opts::EvmOpts, DatabaseRef, DeployResult, Executor, ExecutorBuilder, RawCallResult,
     },
-    trace::{identifier::LocalTraceIdentifier, CallTraceArena, CallTraceDecoder, TraceKind},
+    trace::TraceKind,
     CALLER,
 };
-use foundry_utils::{IntoFunction, encode_args};
 use foundry_config::{figment::Figment, Config};
-
+use foundry_utils::{encode_args, IntoFunction};
+use hex::ToHex;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::impl_figment_convert!(RunArgs, opts, evm_opts);
@@ -39,8 +31,8 @@ pub struct RunArgs {
     #[clap(help = "the calldata to pass to the contract")]
     pub calldata: Option<String>,
 
-    /// Open the script in the debugger.
-    #[clap(long)]
+    /// Open the bytecode execution in debug mode
+    #[clap(long, help="debug the bytecode execution")]
     pub debug: bool,
 
     #[clap(flatten)]
@@ -54,17 +46,24 @@ impl Cmd for RunArgs {
     type Output = ();
 
     fn run(self) -> eyre::Result<Self::Output> {
+        // Load figment
+        let figment: Figment = From::from(&self);
+        let evm_opts = figment.extract::<EvmOpts>()?;
+        let verbosity = evm_opts.verbosity;
+        let config = Config::from_provider(figment).sanitized();
+
         // Parse bytecode string
         let bytecode_vec = self.bytecode.strip_prefix("0x").unwrap_or(&self.bytecode);
         let parsed_bytecode = Bytes::from(hex::decode(bytecode_vec)?);
 
-        println!("Got bytecode: {:?}", parsed_bytecode.to_vec());
-
-        // Load figment
-        let figment: Figment = From::from(&self);
-        let evm_opts = figment.extract::<EvmOpts>()?;
-        let verbosity = 5; // evm_opts.verbosity;
-        let config = Config::from_provider(figment).sanitized();
+        // Parse Calldata
+        let calldata: Bytes =
+            if let Some(calldata) = self.calldata.unwrap_or("0x".to_string()).strip_prefix("0x") {
+                hex::decode(calldata)?.into()
+            } else {
+                let args: Vec<String> = vec![];
+                encode_args(&IntoFunction::into("".to_string()), &args)?.into()
+            };
 
         // Create executor
         let mut builder = ExecutorBuilder::new()
@@ -79,45 +78,59 @@ impl Cmd for RunArgs {
             builder = builder.with_tracing().with_debugger();
         }
 
-        // Parse Calldata
-        let calldata: Bytes = if let Some(calldata) = self.calldata.unwrap_or("0x".to_string()).strip_prefix("0x") {
-            hex::decode(calldata)?.into()
-        } else {
-            let args: Vec<String> = vec![];
-            encode_args(&IntoFunction::into("".to_string()), &args)?.into()
-        };
-        println!("Calldata: {:?}", calldata.to_vec());
-
         // Create the runner
-        let mut runner =
-            Runner::new(builder.build(), evm_opts.initial_balance, evm_opts.sender);
+        let mut runner = Runner::new(builder.build(), evm_opts.sender);
 
         // Deploy the bytecode
-        let DeployResult {
-            address,
-            gas,
-            ..
-        } = runner.setup(parsed_bytecode)?;
-
-        println!("Deployed contract at: {:?}", address);
+        let DeployResult { address, .. } = runner.setup(parsed_bytecode)?;
 
         // Run the bytecode at the deployed address
-        let rcr = runner.run(
-            address,
-            calldata,
-        )?;
-
-        println!("Raw Call Result: {:?}", rcr);
+        let rcr = runner.run(address, calldata)?;
 
         // TODO: Waterfall debug
+        // Ex: https://twitter.com/danielvf/status/1503756428212936710
 
-        if rcr.reverted {
-            println!("{}", Colour::Red.paint("x FAILURE"));
-        } else {
-            println!("{}", Colour::Green.paint("✔ SUCCESS"));
+        // Unwrap Traces
+        let mut traces =
+            rcr.traces.map(|traces| vec![(TraceKind::Execution, traces)]).unwrap_or_default();
+
+        if verbosity >= 3 {
+            if traces.is_empty() {
+                eyre::bail!("Unexpected error: No traces despite verbosity level. Please report this as a bug: https://github.com/gakonst/foundry/issues/new?assignees=&labels=T-bug&template=BUG-FORM.yml");
+            }
+
+            if rcr.reverted {
+                println!("Traces:");
+                for (kind, trace) in &mut traces {
+                    let should_include = match kind {
+                        TraceKind::Setup => (verbosity >= 5) || (verbosity == 4),
+                        TraceKind::Execution => verbosity > 3,
+                        _ => false,
+                    };
+
+                    if should_include {
+                        // TODO: Create decoder using local fork
+                        // decoder.decode(trace);
+                        println!("{}", trace);
+                    }
+                }
+                println!();
+            }
         }
 
-        println!("Gas used: {}", rcr.gas);
+        if rcr.reverted {
+            println!("{}", Colour::Red.paint("[REVERT]"));
+            println!("Gas consumed: {}", rcr.gas);
+        } else {
+            println!("{}", Colour::Green.paint("[SUCCESS]"));
+            let o = rcr.result.encode_hex::<String>();
+            if o.len() > 0 {
+                println!("Output: {}", o);
+            } else {
+                println!("{}", Colour::Yellow.paint("No Output"));
+            }
+            println!("Gas consumed: {}", rcr.gas);
+        }
 
         Ok(())
     }
@@ -125,19 +138,15 @@ impl Cmd for RunArgs {
 
 struct Runner<DB: DatabaseRef> {
     pub executor: Executor<DB>,
-    pub initial_balance: U256,
     pub sender: Address,
 }
 
 impl<DB: DatabaseRef> Runner<DB> {
-    pub fn new(executor: Executor<DB>, initial_balance: U256, sender: Address) -> Self {
-        Self { executor, initial_balance, sender }
+    pub fn new(executor: Executor<DB>, sender: Address) -> Self {
+        Self { executor, sender }
     }
 
-    pub fn setup(
-        &mut self,
-        code: Bytes,
-    ) -> eyre::Result<DeployResult> {
+    pub fn setup(&mut self, code: Bytes) -> eyre::Result<DeployResult> {
         // We max out their balance so that they can deploy and make calls.
         self.executor.set_balance(self.sender, U256::MAX);
         self.executor.set_balance(*CALLER, U256::MAX);
