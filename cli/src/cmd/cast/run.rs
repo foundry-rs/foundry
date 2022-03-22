@@ -53,8 +53,7 @@ impl Cmd for RunArgs {
         let config = Config::from_provider(figment).sanitized();
 
         // Parse bytecode string
-        let bytecode_vec = self.bytecode.strip_prefix("0x").unwrap_or(&self.bytecode);
-        let parsed_bytecode = Bytes::from(hex::decode(bytecode_vec)?);
+        let parsed_bytecode = self.bytecode.parse::<Bytes>()?;
 
         // Parse Calldata
         let calldata: Bytes = if let Some(calldata) =
