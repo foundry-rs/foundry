@@ -156,7 +156,7 @@ pub fn get_fork(evm_opts: &EvmOpts, config: &StorageCachingConfig) -> Option<For
         evm_opts: &EvmOpts,
         config: &StorageCachingConfig,
     ) -> Option<PathBuf> {
-        if evm_opts.no_storage_cache {
+        if evm_opts.no_storage_caching {
             // storage caching explicitly opted out of
             return None
         }

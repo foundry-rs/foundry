@@ -21,7 +21,7 @@ pub struct EvmOpts {
     pub fork_block_number: Option<u64>,
 
     /// Disables storage caching entirely.
-    pub no_storage_cache: bool,
+    pub no_storage_caching: bool,
 
     /// the initial balance of each deployed test contract
     pub initial_balance: U256,

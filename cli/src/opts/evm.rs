@@ -59,7 +59,7 @@ pub struct EvmArgs {
         help = "Explicitly disables the use of storage. All storage slots are read entirely from the endpoint."
     )]
     #[serde(skip)]
-    pub no_storage_cache: bool,
+    pub no_storage_caching: bool,
 
     /// The initial balance of deployed test contracts.
     #[clap(long)]
@@ -114,8 +114,8 @@ impl Provider for EvmArgs {
             dict.insert("ffi".to_string(), self.ffi.into());
         }
 
-        if self.no_storage_cache {
-            dict.insert("ffi".to_string(), self.no_storage_cache.into());
+        if self.no_storage_caching {
+            dict.insert("ffi".to_string(), self.no_storage_caching.into());
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
