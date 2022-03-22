@@ -11,7 +11,7 @@ mod debugger;
 pub use debugger::Debugger;
 
 mod stack;
-pub use stack::InspectorStack;
+pub use stack::{InspectorData, InspectorStack};
 
 mod cheatcodes;
 pub use cheatcodes::Cheatcodes;

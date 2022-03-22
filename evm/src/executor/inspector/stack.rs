@@ -1,7 +1,12 @@
 use super::{Cheatcodes, Debugger, LogCollector, Tracer};
+use crate::{debug::DebugArena, trace::CallTraceArena};
 use bytes::Bytes;
-use ethers::types::{Address, H256};
+use ethers::{
+    abi::RawLog,
+    types::{Address, H256},
+};
 use revm::{db::Database, CallInputs, CreateInputs, EVMData, Gas, Inspector, Interpreter, Return};
+use std::collections::BTreeMap;
 
 /// Helper macro to call the same method on multiple inspectors without resorting to dynamic
 /// dispatch
@@ -15,6 +20,13 @@ macro_rules! call_inspectors {
     }
 }
 
+pub struct InspectorData {
+    pub logs: Vec<RawLog>,
+    pub labels: BTreeMap<Address, String>,
+    pub traces: Option<CallTraceArena>,
+    pub debug: Option<DebugArena>,
+}
+
 /// An inspector that calls multiple inspectors in sequence.
 ///
 /// If a call to an inspector returns a value other than [Return::Continue] (or equivalent) the
@@ -25,6 +37,17 @@ pub struct InspectorStack {
     pub logs: Option<LogCollector>,
     pub cheatcodes: Option<Cheatcodes>,
     pub debugger: Option<Debugger>,
+}
+
+impl InspectorStack {
+    pub fn collect_inspector_states(self) -> InspectorData {
+        InspectorData {
+            logs: self.logs.map(|logs| logs.logs).unwrap_or_default(),
+            labels: self.cheatcodes.map(|cheatcodes| cheatcodes.labels).unwrap_or_default(),
+            traces: self.tracer.map(|tracer| tracer.traces),
+            debug: self.debugger.map(|debugger| debugger.arena),
+        }
+    }
 }
 
 impl<DB> Inspector<DB> for InspectorStack

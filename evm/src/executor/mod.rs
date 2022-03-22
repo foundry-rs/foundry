@@ -24,7 +24,7 @@ pub use revm::SpecId;
 /// Executor database trait
 pub use revm::db::DatabaseRef;
 
-use self::inspector::InspectorStackConfig;
+use self::inspector::{InspectorData, InspectorStackConfig};
 use crate::{debug::DebugArena, trace::CallTraceArena, CALLER};
 use bytes::Bytes;
 use ethers::{
@@ -34,7 +34,6 @@ use ethers::{
 use eyre::Result;
 use foundry_utils::IntoFunction;
 use hashbrown::HashMap;
-use inspector::InspectorStack;
 use revm::{
     db::{CacheDB, DatabaseCommit, EmptyDB},
     return_ok, Account, BlockEnv, CreateScheme, Env, Return, TransactOut, TransactTo, TxEnv, EVM,
@@ -297,7 +296,7 @@ where
         // Persist the changed block environment
         self.inspector_config.block = evm.env.block.clone();
 
-        let InspectorData { logs, labels, traces, debug } = collect_inspector_states(inspector);
+        let InspectorData { logs, labels, traces, debug } = inspector.collect_inspector_states();
         Ok(RawCallResult {
             status,
             reverted: !matches!(status, return_ok!()),
@@ -396,7 +395,7 @@ where
             _ => Bytes::default(),
         };
 
-        let InspectorData { logs, labels, traces, debug } = collect_inspector_states(inspector);
+        let InspectorData { logs, labels, traces, debug } = inspector.collect_inspector_states();
         Ok(RawCallResult {
             status,
             reverted: !matches!(status, return_ok!()),
@@ -425,7 +424,7 @@ where
             // regarding deployments in general
             _ => eyre::bail!("deployment failed: {:?}", status),
         };
-        let InspectorData { logs, traces, debug, .. } = collect_inspector_states(inspector);
+        let InspectorData { logs, traces, debug, .. } = inspector.collect_inspector_states();
 
         Ok(DeployResult { address, gas, logs, traces, debug })
     }
@@ -483,22 +482,6 @@ where
                 ..self.env.tx.clone()
             },
         }
-    }
-}
-
-struct InspectorData {
-    logs: Vec<RawLog>,
-    labels: BTreeMap<Address, String>,
-    traces: Option<CallTraceArena>,
-    debug: Option<DebugArena>,
-}
-
-fn collect_inspector_states(stack: InspectorStack) -> InspectorData {
-    InspectorData {
-        logs: stack.logs.map(|logs| logs.logs).unwrap_or_default(),
-        labels: stack.cheatcodes.map(|cheatcodes| cheatcodes.labels).unwrap_or_default(),
-        traces: stack.tracer.map(|tracer| tracer.traces),
-        debug: stack.debugger.map(|debugger| debugger.arena),
     }
 }
 
