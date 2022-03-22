@@ -1,7 +1,7 @@
 //! Create command
 
 use crate::{
-    cmd::{build::BuildArgs, Cmd},
+    cmd::{forge::build::BuildArgs, Cmd},
     opts::{EthereumOpts, WalletType},
     utils::parse_u256,
 };
@@ -70,10 +70,11 @@ impl Cmd for CreateArgs {
     fn run(self) -> Result<Self::Output> {
         // Find Project & Compile
         let project = self.opts.project()?;
-        let compiled = super::compile(&project, self.opts.names, self.opts.sizes)?;
+        let compiled = crate::cmd::utils::compile(&project, self.opts.names, self.opts.sizes)?;
 
         // Get ABI and BIN
-        let (abi, bin, _) = super::read_artifact(&project, compiled, self.contract.clone())?;
+        let (abi, bin, _) =
+            crate::cmd::utils::read_artifact(&project, compiled, self.contract.clone())?;
 
         let bin = match bin.object {
             BytecodeObject::Bytecode(_) => bin.object,

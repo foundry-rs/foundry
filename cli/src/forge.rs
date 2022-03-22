@@ -3,7 +3,7 @@ mod opts;
 mod term;
 mod utils;
 
-use crate::cmd::{watch, Cmd};
+use crate::cmd::{forge::watch, Cmd};
 
 use ethers::solc::{Project, ProjectPathsConfig};
 use opts::forge::{Dependency, Opts, Subcommands};
@@ -31,7 +31,7 @@ fn main() -> eyre::Result<()> {
         }
         Subcommands::Build(cmd) => {
             if cmd.is_watch() {
-                utils::block_on(crate::cmd::watch::watch_build(cmd))?;
+                utils::block_on(crate::cmd::forge::watch::watch_build(cmd))?;
             } else {
                 cmd.run()?;
             }
@@ -40,10 +40,10 @@ fn main() -> eyre::Result<()> {
             cmd.run()?;
         }
         Subcommands::VerifyContract(args) => {
-            utils::block_on(cmd::verify::run_verify(&args))?;
+            utils::block_on(cmd::forge::verify::run_verify(&args))?;
         }
         Subcommands::VerifyCheck(args) => {
-            utils::block_on(cmd::verify::run_verify_check(&args))?;
+            utils::block_on(cmd::forge::verify::run_verify_check(&args))?;
         }
         Subcommands::Create(cmd) => {
             cmd.run()?;

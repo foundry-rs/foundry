@@ -1,4 +1,4 @@
-use crate::cmd::Cmd;
+use crate::cmd::utils::Cmd;
 
 use clap::{Parser, ValueHint};
 use ethers::contract::MultiAbigen;

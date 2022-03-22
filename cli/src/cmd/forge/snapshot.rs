@@ -1,8 +1,10 @@
 //! Snapshot command
 
 use crate::cmd::{
-    test,
-    test::{Test, TestOutcome},
+    forge::{
+        test,
+        test::{Test, TestOutcome},
+    },
     Cmd,
 };
 use ansi_term::Colour;
