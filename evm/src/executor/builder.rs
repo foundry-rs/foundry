@@ -40,7 +40,7 @@ impl Fork {
     ///
     /// If configured, then this will initialise the backend with the storage cahce
     fn into_backend(self, env: &Env) -> SharedBackend {
-        let Fork { cache_path, url, pin_block , chain_id,} = self;
+        let Fork { cache_path, url, pin_block, chain_id } = self;
 
         let host = Url::parse(&url)
             .ok()

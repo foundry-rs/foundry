@@ -14,9 +14,6 @@ pub use executor::abi;
 /// Fuzzing wrapper for executors
 pub mod fuzz;
 
-/// Support for storing things and disk.
-pub mod storage;
-
 // Re-exports
 pub use ethers::types::Address;
 pub use hashbrown::HashMap;
