@@ -473,16 +473,13 @@ mod tests {
         providers::{Http, Provider},
         types::Address,
     };
-    use std::convert::TryFrom;
+    use std::{convert::TryFrom, path::PathBuf};
 
     use super::*;
 
-    #[test]
-    fn shared_backend() {
+    fn new_db(cache_path: Option<PathBuf>) -> BlockchainDb {
         let url = "https://mainnet.infura.io/v3/c60b0bb42f8a4c6481ecd229eddaca27";
         let provider = Provider::<Http>::try_from(url).unwrap();
-        // some rng contract from etherscan
-        let address: Address = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();
 
         let meta = BlockchainDbMeta {
             cfg_env: Default::default(),
@@ -490,8 +487,16 @@ mod tests {
             host: url.to_string(),
         };
 
-        let db = BlockchainDb::new(meta, None);
+        BlockchainDb::new(meta, cache_path)
+    }
+
+    #[test]
+    fn shared_backend() {
+        let db = new_db(None);
         let backend = SharedBackend::new(Arc::new(provider), db.clone(), None);
+
+        // some rng contract from etherscan
+        let address: Address = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();
 
         let idx = U256::from(0u64);
         let value = backend.storage(address, idx);
@@ -520,4 +525,7 @@ mod tests {
         let slots = db.storage().read().get(&address).unwrap().clone();
         assert_eq!(slots.len() as u64, max_slots);
     }
+
+    #[test]
+    fn can_cache() {}
 }
