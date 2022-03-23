@@ -1,10 +1,7 @@
 //! Smart caching and deduplication of requests when using a forking provider
 use revm::{db::DatabaseRef, AccountInfo, KECCAK_EMPTY};
 
-use crate::{
-    executor::fork::{cache::StorageInfo, BlockchainDb},
-    storage::StorageMap,
-};
+use crate::executor::fork::{cache::StorageInfo, BlockchainDb};
 use ethers::{
     core::abi::ethereum_types::BigEndianHash,
     providers::Middleware,

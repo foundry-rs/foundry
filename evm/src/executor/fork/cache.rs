@@ -1,10 +1,10 @@
 //! Cache related abstraction
-use ethers::types::{Address, Bytes, H256, U256};
+use ethers::types::{Address, H256, U256};
 use parking_lot::RwLock;
 use revm::AccountInfo;
 use serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer};
 use std::{collections::BTreeMap, fs, io::BufWriter, path::PathBuf, sync::Arc};
-use tracing::{trace, trace_span, warn, Level};
+use tracing::{trace, trace_span, warn};
 use tracing_error::InstrumentResult;
 
 pub type StorageInfo = BTreeMap<U256, U256>;
@@ -62,6 +62,11 @@ impl BlockchainDb {
     /// Returns the map that holds all the block hashes
     pub fn block_hashes(&self) -> &RwLock<BTreeMap<u64, H256>> {
         &self.db.block_hashes
+    }
+
+    /// Returns the [revm::Env] related metadata
+    pub fn meta(&self) -> &Arc<RwLock<BlockchainDbMeta>> {
+        &self.meta
     }
 
     /// Delegate for [BlockCacheDB::flush()]

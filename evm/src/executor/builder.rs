@@ -3,19 +3,14 @@ use revm::{
     db::{DatabaseRef, EmptyDB},
     Env, SpecId,
 };
-use std::{path::PathBuf, sync::Arc};
+use std::path::PathBuf;
 
-use super::{
-    fork::{SharedBackend, SharedMemCache},
-    inspector::InspectorStackConfig,
-    Executor,
-};
+use super::{fork::SharedBackend, inspector::InspectorStackConfig, Executor};
 
-use crate::storage::StorageMap;
 use ethers::types::{H160, H256, U256};
 
 use crate::executor::fork::{BlockchainDb, BlockchainDbMeta};
-use parking_lot::lock_api::RwLock;
+
 use revm::AccountInfo;
 use url::Url;
 
@@ -51,7 +46,6 @@ impl Fork {
             .unwrap_or_else(|| url.clone());
 
         let provider = Provider::try_from(url).expect("Failed to establish provider");
-
 
         let meta =
             BlockchainDbMeta { cfg_env: env.cfg.clone(), block_env: env.block.clone(), host };
