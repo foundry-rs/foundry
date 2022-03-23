@@ -1,6 +1,6 @@
 [package]
 name = "foundry-config"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = """
 Foundry configuration
@@ -19,6 +19,7 @@ eyre = "0.6.5"
 ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-solc = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["async", "svm-solc"] }
 Inflector = "0.11.4"
+regex = "1.5.5"
 
 [dev-dependencies]
 pretty_assertions = "1.0.0"

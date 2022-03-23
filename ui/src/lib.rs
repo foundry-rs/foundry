@@ -1,11 +1,3 @@
-use ethers::abi::Abi;
-use std::{
-    cmp::{max, min},
-    collections::{BTreeMap, VecDeque},
-    time::{Duration, Instant},
-};
-use tui::text::Text;
-
 use crossterm::{
     event::{
         self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, MouseEvent,
@@ -14,36 +6,36 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ethers::solc::artifacts::ContractBytecodeSome;
+use ethers::{solc::artifacts::ContractBytecodeSome, types::Address};
+use eyre::Result;
+use forge::debug::DebugStep;
 use std::{
-    io::{self},
+    cmp::{max, min},
+    collections::{BTreeMap, VecDeque},
+    io,
     sync::mpsc,
     thread,
+    time::{Duration, Instant},
 };
-
-use evm_adapters::sputnik::cheatcodes::debugger::DebugStep;
-use eyre::Result;
 use tui::{
     backend::{Backend, CrosstermBackend},
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     terminal::Frame,
-    text::{Span, Spans},
+    text::{Span, Spans, Text},
     widgets::{Block, Borders, Paragraph, Wrap},
     Terminal,
 };
 
-use ethers::types::Address;
-
-/// Trait for starting the ui
+/// Trait for starting the UI
 pub trait Ui {
-    /// Start the agent that will now take over.
+    /// Start the agent that will now take over
     fn start(self) -> Result<TUIExitReason>;
 }
 
-/// Used to indicate why the Ui stopped
+/// Used to indicate why the UI stopped
 pub enum TUIExitReason {
-    /// 'q' exit
+    /// Exit using <q>
     CharExit,
 }
 
@@ -54,7 +46,7 @@ pub struct Tui {
     key_buffer: String,
     /// current step in the debug steps
     current_step: usize,
-    identified_contracts: BTreeMap<Address, (String, Abi)>,
+    identified_contracts: BTreeMap<Address, String>,
     known_contracts: BTreeMap<String, ContractBytecodeSome>,
     source_code: BTreeMap<u32, String>,
 }
@@ -65,7 +57,7 @@ impl Tui {
     pub fn new(
         debug_arena: Vec<(Address, Vec<DebugStep>, bool)>,
         current_step: usize,
-        identified_contracts: BTreeMap<Address, (String, Abi)>,
+        identified_contracts: BTreeMap<Address, String>,
         known_contracts: BTreeMap<String, ContractBytecodeSome>,
         source_code: BTreeMap<u32, String>,
     ) -> Result<Self> {
@@ -104,7 +96,7 @@ impl Tui {
     fn draw_layout<B: Backend>(
         f: &mut Frame<B>,
         address: Address,
-        identified_contracts: &BTreeMap<Address, (String, Abi)>,
+        identified_contracts: &BTreeMap<Address, String>,
         known_contracts: &BTreeMap<String, ContractBytecodeSome>,
         source_code: &BTreeMap<u32, String>,
         debug_steps: &[DebugStep],
@@ -176,7 +168,7 @@ impl Tui {
         let block_controls = Block::default();
 
         let text_output = Text::from(Span::styled(
-            "[q]: Quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end",
+            "[q]: quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end",
             Style::default().add_modifier(Modifier::DIM)
         ));
         let paragraph = Paragraph::new(text_output)
@@ -190,7 +182,7 @@ impl Tui {
     fn draw_src<B: Backend>(
         f: &mut Frame<B>,
         address: Address,
-        identified_contracts: &BTreeMap<Address, (String, Abi)>,
+        identified_contracts: &BTreeMap<Address, String>,
         known_contracts: &BTreeMap<String, ContractBytecodeSome>,
         source_code: &BTreeMap<u32, String>,
         ic: usize,
@@ -198,13 +190,13 @@ impl Tui {
         area: Rect,
     ) {
         let block_source_code = Block::default()
-            .title(format!("Contract construction: {}", creation))
+            .title(if creation { "Contract creation" } else { "Contract call" })
             .borders(Borders::ALL);
 
         let mut text_output: Text = Text::from("");
 
         if let Some(contract_name) = identified_contracts.get(&address) {
-            if let Some(known) = known_contracts.get(&contract_name.0) {
+            if let Some(known) = known_contracts.get(contract_name) {
                 // grab either the creation source map or runtime sourcemap
                 if let Some(sourcemap) = if creation {
                     known.bytecode.source_map()
@@ -499,7 +491,7 @@ impl Tui {
     ) {
         let block_source_code = Block::default()
             .title(format!(
-                " Address: {}, pc: {}, call's gas used: {} ",
+                "Address: {} | PC: {} | Gas used in call: {}",
                 address,
                 if let Some(step) = debug_steps.get(current_step) {
                     step.pc.to_string()
@@ -555,17 +547,17 @@ impl Tui {
             // Format line number
             let line_number_format = if line_number == current_step {
                 let step: &DebugStep = &debug_steps[line_number];
-                format!("{:0>max_pc_len$x} ▶", step.pc, max_pc_len = max_pc_len)
+                format!("{:0>max_pc_len$x}|▶", step.pc, max_pc_len = max_pc_len)
             } else if line_number < debug_steps.len() {
                 let step: &DebugStep = &debug_steps[line_number];
-                format!("{:0>max_pc_len$x}: ", step.pc, max_pc_len = max_pc_len)
+                format!("{:0>max_pc_len$x}| ", step.pc, max_pc_len = max_pc_len)
             } else {
                 "END CALL".to_string()
             };
 
             if let Some(op) = opcode_list.get(line_number) {
                 text_output.push(Spans::from(Span::styled(
-                    format!("{} {}", line_number_format, op),
+                    format!("{}{}", line_number_format, op),
                     Style::default().fg(Color::White).bg(bg_color),
                 )));
             } else {
@@ -592,27 +584,46 @@ impl Tui {
         current_step: usize,
         area: Rect,
     ) {
-        let stack_space =
-            Block::default().title(format!(" Stack: {} ", current_step)).borders(Borders::ALL);
         let stack = &debug_steps[current_step].stack;
+        let stack_space =
+            Block::default().title(format!("Stack: {}", stack.len())).borders(Borders::ALL);
         let min_len = usize::max(format!("{}", stack.len()).len(), 2);
 
         let text: Vec<Spans> = stack
             .iter()
+            .rev()
             .enumerate()
             .map(|(i, stack_item)| {
-                Spans::from(Span::styled(
-                    format!("{: <min_len$}: {:?} \n", i, stack_item, min_len = min_len),
+                let words: Vec<Span> = (0..32)
+                    .into_iter()
+                    .rev()
+                    .map(|i| stack_item.byte(i))
+                    .map(|byte| {
+                        Span::styled(
+                            format!("{:02x} ", byte),
+                            if byte == 0 {
+                                Style::default().fg(Color::Gray).add_modifier(Modifier::DIM)
+                            } else {
+                                Style::default().fg(Color::White)
+                            },
+                        )
+                    })
+                    .collect();
+
+                let mut spans = vec![Span::styled(
+                    format!("{:0min_len$}| ", i, min_len = min_len),
                     Style::default().fg(Color::White),
-                ))
+                )];
+                spans.extend(words);
+                spans.push(Span::raw("\n"));
+
+                Spans::from(spans)
             })
             .collect();
+
         let paragraph = Paragraph::new(text).block(stack_space).wrap(Wrap { trim: true });
         f.render_widget(paragraph, area);
     }
-
-    // cargo r --manifest-path ../foundry/Cargo.toml --bin forge run ./src/test/Locke.t.sol -t
-    // StreamTest --sig "test_fundStream()" --debug
 
     /// Draw memory in memory pane
     fn draw_memory<B: Backend>(
@@ -623,7 +634,7 @@ impl Tui {
     ) {
         let memory = &debug_steps[current_step].memory;
         let stack_space = Block::default()
-            .title(format!(" Memory - Max Expansion: {} bytes", memory.effective_len()))
+            .title(format!("Memory (max expansion: {} bytes)", memory.effective_len()))
             .borders(Borders::ALL);
         let memory = memory.data();
         let max_i = memory.len() / 32;
@@ -633,24 +644,28 @@ impl Tui {
             .chunks(32)
             .enumerate()
             .map(|(i, mem_word)| {
-                let strings: String = mem_word
-                    .chunks(4)
-                    .map(|bytes4| {
-                        bytes4
-                            .iter()
-                            .map(|byte| {
-                                let v: Vec<u8> = vec![*byte];
-                                hex::encode(&v[..])
-                            })
-                            .collect::<Vec<String>>()
-                            .join(" ")
+                let words: Vec<Span> = mem_word
+                    .iter()
+                    .map(|byte| {
+                        Span::styled(
+                            format!("{:02x} ", byte),
+                            if *byte == 0 {
+                                Style::default().fg(Color::Gray).add_modifier(Modifier::DIM)
+                            } else {
+                                Style::default().fg(Color::White)
+                            },
+                        )
                     })
-                    .collect::<Vec<String>>()
-                    .join("  ");
-                Spans::from(Span::styled(
-                    format!("{:0min_len$x}: {} \n", i * 32, strings, min_len = min_len),
+                    .collect();
+
+                let mut spans = vec![Span::styled(
+                    format!("{:0min_len$x}| ", i * 32, min_len = min_len),
                     Style::default().fg(Color::White),
-                ))
+                )];
+                spans.extend(words);
+                spans.push(Span::raw("\n"));
+
+                Spans::from(spans)
             })
             .collect();
         let paragraph = Paragraph::new(text).block(stack_space).wrap(Wrap { trim: true });
@@ -660,23 +675,23 @@ impl Tui {
 
 impl Ui for Tui {
     fn start(mut self) -> Result<TUIExitReason> {
-        // if something panics inside here, we should do everything we can to
+        // If something panics inside here, we should do everything we can to
         // not corrupt the user's terminal.
         std::panic::set_hook(Box::new(|e| {
             disable_raw_mode().expect("Unable to disable raw mode");
-            execute!(std::io::stdout(), LeaveAlternateScreen, DisableMouseCapture)
+            execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture)
                 .expect("unable to execute disable mouse capture");
             println!("{}", e);
         }));
-        // this is the recommend tick rate from tui-rs, based on their examples
+        // This is the recommend tick rate from tui-rs, based on their examples
         let tick_rate = Duration::from_millis(200);
 
-        // setup a channel to send interrupts
+        // Setup a channel to send interrupts
         let (tx, rx) = mpsc::channel();
         thread::spawn(move || {
             let mut last_tick = Instant::now();
             loop {
-                // poll events since last tick
+                // Poll events since last tick
                 if event::poll(tick_rate - last_tick.elapsed()).unwrap() {
                     let event = event::read().unwrap();
                     if let Event::Key(key) = event {
@@ -689,7 +704,7 @@ impl Ui for Tui {
                         }
                     }
                 }
-                // force update if time has passed
+                // Force update if time has passed
                 if last_tick.elapsed() > tick_rate {
                     if tx.send(Interrupt::IntervalElapsed).is_err() {
                         return
@@ -716,9 +731,9 @@ impl Ui for Tui {
                     .collect();
                 last_index = draw_memory.inner_call_index;
             }
-            // grab interrupt
+            // Grab interrupt
             match rx.recv()? {
-                // key press
+                // Key press
                 Interrupt::KeyPressed(event) => match event.code {
                     // Exit
                     KeyCode::Char('q') => {
@@ -732,7 +747,7 @@ impl Ui for Tui {
                     }
                     // Move down
                     KeyCode::Char('j') | KeyCode::Down => {
-                        // grab number of times to do it
+                        // Grab number of times to do it
                         for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
                             if self.current_step < opcode_list.len() - 1 {
                                 self.current_step += 1;

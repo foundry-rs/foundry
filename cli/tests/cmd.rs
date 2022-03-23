@@ -1,7 +1,7 @@
 //! Contains various tests for checking forge's commands
 use ansi_term::Colour;
 use ethers::solc::{artifacts::Metadata, ConfigurableContractArtifact};
-use evm_adapters::evm_opts::{EvmOpts, EvmType};
+use forge::executor::opts::EvmOpts;
 use foundry_cli_test_utils::{
     ethers_solc::{remappings::Remapping, PathStyle},
     forgetest, forgetest_ignore, forgetest_init, pretty_eq,
@@ -11,11 +11,7 @@ use foundry_config::{
     parse_with_profile, BasicConfig, Config, OptimizerDetails, SolidityErrorCode,
 };
 use pretty_assertions::assert_eq;
-use std::{
-    env::{self},
-    fs,
-    str::FromStr,
-};
+use std::{env, fs, str::FromStr};
 
 // import forge utils as mod
 #[allow(unused)]
@@ -245,9 +241,7 @@ forgetest_init!(can_get_evm_opts, |prj: TestProject, mut cmd: TestCommand| {
     assert!(config.ffi);
 
     cmd.set_env("FOUNDRY_ETH_RPC_URL", url);
-    let figment = Config::figment_with_root(prj.root())
-        .merge(("evm_type", EvmType::Sputnik))
-        .merge(("debug", false));
+    let figment = Config::figment_with_root(prj.root()).merge(("debug", false));
     let evm_opts: EvmOpts = figment.extract().unwrap();
     assert_eq!(evm_opts.fork_url, Some(url.to_string()));
 });
@@ -472,7 +466,7 @@ Compiler run successful
     ));
 });
 
-// tests that the `run` command works correctly
+// Tests that the `run` command works correctly
 forgetest!(can_execute_run_command, |prj: TestProject, mut cmd: TestCommand| {
     let script = prj
         .inner()
@@ -494,12 +488,80 @@ contract Demo {
     cmd.arg("run").arg(script);
     let output = cmd.stdout_lossy();
     assert!(output.ends_with(&format!(
-        "
-Compiler run successful
+        "Compiler run successful
 {}
-Gas Used: 1751
+Gas used: 1751
 == Logs ==
-script ran
+  script ran
+",
+        Colour::Green.paint("Script ran successfully.")
+    ),));
+});
+
+// Tests that the run command can run arbitrary functions
+forgetest!(can_execute_run_command_with_sig, |prj: TestProject, mut cmd: TestCommand| {
+    let script = prj
+        .inner()
+        .add_source(
+            "Foo",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+contract Demo {
+    event log_string(string);
+    function myFunction() external {
+        emit log_string("script ran");
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    cmd.arg("run").arg(script).arg("--sig").arg("myFunction()");
+    let output = cmd.stdout_lossy();
+    assert!(output.ends_with(&format!(
+        "Compiler run successful
+{}
+Gas used: 1751
+== Logs ==
+  script ran
+",
+        Colour::Green.paint("Script ran successfully.")
+    ),));
+});
+
+// Tests that the run command can run functions with arguments
+forgetest!(can_execute_run_command_with_args, |prj: TestProject, mut cmd: TestCommand| {
+    let script = prj
+        .inner()
+        .add_source(
+            "Foo",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+contract Demo {
+    event log_string(string);
+    event log_uint(uint);
+    function run(uint256 a, uint256 b) external {
+        emit log_string("script ran");
+        emit log_uint(a);
+        emit log_uint(b);
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    cmd.arg("run").arg(script).arg("--sig").arg("run(uint256,uint256)").arg("1").arg("2");
+    let output = cmd.stdout_lossy();
+    assert!(output.ends_with(&format!(
+        "Compiler run successful
+{}
+Gas used: 3957
+== Logs ==
+  script ran
+  1
+  2
 ",
         Colour::Green.paint("Script ran successfully.")
     ),));
@@ -649,15 +711,16 @@ forgetest_ignore!(can_compile_local_spells, |_: TestProject, mut cmd: TestComman
     let dss_exec_lib = "src/DssSpell.sol:DssExecLib:0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4";
 
     cmd.args([
-        "build",
+        "test",
         "--root",
         root.as_str(),
         "--fork-url",
         eth_rpc_url.as_str(),
+        "--fork-block-number",
+        "14435000",
         "--libraries",
         dss_exec_lib,
         "-vvv",
-        "--force",
     ]);
     cmd.print_output();
 });

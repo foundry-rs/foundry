@@ -268,6 +268,7 @@ interface Hevm {
     // Sets an address' code, (who, newCode)
     function etch(address, bytes calldata) external;
     // Expects an error on next call
+    function expectRevert() external;
     function expectRevert(bytes calldata) external;
     function expectRevert(bytes4) external;
     // Record all storage reads and writes

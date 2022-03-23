@@ -129,8 +129,14 @@ macro_rules! forgetest_external {
 
             // Clone the external repository
             let git_clone =
-                $crate::util::clone_remote(&format!("https://github.com/{}", $repo), prj.root());
-            assert!(git_clone, "could not clone repository");
+                $crate::util::clone_remote(&format!("https://github.com/{}", $repo), prj.root())
+                    .expect("Could not clone repository. Is git installed?");
+            assert!(
+                git_clone.status.success(),
+                "could not clone repository:\nstdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&git_clone.stdout),
+                String::from_utf8_lossy(&git_clone.stderr)
+            );
 
             // We just run make install, but we do not care if it worked or not,
             // since some repositories do not have that target

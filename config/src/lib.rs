@@ -1,6 +1,9 @@
 //! foundry configuration.
+extern crate core;
+
 use std::{
     borrow::Cow,
+    fmt,
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -15,6 +18,7 @@ pub use figment;
 use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::caching::StorageCachingConfig;
 use ethers_core::types::{Address, U256};
 pub use ethers_solc::artifacts::OptimizerDetails;
 use ethers_solc::{
@@ -24,6 +28,7 @@ use ethers_solc::{
     remappings::{RelativeRemapping, Remapping},
     ConfigurableArtifacts, EvmVersion, Project, ProjectPathsConfig, Solc, SolcConfig,
 };
+use eyre::{ContextCompat, WrapErr};
 use figment::{providers::Data, value::Value};
 use inflector::Inflector;
 
@@ -33,6 +38,8 @@ mod macros;
 // Utilities for making it easier to handle tests.
 pub mod utils;
 pub use crate::utils::*;
+
+pub mod caching;
 
 /// Foundry configuration
 ///
@@ -200,6 +207,11 @@ pub struct Config {
     /// If set to true, changes compilation pipeline to go through the Yul intermediate
     /// representation.
     pub via_ir: bool,
+    /// RPC storage caching settings determines what chains and endpoints to cache
+    pub rpc_storage_caching: StorageCachingConfig,
+    /// Disables storage caching entirely. This overrides any settings made in
+    /// `rpc_storage_caching`
+    pub no_storage_caching: bool,
     /// The root path where the config detection started from, `Config::with_root`
     #[doc(hidden)]
     //  We're skipping serialization here, so it won't be included in the [`Config::to_string()`]
@@ -698,6 +710,35 @@ impl Config {
         dirs_next::home_dir().map(|p| p.join(Config::FOUNDRY_DIR_NAME))
     }
 
+    /// Returns the path to foundry's cache dir `~/.foundry/cache`
+    pub fn foundry_cache_dir() -> Option<PathBuf> {
+        Self::foundry_dir().map(|p| p.join("cache"))
+    }
+
+    /// Returns the path to the cache file of the `block` on the `chain`
+    /// `~/.foundry/cache/<chain>/<block>/storage.json`
+    pub fn foundry_block_cache_file(chain_id: impl Into<Chain>, block: u64) -> Option<PathBuf> {
+        Some(
+            Config::foundry_cache_dir()?
+                .join(chain_id.into().to_string())
+                .join(format!("{}", block))
+                .join("storage.json"),
+        )
+    }
+
+    #[doc = r#"Returns the path to `foundry`'s data directory inside the user's data directory
+    |Platform | Value                                 | Example                          |
+    | ------- | ------------------------------------- | -------------------------------- |
+    | Linux   | `$XDG_CONFIG_HOME` or `$HOME`/.config/foundry | /home/alice/.config/foundry|
+    | macOS   | `$HOME`/Library/Application Support/foundry   | /Users/Alice/Library/Application Support/foundry |
+    | Windows | `{FOLDERID_RoamingAppData}/foundry`           | C:\Users\Alice\AppData\Roaming/foundry   |
+    "#]
+    pub fn data_dir() -> eyre::Result<PathBuf> {
+        let path = dirs_next::data_dir().wrap_err("Failed to find data directory")?.join("foundry");
+        std::fs::create_dir_all(&path).wrap_err("Failed to create module directory")?;
+        Ok(path)
+    }
+
     /// Returns the path to the `foundry.toml` file, the file is searched for in
     /// the current working directory and all parent directories until the root,
     /// and the first hit is used.
@@ -855,9 +896,12 @@ impl Default for Config {
             block_number: 0,
             fork_block_number: None,
             chain_id: None,
-            // toml-rs can't handle larger number because integers are stored signed
-            // https://github.com/alexcrichton/toml-rs/issues/256
-            gas_limit: i64::MAX as u64,
+            // We want the gas limit to be high, but if we pick a value that is too high we end up
+            // allowing `mstore`s and `mload`s at very high memory regions, which may cause a panic.
+            //
+            // 80m gas was arbitrarily chosen, but corresponds to about 16MiB of memory if only
+            // used for `mload`/`mstore`.
+            gas_limit: 80_000_000,
             gas_price: 0,
             block_base_fee_per_gas: 0,
             block_coinbase: Address::zero(),
@@ -871,9 +915,12 @@ impl Default for Config {
             ignored_error_codes: vec![SolidityErrorCode::SpdxLicenseNotProvided],
             __non_exhaustive: (),
             via_ir: false,
+            rpc_storage_caching: Default::default(),
+            no_storage_caching: false,
         }
     }
 }
+
 /// A non-exhaustive list of solidity error codes
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum SolidityErrorCode {
@@ -1230,12 +1277,81 @@ impl BasicConfig {
 }
 
 /// Either a named or chain id or the actual id value
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(untagged)]
 pub enum Chain {
-    #[serde(with = "from_str_lowercase")]
+    #[serde(serialize_with = "from_str_lowercase::serialize")]
     Named(ethers_core::types::Chain),
     Id(u64),
+}
+
+impl Chain {
+    /// The id of the chain
+    pub fn id(&self) -> u64 {
+        match self {
+            Chain::Named(chain) => *chain as u64,
+            Chain::Id(id) => *id,
+        }
+    }
+}
+
+impl fmt::Display for Chain {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Chain::Named(chain) => chain.fmt(f),
+            Chain::Id(id) => {
+                if let Ok(chain) = ethers_core::types::Chain::try_from(*id) {
+                    chain.fmt(f)
+                } else {
+                    id.fmt(f)
+                }
+            }
+        }
+    }
+}
+
+impl From<ethers_core::types::Chain> for Chain {
+    fn from(id: ethers_core::types::Chain) -> Self {
+        Chain::Named(id)
+    }
+}
+
+impl From<u64> for Chain {
+    fn from(id: u64) -> Self {
+        Chain::Id(id)
+    }
+}
+
+impl From<Chain> for u64 {
+    fn from(c: Chain) -> Self {
+        match c {
+            Chain::Named(c) => c as u64,
+            Chain::Id(id) => id,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Chain {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum ChainId {
+            Named(String),
+            Id(u64),
+        }
+
+        match ChainId::deserialize(deserializer)? {
+            ChainId::Named(s) => {
+                s.to_lowercase().parse().map(Chain::Named).map_err(serde::de::Error::custom)
+            }
+            ChainId::Id(id) => Ok(ethers_core::types::Chain::try_from(id)
+                .map(Chain::Named)
+                .unwrap_or_else(|_| Chain::Id(id))),
+        }
+    }
 }
 
 mod from_str_lowercase {
@@ -1261,15 +1377,6 @@ mod from_str_lowercase {
     }
 }
 
-impl From<Chain> for u64 {
-    fn from(c: Chain) -> Self {
-        match c {
-            Chain::Named(c) => c as u64,
-            Chain::Id(id) => id,
-        }
-    }
-}
-
 fn canonic(path: impl Into<PathBuf>) -> PathBuf {
     let path = path.into();
     ethers_solc::utils::canonicalize(&path).unwrap_or(path)
@@ -1281,6 +1388,7 @@ mod tests {
     use figment::error::Kind::InvalidType;
     use std::str::FromStr;
 
+    use crate::caching::{CachedChains, CachedEndpoints};
     use figment::{value::Value, Figment};
     use pretty_assertions::assert_eq;
 
@@ -1466,6 +1574,7 @@ mod tests {
                 verbosity = 3
                 remappings = ["ds-test=lib/ds-test/"]
                 via_ir = true
+                rpc_storage_caching = { chains = [1, "optimism", 999999], endpoints = "all"}
             "#,
             )?;
 
@@ -1480,6 +1589,14 @@ mod tests {
                     remappings: vec![Remapping::from_str("ds-test=lib/ds-test/").unwrap().into()],
                     verbosity: 3,
                     via_ir: true,
+                    rpc_storage_caching: StorageCachingConfig {
+                        chains: CachedChains::Chains(vec![
+                            Chain::Named(ethers_core::types::Chain::Mainnet),
+                            Chain::Named(ethers_core::types::Chain::Optimism),
+                            Chain::Id(999999)
+                        ]),
+                        endpoints: CachedEndpoints::All
+                    },
                     ..Config::default()
                 }
             );

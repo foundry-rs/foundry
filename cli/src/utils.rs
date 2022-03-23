@@ -1,8 +1,15 @@
-use std::{future::Future, path::Path, str::FromStr, time::Duration};
+use std::{
+    future::Future,
+    path::{Path, PathBuf},
+    str::FromStr,
+    time::Duration,
+};
 
 use ethers::{solc::EvmVersion, types::U256};
-#[cfg(feature = "sputnik-evm")]
-use sputnik::Config;
+use forge::executor::{opts::EvmOpts, Fork, SpecId};
+use foundry_config::{caching::StorageCachingConfig, Config};
+use tracing_error::ErrorLayer;
+use tracing_subscriber::prelude::*;
 
 // reexport all `foundry_config::utils`
 #[doc(hidden)]
@@ -52,18 +59,18 @@ impl<T: AsRef<Path>> FoundryPathExt for T {
 /// Initializes a tracing Subscriber for logging
 #[allow(dead_code)]
 pub fn subscriber() {
-    tracing_subscriber::FmtSubscriber::builder()
-        // .with_timer(tracing_subscriber::fmt::time::uptime())
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
+    tracing_subscriber::Registry::default()
+        .with(tracing_subscriber::EnvFilter::from_default_env())
+        .with(ErrorLayer::default())
+        .with(tracing_subscriber::fmt::layer())
+        .init()
 }
 
-#[cfg(feature = "sputnik-evm")]
-pub fn sputnik_cfg(evm: &EvmVersion) -> Config {
+pub fn evm_spec(evm: &EvmVersion) -> SpecId {
     match evm {
-        EvmVersion::Istanbul => Config::istanbul(),
-        EvmVersion::Berlin => Config::berlin(),
-        EvmVersion::London => Config::london(),
+        EvmVersion::Istanbul => SpecId::ISTANBUL,
+        EvmVersion::Berlin => SpecId::BERLIN,
+        EvmVersion::London => SpecId::LONDON,
         _ => panic!("Unsupported EVM version"),
     }
 }
@@ -141,6 +148,60 @@ pub fn parse_delay(delay: &str) -> eyre::Result<Duration> {
 pub fn block_on<F: Future>(future: F) -> F::Output {
     let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
     rt.block_on(future)
+}
+
+/// Helper function that returns the [Fork] to use, if any.
+///
+/// storage caching for the [Fork] will be enabled if
+///   - `fork_url` is present
+///   - `fork_block_number` is present
+///   - [StorageCachingConfig] allows the `fork_url` +  chain id pair
+///   - storage is allowed (`no_storage_caching = false`)
+///
+/// If all these criteria are met, then storage caching is enabled and storage info will be written
+/// to [Config::foundry_cache_dir()]/<str(chainid)>/<block>/storage.json
+///
+/// for `mainnet` and `--fork-block-number 14435000` on mac the corresponding storage cache will be
+/// at `~/.foundry/cache/mainnet/14435000/storage.json`
+pub fn get_fork(evm_opts: &EvmOpts, config: &StorageCachingConfig) -> Option<Fork> {
+    /// Returns the path where the cache file should be stored
+    ///
+    /// or `None` if caching should not be enabled
+    ///
+    /// See also [ Config::foundry_block_cache_file()]
+    fn get_block_storage_path(
+        evm_opts: &EvmOpts,
+        config: &StorageCachingConfig,
+        chain_id: u64,
+    ) -> Option<PathBuf> {
+        if evm_opts.no_storage_caching {
+            // storage caching explicitly opted out of
+            return None
+        }
+        let url = evm_opts.fork_url.as_ref()?;
+        // cache only if block explicitly pinned
+        let block = evm_opts.fork_block_number?;
+
+        if config.enable_for_endpoint(url) && config.enable_for_chain_id(chain_id) {
+            return Config::foundry_block_cache_file(chain_id, block)
+        }
+
+        None
+    }
+
+    if let Some(ref url) = evm_opts.fork_url {
+        let chain_id = evm_opts.get_chain_id();
+        let cache_storage = get_block_storage_path(evm_opts, config, chain_id);
+        let fork = Fork {
+            url: url.clone(),
+            pin_block: evm_opts.fork_block_number,
+            cache_path: cache_storage,
+            chain_id,
+        };
+        return Some(fork)
+    }
+
+    None
 }
 
 /// Conditionally print a message

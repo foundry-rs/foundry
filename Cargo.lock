@@ -40,6 +40,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ahash"
+version = "0.7.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fcb51a0695d8f838b1ee009b3fbf66bda078cd64590202a864a8f3e8c4315c47"
+dependencies = [
+ "getrandom 0.2.5",
+ "once_cell",
+ "version_check",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "0.7.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -291,26 +302,14 @@ dependencies = [
 
 [[package]]
 name = "bitvec"
-version = "0.20.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7774144344a4faa177370406a7ff5f1da24303817368584c6206c8303eb07848"
-dependencies = [
- "funty 1.1.0",
- "radium 0.6.2",
- "tap",
- "wyz 0.2.0",
-]
-
-[[package]]
-name = "bitvec"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1489fcb93a5bb47da0462ca93ad252ad6af2145cce58d10d46a83931ba9f016b"
 dependencies = [
- "funty 2.0.0",
+ "funty",
  "radium 0.7.0",
  "tap",
- "wyz 0.5.0",
+ "wyz",
 ]
 
 [[package]]
@@ -474,7 +473,7 @@ checksum = "df8670b8c7b9dae1793364eafadf7239c40d669904660c5960d74cfd80b46a53"
 
 [[package]]
 name = "cast"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono 0.2.25",
  "ethers-core",
@@ -689,7 +688,7 @@ dependencies = [
  "indenter",
  "once_cell",
  "owo-colors",
- "tracing-error",
+ "tracing-error 0.1.2",
 ]
 
 [[package]]
@@ -701,7 +700,7 @@ dependencies = [
  "once_cell",
  "owo-colors",
  "tracing-core",
- "tracing-error",
+ "tracing-error 0.1.2",
 ]
 
 [[package]]
@@ -999,17 +998,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "derive_more"
-version = "0.99.17"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fb810d30a7c1953f91334de7244731fc3f3c10d7fe163338a35b9f640960321"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "dialoguer"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1185,12 +1173,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "environmental"
-version = "1.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "68b91989ae21441195d7d9b9993a2f9295c7e1a8c96255d8b729accddc124797"
-
-[[package]]
 name = "eth-keystore"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1237,29 +1219,9 @@ checksum = "11da94e443c60508eb62cf256243a64da87304c2802ac2528847f79d750007ef"
 dependencies = [
  "crunchy",
  "fixed-hash",
- "impl-codec",
  "impl-rlp",
  "impl-serde",
- "scale-info",
  "tiny-keccak",
-]
-
-[[package]]
-name = "ethereum"
-version = "0.12.0"
-source = "git+https://github.com/rust-blockchain/ethereum#a9f735271098f9de949dca8a6ac9282592468d21"
-dependencies = [
- "bytes",
- "ethereum-types",
- "hash-db",
- "hash256-std-hasher",
- "parity-scale-codec 3.0.0",
- "rlp",
- "rlp-derive",
- "scale-info",
- "serde",
- "sha3 0.10.1",
- "triehash",
 ]
 
 [[package]]
@@ -1270,11 +1232,9 @@ checksum = "b2827b94c556145446fcce834ca86b7abf0c39a805883fe20e72c5bfdb5a0dc6"
 dependencies = [
  "ethbloom",
  "fixed-hash",
- "impl-codec",
  "impl-rlp",
  "impl-serde",
  "primitive-types",
- "scale-info",
  "uint",
 ]
 
@@ -1512,83 +1472,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "evm"
-version = "0.33.1"
-source = "git+https://github.com/gakonst/evm?branch=bump-primitive-types#7df668d1e53a8ca212fe5fe5362eb9b74839363c"
-dependencies = [
- "auto_impl",
- "environmental",
- "ethereum",
- "evm-core",
- "evm-gasometer",
- "evm-runtime",
- "log",
- "primitive-types",
- "rlp",
- "serde",
- "sha3 0.8.2",
-]
-
-[[package]]
-name = "evm-adapters"
-version = "0.1.0"
-dependencies = [
- "ansi_term",
- "bytes",
- "comfy-table",
- "ethers",
- "ethers-core",
- "evm",
- "eyre",
- "foundry-utils",
- "futures",
- "hex",
- "once_cell",
- "parking_lot 0.11.2",
- "proptest",
- "revm_precompiles",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "evm-core"
-version = "0.33.0"
-source = "git+https://github.com/gakonst/evm?branch=bump-primitive-types#7df668d1e53a8ca212fe5fe5362eb9b74839363c"
-dependencies = [
- "funty 1.1.0",
- "parity-scale-codec 2.3.1",
- "primitive-types",
- "serde",
-]
-
-[[package]]
-name = "evm-gasometer"
-version = "0.33.0"
-source = "git+https://github.com/gakonst/evm?branch=bump-primitive-types#7df668d1e53a8ca212fe5fe5362eb9b74839363c"
-dependencies = [
- "environmental",
- "evm-core",
- "evm-runtime",
- "primitive-types",
-]
-
-[[package]]
-name = "evm-runtime"
-version = "0.33.0"
-source = "git+https://github.com/gakonst/evm?branch=bump-primitive-types#7df668d1e53a8ca212fe5fe5362eb9b74839363c"
-dependencies = [
- "auto_impl",
- "environmental",
- "evm-core",
- "primitive-types",
- "sha3 0.8.2",
-]
-
-[[package]]
 name = "eyre"
 version = "0.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1692,15 +1575,16 @@ checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
 
 [[package]]
 name = "forge"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
+ "comfy-table",
  "ethers",
- "evm",
- "evm-adapters",
  "eyre",
+ "foundry-evm",
  "foundry-utils",
  "glob",
  "hex",
+ "once_cell",
  "proptest",
  "rayon",
  "regex",
@@ -1710,12 +1594,12 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
- "tracing-subscriber 0.2.25",
+ "tracing-subscriber 0.3.9",
 ]
 
 [[package]]
 name = "forge-fmt"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "indent_write",
  "pretty_assertions",
@@ -1735,7 +1619,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ansi_term",
  "atty",
@@ -1746,8 +1630,6 @@ dependencies = [
  "console 0.15.0",
  "dunce",
  "ethers",
- "evm",
- "evm-adapters",
  "eyre",
  "forge",
  "forge-fmt",
@@ -1772,7 +1654,8 @@ dependencies = [
  "tokio",
  "toml",
  "tracing",
- "tracing-subscriber 0.2.25",
+ "tracing-error 0.2.0",
+ "tracing-subscriber 0.3.9",
  "ui",
  "vergen",
  "walkdir",
@@ -1793,7 +1676,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-config"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "Inflector",
  "dirs-next",
@@ -1802,6 +1685,7 @@ dependencies = [
  "eyre",
  "figment",
  "pretty_assertions",
+ "regex",
  "semver",
  "serde",
  "serde_json",
@@ -1809,8 +1693,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "foundry-evm"
+version = "0.2.0"
+dependencies = [
+ "ansi_term",
+ "bytes",
+ "ethers",
+ "eyre",
+ "foundry-utils",
+ "futures",
+ "hashbrown 0.12.0",
+ "hex",
+ "once_cell",
+ "parking_lot 0.12.0",
+ "proptest",
+ "revm",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-error 0.2.0",
+ "tracing-subscriber 0.3.9",
+ "url",
+]
+
+[[package]]
 name = "foundry-utils"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ethers",
  "ethers-addressbook",
@@ -1843,12 +1754,6 @@ checksum = "76ee7a02da4d231650c7cea31349b889be2f45ddb3ef3032d2ec8185f6313fd2"
 dependencies = [
  "libc",
 ]
-
-[[package]]
-name = "funty"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fed34cd105917e91daa4da6b3728c47b068749d6a62c59811f06ed2ac71d9da7"
 
 [[package]]
 name = "funty"
@@ -2075,25 +1980,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "hash-db"
-version = "0.15.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d23bd4e7b5eda0d0f3a307e8b381fdc8ba9000f26fbe912250c0a4cc3956364a"
-
-[[package]]
-name = "hash256-std-hasher"
-version = "0.15.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92c171d55b98633f4ed3860808f004099b36c1cc29c42cfc53aa8591b21efcf2"
-dependencies = [
- "crunchy",
-]
-
-[[package]]
 name = "hashbrown"
 version = "0.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab5ef0d4909ef3724cc8cce6ccc8572c5c817592e9285f5464f8e86f8bd3726e"
+
+[[package]]
+name = "hashbrown"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8c21d40587b92fa6a6c6e3c1bdbf87d75511db5672f9c93175574b3a00df1758"
+dependencies = [
+ "ahash",
+]
 
 [[package]]
 name = "heck"
@@ -2124,6 +2023,9 @@ name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "hidapi-rusb"
@@ -2284,7 +2186,7 @@ version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba6a270039626615617f3f36d15fc827041df3b78c439da2cadfa47455a77f2f"
 dependencies = [
- "parity-scale-codec 3.0.0",
+ "parity-scale-codec",
 ]
 
 [[package]]
@@ -2335,7 +2237,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "282a6247722caba404c065016bbfa522806e51714c34f5dfc3e4a3a46fcb4223"
 dependencies = [
  "autocfg",
- "hashbrown",
+ "hashbrown 0.11.2",
 ]
 
 [[package]]
@@ -2566,15 +2468,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "51b9bbe6c47d51fc3e1a9b945965946b4c44142ab8792c50835a980d362c2710"
 dependencies = [
  "cfg-if 1.0.0",
-]
-
-[[package]]
-name = "matchers"
-version = "0.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f099785f7595cc4b4553a174ce30dd7589ef93391ff414dbb67f62392b9e0ce1"
-dependencies = [
- "regex-automata",
 ]
 
 [[package]]
@@ -2892,6 +2785,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "num_enum"
+version = "0.5.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf5395665662ef45796a4ff5486c5d41d29e0c09640af4c5f17fd94ee2c119c9"
+dependencies = [
+ "num_enum_derive",
+]
+
+[[package]]
+name = "num_enum_derive"
+version = "0.5.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3b0498641e53dd6ac1a4f22547548caa6864cc4933784319cd1775271c5a46ce"
+dependencies = [
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "number_prefix"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2983,49 +2897,23 @@ checksum = "2386b4ebe91c2f7f51082d4cefa145d030e33a1842a96b12e4885cc3c01f7a55"
 
 [[package]]
 name = "parity-scale-codec"
-version = "2.3.1"
+version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "373b1a4c1338d9cd3d1fa53b3a11bdab5ab6bd80a20f7f7becd76953ae2be909"
-dependencies = [
- "arrayvec 0.7.2",
- "bitvec 0.20.4",
- "byte-slice-cast",
- "impl-trait-for-tuples",
- "parity-scale-codec-derive 2.3.1",
- "serde",
-]
-
-[[package]]
-name = "parity-scale-codec"
-version = "3.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a7f3fcf5e45fc28b84dcdab6b983e77f197ec01f325a33f404ba6855afd1070"
+checksum = "8483b84fb12de1dc23bf95d26030d16cea56391d136db0db37f749508104e3e6"
 dependencies = [
  "arrayvec 0.7.2",
  "bitvec 1.0.0",
  "byte-slice-cast",
  "impl-trait-for-tuples",
- "parity-scale-codec-derive 3.0.0",
+ "parity-scale-codec-derive",
  "serde",
 ]
 
 [[package]]
 name = "parity-scale-codec-derive"
-version = "2.3.1"
+version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1557010476e0595c9b568d16dcfb81b93cdeb157612726f5170d31aa707bed27"
-dependencies = [
- "proc-macro-crate",
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
-name = "parity-scale-codec-derive"
-version = "3.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c6e626dc84025ff56bf1476ed0e30d10c84d7f89a475ef46ebabee1095a8fba"
+checksum = "7259388ceb4c23bc09caef272c9e7a732b3b8f9fbd0b41f0009a91d6548cc1d9"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -3348,7 +3236,6 @@ dependencies = [
  "impl-codec",
  "impl-rlp",
  "impl-serde",
- "scale-info",
  "uint",
 ]
 
@@ -3466,12 +3353,6 @@ name = "radium"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "def50a86306165861203e7f84ecffbbdfdea79f0e51039b33de1e952358c47ac"
-
-[[package]]
-name = "radium"
-version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "643f8f41a8ebc4c5dc4515c82bb8abd397b527fc20fd681b7c011c2aee5d44fb"
 
 [[package]]
 name = "radium"
@@ -3690,9 +3571,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "revm"
+version = "1.2.0"
+source = "git+https://github.com/bluealloy/revm#0437dcdc658f8a950e4c652d587d266a4bec35ff"
+dependencies = [
+ "arrayref",
+ "auto_impl",
+ "bytes",
+ "hashbrown 0.12.0",
+ "hex",
+ "num_enum",
+ "primitive-types",
+ "revm_precompiles",
+ "rlp",
+ "serde",
+ "sha3 0.10.1",
+]
+
+[[package]]
 name = "revm_precompiles"
 version = "0.4.0"
-source = "git+https://github.com/bluealloy/revm#858ae0837657ee446ef422032969b00a0ce0c8be"
+source = "git+https://github.com/bluealloy/revm#0437dcdc658f8a950e4c652d587d266a4bec35ff"
 dependencies = [
  "bytes",
  "k256",
@@ -3873,31 +3772,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "93fc1dc3aaa9bfed95e02e6eadabb4baf7e3078b0bd1b4d7b6b0b68378900502"
 dependencies = [
  "winapi-util",
-]
-
-[[package]]
-name = "scale-info"
-version = "2.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0563970d79bcbf3c537ce3ad36d859b30d36fc5b190efd227f1f7a84d7cf0d42"
-dependencies = [
- "bitvec 1.0.0",
- "cfg-if 1.0.0",
- "derive_more",
- "parity-scale-codec 3.0.0",
- "scale-info-derive",
-]
-
-[[package]]
-name = "scale-info-derive"
-version = "2.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7805950c36512db9e3251c970bb7ac425f326716941862205d612ab3b5e46e2"
-dependencies = [
- "proc-macro-crate",
- "proc-macro2",
- "quote",
- "syn",
 ]
 
 [[package]]
@@ -4098,19 +3972,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bf27176fb5d15398e3a479c652c20459d9dac830dedd1fa55b42a77dbcdbfcea"
 dependencies = [
  "cc",
-]
-
-[[package]]
-name = "sha3"
-version = "0.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd26bc0e7a2e3a7c959bc494caf58b72ee0c71d67704e9520f736ca7e4853ecf"
-dependencies = [
- "block-buffer 0.7.3",
- "byte-tools",
- "digest 0.8.1",
- "keccak",
- "opaque-debug 0.2.3",
 ]
 
 [[package]]
@@ -4653,6 +4514,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tracing-error"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d686ec1c0f384b1277f097b2f279a2ecc11afe8c133c1aabf036a27cb4cd206e"
+dependencies = [
+ "tracing",
+ "tracing-subscriber 0.3.9",
+]
+
+[[package]]
 name = "tracing-futures"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4674,35 +4545,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "tracing-serde"
-version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc6b213177105856957181934e4920de57730fc69bf42c37ee5bb664d406d9e1"
-dependencies = [
- "serde",
- "tracing-core",
-]
-
-[[package]]
 name = "tracing-subscriber"
 version = "0.2.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0e0d2eaa99c3c2e41547cfa109e910a68ea03823cccad4a0525dcbc9b01e8c71"
 dependencies = [
- "ansi_term",
- "chrono 0.4.19",
- "lazy_static",
- "matchers 0.0.1",
- "regex",
- "serde",
- "serde_json",
  "sharded-slab",
- "smallvec",
  "thread_local",
- "tracing",
  "tracing-core",
- "tracing-log",
- "tracing-serde",
 ]
 
 [[package]]
@@ -4711,13 +4561,16 @@ version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9e0ab7bdc962035a87fba73f3acca9b8a8d0034c2e6f60b84aeaaddddc155dce"
 dependencies = [
+ "ansi_term",
  "lazy_static",
- "matchers 0.1.0",
+ "matchers",
  "regex",
  "sharded-slab",
+ "smallvec",
  "thread_local",
  "tracing",
  "tracing-core",
+ "tracing-log",
 ]
 
 [[package]]
@@ -4733,16 +4586,6 @@ dependencies = [
  "primitive-types",
  "protobuf",
  "rusb",
-]
-
-[[package]]
-name = "triehash"
-version = "0.8.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1631b201eb031b563d2e85ca18ec8092508e262a3196ce9bd10a67ec87b9f5c"
-dependencies = [
- "hash-db",
- "rlp",
 ]
 
 [[package]]
@@ -4794,12 +4637,12 @@ checksum = "dcf81ac59edc17cc8697ff311e8f5ef2d99fcbd9817b34cec66f90b6c3dfd987"
 
 [[package]]
 name = "ui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "crossterm 0.22.1",
  "ethers",
- "evm-adapters",
  "eyre",
+ "forge",
  "hex",
  "tui",
 ]
@@ -5240,12 +5083,6 @@ dependencies = [
  "wasm-bindgen-futures",
  "web-sys",
 ]
-
-[[package]]
-name = "wyz"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85e60b0d1b5f99db2556934e21937020776a5d31520bf169e851ac44e6420214"
 
 [[package]]
 name = "wyz"

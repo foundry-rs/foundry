@@ -1,6 +1,11 @@
+/// Gas reports
+pub mod gas_report;
+
+/// The Forge test runner
 mod runner;
 pub use runner::{ContractRunner, TestKind, TestKindGas, TestResult};
 
+/// Forge test runners for multiple contracts
 mod multi_runner;
 pub use multi_runner::{MultiContractRunner, MultiContractRunnerBuilder};
 
@@ -10,44 +15,62 @@ pub trait TestFilter {
     fn matches_path(&self, path: impl AsRef<str>) -> bool;
 }
 
+/// The Forge EVM backend
+pub use foundry_evm::*;
+
 #[cfg(test)]
 pub mod test_helpers {
-    use super::*;
+    use crate::TestFilter;
     use ethers::{
-        prelude::Lazy,
-        solc::{AggregatedCompilerOutput, Project, ProjectPathsConfig},
-        types::U256,
+        prelude::{Lazy, ProjectCompileOutput},
+        solc::{Project, ProjectPathsConfig},
+        types::{Address, U256},
     };
-    use evm_adapters::{
-        evm_opts::{Env, EvmOpts, EvmType},
-        sputnik::helpers::VICINITY,
-        FAUCET_ACCOUNT,
+    use foundry_evm::{
+        executor::{
+            builder::Backend,
+            opts::{Env, EvmOpts},
+            DatabaseRef, Executor, ExecutorBuilder,
+        },
+        fuzz::FuzzedExecutor,
+        CALLER,
     };
-    use sputnik::backend::MemoryBackend;
+    use std::str::FromStr;
 
-    pub static COMPILED: Lazy<AggregatedCompilerOutput> = Lazy::new(|| {
-        // NB: should we add a test-helper function that makes creating these
-        // ephemeral projects easier?
-        let paths =
-            ProjectPathsConfig::builder().root("testdata").sources("testdata").build().unwrap();
+    pub static COMPILED: Lazy<ProjectCompileOutput> = Lazy::new(|| {
+        let paths = ProjectPathsConfig::builder()
+            .root("../testdata")
+            .sources("../testdata")
+            .build()
+            .unwrap();
         let project = Project::builder().paths(paths).ephemeral().no_artifacts().build().unwrap();
-        project.compile().unwrap().output()
+        project.compile().unwrap()
     });
 
     pub static EVM_OPTS: Lazy<EvmOpts> = Lazy::new(|| EvmOpts {
-        env: Env { gas_limit: 18446744073709551615, chain_id: Some(99), ..Default::default() },
+        env: Env {
+            gas_limit: 18446744073709551615,
+            chain_id: Some(99),
+            tx_origin: Address::from_str("00a329c0648769a73afac7f9381e08fb43dbea72").unwrap(),
+            ..Default::default()
+        },
+        sender: Address::from_str("00a329c0648769a73afac7f9381e08fb43dbea72").unwrap(),
         initial_balance: U256::MAX,
-        evm_type: EvmType::Sputnik,
+        ffi: true,
         ..Default::default()
     });
 
-    pub static BACKEND: Lazy<MemoryBackend<'static>> = Lazy::new(|| {
-        let mut backend = MemoryBackend::new(&*VICINITY, Default::default());
-        // max out the balance of the faucet
-        let faucet = backend.state_mut().entry(*FAUCET_ACCOUNT).or_insert_with(Default::default);
-        faucet.balance = U256::MAX;
-        backend
-    });
+    pub fn test_executor() -> Executor<Backend> {
+        ExecutorBuilder::new().with_cheatcodes(false).with_config((*EVM_OPTS).evm_env()).build()
+    }
+
+    pub fn fuzz_executor<'a, DB: DatabaseRef>(
+        executor: &'a Executor<DB>,
+    ) -> FuzzedExecutor<'a, DB> {
+        let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
+
+        FuzzedExecutor::new(executor, proptest::test_runner::TestRunner::new(cfg), *CALLER)
+    }
 
     pub mod filter {
         use super::*;

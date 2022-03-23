@@ -1,0 +1,252 @@
+use super::{Cheatcodes, Debugger, LogCollector, Tracer};
+use crate::{debug::DebugArena, trace::CallTraceArena};
+use bytes::Bytes;
+use ethers::{
+    abi::RawLog,
+    types::{Address, H256},
+};
+use revm::{db::Database, CallInputs, CreateInputs, EVMData, Gas, Inspector, Interpreter, Return};
+use std::collections::BTreeMap;
+
+/// Helper macro to call the same method on multiple inspectors without resorting to dynamic
+/// dispatch
+macro_rules! call_inspectors {
+    ($id:ident, [ $($inspector:expr),+ ], $call:block) => {
+        $({
+            if let Some($id) = $inspector {
+                $call;
+            }
+        })+
+    }
+}
+
+pub struct InspectorData {
+    pub logs: Vec<RawLog>,
+    pub labels: BTreeMap<Address, String>,
+    pub traces: Option<CallTraceArena>,
+    pub debug: Option<DebugArena>,
+}
+
+/// An inspector that calls multiple inspectors in sequence.
+///
+/// If a call to an inspector returns a value other than [Return::Continue] (or equivalent) the
+/// remaining inspectors are not called.
+#[derive(Default)]
+pub struct InspectorStack {
+    pub tracer: Option<Tracer>,
+    pub logs: Option<LogCollector>,
+    pub cheatcodes: Option<Cheatcodes>,
+    pub debugger: Option<Debugger>,
+}
+
+impl InspectorStack {
+    pub fn collect_inspector_states(self) -> InspectorData {
+        InspectorData {
+            logs: self.logs.map(|logs| logs.logs).unwrap_or_default(),
+            labels: self.cheatcodes.map(|cheatcodes| cheatcodes.labels).unwrap_or_default(),
+            traces: self.tracer.map(|tracer| tracer.traces),
+            debug: self.debugger.map(|debugger| debugger.arena),
+        }
+    }
+}
+
+impl<DB> Inspector<DB> for InspectorStack
+where
+    DB: Database,
+{
+    fn initialize_interp(
+        &mut self,
+        interpreter: &mut Interpreter,
+        data: &mut EVMData<'_, DB>,
+        is_static: bool,
+    ) -> Return {
+        call_inspectors!(
+            inspector,
+            [&mut self.debugger, &mut self.tracer, &mut self.logs, &mut self.cheatcodes],
+            {
+                let status = inspector.initialize_interp(interpreter, data, is_static);
+
+                // Allow inspectors to exit early
+                if status != Return::Continue {
+                    return status
+                }
+            }
+        );
+
+        Return::Continue
+    }
+
+    fn step(
+        &mut self,
+        interpreter: &mut Interpreter,
+        data: &mut EVMData<'_, DB>,
+        is_static: bool,
+    ) -> Return {
+        call_inspectors!(
+            inspector,
+            [&mut self.debugger, &mut self.tracer, &mut self.logs, &mut self.cheatcodes],
+            {
+                let status = inspector.step(interpreter, data, is_static);
+
+                // Allow inspectors to exit early
+                if status != Return::Continue {
+                    return status
+                }
+            }
+        );
+
+        Return::Continue
+    }
+
+    fn log(
+        &mut self,
+        evm_data: &mut EVMData<'_, DB>,
+        address: &Address,
+        topics: &[H256],
+        data: &Bytes,
+    ) {
+        call_inspectors!(inspector, [&mut self.tracer, &mut self.logs, &mut self.cheatcodes], {
+            inspector.log(evm_data, address, topics, data);
+        });
+    }
+
+    fn step_end(
+        &mut self,
+        interpreter: &mut Interpreter,
+        data: &mut EVMData<'_, DB>,
+        is_static: bool,
+        status: Return,
+    ) -> Return {
+        call_inspectors!(
+            inspector,
+            [&mut self.debugger, &mut self.tracer, &mut self.logs, &mut self.cheatcodes],
+            {
+                let status = inspector.step_end(interpreter, data, is_static, status);
+
+                // Allow inspectors to exit early
+                if status != Return::Continue {
+                    return status
+                }
+            }
+        );
+
+        Return::Continue
+    }
+
+    fn call(
+        &mut self,
+        data: &mut EVMData<'_, DB>,
+        call: &mut CallInputs,
+        is_static: bool,
+    ) -> (Return, Gas, Bytes) {
+        call_inspectors!(
+            inspector,
+            [&mut self.debugger, &mut self.tracer, &mut self.logs, &mut self.cheatcodes],
+            {
+                let (status, gas, retdata) = inspector.call(data, call, is_static);
+
+                // Allow inspectors to exit early
+                if status != Return::Continue {
+                    return (status, gas, retdata)
+                }
+            }
+        );
+
+        (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
+    }
+
+    fn call_end(
+        &mut self,
+        data: &mut EVMData<'_, DB>,
+        call: &CallInputs,
+        remaining_gas: Gas,
+        status: Return,
+        retdata: Bytes,
+        is_static: bool,
+    ) -> (Return, Gas, Bytes) {
+        call_inspectors!(
+            inspector,
+            [&mut self.debugger, &mut self.tracer, &mut self.logs, &mut self.cheatcodes],
+            {
+                let (new_status, new_gas, new_retdata) = inspector.call_end(
+                    data,
+                    call,
+                    remaining_gas,
+                    status,
+                    retdata.clone(),
+                    is_static,
+                );
+
+                // If the inspector returns a different status we assume it wants to tell us
+                // something
+                if new_status != status {
+                    return (new_status, new_gas, new_retdata)
+                }
+            }
+        );
+
+        (status, remaining_gas, retdata)
+    }
+
+    fn create(
+        &mut self,
+        data: &mut EVMData<'_, DB>,
+        call: &mut CreateInputs,
+    ) -> (Return, Option<Address>, Gas, Bytes) {
+        call_inspectors!(
+            inspector,
+            [&mut self.debugger, &mut self.tracer, &mut self.logs, &mut self.cheatcodes],
+            {
+                let (status, addr, gas, retdata) = inspector.create(data, call);
+
+                // Allow inspectors to exit early
+                if status != Return::Continue {
+                    return (status, addr, gas, retdata)
+                }
+            }
+        );
+
+        (Return::Continue, None, Gas::new(call.gas_limit), Bytes::new())
+    }
+
+    fn create_end(
+        &mut self,
+        data: &mut EVMData<'_, DB>,
+        call: &CreateInputs,
+        status: Return,
+        address: Option<Address>,
+        remaining_gas: Gas,
+        retdata: Bytes,
+    ) -> (Return, Option<Address>, Gas, Bytes) {
+        call_inspectors!(
+            inspector,
+            [&mut self.debugger, &mut self.tracer, &mut self.logs, &mut self.cheatcodes],
+            {
+                let (new_status, new_address, new_gas, new_retdata) = inspector.create_end(
+                    data,
+                    call,
+                    status,
+                    address,
+                    remaining_gas,
+                    retdata.clone(),
+                );
+
+                if new_status != status {
+                    return (new_status, new_address, new_gas, new_retdata)
+                }
+            }
+        );
+
+        (status, address, remaining_gas, retdata)
+    }
+
+    fn selfdestruct(&mut self) {
+        call_inspectors!(
+            inspector,
+            [&mut self.debugger, &mut self.tracer, &mut self.logs, &mut self.cheatcodes],
+            {
+                Inspector::<DB>::selfdestruct(inspector);
+            }
+        );
+    }
+}

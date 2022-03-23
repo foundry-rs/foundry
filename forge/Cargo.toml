@@ -1,14 +1,12 @@
 [package]
 name = "forge"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 foundry-utils = { path = "./../utils" }
-evm-adapters = { path = "./../evm-adapters", features = ["sputnik", "sputnik-helpers"] }
+foundry-evm = { path = "./../evm" }
 
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["solc-full"] }
 eyre = "0.6.5"
@@ -18,16 +16,15 @@ serde = "1.0.130"
 regex = { version = "1.5.4", default-features = false }
 hex = "0.4.3"
 glob = "0.3.0"
-# TODO: Trim
+# TODO: Trim down
 tokio = { version = "1.10.1" }
 tracing = "0.1.26"
-tracing-subscriber = "0.2.20"
+tracing-subscriber = "0.3"
 proptest = "1.0.0"
 rayon = "1.5"
 rlp = "0.5.1"
-
-# load sputnik for parallel evm usage
-sputnik = { package = "evm", default-features = false, git = "https://github.com/rust-blockchain/evm", features = ["std"] }
+once_cell = "1.9.0"
+comfy-table = "5.0.0"
 
 [dev-dependencies]
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["solc-full", "solc-tests"] }
