@@ -688,7 +688,7 @@ dependencies = [
  "indenter",
  "once_cell",
  "owo-colors",
- "tracing-error",
+ "tracing-error 0.1.2",
 ]
 
 [[package]]
@@ -700,7 +700,7 @@ dependencies = [
  "once_cell",
  "owo-colors",
  "tracing-core",
- "tracing-error",
+ "tracing-error 0.1.2",
 ]
 
 [[package]]
@@ -1714,7 +1714,9 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+ "tracing-error 0.2.0",
  "tracing-subscriber 0.2.25",
+ "url",
 ]
 
 [[package]]
@@ -2021,6 +2023,9 @@ name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "hidapi-rusb"
@@ -3592,23 +3597,25 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "1.2.0"
-source = "git+https://github.com/bluealloy/revm#cb5fbb9adc36c8ee127dce92259356cecbb829b8"
+source = "git+https://github.com/bluealloy/revm#0437dcdc658f8a950e4c652d587d266a4bec35ff"
 dependencies = [
  "arrayref",
  "auto_impl",
  "bytes",
  "hashbrown 0.12.0",
+ "hex",
  "num_enum",
  "primitive-types",
  "revm_precompiles",
  "rlp",
+ "serde",
  "sha3 0.10.1",
 ]
 
 [[package]]
 name = "revm_precompiles"
 version = "0.4.0"
-source = "git+https://github.com/bluealloy/revm#cb5fbb9adc36c8ee127dce92259356cecbb829b8"
+source = "git+https://github.com/bluealloy/revm#0437dcdc658f8a950e4c652d587d266a4bec35ff"
 dependencies = [
  "bytes",
  "k256",
@@ -4528,6 +4535,16 @@ checksum = "b4d7c0b83d4a500748fa5879461652b361edf5c9d51ede2a2ac03875ca185e24"
 dependencies = [
  "tracing",
  "tracing-subscriber 0.2.25",
+]
+
+[[package]]
+name = "tracing-error"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d686ec1c0f384b1277f097b2f279a2ecc11afe8c133c1aabf036a27cb4cd206e"
+dependencies = [
+ "tracing",
+ "tracing-subscriber 0.3.9",
 ]
 
 [[package]]
