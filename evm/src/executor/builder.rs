@@ -38,8 +38,8 @@ pub struct Fork {
 impl Fork {
     /// Initialises the Storage Backend
     ///
-    /// If configured, then this will initialise the backend with the storage cahce
-    fn into_backend(self, env: &Env) -> SharedBackend {
+    /// If configured, then this will initialise the backend with the storage cache
+    pub fn into_backend(self, env: &Env) -> SharedBackend {
         let Fork { cache_path, url, pin_block, chain_id } = self;
 
         let host = Url::parse(&url)

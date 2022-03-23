@@ -1,7 +1,7 @@
 //! Smart caching and deduplication of requests when using a forking provider
 use revm::{db::DatabaseRef, AccountInfo, KECCAK_EMPTY};
 
-use crate::executor::fork::{cache::StorageInfo, BlockchainDb};
+use crate::executor::fork::{BlockchainDb};
 use ethers::{
     core::abi::ethereum_types::BigEndianHash,
     providers::Middleware,
@@ -15,13 +15,12 @@ use futures::{
     task::{Context, Poll},
     Future, FutureExt,
 };
-use parking_lot::RwLock;
+
 use std::{
-    collections::{hash_map::Entry, BTreeMap, HashMap},
+    collections::{hash_map::Entry, HashMap},
     pin::Pin,
     sync::{
         mpsc::{channel as oneshot_channel, Sender as OneshotSender},
-        Arc,
     },
 };
 use tracing::trace;
@@ -318,7 +317,7 @@ where
         if pin.incoming.is_done() && pin.pending_requests.is_empty() {
             if let Poll::Ready(Some(ack)) = Pin::new(&mut pin.shutdown).poll_next(cx) {
                 // effectively flushing the cached storage if any
-                let _ = pin.db.flush_cache();
+                pin.db.cache().flush();
                 // signaling back
                 let _ = ack.send(());
             }
@@ -456,31 +455,30 @@ impl DatabaseRef for SharedBackend {
 
 #[cfg(test)]
 mod tests {
-    use crate::executor::fork::BlockchainDbMeta;
+    use crate::executor::{
+        fork::{BlockchainDbMeta, JsonBlockCacheDB},
+        Fork,
+    };
     use ethers::{
         providers::{Http, Provider},
         types::Address,
     };
+    
     use std::{convert::TryFrom, path::PathBuf};
 
     use super::*;
-
-    fn new_db(cache_path: Option<PathBuf>) -> BlockchainDb {
-        let url = "https://mainnet.infura.io/v3/c60b0bb42f8a4c6481ecd229eddaca27";
-        let provider = Provider::<Http>::try_from(url).unwrap();
-
-        let meta = BlockchainDbMeta {
-            cfg_env: Default::default(),
-            block_env: Default::default(),
-            host: url.to_string(),
-        };
-
-        BlockchainDb::new(meta, cache_path)
-    }
+    const ENDPOINT: &str = "https://mainnet.infura.io/v3/c60b0bb42f8a4c6481ecd229eddaca27";
 
     #[test]
     fn shared_backend() {
-        let db = new_db(None);
+        let provider = Provider::<Http>::try_from(ENDPOINT).unwrap();
+        let meta = BlockchainDbMeta {
+            cfg_env: Default::default(),
+            block_env: Default::default(),
+            host: ENDPOINT.to_string(),
+        };
+
+        let db = BlockchainDb::new(meta, None);
         let backend = SharedBackend::new(Arc::new(provider), db.clone(), None);
 
         // some rng contract from etherscan
@@ -515,5 +513,52 @@ mod tests {
     }
 
     #[test]
-    fn can_cache() {}
+    fn can_read_cache() {
+        let cache_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test-data/storage.json");
+        let json = JsonBlockCacheDB::load(cache_path).unwrap();
+        assert!(!json.db().accounts.read().is_empty());
+    }
+
+    #[test]
+    fn can_read_write_cache() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let cache_path = tmpdir.path().join("storage.json");
+
+        let block_num = 14435000;
+        let env = revm::Env::default();
+
+        let fork = Fork {
+            cache_path: Some(cache_path.clone()),
+            url: ENDPOINT.to_string(),
+            pin_block: Some(block_num),
+            chain_id: 1,
+        };
+
+        let backend = fork.into_backend(&env);
+
+        // some rng contract from etherscan
+        let address: Address = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();
+
+        let idx = U256::from(0u64);
+        let _value = backend.storage(address, idx);
+        let _account = backend.basic(address);
+
+        // fill some slots
+        let num_slots = 10u64;
+        for idx in 1..num_slots {
+            let _ = backend.storage(address, idx.into());
+        }
+        drop(backend);
+
+        let meta = BlockchainDbMeta {
+            cfg_env: Default::default(),
+            block_env: revm::BlockEnv { number: block_num.into(), ..Default::default() },
+            host: "mainnet.infura.io".to_string(),
+        };
+
+        let db = BlockchainDb::new(meta, Some(cache_path));
+        assert!(db.accounts().read().contains_key(&address));
+        assert!(db.storage().read().contains_key(&address));
+        assert_eq!(db.storage().read().get(&address).unwrap().len(), num_slots as usize);
+    }
 }

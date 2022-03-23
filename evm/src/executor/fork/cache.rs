@@ -10,14 +10,14 @@ use tracing_error::InstrumentResult;
 pub type StorageInfo = BTreeMap<U256, U256>;
 
 /// A shareable Block database
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct BlockchainDb {
     /// Contains all the data
     db: Arc<MemDb>,
     /// metadata of the current config
     meta: Arc<RwLock<BlockchainDbMeta>>,
     /// the cache that can be flushed
-    cache: Arc<dyn BlockCacheDB>,
+    cache: Arc<JsonBlockCacheDB>,
 }
 
 impl BlockchainDb {
@@ -34,6 +34,7 @@ impl BlockchainDb {
     pub fn new(meta: BlockchainDbMeta, cache_path: Option<PathBuf>) -> Self {
         // read cache and check if metadata matches
         let cache = cache_path
+            .as_ref()
             .and_then(|p| {
                 JsonBlockCacheDB::load(p).ok().filter(|cache| {
                     if meta != *cache.meta().read() {
@@ -44,9 +45,9 @@ impl BlockchainDb {
                     }
                 })
             })
-            .unwrap_or_else(|| JsonBlockCacheDB::transient(Arc::new(RwLock::new(meta))));
+            .unwrap_or_else(|| JsonBlockCacheDB::new(Arc::new(RwLock::new(meta)), cache_path));
 
-        Self { db: Arc::clone(cache.db()), meta: Arc::clone(cache.meta()), cache: Arc::new(()) }
+        Self { db: Arc::clone(cache.db()), meta: Arc::clone(cache.meta()), cache: Arc::new(cache) }
     }
 
     /// Returns the map that holds the account related info
@@ -69,9 +70,9 @@ impl BlockchainDb {
         &self.meta
     }
 
-    /// Delegate for [BlockCacheDB::flush()]
-    pub fn flush_cache(&self) {
-        self.cache.flush()
+    /// Returns the inner cache
+    pub fn cache(&self) -> &Arc<JsonBlockCacheDB> {
+        &self.cache
     }
 }
 
@@ -95,16 +96,8 @@ pub struct MemDb {
     pub block_hashes: RwLock<BTreeMap<u64, H256>>,
 }
 
-/// Helper trait to abstract disk caching for [SharedMemCache]
-pub trait BlockCacheDB: Send + Sync {
-    /// Expected to flush the cache contents to disk
-    fn flush(&self) {}
-}
-
-// A [BlockCacheDB] that does nothing
-impl BlockCacheDB for () {}
-
 /// A [BlockCacheDB] that stores the cached content in a json file
+#[derive(Debug)]
 pub struct JsonBlockCacheDB {
     /// Where this cache file is stored.
     ///
@@ -115,14 +108,9 @@ pub struct JsonBlockCacheDB {
 }
 
 impl JsonBlockCacheDB {
-    /// Marks the cache as transient.
-    ///
-    /// A transient cache will never be written to disk
-    fn transient(meta: Arc<RwLock<BlockchainDbMeta>>) -> Self {
-        Self {
-            cache_path: None,
-            data: JsonBlockCacheData { meta, data: Arc::new(Default::default()) },
-        }
+    /// Creates a new instance.
+    fn new(meta: Arc<RwLock<BlockchainDbMeta>>, cache_path: Option<PathBuf>) -> Self {
+        Self { cache_path, data: JsonBlockCacheData { meta, data: Arc::new(Default::default()) } }
     }
 
     /// Loads the contents of the diskmap file and returns the read object
@@ -151,10 +139,14 @@ impl JsonBlockCacheDB {
     pub fn meta(&self) -> &Arc<RwLock<BlockchainDbMeta>> {
         &self.data.meta
     }
-}
 
-impl BlockCacheDB for JsonBlockCacheDB {
-    fn flush(&self) {
+    /// Returns `true` if this is a transient cache and nothing will be flushed
+    pub fn is_transient(&self) -> bool {
+        self.cache_path.is_none()
+    }
+
+    /// Flushes the DB to disk if caching is enabled
+    pub fn flush(&self) {
         // writes the data to a json file
         if let Some(ref path) = self.cache_path {
             trace!(target: "cache", "saving json cache path={:?}", path);
@@ -175,6 +167,7 @@ impl BlockCacheDB for JsonBlockCacheDB {
 ///
 /// This will be deserialized in a JSON object with the keys:
 /// `["meta", "accounts", "storage", "block_hashes"]`
+#[derive(Debug)]
 pub struct JsonBlockCacheData {
     pub meta: Arc<RwLock<BlockchainDbMeta>>,
     pub data: Arc<MemDb>,
@@ -200,7 +193,7 @@ impl Serialize for JsonBlockCacheData {
         drop(storage);
 
         let block_hashes = self.data.block_hashes.read();
-        map.serialize_entry("accounts", &*block_hashes)?;
+        map.serialize_entry("block_hashes", &*block_hashes)?;
         drop(block_hashes);
 
         map.end()
