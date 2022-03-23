@@ -3,6 +3,7 @@ extern crate core;
 
 use std::{
     borrow::Cow,
+    fmt,
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -709,9 +710,20 @@ impl Config {
         dirs_next::home_dir().map(|p| p.join(Config::FOUNDRY_DIR_NAME))
     }
 
-    /// Returns the path to foundry's config dir `~/.foundry/cache`
+    /// Returns the path to foundry's cache dir `~/.foundry/cache`
     pub fn foundry_cache_dir() -> Option<PathBuf> {
-        Self::foundry_dir().map(|p|p.join("cache"))
+        Self::foundry_dir().map(|p| p.join("cache"))
+    }
+
+    /// Returns the path to the cache file of the `block` on the `chain`
+    /// `~/.foundry/cache/<chain>/<block>/storage.json`
+    pub fn foundry_block_cache_file(chain_id: impl Into<Chain>, block: u64) -> Option<PathBuf> {
+        Some(
+            Config::foundry_cache_dir()?
+                .join(chain_id.into().to_string())
+                .join(format!("{}", block))
+                .join("storage.json"),
+        )
     }
 
     #[doc = r#"Returns the path to `foundry`'s data directory inside the user's data directory
@@ -1283,6 +1295,42 @@ impl Chain {
     }
 }
 
+impl fmt::Display for Chain {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Chain::Named(chain) => chain.fmt(f),
+            Chain::Id(id) => {
+                if let Ok(chain) = ethers_core::types::Chain::try_from(*id) {
+                    chain.fmt(f)
+                } else {
+                    id.fmt(f)
+                }
+            }
+        }
+    }
+}
+
+impl From<ethers_core::types::Chain> for Chain {
+    fn from(id: ethers_core::types::Chain) -> Self {
+        Chain::Named(id)
+    }
+}
+
+impl From<u64> for Chain {
+    fn from(id: u64) -> Self {
+        Chain::Id(id)
+    }
+}
+
+impl From<Chain> for u64 {
+    fn from(c: Chain) -> Self {
+        match c {
+            Chain::Named(c) => c as u64,
+            Chain::Id(id) => id,
+        }
+    }
+}
+
 impl<'de> Deserialize<'de> for Chain {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -1326,15 +1374,6 @@ mod from_str_lowercase {
         T::Err: std::fmt::Display,
     {
         String::deserialize(deserializer)?.to_lowercase().parse().map_err(serde::de::Error::custom)
-    }
-}
-
-impl From<Chain> for u64 {
-    fn from(c: Chain) -> Self {
-        match c {
-            Chain::Named(c) => c as u64,
-            Chain::Id(id) => id,
-        }
     }
 }
 

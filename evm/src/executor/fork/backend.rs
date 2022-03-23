@@ -1,7 +1,7 @@
 //! Smart caching and deduplication of requests when using a forking provider
 use revm::{db::DatabaseRef, AccountInfo, KECCAK_EMPTY};
 
-use crate::executor::fork::{BlockchainDb};
+use crate::executor::fork::BlockchainDb;
 use ethers::{
     core::abi::ethereum_types::BigEndianHash,
     providers::Middleware,
@@ -19,9 +19,7 @@ use futures::{
 use std::{
     collections::{hash_map::Entry, HashMap},
     pin::Pin,
-    sync::{
-        mpsc::{channel as oneshot_channel, Sender as OneshotSender},
-    },
+    sync::mpsc::{channel as oneshot_channel, Sender as OneshotSender},
 };
 use tracing::trace;
 
@@ -104,6 +102,7 @@ where
     fn on_request(&mut self, req: BackendRequest) {
         match req {
             BackendRequest::Basic(addr, sender) => {
+                trace!(target: "backendhandler", "received request basic address={:?}", addr);
                 let lock = self.db.accounts().read();
                 let basic = lock.get(&addr).cloned();
                 // release the lock
@@ -155,6 +154,7 @@ where
                 entry.get_mut().push(listener);
             }
             Entry::Vacant(entry) => {
+                trace!(target: "backendhandler", "preparing storage request, address={:?}, idx={}", address, idx);
                 entry.insert(vec![listener]);
                 let provider = self.provider.clone();
                 let block_id = self.block_id;
@@ -173,6 +173,7 @@ where
 
     /// returns the future that fetches the account data
     fn get_account_req(&self, address: Address) -> ProviderRequest<eyre::Error> {
+        trace!(target: "backendhandler", "preparing account request, address={:?}", address);
         let provider = self.provider.clone();
         let block_id = self.block_id;
         let fut = Box::pin(async move {
@@ -205,6 +206,7 @@ where
                 entry.get_mut().push(listener);
             }
             Entry::Vacant(entry) => {
+                trace!(target: "backendhandler", "preparing block hash request, number={}", number);
                 entry.insert(vec![listener]);
                 let provider = self.provider.clone();
                 let fut = Box::pin(async move {
@@ -392,6 +394,7 @@ impl SharedBackend {
         let handler = BackendHandler::new(provider, db, backend_rx, shutdown_rx, pin_block);
         // spawn the provider handler to background
         let rt = RuntimeOrHandle::new();
+        trace!(target: "backendhandler", "spawning Backendhandler");
         std::thread::spawn(move || match rt {
             RuntimeOrHandle::Runtime(runtime) => runtime.block_on(handler),
             RuntimeOrHandle::Handle(handle) => handle.block_on(handler),
@@ -463,8 +466,8 @@ mod tests {
         providers::{Http, Provider},
         types::Address,
     };
-    
-    use std::{convert::TryFrom, path::PathBuf};
+
+    use std::{convert::TryFrom, path::PathBuf, sync::Arc};
 
     use super::*;
     const ENDPOINT: &str = "https://mainnet.infura.io/v3/c60b0bb42f8a4c6481ecd229eddaca27";

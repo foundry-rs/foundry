@@ -1,5 +1,5 @@
 use ethers::{
-    providers::Provider,
+    providers::{Middleware, Provider},
     types::{Address, U256},
 };
 use foundry_utils::RuntimeOrHandle;
@@ -34,39 +34,6 @@ pub struct EvmOpts {
 
     /// Verbosity mode of EVM output as number of occurences
     pub verbosity: u8,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct Env {
-    /// the block gas limit
-    pub gas_limit: u64,
-
-    /// the chainid opcode value
-    pub chain_id: Option<u64>,
-
-    /// the tx.gasprice value during EVM execution
-    pub gas_price: u64,
-
-    /// the base fee in a block
-    pub block_base_fee_per_gas: u64,
-
-    /// the tx.origin value during EVM execution
-    pub tx_origin: Address,
-
-    /// the block.coinbase value during EVM execution
-    pub block_coinbase: Address,
-
-    /// the block.timestamp value during EVM execution
-    pub block_timestamp: u64,
-
-    /// the block.number value during EVM execution"
-    pub block_number: u64,
-
-    /// the block.difficulty value during EVM execution
-    pub block_difficulty: u64,
-
-    /// the block.gaslimit value during EVM execution
-    pub block_gas_limit: Option<u64>,
 }
 
 impl EvmOpts {
@@ -106,4 +73,62 @@ impl EvmOpts {
             }
         }
     }
+
+    /// Returns the configured chain id, which will be
+    ///   - the value of `chain_id` if set
+    ///   - mainnet if `fork_url` contains "mainnet"
+    ///   - the chain if `fork_url` is set and the endpoints returned its chain id successfully
+    ///   - mainnet otherwise
+    pub fn get_chain_id(&self) -> u64 {
+        use ethers::types::Chain;
+        if let Some(id) = self.env.chain_id {
+            return id
+        }
+        if let Some(ref url) = self.fork_url {
+            if url.contains("mainnet") {
+                tracing::trace!("auto detected mainnet chain from url {}", url);
+                return Chain::Mainnet as u64
+            }
+            let provider = Provider::try_from(url.as_str())
+                .expect(&format!("Failed to establish provider to {}", url));
+
+            if let Ok(id) = foundry_utils::RuntimeOrHandle::new().block_on(provider.get_chainid()) {
+                return id.as_u64()
+            }
+        }
+        Chain::Mainnet as u64
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Env {
+    /// the block gas limit
+    pub gas_limit: u64,
+
+    /// the chainid opcode value
+    pub chain_id: Option<u64>,
+
+    /// the tx.gasprice value during EVM execution
+    pub gas_price: u64,
+
+    /// the base fee in a block
+    pub block_base_fee_per_gas: u64,
+
+    /// the tx.origin value during EVM execution
+    pub tx_origin: Address,
+
+    /// the block.coinbase value during EVM execution
+    pub block_coinbase: Address,
+
+    /// the block.timestamp value during EVM execution
+    pub block_timestamp: u64,
+
+    /// the block.number value during EVM execution"
+    pub block_number: u64,
+
+    /// the block.difficulty value during EVM execution
+    pub block_difficulty: u64,
+
+    /// the block.gaslimit value during EVM execution
+    pub block_gas_limit: Option<u64>,
 }

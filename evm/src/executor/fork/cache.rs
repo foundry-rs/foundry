@@ -121,9 +121,9 @@ impl JsonBlockCacheDB {
     ///   - the format does not match [JsonBlockCacheData]
     pub fn load(path: impl Into<PathBuf>) -> eyre::Result<Self> {
         let path = path.into();
+        trace!(target: "cache", "reading json cache path={:?}", path);
         let span = trace_span!("cache", "path={:?}", &path);
         let _enter = span.enter();
-        trace!("reading json cache path={:?}", path);
         let file = std::fs::File::open(&path).in_current_span()?;
         let file = std::io::BufReader::new(file);
         let data = serde_json::from_reader(file).in_current_span()?;
