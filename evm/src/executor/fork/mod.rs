@@ -1,5 +1,5 @@
 mod backend;
-pub use backend::{SharedBackend, SharedMemCache};
+pub use backend::SharedBackend;
 
 mod init;
 pub use init::environment;

@@ -26,18 +26,6 @@ use std::{
 };
 use tracing::trace;
 
-/// In Memory cache containing all fetched accounts and storage slots
-/// and their values from RPC
-#[derive(Debug, Default)]
-pub struct SharedMemCache {
-    /// Account related data
-    pub accounts: Arc<RwLock<BTreeMap<Address, AccountInfo>>>,
-    /// Storage related data
-    pub storage: Arc<RwLock<BTreeMap<Address, StorageInfo>>>,
-    /// All retrieved block hashes
-    pub block_hashes: Arc<RwLock<BTreeMap<u64, H256>>>,
-}
-
 type AccountFuture<Err> =
     Pin<Box<dyn Future<Output = (Result<(U256, U256, Bytes), Err>, Address)> + Send>>;
 type StorageFuture<Err> = Pin<Box<dyn Future<Output = (Result<U256, Err>, Address, U256)> + Send>>;
