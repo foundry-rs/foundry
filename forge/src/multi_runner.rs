@@ -201,7 +201,7 @@ impl MultiContractRunner {
         let env = self.evm_opts.evm_env();
 
         // the db backend that serves all the data
-        let db = Backend::new(self.fork.clone(), &env);
+        let db = Backend::new(self.fork.take(), &env);
 
         let results = self
             .contracts

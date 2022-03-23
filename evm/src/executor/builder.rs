@@ -22,7 +22,11 @@ pub struct ExecutorBuilder {
     inspector_config: InspectorStackConfig,
 }
 
-#[derive(Clone, Debug)]
+/// Represents a _fork_ of a live chain whose data is available only via the `url` endpoint.
+///
+/// *Note:* this type intentionally does not implement `Clone` to prevent [Fork::spawn_backend()]
+/// from being called multiple times.
+#[derive(Debug)]
 pub struct Fork {
     /// Where to read the cached storage from
     pub cache_path: Option<PathBuf>,
@@ -35,9 +39,13 @@ pub struct Fork {
 }
 
 impl Fork {
-    /// Initialises the Storage Backend, the [revm::Database]
+    /// Initialises and spawns the Storage Backend, the [revm::Database]
     ///
-    /// If configured, then this will initialise the backend with the storage cache
+    /// If configured, then this will initialise the backend with the storage cache.
+    ///
+    /// The `SharedBackend` returned is connected to a background thread that communicates with the
+    /// endpoint via channels and is intended to be cloned when multiple [revm::Database] are
+    /// required. See also [crate::executor::fork::SharedBackend]
     pub fn spawn_backend(self, env: &Env) -> SharedBackend {
         let Fork { cache_path, url, pin_block, chain_id } = self;
 

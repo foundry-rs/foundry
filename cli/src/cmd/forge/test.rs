@@ -199,6 +199,7 @@ impl Cmd for TestArgs {
             self.filter.test_pattern = self.debug;
             match runner.count_filtered_tests(&self.filter) {
                 1 => {
+
                     // Run the test
                     let results = runner.test(&self.filter, None)?;
 
