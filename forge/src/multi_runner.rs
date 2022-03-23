@@ -6,7 +6,9 @@ use ethers::{
     types::{Address, Bytes, U256},
 };
 use eyre::Result;
-use foundry_evm::executor::{opts::EvmOpts, DatabaseRef, Executor, ExecutorBuilder, Fork, SpecId};
+use foundry_evm::executor::{
+    builder::Backend, opts::EvmOpts, DatabaseRef, Executor, ExecutorBuilder, Fork, SpecId,
+};
 use foundry_utils::PostLinkInput;
 use proptest::test_runner::TestRunner;
 use rayon::prelude::*;
@@ -197,6 +199,10 @@ impl MultiContractRunner {
         stream_result: Option<Sender<(String, BTreeMap<String, TestResult>)>>,
     ) -> Result<BTreeMap<String, BTreeMap<String, TestResult>>> {
         let env = self.evm_opts.evm_env();
+
+        // the db backend that serves all the data
+        let db = Backend::new(self.fork.clone(), &env);
+
         let results = self
             .contracts
             .par_iter()
@@ -209,14 +215,13 @@ impl MultiContractRunner {
                 let mut builder = ExecutorBuilder::new()
                     .with_cheatcodes(self.evm_opts.ffi)
                     .with_config(env.clone())
-                    .with_spec(self.evm_spec)
-                    .with_fork(self.fork.clone());
+                    .with_spec(self.evm_spec);
 
                 if self.evm_opts.verbosity >= 3 {
                     builder = builder.with_tracing();
                 }
 
-                let executor = builder.build();
+                let executor = builder.build(db.clone());
                 let result =
                     self.run_tests(name, abi, executor, deploy_code.clone(), libs, filter)?;
                 Ok((name.clone(), result))

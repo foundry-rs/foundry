@@ -97,6 +97,8 @@ pub struct MemDb {
 }
 
 /// A [BlockCacheDB] that stores the cached content in a json file
+///
+/// If a `cache_path` is set, this type will flush the [MemDb] contents to diks once dropped
 #[derive(Debug)]
 pub struct JsonBlockCacheDB {
     /// Where this cache file is stored.
@@ -105,6 +107,12 @@ pub struct JsonBlockCacheDB {
     cache_path: Option<PathBuf>,
     /// Object that's stored in a json file
     data: JsonBlockCacheData,
+}
+
+impl Drop for JsonBlockCacheDB {
+    fn drop(&mut self) {
+        self.flush()
+    }
 }
 
 impl JsonBlockCacheDB {

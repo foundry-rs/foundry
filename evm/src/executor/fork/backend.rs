@@ -62,8 +62,6 @@ struct BackendHandler<M: Middleware> {
     block_requests: HashMap<u64, Vec<OneshotSender<H256>>>,
     /// Incoming commands.
     incoming: Fuse<Receiver<BackendRequest>>,
-    /// shutdown signal
-    shutdown: Fuse<Receiver<OneshotSender<()>>>,
     /// The block to fetch data from.
     // This is an `Option` so that we can have less code churn in the functions below
     block_id: Option<BlockId>,
@@ -77,7 +75,6 @@ where
         provider: M,
         db: BlockchainDb,
         rx: Receiver<BackendRequest>,
-        shutdown: Receiver<OneshotSender<()>>,
         block_id: Option<BlockId>,
     ) -> Self {
         Self {
@@ -88,7 +85,6 @@ where
             storage_requests: Default::default(),
             block_requests: Default::default(),
             incoming: rx.fuse(),
-            shutdown: shutdown.fuse(),
             block_id,
         }
     }
@@ -317,17 +313,8 @@ where
 
         // the handler is finished if the request channel was closed and all requests are processed
         if pin.incoming.is_done() && pin.pending_requests.is_empty() {
-            if let Poll::Ready(Some(ack)) = Pin::new(&mut pin.shutdown).poll_next(cx) {
-                // effectively flushing the cached storage if any
-                pin.db.cache().flush();
-                // signaling back
-                let _ = ack.send(());
-            }
-
-            if pin.shutdown.is_done() {
-                trace!(target: "backendhandler", "finished");
-                return Poll::Ready(())
-            }
+            trace!(target: "backendhandler", "finished");
+            return Poll::Ready(())
         }
         Poll::Pending
     }
@@ -359,24 +346,6 @@ where
 pub struct SharedBackend {
     /// channel used for sending commands related to database operations
     backend: Sender<BackendRequest>,
-    /// channel to ensure the [BackendHandler] shutdowns gracefully
-    ///
-    /// This is essentially used to sync the last [SharedBackend] with the [BackendHandler]
-    shutdown: Sender<OneshotSender<()>>,
-}
-
-impl Drop for SharedBackend {
-    fn drop(&mut self) {
-        // disconnect the command channel
-        self.backend.disconnect();
-        if self.backend.is_closed() {
-            // was the last sender, let the handler know and wait until it gracefully shut down
-            let (ack, rx) = oneshot_channel();
-            if self.shutdown.try_send(ack).is_ok() {
-                let _ = rx.recv();
-            }
-        }
-    }
 }
 
 impl SharedBackend {
@@ -390,8 +359,7 @@ impl SharedBackend {
         M: Middleware + Unpin + 'static + Clone,
     {
         let (backend, backend_rx) = channel(1);
-        let (shutdown, shutdown_rx) = channel(1);
-        let handler = BackendHandler::new(provider, db, backend_rx, shutdown_rx, pin_block);
+        let handler = BackendHandler::new(provider, db, backend_rx, pin_block);
         // spawn the provider handler to background
         let rt = RuntimeOrHandle::new();
         trace!(target: "backendhandler", "spawning Backendhandler");
@@ -400,7 +368,7 @@ impl SharedBackend {
             RuntimeOrHandle::Handle(handle) => handle.block_on(handler),
         });
 
-        Self { backend, shutdown }
+        Self { backend }
     }
 
     fn do_get_basic(&self, address: Address) -> eyre::Result<AccountInfo> {
@@ -537,7 +505,7 @@ mod tests {
             chain_id: 1,
         };
 
-        let backend = fork.into_backend(&env);
+        let backend = fork.spawn_backend(&env);
 
         // some rng contract from etherscan
         let address: Address = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();
