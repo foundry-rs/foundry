@@ -16,7 +16,7 @@ pub struct BlockchainDb {
     db: Arc<MemDb>,
     /// metadata of the current config
     meta: Arc<RwLock<BlockchainDbMeta>>,
-    /// the cache to
+    /// the cache that can be flushed
     cache: Arc<dyn BlockCacheDB>,
 }
 
