@@ -14,8 +14,10 @@ use super::{
 use crate::storage::StorageMap;
 use ethers::types::{H160, H256, U256};
 
+use crate::executor::fork::{BlockchainDb, BlockchainDbMeta};
 use parking_lot::lock_api::RwLock;
 use revm::AccountInfo;
+use url::Url;
 
 #[derive(Default, Debug)]
 pub struct ExecutorBuilder {
@@ -29,7 +31,7 @@ pub struct ExecutorBuilder {
 #[derive(Clone, Debug)]
 pub struct Fork {
     /// Where to read the cached storage from
-    pub cache_storage: Option<PathBuf>,
+    pub cache_path: Option<PathBuf>,
     /// The URL to a node for fetching remote state
     pub url: String,
     /// The block to fork against
@@ -40,25 +42,23 @@ impl Fork {
     /// Initialises the Storage Backend
     ///
     /// If configured, then this will initialise the backend with the storage cahce
-    fn into_backend(self) -> SharedBackend {
-        let Fork { cache_storage, url, pin_block } = self;
+    fn into_backend(self, env: &Env) -> SharedBackend {
+        let Fork { cache_path, url, pin_block } = self;
+
+        let host = Url::parse(&url)
+            .ok()
+            .and_then(|url| url.host().map(|host| host.to_string()))
+            .unwrap_or_else(|| url.clone());
+
         let provider = Provider::try_from(url).expect("Failed to establish provider");
 
-        let mut storage_map = if let Some(cached_storage) = cache_storage {
-            StorageMap::read(cached_storage)
-        } else {
-            StorageMap::transient()
-        };
 
-        SharedBackend::new(
-            provider,
-            SharedMemCache {
-                storage: Arc::new(RwLock::new(storage_map.take_storage())),
-                ..Default::default()
-            },
-            pin_block.map(Into::into),
-            storage_map,
-        )
+        let meta =
+            BlockchainDbMeta { cfg_env: env.cfg.clone(), block_env: env.block.clone(), host };
+
+        let db = BlockchainDb::new(meta, cache_path);
+
+        SharedBackend::new(provider, db, pin_block.map(Into::into))
     }
 }
 
@@ -69,9 +69,9 @@ pub enum Backend {
 
 impl Backend {
     /// Instantiates a new backend union based on whether there was or not a fork url specified
-    fn new(fork: Option<Fork>) -> Self {
+    fn new(fork: Option<Fork>, env: &Env) -> Self {
         if let Some(fork) = fork {
-            Backend::Forked(fork.into_backend())
+            Backend::Forked(fork.into_backend(env))
         } else {
             Backend::Simple(EmptyDB())
         }
@@ -160,7 +160,7 @@ impl ExecutorBuilder {
 
     /// Builds the executor as configured.
     pub fn build(self) -> Executor<Backend> {
-        let db = Backend::new(self.fork);
+        let db = Backend::new(self.fork, &self.env);
         Executor::new(db, self.env, self.inspector_config)
     }
 }

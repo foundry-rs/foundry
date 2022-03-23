@@ -49,6 +49,21 @@ impl BlockchainDb {
         Self { db: Arc::clone(cache.db()), meta: Arc::clone(cache.meta()), cache: Arc::new(()) }
     }
 
+    /// Returns the map that holds the account related info
+    pub fn accounts(&self) -> &RwLock<BTreeMap<Address, AccountInfo>> {
+        &self.db.accounts
+    }
+
+    /// Returns the map that holds the storage related info
+    pub fn storage(&self) -> &RwLock<BTreeMap<Address, StorageInfo>> {
+        &self.db.storage
+    }
+
+    /// Returns the map that holds all the block hashes
+    pub fn block_hashes(&self) -> &RwLock<BTreeMap<u64, H256>> {
+        &self.db.block_hashes
+    }
+
     /// Delegate for [BlockCacheDB::flush()]
     pub fn flush_cache(&self) {
         self.cache.flush()
@@ -60,7 +75,7 @@ impl BlockchainDb {
 pub struct BlockchainDbMeta {
     pub cfg_env: revm::CfgEnv,
     pub block_env: revm::BlockEnv,
-    pub endpoint: String,
+    pub host: String,
 }
 
 /// In Memory cache containing all fetched accounts and storage slots

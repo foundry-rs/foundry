@@ -1,7 +1,10 @@
 //! Smart caching and deduplication of requests when using a forking provider
 use revm::{db::DatabaseRef, AccountInfo, KECCAK_EMPTY};
 
-use crate::{executor::fork::cache::StorageInfo, storage::StorageMap};
+use crate::{
+    executor::fork::{cache::StorageInfo, BlockchainDb},
+    storage::StorageMap,
+};
 use ethers::{
     core::abi::ethereum_types::BigEndianHash,
     providers::Middleware,
@@ -38,28 +41,6 @@ pub struct SharedMemCache {
     pub block_hashes: Arc<RwLock<BTreeMap<u64, H256>>>,
 }
 
-/// A type that's used to write the storage to the path once dropped
-struct FlushStorageCacheOnDrop {
-    /// Where to write the data on drop
-    storage_map: StorageMap,
-    /// access to the storage to write when this type is dropped
-    storage: Arc<RwLock<BTreeMap<Address, StorageInfo>>>,
-}
-
-impl Drop for FlushStorageCacheOnDrop {
-    fn drop(&mut self) {
-        // only flush if map is not transient
-        if !self.storage_map.is_transient() {
-            let lock = self.storage.read();
-            let data = lock.clone();
-            drop(lock);
-            self.storage_map.set_storage(data);
-            self.storage_map.save();
-            trace!(target: "diskmap", "flushed storage map {:?}", self.storage_map.path());
-        }
-    }
-}
-
 type AccountFuture<Err> =
     Pin<Box<dyn Future<Output = (Result<(U256, U256, Bytes), Err>, Address)> + Send>>;
 type StorageFuture<Err> = Pin<Box<dyn Future<Output = (Result<U256, Err>, Address, U256)> + Send>>;
@@ -87,8 +68,8 @@ enum BackendRequest {
 #[must_use = "BackendHandler does nothing unless polled."]
 struct BackendHandler<M: Middleware> {
     provider: M,
-    /// Stores the state.
-    cache: SharedMemCache,
+    /// Stores all the data.
+    db: BlockchainDb,
     /// Requests currently in progress
     pending_requests: Vec<ProviderRequest<eyre::Error>>,
     /// Listeners that wait for a `get_account` related response
@@ -104,9 +85,6 @@ struct BackendHandler<M: Middleware> {
     /// The block to fetch data from.
     // This is an `Option` so that we can have less code churn in the functions below
     block_id: Option<BlockId>,
-    /// If storage caching is enabled, this will flush the data to the configured file once the
-    /// handler is dropped
-    flush_storage: Option<FlushStorageCacheOnDrop>,
 }
 
 impl<M> BackendHandler<M>
@@ -115,19 +93,14 @@ where
 {
     fn new(
         provider: M,
-        cache: SharedMemCache,
+        db: BlockchainDb,
         rx: Receiver<BackendRequest>,
         shutdown: Receiver<OneshotSender<()>>,
         block_id: Option<BlockId>,
-        storage_map: StorageMap,
     ) -> Self {
         Self {
-            flush_storage: Some(FlushStorageCacheOnDrop {
-                storage_map,
-                storage: Arc::clone(&cache.storage),
-            }),
             provider,
-            cache,
+            db,
             pending_requests: Default::default(),
             account_requests: Default::default(),
             storage_requests: Default::default(),
@@ -147,7 +120,7 @@ where
     fn on_request(&mut self, req: BackendRequest) {
         match req {
             BackendRequest::Basic(addr, sender) => {
-                let lock = self.cache.accounts.read();
+                let lock = self.db.accounts().read();
                 let basic = lock.get(&addr).cloned();
                 // release the lock
                 drop(lock);
@@ -158,7 +131,7 @@ where
                 }
             }
             BackendRequest::BlockHash(number, sender) => {
-                let lock = self.cache.block_hashes.read();
+                let lock = self.db.block_hashes().read();
                 let hash = lock.get(&number).cloned();
                 // release the lock
                 drop(lock);
@@ -169,7 +142,7 @@ where
                 }
             }
             BackendRequest::Storage(addr, idx, sender) => {
-                let lock = self.cache.storage.read();
+                let lock = self.db.storage().read();
                 let acc = lock.get(&addr);
                 let value = acc.and_then(|acc| acc.get(&idx).copied());
                 // release the lock
@@ -302,7 +275,7 @@ where
 
                         // update the cache
                         let acc = AccountInfo { nonce: nonce.as_u64(), balance, code, code_hash };
-                        pin.cache.accounts.write().insert(addr, acc.clone());
+                        pin.db.accounts().write().insert(addr, acc.clone());
 
                         // notify all listeners
                         if let Some(listeners) = pin.account_requests.remove(&addr) {
@@ -321,7 +294,7 @@ where
                         });
 
                         // update the cache
-                        pin.cache.storage.write().entry(addr).or_default().insert(idx, value);
+                        pin.db.storage().write().entry(addr).or_default().insert(idx, value);
 
                         // notify all listeners
                         if let Some(listeners) = pin.storage_requests.remove(&(addr, idx)) {
@@ -340,7 +313,7 @@ where
                         });
 
                         // update the cache
-                        pin.cache.block_hashes.write().insert(number, value);
+                        pin.db.block_hashes().write().insert(number, value);
 
                         // notify all listeners
                         if let Some(listeners) = pin.block_requests.remove(&number) {
@@ -360,7 +333,7 @@ where
         if pin.incoming.is_done() && pin.pending_requests.is_empty() {
             if let Poll::Ready(Some(ack)) = Pin::new(&mut pin.shutdown).poll_next(cx) {
                 // effectively flushing the cached storage if any
-                let _ = pin.flush_storage.take();
+                let _ = pin.db.flush_cache();
                 // signaling back
                 let _ = ack.send(());
             }
@@ -426,19 +399,13 @@ impl SharedBackend {
     ///
     ///
     /// NOTE: this should be called with `Arc<Provider>`
-    pub fn new<M>(
-        provider: M,
-        cache: SharedMemCache,
-        pin_block: Option<BlockId>,
-        storage_map: StorageMap,
-    ) -> Self
+    pub fn new<M>(provider: M, db: BlockchainDb, pin_block: Option<BlockId>) -> Self
     where
         M: Middleware + Unpin + 'static + Clone,
     {
         let (backend, backend_rx) = channel(1);
         let (shutdown, shutdown_rx) = channel(1);
-        let handler =
-            BackendHandler::new(provider, cache, backend_rx, shutdown_rx, pin_block, storage_map);
+        let handler = BackendHandler::new(provider, db, backend_rx, shutdown_rx, pin_block);
         // spawn the provider handler to background
         let rt = RuntimeOrHandle::new();
         std::thread::spawn(move || match rt {
@@ -504,6 +471,7 @@ impl DatabaseRef for SharedBackend {
 
 #[cfg(test)]
 mod tests {
+    use crate::executor::fork::BlockchainDbMeta;
     use ethers::{
         providers::{Http, Provider},
         types::Address,
@@ -514,31 +482,34 @@ mod tests {
 
     #[test]
     fn shared_backend() {
-        let provider = Provider::<Http>::try_from(
-            "https://mainnet.infura.io/v3/c60b0bb42f8a4c6481ecd229eddaca27",
-        )
-        .unwrap();
+        let url = "https://mainnet.infura.io/v3/c60b0bb42f8a4c6481ecd229eddaca27";
+        let provider = Provider::<Http>::try_from(url).unwrap();
         // some rng contract from etherscan
         let address: Address = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();
 
-        let cache = SharedMemCache::default();
-        let backend =
-            SharedBackend::new(Arc::new(provider), cache.clone(), None, StorageMap::transient());
+        let meta = BlockchainDbMeta {
+            cfg_env: Default::default(),
+            block_env: Default::default(),
+            host: url.to_string(),
+        };
+
+        let db = BlockchainDb::new(meta, None);
+        let backend = SharedBackend::new(Arc::new(provider), db.clone(), None);
 
         let idx = U256::from(0u64);
         let value = backend.storage(address, idx);
         let account = backend.basic(address);
 
-        let mem_acc = cache.accounts.read().get(&address).unwrap().clone();
+        let mem_acc = db.accounts().read().get(&address).unwrap().clone();
         assert_eq!(account.balance, mem_acc.balance);
         assert_eq!(account.nonce, mem_acc.nonce);
-        let slots = cache.storage.read().get(&address).unwrap().clone();
+        let slots = db.storage().read().get(&address).unwrap().clone();
         assert_eq!(slots.len(), 1);
         assert_eq!(slots.get(&idx).copied().unwrap(), value);
 
         let num = U256::from(10u64);
         let hash = backend.block_hash(num);
-        let mem_hash = *cache.block_hashes.read().get(&num.as_u64()).unwrap();
+        let mem_hash = *db.block_hashes().read().get(&num.as_u64()).unwrap();
         assert_eq!(hash, mem_hash);
 
         let max_slots = 5;
@@ -549,7 +520,7 @@ mod tests {
             }
         });
         handle.join().unwrap();
-        let slots = cache.storage.read().get(&address).unwrap().clone();
+        let slots = db.storage().read().get(&address).unwrap().clone();
         assert_eq!(slots.len() as u64, max_slots);
     }
 }
