@@ -1,6 +1,6 @@
 [package]
 name = "foundry-evm"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 # TODO: We can probably reduce dependencies here or in the forge crate
