@@ -31,6 +31,8 @@ pub struct Fork {
     pub url: String,
     /// The block to fork against
     pub pin_block: Option<u64>,
+    /// chain id retrieved from the endpoint
+    pub chain_id: u64,
 }
 
 impl Fork {
@@ -38,7 +40,7 @@ impl Fork {
     ///
     /// If configured, then this will initialise the backend with the storage cahce
     fn into_backend(self, env: &Env) -> SharedBackend {
-        let Fork { cache_path, url, pin_block } = self;
+        let Fork { cache_path, url, pin_block , chain_id,} = self;
 
         let host = Url::parse(&url)
             .ok()
@@ -47,8 +49,14 @@ impl Fork {
 
         let provider = Provider::try_from(url).expect("Failed to establish provider");
 
-        let meta =
+        let mut meta =
             BlockchainDbMeta { cfg_env: env.cfg.clone(), block_env: env.block.clone(), host };
+
+        // update the meta to match the forked config
+        meta.cfg_env.chain_id = chain_id.into();
+        if let Some(pin) = pin_block {
+            meta.block_env.number = pin.into();
+        }
 
         let db = BlockchainDb::new(meta, cache_path);
 

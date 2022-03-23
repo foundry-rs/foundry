@@ -159,15 +159,17 @@ pub fn block_on<F: Future>(future: F) -> F::Output {
 ///   - storage is allowed (`no_storage_caching = false`)
 ///
 /// If all these criteria are met, then storage caching is enabled and storage info will be written
-/// to [Config::data_dir()]/<str(chainid)>/block/storage.json
+/// to [Config::foundry_cache_dir()]/<str(chainid)>/block/storage.json
 ///
 /// for `mainnet` and `--fork-block-number 14435000` on mac the corresponding storage cache will be
-/// at `$HOME`/Library/Application Support/foundry/mainnet/14435000/storage.json`
+/// at `~/.foundry/cache/mainnet/14435000/storage.json`
 pub fn get_fork(evm_opts: &EvmOpts, config: &StorageCachingConfig) -> Option<Fork> {
-    fn get_cache_storage_path(
+    /// Returns the chain id of the endpoint url, if available, otherwise mainnet == 1
+    /// and the path where the cache file should be
+    fn get_chain_and_cache_path(
         evm_opts: &EvmOpts,
         config: &StorageCachingConfig,
-    ) -> Option<PathBuf> {
+    ) -> Option<(Option<PathBuf>, u64)> {
         if evm_opts.no_storage_caching {
             // storage caching explicitly opted out of
             return None
@@ -187,7 +189,12 @@ pub fn get_fork(evm_opts: &EvmOpts, config: &StorageCachingConfig) -> Option<For
                         } else {
                             format!("{}", chain_id)
                         };
-                        return Some(Config::data_dir().ok()?.join(chain).join(format!("{}", block)))
+                        return Some((
+                            Some(
+                                Config::foundry_cache_dir()?.join(chain).join(format!("{}", block)),
+                            ),
+                            chain_id,
+                        ))
                     }
                 }
                 Err(err) => {
@@ -200,8 +207,14 @@ pub fn get_fork(evm_opts: &EvmOpts, config: &StorageCachingConfig) -> Option<For
     }
 
     if let Some(ref url) = evm_opts.fork_url {
-        let cache_storage = get_cache_storage_path(evm_opts, config);
-        let fork = Fork { url: url.clone(), pin_block: evm_opts.fork_block_number, cache_storage };
+        let (cache_storage, chain_id) = get_chain_and_cache_path(evm_opts, config)
+            .unwrap_or_else(|| (None, ethers::types::Chain::Mainnet as u64));
+        let fork = Fork {
+            url: url.clone(),
+            pin_block: evm_opts.fork_block_number,
+            cache_path: cache_storage,
+            chain_id,
+        };
         return Some(fork)
     }
 

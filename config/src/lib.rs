@@ -709,6 +709,11 @@ impl Config {
         dirs_next::home_dir().map(|p| p.join(Config::FOUNDRY_DIR_NAME))
     }
 
+    /// Returns the path to foundry's config dir `~/.foundry/cache`
+    pub fn foundry_cache_dir() -> Option<PathBuf> {
+        Self::foundry_dir().map(|p|p.join("cache"))
+    }
+
     #[doc = r#"Returns the path to `foundry`'s data directory inside the user's data directory
     |Platform | Value                                 | Example                          |
     | ------- | ------------------------------------- | -------------------------------- |
