@@ -400,54 +400,56 @@ fn test(
                 short_test_result(name, result);
 
                 // We only display logs at level 2 and above
-                if verbosity < 2 {
-                    continue
-                }
-
-                // We only decode logs from Hardhat and DS-style console events
-                let console_logs = decode_console_logs(&result.logs);
-                if !console_logs.is_empty() {
-                    println!("Logs:");
-                    for log in console_logs {
-                        println!("  {}", log);
+                if verbosity >= 2 {
+                    // We only decode logs from Hardhat and DS-style console events
+                    let console_logs = decode_console_logs(&result.logs);
+                    if !console_logs.is_empty() {
+                        println!("Logs:");
+                        for log in console_logs {
+                            println!("  {}", log);
+                        }
+                        println!();
                     }
-                    println!();
                 }
 
                 if !result.traces.is_empty() {
-                    // We only display traces at verbosity level 3 and above
-                    if verbosity < 3 {
-                        continue
-                    }
-
-                    // At verbosity level 3, we only display traces for failed tests
-                    if verbosity == 3 && result.success {
-                        continue
-                    }
-
                     // Identify addresses in each trace
                     let mut decoder =
                         CallTraceDecoder::new_with_labels(result.labeled_addresses.clone());
 
-                    println!("Traces:");
+                    // Decode the traces
+                    let mut decoded_traces = Vec::new();
                     for (kind, trace) in &mut result.traces {
                         decoder.identify(trace, &local_identifier);
 
                         let should_include = match kind {
+                            // At verbosity level 3, we only display traces for failed tests
                             // At verbosity level 4, we also display the setup trace for failed
                             // tests At verbosity level 5, we display
                             // all traces for all tests
                             TraceKind::Setup => {
                                 (verbosity >= 5) || (verbosity == 4 && !result.success)
                             }
-                            TraceKind::Execution => verbosity > 3 || !result.success,
+                            TraceKind::Execution => {
+                                verbosity > 3 || (verbosity == 3 && !result.success)
+                            }
                             _ => false,
                         };
 
-                        if should_include {
+                        // We decode the trace if we either need to build a gas report or we need
+                        // to print it
+                        if should_include || gas_reporting {
                             decoder.decode(trace);
-                            println!("{}", trace);
                         }
+
+                        if should_include {
+                            decoded_traces.push(trace.to_string());
+                        }
+                    }
+
+                    if !decoded_traces.is_empty() {
+                        println!("Traces:");
+                        decoded_traces.into_iter().for_each(|trace| println!("{}", trace));
                     }
 
                     if gas_reporting {
