@@ -1,7 +1,7 @@
 //! Smart caching and deduplication of requests when using a forking provider
 use revm::{db::DatabaseRef, AccountInfo, KECCAK_EMPTY};
 
-use crate::storage::StorageMap;
+use crate::{executor::fork::cache::StorageInfo, storage::StorageMap};
 use ethers::{
     core::abi::ethereum_types::BigEndianHash,
     providers::Middleware,
@@ -26,14 +26,15 @@ use std::{
 };
 use tracing::trace;
 
-type StorageInfo = BTreeMap<U256, U256>;
-
 /// In Memory cache containing all fetched accounts and storage slots
 /// and their values from RPC
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub struct SharedMemCache {
+    /// Account related data
     pub accounts: Arc<RwLock<BTreeMap<Address, AccountInfo>>>,
+    /// Storage related data
     pub storage: Arc<RwLock<BTreeMap<Address, StorageInfo>>>,
+    /// All retrieved block hashes
     pub block_hashes: Arc<RwLock<BTreeMap<u64, H256>>>,
 }
 
