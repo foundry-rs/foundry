@@ -90,7 +90,7 @@ impl EvmOpts {
                 return Chain::Mainnet as u64
             }
             let provider = Provider::try_from(url.as_str())
-                .expect(&format!("Failed to establish provider to {}", url));
+                .unwrap_or_else(|_| panic!("Failed to establish provider to {}", url));
 
             if let Ok(id) = foundry_utils::RuntimeOrHandle::new().block_on(provider.get_chainid()) {
                 return id.as_u64()
