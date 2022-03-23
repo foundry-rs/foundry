@@ -400,7 +400,7 @@ fn test(
                 short_test_result(name, result);
 
                 // We only display logs at level 2 and above
-                if verbosity < 2 {
+                if verbosity >= 2 {
                     // We only decode logs from Hardhat and DS-style console events
                     let console_logs = decode_console_logs(&result.logs);
                     if !console_logs.is_empty() {
