@@ -57,7 +57,7 @@ impl EvmOpts {
                     timestamp: self.env.block_timestamp.into(),
                     difficulty: self.env.block_difficulty.into(),
                     basefee: self.env.block_base_fee_per_gas.into(),
-                    gas_limit: self.env.block_gas_limit.unwrap_or(self.env.gas_limit).into(),
+                    gas_limit: self.gas_limit(),
                 },
                 cfg: CfgEnv {
                     chain_id: self.env.chain_id.unwrap_or(99).into(),
@@ -66,12 +66,16 @@ impl EvmOpts {
                 },
                 tx: TxEnv {
                     gas_price: self.env.gas_price.into(),
-                    gas_limit: self.env.block_gas_limit.unwrap_or(self.env.gas_limit),
+                    gas_limit: self.gas_limit().as_u64(),
                     caller: self.sender,
                     ..Default::default()
                 },
             }
         }
+    }
+
+    pub fn gas_limit(&self) -> U256 {
+        self.env.block_gas_limit.unwrap_or(self.env.gas_limit).into()
     }
 
     /// Returns the configured chain id, which will be
