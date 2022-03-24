@@ -30,13 +30,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v2
 
-      - name: Compute release name and tag
-        id: release_info
-        run: |
-          if [[ $IS_NIGHTLY ]]; then
-            echo "::set-output name=tag_name::nightly-${GITHUB_SHA}"
-            echo "::set-output name=release_name::Nightly ($(date '+%Y-%m-%d'))"
-
       # Login against a Docker registry except on PR
       # https://github.com/docker/login-action
       - name: Log into registry ${{ env.REGISTRY }}
