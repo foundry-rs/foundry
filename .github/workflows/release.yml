@@ -70,7 +70,7 @@ jobs:
         uses: actions/checkout@v2
 
       - name: Run Docker Release
-        uses: ./.github/workflows/docker-publish.yml
+        uses: ./.github/workflows/docker-publish.yml@main
   release:
     name: ${{ matrix.job.target }} (${{ matrix.job.os }})
     runs-on: ${{ matrix.job.os }}
