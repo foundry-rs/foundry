@@ -16,7 +16,7 @@ use ethers_providers::{Middleware, PendingTransaction};
 use eyre::{Context, Result};
 use futures::future::join_all;
 use rustc_hex::{FromHexIter, ToHex};
-use std::str::FromStr;
+use std::{path::PathBuf, str::FromStr};
 
 use foundry_utils::{encode_args, get_func, get_func_etherscan, to_table};
 
@@ -1294,6 +1294,32 @@ impl SimpleCast {
 
         Ok(code)
     }
+
+    /// Fetches the source code of verified contracts from etherscan and expands the resulting
+    /// files to a directory for easy perusal.
+    /// ```
+    /// # use cast::SimpleCast as Cast;
+    /// # use ethers_core::types::Chain;
+    /// # use std::path::PathBuf;
+    ///
+    /// # async fn expand() -> eyre::Result<()> {
+    ///      Cast::expand_etherscan_source_to_directory(Chain::Mainnet, "0xBB9bc244D798123fDe783fCc1C72d3Bb8C189413".to_string(), "<etherscan_api_key>".to_string(), PathBuf::from("output_dir")).await?;
+    /// #    Ok(())
+    /// # }
+    /// ```
+    pub async fn expand_etherscan_source_to_directory(
+        chain: Chain,
+        contract_address: String,
+        etherscan_api_key: String,
+        output_directory: PathBuf,
+    ) -> eyre::Result<()> {
+        let client = Client::new(chain, etherscan_api_key)?;
+        let meta = client.contract_source_code(contract_address.parse()?).await?;
+        let source_tree = meta.source_tree()?;
+        source_tree.write_to(&output_directory)?;
+        Ok(())
+    }
+
     /// Prints the slot number for the specified mapping type and input data
     /// Uses abi_encode to pad the data to 32 bytes.
     /// For value types v, slot number of v is keccak256(concat(h(v) , p)) where h is the padding

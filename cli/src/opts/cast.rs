@@ -473,6 +473,8 @@ pub enum Subcommands {
         chain: ClapChain,
         #[clap(help = "the contract address")]
         address: String,
+        #[clap(short, help = "output directory to expand source tree")]
+        directory: Option<PathBuf>,
         #[clap(long, env = "ETHERSCAN_API_KEY")]
         etherscan_api_key: String,
     },

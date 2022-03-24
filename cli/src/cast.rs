@@ -530,11 +530,25 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).nonce(who, block).await?);
         }
-        Subcommands::EtherscanSource { chain, address, etherscan_api_key } => {
-            println!(
-                "{}",
-                SimpleCast::etherscan_source(chain.inner, address, etherscan_api_key).await?
-            );
+        Subcommands::EtherscanSource { chain, address, directory, etherscan_api_key } => {
+            match directory {
+                Some(dir) => {
+                    SimpleCast::expand_etherscan_source_to_directory(
+                        chain.inner,
+                        address,
+                        etherscan_api_key,
+                        dir,
+                    )
+                    .await?
+                }
+                None => {
+                    println!(
+                        "{}",
+                        SimpleCast::etherscan_source(chain.inner, address, etherscan_api_key)
+                            .await?
+                    );
+                }
+            }
         }
         Subcommands::Sig { sig } => {
             let contract = BaseContract::from(parse_abi(&[&sig]).unwrap());
