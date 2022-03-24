@@ -83,7 +83,11 @@ fn main() -> eyre::Result<()> {
             project.cleanup()?;
         }
         Subcommands::Snapshot(cmd) => {
-            cmd.run()?;
+            if cmd.is_watch() {
+                utils::block_on(crate::cmd::forge::watch::watch_snapshot(cmd))?;
+            } else {
+                cmd.run()?;
+            }
         }
         // Subcommands::Fmt(cmd) => {
         //     cmd.run()?;

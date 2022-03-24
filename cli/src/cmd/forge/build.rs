@@ -214,20 +214,8 @@ impl BuildArgs {
     /// Returns the [`watchexec::InitConfig`] and [`watchexec::RuntimeConfig`] necessary to
     /// bootstrap a new [`watchexe::Watchexec`] loop.
     pub(crate) fn watchexec_config(&self) -> eyre::Result<(InitConfig, RuntimeConfig)> {
-        use crate::cmd::forge::watch;
-        let init = watch::init()?;
-        let mut runtime = watch::runtime(&self.watch)?;
-
-        // contains all the arguments `--watch p1, p2, p3`
-        let has_paths =
-            self.watch.watch.as_ref().map(|paths| !paths.is_empty()).unwrap_or_default();
-
-        if !has_paths {
-            // listen for changes in the project's src dir
-            let config = Config::from(self);
-            runtime.pathset(Some(config.src));
-        }
-        Ok((init, runtime))
+        // use the path arguments or if none where provided the `src` dir
+        self.watch.watchexec_config(|| Config::from(self).src)
     }
 
     /// Returns the remappings to add to the config
