@@ -24,7 +24,7 @@ Book][foundry-book] (WIP)!**
 
 [foundry-book]: https://onbjerg.github.io/foundry-book/
 
-![demo](./assets/demo.svg)
+![demo](./assets/demo.gif)
 
 ## Installation
 
