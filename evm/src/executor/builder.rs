@@ -87,8 +87,12 @@ impl Backend {
         if let Some(fork) = fork {
             Backend::Forked(fork.spawn_backend(env))
         } else {
-            Backend::Simple(EmptyDB())
+            Self::simple()
         }
+    }
+
+    pub fn simple() -> Self {
+        Backend::Simple(EmptyDB())
     }
 }
 
