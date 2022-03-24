@@ -20,6 +20,7 @@ pub struct ExecutorBuilder {
     env: Env,
     /// The configuration used to build an [InspectorStack].
     inspector_config: InspectorStackConfig,
+    gas_limit: Option<U256>,
 }
 
 /// Represents a _fork_ of a live chain whose data is available only via the `url` endpoint.
@@ -156,6 +157,15 @@ impl ExecutorBuilder {
         self
     }
 
+    /// Sets the executor gas limit.
+    ///
+    /// See [Executor::gas_limit] for more info on why you might want to set this.
+    #[must_use]
+    pub fn with_gas_limit(mut self, gas_limit: U256) -> Self {
+        self.gas_limit = Some(gas_limit);
+        self
+    }
+
     /// Configure the execution environment (gas limit, chain spec, ...)
     #[must_use]
     pub fn with_config(mut self, env: Env) -> Self {
@@ -166,6 +176,7 @@ impl ExecutorBuilder {
 
     /// Builds the executor as configured.
     pub fn build(self, db: impl Into<Backend>) -> Executor<Backend> {
-        Executor::new(db.into(), self.env, self.inspector_config)
+        let gas_limit = self.gas_limit.unwrap_or(self.env.block.gas_limit);
+        Executor::new(db.into(), self.env, self.inspector_config, gas_limit)
     }
 }

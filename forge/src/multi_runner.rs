@@ -215,7 +215,8 @@ impl MultiContractRunner {
                 let mut builder = ExecutorBuilder::new()
                     .with_cheatcodes(self.evm_opts.ffi)
                     .with_config(env.clone())
-                    .with_spec(self.evm_spec);
+                    .with_spec(self.evm_spec)
+                    .with_gas_limit(self.evm_opts.gas_limit());
 
                 if self.evm_opts.verbosity >= 3 {
                     builder = builder.with_tracing();
