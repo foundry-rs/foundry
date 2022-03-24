@@ -17,11 +17,11 @@ use futures::{
 };
 
 use std::{
-    collections::{hash_map::Entry, HashMap},
+    collections::{hash_map::Entry, HashMap, VecDeque},
     pin::Pin,
     sync::mpsc::{channel as oneshot_channel, Sender as OneshotSender},
 };
-use tracing::trace;
+use tracing::{trace, warn};
 
 type AccountFuture<Err> =
     Pin<Box<dyn Future<Output = (Result<(U256, U256, Bytes), Err>, Address)> + Send>>;
@@ -62,6 +62,8 @@ struct BackendHandler<M: Middleware> {
     block_requests: HashMap<u64, Vec<OneshotSender<H256>>>,
     /// Incoming commands.
     incoming: Fuse<Receiver<BackendRequest>>,
+    /// unprocessed queued requests
+    queued_requests: VecDeque<BackendRequest>,
     /// shutdown signal
     shutdown: Fuse<Receiver<OneshotSender<()>>>,
     /// The block to fetch data from.
@@ -87,6 +89,7 @@ where
             account_requests: Default::default(),
             storage_requests: Default::default(),
             block_requests: Default::default(),
+            queued_requests: Default::default(),
             incoming: rx.fuse(),
             shutdown: shutdown.fuse(),
             block_id,
@@ -235,100 +238,121 @@ where
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let pin = self.get_mut();
 
-        // receive new requests to delegate to the underlying provider
-        while let Poll::Ready(Some(req)) = Pin::new(&mut pin.incoming).poll_next(cx) {
-            pin.on_request(req)
+        loop {
+            // Drain queued requests first.
+            while let Some(req) = pin.queued_requests.pop_front() {
+                pin.on_request(req)
+            }
+
+            // receive new requests to delegate to the underlying provider
+            while let Poll::Ready(Some(req)) = Pin::new(&mut pin.incoming).poll_next(cx) {
+                pin.queued_requests.push_back(req);
+            }
+
+            // poll all requests in progress
+            for n in (0..pin.pending_requests.len()).rev() {
+                let mut request = pin.pending_requests.swap_remove(n);
+                match &mut request {
+                    ProviderRequest::Account(fut) => {
+                        if let Poll::Ready((resp, addr)) = fut.poll_unpin(cx) {
+                            // get the response
+                            let (balance, nonce, code) = resp.unwrap_or_else(|_| {
+                            trace!( target: "backendhandler", "Failed to get account for {}", addr);
+                            Default::default()
+                        });
+
+                            // convert it to revm-style types
+                            let (code, code_hash) = if !code.0.is_empty() {
+                                (Some(code.0.clone()), keccak256(&code).into())
+                            } else {
+                                (None, KECCAK_EMPTY)
+                            };
+
+                            // update the cache
+                            let acc =
+                                AccountInfo { nonce: nonce.as_u64(), balance, code, code_hash };
+                            pin.db.accounts().write().insert(addr, acc.clone());
+
+                            // notify all listeners
+                            if let Some(listeners) = pin.account_requests.remove(&addr) {
+                                listeners.into_iter().for_each(|l| {
+                                    let _ = l.send(acc.clone());
+                                })
+                            }
+                            continue
+                        }
+                    }
+                    ProviderRequest::Storage(fut) => {
+                        if let Poll::Ready((resp, addr, idx)) = fut.poll_unpin(cx) {
+                            let value = resp.unwrap_or_else(|_| {
+                            trace!( target: "backendhandler", "Failed to get storage for {} at {}", addr, idx);
+                            Default::default()
+                        });
+
+                            // update the cache
+                            pin.db.storage().write().entry(addr).or_default().insert(idx, value);
+
+                            // notify all listeners
+                            if let Some(listeners) = pin.storage_requests.remove(&(addr, idx)) {
+                                listeners.into_iter().for_each(|l| {
+                                    let _ = l.send(value);
+                                })
+                            }
+                            continue
+                        }
+                    }
+                    ProviderRequest::BlockHash(fut) => {
+                        if let Poll::Ready((block_hash, number)) = fut.poll_unpin(cx) {
+                            let value = block_hash.unwrap_or_else(|_| {
+                            trace!( target: "backendhandler", "Failed to get block hash for {}", number);
+                            Default::default()
+                        });
+
+                            // update the cache
+                            pin.db.block_hashes().write().insert(number, value);
+
+                            // notify all listeners
+                            if let Some(listeners) = pin.block_requests.remove(&number) {
+                                listeners.into_iter().for_each(|l| {
+                                    let _ = l.send(value);
+                                })
+                            }
+                            continue
+                        }
+                    }
+                }
+                // not ready, insert and poll again
+                pin.pending_requests.push(request);
+            }
+
+            // If no new requests have been queued, break to
+            // be polled again later.
+            if pin.queued_requests.is_empty() {
+                break
+            }
         }
 
-        // poll all requests in progress
-        for n in (0..pin.pending_requests.len()).rev() {
-            let mut request = pin.pending_requests.swap_remove(n);
-            match &mut request {
-                ProviderRequest::Account(fut) => {
-                    if let Poll::Ready((resp, addr)) = fut.poll_unpin(cx) {
-                        // get the response
-                        let (balance, nonce, code) = resp.unwrap_or_else(|_| {
-                            trace!("Failed to get account for {}", addr);
-                            Default::default()
-                        });
-
-                        // conver it to revm-style types
-                        let (code, code_hash) = if !code.0.is_empty() {
-                            (Some(code.0.clone()), keccak256(&code).into())
-                        } else {
-                            (None, KECCAK_EMPTY)
-                        };
-
-                        // update the cache
-                        let acc = AccountInfo { nonce: nonce.as_u64(), balance, code, code_hash };
-                        pin.db.accounts().write().insert(addr, acc.clone());
-
-                        // notify all listeners
-                        if let Some(listeners) = pin.account_requests.remove(&addr) {
-                            listeners.into_iter().for_each(|l| {
-                                let _ = l.send(acc.clone());
-                            })
-                        }
-                        continue
-                    }
-                }
-                ProviderRequest::Storage(fut) => {
-                    if let Poll::Ready((resp, addr, idx)) = fut.poll_unpin(cx) {
-                        let value = resp.unwrap_or_else(|_| {
-                            trace!("Failed to get storage for {} at {}", addr, idx);
-                            Default::default()
-                        });
-
-                        // update the cache
-                        pin.db.storage().write().entry(addr).or_default().insert(idx, value);
-
-                        // notify all listeners
-                        if let Some(listeners) = pin.storage_requests.remove(&(addr, idx)) {
-                            listeners.into_iter().for_each(|l| {
-                                let _ = l.send(value);
-                            })
-                        }
-                        continue
-                    }
-                }
-                ProviderRequest::BlockHash(fut) => {
-                    if let Poll::Ready((block_hash, number)) = fut.poll_unpin(cx) {
-                        let value = block_hash.unwrap_or_else(|_| {
-                            trace!("Failed to get block hash for {}", number);
-                            Default::default()
-                        });
-
-                        // update the cache
-                        pin.db.block_hashes().write().insert(number, value);
-
-                        // notify all listeners
-                        if let Some(listeners) = pin.block_requests.remove(&number) {
-                            listeners.into_iter().for_each(|l| {
-                                let _ = l.send(value);
-                            })
-                        }
-                        continue
-                    }
-                }
+        if let Poll::Ready(Some(ack)) = Pin::new(&mut pin.shutdown).poll_next(cx) {
+            trace!(target: "backendhandler", "received shutdown signal");
+            if pin.incoming.is_done() {
+                // if request channel was closed, flush the cached storage to disk, if caching is
+                // enabled
+                pin.db.cache().flush();
             }
-            // not ready, insert and poll again
-            pin.pending_requests.push(request);
+            // signaling back
+            let _ = ack.send(());
         }
 
         // the handler is finished if the request channel was closed and all requests are processed
-        if pin.incoming.is_done() && pin.pending_requests.is_empty() {
-            if let Poll::Ready(Some(ack)) = Pin::new(&mut pin.shutdown).poll_next(cx) {
-                // effectively flushing the cached storage if any
-                pin.db.cache().flush();
-                // signaling back
-                let _ = ack.send(());
-            }
-
-            if pin.shutdown.is_done() {
-                trace!(target: "backendhandler", "finished");
-                return Poll::Ready(())
-            }
+        if pin.incoming.is_done() &&
+            pin.pending_requests.is_empty() &&
+            pin.shutdown.is_done() &&
+            pin.shutdown.is_done()
+        {
+            trace!(target: "backendhandler", "finished");
+            return Poll::Ready(())
         }
+        trace!( target: "backendhandler", "pending");
         Poll::Pending
     }
 }
@@ -370,11 +394,13 @@ impl Drop for SharedBackend {
         // disconnect the command channel
         self.backend.disconnect();
         if self.backend.is_closed() {
+            tracing::trace!( target: "sharedbackend", "shutting down");
             // was the last sender, let the handler know and wait until it gracefully shut down
             let (ack, rx) = oneshot_channel();
             if self.shutdown.try_send(ack).is_ok() {
                 let _ = rx.recv();
             }
+            tracing::trace!( target: "sharedbackend", "shut down");
         }
     }
 }
@@ -428,7 +454,7 @@ impl SharedBackend {
 impl DatabaseRef for SharedBackend {
     fn basic(&self, address: H160) -> AccountInfo {
         self.do_get_basic(address).unwrap_or_else(|_| {
-            trace!("Failed to send/recv `basic` for {}", address);
+            warn!( target: "sharedbackend", "Failed to send/recv `basic` for {}", address);
             Default::default()
         })
     }
@@ -438,8 +464,9 @@ impl DatabaseRef for SharedBackend {
     }
 
     fn storage(&self, address: H160, index: U256) -> U256 {
-        self.do_get_storage(address, index).unwrap_or_else(|_| {
-            trace!("Failed to send/recv `storage` for {} at {}", address, index);
+        self.do_get_storage(address, index)
+            .unwrap_or_else(|_| {
+            warn!( target: "sharedbackend", "Failed to send/recv `storage` for {} at {}", address, index);
             Default::default()
         })
     }
@@ -450,7 +477,7 @@ impl DatabaseRef for SharedBackend {
         }
         let number = number.as_u64();
         self.do_get_block_hash(number).unwrap_or_else(|_| {
-            trace!("Failed to send/recv `block_hash` for {}", number);
+            warn!( target: "sharedbackend", "Failed to send/recv `block_hash` for {}", number);
             Default::default()
         })
     }
@@ -537,7 +564,7 @@ mod tests {
             chain_id: 1,
         };
 
-        let backend = fork.into_backend(&env);
+        let backend = fork.spawn_backend(&env);
 
         // some rng contract from etherscan
         let address: Address = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();

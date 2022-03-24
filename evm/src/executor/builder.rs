@@ -20,11 +20,14 @@ pub struct ExecutorBuilder {
     env: Env,
     /// The configuration used to build an [InspectorStack].
     inspector_config: InspectorStackConfig,
-    fork: Option<Fork>,
     gas_limit: Option<U256>,
 }
 
-#[derive(Clone, Debug)]
+/// Represents a _fork_ of a live chain whose data is available only via the `url` endpoint.
+///
+/// *Note:* this type intentionally does not implement `Clone` to prevent [Fork::spawn_backend()]
+/// from being called multiple times.
+#[derive(Debug)]
 pub struct Fork {
     /// Where to read the cached storage from
     pub cache_path: Option<PathBuf>,
@@ -37,10 +40,14 @@ pub struct Fork {
 }
 
 impl Fork {
-    /// Initialises the Storage Backend
+    /// Initialises and spawns the Storage Backend, the [revm::Database]
     ///
-    /// If configured, then this will initialise the backend with the storage cache
-    pub fn into_backend(self, env: &Env) -> SharedBackend {
+    /// If configured, then this will initialise the backend with the storage cache.
+    ///
+    /// The `SharedBackend` returned is connected to a background thread that communicates with the
+    /// endpoint via channels and is intended to be cloned when multiple [revm::Database] are
+    /// required. See also [crate::executor::fork::SharedBackend]
+    pub fn spawn_backend(self, env: &Env) -> SharedBackend {
         let Fork { cache_path, url, pin_block, chain_id } = self;
 
         let host = Url::parse(&url)
@@ -64,20 +71,28 @@ impl Fork {
         SharedBackend::new(provider, db, pin_block.map(Into::into))
     }
 }
-
+/// Variants of a [revm::Database]
+#[derive(Debug, Clone)]
 pub enum Backend {
+    /// Simple in memory [revm::Database]
     Simple(EmptyDB),
+    /// A [revm::Database] that forks of a remote location and can have multiple consumers of the
+    /// same data
     Forked(SharedBackend),
 }
 
 impl Backend {
     /// Instantiates a new backend union based on whether there was or not a fork url specified
-    fn new(fork: Option<Fork>, env: &Env) -> Self {
+    pub fn new(fork: Option<Fork>, env: &Env) -> Self {
         if let Some(fork) = fork {
-            Backend::Forked(fork.into_backend(env))
+            Backend::Forked(fork.spawn_backend(env))
         } else {
-            Backend::Simple(EmptyDB())
+            Self::simple()
         }
+    }
+
+    pub fn simple() -> Self {
+        Backend::Simple(EmptyDB())
     }
 }
 
@@ -163,17 +178,9 @@ impl ExecutorBuilder {
         self
     }
 
-    /// Configure the executor's forking mode
-    #[must_use]
-    pub fn with_fork(mut self, fork: Option<Fork>) -> Self {
-        self.fork = fork;
-        self
-    }
-
     /// Builds the executor as configured.
-    pub fn build(self) -> Executor<Backend> {
-        let db = Backend::new(self.fork, &self.env);
+    pub fn build(self, db: impl Into<Backend>) -> Executor<Backend> {
         let gas_limit = self.gas_limit.unwrap_or(self.env.block.gas_limit);
-        Executor::new(db, self.env, self.inspector_config, gas_limit)
+        Executor::new(db.into(), self.env, self.inspector_config, gas_limit)
     }
 }

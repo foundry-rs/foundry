@@ -17,8 +17,8 @@ use forge::{
     debug::DebugArena,
     decode::decode_console_logs,
     executor::{
-        opts::EvmOpts, CallResult, DatabaseRef, DeployResult, EvmError, Executor, ExecutorBuilder,
-        RawCallResult,
+        builder::Backend, opts::EvmOpts, CallResult, DatabaseRef, DeployResult, EvmError, Executor,
+        ExecutorBuilder, RawCallResult,
     },
     trace::{identifier::LocalTraceIdentifier, CallTraceArena, CallTraceDecoder, TraceKind},
     CALLER,
@@ -96,11 +96,16 @@ impl Cmd for RunArgs {
         let bytecode = bytecode.expect("no bytecode for contract").object.into_bytes().unwrap();
         let needs_setup = abi.functions().any(|func| func.name == "setUp");
 
+        let env = evm_opts.evm_env();
+        // the db backend that serves all the data
+        let db = Backend::new(utils::get_fork(&evm_opts, &config.rpc_storage_caching), &env);
+
         let mut builder = ExecutorBuilder::new()
             .with_cheatcodes(evm_opts.ffi)
-            .with_config(evm_opts.evm_env())
+            .with_config(env)
             .with_spec(crate::utils::evm_spec(&config.evm_version))
-            .with_fork(utils::get_fork(&evm_opts, &config.rpc_storage_caching));
+            .with_gas_limit(evm_opts.gas_limit());
+
         if verbosity >= 3 {
             builder = builder.with_tracing();
         }
@@ -110,7 +115,7 @@ impl Cmd for RunArgs {
 
         let mut result = {
             let mut runner =
-                Runner::new(builder.build(), evm_opts.initial_balance, evm_opts.sender);
+                Runner::new(builder.build(db), evm_opts.initial_balance, evm_opts.sender);
             let (address, mut result) =
                 runner.setup(&predeploy_libraries, bytecode, needs_setup)?;
 
