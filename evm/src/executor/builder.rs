@@ -21,6 +21,7 @@ pub struct ExecutorBuilder {
     /// The configuration used to build an [InspectorStack].
     inspector_config: InspectorStackConfig,
     fork: Option<Fork>,
+    gas_limit: Option<U256>,
 }
 
 #[derive(Clone, Debug)]
@@ -145,6 +146,15 @@ impl ExecutorBuilder {
         self
     }
 
+    /// Sets the executor gas limit.
+    ///
+    /// See [Executor::gas_limit] for more info on why you might want to set this.
+    #[must_use]
+    pub fn with_gas_limit(mut self, gas_limit: U256) -> Self {
+        self.gas_limit = Some(gas_limit);
+        self
+    }
+
     /// Configure the execution environment (gas limit, chain spec, ...)
     #[must_use]
     pub fn with_config(mut self, env: Env) -> Self {
@@ -163,6 +173,7 @@ impl ExecutorBuilder {
     /// Builds the executor as configured.
     pub fn build(self) -> Executor<Backend> {
         let db = Backend::new(self.fork, &self.env);
-        Executor::new(db, self.env, self.inspector_config)
+        let gas_limit = self.gas_limit.unwrap_or(self.env.block.gas_limit);
+        Executor::new(db, self.env, self.inspector_config, gas_limit)
     }
 }
