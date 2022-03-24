@@ -103,7 +103,8 @@ impl Cmd for RunArgs {
         let mut builder = ExecutorBuilder::new()
             .with_cheatcodes(evm_opts.ffi)
             .with_config(env)
-            .with_spec(crate::utils::evm_spec(&config.evm_version));
+            .with_spec(crate::utils::evm_spec(&config.evm_version))
+            .with_gas_limit(evm_opts.gas_limit());
 
         if verbosity >= 3 {
             builder = builder.with_tracing();

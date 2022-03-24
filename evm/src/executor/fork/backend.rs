@@ -344,11 +344,13 @@ where
         }
 
         // the handler is finished if the request channel was closed and all requests are processed
-        if pin.incoming.is_done() && pin.pending_requests.is_empty() && pin.shutdown.is_done() {
-            if pin.shutdown.is_done() {
-                trace!(target: "backendhandler", "finished");
-                return Poll::Ready(())
-            }
+        if pin.incoming.is_done() &&
+            pin.pending_requests.is_empty() &&
+            pin.shutdown.is_done() &&
+            pin.shutdown.is_done()
+        {
+            trace!(target: "backendhandler", "finished");
+            return Poll::Ready(())
         }
         trace!( target: "backendhandler", "pending");
         Poll::Pending
