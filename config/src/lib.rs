@@ -484,6 +484,7 @@ impl Config {
         ProjectPathsConfig::builder()
             .cache(&self.cache_path.join(SOLIDITY_FILES_CACHE_FILENAME))
             .sources(&self.src)
+            .tests(&self.test)
             .artifacts(&self.out)
             .libs(self.libs.clone())
             .remappings(self.get_all_remappings())
@@ -1441,6 +1442,34 @@ mod tests {
             let config = Config::load();
             assert_eq!(config.libs, vec![PathBuf::from("modules")]);
 
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_default_test_path() {
+        figment::Jail::expect_with(|_| {
+            let config = Config::default();
+            let paths_config = config.project_paths();
+            assert_eq!(paths_config.tests, PathBuf::from(r"test"));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_custom_test_path() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+                test = "mytest"
+            "#,
+            )?;
+
+            let config = Config::load();
+            let paths_config = config.project_paths();
+            assert_eq!(paths_config.tests, PathBuf::from(r"mytest"));
             Ok(())
         });
     }
