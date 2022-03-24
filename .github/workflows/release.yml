@@ -61,7 +61,11 @@ jobs:
           toTag: ${{ steps.release_info.outputs.tag_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
+  release_docker:
+    name: Release Docker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/workflows/docker-publish.yml
   release:
     name: ${{ matrix.job.target }} (${{ matrix.job.os }})
     runs-on: ${{ matrix.job.os }}
