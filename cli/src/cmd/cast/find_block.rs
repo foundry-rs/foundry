@@ -5,7 +5,7 @@ use cast::Cast;
 use clap::Parser;
 use ethers::prelude::*;
 use eyre::Result;
-use futures::{join, future::BoxFuture};
+use futures::{future::BoxFuture, join};
 
 #[derive(Debug, Clone, Parser)]
 pub struct FindBlockArgs {
@@ -17,13 +17,6 @@ pub struct FindBlockArgs {
 
 impl Cmd for FindBlockArgs {
     type Output = BoxFuture<'static, Result<()>>;
-
-    // fn run(self) -> Result<Self::Output> {
-    //     let FindBlockArgs { timestamp, rpc_url } = self;
-    //     let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
-    //     rt.block_on(Self::query_block(timestamp, rpc_url))?;
-    //     Ok(())
-    // }
 
     fn run(self) -> Result<Self::Output> {
         let FindBlockArgs { timestamp, rpc_url } = self;
