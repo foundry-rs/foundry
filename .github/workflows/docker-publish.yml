@@ -30,13 +30,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v2
 
-      - name: Compute release name and tag
-        id: release_info
-        run: |
-          if [[ $IS_NIGHTLY ]]; then
-            echo "::set-output name=tag_name::nightly-${GITHUB_SHA}"
-            echo "::set-output name=release_name::Nightly ($(date '+%Y-%m-%d'))"
-
       # Login against a Docker registry except on PR
       # https://github.com/docker/login-action
       - name: Log into registry ${{ env.REGISTRY }}
@@ -54,9 +47,25 @@ jobs:
         uses: docker/metadata-action@v3.6.2
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+
+      # Creates an additional 'latest' or 'nightly' tag
+      - name: Assign Additional Docker Metadata
+        id: additional_tags
+        run: |
+          if [[ "${{ steps.meta.outputs.tags }}" == *"foundry:main" ]] || [[ "${{ steps.meta.outputs.tags }}" == *"foundry:master" ]]; then
+            echo "assigning latest tag"
+            echo "::set-output name=additional_tag::${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+          else
+            echo "assigning nightly tag"
+            echo "::set-output name=additonal_tag::${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:nightly-${GITHUB_SHA}"
+          fi
+
+      # Log docker metadata to explicitly know what is being pushed
+      - name: Inspect Docker Metadata
+        run: |
+          echo "TAGS -> ${{ steps.meta.outputs.tags }}, ${{ steps.additional_tags.outputs.additional_tag }}"
+          echo "LABELS ->  ${{ steps.meta.outputs.labels }}"
         
-
-
       # Build and push Docker image with Buildx (don't push on PR)
       # https://github.com/docker/build-push-action
       - name: Build and push Docker image
@@ -65,5 +74,5 @@ jobs:
         with:
           context: .
           push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
+          tags: ${{ steps.meta.outputs.tags }},${{ steps.additional_tags.outputs.additional_tag }}
           labels: ${{ steps.meta.outputs.labels }}
