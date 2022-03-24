@@ -1,6 +1,7 @@
 //! Cast
 //!
 //! TODO
+use async_stream::stream;
 use chrono::NaiveDateTime;
 use ethers_core::{
     abi::{
@@ -10,18 +11,24 @@ use ethers_core::{
     types::{transaction::eip2718::TypedTransaction, Chain, *},
     utils::{self, keccak256, parse_units},
 };
-use ethers_providers::{FilterWatcher, Provider, StreamExt};
-
-use async_stream::stream;
 use ethers_etherscan::Client;
-use ethers_providers::{Middleware, PendingTransaction};
+use ethers_providers::{
+    FilterWatcher, JsonRpcClient, Middleware, PendingTransaction, Provider, StreamExt,
+};
 use eyre::{Context, Result};
 use foundry_utils::{encode_args, get_func, get_func_etherscan, to_table};
 use futures::future::join_all;
-use futures_core::stream::Stream;
+use futures_core::{stream::Stream, Future};
 use futures_util::pin_mut;
 use rustc_hex::{FromHexIter, ToHex};
-use std::str::FromStr;
+use serde::{de::DeserializeOwned, Serialize};
+use std::fmt::Debug;
+
+use std::{
+    pin::Pin,
+    str::FromStr,
+    task::{Context as TaskContext, Poll},
+};
 
 // TODO: CastContract with common contract initializers? Same for CastProviders?
 
@@ -53,7 +60,7 @@ where
     /// Makes a read-only call to the specified address
     ///
     /// ```no_run
-    ///
+    /// 
     /// use cast::Cast;
     /// use ethers_core::types::{Address, Chain};
     /// use ethers_providers::{Provider, Http};
@@ -386,7 +393,7 @@ where
         &self,
         specific_block: Option<T>,
         contract: A,
-    ) -> Result<impl Stream<Item = Result<Vec<Log>>> + '_> {
+    ) -> eyre::Result<()> {
         let address = match contract.into() {
             NameOrAddress::Name(ref ens_name) => self.provider.resolve_name(ens_name).await?,
             NameOrAddress::Address(addr) => addr,
@@ -408,20 +415,7 @@ where
                 filter
             }
         };
-        Ok(self.create_raw_log_tream(filter))
-    }
-    fn create_raw_log_tream(
-        &self,
-        mut filter: Filter,
-    ) -> impl Stream<Item = Result<Vec<Log>>> + '_ {
-        stream! {
-        let mut stream = self.provider.watch_blocks().await?;
-            if let Some(block) = stream.next().await {
-                filter = filter.at_block_hash(block);
-            }
-        let logs = self.provider.get_logs(&filter).await?;
-        yield(Ok(logs));
-        }
+        Ok(())
     }
 
     async fn block_field_as_num<T: Into<BlockId>>(&self, block: T, field: String) -> Result<U256> {
@@ -1249,7 +1243,7 @@ impl SimpleCast {
         let code = meta.source_code();
 
         if code.is_empty() {
-            return Err(eyre::eyre!("unverified contract"));
+            return Err(eyre::eyre!("unverified contract"))
         }
 
         Ok(code)
@@ -1278,6 +1272,37 @@ impl SimpleCast {
         let encoded = Self::abi_encode(&sig, &[from_value, slot_number])?;
         let location: String = Self::keccak(&encoded)?;
         Ok(location)
+    }
+}
+
+struct RawLogs<'a, M, R> {
+    provider: M,
+    log_stream: FilterWatcher<'a, M, R>,
+    filter: Filter,
+}
+
+impl<
+        'a,
+        M: JsonRpcClient + Middleware,
+        R: 'a + DeserializeOwned + Sync + Send + Serialize + Debug + Into<TxHash>,
+    > Stream for RawLogs<'a, M, R>
+{
+    type Item = Result<Vec<Log>, <M as Middleware>::Error>;
+
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+    ) -> Poll<Option<Result<Vec<Log>, <M as Middleware>::Error>>> {
+        match Pin::new(&mut self.log_stream).poll_next(cx) {
+            Poll::Ready(block) => {
+                self.filter = self.filter.at_block_hash(block.unwrap());
+                match Pin::new(&mut self.provider.get_logs(&self.filter)).poll(cx) {
+                    Poll::Ready(result) => Poll::Ready(Some(result)),
+                    Poll::Pending => Poll::Pending,
+                }
+            }
+            Poll::Pending => Poll::Pending,
+        }
     }
 }
 
