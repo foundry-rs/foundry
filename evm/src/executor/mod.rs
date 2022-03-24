@@ -427,8 +427,14 @@ where
 
         let mut inspector = self.inspector_config.stack();
         let (status, out, gas, _) = evm.inspect_commit(&mut inspector);
-        let address = match out {
-            TransactOut::Create(_, Some(addr)) => addr,
+        let address = match status {
+            return_ok!() => {
+                if let TransactOut::Create(_, Some(addr)) = out {
+                    addr
+                } else {
+                    panic!("deployment succeeded, but we got no address. this is a bug.");
+                }
+            }
             // TODO: We should have better error handling logic in the test runner
             // regarding deployments in general
             _ => eyre::bail!("deployment failed: {:?}", status),
