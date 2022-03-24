@@ -45,6 +45,20 @@ macro_rules! forgetest {
     };
 }
 
+#[macro_export]
+macro_rules! casttest {
+    ($test:ident, $fun:expr) => {
+        $crate::casttest!($test, $crate::ethers_solc::PathStyle::Dapptools, $fun);
+    };
+    ($test:ident, $style:expr, $fun:expr) => {
+        #[test]
+        fn $test() {
+            let (prj, cmd) = $crate::util::setup_cast(stringify!($test), $style);
+            $fun(prj, cmd);
+        }
+    };
+}
+
 /// A helper macro to ignore `forgetest!` that should not run on CI
 #[macro_export]
 macro_rules! forgetest_ignore {
