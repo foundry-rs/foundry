@@ -5,22 +5,157 @@ FOUNDRY_DIR=${FOUNDRY_DIR-"$HOME/.foundry"}
 FOUNDRY_BIN_DIR="$FOUNDRY_DIR/bin"
 FOUNDRY_MAN_DIR="$FOUNDRY_DIR/share/man/man1"
 
-while [[ $1 ]]; do
-  case $1 in
-    --)               shift; break;;
+main() {
+  need_cmd git
+  need_cmd curl
 
-    -r|--repo)        shift; FOUNDRYUP_REPO=$1;;
-    -b|--branch)      shift; FOUNDRYUP_BRANCH=$1;;
-    -v|--version)     shift; FOUNDRYUP_VERSION=$1;;
-    -p|--path)        shift; FOUNDRYUP_LOCAL_REPO=$1;;
-    -h|--help)        FOUNDRYUP_HELP="1";;
+  while [[ $1 ]]; do
+    case $1 in
+      --)               shift; break;;
 
-    *) printf "foundryup: internal error: %q\\n" "$1"; exit 1
-  esac; shift
-done
+      -r|--repo)        shift; FOUNDRYUP_REPO=$1;;
+      -b|--branch)      shift; FOUNDRYUP_BRANCH=$1;;
+      -v|--version)     shift; FOUNDRYUP_VERSION=$1;;
+      -p|--path)        shift; FOUNDRYUP_LOCAL_REPO=$1;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *) 
+        err "internal error: unknown option "$1"\n";;
+    esac; shift
+  done
 
-if [[ "$FOUNDRYUP_HELP" == "1" ]]; then
-    echo "Update or revert to a specific Foundry branch with ease.
+  # Installs foundry from a local repository if --path parameter is provided
+  if [[ -n "$FOUNDRYUP_LOCAL_REPO" ]]; then
+    need_cmd cargo
+
+    # Ignore branches/versions as we do not want to modify local git state
+    if [ -n "$FOUNDRYUP_REPO" ] || [ -n "$FOUNDRY_BRANCH" ] || [ -n "$FOUNDRY_VERSION" ]; then
+      warn "--branch, --version, and --repo arguments are ignored during local install"
+    fi
+
+    # Enter local repo and build
+    say "installing from $FOUNDRYUP_LOCAL_REPO"
+    cd $FOUNDRYUP_LOCAL_REPO
+    RUSTFLAGS="-C target-cpu=native" ensure cargo build --release # need 4 speed
+
+
+    # Remove prior installations if they exist
+    rm -f "$FOUNDRY_BIN_DIR/forge"
+    rm -f "$FOUNDRY_BIN_DIR/cast"
+
+    # Symlink from local repo binaries to bin dir
+    ensure ln -s "$PWD/target/release/forge" "$FOUNDRY_BIN_DIR/forge"
+    ensure ln -s "$PWD/target/release/cast" "$FOUNDRY_BIN_DIR/cast"
+    say "done"
+    exit 0
+  fi
+
+  FOUNDRYUP_REPO=${FOUNDRYUP_REPO-gakonst/foundry}
+
+  if [[ "$FOUNDRYUP_REPO" == "gakonst/foundry" && -z "$FOUNDRYUP_BRANCH" ]]; then
+    FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION-nightly}
+    FOUNDRYUP_TAG=$FOUNDRYUP_VERSION
+
+    # Normalize versions (handle channels, versions without v prefix
+    if [[ "$FOUNDRYUP_VERSION" == "nightly" ]]; then
+      # Locate real nightly tag
+      SHA=$(curl -sSf https://api.github.com/repos/${FOUNDRYUP_REPO}/git/refs/tags/nightly \
+        | grep -Eo '"sha"[^,]*' \
+        | grep -Eo '[^:]*$' \
+        | tr -d '"' \
+        | tr -d ' ')
+      FOUNDRYUP_TAG="nightly-${SHA}"
+    elif [[ "$FOUNDRYUP_VERSION" == nightly* ]]; then
+      FOUNDRYUP_VERSION="nightly"
+    elif [[ "$FOUNDRYUP_VERSION" == [[:digit:]]* ]]; then
+      # Add v prefix
+      FOUNDRYUP_VERSION="v${FOUNDRYUP_VERSION}"
+      FOUNDRYUP_TAG="${FOUNDRYUP_VERSION}"
+    fi
+
+    say "installing foundry (version ${FOUNDRYUP_VERSION}, tag ${FOUNDRYUP_TAG})"
+
+    PLATFORM="$(uname -s)"
+    case $PLATFORM in
+      Linux)
+        PLATFORM="linux"
+        ;;
+      Darwin)
+        PLATFORM="darwin"
+        ;;
+      *)
+        err "unsupported platform: $PLATFORM"
+        ;;
+    esac
+
+    ARCHITECTURE="$(uname -m)"
+    if [ "${ARCHITECTURE}" = "x86_64" ]; then
+      # Redirect stderr to /dev/null to avoid printing errors if non Rosetta.
+      if [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = "1" ]; then
+        ARCHITECTURE="arm64" # Rosetta.
+      else
+        ARCHITECTURE="amd64" # Intel.
+      fi
+    elif [ "${ARCHITECTURE}" = "arm64" ] ||[ "${ARCHITECTURE}" = "aarch64" ] ; then
+      ARCHITECTURE="arm64" # Arm.
+    else
+      ARCHITECTURE="amd64" # Amd.
+    fi
+
+    # Compute the URL of the release tarball in the Foundry repository.
+    RELEASE_URL="https://github.com/${FOUNDRYUP_REPO}/releases/download/${FOUNDRYUP_TAG}/"
+    BIN_TARBALL_URL="${RELEASE_URL}foundry_${FOUNDRYUP_VERSION}_${PLATFORM}_${ARCHITECTURE}.tar.gz"
+    MAN_TARBALL_URL="${RELEASE_URL}foundry_man_${FOUNDRYUP_VERSION}.tar.gz"
+
+    # Download the binaries tarball and unpack it into the .foundry bin directory.
+    say "downloading latest forge and cast"
+    ensure curl -# -L $BIN_TARBALL_URL | tar -xzC $FOUNDRY_BIN_DIR
+    # Download the man tarball and unpack it into the .foundry man directory.
+    say "downloading manpages"
+    ensure curl -# -L $MAN_TARBALL_URL | tar -xzC $FOUNDRY_MAN_DIR
+    say "installed - $($FOUNDRY_BIN_DIR/forge --version)"
+    say "installed - $($FOUNDRY_BIN_DIR/cast --version)"
+    say "done"
+  else
+    need_cmd cargo
+    FOUNDRYUP_BRANCH=${FOUNDRYUP_BRANCH-master}
+    REPO_PATH="${FOUNDRY_DIR}/${FOUNDRYUP_REPO}"
+
+    if [ -d $REPO_PATH ]; then
+      # If the repo path exists move to it and do a force checkout, discarding any local changes
+      cd $REPO_PATH
+      ensure git fetch
+      ensure git reset --hard origin/${FOUNDRYUP_BRANCH}
+    else
+      # Repo path did not exist, grab the author from the repo, make a directory in .foundry, cd to it and clone.
+      IFS="/" read -ra AUTHOR <<< "$FOUNDRYUP_REPO"
+      ensure mkdir -p "$FOUNDRY_DIR/$AUTHOR"
+      cd "$FOUNDRY_DIR/$AUTHOR"
+      ensure git clone https://github.com/${FOUNDRYUP_REPO}
+      cd $REPO_PATH
+      ensure git checkout ${FOUNDRYUP_BRANCH}
+    fi
+
+    # Build the repo and install it locally to the .foundry bin directory.
+    # --root appends /bin to the directory it is given, so we pass FOUNDRY_DIR.
+    RUSTFLAGS="-C target-cpu=native" ensure cargo install --path ./cli --bins --locked --force --root $FOUNDRY_DIR
+
+    # If help2man is installed, use it to add Foundry man pages.
+    if command -v help2man &> /dev/null ; then
+      help2man -N $FOUNDRY_BIN_DIR/forge > $FOUNDRY_MAN_DIR/forge.1
+      help2man -N $FOUNDRY_BIN_DIR/cast > $FOUNDRY_MAN_DIR/cast.1
+    fi
+    say "done"
+  fi
+}
+
+usage() {
+  cat 1>&2 <<EOF
+The installer for Foundry.
+
+Update or revert to a specific Foundry version with ease.
 
 USAGE:
     foundryup <OPTIONS>
@@ -30,136 +165,38 @@ OPTIONS:
     -v, --version   Install a specific version
     -b, --branch    Install a specific branch
     -r, --repo      Install a forks main branch
-    -p, --path      Install a local repository"
-    exit 0
-fi
+    -p, --path      Install a local repository
+EOF
+}
 
-# Installs foundry from a local repository if --path parameter is provided
-if [[ -n "$FOUNDRYUP_LOCAL_REPO" ]]; then
+say() {
+  printf 'foundryup: %s\n' "$1"
+}
 
-  # Ignore branches/versions as we do not want to modify local git state
-  if [ -n "$FOUNDRYUP_REPO" ] || [ -n "$FOUNDRY_BRANCH" ] || [ -n "$FOUNDRY_VERSION" ]; then
-    echo "foundryup: !WARN! --branch, --version, and --repo arguments are ignored during local install"
+warn() {
+  say "warning: ${1}" >&2
+}
+
+err() {
+  say "$1" >&2
+  exit 1
+}
+
+need_cmd() {
+  if ! check_cmd "$1"; then
+    err "need '$1' (command not found)"
   fi
+}
 
-  if ! command -v cargo &> /dev/null ; then
-    # Error if cargo is not already installed.
-    echo "foundryup: cargo is not installed. Please install it first."
-    exit 1
-  fi
+check_cmd() {
+  command -v "$1" > /dev/null 2>&1
+}
 
-  # Enter local repo and build
-  echo "foundryup: installing from $FOUNDRYUP_LOCAL_REPO"
-  cd $FOUNDRYUP_LOCAL_REPO
-  RUSTFLAGS="-C target-cpu=native" cargo build --release # need 4 speed
+# Run a command that should never fail. If the command fails execution
+# will immediately terminate with an error showing the failing
+# command.
+ensure() {
+  if ! "$@"; then err "command failed: $*"; fi
+}
 
-
-  # Remove prior installations if they exist
-  rm -f "$FOUNDRY_BIN_DIR/forge"
-  rm -f "$FOUNDRY_BIN_DIR/cast"
-
-  # Symlink from local repo binaries to bin dir
-  ln -s "$PWD/target/release/forge" "$FOUNDRY_BIN_DIR/forge"
-  ln -s "$PWD/target/release/cast" "$FOUNDRY_BIN_DIR/cast"
-  echo foundryup: done!
-  exit 0
-fi
-
-FOUNDRYUP_REPO=${FOUNDRYUP_REPO-gakonst/foundry}
-
-if [[ "$FOUNDRYUP_REPO" == "gakonst/foundry" && -z "$FOUNDRYUP_BRANCH" ]]; then
-  FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION-nightly}
-  FOUNDRYUP_TAG=$FOUNDRYUP_VERSION
-
-  # Normalize versions (handle channels, versions without v prefix
-  if [[ "$FOUNDRYUP_VERSION" == "nightly" ]]; then
-    # Locate real nightly tag
-    SHA=$(curl -sSf https://api.github.com/repos/${FOUNDRYUP_REPO}/git/refs/tags/nightly \
-      | grep -Eo '"sha"[^,]*' \
-      | grep -Eo '[^:]*$' \
-      | tr -d '"' \
-      | tr -d ' ')
-    FOUNDRYUP_TAG="nightly-${SHA}"
-  elif [[ "$FOUNDRYUP_VERSION" == nightly* ]]; then
-    FOUNDRYUP_VERSION="nightly"
-  elif [[ "$FOUNDRYUP_VERSION" == [[:digit:]]* ]]; then
-    # Add v prefix
-    FOUNDRYUP_VERSION="v${FOUNDRYUP_VERSION}"
-    FOUNDRYUP_TAG="${FOUNDRYUP_VERSION}"
-  fi
-
-  PLATFORM="$(uname -s)"
-  case $PLATFORM in
-    Linux)
-      PLATFORM="linux"
-      ;;
-    Darwin)
-      PLATFORM="darwin"
-      ;;
-    *)
-      echo "foundryup: unsupported platform: $PLATFORM"
-      exit 1
-      ;;
-  esac
-
-  ARCHITECTURE="$(uname -m)"
-  if [ "${ARCHITECTURE}" = "x86_64" ]; then
-    # Redirect stderr to /dev/null to avoid printing errors if non Rosetta.
-    if [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = "1" ]; then
-      ARCHITECTURE="arm64" # Rosetta.
-    else
-      ARCHITECTURE="amd64" # Intel.
-    fi
-  elif [ "${ARCHITECTURE}" = "arm64" ] ||[ "${ARCHITECTURE}" = "aarch64" ] ; then
-    ARCHITECTURE="arm64" # Arm.
-  else
-    ARCHITECTURE="amd64" # Amd.
-  fi
-
-  # Compute the URL of the release tarball in the Foundry repository.
-  RELEASE_URL="https://github.com/${FOUNDRYUP_REPO}/releases/download/${FOUNDRYUP_TAG}/"
-  BIN_TARBALL_URL="${RELEASE_URL}foundry_${FOUNDRYUP_VERSION}_${PLATFORM}_${ARCHITECTURE}.tar.gz"
-  MAN_TARBALL_URL="${RELEASE_URL}foundry_man_${FOUNDRYUP_VERSION}.tar.gz"
-
-  # Download the binaries tarball and unpack it into the .foundry bin directory.
-  curl -# -L $BIN_TARBALL_URL | tar -xvzC $FOUNDRY_BIN_DIR
-  # Download the man tarball and unpack it into the .foundry man directory.
-  curl -# -L $MAN_TARBALL_URL | tar -xvzC $FOUNDRY_MAN_DIR
-  echo foundryup: done!
-else
-  FOUNDRYUP_BRANCH=${FOUNDRYUP_BRANCH-master}
-
-  if ! command -v cargo &> /dev/null ; then
-    # Error if cargo is not already installed.
-    echo "foundryup: cargo is not installed. Please install it first."
-    exit 1
-  fi
-
-  REPO_PATH="${FOUNDRY_DIR}/${FOUNDRYUP_REPO}"
-
-  if [ -d $REPO_PATH ]; then
-    # If the repo path exists move to it and do a force checkout, discarding any local changes
-    cd $REPO_PATH
-    git fetch
-    git reset --hard origin/${FOUNDRYUP_BRANCH}
-  else
-    # Repo path did not exist, grab the author from the repo, make a directory in .foundry, cd to it and clone.
-    IFS="/" read -ra AUTHOR <<< "$FOUNDRYUP_REPO"
-    mkdir -p "$FOUNDRY_DIR/$AUTHOR"
-    cd "$FOUNDRY_DIR/$AUTHOR"
-    git clone https://github.com/${FOUNDRYUP_REPO}
-    cd $REPO_PATH
-    git checkout ${FOUNDRYUP_BRANCH}
-  fi
-
-  # Build the repo and install it locally to the .foundry bin directory.
-  # --root appends /bin to the directory it is given, so we pass FOUNDRY_DIR.
-  cargo install --path ./cli --bins --locked --force --root $FOUNDRY_DIR
-
-  # If help2man is installed, use it to add Foundry man pages.
-  if command -v help2man &> /dev/null ; then
-    help2man -N $FOUNDRY_BIN_DIR/forge > $FOUNDRY_MAN_DIR/forge.1
-    help2man -N $FOUNDRY_BIN_DIR/cast > $FOUNDRY_MAN_DIR/cast.1
-  fi
-  echo foundryup: done!
-fi
+main "$@" || exit 1
