@@ -140,45 +140,49 @@ impl CallTraceDecoder {
     ///
     /// Unknown contracts are contracts that either lack a label or an ABI.
     pub fn identify(&mut self, trace: &CallTraceArena, identifier: &impl TraceIdentifier) {
-        trace.addresses_iter().for_each(|(address, code)| {
-            // We only try to identify addresses with missing data
-            if self.labels.contains_key(address) && self.contracts.contains_key(address) {
-                return
-            }
+        let unidentified_addresses = trace
+            .addresses()
+            .into_iter()
+            .filter(|(address, _)| {
+                !self.labels.contains_key(address) || !self.contracts.contains_key(address)
+            })
+            .collect();
 
-            let (contract, label, abi) = identifier.identify_address(address, code);
-            if let Some(contract) = contract {
-                self.contracts.entry(*address).or_insert(contract);
-            }
+        identifier.identify_addresses(unidentified_addresses).iter().for_each(
+            |(address, contract, label, abi)| {
+                if let Some(contract) = contract {
+                    self.contracts.entry(*address).or_insert(contract.to_string());
+                }
 
-            if let Some(label) = label {
-                self.labels.entry(*address).or_insert(label);
-            }
+                if let Some(label) = label {
+                    self.labels.entry(*address).or_insert(label.to_string());
+                }
 
-            if let Some(abi) = abi {
-                // Store known functions for the address
-                abi.functions()
-                    .map(|func| (func.short_signature(), func.clone()))
-                    .for_each(|(sig, func)| self.functions.entry(sig).or_default().push(func));
+                if let Some(abi) = abi {
+                    // Store known functions for the address
+                    abi.functions()
+                        .map(|func| (func.short_signature(), func.clone()))
+                        .for_each(|(sig, func)| self.functions.entry(sig).or_default().push(func));
 
-                // Flatten events from all ABIs
-                abi.events()
-                    .map(|event| ((event.signature(), indexed_inputs(event)), event.clone()))
-                    .for_each(|(sig, event)| {
-                        self.events.entry(sig).or_default().push(event);
+                    // Flatten events from all ABIs
+                    abi.events()
+                        .map(|event| ((event.signature(), indexed_inputs(event)), event.clone()))
+                        .for_each(|(sig, event)| {
+                            self.events.entry(sig).or_default().push(event);
+                        });
+
+                    // Flatten errors from all ABIs
+                    abi.errors().for_each(|error| {
+                        let entry = self
+                            .errors
+                            .errors
+                            .entry(error.name.clone())
+                            .or_insert_with(Default::default);
+                        entry.push(error.clone());
                     });
-
-                // Flatten errors from all ABIs
-                abi.errors().for_each(|error| {
-                    let entry = self
-                        .errors
-                        .errors
-                        .entry(error.name.clone())
-                        .or_insert_with(Default::default);
-                    entry.push(error.clone());
-                });
-            }
-        });
+                }
+            },
+        );
     }
 
     pub fn decode(&self, traces: &mut CallTraceArena) {

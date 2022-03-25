@@ -14,7 +14,10 @@ use ethers::{
     types::U256,
 };
 use serde::{Deserialize, Serialize};
-use std::fmt::{self, Write};
+use std::{
+    collections::HashSet,
+    fmt::{self, Write},
+};
 
 /// An arena of [CallTraceNode]s
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,20 +63,23 @@ impl CallTraceArena {
         }
     }
 
-    pub fn addresses_iter(&self) -> impl Iterator<Item = (&Address, Option<&Vec<u8>>)> {
-        self.arena.iter().map(|node| {
-            let code = if node.trace.created() {
-                if let RawOrDecodedReturnData::Raw(bytes) = &node.trace.output {
-                    Some(bytes)
+    pub fn addresses(&self) -> HashSet<(&Address, Option<&Vec<u8>>)> {
+        self.arena
+            .iter()
+            .map(|node| {
+                let code = if node.trace.created() {
+                    if let RawOrDecodedReturnData::Raw(bytes) = &node.trace.output {
+                        Some(bytes)
+                    } else {
+                        None
+                    }
                 } else {
                     None
-                }
-            } else {
-                None
-            };
+                };
 
-            (&node.trace.address, code)
-        })
+                (&node.trace.address, code)
+            })
+            .collect()
     }
 }
 

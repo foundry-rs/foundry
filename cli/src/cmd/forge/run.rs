@@ -144,6 +144,9 @@ impl Cmd for RunArgs {
         };
 
         // Identify addresses in each trace
+        // TODO: Could we use the Etherscan identifier here? Main issue: Pulling source code and
+        // bytecode. Might be better to wait for an interactive debugger where we can do this on
+        // the fly while retaining access to the database?
         let local_identifier = LocalTraceIdentifier::new(&known_contracts);
         let mut decoder = CallTraceDecoder::new_with_labels(result.labeled_addresses.clone());
         for (_, trace) in &mut result.traces {
