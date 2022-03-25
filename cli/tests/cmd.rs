@@ -207,7 +207,7 @@ forgetest_init!(can_override_config, |prj: TestProject, mut cmd: TestCommand| {
     cmd.unset_env("DAPP_REMAPPINGS");
     pretty_err(&remappings_txt, fs::remove_file(&remappings_txt));
 
-    cmd.set_cmd(prj.bin()).args(["config", "--basic"]);
+    cmd.set_cmd(prj.forge_bin()).args(["config", "--basic"]);
     let expected = profile.into_basic().to_string_pretty().unwrap();
     pretty_eq!(expected.trim().to_string(), cmd.stdout().trim().to_string());
 });
@@ -280,7 +280,7 @@ forgetest_init!(can_emit_extra_output, |prj: TestProject, mut cmd: TestCommand| 
         ethers::solc::utils::read_json_file(artifact_path).unwrap();
     assert!(artifact.metadata.is_some());
 
-    cmd.fuse().args(["build", "--extra-output-files", "metadata", "--force"]).root_arg();
+    cmd.forge_fuse().args(["build", "--extra-output-files", "metadata", "--force"]).root_arg();
     cmd.assert_non_empty_stdout();
 
     let metadata_path = prj.paths().artifacts.join("Contract.sol/Contract.metadata.json");
@@ -411,17 +411,17 @@ contract Foo {}
     let stdout = cmd.stdout_lossy();
     assert!(stdout.contains("Compiler run successful"));
 
-    cmd.fuse().args(["build", "--force", "--use", "solc:0.8.11"]).root_arg();
+    cmd.forge_fuse().args(["build", "--force", "--use", "solc:0.8.11"]).root_arg();
 
     assert!(stdout.contains("Compiler run successful"));
 
     // fails to use solc that does not exist
-    cmd.fuse().args(["build", "--use", "this/solc/does/not/exist"]);
+    cmd.forge_fuse().args(["build", "--use", "this/solc/does/not/exist"]);
     assert!(cmd.stderr_lossy().contains("this/solc/does/not/exist does not exist"));
 
     // 0.8.11 was installed in previous step, so we can use the path to this directly
     let local_solc = ethers::solc::Solc::find_svm_installed_version("0.8.11").unwrap().unwrap();
-    cmd.fuse().args(["build", "--force", "--use"]).arg(local_solc.solc).root_arg();
+    cmd.forge_fuse().args(["build", "--force", "--use"]).arg(local_solc.solc).root_arg();
     assert!(stdout.contains("Compiler run successful"));
 });
 

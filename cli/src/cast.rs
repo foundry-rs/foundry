@@ -555,7 +555,7 @@ async fn main() -> eyre::Result<()> {
             let selector = contract.abi().functions().last().unwrap().short_signature();
             println!("0x{}", hex::encode(selector));
         }
-        Subcommands::FindBlock(cmd) => cmd.run()?,
+        Subcommands::FindBlock(cmd) => cmd.run()?.await?,
         Subcommands::Wallet { command } => match command {
             WalletSubcommands::New { path, password, unsafe_password } => {
                 let mut rng = thread_rng();
