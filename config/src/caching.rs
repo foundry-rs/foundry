@@ -134,7 +134,7 @@ impl Eq for CachedEndpoints {}
 
 impl Default for CachedEndpoints {
     fn default() -> Self {
-        CachedEndpoints::Remote
+        CachedEndpoints::All
     }
 }
 
