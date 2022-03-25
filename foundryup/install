@@ -89,6 +89,8 @@ if [[ "$FOUNDRYUP_REPO" == "gakonst/foundry" && -z "$FOUNDRYUP_BRANCH" ]]; then
       | tr -d '\''"'\'' \
       | tr -d '\'' '\'')
     FOUNDRYUP_TAG="nightly-${SHA}"
+  elif [[ "$FOUNDRYUP_VERSION" == nightly* ]]; then
+    FOUNDRYUP_VERSION="nightly"
   elif [[ "$FOUNDRYUP_VERSION" == [[:digit:]]* ]]; then
     # Add v prefix
     FOUNDRYUP_VERSION="v${FOUNDRYUP_VERSION}"
