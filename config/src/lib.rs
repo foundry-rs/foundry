@@ -686,6 +686,7 @@ impl Config {
                     &format!("[{}.optimizer_details.yulDetails]", self.profile),
                 );
         }
+        s = s.replace("[rpc_storage_caching]", &format!("[{}.rpc_storage_caching]", self.profile));
 
         Ok(format!(
             r#"[{}]

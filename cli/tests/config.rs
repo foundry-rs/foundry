@@ -1,18 +1,92 @@
 //! Contains various tests for checking forge commands related to config values
+use ethers::{
+    prelude::artifacts::YulDetails,
+    types::{Address, U256},
+};
 use forge::executor::opts::EvmOpts;
 use foundry_cli_test_utils::{
-    ethers_solc::remappings::Remapping,
+    ethers_solc::{remappings::Remapping, EvmVersion},
     forgetest, forgetest_init, pretty_eq,
     util::{pretty_err, TestCommand, TestProject},
 };
-use foundry_config::{Config, OptimizerDetails};
+use foundry_config::{
+    caching::{CachedChains, CachedEndpoints, StorageCachingConfig},
+    Config, OptimizerDetails, SolcReq,
+};
 use pretty_assertions::assert_eq;
-use std::fs;
+use std::{fs, path::PathBuf, str::FromStr};
 
 // import forge utils as mod
 #[allow(unused)]
 #[path = "../src/utils.rs"]
 mod forge_utils;
+
+// tests all config values are supported
+forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.set_current_dir(prj.root());
+    // explicitly set all values
+    let input = Config {
+        profile: Config::DEFAULT_PROFILE,
+        __root: Default::default(),
+        src: "test-src".into(),
+        test: "test-test".into(),
+        out: "out-test".into(),
+        libs: vec!["lib-test".into()],
+        cache: true,
+        cache_path: "test-cache".into(),
+        force: true,
+        evm_version: EvmVersion::Byzantium,
+        gas_reports: vec!["Contract".to_string()],
+        solc: Some(SolcReq::Local(PathBuf::from("custom-solc"))),
+        auto_detect_solc: false,
+        offline: true,
+        optimizer: false,
+        optimizer_runs: 1000,
+        optimizer_details: Some(OptimizerDetails {
+            yul: Some(false),
+            yul_details: Some(YulDetails { stack_allocation: Some(true), ..Default::default() }),
+            ..Default::default()
+        }),
+        extra_output: Default::default(),
+        extra_output_files: Default::default(),
+        names: true,
+        sizes: true,
+        fuzz_runs: 1000,
+        fuzz_max_local_rejects: 2000,
+        fuzz_max_global_rejects: 100203,
+        ffi: true,
+        sender: "00a329c0648769A73afAc7F9381D08FB43dBEA72".parse().unwrap(),
+        tx_origin: "00a329c0648769A73afAc7F9F81E08FB43dBEA72".parse().unwrap(),
+        initial_balance: U256::from(0xffffffffffffffffffffffffu128),
+        block_number: 10,
+        fork_block_number: Some(200),
+        chain_id: Some(9999.into()),
+        gas_limit: 99_000_000,
+        gas_price: 999,
+        block_base_fee_per_gas: 10,
+        block_coinbase: Address::random(),
+        block_timestamp: 10,
+        block_difficulty: 10,
+        block_gas_limit: Some(100),
+        eth_rpc_url: Some("localhost".to_string()),
+        verbosity: 4,
+        remappings: vec![Remapping::from_str("ds-test=lib/ds-test/").unwrap().into()],
+        libraries: vec![
+            "src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6".to_string()
+        ],
+        ignored_error_codes: vec![],
+        via_ir: true,
+        rpc_storage_caching: StorageCachingConfig {
+            chains: CachedChains::None,
+            endpoints: CachedEndpoints::Remote,
+        },
+        no_storage_caching: true,
+        __non_exhaustive: (),
+    };
+    prj.write_config(input.clone());
+    let config = cmd.config();
+    assert_eq!(input, config);
+});
 
 // tests config gets printed to std out
 forgetest!(can_show_config, |prj: TestProject, mut cmd: TestCommand| {
@@ -141,7 +215,8 @@ contract Greeter {}
         .unwrap();
 
     // explicitly set to run with 0.8.10
-    let config = Config { solc: Some("0.8.10".into()), ..Default::default() };
+    let config =
+        Config { solc: Some(SolcReq::Local(PathBuf::from("0.8.10"))), ..Default::default() };
     prj.write_config(config);
 
     cmd.arg("build");
