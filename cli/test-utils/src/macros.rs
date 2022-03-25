@@ -39,7 +39,21 @@ macro_rules! forgetest {
     ($test:ident, $style:expr, $fun:expr) => {
         #[test]
         fn $test() {
-            let (prj, cmd) = $crate::util::setup(stringify!($test), $style);
+            let (prj, cmd) = $crate::util::setup_forge(stringify!($test), $style);
+            $fun(prj, cmd);
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! casttest {
+    ($test:ident, $fun:expr) => {
+        $crate::casttest!($test, $crate::ethers_solc::PathStyle::Dapptools, $fun);
+    };
+    ($test:ident, $style:expr, $fun:expr) => {
+        #[test]
+        fn $test() {
+            let (prj, cmd) = $crate::util::setup_cast(stringify!($test), $style);
             $fun(prj, cmd);
         }
     };
@@ -55,7 +69,7 @@ macro_rules! forgetest_ignore {
         #[test]
         #[ignore]
         fn $test() {
-            let (prj, cmd) = $crate::util::setup(stringify!($test), $style);
+            let (prj, cmd) = $crate::util::setup_forge(stringify!($test), $style);
             $fun(prj, cmd);
         }
     };
@@ -70,7 +84,7 @@ macro_rules! forgetest_init {
     ($test:ident, $style:expr, $fun:expr) => {
         #[test]
         fn $test() {
-            let (prj, cmd) = $crate::util::setup(stringify!($test), $style);
+            let (prj, cmd) = $crate::util::setup_forge(stringify!($test), $style);
             $crate::util::initialize(prj.root());
             $fun(prj, cmd);
         }
@@ -122,7 +136,7 @@ macro_rules! forgetest_external {
                 return
             };
 
-            let (prj, mut cmd) = $crate::util::setup(stringify!($test), $style);
+            let (prj, mut cmd) = $crate::util::setup_forge(stringify!($test), $style);
 
             // Wipe the default structure
             prj.wipe();
