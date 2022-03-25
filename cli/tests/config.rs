@@ -21,7 +21,7 @@ use std::{fs, path::PathBuf, str::FromStr};
 #[path = "../src/utils.rs"]
 mod forge_utils;
 
-// tests all config values are supported
+// tests all config values that are in use
 forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
     cmd.set_current_dir(prj.root());
     // explicitly set all values
