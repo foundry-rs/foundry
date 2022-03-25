@@ -236,7 +236,6 @@ impl MultiContractRunner {
                 (name, result)
             })
             .collect::<BTreeMap<_, _>>();
-
         Ok(results)
     }
 
