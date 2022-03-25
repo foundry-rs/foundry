@@ -126,6 +126,7 @@ main() {
     if [ -d $REPO_PATH ]; then
       # If the repo path exists move to it and do a force checkout, discarding any local changes
       cd $REPO_PATH
+      git switch ${FOUNDRYUP_BRANCH}
       ensure git fetch
       ensure git reset --hard origin/${FOUNDRYUP_BRANCH}
     else
