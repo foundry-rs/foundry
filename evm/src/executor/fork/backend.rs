@@ -394,7 +394,6 @@ pub struct SharedBackend {
 
 impl Drop for SharedBackend {
     fn drop(&mut self) {
-        tracing::trace!( target: "sharedbackend", "dropping");
         // disconnect the command channel
         self.backend.disconnect();
         if self.backend.is_closed() {
@@ -402,13 +401,12 @@ impl Drop for SharedBackend {
             // was the last sender, let the handler know and wait until it gracefully shut down
             let (ack, rx) = oneshot_channel();
 
-            self.shutdown.try_send(ack).unwrap();
-            // if self.shutdown.try_send(ack).is_ok() {
+            if self.shutdown.try_send(ack).is_ok() {
                 tracing::trace!( target: "sharedbackend", "waiting for ack");
                 if let Err(err) = rx.recv() {
                     warn!(target: "sharedbackend", "Failed to receive ack:{}", err);
                 }
-            // }
+            }
             tracing::trace!( target: "sharedbackend", "shut down");
         }
     }

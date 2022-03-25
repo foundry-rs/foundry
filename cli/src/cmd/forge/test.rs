@@ -386,7 +386,7 @@ fn test(
         let local_identifier = LocalTraceIdentifier::new(&runner.known_contracts);
         let (tx, rx) = channel::<(String, BTreeMap<String, TestResult>)>();
 
-        thread::spawn(move || runner.test(&filter, Some(tx)).unwrap());
+        let handle = thread::spawn(move || runner.test(&filter, Some(tx)).unwrap());
 
         let mut results: BTreeMap<String, BTreeMap<String, TestResult>> = BTreeMap::new();
         let mut gas_report = GasReport::new(gas_reports);
@@ -463,6 +463,9 @@ fn test(
         if gas_reporting {
             println!("{}", gas_report.finalize());
         }
+
+        // reattach the thread
+        let _ = handle.join();
 
         Ok(TestOutcome::new(results, allow_failure))
     }
