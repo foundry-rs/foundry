@@ -47,7 +47,6 @@ jobs:
         uses: docker/metadata-action@v3.6.2
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          labels: latest
         
 
 
@@ -59,5 +58,5 @@ jobs:
         with:
           context: .
           push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
+          tags: ${{ steps.meta.outputs.tags == 'nigthly' && 'nightly' }}, ${{ (steps.meta.outputs.tags == 'master' || steps.meta.outputs.tags == 'main') && 'latest'}}
           labels: ${{ steps.meta.outputs.labels }}
