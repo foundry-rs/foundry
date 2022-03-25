@@ -2,6 +2,7 @@
 
 use crate::cmd::{
     forge::{
+        build::BuildArgs,
         test,
         test::{Test, TestOutcome},
     },
@@ -22,6 +23,7 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
 };
+use watchexec::config::{InitConfig, RuntimeConfig};
 
 /// A regex that matches a basic snapshot entry like
 /// `Test:testDeposit() (gas: 58804)`
@@ -62,6 +64,24 @@ pub struct SnapshotArgs {
         value_name = "SNAPSHOT_FILE"
     )]
     snap: PathBuf,
+}
+
+impl SnapshotArgs {
+    /// Returns whether `SnapshotArgs` was configured with `--watch`
+    pub fn is_watch(&self) -> bool {
+        self.test.build_args().is_watch()
+    }
+
+    /// Returns the [`watchexec::InitConfig`] and [`watchexec::RuntimeConfig`] necessary to
+    /// bootstrap a new [`watchexe::Watchexec`] loop.
+    pub(crate) fn watchexec_config(&self) -> eyre::Result<(InitConfig, RuntimeConfig)> {
+        self.test.build_args().watchexec_config()
+    }
+
+    /// Returns the nested [`BuildArgs`]
+    pub fn build_args(&self) -> &BuildArgs {
+        self.test.build_args()
+    }
 }
 
 impl Cmd for SnapshotArgs {

@@ -1,12 +1,13 @@
 //! Watch mode support
 
 use crate::{
-    cmd::forge::{build::BuildArgs, test::TestArgs},
+    cmd::forge::{build::BuildArgs, snapshot::SnapshotArgs, test::TestArgs},
     utils::{self, FoundryPathExt},
 };
 use clap::Parser;
 use regex::Regex;
 use std::{convert::Infallible, path::PathBuf, str::FromStr, sync::Arc};
+use tracing::trace;
 use watchexec::{
     action::{Action, Outcome, PreSpawn},
     command::Shell,
@@ -49,7 +50,7 @@ pub struct WatchArgs {
     #[clap(
         short = 'w',
         long = "watch",
-        value_name = "path",
+        value_name = "PATH",
         min_values = 0,
         multiple_values = true,
         multiple_occurrences = false
@@ -57,15 +58,61 @@ pub struct WatchArgs {
     pub watch: Option<Vec<PathBuf>>,
 }
 
+impl WatchArgs {
+    /// Returns new [InitConfig] and [RuntimeConfig] based on the [WatchArgs]
+    ///
+    /// If paths were provided as arguments the these will be used as the watcher's pathset,
+    /// otherwise the path the closure returns will be used
+    pub fn watchexec_config(
+        &self,
+        f: impl FnOnce() -> PathBuf,
+    ) -> eyre::Result<(InitConfig, RuntimeConfig)> {
+        let init = init()?;
+        let mut runtime = runtime(self)?;
+
+        // contains all the arguments `--watch p1, p2, p3`
+        let has_paths = self.watch.as_ref().map(|paths| !paths.is_empty()).unwrap_or_default();
+
+        if !has_paths {
+            // use alternative pathset
+            runtime.pathset(Some(f()));
+        }
+        Ok((init, runtime))
+    }
+}
+
 /// Executes a [`Watchexec`] that listens for changes in the project's src dir and reruns `forge
 /// build`
 pub async fn watch_build(args: BuildArgs) -> eyre::Result<()> {
     let (init, mut runtime) = args.watchexec_config()?;
     let cmd = cmd_args(args.watch.watch.as_ref().map(|paths| paths.len()).unwrap_or_default());
+
+    trace!("watch build cmd={:?}", cmd);
     runtime.command(cmd.clone());
 
     let wx = Watchexec::new(init, runtime.clone())?;
     on_action(args.watch, runtime, Arc::clone(&wx), cmd, (), |_| {});
+
+    // start executing the command immediately
+    wx.send_event(Event::default()).await?;
+    wx.main().await??;
+
+    Ok(())
+}
+
+/// Executes a [`Watchexec`] that listens for changes in the project's src dir and reruns `forge
+/// snapshot`
+pub async fn watch_snapshot(args: SnapshotArgs) -> eyre::Result<()> {
+    let (init, mut runtime) = args.watchexec_config()?;
+    let cmd = cmd_args(
+        args.build_args().watch.watch.as_ref().map(|paths| paths.len()).unwrap_or_default(),
+    );
+
+    trace!("watch snapshot cmd={:?}", cmd);
+    runtime.command(cmd.clone());
+    let wx = Watchexec::new(init, runtime.clone())?;
+
+    on_action(args.build_args().watch.clone(), runtime, Arc::clone(&wx), cmd, (), |_| {});
 
     // start executing the command immediately
     wx.send_event(Event::default()).await?;
@@ -81,6 +128,7 @@ pub async fn watch_test(args: TestArgs) -> eyre::Result<()> {
     let cmd = cmd_args(
         args.build_args().watch.watch.as_ref().map(|paths| paths.len()).unwrap_or_default(),
     );
+    trace!("watch test cmd={:?}", cmd);
     runtime.command(cmd.clone());
     let wx = Watchexec::new(init, runtime.clone())?;
 
