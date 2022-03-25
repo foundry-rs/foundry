@@ -393,12 +393,12 @@ where
         &self,
         specific_block: Option<T>,
         contract: A,
-    ) -> eyre::Result<()> {
+    ) -> eyre::Result<RawLogs<'_, '_, M>> {
         let address = match contract.into() {
             NameOrAddress::Name(ref ens_name) => self.provider.resolve_name(ens_name).await?,
             NameOrAddress::Address(addr) => addr,
         };
-        let filter = match specific_block {
+        let mut filter = match specific_block {
             Some(block_id) => {
                 let filter: Filter = match block_id.into() {
                     BlockId::Hash(hash) => Filter::new()
@@ -410,12 +410,14 @@ where
                 };
                 filter
             }
-            None => {
-                let mut filter = Filter::new().address(ValueOrArray::Value(address.into()));
-                filter
-            }
+            None => Filter::new().address(ValueOrArray::Value(address.into())),
         };
-        Ok(())
+        print!("filter {:?}\n provider: {:?}\n", filter, self.provider);
+        Ok(RawLogs {
+            provider: &self.provider,
+            block_stream: self.provider.watch_blocks().await?,
+            filter,
+        })
     }
 
     async fn block_field_as_num<T: Into<BlockId>>(&self, block: T, field: String) -> Result<U256> {
@@ -1275,28 +1277,29 @@ impl SimpleCast {
     }
 }
 
-struct RawLogs<'a, M, R> {
-    provider: M,
-    log_stream: FilterWatcher<'a, M, R>,
+pub struct RawLogs<'a, 'b, M: Middleware> {
+    provider: &'b M,
+    block_stream: FilterWatcher<'a, <M as Middleware>::Provider, TxHash>,
     filter: Filter,
 }
+impl<'a, 'b, M: Middleware> Unpin for RawLogs<'a, 'b, M> {}
 
-impl<
-        'a,
-        M: JsonRpcClient + Middleware,
-        R: 'a + DeserializeOwned + Sync + Send + Serialize + Debug + Into<TxHash>,
-    > Stream for RawLogs<'a, M, R>
+impl<'a, 'b, M: Middleware> Stream for RawLogs<'a, 'b, M>
+where
+    M: Middleware,
 {
     type Item = Result<Vec<Log>, <M as Middleware>::Error>;
-
     fn poll_next(
         mut self: Pin<&mut Self>,
         cx: &mut TaskContext<'_>,
     ) -> Poll<Option<Result<Vec<Log>, <M as Middleware>::Error>>> {
-        match Pin::new(&mut self.log_stream).poll_next(cx) {
+        match Pin::new(&mut self.block_stream).poll_next(cx) {
             Poll::Ready(block) => {
-                self.filter = self.filter.at_block_hash(block.unwrap());
-                match Pin::new(&mut self.provider.get_logs(&self.filter)).poll(cx) {
+                println!("New block! {:?}", block);
+                // Apply the new filter so that it shows logs from the latest block
+                let filter = self.filter.clone().at_block_hash(block.unwrap());
+                // Now that the filter is set, we ask the Provider of any logs based on the filter
+                match Pin::new(&mut self.provider.get_logs(&filter.clone())).poll(cx) {
                     Poll::Ready(result) => Poll::Ready(Some(result)),
                     Poll::Pending => Poll::Pending,
                 }
