@@ -159,6 +159,7 @@ impl JsonBlockCacheDB {
                     serde_json::to_writer(BufWriter::new(f), &self.data)
                         .map_err(|e| warn!(target: "cache" ,"Failed to write to json cache: {}", e))
                 });
+            trace!(target: "cache", "saved json cache path={:?}", path);
         }
     }
 }

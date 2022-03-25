@@ -333,14 +333,17 @@ where
         }
 
         if let Poll::Ready(Some(ack)) = Pin::new(&mut pin.shutdown).poll_next(cx) {
-            trace!(target: "backendhandler", "received shutdown signal");
+            trace!(target: "backendhandler", "received shutdown signal from sender");
             if pin.incoming.is_done() {
+                trace!(target: "backendhandler", "flushing cache");
                 // if request channel was closed, flush the cached storage to disk, if caching is
                 // enabled
                 pin.db.cache().flush();
             }
             // signaling back
-            let _ = ack.send(());
+            if let Err(err) = ack.send(()) {
+                warn!(target: "backendhandler", "Failed to send shutdown ack:{}", err);
+            }
         }
 
         // the handler is finished if the request channel was closed and all requests are processed
@@ -391,15 +394,21 @@ pub struct SharedBackend {
 
 impl Drop for SharedBackend {
     fn drop(&mut self) {
+        tracing::trace!( target: "sharedbackend", "dropping");
         // disconnect the command channel
         self.backend.disconnect();
         if self.backend.is_closed() {
             tracing::trace!( target: "sharedbackend", "shutting down");
             // was the last sender, let the handler know and wait until it gracefully shut down
             let (ack, rx) = oneshot_channel();
-            if self.shutdown.try_send(ack).is_ok() {
-                let _ = rx.recv();
-            }
+
+            self.shutdown.try_send(ack).unwrap();
+            // if self.shutdown.try_send(ack).is_ok() {
+                tracing::trace!( target: "sharedbackend", "waiting for ack");
+                if let Err(err) = rx.recv() {
+                    warn!(target: "sharedbackend", "Failed to receive ack:{}", err);
+                }
+            // }
             tracing::trace!( target: "sharedbackend", "shut down");
         }
     }

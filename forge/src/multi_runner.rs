@@ -237,6 +237,8 @@ impl MultiContractRunner {
             })
             .collect::<BTreeMap<_, _>>();
 
+        drop(db);
+        println!("ran all tests");
         Ok(results)
     }
 
