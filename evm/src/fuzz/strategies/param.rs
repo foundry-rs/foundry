@@ -140,3 +140,32 @@ pub fn fuzz_param_from_state(param: &ParamType, state: EvmFuzzState) -> BoxedStr
             .boxed(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fuzz::strategies::{build_initial_state, fuzz_calldata, fuzz_calldata_from_state};
+    use ethers::abi::AbiParser;
+    use revm::db::{CacheDB, EmptyDB};
+
+    #[test]
+    fn can_fuzz_array() {
+        let f = "function testArray(uint64[2] calldata values)";
+        let func = AbiParser::default().parse_function(f).unwrap();
+
+        let db = CacheDB::new(EmptyDB());
+        let state = build_initial_state(&db);
+
+        let calldata = fuzz_calldata_from_state(func.clone(), state.clone());
+
+        let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
+        let mut runner = proptest::test_runner::TestRunner::new(cfg);
+
+        let strat = proptest::strategy::Union::new_weighted(vec![
+            (60, fuzz_calldata(func.clone())),
+            (40, fuzz_calldata_from_state(func.clone(), state.clone())),
+        ]);
+
+        runner.clone().run(&strat, |calldata| Ok(()));
+    }
+}

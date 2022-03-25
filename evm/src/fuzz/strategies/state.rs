@@ -3,7 +3,7 @@ use crate::executor::StateChangeset;
 use bytes::Bytes;
 use ethers::{
     abi::{Function, RawLog},
-    types::{H256, U256},
+    types::{Address, H256, U256},
 };
 use proptest::prelude::{BoxedStrategy, Strategy};
 use revm::{
@@ -31,6 +31,7 @@ pub fn fuzz_calldata_from_state(
 
     strats
         .prop_map(move |tokens| {
+            dbg!(tokens.clone());
             tracing::trace!(input = ?tokens);
             func.encode_input(&tokens).unwrap().into()
         })
@@ -54,6 +55,13 @@ pub fn build_initial_state<DB: DatabaseRef>(db: &CacheDB<DB>) -> EvmFuzzState {
             state.insert(u256_to_h256(*slot).into());
             state.insert(u256_to_h256(*value).into());
         }
+    }
+
+    // need at least some state data if db is empty otherwise we can't select random data for state
+    // fuzzing
+    if state.is_empty() {
+        // prefill with a random addresses
+        state.insert(H256::from(Address::random()).into());
     }
 
     Rc::new(RefCell::new(state))
