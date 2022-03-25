@@ -56,11 +56,13 @@ pub fn fuzz_param(param: &ParamType) -> impl Strategy<Value = Token> {
             .collect::<Vec<_>>()
             .prop_map(Token::FixedBytes)
             .boxed(),
-        ParamType::FixedArray(param, size) => (0..*size as u64)
-            .map(|_| fuzz_param(param).prop_map(|param| param.into_token()))
-            .collect::<Vec<_>>()
-            .prop_map(Token::FixedArray)
-            .boxed(),
+        ParamType::FixedArray(param, size) => {
+            std::iter::repeat_with(|| fuzz_param(param).prop_map(|param| param.into_token()))
+                .take(*size)
+                .collect::<Vec<_>>()
+                .prop_map(Token::FixedArray)
+                .boxed()
+        }
         ParamType::Tuple(params) => {
             params.iter().map(fuzz_param).collect::<Vec<_>>().prop_map(Token::Tuple).boxed()
         }
@@ -128,7 +130,8 @@ pub fn fuzz_param_from_state(param: &ParamType, state: EvmFuzzState) -> BoxedStr
             value.prop_map(move |value| Token::FixedBytes(value[32 - size..].to_vec())).boxed()
         }
         ParamType::FixedArray(param, size) => {
-            proptest::collection::vec(fuzz_param_from_state(param, state), 0..*size)
+            let fixed_size = *size;
+            proptest::collection::vec(fuzz_param_from_state(param, state), fixed_size)
                 .prop_map(Token::FixedArray)
                 .boxed()
         }
@@ -143,7 +146,6 @@ pub fn fuzz_param_from_state(param: &ParamType, state: EvmFuzzState) -> BoxedStr
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::fuzz::strategies::{build_initial_state, fuzz_calldata, fuzz_calldata_from_state};
     use ethers::abi::AbiParser;
     use revm::db::{CacheDB, EmptyDB};
@@ -156,16 +158,14 @@ mod tests {
         let db = CacheDB::new(EmptyDB());
         let state = build_initial_state(&db);
 
-        let calldata = fuzz_calldata_from_state(func.clone(), state.clone());
-
-        let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
-        let mut runner = proptest::test_runner::TestRunner::new(cfg);
-
         let strat = proptest::strategy::Union::new_weighted(vec![
             (60, fuzz_calldata(func.clone())),
             (40, fuzz_calldata_from_state(func.clone(), state.clone())),
         ]);
 
-        runner.clone().run(&strat, |calldata| Ok(()));
+        let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
+        let mut runner = proptest::test_runner::TestRunner::new(cfg);
+
+        let _ = runner.run(&strat, |_| Ok(()));
     }
 }

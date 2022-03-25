@@ -31,9 +31,16 @@ pub fn fuzz_calldata_from_state(
 
     strats
         .prop_map(move |tokens| {
-            dbg!(tokens.clone());
             tracing::trace!(input = ?tokens);
-            func.encode_input(&tokens).unwrap().into()
+            func.encode_input(&tokens)
+                .unwrap_or_else(|_| {
+                    panic!(
+                        r#"Fuzzer generated invalid tokens {:?} for function `{}` inputs {:?}
+This is a bug, please open an issue: https://github.com/gakonst/foundry/issues"#,
+                        tokens, func.name, func.inputs
+                    )
+                })
+                .into()
         })
         .no_shrink()
         .boxed()
