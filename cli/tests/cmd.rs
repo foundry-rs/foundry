@@ -163,7 +163,7 @@ forgetest_init!(can_emit_extra_output, |prj: TestProject, mut cmd: TestCommand| 
         ethers::solc::utils::read_json_file(artifact_path).unwrap();
     assert!(artifact.metadata.is_some());
 
-    cmd.fuse().args(["build", "--extra-output-files", "metadata", "--force"]).root_arg();
+    cmd.forge_fuse().args(["build", "--extra-output-files", "metadata", "--force"]).root_arg();
     cmd.assert_non_empty_stdout();
 
     let metadata_path = prj.paths().artifacts.join("Contract.sol/Contract.metadata.json");
