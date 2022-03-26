@@ -643,13 +643,16 @@ impl Tui {
         // color memory words based on write/read
         let (mut word, mut color) =
             if let Instruction::OpCode(op) = debug_steps[current_step].instruction {
-                let w = debug_steps[current_step].stack[debug_steps[current_step].stack.len() - 1]
-                    .as_usize() /
-                    32;
-                match op {
-                    0x51 => (Some(w), Some(Color::Cyan)), // read mem word
-                    0x52 => (Some(w), Some(Color::Red)),  // write mem word
-                    _ => (None, None),
+                let stack_len = debug_steps[current_step].stack.len();
+                if stack_len > 0 {
+                    let w = debug_steps[current_step].stack[stack_len - 1];
+                    match op {
+                        0x51 => (Some(w.as_usize() / 32), Some(Color::Cyan)), // read mem word
+                        0x52 => (Some(w.as_usize() / 32), Some(Color::Red)),  // write mem word
+                        _ => (None, None),
+                    }
+                } else {
+                    (None, None)
                 }
             } else {
                 (None, None)
@@ -657,10 +660,11 @@ impl Tui {
 
         // color word on previous write op
         if current_step > 0 {
-            if let Instruction::OpCode(op) = debug_steps[current_step - 1].instruction {
+            let prev_step = current_step - 1;
+            let stack_len = debug_steps[prev_step].stack.len();
+            if let Instruction::OpCode(op) = debug_steps[prev_step].instruction {
                 if op == 0x52 {
-                    let prev_top = debug_steps[current_step - 1].stack
-                        [debug_steps[current_step - 1].stack.len() - 1];
+                    let prev_top = debug_steps[prev_step].stack[stack_len - 1];
                     word = Some(prev_top.as_usize() / 32);
                     color = Some(Color::Green);
                 }
