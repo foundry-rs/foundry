@@ -4644,6 +4644,7 @@ dependencies = [
  "eyre",
  "forge",
  "hex",
+ "revm",
  "tui",
 ]
 

@@ -8,7 +8,7 @@ use crossterm::{
 };
 use ethers::{solc::artifacts::ContractBytecodeSome, types::Address};
 use eyre::Result;
-use forge::debug::DebugStep;
+use forge::debug::{DebugStep, Instruction};
 use std::{
     cmp::{max, min},
     collections::{BTreeMap, VecDeque},
@@ -26,6 +26,8 @@ use tui::{
     widgets::{Block, Borders, Paragraph, Wrap},
     Terminal,
 };
+
+use revm::opcode;
 
 /// Trait for starting the UI
 pub trait Ui {
@@ -640,6 +642,40 @@ impl Tui {
         let max_i = memory.len() / 32;
         let min_len = format!("{:x}", max_i * 32).len();
 
+        // color memory words based on write/read
+        let mut word = None;
+        let mut color = None;
+        if let Instruction::OpCode(op) = debug_steps[current_step].instruction {
+            let stack_len = debug_steps[current_step].stack.len();
+            if stack_len > 0 {
+                let w = debug_steps[current_step].stack[stack_len - 1];
+                match op {
+                    opcode::MLOAD => {
+                        word = Some(w.as_usize() / 32);
+                        color = Some(Color::Cyan);
+                    }
+                    opcode::MSTORE => {
+                        word = Some(w.as_usize() / 32);
+                        color = Some(Color::Red);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // color word on previous write op
+        if current_step > 0 {
+            let prev_step = current_step - 1;
+            let stack_len = debug_steps[prev_step].stack.len();
+            if let Instruction::OpCode(op) = debug_steps[prev_step].instruction {
+                if op == opcode::MSTORE {
+                    let prev_top = debug_steps[prev_step].stack[stack_len - 1];
+                    word = Some(prev_top.as_usize() / 32);
+                    color = Some(Color::Green);
+                }
+            }
+        }
+
         let text: Vec<Spans> = memory
             .chunks(32)
             .enumerate()
@@ -649,7 +685,15 @@ impl Tui {
                     .map(|byte| {
                         Span::styled(
                             format!("{:02x} ", byte),
-                            if *byte == 0 {
+                            if let (Some(w), Some(color)) = (word, color) {
+                                if i == w {
+                                    Style::default().fg(color)
+                                } else if *byte == 0 {
+                                    Style::default().fg(Color::Gray).add_modifier(Modifier::DIM)
+                                } else {
+                                    Style::default().fg(Color::White)
+                                }
+                            } else if *byte == 0 {
                                 Style::default().fg(Color::Gray).add_modifier(Modifier::DIM)
                             } else {
                                 Style::default().fg(Color::White)
