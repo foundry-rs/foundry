@@ -41,6 +41,9 @@ pub enum TUIExitReason {
     CharExit,
 }
 
+mod op_effects;
+use op_effects::stack_indices_affected;
+
 pub struct Tui {
     debug_arena: Vec<(Address, Vec<DebugStep>, bool)>,
     terminal: Terminal<CrosstermBackend<io::Stdout>>,
@@ -106,6 +109,7 @@ impl Tui {
         current_step: usize,
         creation: bool,
         draw_memory: &mut DrawMemory,
+        stack_labels: bool,
     ) {
         let total_size = f.size();
 
@@ -152,7 +156,7 @@ impl Tui {
                             draw_memory,
                             op_pane,
                         );
-                        Tui::draw_stack(f, debug_steps, current_step, stack_pane);
+                        Tui::draw_stack(f, debug_steps, current_step, stack_pane, stack_labels);
                         Tui::draw_memory(f, debug_steps, current_step, memory_pane);
                     }
                 } else {
@@ -170,7 +174,7 @@ impl Tui {
         let block_controls = Block::default();
 
         let text_output = Text::from(Span::styled(
-            "[q]: quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end",
+            "[q]: quit | [k/j]: prev/next op | [a/s]: prev/next jump | [c/C]: prev/next call | [g/G]: start/end | [t]: toggle stack labels",
             Style::default().add_modifier(Modifier::DIM)
         ));
         let paragraph = Paragraph::new(text_output)
@@ -585,25 +589,38 @@ impl Tui {
         debug_steps: &[DebugStep],
         current_step: usize,
         area: Rect,
+        stack_labels: bool,
     ) {
         let stack = &debug_steps[current_step].stack;
         let stack_space =
             Block::default().title(format!("Stack: {}", stack.len())).borders(Borders::ALL);
         let min_len = usize::max(format!("{}", stack.len()).len(), 2);
 
+        let indices_affected =
+            if let Instruction::OpCode(op) = debug_steps[current_step].instruction {
+                stack_indices_affected(op)
+            } else {
+                vec![]
+            };
+
         let text: Vec<Spans> = stack
             .iter()
             .rev()
             .enumerate()
             .map(|(i, stack_item)| {
-                let words: Vec<Span> = (0..32)
+                let affected =
+                    indices_affected.iter().find(|(affected_index, _name)| *affected_index == i);
+
+                let mut words: Vec<Span> = (0..32)
                     .into_iter()
                     .rev()
                     .map(|i| stack_item.byte(i))
                     .map(|byte| {
                         Span::styled(
                             format!("{:02x} ", byte),
-                            if byte == 0 {
+                            if affected.is_some() {
+                                Style::default().fg(Color::Cyan)
+                            } else if byte == 0 {
                                 Style::default().fg(Color::Gray).add_modifier(Modifier::DIM)
                             } else {
                                 Style::default().fg(Color::White)
@@ -611,6 +628,14 @@ impl Tui {
                         )
                     })
                     .collect();
+
+                if stack_labels {
+                    if let Some((_, name)) = affected {
+                        words.push(Span::raw(format!("| {}", name)));
+                    } else {
+                        words.push(Span::raw("| ".to_string()));
+                    }
+                }
 
                 let mut spans = vec![Span::styled(
                     format!("{:0min_len$}| ", i, min_len = min_len),
@@ -765,6 +790,8 @@ impl Ui for Tui {
         let mut opcode_list: Vec<String> =
             debug_call[0].1.iter().map(|step| step.pretty_opcode()).collect();
         let mut last_index = 0;
+
+        let mut stack_labels = false;
         // UI thread that manages drawing
         loop {
             if last_index != draw_memory.inner_call_index {
@@ -895,6 +922,10 @@ impl Ui for Tui {
                         }
                         self.key_buffer.clear();
                     }
+                    // toggle stack labels
+                    KeyCode::Char('t') => {
+                        stack_labels = !stack_labels;
+                    }
                     KeyCode::Char(other) => match other {
                         '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' => {
                             self.key_buffer.push(other);
@@ -944,6 +975,7 @@ impl Ui for Tui {
                     current_step,
                     debug_call[draw_memory.inner_call_index].2,
                     &mut draw_memory,
+                    stack_labels,
                 )
             })?;
         }
