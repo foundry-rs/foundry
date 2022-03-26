@@ -506,7 +506,7 @@ pub enum Subcommands {
     },
     #[clap(
         name = "find-block",
-        about = "Prints the block number closes to the provided timestamp"
+        about = "Prints the block number closest to the provided timestamp"
     )]
     FindBlock(FindBlockArgs),
     #[clap(about = "Generate shell completions script")]
