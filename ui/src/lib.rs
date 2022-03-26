@@ -8,7 +8,7 @@ use crossterm::{
 };
 use ethers::{solc::artifacts::ContractBytecodeSome, types::Address};
 use eyre::Result;
-use forge::debug::DebugStep;
+use forge::debug::{DebugStep, Instruction};
 use std::{
     cmp::{max, min},
     collections::{BTreeMap, VecDeque},
@@ -640,6 +640,33 @@ impl Tui {
         let max_i = memory.len() / 32;
         let min_len = format!("{:x}", max_i * 32).len();
 
+        // color memory words based on write/read
+        let (mut word, mut color) =
+            if let Instruction::OpCode(op) = debug_steps[current_step].instruction {
+                let w = debug_steps[current_step].stack[debug_steps[current_step].stack.len() - 1]
+                    .as_usize() /
+                    32;
+                match op {
+                    0x51 => (Some(w), Some(Color::Cyan)), // read mem word
+                    0x52 => (Some(w), Some(Color::Red)),  // write mem word
+                    _ => (None, None),
+                }
+            } else {
+                (None, None)
+            };
+
+        // color word on previous write op
+        if current_step > 0 {
+            if let Instruction::OpCode(op) = debug_steps[current_step - 1].instruction {
+                if op == 0x52 {
+                    let prev_top = debug_steps[current_step - 1].stack
+                        [debug_steps[current_step - 1].stack.len() - 1];
+                    word = Some(prev_top.as_usize() / 32);
+                    color = Some(Color::Green);
+                }
+            }
+        }
+
         let text: Vec<Spans> = memory
             .chunks(32)
             .enumerate()
@@ -649,7 +676,15 @@ impl Tui {
                     .map(|byte| {
                         Span::styled(
                             format!("{:02x} ", byte),
-                            if *byte == 0 {
+                            if let (Some(w), Some(color)) = (word, color) {
+                                if i == w {
+                                    Style::default().fg(color)
+                                } else if *byte == 0 {
+                                    Style::default().fg(Color::Gray).add_modifier(Modifier::DIM)
+                                } else {
+                                    Style::default().fg(Color::White)
+                                }
+                            } else if *byte == 0 {
                                 Style::default().fg(Color::Gray).add_modifier(Modifier::DIM)
                             } else {
                                 Style::default().fg(Color::White)
