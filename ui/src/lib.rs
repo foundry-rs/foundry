@@ -27,6 +27,8 @@ use tui::{
     Terminal,
 };
 
+use revm::opcode;
+
 /// Trait for starting the UI
 pub trait Ui {
     /// Start the agent that will now take over
@@ -641,29 +643,32 @@ impl Tui {
         let min_len = format!("{:x}", max_i * 32).len();
 
         // color memory words based on write/read
-        let (mut word, mut color) =
-            if let Instruction::OpCode(op) = debug_steps[current_step].instruction {
-                let stack_len = debug_steps[current_step].stack.len();
-                if stack_len > 0 {
-                    let w = debug_steps[current_step].stack[stack_len - 1];
-                    match op {
-                        0x51 => (Some(w.as_usize() / 32), Some(Color::Cyan)), // read mem word
-                        0x52 => (Some(w.as_usize() / 32), Some(Color::Red)),  // write mem word
-                        _ => (None, None),
+        let mut word = None;
+        let mut color = None;
+        if let Instruction::OpCode(op) = debug_steps[current_step].instruction {
+            let stack_len = debug_steps[current_step].stack.len();
+            if stack_len > 0 {
+                let w = debug_steps[current_step].stack[stack_len - 1];
+                match op {
+                    opcode::MLOAD => {
+                        word = Some(w.as_usize() / 32);
+                        color = Some(Color::Cyan);
                     }
-                } else {
-                    (None, None)
+                    opcode::MSTORE => {
+                        word = Some(w.as_usize() / 32);
+                        color = Some(Color::Red);
+                    }
+                    _ => {}
                 }
-            } else {
-                (None, None)
-            };
+            }
+        }
 
         // color word on previous write op
         if current_step > 0 {
             let prev_step = current_step - 1;
             let stack_len = debug_steps[prev_step].stack.len();
             if let Instruction::OpCode(op) = debug_steps[prev_step].instruction {
-                if op == 0x52 {
+                if op == opcode::MSTORE {
                     let prev_top = debug_steps[prev_step].stack[stack_len - 1];
                     word = Some(prev_top.as_usize() / 32);
                     color = Some(Color::Green);
