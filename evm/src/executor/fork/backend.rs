@@ -413,12 +413,14 @@ impl Drop for SharedBackend {
 }
 
 impl SharedBackend {
-    /// Spawns a new `BackendHandler` on a background thread that listens for requests from any
-    /// `SharedBackend`. Missing values get inserted in the `cache`.
+    /// _Spawns_ a new `BackendHandler` on a background thread that listens for requests from any
+    /// `SharedBackend`. Missing values get inserted in the `db`.
     ///
+    /// The spawned `BackendHandler` is dropped once the last `SharedBackend` connected to it is
+    /// dropped.
     ///
     /// NOTE: this should be called with `Arc<Provider>`
-    pub fn new<M>(provider: M, db: BlockchainDb, pin_block: Option<BlockId>) -> Self
+    pub fn spawn_backend<M>(provider: M, db: BlockchainDb, pin_block: Option<BlockId>) -> Self
     where
         M: Middleware + Unpin + 'static + Clone,
     {
@@ -516,7 +518,7 @@ mod tests {
         };
 
         let db = BlockchainDb::new(meta, None);
-        let backend = SharedBackend::new(Arc::new(provider), db.clone(), None);
+        let backend = SharedBackend::spawn_backend(Arc::new(provider), db.clone(), None);
 
         // some rng contract from etherscan
         let address: Address = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();
