@@ -124,9 +124,11 @@ pub struct BuildArgs {
     pub compiler: CompilerArgs,
 
     #[clap(help = "print compiled contract names", long = "names")]
+    #[serde(skip)]
     pub names: bool,
 
     #[clap(help = "print compiled contract sizes", long = "sizes")]
+    #[serde(skip)]
     pub sizes: bool,
 
     #[clap(help = "ignore warnings with specific error codes", long)]
@@ -173,6 +175,7 @@ pub struct BuildArgs {
     pub hardhat: bool,
 
     #[clap(help = "add linked libraries", long, env = "DAPP_LIBRARIES")]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub libraries: Vec<String>,
 
     #[clap(flatten)]
@@ -266,6 +269,14 @@ impl Provider for BuildArgs {
 
         if self.via_ir {
             dict.insert("via_ir".to_string(), true.into());
+        }
+
+        if self.names {
+            dict.insert("names".to_string(), true.into());
+        }
+
+        if self.sizes {
+            dict.insert("sizes".to_string(), true.into());
         }
 
         if self.force {
