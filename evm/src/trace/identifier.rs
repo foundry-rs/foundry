@@ -27,7 +27,9 @@ impl LocalTraceIdentifier {
         Self {
             local_contracts: known_contracts
                 .iter()
-                .map(|(id, (abi, runtime_code))| (runtime_code.clone(), (id.slug(), abi.clone())))
+                .map(|(id, (abi, runtime_code))| {
+                    (runtime_code.clone(), (id.name.clone(), abi.clone()))
+                })
                 .collect(),
         }
     }
