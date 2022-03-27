@@ -4,6 +4,7 @@ use crate::{
         inspector::utils::{gas_used, get_create_address},
         CHEATCODE_ADDRESS,
     },
+    CallKind,
 };
 use bytes::Bytes;
 use ethers::types::Address;
@@ -73,19 +74,18 @@ impl Debugger {
     }
 
     /// Enters a new execution context.
-    pub fn enter(&mut self, depth: usize, address: Address, creation: bool) {
+    pub fn enter(&mut self, depth: usize, address: Address, kind: CallKind) {
         self.context = address;
-        self.head =
-            self.arena.push_node(DebugNode { depth, address, creation, ..Default::default() });
+        self.head = self.arena.push_node(DebugNode { depth, address, kind, ..Default::default() });
     }
 
     /// Exits the current execution context, replacing it with the previous one.
     pub fn exit(&mut self) {
         if let Some(parent_id) = self.arena.arena[self.head].parent {
-            let DebugNode { depth, address, creation, .. } = self.arena.arena[parent_id];
+            let DebugNode { depth, address, kind, .. } = self.arena.arena[parent_id];
             self.context = address;
             self.head =
-                self.arena.push_node(DebugNode { depth, address, creation, ..Default::default() });
+                self.arena.push_node(DebugNode { depth, address, kind, ..Default::default() });
         }
     }
 }
@@ -100,7 +100,11 @@ where
         call: &mut CallInputs,
         _: bool,
     ) -> (Return, Gas, Bytes) {
-        self.enter(data.subroutine.depth() as usize, call.context.code_address, false);
+        self.enter(
+            data.subroutine.depth() as usize,
+            call.context.code_address,
+            call.context.scheme.into(),
+        );
         if call.contract == CHEATCODE_ADDRESS {
             self.arena.arena[self.head].steps.push(DebugStep {
                 memory: Memory::new(),
@@ -202,7 +206,11 @@ where
         // TODO: Does this increase gas cost?
         data.subroutine.load_account(call.caller, data.db);
         let nonce = data.subroutine.account(call.caller).info.nonce;
-        self.enter(data.subroutine.depth() as usize, get_create_address(call, nonce), true);
+        self.enter(
+            data.subroutine.depth() as usize,
+            get_create_address(call, nonce),
+            CallKind::Create,
+        );
 
         (Return::Continue, None, Gas::new(call.gas_limit), Bytes::new())
     }

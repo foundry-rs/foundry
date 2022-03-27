@@ -24,7 +24,7 @@ pub static CALLER: Lazy<Address> = Lazy::new(Address::random);
 use revm::{CallScheme, CreateScheme};
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum CallKind {
     Call,
     StaticCall,
