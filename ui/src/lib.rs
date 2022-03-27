@@ -8,7 +8,10 @@ use crossterm::{
 };
 use ethers::{solc::artifacts::ContractBytecodeSome, types::Address};
 use eyre::Result;
-use forge::debug::{DebugStep, Instruction};
+use forge::{
+    debug::{DebugStep, Instruction},
+    CallKind,
+};
 use std::{
     cmp::{max, min},
     collections::{BTreeMap, VecDeque},
@@ -45,7 +48,7 @@ mod op_effects;
 use op_effects::stack_indices_affected;
 
 pub struct Tui {
-    debug_arena: Vec<(Address, Vec<DebugStep>, bool)>,
+    debug_arena: Vec<(Address, Vec<DebugStep>, CallKind)>,
     terminal: Terminal<CrosstermBackend<io::Stdout>>,
     /// Buffer for keys prior to execution, i.e. '10' + 'k' => move up 10 operations
     key_buffer: String,
@@ -60,7 +63,7 @@ impl Tui {
     /// Create a tui
     #[allow(unused_must_use)]
     pub fn new(
-        debug_arena: Vec<(Address, Vec<DebugStep>, bool)>,
+        debug_arena: Vec<(Address, Vec<DebugStep>, CallKind)>,
         current_step: usize,
         identified_contracts: BTreeMap<Address, String>,
         known_contracts: BTreeMap<String, ContractBytecodeSome>,
@@ -107,7 +110,7 @@ impl Tui {
         debug_steps: &[DebugStep],
         opcode_list: &[String],
         current_step: usize,
-        creation: bool,
+        call_kind: CallKind,
         draw_memory: &mut DrawMemory,
         stack_labels: bool,
         mem_utf: bool,
@@ -123,7 +126,7 @@ impl Tui {
                 debug_steps,
                 opcode_list,
                 current_step,
-                creation,
+                call_kind,
                 draw_memory,
                 stack_labels,
                 mem_utf,
@@ -138,7 +141,7 @@ impl Tui {
                 debug_steps,
                 opcode_list,
                 current_step,
-                creation,
+                call_kind,
                 draw_memory,
                 stack_labels,
                 mem_utf,
@@ -156,7 +159,7 @@ impl Tui {
         debug_steps: &[DebugStep],
         opcode_list: &[String],
         current_step: usize,
-        creation: bool,
+        call_kind: CallKind,
         draw_memory: &mut DrawMemory,
         stack_labels: bool,
         mem_utf: bool,
@@ -188,7 +191,7 @@ impl Tui {
                     known_contracts,
                     source_code,
                     debug_steps[current_step].ic,
-                    creation,
+                    call_kind,
                     src_pane,
                 );
                 Tui::draw_op_list(
@@ -227,7 +230,7 @@ impl Tui {
         debug_steps: &[DebugStep],
         opcode_list: &[String],
         current_step: usize,
-        creation: bool,
+        call_kind: CallKind,
         draw_memory: &mut DrawMemory,
         stack_labels: bool,
         mem_utf: bool,
@@ -265,7 +268,7 @@ impl Tui {
                             known_contracts,
                             source_code,
                             debug_steps[current_step].ic,
-                            creation,
+                            call_kind,
                             src_pane,
                         );
                         Tui::draw_op_list(
@@ -327,11 +330,17 @@ impl Tui {
         known_contracts: &BTreeMap<String, ContractBytecodeSome>,
         source_code: &BTreeMap<u32, String>,
         ic: usize,
-        creation: bool,
+        call_kind: CallKind,
         area: Rect,
     ) {
         let block_source_code = Block::default()
-            .title(if creation { "Contract creation" } else { "Contract call" })
+            .title(match call_kind {
+                CallKind::Create => "Contract creation",
+                CallKind::Call => "Contract call",
+                CallKind::StaticCall => "Contract staticcall",
+                CallKind::CallCode => "Contract callcode",
+                CallKind::DelegateCall => "Contract delegatecall",
+            })
             .borders(Borders::ALL);
 
         let mut text_output: Text = Text::from("");
@@ -339,7 +348,7 @@ impl Tui {
         if let Some(contract_name) = identified_contracts.get(&address) {
             if let Some(known) = known_contracts.get(contract_name) {
                 // grab either the creation source map or runtime sourcemap
-                if let Some(sourcemap) = if creation {
+                if let Some(sourcemap) = if matches!(call_kind, CallKind::Create) {
                     known.bytecode.source_map()
                 } else {
                     known.deployed_bytecode.bytecode.as_ref().expect("no bytecode").source_map()
@@ -944,7 +953,7 @@ impl Ui for Tui {
         self.terminal.clear()?;
         let mut draw_memory: DrawMemory = DrawMemory::default();
 
-        let debug_call: Vec<(Address, Vec<DebugStep>, bool)> = self.debug_arena.clone();
+        let debug_call: Vec<(Address, Vec<DebugStep>, CallKind)> = self.debug_arena.clone();
         let mut opcode_list: Vec<String> =
             debug_call[0].1.iter().map(|step| step.pretty_opcode()).collect();
         let mut last_index = 0;

@@ -4,6 +4,7 @@ use crate::{
         inspector::utils::{gas_used, get_create_address},
         CHEATCODE_ADDRESS,
     },
+    CallKind,
 };
 use bytes::Bytes;
 use ethers::types::Address;
@@ -20,6 +21,8 @@ pub struct Debugger {
     pub arena: DebugArena,
     /// The ID of the current [DebugNode].
     pub head: usize,
+    /// The current execution address.
+    pub context: Address,
     /// A mapping of program counters to instruction counters.
     ///
     /// The program counter keeps track of where we are in the contract bytecode as a whole,
@@ -48,7 +51,7 @@ impl Debugger {
     /// Builds the instruction counter map for the given bytecode.
     // TODO: Some of the same logic is performed in REVM, but then later discarded. We should
     // investigate if we can reuse it
-    pub fn build_ic_map(&mut self, spec: SpecId, address: &Address, code: &Bytes) {
+    pub fn build_ic_map(&mut self, spec: SpecId, code: &Bytes) {
         let opcode_infos = spec_opcode_gas(spec);
         let mut ic_map: BTreeMap<usize, usize> = BTreeMap::new();
 
@@ -67,21 +70,22 @@ impl Debugger {
             i += 1;
         }
 
-        self.ic_map.insert(*address, ic_map);
+        self.ic_map.insert(self.context, ic_map);
     }
 
     /// Enters a new execution context.
-    pub fn enter(&mut self, depth: usize, address: Address, creation: bool) {
-        self.head =
-            self.arena.push_node(DebugNode { depth, address, creation, ..Default::default() });
+    pub fn enter(&mut self, depth: usize, address: Address, kind: CallKind) {
+        self.context = address;
+        self.head = self.arena.push_node(DebugNode { depth, address, kind, ..Default::default() });
     }
 
     /// Exits the current execution context, replacing it with the previous one.
     pub fn exit(&mut self) {
         if let Some(parent_id) = self.arena.arena[self.head].parent {
-            let DebugNode { depth, address, creation, .. } = self.arena.arena[parent_id];
+            let DebugNode { depth, address, kind, .. } = self.arena.arena[parent_id];
+            self.context = address;
             self.head =
-                self.arena.push_node(DebugNode { depth, address, creation, ..Default::default() });
+                self.arena.push_node(DebugNode { depth, address, kind, ..Default::default() });
         }
     }
 }
@@ -96,7 +100,11 @@ where
         call: &mut CallInputs,
         _: bool,
     ) -> (Return, Gas, Bytes) {
-        self.enter(data.subroutine.depth() as usize, call.contract, false);
+        self.enter(
+            data.subroutine.depth() as usize,
+            call.context.code_address,
+            call.context.scheme.into(),
+        );
         if call.contract == CHEATCODE_ADDRESS {
             self.arena.arena[self.head].steps.push(DebugStep {
                 memory: Memory::new(),
@@ -119,11 +127,7 @@ where
         // TODO: This is rebuilt for all contracts every time. We should only run this if the IC
         // map for a given address does not exist, *but* we need to account for the fact that the
         // code given by the interpreter may either be the contract init code, or the runtime code.
-        self.build_ic_map(
-            data.env.cfg.spec_id,
-            &interp.contract().address,
-            &interp.contract().code,
-        );
+        self.build_ic_map(data.env.cfg.spec_id, &interp.contract().code);
         self.previous_gas_block = interp.contract.first_gas_block();
         Return::Continue
     }
@@ -170,7 +174,7 @@ where
             push_bytes,
             ic: *self
                 .ic_map
-                .get(&interpreter.contract().address)
+                .get(&self.context)
                 .expect("no instruction counter map")
                 .get(&pc)
                 .expect("unknown ic for pc"),
@@ -202,7 +206,11 @@ where
         // TODO: Does this increase gas cost?
         data.subroutine.load_account(call.caller, data.db);
         let nonce = data.subroutine.account(call.caller).info.nonce;
-        self.enter(data.subroutine.depth() as usize, get_create_address(call, nonce), true);
+        self.enter(
+            data.subroutine.depth() as usize,
+            get_create_address(call, nonce),
+            CallKind::Create,
+        );
 
         (Return::Continue, None, Gas::new(call.gas_limit), Bytes::new())
     }

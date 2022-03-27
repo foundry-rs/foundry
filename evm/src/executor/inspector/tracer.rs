@@ -7,6 +7,7 @@ use crate::{
         CallTrace, CallTraceArena, LogCallOrder, RawOrDecodedCall, RawOrDecodedLog,
         RawOrDecodedReturnData,
     },
+    CallKind,
 };
 use bytes::Bytes;
 use ethers::{
@@ -29,14 +30,14 @@ impl Tracer {
         address: Address,
         data: Vec<u8>,
         value: U256,
-        created: bool,
+        kind: CallKind,
     ) {
         self.trace_stack.push(self.traces.push_trace(
             0,
             CallTrace {
                 depth,
                 address,
-                created,
+                kind,
                 data: RawOrDecodedCall::Raw(data),
                 value,
                 ..Default::default()
@@ -67,10 +68,10 @@ where
         if call.contract != HARDHAT_CONSOLE_ADDRESS {
             self.start_trace(
                 data.subroutine.depth() as usize,
-                call.contract,
+                call.context.code_address,
                 call.input.to_vec(),
                 call.transfer.value,
-                false,
+                call.context.scheme.into(),
             );
         }
 
@@ -117,7 +118,7 @@ where
             get_create_address(call, nonce),
             call.init_code.to_vec(),
             call.value,
-            true,
+            CallKind::Create,
         );
 
         (Return::Continue, None, Gas::new(call.gas_limit), Bytes::new())
