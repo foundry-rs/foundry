@@ -275,6 +275,7 @@ fn config_paths_exist(paths: &ProjectPathsConfig, cached: bool) {
     paths.libraries.iter().for_each(|lib| assert!(lib.exists()));
 }
 
+#[track_caller]
 pub fn pretty_err<T, E: std::error::Error>(path: impl AsRef<Path>, res: Result<T, E>) -> T {
     match res {
         Ok(t) => t,

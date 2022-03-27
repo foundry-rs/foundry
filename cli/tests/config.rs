@@ -215,8 +215,7 @@ contract Greeter {}
         .unwrap();
 
     // explicitly set to run with 0.8.10
-    let config =
-        Config { solc: Some(SolcReq::Local(PathBuf::from("0.8.10"))), ..Default::default() };
+    let config = Config { solc: Some("0.8.10".into()), ..Default::default() };
     prj.write_config(config);
 
     cmd.arg("build");
