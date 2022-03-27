@@ -3,7 +3,7 @@ use super::{
 };
 use crate::abi::{CHEATCODE_ADDRESS, CONSOLE_ABI, HEVM_ABI};
 use ethers::{
-    abi::{Abi, Address, Event, Function, Token},
+    abi::{Abi, Address, Event, Function, Param, ParamType, Token},
     types::H256,
 };
 use foundry_utils::format_token;
@@ -18,6 +18,8 @@ use std::collections::BTreeMap;
 /// different sets might overlap.
 #[derive(Default, Debug)]
 pub struct CallTraceDecoder {
+    /// Information for decoding precompile calls.
+    pub precompiles: BTreeMap<Address, Function>,
     /// Addresses identified to be a specific contract.
     ///
     /// The values are in the form `"<artifact>:<contract>"`.
@@ -39,6 +41,78 @@ impl CallTraceDecoder {
     /// as DSTest-style logs.
     pub fn new() -> Self {
         Self {
+            // TODO: These are the Ethereum precompiles. We should add a way to support precompiles
+            // for other networks, too.
+            precompiles: [
+                precompile(
+                    1,
+                    "ecrecover",
+                    [
+                        ParamType::FixedBytes(32),
+                        ParamType::Uint(256),
+                        ParamType::Uint(256),
+                        ParamType::Uint(256),
+                    ],
+                    [ParamType::Address],
+                ),
+                precompile(2, "keccak", [ParamType::Bytes], [ParamType::FixedBytes(32)]),
+                precompile(3, "ripemd", [ParamType::Bytes], [ParamType::FixedBytes(32)]),
+                precompile(4, "identity", [ParamType::Bytes], [ParamType::Bytes]),
+                precompile(
+                    5,
+                    "modexp",
+                    [
+                        ParamType::Uint(256),
+                        ParamType::Uint(256),
+                        ParamType::Uint(256),
+                        ParamType::Bytes,
+                    ],
+                    [ParamType::Bytes],
+                ),
+                precompile(
+                    6,
+                    "ecadd",
+                    [
+                        ParamType::Uint(256),
+                        ParamType::Uint(256),
+                        ParamType::Uint(256),
+                        ParamType::Uint(256),
+                    ],
+                    [ParamType::Uint(256), ParamType::Uint(256)],
+                ),
+                precompile(
+                    7,
+                    "ecmul",
+                    [ParamType::Uint(256), ParamType::Uint(256), ParamType::Uint(256)],
+                    [ParamType::Uint(256), ParamType::Uint(256)],
+                ),
+                precompile(
+                    8,
+                    "ecpairing",
+                    [
+                        ParamType::Uint(256),
+                        ParamType::Uint(256),
+                        ParamType::Uint(256),
+                        ParamType::Uint(256),
+                        ParamType::Uint(256),
+                        ParamType::Uint(256),
+                    ],
+                    [ParamType::Uint(256)],
+                ),
+                precompile(
+                    9,
+                    "blake2f",
+                    [
+                        ParamType::Uint(4),
+                        ParamType::FixedBytes(64),
+                        ParamType::FixedBytes(128),
+                        ParamType::FixedBytes(16),
+                        ParamType::FixedBytes(1),
+                    ],
+                    [ParamType::FixedBytes(64)],
+                ),
+            ]
+            .into(),
             contracts: BTreeMap::new(),
             labels: [(CHEATCODE_ADDRESS, "VM".to_string())].into(),
             functions: HEVM_ABI
@@ -121,7 +195,31 @@ impl CallTraceDecoder {
 
             // Decode call
             if let RawOrDecodedCall::Raw(bytes) = &node.trace.data {
-                if bytes.len() >= 4 {
+                if let Some(precompile_fn) = self.precompiles.get(&node.trace.address) {
+                    node.trace.label = Some("PRECOMPILE".to_string());
+                    node.trace.data = RawOrDecodedCall::Decoded(
+                        precompile_fn.name.clone(),
+                        precompile_fn.decode_input(&bytes[..]).map_or_else(
+                            |_| vec![hex::encode(&bytes)],
+                            |tokens| tokens.iter().map(|token| self.apply_label(token)).collect(),
+                        ),
+                    );
+
+                    if let RawOrDecodedReturnData::Raw(bytes) = &node.trace.output {
+                        node.trace.output = RawOrDecodedReturnData::Decoded(
+                            precompile_fn.decode_output(&bytes[..]).map_or_else(
+                                |_| hex::encode(&bytes),
+                                |tokens| {
+                                    tokens
+                                        .iter()
+                                        .map(|token| self.apply_label(token))
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                },
+                            ),
+                        );
+                    }
+                } else if bytes.len() >= 4 {
                     if let Some(funcs) = self.functions.get(&bytes[0..4]) {
                         // This is safe because (1) we would not have an entry for the given
                         // selector if no functions with that selector were added and (2) the same
@@ -236,4 +334,28 @@ impl CallTraceDecoder {
             _ => None,
         }
     }
+}
+
+fn precompile<I, O>(number: u8, name: impl ToString, inputs: I, outputs: O) -> (Address, Function)
+where
+    I: IntoIterator<Item = ParamType>,
+    O: IntoIterator<Item = ParamType>,
+{
+    (
+        Address::from_slice(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, number]),
+        #[allow(deprecated)]
+        Function {
+            name: name.to_string(),
+            inputs: inputs
+                .into_iter()
+                .map(|kind| Param { name: "".to_string(), kind, internal_type: None })
+                .collect(),
+            outputs: outputs
+                .into_iter()
+                .map(|kind| Param { name: "".to_string(), kind, internal_type: None })
+                .collect(),
+            constant: None,
+            state_mutability: ethers::abi::StateMutability::Pure,
+        },
+    )
 }
