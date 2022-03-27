@@ -4,8 +4,6 @@ mod term;
 mod utils;
 
 use crate::cmd::{forge::watch, Cmd};
-
-use ethers::solc::{Project, ProjectPathsConfig};
 use opts::forge::{Dependency, Opts, Subcommands};
 use std::process::Command;
 
@@ -77,10 +75,8 @@ fn main() -> eyre::Result<()> {
             generate(shell, &mut Opts::command(), "forge", &mut std::io::stdout())
         }
         Subcommands::Clean { root } => {
-            let root = root.unwrap_or_else(|| std::env::current_dir().unwrap());
-            let paths = ProjectPathsConfig::builder().root(&root).build()?;
-            let project = Project::builder().paths(paths).build()?;
-            project.cleanup()?;
+            let config = utils::load_config_with_root(root);
+            config.project()?.cleanup()?;
         }
         Subcommands::Snapshot(cmd) => {
             if cmd.is_watch() {

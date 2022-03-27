@@ -156,13 +156,16 @@ impl TestProject {
     }
 
     /// Creates a file with contents `contents` in the test project's directory. The
-    /// file will be deleted with the project is dropped.
+    /// file will be deleted when the project is dropped.
     pub fn create_file(&self, path: impl AsRef<Path>, contents: &str) -> PathBuf {
         let path = path.as_ref();
         if !path.is_relative() {
             panic!("create_file(): file path is absolute");
         }
         let path = self.root().join(path);
+        if let Some(parent) = path.parent() {
+            pretty_err(parent, std::fs::create_dir_all(parent));
+        }
         let file = pretty_err(&path, File::create(&path));
         let mut writer = BufWriter::new(file);
         pretty_err(&path, writer.write_all(contents.as_bytes()));

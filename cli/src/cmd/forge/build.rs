@@ -3,9 +3,10 @@
 use ethers::solc::{Project, ProjectCompileOutput};
 use std::path::PathBuf;
 
-use crate::{cmd::Cmd, opts::forge::CompilerArgs};
-
-use crate::cmd::forge::watch::WatchArgs;
+use crate::{
+    cmd::{forge::watch::WatchArgs, Cmd},
+    opts::forge::CompilerArgs,
+};
 use clap::{Parser, ValueHint};
 use ethers::solc::remappings::Remapping;
 use foundry_config::{

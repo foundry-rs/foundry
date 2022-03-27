@@ -153,6 +153,23 @@ forgetest!(can_clean_hardhat, PathStyle::HardHat, |prj: TestProject, mut cmd: Te
     prj.assert_cleaned();
 });
 
+// checks that `clean` also works with the "out" value set in Config
+forgetest_init!(can_clean_config, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.set_current_dir(prj.root());
+    let config = Config { out: "custom-out".into(), ..Default::default() };
+    prj.write_config(config);
+    cmd.arg("build");
+    cmd.assert_non_empty_stdout();
+
+    // default test contract is written in custom out directory
+    let artifact = prj.root().join("custom-out/Contract.t.sol/ContractTest.json");
+    assert!(artifact.exists());
+
+    cmd.forge_fuse().arg("clean");
+    cmd.output();
+    assert!(!artifact.exists());
+});
+
 // checks that extra output works
 forgetest_init!(can_emit_extra_output, |prj: TestProject, mut cmd: TestCommand| {
     cmd.args(["build", "--extra-output", "metadata"]);
