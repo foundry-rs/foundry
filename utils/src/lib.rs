@@ -1008,13 +1008,14 @@ mod tests {
 
     #[test]
     fn test_linking() {
-        let contract_names = [
+        let mut contract_names = [
             "DSTest.json:DSTest",
             "Lib.json:Lib",
             "LibraryConsumer.json:LibraryConsumer",
             "LibraryLinkingTest.json:LibraryLinkingTest",
             "NestedLib.json:NestedLib",
         ];
+        contract_names.sort_unstable();
 
         let paths = ProjectPathsConfig::builder()
             .root("../testdata")
@@ -1034,10 +1035,10 @@ mod tests {
         let mut known_contracts: BTreeMap<ArtifactId, (Abi, Vec<u8>)> = Default::default();
         let mut deployable_contracts: BTreeMap<String, (Abi, Bytes, Vec<Bytes>)> =
             Default::default();
-        assert_eq!(
-            &contracts.keys().map(|i| i.slug()).collect::<Vec<String>>()[..],
-            &contract_names[..]
-        );
+
+        let mut res = contracts.keys().map(|i| i.slug()).collect::<Vec<String>>();
+        res.sort_unstable();
+        assert_eq!(&res[..], &contract_names[..]);
 
         let lib_linked = hex::encode(
             &contracts
