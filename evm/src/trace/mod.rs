@@ -7,13 +7,12 @@ pub use identifier::TraceIdentifier;
 mod decoder;
 pub use decoder::CallTraceDecoder;
 
-use crate::abi::CHEATCODE_ADDRESS;
+use crate::{abi::CHEATCODE_ADDRESS, CallKind};
 use ansi_term::Colour;
 use ethers::{
     abi::{Address, RawLog},
     types::U256,
 };
-use revm::CallScheme;
 use serde::{Deserialize, Serialize};
 use std::fmt::{self, Write};
 
@@ -63,7 +62,7 @@ impl CallTraceArena {
 
     pub fn addresses_iter(&self) -> impl Iterator<Item = (&Address, Option<&Vec<u8>>)> {
         self.arena.iter().map(|node| {
-            let code = if node.trace.created {
+            let code = if node.trace.created() {
                 if let RawOrDecodedReturnData::Raw(bytes) = &node.trace.output {
                     Some(bytes)
                 } else {
@@ -127,7 +126,7 @@ impl fmt::Display for CallTraceArena {
             let color = trace_color(&node.trace);
             write!(writer, "{}{}", child, EDGE)?;
             write!(writer, "{}", color.paint(RETURN))?;
-            if node.trace.created {
+            if node.trace.created() {
                 if let RawOrDecodedReturnData::Raw(bytes) = &node.trace.output {
                     writeln!(writer, "{} bytes of code", bytes.len())?;
                 } else {
@@ -284,8 +283,8 @@ pub struct CallTrace {
     pub label: Option<String>,
     /// The destination address of the call
     pub address: Address,
-    /// Whether the call was a contract creation or not
-    pub created: bool,
+    /// The kind of call this is
+    pub kind: CallKind,
     /// The value tranferred in the call
     pub value: U256,
     /// The calldata for the call, or the init code for contract creations
@@ -302,18 +301,23 @@ impl CallTrace {
     fn update(&mut self, new_trace: Self) {
         self.success = new_trace.success;
         self.address = new_trace.address;
-        self.created = new_trace.created;
+        self.kind = new_trace.kind;
         self.value = new_trace.value;
         self.data = new_trace.data;
         self.output = new_trace.output;
         self.address = new_trace.address;
         self.gas_cost = new_trace.gas_cost;
     }
+
+    /// Whether this is a contract creation or not
+    pub fn created(&self) -> bool {
+        matches!(self.kind, CallKind::Create)
+    }
 }
 
 impl fmt::Display for CallTrace {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if self.created {
+        if self.created() {
             write!(
                 f,
                 "[{}] {}{} {}@{:?}",
@@ -334,11 +338,20 @@ impl fmt::Display for CallTrace {
                 RawOrDecodedCall::Decoded(func, inputs) => (func.clone(), inputs.join(", ")),
             };
 
+            let action = match self.kind {
+                CallKind::Call => "call",
+                CallKind::StaticCall => "staticcall",
+                CallKind::CallCode => "callcode",
+                CallKind::DelegateCall => "delegatecall",
+                _ => unreachable!(),
+            };
+
             let color = trace_color(self);
             write!(
                 f,
-                "[{}] {}::{}{}({})",
+                "[{}] {} {}::{}{}({})",
                 self.gas_cost,
+                Colour::Yellow.paint(action),
                 color.paint(self.label.as_ref().unwrap_or(&self.address.to_string())),
                 color.paint(func),
                 if !self.value.is_zero() {
