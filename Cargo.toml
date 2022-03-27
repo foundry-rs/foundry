@@ -11,12 +11,6 @@ members = [
     "evm"
 ]
 
-[profile.test]
-# Speeds up build
-debug = 0
-# Speeds up tests
-opt-level = 3
-
 [profile.release]
 # Optimize for binary size, but keep loop vectorization
 opt-level = "s"
