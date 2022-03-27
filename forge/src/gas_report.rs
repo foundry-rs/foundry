@@ -60,7 +60,7 @@ impl GasReport {
                     self.contracts.entry(name.to_string()).or_insert_with(Default::default);
 
                 match &trace.data {
-                    RawOrDecodedCall::Raw(bytes) if trace.created => {
+                    RawOrDecodedCall::Raw(bytes) if trace.created() => {
                         contract_report.gas = trace.gas_cost.into();
                         contract_report.size = bytes.len().into();
                     }

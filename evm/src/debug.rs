@@ -1,4 +1,4 @@
-use crate::abi::HEVM_ABI;
+use crate::{abi::HEVM_ABI, CallKind};
 use ethers::types::{Address, U256};
 use revm::{Memory, OpCode};
 use std::fmt::Display;
@@ -60,15 +60,15 @@ impl DebugArena {
     ///
     /// - The address of the contract being executed
     /// - A [Vec] of debug steps along that contract's execution path
-    /// - A boolean denoting whether this is a contract creation or not
+    /// - An enum denoting the type of call this is
     ///
     /// This makes it easy to pretty print the execution steps.
-    pub fn flatten(&self, entry: usize) -> Vec<(Address, Vec<DebugStep>, bool)> {
+    pub fn flatten(&self, entry: usize) -> Vec<(Address, Vec<DebugStep>, CallKind)> {
         let node = &self.arena[entry];
 
         let mut flattened = vec![];
         if !node.steps.is_empty() {
-            flattened.push((node.address, node.steps.clone(), node.creation));
+            flattened.push((node.address, node.steps.clone(), node.kind));
         }
         flattened.extend(node.children.iter().flat_map(|child| self.flatten(*child)));
 
@@ -85,14 +85,16 @@ pub struct DebugNode {
     pub children: Vec<usize>,
     /// Location in parent
     pub location: usize,
-    /// Address context
+    /// Execution context.
+    ///
+    /// Note that this is the address of the *code*, not necessarily the adddress of the storage.
     pub address: Address,
+    /// The kind of call this is
+    pub kind: CallKind,
     /// Depth
     pub depth: usize,
     /// The debug steps
     pub steps: Vec<DebugStep>,
-    /// Whether the contract was created in this node or not
-    pub creation: bool,
 }
 
 impl DebugNode {
