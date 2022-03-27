@@ -55,18 +55,13 @@ impl MultiContractRunnerBuilder {
             .map(|(i, _)| (i.slug(), i.source.to_string_lossy().into()))
             .collect::<BTreeMap<String, String>>();
 
-        let contracts = contracts
-            .into_iter()
-            .map(|(i, c)| (i.slug(), c))
-            .collect::<BTreeMap<String, CompactContractBytecode>>();
-
-        let mut known_contracts: BTreeMap<String, (Abi, Vec<u8>)> = Default::default();
+        let mut known_contracts: BTreeMap<ArtifactId, (Abi, Vec<u8>)> = Default::default();
 
         // create a mapping of name => (abi, deployment code, Vec<library deployment code>)
         let mut deployable_contracts = DeployableContracts::default();
 
         foundry_utils::link(
-            &contracts,
+            BTreeMap::from_iter(contracts),
             &mut known_contracts,
             evm_opts.sender,
             &mut deployable_contracts,
@@ -75,7 +70,7 @@ impl MultiContractRunnerBuilder {
                 let PostLinkInput {
                     contract,
                     known_contracts,
-                    fname,
+                    id,
                     extra: deployable_contracts,
                     dependencies,
                 } = post_link_input;
@@ -94,18 +89,14 @@ impl MultiContractRunnerBuilder {
                     abi.functions().any(|func| func.name.starts_with("test"))
                 {
                     deployable_contracts
-                        .insert(fname.clone(), (abi.clone(), bytecode, dependencies.to_vec()));
+                        .insert(id.slug(), (abi.clone(), bytecode, dependencies.to_vec()));
                 }
 
-                let split = fname.split(':').collect::<Vec<&str>>();
-                let contract_name = if split.len() > 1 { split[1] } else { split[0] };
                 contract
                     .deployed_bytecode
                     .and_then(|d_bcode| d_bcode.bytecode)
                     .and_then(|bcode| bcode.object.into_bytes())
-                    .and_then(|bytes| {
-                        known_contracts.insert(contract_name.to_string(), (abi, bytes.to_vec()))
-                    });
+                    .and_then(|bytes| known_contracts.insert(id, (abi, bytes.to_vec())));
                 Ok(())
             },
         )?;
@@ -162,7 +153,7 @@ pub struct MultiContractRunner {
     /// needs to be deployed & linked against
     pub contracts: BTreeMap<String, (Abi, ethers::prelude::Bytes, Vec<ethers::prelude::Bytes>)>,
     /// Compiled contracts by name that have an Abi and runtime bytecode
-    pub known_contracts: BTreeMap<String, (Abi, Vec<u8>)>,
+    pub known_contracts: BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
     /// The EVM instance used in the test runner
     pub evm_opts: EvmOpts,
     /// The EVM spec

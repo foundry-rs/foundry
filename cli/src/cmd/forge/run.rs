@@ -7,6 +7,7 @@ use ansi_term::Colour;
 use clap::{Parser, ValueHint};
 use ethers::{
     abi::{Abi, RawLog},
+    prelude::ArtifactId,
     solc::{
         artifacts::{CompactContractBytecode, ContractBytecode, ContractBytecodeSome},
         Project,
@@ -80,16 +81,16 @@ impl Cmd for RunArgs {
 
         let known_contracts = highlevel_known_contracts
             .iter()
-            .map(|(name, c)| {
+            .map(|(id, c)| {
                 (
-                    name.clone(),
+                    id.clone(),
                     (
                         c.abi.clone(),
                         c.deployed_bytecode.clone().into_bytes().expect("not bytecode").to_vec(),
                     ),
                 )
             })
-            .collect::<BTreeMap<String, (Abi, Vec<u8>)>>();
+            .collect::<BTreeMap<ArtifactId, (Abi, Vec<u8>)>>();
 
         let CompactContractBytecode { abi, bytecode, .. } = contract;
         let abi = abi.expect("no ABI for contract");
@@ -168,8 +169,16 @@ impl Cmd for RunArgs {
 
             let calls: Vec<DebugArena> = result.debug.expect("we should have collected debug info");
             let flattened = calls.last().expect("we should have collected debug info").flatten(0);
-            let tui =
-                Tui::new(flattened, 0, decoder.contracts, highlevel_known_contracts, source_code)?;
+            let tui = Tui::new(
+                flattened,
+                0,
+                decoder.contracts,
+                highlevel_known_contracts
+                    .into_iter()
+                    .map(|(id, artifact)| (id.slug(), artifact))
+                    .collect(),
+                source_code,
+            )?;
             match tui.start().expect("Failed to start tui") {
                 TUIExitReason::CharExit => return Ok(()),
             }
@@ -229,7 +238,7 @@ struct ExtraLinkingInfo<'a> {
 pub struct BuildOutput {
     pub project: Project,
     pub contract: CompactContractBytecode,
-    pub highlevel_known_contracts: BTreeMap<String, ContractBytecodeSome>,
+    pub highlevel_known_contracts: BTreeMap<ArtifactId, ContractBytecodeSome>,
     pub sources: BTreeMap<u32, String>,
     pub predeploy_libraries: Vec<ethers::types::Bytes>,
 }
@@ -241,12 +250,9 @@ impl RunArgs {
         let project = config.ephemeral_no_artifacts_project()?;
         let output = compile_files(&project, vec![target_contract])?;
 
-        let (sources, all_contracts) = output.output().split();
-
-        let contracts: BTreeMap<String, CompactContractBytecode> = all_contracts
-            .contracts_with_files()
-            .map(|(file, name, contract)| (format!("{}:{}", file, name), contract.clone().into()))
-            .collect();
+        let (contracts, sources) = output.into_artifacts_with_sources();
+        let contracts: BTreeMap<ArtifactId, CompactContractBytecode> =
+            contracts.into_iter().map(|(id, artifact)| (id, artifact.into())).collect();
 
         let mut run_dependencies = vec![];
         let mut contract =
@@ -267,7 +273,7 @@ impl RunArgs {
         };
 
         foundry_utils::link(
-            &contracts,
+            contracts,
             &mut highlevel_known_contracts,
             evm_opts.sender,
             &mut ExtraLinkingInfo {
@@ -282,29 +288,29 @@ impl RunArgs {
                 let PostLinkInput {
                     contract,
                     known_contracts: highlevel_known_contracts,
-                    fname,
+                    id,
                     extra,
                     dependencies,
                 } = post_link_input;
-                let split = fname.split(':').collect::<Vec<&str>>();
 
                 // if its the target contract, grab the info
-                if extra.no_target_name && split[0] == extra.target_fname {
+                if extra.no_target_name &&
+                    id.path.file_stem().unwrap().to_string_lossy() == extra.target_fname
+                {
                     if extra.matched {
                         eyre::bail!("Multiple contracts in the target path. Please specify the contract name with `-t ContractName`")
                     }
                     *extra.dependencies = dependencies;
                     *extra.contract = contract.clone();
                     extra.matched = true;
-                } else if extra.target_fname == fname {
+                } else if extra.target_fname == id.slug() {
                     *extra.dependencies = dependencies;
                     *extra.contract = contract.clone();
                     extra.matched = true;
                 }
 
                 let tc: ContractBytecode = contract.into();
-                let contract_name = if split.len() > 1 { split[1] } else { split[0] };
-                highlevel_known_contracts.insert(contract_name.to_string(), tc.unwrap());
+                highlevel_known_contracts.insert(id, tc.unwrap());
                 Ok(())
             },
         )?;

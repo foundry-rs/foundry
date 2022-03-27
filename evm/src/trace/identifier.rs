@@ -1,4 +1,7 @@
-use ethers::abi::{Abi, Address};
+use ethers::{
+    abi::{Abi, Address},
+    prelude::ArtifactId,
+};
 use std::collections::BTreeMap;
 
 /// Trace identifiers figure out what ABIs and labels belong to all the addresses of the trace.
@@ -20,12 +23,12 @@ pub struct LocalTraceIdentifier {
 }
 
 impl LocalTraceIdentifier {
-    pub fn new(known_contracts: &BTreeMap<String, (Abi, Vec<u8>)>) -> Self {
+    pub fn new(known_contracts: &BTreeMap<ArtifactId, (Abi, Vec<u8>)>) -> Self {
         Self {
             local_contracts: known_contracts
                 .iter()
-                .map(|(name, (abi, runtime_code))| {
-                    (runtime_code.clone(), (name.clone(), abi.clone()))
+                .map(|(id, (abi, runtime_code))| {
+                    (runtime_code.clone(), (id.name.clone(), abi.clone()))
                 })
                 .collect(),
         }
