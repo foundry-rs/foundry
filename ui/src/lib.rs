@@ -111,6 +111,7 @@ impl Tui {
         draw_memory: &mut DrawMemory,
         stack_labels: bool,
         mem_utf: bool,
+        gas_lines: bool,
     ) {
         let total_size = f.size();
         if total_size.width < 225 {
@@ -127,6 +128,7 @@ impl Tui {
                 draw_memory,
                 stack_labels,
                 mem_utf,
+                gas_lines,
             );
         } else {
             Tui::square_layout(
@@ -142,6 +144,7 @@ impl Tui {
                 draw_memory,
                 stack_labels,
                 mem_utf,
+                gas_lines,
             );
         }
     }
@@ -160,6 +163,7 @@ impl Tui {
         draw_memory: &mut DrawMemory,
         stack_labels: bool,
         mem_utf: bool,
+        gas_lines: bool,
     ) {
         let total_size = f.size();
         if let [app, footer] = Layout::default()
@@ -190,6 +194,9 @@ impl Tui {
                     debug_steps[current_step].ic,
                     creation,
                     src_pane,
+                    gas_lines,
+                    draw_memory,
+                    current_step,
                 );
                 Tui::draw_op_list(
                     f,
@@ -231,6 +238,7 @@ impl Tui {
         draw_memory: &mut DrawMemory,
         stack_labels: bool,
         mem_utf: bool,
+        gas_lines: bool,
     ) {
         let total_size = f.size();
 
@@ -267,6 +275,9 @@ impl Tui {
                             debug_steps[current_step].ic,
                             creation,
                             src_pane,
+                            gas_lines,
+                            draw_memory,
+                            current_step,
                         );
                         Tui::draw_op_list(
                             f,
@@ -329,6 +340,9 @@ impl Tui {
         ic: usize,
         creation: bool,
         area: Rect,
+        gas_lines: bool,
+        draw_memory: &mut DrawMemory,
+        current_step: usize,
     ) {
         let block_source_code = Block::default()
             .title(if creation { "Contract creation" } else { "Contract call" })
@@ -369,8 +383,6 @@ impl Tui {
                                         .split_inclusive('\n')
                                         .collect::<VecDeque<&str>>();
 
-                                    let mut line_number = 0;
-
                                     let num_lines = before.len() + actual.len() + after.len();
                                     let height = area.height as usize;
                                     let needed_highlight = actual.len();
@@ -400,11 +412,61 @@ impl Tui {
                                         (before.len().saturating_sub(above), mid_len + below)
                                     };
 
-                                    let max_line_num = num_lines.to_string().len();
+                                    let mut max_line_num = num_lines.to_string().len();
+
+                                    // explicitly type just for clarity because
+                                    // the datastructure is complicated
+                                    let src_entry: &mut LineCosts = draw_memory
+                                        .line_gas
+                                        .entry(source_idx)
+                                        .or_insert_with(BTreeMap::default)
+                                        .entry(draw_memory.inner_call_index)
+                                        .or_insert_with(BTreeMap::default)
+                                        .entry(current_step)
+                                        .or_insert_with(BTreeMap::default);
+
+                                    let mut max_gas = 100;
+                                    for (_k, v) in src_entry.iter() {
+                                        if v > &max_gas {
+                                            max_gas = *v;
+                                        }
+                                    }
+                                    let max_gas = max_gas.to_string().len();
+
+                                    // add top line descriptors
+                                    if gas_lines {
+                                        max_line_num = max_line_num.max(4);
+                                        text_output.lines.push(Spans::from(vec![
+                                            Span::styled(
+                                                format!(
+                                                    "{: >max_line_num$}",
+                                                    "line",
+                                                    max_line_num = max_line_num
+                                                ),
+                                                Style::default()
+                                                    .fg(Color::Gray)
+                                                    .bg(Color::DarkGray),
+                                            ),
+                                            Span::styled(
+                                                format!(
+                                                    " {: >max_gas$} | ",
+                                                    "gas",
+                                                    max_gas = max_gas
+                                                ),
+                                                Style::default().fg(Color::Gray),
+                                            ),
+                                        ]));
+                                    }
                                     // We check if there is other text on the same line before the
                                     // highlight starts
+                                    let mut line_number = start_line;
                                     if let Some(last) = before.pop() {
                                         if !last.ends_with('\n') {
+                                            // if `before` doesn't end with a new line,
+                                            // `actual` starts mid line. This code adjusts for that
+                                            //
+                                            // generate spans starting at start_line for before
+                                            // note: last element was popped
                                             before.iter().skip(start_line).for_each(|line| {
                                                 text_output.lines.push(Spans::from(vec![
                                                     Span::styled(
@@ -417,6 +479,12 @@ impl Tui {
                                                             .fg(Color::Gray)
                                                             .bg(Color::DarkGray),
                                                     ),
+                                                    gas_line_span(
+                                                        src_entry,
+                                                        line_number,
+                                                        gas_lines,
+                                                        max_gas,
+                                                    ),
                                                     Span::styled(
                                                         "\u{2800} ".to_string() + line,
                                                         Style::default()
@@ -426,6 +494,7 @@ impl Tui {
                                                 line_number += 1;
                                             });
 
+                                            // add last + actual as a new line
                                             text_output.lines.push(Spans::from(vec![
                                                 Span::styled(
                                                     format!(
@@ -438,6 +507,12 @@ impl Tui {
                                                         .bg(Color::DarkGray)
                                                         .add_modifier(Modifier::BOLD),
                                                 ),
+                                                gas_line_span(
+                                                    src_entry,
+                                                    line_number,
+                                                    gas_lines,
+                                                    max_gas,
+                                                ),
                                                 Span::raw("\u{2800} "),
                                                 Span::raw(last),
                                                 Span::styled(
@@ -449,6 +524,8 @@ impl Tui {
                                             ]));
                                             line_number += 1;
 
+                                            // skip the first element because we joined it
+                                            // with `last` and already inserted it
                                             actual.iter().skip(1).for_each(|s| {
                                                 text_output.lines.push(Spans::from(vec![
                                                     Span::styled(
@@ -461,6 +538,12 @@ impl Tui {
                                                             .fg(Color::Cyan)
                                                             .bg(Color::DarkGray)
                                                             .add_modifier(Modifier::BOLD),
+                                                    ),
+                                                    gas_line_span(
+                                                        src_entry,
+                                                        line_number,
+                                                        gas_lines,
+                                                        max_gas,
                                                     ),
                                                     Span::raw("\u{2800} "),
                                                     Span::styled(
@@ -479,6 +562,8 @@ impl Tui {
                                                 line_number += 1;
                                             });
                                         } else {
+                                            // `last` was a legitimate full line
+                                            // push it back into before and add all of them
                                             before.push(last);
                                             before.iter().skip(start_line).for_each(|line| {
                                                 text_output.lines.push(Spans::from(vec![
@@ -492,6 +577,12 @@ impl Tui {
                                                             .fg(Color::Gray)
                                                             .bg(Color::DarkGray),
                                                     ),
+                                                    gas_line_span(
+                                                        src_entry,
+                                                        line_number,
+                                                        gas_lines,
+                                                        max_gas,
+                                                    ),
                                                     Span::styled(
                                                         "\u{2800} ".to_string() + line,
                                                         Style::default()
@@ -501,6 +592,7 @@ impl Tui {
 
                                                 line_number += 1;
                                             });
+                                            // add colored `actual` lines
                                             actual.iter().for_each(|s| {
                                                 text_output.lines.push(Spans::from(vec![
                                                     Span::styled(
@@ -513,6 +605,12 @@ impl Tui {
                                                             .fg(Color::Cyan)
                                                             .bg(Color::DarkGray)
                                                             .add_modifier(Modifier::BOLD),
+                                                    ),
+                                                    gas_line_span(
+                                                        src_entry,
+                                                        line_number,
+                                                        gas_lines,
+                                                        max_gas,
                                                     ),
                                                     Span::raw("\u{2800} "),
                                                     Span::styled(
@@ -530,6 +628,7 @@ impl Tui {
                                             });
                                         }
                                     } else {
+                                        // before was empty, just add actuals
                                         actual.iter().for_each(|s| {
                                             text_output.lines.push(Spans::from(vec![
                                                 Span::styled(
@@ -542,6 +641,12 @@ impl Tui {
                                                         .fg(Color::Cyan)
                                                         .bg(Color::DarkGray)
                                                         .add_modifier(Modifier::BOLD),
+                                                ),
+                                                gas_line_span(
+                                                    src_entry,
+                                                    line_number,
+                                                    gas_lines,
+                                                    max_gas,
                                                 ),
                                                 Span::raw("\u{2800} "),
                                                 Span::styled(
@@ -559,9 +664,11 @@ impl Tui {
                                         });
                                     }
 
-                                    // fill in the rest of the line as unhighlighted
+                                    // check if `actual.last()` was a full line
                                     if let Some(last) = actual.last() {
                                         if !last.ends_with('\n') {
+                                            // it wasn't, grab the first `after` and append
+                                            // it to the last line in the output
                                             if let Some(post) = after.pop_front() {
                                                 if let Some(last) = text_output.lines.last_mut() {
                                                     last.0.push(Span::raw(post));
@@ -570,10 +677,12 @@ impl Tui {
                                         }
                                     }
 
-                                    // add after highlighted text
+                                    // remove any lines that wont fit given an end_line
                                     while mid_len + after.len() > end_line {
                                         after.pop_back();
                                     }
+
+                                    // add each `after` line
                                     after.iter().for_each(|line| {
                                         text_output.lines.push(Spans::from(vec![
                                             Span::styled(
@@ -585,6 +694,12 @@ impl Tui {
                                                 Style::default()
                                                     .fg(Color::Gray)
                                                     .bg(Color::DarkGray),
+                                            ),
+                                            gas_line_span(
+                                                src_entry,
+                                                line_number,
+                                                gas_lines,
+                                                max_gas,
                                             ),
                                             Span::styled(
                                                 "\u{2800} ".to_string() + line,
@@ -898,6 +1013,86 @@ impl Tui {
         let paragraph = Paragraph::new(text).block(stack_space).wrap(Wrap { trim: true });
         f.render_widget(paragraph, area);
     }
+
+    fn count_gas_per_line(
+        identified_contracts: &BTreeMap<Address, String>,
+        known_contracts: &BTreeMap<String, ContractBytecodeSome>,
+        source_code: &BTreeMap<u32, String>,
+        draw_memory: &mut DrawMemory,
+        debug_calls: &[(Address, Vec<DebugStep>, bool)],
+    ) {
+        // builds a mapping of:
+        // src_idx => call_index => current_step => line_num => gas_cost
+        //
+        // step thru each debug_call
+        debug_calls.iter().enumerate().for_each(|(call_index, (address, steps, creation))| {
+            // iterate thru the debug_steps for an index
+            steps.iter().enumerate().for_each(|(current_step, step)| {
+                // grab the sourcemap
+                if let Some(contract_name) = identified_contracts.get(address) {
+                    if let Some(known) = known_contracts.get(contract_name) {
+                        // grab either the creation source map or runtime sourcemap
+                        if let Some(Ok(sourcemap)) = if *creation {
+                            known.bytecode.source_map()
+                        } else {
+                            known
+                                .deployed_bytecode
+                                .bytecode
+                                .as_ref()
+                                .expect("no bytecode")
+                                .source_map()
+                        } {
+                            if let Some(source_idx) = sourcemap[step.ic].index {
+                                if let Some(source) = source_code.get(&source_idx) {
+                                    // get offset, and number of lines up until the
+                                    // offset, which tells us the line number
+                                    let offset = sourcemap[step.ic].offset;
+                                    let line_num = source[..offset].matches('\n').count();
+                                    // get the
+                                    let src_index_gas_map = if let Some(prev_call_index) =
+                                        draw_memory.line_gas.get(&source_idx).map(|f| {
+                                            let d = BTreeMap::default();
+                                            // get last non-zero
+                                            let (_key, value) =
+                                                f.iter().next_back().unwrap_or((&0, &d));
+                                            value.clone()
+                                        }) {
+                                        draw_memory
+                                            .line_gas
+                                            .entry(source_idx)
+                                            .or_insert_with(BTreeMap::default) // no map for src yet
+                                            .entry(call_index)
+                                            .or_insert(prev_call_index) // no call index for src,
+                                                                        // clone previous
+                                    } else {
+                                        // no previous src info
+                                        draw_memory
+                                            .line_gas
+                                            .entry(source_idx)
+                                            .or_insert_with(BTreeMap::default)
+                                            .entry(call_index)
+                                            .or_insert_with(BTreeMap::default)
+                                    };
+
+                                    let last_gas_map = if let Some((_k, v)) =
+                                        src_index_gas_map.iter().next_back()
+                                    {
+                                        v.clone()
+                                    } else {
+                                        Default::default()
+                                    };
+                                    let new_gas_map = src_index_gas_map
+                                        .entry(current_step)
+                                        .or_insert_with(|| last_gas_map);
+                                    *new_gas_map.entry(line_num).or_insert(0) += step.step_gas;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        });
+    }
 }
 
 impl Ui for Tui {
@@ -949,8 +1144,17 @@ impl Ui for Tui {
             debug_call[0].1.iter().map(|step| step.pretty_opcode()).collect();
         let mut last_index = 0;
 
+        Tui::count_gas_per_line(
+            &self.identified_contracts,
+            &self.known_contracts,
+            &self.source_code,
+            &mut draw_memory,
+            &debug_call,
+        );
+
         let mut stack_labels = false;
         let mut mem_utf = false;
+        let mut gas_lines = false;
         // UI thread that manages drawing
         loop {
             if last_index != draw_memory.inner_call_index {
@@ -1120,6 +1324,10 @@ impl Ui for Tui {
                     KeyCode::Char('m') => {
                         mem_utf = !mem_utf;
                     }
+                    // toggle gas lines
+                    KeyCode::Char('l') => {
+                        gas_lines = !gas_lines;
+                    }
                     KeyCode::Char(other) => match other {
                         '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' => {
                             self.key_buffer.push(other);
@@ -1175,6 +1383,7 @@ impl Ui for Tui {
                     &mut draw_memory,
                     stack_labels,
                     mem_utf,
+                    gas_lines,
                 )
             })?;
         }
@@ -1188,6 +1397,18 @@ enum Interrupt {
     IntervalElapsed,
 }
 
+// Line number to gas costs
+type LineCosts = BTreeMap<usize, u64>;
+
+// Step to source costs
+type StepCosts = BTreeMap<usize, LineCosts>;
+
+// Call index to step costs
+type CallIndexCosts = BTreeMap<usize, StepCosts>;
+
+// Source index to call index costs
+type SourceIndexCosts = BTreeMap<u32, CallIndexCosts>;
+
 /// This is currently used to remember last scroll
 /// position so screen doesn't wiggle as much.
 struct DrawMemory {
@@ -1195,6 +1416,8 @@ struct DrawMemory {
     pub inner_call_index: usize,
     pub current_mem_startline: usize,
     pub current_stack_startline: usize,
+    // mapping of src index => call_index => step => mapping line => gas consumed
+    pub line_gas: SourceIndexCosts,
 }
 
 impl DrawMemory {
@@ -1204,6 +1427,27 @@ impl DrawMemory {
             inner_call_index: 0,
             current_mem_startline: 0,
             current_stack_startline: 0,
+            line_gas: BTreeMap::new(),
         }
+    }
+}
+
+fn gas_line_span(
+    src_entry: &mut LineCosts,
+    line_number: usize,
+    gas_lines: bool,
+    max_gas: usize,
+) -> Span<'static> {
+    if gas_lines {
+        Span::styled(
+            format!(
+                " {: >max_gas$} | ",
+                src_entry.get(&line_number).unwrap_or(&0).to_string(),
+                max_gas = max_gas
+            ),
+            Style::default().fg(Color::Gray),
+        )
+    } else {
+        Span::raw("")
     }
 }

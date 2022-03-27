@@ -175,6 +175,8 @@ where
                 .get(&pc)
                 .expect("unknown ic for pc"),
             total_gas_used: gas_used(data.env.cfg.spec_id, total_gas_spent, gas.refunded() as u64),
+            // TODO: fix this to be accurate
+            step_gas: self.current_gas_block,
         });
 
         Return::Continue
