@@ -1028,20 +1028,20 @@ impl Tui {
         known_contracts: &BTreeMap<String, ContractBytecodeSome>,
         source_code: &BTreeMap<u32, String>,
         draw_memory: &mut DrawMemory,
-        debug_calls: &[(Address, Vec<DebugStep>, bool)],
+        debug_calls: &[(Address, Vec<DebugStep>, CallKind)],
     ) {
         // builds a mapping of:
         // src_idx => call_index => current_step => line_num => gas_cost
         //
         // step thru each debug_call
-        debug_calls.iter().enumerate().for_each(|(call_index, (address, steps, creation))| {
+        debug_calls.iter().enumerate().for_each(|(call_index, (address, steps, call_kind))| {
             // iterate thru the debug_steps for an index
             steps.iter().enumerate().for_each(|(current_step, step)| {
                 // grab the sourcemap
                 if let Some(contract_name) = identified_contracts.get(address) {
                     if let Some(known) = known_contracts.get(contract_name) {
                         // grab either the creation source map or runtime sourcemap
-                        if let Some(Ok(sourcemap)) = if *creation {
+                        if let Some(Ok(sourcemap)) = if matches!(call_kind, CallKind::Create) {
                             known.bytecode.source_map()
                         } else {
                             known
@@ -1158,7 +1158,7 @@ impl Ui for Tui {
             &self.known_contracts,
             &self.source_code,
             &mut draw_memory,
-            &debug_call,
+            &debug_call[..],
         );
 
         let mut stack_labels = false;

@@ -37,14 +37,16 @@ pub struct Debugger {
     ///
     /// Gas blocks contain the gas costs of opcodes with a fixed cost. Dynamic costs are not
     /// included in the gas block, and are instead added during execution of the contract.
-    pub current_gas_block: u64,
+    pub partial_gas_block: u64,
     /// The amount of gas spent in the previous gas block.
     ///
     /// Costs for gas blocks are accounted for when *entering* the gas block, which also means that
     /// every run of the interpreter will always start with a non-zero `gas.spend()`.
     ///
     /// For more information on gas blocks, see [current_gas_block].
-    pub previous_gas_block: u64,
+    pub full_gas_block: u64,
+    pub previous_total_gas: u64,
+    pub is_returned: bool,
 }
 
 impl Debugger {
@@ -128,7 +130,7 @@ where
         // map for a given address does not exist, *but* we need to account for the fact that the
         // code given by the interpreter may either be the contract init code, or the runtime code.
         self.build_ic_map(data.env.cfg.spec_id, &interp.contract().code);
-        self.previous_gas_block = interp.contract.first_gas_block();
+        self.full_gas_block = interp.contract.first_gas_block();
         Return::Continue
     }
 
@@ -158,13 +160,18 @@ where
 
         // Calculate the current amount of gas used
         let gas = interpreter.gas();
-        let total_gas_spent = gas.spend() - self.previous_gas_block + self.current_gas_block;
+        let total_gas_spent = gas.spend() - self.full_gas_block + self.partial_gas_block;
         if opcode_info.gas_block_end {
-            self.previous_gas_block = interpreter.contract.gas_block(pc);
-            self.current_gas_block = 0;
+            self.partial_gas_block = 0;
+            self.full_gas_block = interpreter.contract.gas_block(pc);
         } else {
-            self.current_gas_block += opcode_info.gas;
+            self.partial_gas_block += opcode_info.gas;
         }
+
+        assert!(total_gas_spent >= self.previous_total_gas, "{:?} >= {}", total_gas_spent, self.previous_total_gas);
+        let step_gas = total_gas_spent - self.previous_total_gas;
+
+        self.previous_total_gas = total_gas_spent;
 
         self.arena.arena[self.head].steps.push(DebugStep {
             pc,
@@ -179,10 +186,25 @@ where
                 .get(&pc)
                 .expect("unknown ic for pc"),
             total_gas_used: gas_used(data.env.cfg.spec_id, total_gas_spent, gas.refunded() as u64),
-            // TODO: fix this to be accurate
-            step_gas: self.current_gas_block,
+            step_gas,
         });
 
+        Return::Continue
+    }
+
+    fn step_end(
+        &mut self,
+        interp: &mut revm::Interpreter,
+        _data: &mut EVMData<'_, DB>,
+        _is_static: bool,
+        _eval: revm::Return,
+    ) -> Return {
+         if self.is_returned {
+            // we are okay to decrement PC by one as it is return of call
+            let previous_pc = interp.program_counter()-1;
+            self.full_gas_block = interp.contract.gas_block(previous_pc);
+            self.is_returned = false;
+        }
         Return::Continue
     }
 
@@ -197,6 +219,7 @@ where
     ) -> (Return, Gas, Bytes) {
         self.exit();
 
+        self.is_returned = true;
         (status, gas, retdata)
     }
 
@@ -228,6 +251,7 @@ where
     ) -> (Return, Option<Address>, Gas, Bytes) {
         self.exit();
 
+        self.is_returned = true;
         (status, address, gas, retdata)
     }
 }
