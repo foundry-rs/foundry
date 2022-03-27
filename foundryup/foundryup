@@ -17,6 +17,7 @@ main() {
       -b|--branch)      shift; FOUNDRYUP_BRANCH=$1;;
       -v|--version)     shift; FOUNDRYUP_VERSION=$1;;
       -p|--path)        shift; FOUNDRYUP_LOCAL_REPO=$1;;
+      -P|--pr)          shift; FOUNDRYUP_PR=$1;;
       -h|--help)
         usage
         exit 0
@@ -25,6 +26,14 @@ main() {
         err "internal error: unknown option "$1"\n";;
     esac; shift
   done
+
+  if [ ! -z "$FOUNDRYUP_PR" ]; then
+    if [ -z "$FOUNDRYUP_BRANCH" ]; then
+      FOUNDRYUP_BRANCH="refs/pull/$FOUNDRYUP_PR/head"
+    else
+      err "can't use --pr and --branch at the same time"
+    fi
+  fi
 
   # Installs foundry from a local repository if --path parameter is provided
   if [[ -n "$FOUNDRYUP_LOCAL_REPO" ]]; then
@@ -123,21 +132,17 @@ main() {
     FOUNDRYUP_BRANCH=${FOUNDRYUP_BRANCH-master}
     REPO_PATH="${FOUNDRY_DIR}/${FOUNDRYUP_REPO}"
 
-    if [ -d $REPO_PATH ]; then
-      # If the repo path exists move to it and do a force checkout, discarding any local changes
-      cd $REPO_PATH
-      git switch ${FOUNDRYUP_BRANCH}
-      ensure git fetch
-      ensure git reset --hard origin/${FOUNDRYUP_BRANCH}
-    else
+    if [ ! -d $REPO_PATH ]; then
       # Repo path did not exist, grab the author from the repo, make a directory in .foundry, cd to it and clone.
       IFS="/" read -ra AUTHOR <<< "$FOUNDRYUP_REPO"
       ensure mkdir -p "$FOUNDRY_DIR/$AUTHOR"
       cd "$FOUNDRY_DIR/$AUTHOR"
       ensure git clone https://github.com/${FOUNDRYUP_REPO}
-      cd $REPO_PATH
-      ensure git checkout ${FOUNDRYUP_BRANCH}
     fi
+    # force checkout, discarding any local changes
+    cd $REPO_PATH
+    ensure git fetch origin ${FOUNDRYUP_BRANCH}:remotes/origin/${FOUNDRYUP_BRANCH}
+    ensure git checkout origin/${FOUNDRYUP_BRANCH}
 
     # Build the repo and install it locally to the .foundry bin directory.
     # --root appends /bin to the directory it is given, so we pass FOUNDRY_DIR.
@@ -165,6 +170,7 @@ OPTIONS:
     -h, --help      Print help information
     -v, --version   Install a specific version
     -b, --branch    Install a specific branch
+    -P, --pr        Install a specific Pull Request
     -r, --repo      Install a forks main branch
     -p, --path      Install a local repository
 EOF
