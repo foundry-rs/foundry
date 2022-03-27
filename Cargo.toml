@@ -22,6 +22,9 @@ panic = "abort"
 # We end up stripping away these symbols anyway
 debug = 0
 
+[patch."https://github.com/bluealloy/revm"]
+revm = { git = "https://github.com/onbjerg/revm", branch = "onbjerg/fixes" }
+
 ## Patch ethers-rs with a local checkout then run `cargo update -p ethers`
 #[patch."https://github.com/gakonst/ethers-rs"]
 #ethers = { path = "../ethers-rs" }

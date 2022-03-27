@@ -24,6 +24,9 @@ pub use revm::SpecId;
 /// Executor database trait
 pub use revm::db::DatabaseRef;
 
+/// Executor call schemes.
+pub use revm::CallScheme;
+
 use self::inspector::{InspectorData, InspectorStackConfig};
 use crate::{debug::DebugArena, trace::CallTraceArena, CALLER};
 use bytes::Bytes;

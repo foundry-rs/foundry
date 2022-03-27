@@ -3573,7 +3573,7 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "1.2.0"
-source = "git+https://github.com/bluealloy/revm#0437dcdc658f8a950e4c652d587d266a4bec35ff"
+source = "git+https://github.com/onbjerg/revm?branch=onbjerg/fixes#63817cd0947639eaaf8ee2966e15d1db33cd62f2"
 dependencies = [
  "arrayref",
  "auto_impl",
@@ -3591,7 +3591,7 @@ dependencies = [
 [[package]]
 name = "revm_precompiles"
 version = "0.4.0"
-source = "git+https://github.com/bluealloy/revm#0437dcdc658f8a950e4c652d587d266a4bec35ff"
+source = "git+https://github.com/onbjerg/revm?branch=onbjerg/fixes#63817cd0947639eaaf8ee2966e15d1db33cd62f2"
 dependencies = [
  "bytes",
  "k256",

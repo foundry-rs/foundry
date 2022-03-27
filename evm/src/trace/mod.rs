@@ -13,6 +13,7 @@ use ethers::{
     abi::{Address, RawLog},
     types::U256,
 };
+use revm::CallScheme;
 use serde::{Deserialize, Serialize};
 use std::fmt::{self, Write};
 
