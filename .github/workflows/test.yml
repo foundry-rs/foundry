@@ -70,7 +70,7 @@ jobs:
           cache-on-failure: true
 
       - name: cargo test
-        run: cargo test --locked --workspace --all-features --test '*'
+        run: cargo test --locked --workspace --features integration-tests --test integration
 
   lint:
     runs-on: ubuntu-latest
