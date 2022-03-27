@@ -61,6 +61,10 @@ jobs:
           toTag: ${{ steps.release_info.outputs.tag_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
+  release_docker:
+    name: Release Docker
+    uses: ./.github/workflows/docker-publish.yml
 
   release:
     name: ${{ matrix.job.target }} (${{ matrix.job.os }})
