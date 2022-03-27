@@ -114,7 +114,6 @@ impl Tui {
     ) {
         let total_size = f.size();
         if total_size.width < 225 {
-            // panic!("here {:?}", total_size);
             Tui::vertical_layout(
                 f,
                 address,
