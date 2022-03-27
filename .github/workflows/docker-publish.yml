@@ -40,21 +40,27 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
 
       # Creates an additional 'latest' or 'nightly' tag
-      - name: Assign Additional Docker Metadata
-        id: additional_tags
+      # If the job is triggered via cron schedule, tag nightly and nightly-{SHA}
+      # If the job is triggered via workflow dispatch and on a master branch, tag branch and latest
+      # Otherwise, just tag as the branch name
+      - name: Finalize Docker Metadata
+        id: docker_tagging
         run: |
-          if [[ "${{ steps.meta.outputs.tags }}" == *"foundry:main" ]] || [[ "${{ steps.meta.outputs.tags }}" == *"foundry:master" ]]; then
-            echo "assigning latest tag"
-            echo "::set-output name=additional_tag::${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+          if [[ "${{ github.event_name }}" == 'schedule' ]]; then
+            echo "cron trigger, assigning nightly tag"
+            echo "::set-output name=docker_tags::${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:nightly,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:nightly-${GITHUB_SHA}"
+          elif [[ "${GITHUB_REF##*/}" == "main" ]] || [[ ${GITHUB_REF##*/} == "master" ]]; then
+            echo "manual trigger from master/main branch, assigning latest tag"
+            echo "::set-output name=docker_tags::${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${GITHUB_REF##*/},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
           else
-            echo "assigning nightly tag"
-            echo "::set-output name=additonal_tag::${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:nightly-${GITHUB_SHA}"
+            echo "Neither scheduled nor manual release from main branch. Just tagging as branch name"
+            echo "::set-output name=docker_tags::${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${GITHUB_REF##*/}"
           fi
 
       # Log docker metadata to explicitly know what is being pushed
       - name: Inspect Docker Metadata
         run: |
-          echo "TAGS -> ${{ steps.meta.outputs.tags }}, ${{ steps.additional_tags.outputs.additional_tag }}"
+          echo "TAGS -> ${{ steps.docker_tagging.outputs.docker_tags }}"
           echo "LABELS ->  ${{ steps.meta.outputs.labels }}"
         
       # Build and push Docker image
@@ -65,5 +71,5 @@ jobs:
         with:
           context: .
           push: true
-          tags: ${{ steps.meta.outputs.tags }},${{ steps.additional_tags.outputs.additional_tag }}
+          tags: ${{ steps.docker_tagging.outputs.docker_tags }}
           labels: ${{ steps.meta.outputs.labels }}
