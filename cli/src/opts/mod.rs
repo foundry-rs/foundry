@@ -14,7 +14,7 @@ use ethers::{
     },
     types::{Address, Chain, U256},
 };
-use eyre::Result;
+use eyre::{eyre, Result};
 use foundry_config::{
     figment::{
         self,
@@ -232,7 +232,10 @@ impl Wallet {
     fn private_key(&self) -> Result<Option<LocalWallet>> {
         Ok(if let Some(ref private_key) = self.private_key {
             let privk = &private_key.strip_prefix("0x").unwrap_or(private_key);
-            Some(LocalWallet::from_str(privk)?)
+            Some(
+                LocalWallet::from_str(privk)
+                    .map_err(|x| eyre!("Failed to create wallet from private key: {x}"))?,
+            )
         } else {
             None
         })
@@ -262,5 +265,36 @@ impl Wallet {
         } else {
             None
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn illformed_private_key_generates_user_friendly_error() {
+        let wallet = Wallet {
+            interactive: false,
+            private_key: Some("123".to_string()),
+            keystore_path: None,
+            keystore_password: None,
+            mnemonic_path: None,
+            ledger: false,
+            trezor: false,
+            hd_path: None,
+            mnemonic_index: 0,
+        };
+        match wallet.private_key() {
+            Ok(_) => {
+                assert!(false, "illformed private key shouldn't decode")
+            }
+            Err(x) => {
+                assert!(
+                    x.to_string().contains("Failed to create wallet"),
+                    "Error message is not user-friendly"
+                );
+            }
+        }
     }
 }
