@@ -339,19 +339,19 @@ impl fmt::Display for CallTrace {
             };
 
             let action = match self.kind {
-                CallKind::Call => "call",
-                CallKind::StaticCall => "staticcall",
-                CallKind::CallCode => "callcode",
-                CallKind::DelegateCall => "delegatecall",
+                // do not show anything for CALLs
+                CallKind::Call => "",
+                CallKind::StaticCall => "[staticcall]",
+                CallKind::CallCode => "[callcode]",
+                CallKind::DelegateCall => "[delegatecall]",
                 _ => unreachable!(),
             };
 
             let color = trace_color(self);
             write!(
                 f,
-                "[{}] {} {}::{}{}({})",
+                "[{}] {}::{}{}({}) {}",
                 self.gas_cost,
-                Colour::Yellow.paint(action),
                 color.paint(self.label.as_ref().unwrap_or(&self.address.to_string())),
                 color.paint(func),
                 if !self.value.is_zero() {
@@ -359,7 +359,8 @@ impl fmt::Display for CallTrace {
                 } else {
                     "".to_string()
                 },
-                inputs
+                inputs,
+                Colour::Yellow.paint(action),
             )?;
         }
 
