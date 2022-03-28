@@ -139,9 +139,7 @@ impl ExecutorBuilder {
     /// Enables cheatcodes on the executor.
     #[must_use]
     pub fn with_cheatcodes(mut self, ffi: bool) -> Self {
-        let mut cheatcodes = Cheatcodes::default();
-        cheatcodes.ffi = ffi;
-        self.inspector_config.cheatcodes = Some(cheatcodes);
+        self.inspector_config.cheatcodes = Some(Cheatcodes::new(ffi, self.env.block.clone()));
         self
     }
 
