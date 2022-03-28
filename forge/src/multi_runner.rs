@@ -55,7 +55,7 @@ impl MultiContractRunnerBuilder {
         let mut known_contracts: BTreeMap<ArtifactId, (Abi, Vec<u8>)> = Default::default();
         let source_paths = contracts
             .iter()
-            .map(|(i, _)| (i.slug(), i.source.to_string_lossy().into()))
+            .map(|(i, _)| (i.identifier(), i.source.to_string_lossy().into()))
             .collect::<BTreeMap<String, String>>();
 
         // create a mapping of name => (abi, deployment code, Vec<library deployment code>)
