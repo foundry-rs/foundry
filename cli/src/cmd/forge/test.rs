@@ -199,7 +199,7 @@ impl Cmd for TestArgs {
             .evm_spec(evm_spec)
             .sender(evm_opts.sender)
             .with_fork(utils::get_fork(&evm_opts, &config.rpc_storage_caching))
-            .build(output, evm_opts)?;
+            .build(project.paths.root, output, evm_opts)?;
 
         if self.debug.is_some() {
             self.filter.test_pattern = self.debug;

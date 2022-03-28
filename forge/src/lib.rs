@@ -37,15 +37,16 @@ pub mod test_helpers {
     };
     use std::str::FromStr;
 
-    pub static COMPILED: Lazy<ProjectCompileOutput> = Lazy::new(|| {
+    pub static PROJECT: Lazy<Project> = Lazy::new(|| {
         let paths = ProjectPathsConfig::builder()
             .root("../testdata")
             .sources("../testdata")
             .build()
             .unwrap();
-        let project = Project::builder().paths(paths).ephemeral().no_artifacts().build().unwrap();
-        project.compile().unwrap()
+        Project::builder().paths(paths).ephemeral().no_artifacts().build().unwrap()
     });
+
+    pub static COMPILED: Lazy<ProjectCompileOutput> = Lazy::new(|| (*PROJECT).compile().unwrap());
 
     pub static EVM_OPTS: Lazy<EvmOpts> = Lazy::new(|| EvmOpts {
         env: Env {

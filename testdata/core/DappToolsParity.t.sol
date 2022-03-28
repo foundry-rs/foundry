@@ -3,7 +3,7 @@ pragma solidity >=0.8.0;
 
 import "ds-test/test.sol";
 
-contract DSStyleTest is DSTest {
+contract DappToolsParityTest is DSTest {
     function chainId() internal view returns (uint256 id) {
         assembly {
             id := chainid()
