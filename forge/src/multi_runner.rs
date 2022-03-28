@@ -1,4 +1,4 @@
-use crate::{ContractRunner, TestFilter, TestResult};
+use crate::{ContractRunner, SuiteResult, TestFilter};
 use ethers::{
     abi::Abi,
     prelude::{artifacts::CompactContractBytecode, ArtifactId, ArtifactOutput},
@@ -187,8 +187,8 @@ impl MultiContractRunner {
     pub fn test(
         &mut self,
         filter: &(impl TestFilter + Send + Sync),
-        stream_result: Option<Sender<(String, BTreeMap<String, TestResult>)>>,
-    ) -> Result<BTreeMap<String, BTreeMap<String, TestResult>>> {
+        stream_result: Option<Sender<(String, SuiteResult)>>,
+    ) -> Result<BTreeMap<String, SuiteResult>> {
         let env = self.evm_opts.evm_env();
 
         // the db backend that serves all the data
@@ -247,7 +247,7 @@ impl MultiContractRunner {
         deploy_code: Bytes,
         libs: &[Bytes],
         filter: &impl TestFilter,
-    ) -> Result<BTreeMap<String, TestResult>> {
+    ) -> Result<SuiteResult> {
         let mut runner = ContractRunner::new(
             executor,
             contract,
@@ -289,7 +289,7 @@ mod tests {
 
     /// A helper to assert the outcome of multiple tests with helpful assert messages
     fn assert_multiple(
-        actuals: &BTreeMap<String, BTreeMap<String, TestResult>>,
+        actuals: &BTreeMap<String, SuiteResult>,
         expecteds: BTreeMap<&str, Vec<(&str, bool, Option<String>, Option<Vec<String>>)>>,
     ) {
         assert_eq!(
@@ -305,25 +305,26 @@ mod tests {
                 contract_name
             );
             for (test_name, should_pass, reason, expected_logs) in tests {
-                let logs = decode_console_logs(&actuals[*contract_name][*test_name].logs);
+                let logs =
+                    decode_console_logs(&actuals[*contract_name].test_results[*test_name].logs);
 
                 if *should_pass {
                     assert!(
-                        actuals[*contract_name][*test_name].success,
+                        actuals[*contract_name].test_results[*test_name].success,
                         "Test {} did not pass as expected.\nReason: {:?}\nLogs:\n{}",
                         test_name,
-                        actuals[*contract_name][*test_name].reason,
+                        actuals[*contract_name].test_results[*test_name].reason,
                         logs.join("\n")
                     );
                 } else {
                     assert!(
-                        !actuals[*contract_name][*test_name].success,
+                        !actuals[*contract_name].test_results[*test_name].success,
                         "Test {} did not fail as expected.\nLogs:\n{}",
                         test_name,
                         logs.join("\n")
                     );
                     assert_eq!(
-                        actuals[*contract_name][*test_name].reason, *reason,
+                        actuals[*contract_name].test_results[*test_name].reason, *reason,
                         "Failure reason for test {} did not match what we expected.",
                         test_name
                     );
@@ -451,10 +452,10 @@ mod tests {
     #[test]
     fn test_cheats() {
         let mut runner = runner();
-        let results = runner.test(&Filter::new(".*", ".*", ".*cheats"), None).unwrap();
+        let suite_result = runner.test(&Filter::new(".*", ".*", ".*cheats"), None).unwrap();
 
-        for (_, tests) in results {
-            for (test_name, result) in tests {
+        for (_, SuiteResult { test_results, .. }) in suite_result {
+            for (test_name, result) in test_results {
                 assert!(
                     result.success,
                     "Test {} did not pass as expected.\nReason: {:?}",
@@ -467,10 +468,10 @@ mod tests {
     #[test]
     fn test_fuzz() {
         let mut runner = runner();
-        let results = runner.test(&Filter::new(".*", ".*", ".*fuzz"), None).unwrap();
+        let suite_result = runner.test(&Filter::new(".*", ".*", ".*fuzz"), None).unwrap();
 
-        for (_, tests) in results {
-            for (test_name, result) in tests {
+        for (_, SuiteResult { test_results, .. }) in suite_result {
+            for (test_name, result) in test_results {
                 match test_name.as_ref() {
                     "testPositive(uint256)" | "testSuccessfulFuzz(uint128,uint128)" => assert!(
                         result.success,
@@ -490,12 +491,12 @@ mod tests {
     #[test]
     fn test_trace() {
         let mut runner = tracing_runner();
-        let results = runner.test(&Filter::new(".*", ".*", ".*trace"), None).unwrap();
+        let suite_result = runner.test(&Filter::new(".*", ".*", ".*trace"), None).unwrap();
 
         // TODO: This trace test is very basic - it is probably a good candidate for snapshot
         // testing.
-        for (_, tests) in results {
-            for (test_name, result) in tests {
+        for (_, SuiteResult { test_results, .. }) in suite_result {
+            for (test_name, result) in test_results {
                 let deployment_traces =
                     result.traces.iter().filter(|(kind, _)| *kind == TraceKind::Deployment);
                 let setup_traces =

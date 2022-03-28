@@ -3,7 +3,7 @@ pub mod gas_report;
 
 /// The Forge test runner
 mod runner;
-pub use runner::{ContractRunner, TestKind, TestKindGas, TestResult};
+pub use runner::{ContractRunner, SuiteResult, TestKind, TestKindGas, TestResult};
 
 /// Forge test runners for multiple contracts
 mod multi_runner;

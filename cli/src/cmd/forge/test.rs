@@ -14,11 +14,13 @@ use forge::{
     executor::opts::EvmOpts,
     gas_report::GasReport,
     trace::{identifier::LocalTraceIdentifier, CallTraceDecoder, TraceKind},
-    MultiContractRunner, MultiContractRunnerBuilder, TestFilter, TestKind, TestResult,
+    MultiContractRunner, MultiContractRunnerBuilder, SuiteResult, TestFilter, TestKind,
 };
 use foundry_config::{figment::Figment, Config};
 use regex::Regex;
-use std::{collections::BTreeMap, path::PathBuf, str::FromStr, sync::mpsc::channel, thread};
+use std::{
+    collections::BTreeMap, path::PathBuf, str::FromStr, sync::mpsc::channel, thread, time::Duration,
+};
 
 #[derive(Debug, Clone, Parser)]
 pub struct Filter {
@@ -207,8 +209,8 @@ impl Cmd for TestArgs {
                     let results = runner.test(&self.filter, None)?;
 
                     // Get the result of the single test
-                    let (id, sig, test_kind, counterexample) = results.iter().map(|(id, results)| {
-                        let (sig, result) = results.iter().next().unwrap();
+                    let (id, sig, test_kind, counterexample) = results.iter().map(|(id, SuiteResult{ test_results, .. })| {
+                        let (sig, result) = test_results.iter().next().unwrap();
 
                         (id.clone(), sig.clone(), result.kind.clone(), result.counterexample.clone())
                     }).next().unwrap();
@@ -293,13 +295,13 @@ pub struct TestOutcome {
     pub allow_failure: bool,
     /// Whether to include fuzz test gas usage in the output
     pub include_fuzz_test_gas: bool,
-    /// All test results `contract -> (test name -> TestResult)`
-    pub results: BTreeMap<String, BTreeMap<String, forge::TestResult>>,
+    /// Results for each suite of tests `contract -> SuiteResult`
+    pub results: BTreeMap<String, SuiteResult>,
 }
 
 impl TestOutcome {
     fn new(
-        results: BTreeMap<String, BTreeMap<String, forge::TestResult>>,
+        results: BTreeMap<String, SuiteResult>,
         allow_failure: bool,
         include_fuzz_test_gas: bool,
     ) -> Self {
@@ -318,14 +320,16 @@ impl TestOutcome {
 
     /// Iterator over all tests and their names
     pub fn tests(&self) -> impl Iterator<Item = (&String, &forge::TestResult)> {
-        self.results.values().flat_map(|tests| tests.iter())
+        self.results.values().flat_map(|SuiteResult { test_results, .. }| test_results.iter())
     }
 
     /// Returns an iterator over all `Test`
     pub fn into_tests(self) -> impl Iterator<Item = Test> {
         self.results
             .into_iter()
-            .flat_map(|(file, tests)| tests.into_iter().map(move |t| (file.clone(), t)))
+            .flat_map(|(file, SuiteResult { test_results, .. })| {
+                test_results.into_iter().map(move |t| (file.clone(), t))
+            })
             .map(|(artifact_id, (signature, result))| Test { artifact_id, signature, result })
     }
 
@@ -334,6 +338,7 @@ impl TestOutcome {
         if !self.allow_failure {
             let failures = self.failures().count();
             if failures > 0 {
+                println!();
                 println!("Failed tests:");
                 for (name, result) in self.failures() {
                     short_test_result(name, include_fuzz_test_gas, result);
@@ -350,6 +355,25 @@ impl TestOutcome {
             }
         }
         Ok(())
+    }
+
+    pub fn duration(&self) -> Duration {
+        self.results
+            .values()
+            .fold(Duration::ZERO, |acc, SuiteResult { duration, .. }| acc + *duration)
+    }
+
+    pub fn summary(&self) -> String {
+        let failed = self.failures().count();
+        let result =
+            if failed == 0 { Colour::Green.paint("ok") } else { Colour::Red.paint("FAILED") };
+        format!(
+            "Test result: {}. {} passed; {} failed; finished in {:.2?}",
+            result,
+            self.successes().count(),
+            failed,
+            self.duration()
+        )
     }
 }
 
@@ -391,13 +415,14 @@ fn test(
         Ok(TestOutcome::new(results, allow_failure, include_fuzz_test_gas))
     } else {
         let local_identifier = LocalTraceIdentifier::new(&runner.known_contracts);
-        let (tx, rx) = channel::<(String, BTreeMap<String, TestResult>)>();
+        let (tx, rx) = channel::<(String, SuiteResult)>();
 
         let handle = thread::spawn(move || runner.test(&filter, Some(tx)).unwrap());
 
-        let mut results: BTreeMap<String, BTreeMap<String, TestResult>> = BTreeMap::new();
+        let mut results: BTreeMap<String, SuiteResult> = BTreeMap::new();
         let mut gas_report = GasReport::new(gas_reports);
-        for (contract_name, mut tests) in rx {
+        for (contract_name, suite_result) in rx {
+            let mut tests = suite_result.test_results.clone();
             println!();
             if !tests.is_empty() {
                 let term = if tests.len() > 1 { "tests" } else { "test" };
@@ -464,7 +489,13 @@ fn test(
                     }
                 }
             }
-            results.insert(contract_name, tests);
+            let block_outcome = TestOutcome::new(
+                [(contract_name.clone(), suite_result.clone())].into(),
+                allow_failure,
+                include_fuzz_test_gas,
+            );
+            println!("{}", block_outcome.summary());
+            results.insert(contract_name, suite_result);
         }
 
         if gas_reporting {
