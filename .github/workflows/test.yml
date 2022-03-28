@@ -65,9 +65,15 @@ jobs:
           toolchain: stable
           profile: minimal
           override: true
-      - uses: Swatinem/rust-cache@v1
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v1
         with:
           cache-on-failure: true
+      - name: Forge RPC cache
+        uses: actions/cache@v3
+        with:
+          path: ~/.foundry/cache
+          key: forge-rpc-cache
 
       - name: cargo test
         run: cargo test --locked --workspace --all-features --test '*'
