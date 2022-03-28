@@ -494,31 +494,26 @@ mod tests {
         // testing.
         for (_, tests) in results {
             for (test_name, result) in tests {
-                let deployment_traces = result
-                    .traces
-                    .iter()
-                    .filter(|(kind, _)| *kind == TraceKind::Deployment)
-                    .collect::<Vec<_>>();
-                let setup_traces = result
-                    .traces
-                    .iter()
-                    .filter(|(kind, _)| *kind == TraceKind::Setup)
-                    .collect::<Vec<_>>();
-                let execution_traces = result
-                    .traces
-                    .iter()
-                    .filter(|(kind, _)| *kind == TraceKind::Deployment)
-                    .collect::<Vec<_>>();
+                let deployment_traces =
+                    result.traces.iter().filter(|(kind, _)| *kind == TraceKind::Deployment);
+                let setup_traces =
+                    result.traces.iter().filter(|(kind, _)| *kind == TraceKind::Setup);
+                let execution_traces =
+                    result.traces.iter().filter(|(kind, _)| *kind == TraceKind::Deployment);
 
                 assert_eq!(
-                    deployment_traces.len(),
+                    deployment_traces.count(),
                     1,
                     "Test {} did not have exactly 1 deployment trace.",
                     test_name
                 );
-                assert!(setup_traces.len() <= 1, "Test {} had more than 1 setup trace.", test_name);
+                assert!(
+                    setup_traces.count() <= 1,
+                    "Test {} had more than 1 setup trace.",
+                    test_name
+                );
                 assert_eq!(
-                    execution_traces.len(),
+                    execution_traces.count(),
                     1,
                     "Test {} did not not have exactly 1 execution trace.",
                     test_name
