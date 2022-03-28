@@ -14,7 +14,7 @@ use std::{
 pub type TxMarker = Vec<u8>;
 
 /// creates an unique identifier for aan (`nonce` + `Address`) combo
-fn to_marker(nonce: u64, from: Address) -> TxMarker {
+pub fn to_marker(nonce: u64, from: Address) -> TxMarker {
     let mut data = [0u8; 28];
     data[..8].copy_from_slice(&nonce.to_le_bytes()[..]);
     data[8..].copy_from_slice(&from.0[..]);
@@ -31,6 +31,8 @@ pub struct PoolTransaction {
     /// Markers that this transaction provides
     pub provides: Vec<TxMarker>,
 }
+
+// == impl PoolTransaction ==
 
 impl PoolTransaction {
     /// Returns the hash of this transaction

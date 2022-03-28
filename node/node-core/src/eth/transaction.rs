@@ -1,9 +1,15 @@
 //! transaction related data
 
-use ethers_core::types::{transaction::eip2930::AccessListItem, Address, Bytes, U256, H256, TxHash};
-use ethers_core::types::transaction::eip2930::AccessList;
-use ethers_core::utils::{keccak256, rlp};
-use ethers_core::utils::rlp::{Encodable, RlpStream};
+use ethers_core::{
+    types::{
+        transaction::eip2930::{AccessList, AccessListItem},
+        Address, Bytes, Signature, TxHash, H256, U256,
+    },
+    utils::{
+        keccak256, rlp,
+        rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream},
+    },
+};
 use serde::{Deserialize, Serialize};
 
 /// Container type for various Ethereum transaction requests
@@ -136,6 +142,27 @@ pub struct TransactionSignature {
     pub s: U256,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TransactionRecoveryId(pub u64);
+
+impl TransactionRecoveryId {
+    pub fn standard(self) -> u8 {
+        if self.0 == 27 || self.0 == 28 || self.0 > 36 {
+            ((self.0 - 1) % 2) as u8
+        } else {
+            4
+        }
+    }
+
+    pub fn chain_id(self) -> Option<u64> {
+        if self.0 > 36 {
+            Some((self.0 - 35) / 2)
+        } else {
+            None
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TransactionKind {
     Call(Address),
@@ -149,6 +176,20 @@ impl Encodable for TransactionKind {
                 s.encoder().encode_value(&address[..]);
             }
             TransactionKind::Create => s.encoder().encode_value(&[]),
+        }
+    }
+}
+
+impl Decodable for TransactionKind {
+    fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
+        if rlp.is_empty() {
+            if rlp.is_data() {
+                Ok(TransactionKind::Create)
+            } else {
+                Err(DecoderError::RlpExpectedToBeData)
+            }
+        } else {
+            Ok(TransactionKind::Call(rlp.as_val()?))
         }
     }
 }
@@ -201,6 +242,14 @@ pub enum TypedTransaction {
 }
 
 impl TypedTransaction {
+    pub fn nonce(&self) -> &U256 {
+        match self {
+            TypedTransaction::Legacy(t) => t.nonce(),
+            TypedTransaction::EIP2930(t) => t.nonce(),
+            TypedTransaction::EIP1559(t) => t.nonce(),
+        }
+    }
+
     pub fn hash(&self) -> H256 {
         match self {
             TypedTransaction::Legacy(t) => t.hash(),
@@ -222,6 +271,10 @@ pub struct LegacyTransaction {
 }
 
 impl LegacyTransaction {
+    pub fn nonce(&self) -> &U256 {
+        &self.nonce
+    }
+
     pub fn hash(&self) -> H256 {
         H256::from_slice(keccak256(&rlp::encode(self)).as_slice())
     }
@@ -242,8 +295,29 @@ impl Encodable for LegacyTransaction {
     }
 }
 
+impl Decodable for LegacyTransaction {
+    fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
+        if rlp.item_count()? != 9 {
+            return Err(DecoderError::RlpIncorrectListLen)
+        }
 
-#[derive(Clone, Debug, PartialEq, Eq,  Serialize, Deserialize)]
+        let v = rlp.val_at(6)?;
+        let r = rlp.val_at::<U256>(7)?;
+        let s = rlp.val_at::<U256>(8)?;
+
+        Ok(Self {
+            nonce: rlp.val_at(0)?,
+            gas_price: rlp.val_at(1)?,
+            gas_limit: rlp.val_at(2)?,
+            kind: rlp.val_at(3)?,
+            value: rlp.val_at(4)?,
+            input: rlp.val_at::<Vec<u8>>(5)?.into(),
+            signature: TransactionSignature { v, r, s },
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EIP2930Transaction {
     pub chain_id: u64,
     pub nonce: U256,
@@ -259,6 +333,10 @@ pub struct EIP2930Transaction {
 }
 
 impl EIP2930Transaction {
+    pub fn nonce(&self) -> &U256 {
+        &self.nonce
+    }
+
     pub fn hash(&self) -> H256 {
         let encoded = rlp::encode(self);
         let mut out = vec![0; 1 + encoded.len()];
@@ -285,6 +363,36 @@ impl Encodable for EIP2930Transaction {
     }
 }
 
+impl Decodable for EIP2930Transaction {
+    fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
+        if rlp.item_count()? != 11 {
+            return Err(DecoderError::RlpIncorrectListLen)
+        }
+
+        Ok(Self {
+            chain_id: rlp.val_at(0)?,
+            nonce: rlp.val_at(1)?,
+            gas_price: rlp.val_at(2)?,
+            gas_limit: rlp.val_at(3)?,
+            kind: rlp.val_at(4)?,
+            value: rlp.val_at(5)?,
+            input: rlp.val_at::<Vec<u8>>(6)?.into(),
+            access_list: rlp.val_at(7)?,
+            odd_y_parity: rlp.val_at(8)?,
+            r: {
+                let mut rarr = [0_u8; 32];
+                rlp.val_at::<U256>(9)?.to_big_endian(&mut rarr);
+                H256::from(rarr)
+            },
+            s: {
+                let mut sarr = [0_u8; 32];
+                rlp.val_at::<U256>(10)?.to_big_endian(&mut sarr);
+                H256::from(sarr)
+            },
+        })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EIP1559Transaction {
     pub chain_id: u64,
@@ -302,6 +410,10 @@ pub struct EIP1559Transaction {
 }
 
 impl EIP1559Transaction {
+    pub fn nonce(&self) -> &U256 {
+        &self.nonce
+    }
+
     pub fn hash(&self) -> H256 {
         let encoded = rlp::encode(self);
         let mut out = vec![0; 1 + encoded.len()];
@@ -329,19 +441,58 @@ impl Encodable for EIP1559Transaction {
     }
 }
 
+impl Decodable for EIP1559Transaction {
+    fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
+        if rlp.item_count()? != 12 {
+            return Err(DecoderError::RlpIncorrectListLen)
+        }
+
+        Ok(Self {
+            chain_id: rlp.val_at(0)?,
+            nonce: rlp.val_at(1)?,
+            max_priority_fee_per_gas: rlp.val_at(2)?,
+            max_fee_per_gas: rlp.val_at(3)?,
+            gas_limit: rlp.val_at(4)?,
+            kind: rlp.val_at(5)?,
+            value: rlp.val_at(6)?,
+            input: rlp.val_at::<Vec<u8>>(7)?.into(),
+            access_list: rlp.val_at(8)?,
+            odd_y_parity: rlp.val_at(9)?,
+            r: {
+                let mut rarr = [0_u8; 32];
+                rlp.val_at::<U256>(10)?.to_big_endian(&mut rarr);
+                H256::from(rarr)
+            },
+            s: {
+                let mut sarr = [0_u8; 32];
+                rlp.val_at::<U256>(11)?.to_big_endian(&mut sarr);
+                H256::from(sarr)
+            },
+        })
+    }
+}
+
 /// Queued transaction
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PendingTransaction {
     /// The actual transaction
     transaction: TypedTransaction,
     /// hash of `transaction`, so it can easily be reused with encoding and hashing agan
-    hash: TxHash
+    hash: TxHash,
 }
 
+// == impl PendingTransaction ==
+
 impl PendingTransaction {
+    pub fn new(transaction: TypedTransaction) -> Self {
+        Self { hash: transaction.hash(), transaction }
+    }
+
+    pub fn nonce(&self) -> &U256 {
+        self.transaction.nonce()
+    }
 
     pub fn hash(&self) -> &TxHash {
         &self.hash
     }
-
 }

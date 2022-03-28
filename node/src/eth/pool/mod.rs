@@ -19,6 +19,15 @@ pub struct Pool {
     pool: RwLock<PoolInner>,
 }
 
+// == impl Pool ==
+
+impl Pool {
+    /// Adds a new transaction to the pool
+    pub fn add_transaction(&self, tx: PoolTransaction) -> Result<AddedTransaction, PoolError> {
+        self.pool.write().add_transaction(tx)
+    }
+}
+
 /// A Transaction Pool
 ///
 /// Contains all transactions that are ready to be executed
@@ -32,12 +41,11 @@ struct PoolInner {
 
 impl PoolInner {
     /// Returns true if this pool already contains the transaction
-    pub fn contains(&self, tx_hash: &TxHash) -> bool {
+    fn contains(&self, tx_hash: &TxHash) -> bool {
         self.pending_transactions.contains(tx_hash) || self.ready_transactions.contains(tx_hash)
     }
 
-    /// Adds a new transaction to the pool
-    pub fn add_transaction(&mut self, tx: PoolTransaction) -> Result<AddedTransaction, PoolError> {
+    fn add_transaction(&mut self, tx: PoolTransaction) -> Result<AddedTransaction, PoolError> {
         if self.contains(tx.hash()) {
             return Err(PoolError::AlreadyImported(Box::new(tx)))
         }
@@ -140,6 +148,15 @@ pub enum AddedTransaction {
         /// the hash of the submitted transaction
         hash: TxHash,
     },
+}
+
+impl AddedTransaction {
+    pub fn hash(&self) -> &TxHash {
+        match self {
+            AddedTransaction::Ready(tx) => &tx.hash,
+            AddedTransaction::Pending { hash } => hash,
+        }
+    }
 }
 
 /// A validated transaction

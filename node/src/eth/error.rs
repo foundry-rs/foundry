@@ -14,6 +14,8 @@ pub enum BlockchainError {
     ChainIdNotAvailable,
     #[error("Invalid Transaction")]
     InvalidTransaction,
+    #[error("Transaction data is empty")]
+    EmptyRawTransactionData,
 }
 
 /// Errors that can occur in the transaction pool

@@ -1,7 +1,10 @@
 use crate::eth::{
     backend::Backend,
     error::{BlockchainError, Result},
-    pool::Pool,
+    pool::{
+        transactions::{to_marker, PoolTransaction},
+        Pool,
+    },
     sign::Signer,
 };
 use ethers::{
@@ -13,7 +16,9 @@ use ethers::{
 };
 use forge_node_core::{
     eth::{
-        transaction::{EthTransactionRequest, TypedTransaction, TypedTransactionRequest},
+        transaction::{
+            EthTransactionRequest, PendingTransaction, TypedTransaction, TypedTransactionRequest,
+        },
         EthRequest,
     },
     response::RpcResponse,
@@ -208,15 +213,15 @@ impl EthApi {
     }
 
     /// Sends a transaction
-    /// will wait for signer to return the transaction hash.
     ///
     /// Handler for ETH RPC call: `eth_sendTransaction`
-    pub async fn send_transaction(&self, request: EthTransactionRequest) -> Result<H256> {
+    pub async fn send_transaction(&self, request: EthTransactionRequest) -> Result<TxHash> {
         let from = request.from.map(Ok).unwrap_or_else(|| {
             self.accounts()?.get(0).cloned().ok_or(BlockchainError::NoSignerAvailable)
         })?;
 
-        let nonce = request.nonce.map(Ok).unwrap_or_else(|| self.transaction_count(from, None))?;
+        let on_chain_nonce = self.transaction_count(from, None)?;
+        let nonce = request.nonce.unwrap_or(on_chain_nonce);
 
         let chain_id = self.chain_id()?.ok_or(BlockchainError::ChainIdNotAvailable)?.as_u64();
 
@@ -252,18 +257,43 @@ impl EthApi {
                 }
                 TypedTransactionRequest::EIP1559(m)
             }
-            _ => return { Err(BlockchainError::InvalidTransaction) },
+            _ => return Err(BlockchainError::InvalidTransaction),
         };
 
         let transaction = self.sign_request(&from, request)?;
+        let pending_transaction = PendingTransaction::new(transaction);
 
-        todo!()
+        let prev_nonce = nonce.saturating_sub(U256::one());
+        let requires = if on_chain_nonce < prev_nonce {
+            vec![to_marker(prev_nonce.as_u64(), from)]
+        } else {
+            vec![]
+        };
+
+        let pool_transaction = PoolTransaction {
+            requires,
+            provides: vec![to_marker(nonce.as_u64(), from)],
+            pending_transaction,
+        };
+
+        let tx = self.pool.add_transaction(pool_transaction)?;
+        Ok(*tx.hash())
     }
 
     /// Sends signed transaction, returning its hash.
     ///
     /// Handler for ETH RPC call: `eth_sendRawTransaction`
-    pub async fn send_raw_transaction(&self, _: Bytes) -> Result<H256> {
+    pub async fn send_raw_transaction(&self, tx: Bytes) -> Result<TxHash> {
+        let data = tx.as_ref();
+        if data.is_empty() {
+            return Err(BlockchainError::EmptyRawTransactionData)
+        }
+        if data[0] > 0x7f {
+            // legacy transaction
+        } else {
+            // typed transaction
+        }
+
         todo!()
     }
 
