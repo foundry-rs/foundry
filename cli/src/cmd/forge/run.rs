@@ -301,10 +301,15 @@ impl RunArgs {
                     *extra.dependencies = dependencies;
                     *extra.contract = contract.clone();
                     extra.matched = true;
-                } else if extra.target_fname == id.slug() {
-                    *extra.dependencies = dependencies;
-                    *extra.contract = contract.clone();
-                    extra.matched = true;
+                } else {
+                    let split: Vec<&str> = extra.target_fname.split(':').collect();
+                    let path = std::path::Path::new(split[0]);
+                    let name = split[1];
+                    if path == id.source && name == id.name {
+                        *extra.dependencies = dependencies;
+                        *extra.contract = contract.clone();
+                        extra.matched = true;
+                    }
                 }
 
                 let tc: ContractBytecode = contract.into();
