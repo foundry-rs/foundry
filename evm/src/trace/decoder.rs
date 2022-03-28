@@ -29,7 +29,7 @@ pub struct CallTraceDecoder {
     /// A mapping of addresses to their known functions
     pub functions: BTreeMap<[u8; 4], Vec<Function>>,
     /// All known events
-    pub events: BTreeMap<H256, Event>,
+    pub events: BTreeMap<(H256, usize), Vec<Event>>,
     /// All known errors
     pub errors: Abi,
 }
@@ -121,8 +121,8 @@ impl CallTraceDecoder {
                 .collect::<BTreeMap<[u8; 4], Vec<Function>>>(),
             events: CONSOLE_ABI
                 .events()
-                .map(|event| (event.signature(), event.clone()))
-                .collect::<BTreeMap<H256, Event>>(),
+                .map(|event| ((event.signature(), indexed_inputs(event)), vec![event.clone()]))
+                .collect::<BTreeMap<(H256, usize), Vec<Event>>>(),
             errors: Abi::default(),
         }
     }
@@ -162,11 +162,11 @@ impl CallTraceDecoder {
                     .for_each(|(sig, func)| self.functions.entry(sig).or_default().push(func));
 
                 // Flatten events from all ABIs
-                abi.events().map(|event| (event.signature(), event.clone())).for_each(
-                    |(sig, event)| {
-                        self.events.insert(sig, event);
-                    },
-                );
+                abi.events()
+                    .map(|event| ((event.signature(), indexed_inputs(event)), event.clone()))
+                    .for_each(|(sig, event)| {
+                        self.events.entry(sig).or_default().push(event);
+                    });
 
                 // Flatten errors from all ABIs
                 abi.errors().for_each(|error| {
@@ -296,16 +296,21 @@ impl CallTraceDecoder {
             // Decode events
             node.logs.iter_mut().for_each(|log| {
                 if let RawOrDecodedLog::Raw(raw_log) = log {
-                    if let Some(event) = self.events.get(&raw_log.topics[0]) {
-                        if let Ok(decoded) = event.parse_log(raw_log.clone()) {
-                            *log = RawOrDecodedLog::Decoded(
-                                event.name.clone(),
-                                decoded
-                                    .params
-                                    .into_iter()
-                                    .map(|param| (param.name, self.apply_label(&param.value)))
-                                    .collect(),
-                            )
+                    if let Some(events) =
+                        self.events.get(&(raw_log.topics[0], raw_log.topics.len() - 1))
+                    {
+                        for event in events {
+                            if let Ok(decoded) = event.parse_log(raw_log.clone()) {
+                                *log = RawOrDecodedLog::Decoded(
+                                    event.name.clone(),
+                                    decoded
+                                        .params
+                                        .into_iter()
+                                        .map(|param| (param.name, self.apply_label(&param.value)))
+                                        .collect(),
+                                );
+                                break
+                            }
                         }
                     }
                 }
@@ -358,4 +363,8 @@ where
             state_mutability: ethers::abi::StateMutability::Pure,
         },
     )
+}
+
+fn indexed_inputs(event: &Event) -> usize {
+    event.inputs.iter().filter(|param| param.indexed).count()
 }
