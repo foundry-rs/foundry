@@ -24,5 +24,5 @@ casttest!(finds_block, |_: TestProject, mut cmd: TestCommand| {
     println!("{}", output);
 
     // Expect successful block query
-    assert!(output.contains("6574364"));
+    assert!(output.contains("6574364"), "{}", output);
 });

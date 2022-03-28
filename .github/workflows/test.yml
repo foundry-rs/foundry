@@ -69,6 +69,27 @@ jobs:
         uses: Swatinem/rust-cache@v1
         with:
           cache-on-failure: true
+
+      - name: cargo test
+        run: cargo test --locked --workspace --test '*'
+
+  external-integration:
+    name: external integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+      - name: Clone testdata for fmt tests
+        run: make fmt-testdata
+      - name: Install toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+      - uses: Swatinem/rust-cache@v1
+        with:
+          cache-on-failure: true
       - name: Forge RPC cache
         uses: actions/cache@v3
         with:
@@ -76,7 +97,7 @@ jobs:
           key: forge-rpc-cache
 
       - name: cargo test
-        run: cargo test --locked --workspace --all-features --test '*'
+        run: cargo test --locked --workspace --features external-integration-tests --test '*'
 
   lint:
     runs-on: ubuntu-latest

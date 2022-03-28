@@ -1,5 +1,3 @@
-#![cfg(feature = "integration-tests")]
-
 use foundry_cli_test_utils::forgetest_external;
 
 forgetest_external!(solmate, "Rari-Capital/solmate");
