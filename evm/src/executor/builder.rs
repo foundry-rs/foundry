@@ -3,7 +3,7 @@ use revm::{
     db::{DatabaseRef, EmptyDB},
     Env, SpecId,
 };
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use super::{fork::SharedBackend, inspector::InspectorStackConfig, Executor};
 
@@ -55,7 +55,7 @@ impl Fork {
             .and_then(|url| url.host().map(|host| host.to_string()))
             .unwrap_or_else(|| url.clone());
 
-        let provider = Provider::try_from(url).expect("Failed to establish provider");
+        let provider = Arc::new(Provider::try_from(url).expect("Failed to establish provider"));
 
         let mut meta =
             BlockchainDbMeta { cfg_env: env.cfg.clone(), block_env: env.block.clone(), host };
