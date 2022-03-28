@@ -114,12 +114,6 @@ impl Cmd for InitArgs {
             if !dest.exists() {
                 // write foundry.toml
                 let mut config = Config::load_with_root(&root).into_basic();
-                // add the ds-test remapping manually because we initialize before installing it
-                if !offline {
-                    config
-                        .remappings
-                        .push("ds-test/=lib/ds-test/src/".parse::<Remapping>().unwrap().into());
-                }
                 std::fs::write(dest, config.to_string_pretty()?)?;
             }
 
