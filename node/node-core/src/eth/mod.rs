@@ -1,10 +1,15 @@
-use ethers::prelude::{
-    types::transaction::eip2718::TypedTransaction, Address, BlockNumber, Transaction, TxHash, U256,
+use crate::error::Error;
+use ethers_core::types::{
+    transaction::{eip2718::TypedTransaction, eip2930::AccessListItem},
+    Address, BlockNumber, Bytes, Transaction, TxHash, U256,
 };
 use serde::{
     de::DeserializeOwned, ser::SerializeSeq, Deserialize, Deserializer, Serialize, Serializer,
 };
 
+pub mod transaction;
+
+/// Represents ethereum JSON-RPC API
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "method", content = "params")]
 pub enum EthRequest {
@@ -42,11 +47,9 @@ where
     T: DeserializeOwned,
 {
     let mut seq = Vec::<T>::deserialize(d)?;
-    assert!(seq.len() == 1);
+    assert_eq!(seq.len(), 1);
     Ok(seq.pop().expect("length of vector is 1"))
 }
-
-pub type BoxedError = Box<dyn erased_serde::Serialize>;
 
 #[derive(Serialize)]
 #[serde(untagged)]
@@ -54,13 +57,12 @@ pub type BoxedError = Box<dyn erased_serde::Serialize>;
 pub enum EthResponse {
     EthGetBalance(U256),
     EthGetTransactionByHash(Box<Option<Transaction>>),
-    EthSendTransaction(Result<TxHash, BoxedError>),
+    EthSendTransaction(Result<TxHash, Error>),
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
     use rand::Rng;
 
     #[test]
@@ -93,7 +95,7 @@ mod tests {
 
         let val = EthResponse::EthSendTransaction(Ok(TxHash::default()));
         let _ser = serde_json::to_string(&val).unwrap();
-        let val = EthResponse::EthSendTransaction(Err(Box::new("some error")));
+        let val = EthResponse::EthSendTransaction(Err(Error::parse_error()));
         let _ser = serde_json::to_string(&val).unwrap();
     }
 }

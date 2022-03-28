@@ -1,0 +1,33 @@
+[package]
+name = "forge-node"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+# foundry internal
+foundry-evm = { path = "../evm" }
+forge-node-core = { path = "node-core" }
+foundry-utils = { path = "../utils" }
+
+ethers = { git = "https://github.com/gakonst/ethers-rs" }
+
+# axum related
+axum = {version = "0.2", features = ["ws"] }
+hyper = "0.14"
+tower = "0.4"
+tower-http = { version = "0.2", features = ["trace"] }
+
+# tracing
+tracing = "0.1.32"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# async
+tokio = { version = "1.10", features = ["time"] }
+parking_lot = "0.12"
+futures = "0.3"
+
+chrono = "0.4.0"
+serde_json = "1.0.67"
+thiserror = "1.0.30"
+

@@ -20,10 +20,10 @@ use ethers::{
 };
 use evm_adapters::Evm;
 use forge_node_types::{
-    BoxedError, Error, EthRequest, EthResponse, JsonRpcRequest, JsonRpcResponse, ResponseContent,
+    BoxedError, Error, EthRequest, EthResponse, ResponseResult, RpcCall, RpcResponse,
 };
 
-use crate::{blockchain::Blockchain, config::NodeConfig};
+use crate::{config::NodeConfig, eth::blockchain::Blockchain};
 
 pub enum NodeError {
     MissingParent,
@@ -478,9 +478,9 @@ where
 }
 
 async fn handler<E, S>(
-    request: Result<Json<JsonRpcRequest>, JsonRejection>,
+    request: Result<Json<RpcCall>, JsonRejection>,
     Extension(state): Extension<SharedNode<S, E>>,
-) -> JsonRpcResponse
+) -> RpcResponse
 where
     E: Evm<S>,
 {
@@ -492,19 +492,16 @@ where
                     .expect("deserialized payload should be serializable"),
             ) {
                 Ok(msg) => {
-                    JsonRpcResponse::new(payload.id(), ResponseContent::success(handle(state, msg)))
+                    RpcResponse::new(payload.id(), ResponseResult::success(handle(state, msg)))
                 }
                 Err(e) => {
                     if e.to_string().contains("unknown variant") {
-                        JsonRpcResponse::new(
+                        RpcResponse::new(
                             payload.id(),
-                            ResponseContent::error(Error::METHOD_NOT_FOUND),
+                            ResponseResult::error(Error::METHOD_NOT_FOUND),
                         )
                     } else {
-                        JsonRpcResponse::new(
-                            payload.id(),
-                            ResponseContent::error(Error::INVALID_PARAMS),
-                        )
+                        RpcResponse::new(payload.id(), ResponseResult::error(Error::INVALID_PARAMS))
                     }
                 }
             }

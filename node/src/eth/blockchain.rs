@@ -2,8 +2,8 @@ use std::collections::{HashMap, VecDeque};
 
 use ethers::prelude::{Block, Log, Transaction, TransactionReceipt, TxHash, H256, U256, U64};
 
-#[derive(Default)]
 /// Stores the blockchain data (blocks, transactions)
+#[derive(Default)]
 pub struct Blockchain {
     /// Mapping from block hash to the block number
     pub(crate) blocks_by_hash: HashMap<H256, U64>,
