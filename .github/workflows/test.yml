@@ -69,11 +69,6 @@ jobs:
         uses: Swatinem/rust-cache@v1
         with:
           cache-on-failure: true
-      - name: Forge RPC cache
-        uses: actions/cache@v3
-        with:
-          path: ~/.foundry/cache
-          key: forge-rpc-cache
 
       - name: cargo test
         run: cargo test --locked --workspace --test '*'
@@ -95,6 +90,11 @@ jobs:
       - uses: Swatinem/rust-cache@v1
         with:
           cache-on-failure: true
+      - name: Forge RPC cache
+        uses: actions/cache@v3
+        with:
+          path: ~/.foundry/cache
+          key: forge-rpc-cache
 
       - name: cargo test
         run: cargo test --locked --workspace --features external-integration-tests --test '*'
