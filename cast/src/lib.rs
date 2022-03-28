@@ -17,8 +17,11 @@ use eyre::{Context, Result};
 use futures::future::join_all;
 use rustc_hex::{FromHexIter, ToHex};
 use std::{path::PathBuf, str::FromStr};
+pub use tx::TxBuilder;
 
 use foundry_utils::{encode_args, get_func, get_func_etherscan, to_table};
+
+mod tx;
 
 // TODO: CastContract with common contract initializers? Same for CastProviders?
 
@@ -50,7 +53,7 @@ where
     /// Makes a read-only call to the specified address
     ///
     /// ```no_run
-    /// 
+    ///
     /// use cast::Cast;
     /// use ethers_core::types::{Address, Chain};
     /// use ethers_providers::{Provider, Http};
@@ -67,22 +70,15 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn call<F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
+    pub async fn call(
         &self,
-        from: F,
-        to: T,
-        args: (&str, Vec<String>),
-        chain: Chain,
-        etherscan_api_key: Option<String>,
+        builder: TxBuilder,
         block: Option<BlockId>,
     ) -> Result<String> {
-        let (tx, func) = self
-            .build_tx(from, to, Some(args), None, None, None, None, chain, etherscan_api_key, false)
-            .await?;
-        let res = self.provider.call(&tx, block).await?;
+        let res = self.provider.call(&builder.tx, block).await?;
 
         // decode args into tokens
-        let func = func.expect("no valid function signature was provided.");
+        let func = builder.func.expect("no valid function signature was provided.");
         let decoded = func.decode_output(res.as_ref()).wrap_err(
             "could not decode output. did you specify the wrong function return data type perhaps?",
         )?;
@@ -113,7 +109,7 @@ where
     /// Generates an access list for the specified transaction
     ///
     /// ```no_run
-    /// 
+    ///
     /// use cast::Cast;
     /// use ethers_core::types::{Address, Chain};
     /// use ethers_providers::{Provider, Http};
@@ -130,19 +126,13 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn access_list<F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
+    pub async fn access_list(
         &self,
-        from: F,
-        to: T,
-        args: (&str, Vec<String>),
-        chain: Chain,
+        builder: &TxBuilder,
         block: Option<BlockId>,
         to_json: bool,
     ) -> Result<String> {
-        let (tx, _) =
-            self.build_tx(from, to, Some(args), None, None, None, None, chain, None, false).await?;
-
-        let access_list = self.provider.create_access_list(&tx, block).await?;
+        let access_list = self.provider.create_access_list(&builder.tx, block).await?;
         let res = if to_json {
             serde_json::to_string(&access_list)?
         } else {
@@ -195,34 +185,11 @@ where
     /// # }
     /// ```
     #[allow(clippy::too_many_arguments)]
-    pub async fn send<F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
+    pub async fn send(
         &self,
-        from: F,
-        to: T,
-        args: Option<(&str, Vec<String>)>,
-        gas: Option<U256>,
-        gas_price: Option<U256>,
-        value: Option<U256>,
-        nonce: Option<U256>,
-        chain: Chain,
-        etherscan_api_key: Option<String>,
-        legacy: bool,
+        builder: TxBuilder,
     ) -> Result<PendingTransaction<'_, M::Provider>> {
-        let (tx, _) = self
-            .build_tx(
-                from,
-                to,
-                args,
-                gas,
-                gas_price,
-                value,
-                nonce,
-                chain,
-                etherscan_api_key,
-                legacy,
-            )
-            .await?;
-        let res = self.provider.send_transaction(tx, None).await?;
+        let res = self.provider.send_transaction(builder.tx, None).await?;
 
         Ok::<_, eyre::Error>(res)
     }
@@ -282,96 +249,16 @@ where
         chain: Chain,
         etherscan_api_key: Option<String>,
     ) -> Result<U256> {
-        let (tx, _) = self
-            .build_tx(from, to, args, None, None, value, None, chain, etherscan_api_key, false)
+        let mut builder = TxBuilder::new(&self.provider, from, to, chain, false).await?;
+        builder
+            .value(value)
+            .etherscan_api_key(etherscan_api_key)
+            .args(&self.provider, args)
             .await?;
-        let res = self.provider.estimate_gas(&tx).await?;
+
+        let res = self.provider.estimate_gas(&builder.tx).await?;
 
         Ok::<_, eyre::Error>(res)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    async fn build_tx<F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
-        &self,
-        from: F,
-        to: T,
-        args: Option<(&str, Vec<String>)>,
-        gas: Option<U256>,
-        gas_price: Option<U256>,
-        value: Option<U256>,
-        nonce: Option<U256>,
-        chain: Chain,
-        etherscan_api_key: Option<String>,
-        legacy: bool,
-    ) -> Result<(TypedTransaction, Option<ethers_core::abi::Function>)> {
-        let from = match from.into() {
-            NameOrAddress::Name(ref ens_name) => self.provider.resolve_name(ens_name).await?,
-            NameOrAddress::Address(addr) => addr,
-        };
-
-        // Queries the addressbook for the address if present.
-        let to = foundry_utils::resolve_addr(to, chain)?;
-
-        let to = match to {
-            NameOrAddress::Name(ref ens_name) => self.provider.resolve_name(ens_name).await?,
-            NameOrAddress::Address(addr) => addr,
-        };
-
-        // make the call
-        let mut tx: TypedTransaction = if chain.is_legacy() || legacy {
-            TransactionRequest::new().from(from).to(to).into()
-        } else {
-            Eip1559TransactionRequest::new().from(from).to(to).into()
-        };
-
-        let func = if let Some((sig, args)) = args {
-            let args = resolve_name_args(&args, &self.provider).await;
-
-            let func = if sig.contains('(') {
-                get_func(sig)?
-            } else if sig.starts_with("0x") {
-                // if only calldata is provided, returning a dummy function
-                get_func("x()")?
-            } else {
-                get_func_etherscan(
-                    sig,
-                    to,
-                    &args,
-                    chain,
-                    etherscan_api_key.expect("Must set ETHERSCAN_API_KEY"),
-                )
-                .await?
-            };
-
-            let data = if sig.starts_with("0x") {
-                hex::decode(strip_0x(sig))?
-            } else {
-                encode_args(&func, &args)?
-            };
-
-            tx.set_data(data.into());
-            Some(func)
-        } else {
-            None
-        };
-
-        if let Some(gas) = gas {
-            tx.set_gas(gas);
-        }
-
-        if let Some(gas_price) = gas_price {
-            tx.set_gas_price(gas_price)
-        }
-
-        if let Some(value) = value {
-            tx.set_value(value);
-        }
-
-        if let Some(nonce) = nonce {
-            tx.set_nonce(nonce);
-        }
-
-        Ok((tx, func))
     }
 
     /// ```no_run
@@ -1289,7 +1176,7 @@ impl SimpleCast {
         let code = meta.source_code();
 
         if code.is_empty() {
-            return Err(eyre::eyre!("unverified contract"))
+            return Err(eyre::eyre!("unverified contract"));
         }
 
         Ok(code)
@@ -1349,21 +1236,6 @@ impl SimpleCast {
 
 fn strip_0x(s: &str) -> &str {
     s.strip_prefix("0x").unwrap_or(s)
-}
-
-async fn resolve_name_args<M: Middleware>(args: &[String], provider: &M) -> Vec<String> {
-    join_all(args.iter().map(|arg| async {
-        if arg.contains('.') {
-            let addr = provider.resolve_name(arg).await;
-            match addr {
-                Ok(addr) => format!("0x{}", hex::encode(addr.as_bytes())),
-                Err(_) => arg.to_string(),
-            }
-        } else {
-            arg.to_string()
-        }
-    }))
-    .await
 }
 
 #[cfg(test)]

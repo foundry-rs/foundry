@@ -3,7 +3,7 @@ pub mod cmd;
 mod term;
 mod utils;
 
-use cast::{Cast, SimpleCast};
+use cast::{Cast, SimpleCast, TxBuilder};
 mod opts;
 use cast::InterfacePath;
 use ethers::{
@@ -152,19 +152,17 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::AccessList { eth, address, sig, args, block, to_json } => {
             let provider = Provider::try_from(eth.rpc_url()?)?;
-            println!(
-                "{}",
-                Cast::new(provider)
-                    .access_list(
-                        eth.from.unwrap_or(Address::zero()),
-                        address,
-                        (&sig, args),
-                        eth.chain,
-                        block,
-                        to_json,
-                    )
-                    .await?
-            );
+            let mut builder = TxBuilder::new(
+                &provider,
+                eth.from.unwrap_or(Address::zero()),
+                address,
+                eth.chain,
+                false,
+            )
+            .await?;
+            builder.set_args(&provider, &sig, args);
+
+            println!("{}", Cast::new(provider).access_list(&builder, block, to_json).await?);
         }
         Subcommands::Block { rpc_url, block, full, field, to_json } => {
             let provider = Provider::try_from(rpc_url)?;
@@ -176,19 +174,16 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::Call { eth, address, sig, args, block } => {
             let provider = Provider::try_from(eth.rpc_url()?)?;
-            println!(
-                "{}",
-                Cast::new(provider)
-                    .call(
-                        eth.from.unwrap_or(Address::zero()),
-                        address,
-                        (&sig, args),
-                        eth.chain,
-                        eth.etherscan_api_key,
-                        block
-                    )
-                    .await?
-            );
+            let mut builder = TxBuilder::new(
+                &provider,
+                eth.from.unwrap_or(Address::zero()),
+                address,
+                eth.chain,
+                false,
+            )
+            .await?;
+            builder.set_args(&provider, &sig, args).await?.etherscan_api_key(eth.etherscan_api_key);
+            println!("{}", Cast::new(provider).call(builder, block).await?);
         }
         Subcommands::Calldata { sig, args } => {
             println!("{}", SimpleCast::calldata(sig, &args)?);
@@ -738,14 +733,22 @@ async fn cast_send<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>
 where
     M::Error: 'static,
 {
-    let cast = Cast::new(provider);
-
     let sig = args.0;
     let params = args.1;
     let params = if !sig.is_empty() { Some((&sig[..], params)) } else { None };
-    let pending_tx = cast
-        .send(from, to, params, gas, gas_price, value, nonce, chain, etherscan_api_key, legacy)
-        .await?;
+    let mut builder = TxBuilder::new(&provider, from, to, chain, legacy).await?;
+    builder
+        .args(&provider, params)
+        .await?
+        .gas(gas)
+        .gas_price(gas_price)
+        .value(value)
+        .nonce(nonce)
+        .etherscan_api_key(etherscan_api_key);
+
+    let cast = Cast::new(provider);
+
+    let pending_tx = cast.send(builder).await?;
     let tx_hash = *pending_tx;
 
     if cast_async {
