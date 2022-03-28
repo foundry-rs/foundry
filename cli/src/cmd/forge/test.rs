@@ -290,9 +290,9 @@ impl Test {
 /// Represents the bundled results of all tests
 pub struct TestOutcome {
     /// Whether failures are allowed
-    allow_failure: bool,
+    pub allow_failure: bool,
     /// Whether to include fuzz test gas usage in the output
-    include_fuzz_test_gas: bool,
+    pub include_fuzz_test_gas: bool,
     /// All test results `contract -> (test name -> TestResult)`
     pub results: BTreeMap<String, BTreeMap<String, forge::TestResult>>,
 }
