@@ -88,24 +88,25 @@ impl Cmd for SnapshotArgs {
     type Output = ();
 
     fn run(self) -> eyre::Result<()> {
+        let include_fuzz_test_gas = self.test.include_fuzz_test_gas;
         let outcome = self.test.run()?;
-        outcome.ensure_ok()?;
+        outcome.ensure_ok(include_fuzz_test_gas)?;
         let tests = self.config.apply(outcome);
 
         if let Some(path) = self.diff {
             let snap = path.as_ref().unwrap_or(&self.snap);
             let snaps = read_snapshot(snap)?;
-            diff(tests, snaps)?;
+            diff(tests, include_fuzz_test_gas, snaps)?;
         } else if let Some(path) = self.check {
             let snap = path.as_ref().unwrap_or(&self.snap);
             let snaps = read_snapshot(snap)?;
-            if check(tests, snaps) {
+            if check(tests, include_fuzz_test_gas, snaps) {
                 std::process::exit(0)
             } else {
                 std::process::exit(1)
             }
         } else {
-            write_to_snapshot_file(&tests, self.snap, self.format)?;
+            write_to_snapshot_file(&tests, self.snap, include_fuzz_test_gas, self.format)?;
         }
         Ok(())
     }
@@ -207,6 +208,7 @@ impl FromStr for SnapshotEntry {
                                     contract_name: file.as_str().to_string(),
                                     signature: sig.as_str().to_string(),
                                     gas_used: TestKindGas::Fuzz {
+                                        include_fuzz_test_gas: true,
                                         runs: runs.as_str().parse().unwrap(),
                                         median: med.as_str().parse().unwrap(),
                                         mean: avg.as_str().parse().unwrap(),
@@ -240,6 +242,7 @@ fn read_snapshot(path: impl AsRef<Path>) -> eyre::Result<Vec<SnapshotEntry>> {
 fn write_to_snapshot_file(
     tests: &[Test],
     path: impl AsRef<Path>,
+    include_fuzz_test_gas: bool,
     _format: Option<Format>,
 ) -> eyre::Result<()> {
     let mut out = String::new();
@@ -249,7 +252,7 @@ fn write_to_snapshot_file(
             "{}:{} {}",
             test.contract_name(),
             test.signature,
-            test.result.kind.gas_used()
+            test.result.kind.gas_used(include_fuzz_test_gas)
         )?;
     }
     Ok(fs::write(path, out)?)
@@ -281,7 +284,7 @@ impl SnapshotDiff {
 /// Compares the set of tests with an existing snapshot
 ///
 /// Returns true all tests match
-fn check(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> bool {
+fn check(tests: Vec<Test>, include_fuzz_test_gas: bool, snaps: Vec<SnapshotEntry>) -> bool {
     let snaps = snaps
         .into_iter()
         .map(|s| ((s.contract_name, s.signature), s.gas_used))
@@ -291,7 +294,7 @@ fn check(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> bool {
         if let Some(target_gas) =
             snaps.get(&(test.contract_name().to_string(), test.signature.clone())).cloned()
         {
-            let source_gas = test.result.kind.gas_used();
+            let source_gas = test.result.kind.gas_used(include_fuzz_test_gas);
             if source_gas.gas() != target_gas.gas() {
                 eprintln!(
                     "Diff in \"{}::{}\": consumed \"{}\" gas, expected \"{}\" gas ",
@@ -315,7 +318,11 @@ fn check(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> bool {
 }
 
 /// Compare the set of tests with an existing snapshot
-fn diff(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> eyre::Result<()> {
+fn diff(
+    tests: Vec<Test>,
+    include_fuzz_test_gas: bool,
+    snaps: Vec<SnapshotEntry>,
+) -> eyre::Result<()> {
     let snaps = snaps
         .into_iter()
         .map(|s| ((s.contract_name, s.signature), s.gas_used))
@@ -333,7 +340,7 @@ fn diff(tests: Vec<Test>, snaps: Vec<SnapshotEntry>) -> eyre::Result<()> {
             })?;
 
         diffs.push(SnapshotDiff {
-            source_gas_used: test.result.kind.gas_used(),
+            source_gas_used: test.result.kind.gas_used(include_fuzz_test_gas),
             signature: test.signature,
             target_gas_used,
         });
@@ -413,7 +420,12 @@ mod tests {
             SnapshotEntry {
                 contract_name: "Test".to_string(),
                 signature: "deposit()".to_string(),
-                gas_used: TestKindGas::Fuzz { runs: 256, median: 200, mean: 100 }
+                gas_used: TestKindGas::Fuzz {
+                    runs: 256,
+                    median: 200,
+                    mean: 100,
+                    include_fuzz_test_gas: true
+                }
             }
         );
     }
