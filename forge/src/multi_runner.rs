@@ -12,7 +12,7 @@ use foundry_evm::executor::{
 use foundry_utils::PostLinkInput;
 use proptest::test_runner::TestRunner;
 use rayon::prelude::*;
-use std::{collections::BTreeMap, marker::Sync, sync::mpsc::Sender};
+use std::{collections::BTreeMap, marker::Sync, path::Path, sync::mpsc::Sender};
 
 /// Builder used for instantiating the multi-contract runner
 #[derive(Debug, Default)]
@@ -37,6 +37,7 @@ impl MultiContractRunnerBuilder {
     /// against that evm
     pub fn build<A>(
         self,
+        root: impl AsRef<Path>,
         output: ProjectCompileOutput<A>,
         evm_opts: EvmOpts,
     ) -> Result<MultiContractRunner>
@@ -46,7 +47,7 @@ impl MultiContractRunnerBuilder {
         // This is just the contracts compiled, but we need to merge this with the read cached
         // artifacts
         let contracts = output
-            .with_stripped_file_prefixes(std::env::current_dir().unwrap())
+            .with_stripped_file_prefixes(root)
             .into_artifacts()
             .map(|(i, c)| (i, c.into_contract_bytecode()))
             .collect::<Vec<(ArtifactId, CompactContractBytecode)>>();
@@ -270,7 +271,7 @@ mod tests {
     use super::*;
     use crate::{
         decode::decode_console_logs,
-        test_helpers::{filter::Filter, COMPILED, EVM_OPTS},
+        test_helpers::{filter::Filter, COMPILED, EVM_OPTS, PROJECT},
     };
     use foundry_evm::trace::TraceKind;
 
@@ -281,14 +282,14 @@ mod tests {
 
     /// Builds a non-tracing runner
     fn runner() -> MultiContractRunner {
-        base_runner().build((*COMPILED).clone(), EVM_OPTS.clone()).unwrap()
+        base_runner().build(&(*PROJECT).paths.root, (*COMPILED).clone(), EVM_OPTS.clone()).unwrap()
     }
 
     /// Builds a tracing runner
     fn tracing_runner() -> MultiContractRunner {
         let mut opts = EVM_OPTS.clone();
         opts.verbosity = 5;
-        base_runner().build((*COMPILED).clone(), opts).unwrap()
+        base_runner().build(&(*PROJECT).paths.root, (*COMPILED).clone(), opts).unwrap()
     }
 
     /// A helper to assert the outcome of multiple tests with helpful assert messages
@@ -356,7 +357,7 @@ mod tests {
             &results,
             BTreeMap::from([
                 (
-                    "FailingSetupTest.json:FailingSetupTest",
+                    "core/FailingSetup.t.sol:FailingSetupTest",
                     vec![(
                         "setUp()",
                         false,
@@ -364,27 +365,34 @@ mod tests {
                         None,
                     )],
                 ),
-                ("RevertingTest.json:RevertingTest", vec![("testFailRevert()", true, None, None)]),
                 (
-                    "SetupConsistencyCheck.json:SetupConsistencyCheck",
+                    "core/Reverting.t.sol:RevertingTest",
+                    vec![("testFailRevert()", true, None, None)],
+                ),
+                (
+                    "core/SetupConsistency.t.sol:SetupConsistencyCheck",
                     vec![("testAdd()", true, None, None), ("testMultiply()", true, None, None)],
                 ),
                 (
-                    "DSStyleTest.json:DSStyleTest",
+                    "core/DSStyle.t.sol:DSStyleTest",
+                    vec![("testFailingAssertions()", true, None, None)],
+                ),
+                (
+                    "core/DappToolsParity.t.sol:DappToolsParityTest",
                     vec![
                         ("testAddresses()", true, None, None),
                         ("testEnvironment()", true, None, None),
                     ],
                 ),
                 (
-                    "PaymentFailureTest.json:PaymentFailureTest",
+                    "core/PaymentFailure.t.sol:PaymentFailureTest",
                     vec![("testCantPay()", false, Some("Revert".to_string()), None)],
                 ),
                 (
-                    "LibraryLinkingTest.json:LibraryLinkingTest",
+                    "core/LibraryLinking.t.sol:LibraryLinkingTest",
                     vec![("testDirect()", true, None, None), ("testNested()", true, None, None)],
                 ),
-                ("AbstractTest.json:AbstractTest", vec![("testSomething()", true, None, None)]),
+                ("core/Abstract.t.sol:AbstractTest", vec![("testSomething()", true, None, None)]),
             ]),
         );
     }
@@ -398,7 +406,7 @@ mod tests {
             &results,
             BTreeMap::from([
                 (
-                    "DebugLogsTest.json:DebugLogsTest",
+                    "logs/DebugLogs.t.sol:DebugLogsTest",
                     vec![
                         ("test1()", true, None, Some(vec!["0".into(), "1".into(), "2".into()])),
                         ("test2()", true, None, Some(vec!["0".into(), "1".into(), "3".into()])),
@@ -417,7 +425,7 @@ mod tests {
                     ],
                 ),
                 (
-                    "HardhatLogsTest.json:HardhatLogsTest",
+                    "logs/HardhatLogs.t.sol:HardhatLogsTest",
                     vec![
                         (
                             "testInts()",
@@ -533,7 +541,7 @@ mod tests {
     fn test_doesnt_run_abstract_contract() {
         let mut runner = runner();
         let results = runner.test(&Filter::new(".*", ".*", ".*core/Abstract.t.sol"), None).unwrap();
-        assert!(results.get("AbstractTestBase.json:AbstractTestBase").is_none());
-        assert!(results.get("AbstractTest.json:AbstractTest").is_some());
+        assert!(results.get("core/Abstract.t.sol:AbstractTestBase").is_none());
+        assert!(results.get("core/Abstract.t.sol:AbstractTest").is_some());
     }
 }
