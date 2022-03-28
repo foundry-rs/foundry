@@ -46,6 +46,7 @@ impl MultiContractRunnerBuilder {
         // This is just the contracts compiled, but we need to merge this with the read cached
         // artifacts
         let contracts = output
+            .with_stripped_file_prefixes(std::env::current_dir().unwrap())
             .into_artifacts()
             .map(|(i, c)| (i, c.into_contract_bytecode()))
             .collect::<Vec<(ArtifactId, CompactContractBytecode)>>();
@@ -221,7 +222,7 @@ impl MultiContractRunner {
                     libs,
                     filter,
                 )?;
-                Ok((id.identifier().clone(), result))
+                Ok((id.identifier(), result))
             })
             .filter_map(Result::<_>::ok)
             .filter(|(_, results)| !results.is_empty())
