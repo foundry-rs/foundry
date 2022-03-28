@@ -266,7 +266,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
             .contract
             .functions()
             .into_iter()
-            .filter(|func| func.name.starts_with("test") && filter.matches_test(&func.name))
+            .filter(|func| func.name.starts_with("test") && filter.matches_test(func.signature()))
             .map(|func| (func, func.name.starts_with("testFail")))
             .collect();
 
