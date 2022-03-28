@@ -30,7 +30,7 @@ pub struct MultiContractRunnerBuilder {
     pub fork: Option<Fork>,
 }
 
-pub type DeployableContracts = BTreeMap<String, (Abi, Bytes, Vec<Bytes>)>;
+pub type DeployableContracts = BTreeMap<ArtifactId, (Abi, Bytes, Vec<Bytes>)>;
 
 impl MultiContractRunnerBuilder {
     /// Given an EVM, proceeds to return a runner which is able to execute all tests
@@ -50,12 +50,11 @@ impl MultiContractRunnerBuilder {
             .map(|(i, c)| (i, c.into_contract_bytecode()))
             .collect::<Vec<(ArtifactId, CompactContractBytecode)>>();
 
+        let mut known_contracts: BTreeMap<ArtifactId, (Abi, Vec<u8>)> = Default::default();
         let source_paths = contracts
             .iter()
             .map(|(i, _)| (i.slug(), i.source.to_string_lossy().into()))
             .collect::<BTreeMap<String, String>>();
-
-        let mut known_contracts: BTreeMap<ArtifactId, (Abi, Vec<u8>)> = Default::default();
 
         // create a mapping of name => (abi, deployment code, Vec<library deployment code>)
         let mut deployable_contracts = DeployableContracts::default();
@@ -89,14 +88,14 @@ impl MultiContractRunnerBuilder {
                     abi.functions().any(|func| func.name.starts_with("test"))
                 {
                     deployable_contracts
-                        .insert(id.slug(), (abi.clone(), bytecode, dependencies.to_vec()));
+                        .insert(id.clone(), (abi.clone(), bytecode, dependencies.to_vec()));
                 }
 
                 contract
                     .deployed_bytecode
                     .and_then(|d_bcode| d_bcode.bytecode)
                     .and_then(|bcode| bcode.object.into_bytes())
-                    .and_then(|bytes| known_contracts.insert(id, (abi, bytes.to_vec())));
+                    .and_then(|bytes| known_contracts.insert(id.clone(), (abi, bytes.to_vec())));
                 Ok(())
             },
         )?;
@@ -151,7 +150,7 @@ impl MultiContractRunnerBuilder {
 pub struct MultiContractRunner {
     /// Mapping of contract name to Abi, creation bytecode and library bytecode which
     /// needs to be deployed & linked against
-    pub contracts: BTreeMap<String, (Abi, ethers::prelude::Bytes, Vec<ethers::prelude::Bytes>)>,
+    pub contracts: DeployableContracts,
     /// Compiled contracts by name that have an Abi and runtime bytecode
     pub known_contracts: BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
     /// The EVM instance used in the test runner
@@ -174,9 +173,9 @@ impl MultiContractRunner {
     pub fn count_filtered_tests(&self, filter: &(impl TestFilter + Send + Sync)) -> usize {
         self.contracts
             .iter()
-            .filter(|(name, _)| {
-                filter.matches_path(&self.source_paths.get(*name).unwrap()) &&
-                    filter.matches_contract(name)
+            .filter(|(id, _)| {
+                filter.matches_path(id.source.to_string_lossy()) &&
+                    filter.matches_contract(&id.name)
             })
             .flat_map(|(_, (abi, _, _))| {
                 abi.functions().filter(|func| filter.matches_test(func.signature()))
@@ -197,14 +196,12 @@ impl MultiContractRunner {
         let results = self
             .contracts
             .par_iter()
-            .filter(|(name, _)| {
-                filter.matches_path(&self.source_paths.get(*name).unwrap()) &&
-                    filter.matches_contract(name)
+            .filter(|(id, _)| {
+                filter.matches_path(id.source.to_string_lossy()) &&
+                    filter.matches_contract(&id.name)
             })
-            .filter(|(_, (abi, _, _))| {
-                abi.functions().any(|func| filter.matches_test(func.signature()))
-            })
-            .map(|(name, (abi, deploy_code, libs))| {
+            .filter(|(_, (abi, _, _))| abi.functions().any(|func| filter.matches_test(&func.name)))
+            .map(|(id, (abi, deploy_code, libs))| {
                 let mut builder = ExecutorBuilder::new()
                     .with_cheatcodes(self.evm_opts.ffi)
                     .with_config(env.clone())
@@ -216,9 +213,15 @@ impl MultiContractRunner {
                 }
 
                 let executor = builder.build(db.clone());
-                let result =
-                    self.run_tests(name, abi, executor, deploy_code.clone(), libs, filter)?;
-                Ok((name.clone(), result))
+                let result = self.run_tests(
+                    &id.identifier(),
+                    abi,
+                    executor,
+                    deploy_code.clone(),
+                    libs,
+                    filter,
+                )?;
+                Ok((id.identifier().clone(), result))
             })
             .filter_map(Result::<_>::ok)
             .filter(|(_, results)| !results.is_empty())

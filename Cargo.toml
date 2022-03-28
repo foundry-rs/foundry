@@ -21,3 +21,11 @@ codegen-units = 1
 panic = "abort"
 # We end up stripping away these symbols anyway
 debug = 0
+
+[patch."https://github.com/gakonst/ethers-rs"]
+ethers = { git = "https://github.com/onbjerg/ethers-rs", branch = "onbjerg/artifact-identifier" }
+ethers-core = { git = "https://github.com/onbjerg/ethers-rs", branch = "onbjerg/artifact-identifier" }
+ethers-providers = { git = "https://github.com/onbjerg/ethers-rs", branch = "onbjerg/artifact-identifier" }
+ethers-signers = { git = "https://github.com/onbjerg/ethers-rs", branch = "onbjerg/artifact-identifier" }
+ethers-etherscan = { git = "https://github.com/onbjerg/ethers-rs", branch = "onbjerg/artifact-identifier" }
+ethers-solc = { git = "https://github.com/onbjerg/ethers-rs", branch = "onbjerg/artifact-identifier" }
