@@ -234,18 +234,18 @@ forgetest!(can_use_solc, |prj: TestProject, mut cmd: TestCommand| {
             "Foo",
             r#"
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity >=0.8.10;
+pragma solidity >=0.7.0;
 contract Foo {}
    "#,
         )
         .unwrap();
 
-    cmd.args(["build", "--use", "0.8.11"]);
+    cmd.args(["build", "--use", "0.7.1"]);
 
     let stdout = cmd.stdout_lossy();
     assert!(stdout.contains("Compiler run successful"));
 
-    cmd.forge_fuse().args(["build", "--force", "--use", "solc:0.8.11"]).root_arg();
+    cmd.forge_fuse().args(["build", "--force", "--use", "solc:0.7.1"]).root_arg();
 
     assert!(stdout.contains("Compiler run successful"));
 
@@ -253,8 +253,10 @@ contract Foo {}
     cmd.forge_fuse().args(["build", "--use", "this/solc/does/not/exist"]);
     assert!(cmd.stderr_lossy().contains("this/solc/does/not/exist does not exist"));
 
-    // 0.8.11 was installed in previous step, so we can use the path to this directly
-    let local_solc = ethers::solc::Solc::find_svm_installed_version("0.8.11").unwrap().unwrap();
+    // 0.7.1 was installed in previous step, so we can use the path to this directly
+    let local_solc = ethers::solc::Solc::find_svm_installed_version("0.7.1")
+        .unwrap()
+        .expect("solc 0.7.1 is installed");
     cmd.forge_fuse().args(["build", "--force", "--use"]).arg(local_solc.solc).root_arg();
     assert!(stdout.contains("Compiler run successful"));
 });
