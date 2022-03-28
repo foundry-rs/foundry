@@ -1,8 +1,6 @@
-use ethers::{signers, types::Address};
-use forge_node_core::{
-    error::RpcError,
-    eth::transaction::{TypedTransaction, TypedTransactionRequest},
-};
+use crate::eth::error::BlockchainError;
+use ethers::types::Address;
+use forge_node_core::eth::transaction::{TypedTransaction, TypedTransactionRequest};
 
 /// A transaction signer
 pub trait Signer: Send + Sync {
@@ -13,5 +11,5 @@ pub trait Signer: Send + Sync {
         &self,
         request: TypedTransactionRequest,
         address: &Address,
-    ) -> Result<TypedTransaction, RpcError>;
+    ) -> Result<TypedTransaction, BlockchainError>;
 }

@@ -12,6 +12,8 @@ pub enum BlockchainError {
     NoSignerAvailable,
     #[error("Chain Id not available")]
     ChainIdNotAvailable,
+    #[error("Invalid Transaction")]
+    InvalidTransaction,
 }
 
 /// Errors that can occur in the transaction pool

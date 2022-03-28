@@ -57,7 +57,7 @@ pub struct EthTransactionRequest {
 
 impl EthTransactionRequest {
     /// Converts the request into a [TypedTransactionRequest]
-    fn into_typed_request(self) -> Option<TypedTransactionRequest> {
+    pub fn into_typed_request(self) -> Option<TypedTransactionRequest> {
         let EthTransactionRequest {
             to,
             gas_price,
