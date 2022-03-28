@@ -3573,7 +3573,7 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "1.2.0"
-source = "git+https://github.com/bluealloy/revm#eb3282dfa37bb4e97145037303dcc1853d88fe34"
+source = "git+https://github.com/onbjerg/revm?branch=onbjerg/memory-limit#0d60faad4a667883082df7b955080f9f467c56d1"
 dependencies = [
  "arrayref",
  "auto_impl",
@@ -3591,7 +3591,7 @@ dependencies = [
 [[package]]
 name = "revm_precompiles"
 version = "0.4.0"
-source = "git+https://github.com/bluealloy/revm#eb3282dfa37bb4e97145037303dcc1853d88fe34"
+source = "git+https://github.com/onbjerg/revm?branch=onbjerg/memory-limit#0d60faad4a667883082df7b955080f9f467c56d1"
 dependencies = [
  "bytes",
  "k256",
