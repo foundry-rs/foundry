@@ -13,6 +13,7 @@ use ethers::{
         Address, Block, BlockNumber, Bytes, FeeHistory, Filter, Log, Transaction,
         TransactionReceipt, TxHash, H160, H256, U256, U64,
     },
+    utils::rlp,
 };
 use forge_node_core::{
     eth::{
@@ -288,11 +289,20 @@ impl EthApi {
         if data.is_empty() {
             return Err(BlockchainError::EmptyRawTransactionData)
         }
-        if data[0] > 0x7f {
+        let transaction: TypedTransaction = if data[0] > 0x7f {
             // legacy transaction
+            todo!("implement legacy decoding")
         } else {
-            // typed transaction
-        }
+            // the [TypedTransaction] requires a valid rlp input,
+            // but EIP-1559 prepends a version byte, so we need to encode the data first to get a
+            // valid rlp and then the decode implementation will strip to check the transaction
+            // version byte.
+            let extend = rlp::encode(&data);
+            match rlp::decode::<TypedTransaction>(&extend[..]) {
+                Ok(transaction) => transaction,
+                Err(_) => return Err(BlockchainError::FailedToDecodeSignedTransaction),
+            }
+        };
 
         todo!()
     }

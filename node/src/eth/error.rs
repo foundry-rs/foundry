@@ -16,6 +16,8 @@ pub enum BlockchainError {
     InvalidTransaction,
     #[error("Transaction data is empty")]
     EmptyRawTransactionData,
+    #[error("Failed to decode signed transaction")]
+    FailedToDecodeSignedTransaction,
 }
 
 /// Errors that can occur in the transaction pool

@@ -259,6 +259,24 @@ impl TypedTransaction {
     }
 }
 
+impl Decodable for TypedTransaction {
+    fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
+        let data = rlp.data()?;
+        let first = *data.get(0).ok_or(DecoderError::Custom("empty slice"))?;
+        if rlp.is_list() {
+            return Ok(TypedTransaction::Legacy(rlp.as_val()?));
+        }
+        let s = data.get(1..).ok_or(DecoderError::Custom("no tx body"))?;
+        if first == 0x01 {
+            return rlp::decode(s).map(TypedTransaction::EIP2930);
+        }
+        if first == 0x02 {
+            return rlp::decode(s).map(TypedTransaction::EIP1559);
+        }
+        Err(DecoderError::Custom("invalid tx type"))
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LegacyTransaction {
     pub nonce: U256,
