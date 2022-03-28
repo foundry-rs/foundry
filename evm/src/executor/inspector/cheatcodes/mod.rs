@@ -213,7 +213,7 @@ where
         retdata: Bytes,
         _: bool,
     ) -> (Return, Gas, Bytes) {
-        if call.contract == CHEATCODE_ADDRESS {
+        if call.contract == CHEATCODE_ADDRESS || call.contract == HARDHAT_CONSOLE_ADDRESS {
             return (status, remaining_gas, retdata)
         }
 
