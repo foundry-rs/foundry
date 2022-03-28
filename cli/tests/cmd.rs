@@ -433,10 +433,7 @@ contract BTest is DSTest {
     cmd.arg("snapshot");
 
     let out = cmd.stdout();
-    assert!(
-        out.contains("Running 1 test for BTest.json:BTest") &&
-            out.contains("Running 1 test for ATest.json:ATest")
-    );
+    assert!(out.contains("src/BTest.t.sol:BTest") && out.contains("src/ATest.t.sol:ATest"));
 
     cmd.arg("--check");
     let _ = cmd.output();
