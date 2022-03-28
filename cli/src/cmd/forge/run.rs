@@ -175,7 +175,7 @@ impl Cmd for RunArgs {
                 decoder.contracts,
                 highlevel_known_contracts
                     .into_iter()
-                    .map(|(id, artifact)| (id.slug(), artifact))
+                    .map(|(id, artifact)| (id.name, artifact))
                     .collect(),
                 source_code,
             )?;
