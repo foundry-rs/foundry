@@ -8,6 +8,10 @@ pub(crate) type Result<T> = std::result::Result<T, BlockchainError>;
 pub enum BlockchainError {
     #[error(transparent)]
     Pool(#[from] PoolError),
+    #[error("No signer available")]
+    NoSignerAvailable,
+    #[error("Chain Id not available")]
+    ChainIdNotAvailable,
 }
 
 /// Errors that can occur in the transaction pool

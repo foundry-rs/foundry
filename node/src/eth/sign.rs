@@ -1,11 +1,11 @@
-use ethers::types::Address;
+use ethers::{signers, types::Address};
 use forge_node_core::{
     error::RpcError,
     eth::transaction::{TypedTransaction, TypedTransactionRequest},
 };
 
-/// A generic Ethereum signer.
-pub trait EthSigner: Send + Sync {
+/// A transaction signer
+pub trait Signer: Send + Sync {
     /// returns the available accounts for this signer
     fn accounts(&self) -> Vec<Address>;
     /// signs a transaction request using the given account in request

@@ -1,13 +1,18 @@
-use crate::eth::{backend::Backend, error::Result, pool::Pool};
+use crate::eth::{
+    backend::Backend,
+    error::{BlockchainError, Result},
+    pool::Pool,
+    sign::Signer,
+};
 use ethers::{
     abi::ethereum_types::H64,
     types::{
-        transaction::eip2718::TypedTransaction, Block, BlockNumber, Bytes, FeeHistory, Filter, Log,
-        Transaction, TransactionReceipt, TransactionRequest, TxHash, H160, H256, U256, U64,
+        transaction::eip2718::TypedTransaction, Address, Block, BlockNumber, Bytes, FeeHistory,
+        Filter, Log, Transaction, TransactionReceipt, TxHash, H160, H256, U256, U64,
     },
 };
 use forge_node_core::{
-    eth::EthRequest,
+    eth::{transaction::EthTransactionRequest, EthRequest},
     response::RpcResponse,
     types::{Index, Work},
 };
@@ -22,14 +27,25 @@ pub struct EthApi {
     backend: Arc<Backend>,
     /// Whether this node is mining
     is_authority: bool,
-    // TODO signers
+    /// available signers
+    signers: Arc<Vec<Box<dyn Signer>>>,
+
+    chain_id: Option<U64>,
 }
 
 // === impl Eth RPC API ===
 
 impl EthApi {
     /// Executes the [EthRequest] and returns an RPC [RpcResponse]
-    pub async fn execute(&self, _request: EthRequest) -> RpcResponse {
+    pub async fn execute(&self, request: EthRequest) -> RpcResponse {
+        match request {
+            EthRequest::EthGetBalance(_, _) => {}
+            EthRequest::EthGetTransactionByHash(_) => {}
+            EthRequest::EthSendTransaction(request) => {
+                self.send_transaction(*request).await;
+            }
+        }
+
         todo!()
     }
 
@@ -47,7 +63,7 @@ impl EthApi {
         Ok(U256::zero())
     }
 
-    /// Returns block author.
+    /// Returns the block author.
     ///
     /// Handler for ETH RPC call: `eth_coinbase`
     pub async fn author(&self) -> Result<H160> {
@@ -66,25 +82,29 @@ impl EthApi {
     /// available.
     ///
     /// Handler for ETH RPC call: `eth_chainId`
-    pub async fn chain_id(&self) -> Result<Option<U64>> {
-        todo!()
+    pub fn chain_id(&self) -> Result<Option<U64>> {
+        Ok(self.chain_id)
     }
 
-    /// Returns current gas_price.
+    /// Returns the current gas_price
     ///
     /// Handler for ETH RPC call: `eth_gasPrice`
     pub async fn gas_price(&self) -> Result<U256> {
         todo!()
     }
 
-    /// Returns accounts list.
+    /// Returns the accounts list
     ///
     /// Handler for ETH RPC call: `eth_accounts`
-    pub async fn accounts(&self) -> Result<Vec<H160>> {
-        todo!()
+    pub fn accounts(&self) -> Result<Vec<Address>> {
+        let mut accounts = Vec::new();
+        for signer in self.signers.iter() {
+            accounts.append(&mut signer.accounts());
+        }
+        Ok(accounts)
     }
 
-    /// Returns highest block number.
+    /// Returns the highest block number.
     ///
     /// Handler for ETH RPC call: `eth_blockNumber`
     pub async fn block_number(&self) -> Result<U256> {
@@ -127,7 +147,7 @@ impl EthApi {
     /// Returns the number of transactions sent from given address at given time (block number).
     ///
     /// Handler for ETH RPC call: `eth_getTransactionCount`
-    pub async fn transaction_count(&self, _address: H160, _: Option<BlockNumber>) -> Result<U256> {
+    pub fn transaction_count(&self, _address: H160, _: Option<BlockNumber>) -> Result<U256> {
         todo!()
     }
 
@@ -166,11 +186,20 @@ impl EthApi {
         todo!()
     }
 
-    /// Sends transaction
-    /// will block waiting for signer to return the transaction hash.
+    /// Sends a transaction
+    /// will wait for signer to return the transaction hash.
     ///
     /// Handler for ETH RPC call: `eth_sendTransaction`
-    pub async fn send_transaction(&self, _: TransactionRequest) -> Result<H256> {
+    pub async fn send_transaction(&self, request: EthTransactionRequest) -> Result<H256> {
+        let from = request.from.map(Ok).unwrap_or_else(|| {
+            self.accounts()?.get(0).cloned().ok_or_else(|| BlockchainError::NoSignerAvailable)
+        })?;
+
+        let nonce = request.nonce.map(Ok).unwrap_or_else(|| self.transaction_count(from, None))?;
+
+        let chain_id =
+            self.chain_id()?.ok_or_else(|| BlockchainError::ChainIdNotAvailable)?.as_u64();
+
         todo!()
     }
 

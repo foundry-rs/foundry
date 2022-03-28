@@ -5,6 +5,7 @@ use ethers_core::types::{
 use serde::{
     de::DeserializeOwned, ser::SerializeSeq, Deserialize, Deserializer, Serialize, Serializer,
 };
+use crate::eth::transaction::EthTransactionRequest;
 
 pub mod transaction;
 
@@ -27,7 +28,7 @@ pub enum EthRequest {
         serialize_with = "ser_into_sequence",
         deserialize_with = "de_from_sequence"
     )]
-    EthSendTransaction(Box<TypedTransaction>),
+    EthSendTransaction(Box<EthTransactionRequest>),
 }
 
 fn ser_into_sequence<S, T>(val: &T, s: S) -> Result<S::Ok, S::Error>
