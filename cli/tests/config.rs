@@ -202,6 +202,7 @@ forgetest_init!(can_set_config_values, |prj: TestProject, _cmd: TestCommand| {
 });
 
 forgetest!(can_set_solc_explicitly, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.set_current_dir(prj.root());
     prj.inner()
         .add_source(
             "Foo",
@@ -228,6 +229,7 @@ Compiler run successful
 
 // tests that `--use <solc>` works
 forgetest!(can_use_solc, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.set_current_dir(prj.root());
     prj.inner()
         .add_source(
             "Foo",
@@ -262,6 +264,7 @@ contract Foo {}
 
 // test to ensure yul optimizer can be set as intended
 forgetest!(can_set_yul_optimizer, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.set_current_dir(prj.root());
     prj.inner()
         .add_source(
             "Foo",
