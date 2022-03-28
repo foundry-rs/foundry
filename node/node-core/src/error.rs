@@ -5,7 +5,7 @@ use std::{borrow::Cow, fmt};
 /// Represents a JSON-RPC error
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct Error {
+pub struct RpcError {
     code: ErrorCode,
     /// error message
     message: Cow<'static, str>,
@@ -13,10 +13,10 @@ pub struct Error {
     data: Option<serde_json::Value>,
 }
 
-impl Error {
+impl RpcError {
     /// New [Error] with the given [ErrorCode]
     pub const fn new(code: ErrorCode) -> Self {
-        Error { message: Cow::Borrowed(code.message()), code, data: None }
+        RpcError { message: Cow::Borrowed(code.message()), code, data: None }
     }
 
     /// Creates a new `ParseError`
@@ -39,11 +39,11 @@ impl Error {
     where
         M: Into<String>,
     {
-        Error { code: ErrorCode::InvalidParams, message: message.into().into(), data: None }
+        RpcError { code: ErrorCode::InvalidParams, message: message.into().into(), data: None }
     }
 }
 
-impl fmt::Display for Error {
+impl fmt::Display for RpcError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}: {}", self.code.message(), self.message)
     }

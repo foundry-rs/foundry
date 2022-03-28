@@ -9,7 +9,7 @@ use axum::{
     Json,
 };
 use forge_node_core::{
-    error::Error,
+    error::RpcError,
     eth::EthRequest,
     request::{Request, RpcCall, RpcMethodCall},
     response::{Response, RpcResponse},
@@ -25,7 +25,7 @@ pub async fn handle_rpc(
     match request {
         Err(err) => {
             warn!("invalid request={:?}", err);
-            Response::error(Error::invalid_request()).into()
+            Response::error(RpcError::invalid_request()).into()
         }
         Ok(req) => handle_request(req.0, api).await.unwrap().into(),
     }
@@ -78,9 +78,9 @@ async fn execute_method_call(call: RpcMethodCall, api: EthApi) -> RpcResponse {
         Err(err) => {
             let msg = err.to_string();
             if msg.contains("unknown variant") {
-                RpcResponse::new(id, Error::method_not_found())
+                RpcResponse::new(id, RpcError::method_not_found())
             } else {
-                RpcResponse::new(id, Error::invalid_params(msg))
+                RpcResponse::new(id, RpcError::invalid_params(msg))
             }
         }
         Ok(req) => api.execute(req).await,

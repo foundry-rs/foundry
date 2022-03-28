@@ -1,5 +1,5 @@
 use crate::{
-    error::Error,
+    error::RpcError,
     request::{Id, Version},
 };
 use serde::{Deserialize, Serialize};
@@ -16,8 +16,8 @@ pub struct RpcResponse {
     result: ResponseResult,
 }
 
-impl From<Error> for RpcResponse {
-    fn from(e: Error) -> Self {
+impl From<RpcError> for RpcResponse {
+    fn from(e: RpcError) -> Self {
         Self { jsonrpc: Version::V2, id: None, result: ResponseResult::Error(e) }
     }
 }
@@ -28,7 +28,7 @@ impl RpcResponse {
     }
 
     pub fn invalid_request(id: Id) -> Self {
-        Self::new(id, Error::invalid_request())
+        Self::new(id, RpcError::invalid_request())
     }
 }
 
@@ -39,7 +39,7 @@ pub enum ResponseResult {
     #[serde(rename = "result")]
     Success(serde_json::Value),
     #[serde(rename = "error")]
-    Error(Error),
+    Error(RpcError),
 }
 
 impl ResponseResult {
@@ -50,13 +50,13 @@ impl ResponseResult {
         ResponseResult::Success(serde_json::to_value(&content).unwrap())
     }
 
-    pub fn error(error: Error) -> Self {
+    pub fn error(error: RpcError) -> Self {
         ResponseResult::Error(error)
     }
 }
 
-impl From<Error> for ResponseResult {
-    fn from(err: Error) -> Self {
+impl From<RpcError> for ResponseResult {
+    fn from(err: RpcError) -> Self {
         ResponseResult::error(err)
     }
 }
@@ -74,13 +74,13 @@ pub enum Response {
 
 impl Response {
     /// Creates new [Response] with the given [Error]
-    pub fn error(error: Error) -> Self {
+    pub fn error(error: RpcError) -> Self {
         RpcResponse::new(Id::Null, ResponseResult::Error(error)).into()
     }
 }
 
-impl From<Error> for Response {
-    fn from(err: Error) -> Self {
+impl From<RpcError> for Response {
+    fn from(err: RpcError) -> Self {
         Response::error(err)
     }
 }

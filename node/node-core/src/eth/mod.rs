@@ -1,4 +1,4 @@
-use crate::error::Error;
+use crate::error::RpcError;
 use ethers_core::types::{
     transaction::eip2718::TypedTransaction, Address, BlockNumber, Transaction, TxHash, U256,
 };
@@ -56,7 +56,7 @@ where
 pub enum EthResponse {
     EthGetBalance(U256),
     EthGetTransactionByHash(Box<Option<Transaction>>),
-    EthSendTransaction(Result<TxHash, Error>),
+    EthSendTransaction(Result<TxHash, RpcError>),
 }
 
 #[cfg(test)]
@@ -94,7 +94,7 @@ mod tests {
 
         let val = EthResponse::EthSendTransaction(Ok(TxHash::default()));
         let _ser = serde_json::to_string(&val).unwrap();
-        let val = EthResponse::EthSendTransaction(Err(Error::parse_error()));
+        let val = EthResponse::EthSendTransaction(Err(RpcError::parse_error()));
         let _ser = serde_json::to_string(&val).unwrap();
     }
 }

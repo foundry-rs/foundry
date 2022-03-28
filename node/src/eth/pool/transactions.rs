@@ -35,7 +35,7 @@ pub struct PoolTransaction {
 impl PoolTransaction {
     /// Returns the hash of this transaction
     pub fn hash(&self) -> &TxHash {
-        &self.pending_transaction.hash()
+        self.pending_transaction.hash()
     }
 }
 

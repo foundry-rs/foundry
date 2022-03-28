@@ -75,7 +75,7 @@ impl PoolInner {
             let current_hash = *current_tx.transaction.hash();
             // try to add the transaction to the ready pool
             match self.ready_transactions.add_transaction(current_tx) {
-                Ok(mut replaced_transactions) => {
+                Ok(replaced_transactions) => {
                     if !is_new_tx {
                         ready.promoted.push(current_hash);
                     }
