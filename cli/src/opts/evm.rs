@@ -50,6 +50,18 @@ pub struct EvmArgs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_block_number: Option<u64>,
 
+    /// Disables storage caching entirely. This overrides any settings made in
+    /// [foundry_config::caching::StorageCachingConfig]
+    ///
+    /// See --fork-url.
+    #[clap(
+        long,
+        requires = "fork-url",
+        help = "Explicitly disables the use of storage. All storage slots are read entirely from the endpoint."
+    )]
+    #[serde(skip)]
+    pub no_storage_caching: bool,
+
     /// The initial balance of deployed test contracts.
     #[clap(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -101,6 +113,10 @@ impl Provider for EvmArgs {
 
         if self.ffi {
             dict.insert("ffi".to_string(), self.ffi.into());
+        }
+
+        if self.no_storage_caching {
+            dict.insert("no_storage_caching".to_string(), self.no_storage_caching.into());
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
@@ -160,44 +176,4 @@ pub struct EnvArgs {
     #[clap(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_gas_limit: Option<u64>,
-}
-
-impl EnvArgs {
-    #[cfg(feature = "sputnik")]
-    pub fn sputnik_state(&self) -> MemoryVicinity {
-        MemoryVicinity {
-            chain_id: self.chain_id.unwrap_or_default().into(),
-
-            gas_price: self.gas_price.unwrap_or_default().into(),
-            origin: self.tx_origin.unwrap_or_default(),
-
-            block_coinbase: self.block_coinbase.unwrap_or_default(),
-            block_number: self.block_number.unwrap_or_default().into(),
-            block_timestamp: self.block_timestamp.unwrap_or_default().into(),
-            block_difficulty: self.block_difficulty.unwrap_or_default().into(),
-            block_base_fee_per_gas: self.block_base_fee_per_gas.unwrap_or_default().into(),
-            block_gas_limit: self
-                .block_gas_limit
-                .unwrap_or_else(|| self.gas_limit.unwrap_or_default())
-                .into(),
-            block_hashes: Vec::new(),
-        }
-    }
-
-    #[cfg(feature = "evmodin")]
-    pub fn evmodin_state(&self) -> MockedHost {
-        let mut host = MockedHost::default();
-
-        host.tx_context.chain_id = self.chain_id.unwrap_or_default().into();
-        host.tx_context.tx_gas_price = self.gas_price.unwrap_or_default().into();
-        host.tx_context.tx_origin = self.tx_origin.unwrap_or_default();
-        host.tx_context.block_coinbase = self.block_coinbase.unwrap_or_default();
-        host.tx_context.block_number = self.block_number.unwrap_or_default();
-        host.tx_context.block_timestamp = self.block_timestamp.unwrap_or_default();
-        host.tx_context.block_difficulty = self.block_difficulty.unwrap_or_default().into();
-        host.tx_context.block_gas_limit =
-            self.block_gas_limit.unwrap_or(self.gas_limit.unwrap_or_default());
-
-        host
-    }
 }

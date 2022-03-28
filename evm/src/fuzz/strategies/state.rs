@@ -3,7 +3,7 @@ use crate::executor::StateChangeset;
 use bytes::Bytes;
 use ethers::{
     abi::{Function, RawLog},
-    types::{H256, U256},
+    types::{Address, H256, U256},
 };
 use proptest::prelude::{BoxedStrategy, Strategy};
 use revm::{
@@ -32,7 +32,15 @@ pub fn fuzz_calldata_from_state(
     strats
         .prop_map(move |tokens| {
             tracing::trace!(input = ?tokens);
-            func.encode_input(&tokens).unwrap().into()
+            func.encode_input(&tokens)
+                .unwrap_or_else(|_| {
+                    panic!(
+                        r#"Fuzzer generated invalid tokens {:?} for function `{}` inputs {:?}
+This is a bug, please open an issue: https://github.com/gakonst/foundry/issues"#,
+                        tokens, func.name, func.inputs
+                    )
+                })
+                .into()
         })
         .no_shrink()
         .boxed()
@@ -54,6 +62,13 @@ pub fn build_initial_state<DB: DatabaseRef>(db: &CacheDB<DB>) -> EvmFuzzState {
             state.insert(u256_to_h256(*slot).into());
             state.insert(u256_to_h256(*value).into());
         }
+    }
+
+    // need at least some state data if db is empty otherwise we can't select random data for state
+    // fuzzing
+    if state.is_empty() {
+        // prefill with a random addresses
+        state.insert(H256::from(Address::random()).into());
     }
 
     Rc::new(RefCell::new(state))

@@ -10,7 +10,7 @@ use foundry_config::Config;
 
 use crate::cmd::forge::{install::DependencyInstallOpts, remappings};
 use ansi_term::Colour;
-use ethers::solc::remappings::Remapping;
+
 use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -113,13 +113,7 @@ impl Cmd for InitArgs {
             let dest = root.join(Config::FILE_NAME);
             if !dest.exists() {
                 // write foundry.toml
-                let mut config = Config::load_with_root(&root).into_basic();
-                // add the ds-test remapping manually because we initialize before installing it
-                if !offline {
-                    config
-                        .remappings
-                        .push("ds-test/=lib/ds-test/src/".parse::<Remapping>().unwrap().into());
-                }
+                let config = Config::load_with_root(&root).into_basic();
                 std::fs::write(dest, config.to_string_pretty()?)?;
             }
 

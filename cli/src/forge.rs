@@ -5,9 +5,8 @@ mod term;
 mod utils;
 
 use crate::cmd::{forge::watch, Cmd};
-
-use ethers::solc::{Project, ProjectPathsConfig};
-use opts::forge::{Dependency, FullContractInfo, Opts, Subcommands};
+use opts::forge::{Dependency, Opts, Subcommands};
+use std::process::Command;
 
 use clap::{IntoApp, Parser};
 use clap_complete::generate;
@@ -25,8 +24,9 @@ fn main() -> eyre::Result<()> {
             if cmd.build_args().is_watch() {
                 utils::block_on(watch::watch_test(cmd))?;
             } else {
+                let include_fuzz_test_gas = cmd.include_fuzz_test_gas;
                 let outcome = cmd.run()?;
-                outcome.ensure_ok()?;
+                outcome.ensure_ok(include_fuzz_test_gas)?;
             }
         }
         Subcommands::Bind(cmd) => {
@@ -83,13 +83,15 @@ fn main() -> eyre::Result<()> {
             generate(shell, &mut Opts::command(), "forge", &mut std::io::stdout())
         }
         Subcommands::Clean { root } => {
-            let root = root.unwrap_or_else(|| std::env::current_dir().unwrap());
-            let paths = ProjectPathsConfig::builder().root(&root).build()?;
-            let project = Project::builder().paths(paths).build()?;
-            project.cleanup()?;
+            let config = utils::load_config_with_root(root);
+            config.project()?.cleanup()?;
         }
         Subcommands::Snapshot(cmd) => {
-            cmd.run()?;
+            if cmd.is_watch() {
+                utils::block_on(crate::cmd::forge::watch::watch_snapshot(cmd))?;
+            } else {
+                cmd.run()?;
+            }
         }
         // Subcommands::Fmt(cmd) => {
         //     cmd.run()?;

@@ -473,6 +473,8 @@ pub enum Subcommands {
         chain: ClapChain,
         #[clap(help = "the contract address")]
         address: String,
+        #[clap(short, help = "output directory to expand source tree")]
+        directory: Option<PathBuf>,
         #[clap(long, env = "ETHERSCAN_API_KEY")]
         etherscan_api_key: String,
     },
@@ -504,7 +506,7 @@ pub enum Subcommands {
     },
     #[clap(
         name = "find-block",
-        about = "Prints the block number closes to the provided timestamp"
+        about = "Prints the block number closest to the provided timestamp"
     )]
     FindBlock(FindBlockArgs),
     #[clap(about = "Generate shell completions script")]

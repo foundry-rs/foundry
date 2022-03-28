@@ -95,7 +95,7 @@ where
         call: &mut CallInputs,
         _: bool,
     ) -> (Return, Gas, Bytes) {
-        if call.contract == *CHEATCODE_ADDRESS {
+        if call.contract == CHEATCODE_ADDRESS {
             match self.apply_cheatcode(data, call.context.caller, call) {
                 Ok(retdata) => (Return::Return, Gas::new(call.gas_limit), retdata),
                 Err(err) => (Return::Revert, Gas::new(call.gas_limit), err),
@@ -208,7 +208,7 @@ where
         retdata: Bytes,
         _: bool,
     ) -> (Return, Gas, Bytes) {
-        if call.contract == *CHEATCODE_ADDRESS {
+        if call.contract == CHEATCODE_ADDRESS {
             return (status, remaining_gas, retdata)
         }
 

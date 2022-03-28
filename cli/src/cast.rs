@@ -530,18 +530,32 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).nonce(who, block).await?);
         }
-        Subcommands::EtherscanSource { chain, address, etherscan_api_key } => {
-            println!(
-                "{}",
-                SimpleCast::etherscan_source(chain.inner, address, etherscan_api_key).await?
-            );
+        Subcommands::EtherscanSource { chain, address, directory, etherscan_api_key } => {
+            match directory {
+                Some(dir) => {
+                    SimpleCast::expand_etherscan_source_to_directory(
+                        chain.inner,
+                        address,
+                        etherscan_api_key,
+                        dir,
+                    )
+                    .await?
+                }
+                None => {
+                    println!(
+                        "{}",
+                        SimpleCast::etherscan_source(chain.inner, address, etherscan_api_key)
+                            .await?
+                    );
+                }
+            }
         }
         Subcommands::Sig { sig } => {
             let contract = BaseContract::from(parse_abi(&[&sig]).unwrap());
             let selector = contract.abi().functions().last().unwrap().short_signature();
             println!("0x{}", hex::encode(selector));
         }
-        Subcommands::FindBlock(cmd) => cmd.run()?,
+        Subcommands::FindBlock(cmd) => cmd.run()?.await?,
         Subcommands::Wallet { command } => match command {
             WalletSubcommands::New { path, password, unsafe_password } => {
                 let mut rng = thread_rng();

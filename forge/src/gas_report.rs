@@ -49,7 +49,7 @@ impl GasReport {
         let node = &arena.arena[node_index];
         let trace = &node.trace;
 
-        if trace.address == *CHEATCODE_ADDRESS || trace.address == *HARDHAT_CONSOLE_ADDRESS {
+        if trace.address == CHEATCODE_ADDRESS || trace.address == HARDHAT_CONSOLE_ADDRESS {
             return
         }
 
@@ -60,7 +60,7 @@ impl GasReport {
                     self.contracts.entry(name.to_string()).or_insert_with(Default::default);
 
                 match &trace.data {
-                    RawOrDecodedCall::Raw(bytes) if trace.created => {
+                    RawOrDecodedCall::Raw(bytes) if trace.created() => {
                         contract_report.gas = trace.gas_cost.into();
                         contract_report.size = bytes.len().into();
                     }
@@ -111,6 +111,10 @@ impl GasReport {
 impl Display for GasReport {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         for (name, contract) in self.contracts.iter() {
+            if contract.functions.is_empty() {
+                continue
+            }
+
             let mut table = Table::new();
             table.load_preset(UTF8_FULL).apply_modifier(UTF8_ROUND_CORNERS);
             table.set_header(vec![Cell::new(format!("{} contract", name))

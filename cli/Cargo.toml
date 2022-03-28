@@ -1,6 +1,6 @@
 [package]
 name = "foundry-cli"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 
@@ -38,7 +38,8 @@ tokio = { version = "1.11.0", features = ["macros"] }
 regex = { version = "1.5.4", default-features = false }
 ansi_term = "0.12.1"
 rpassword = "5.0.1"
-tracing-subscriber = "0.2.20"
+tracing-error = "0.2.0"
+tracing-subscriber = { version = "0.3", features = ["registry", "env-filter", "fmt"] }
 tracing = "0.1.26"
 hex = "0.4.3"
 rayon = "1.5.1"
@@ -49,7 +50,6 @@ proptest = "1.0.0"
 glob = "0.3.0"
 semver = "1.0.5"
 once_cell = "1.9.0"
-locate-cargo-manifest = "0.2.2"
 walkdir = "2.3.2"
 solang-parser = "0.1.2"
 similar = { version = "2.1.0", features = ["inline"] }
@@ -70,6 +70,11 @@ rustls = ["ethers/rustls"]
 openssl = ["ethers/openssl"]
 
 integration-tests = []
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+required-features = ["integration-tests"]
 
 [[bin]]
 name = "cast"

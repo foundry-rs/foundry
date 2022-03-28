@@ -3,11 +3,9 @@ use crate::abi::HEVMCalls;
 use bytes::Bytes;
 use ethers::{
     abi::{AbiEncode, RawLog},
-    types::Address,
+    types::{Address, H160},
 };
-use once_cell::sync::Lazy;
 use revm::{return_ok, Database, EVMData, Return};
-use std::str::FromStr;
 
 /// For some cheatcodes we may internally change the status of the call, i.e. in `expectRevert`.
 /// Solidity will see a successful call and attempt to decode the return data. Therefore, we need
@@ -18,8 +16,8 @@ use std::str::FromStr;
 static DUMMY_CALL_OUTPUT: [u8; 320] = [0u8; 320];
 
 /// Same reasoning as [DUMMY_CALL_OUTPUT], but for creates.
-static DUMMY_CREATE_ADDRESS: Lazy<Address> =
-    Lazy::new(|| Address::from_str("0000000000000000000000000000000000000001").unwrap());
+static DUMMY_CREATE_ADDRESS: Address =
+    H160([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
 
 #[derive(Clone, Debug, Default)]
 pub struct ExpectedRevert {
@@ -91,7 +89,7 @@ pub fn handle_expect_revert(
 
     if actual_revert == expected_revert {
         Ok(if is_create {
-            (Some(*DUMMY_CREATE_ADDRESS), Bytes::new())
+            (Some(DUMMY_CREATE_ADDRESS), Bytes::new())
         } else {
             (None, DUMMY_CALL_OUTPUT.to_vec().into())
         })

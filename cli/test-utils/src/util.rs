@@ -25,7 +25,7 @@ static CURRENT_DIR_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
 /// Contains a `forge init` initialized project
 pub static FORGE_INITIALIZED: Lazy<TestProject> = Lazy::new(|| {
-    let (prj, mut cmd) = setup("init-template", PathStyle::Dapptools);
+    let (prj, mut cmd) = setup_forge("init-template", PathStyle::Dapptools);
     cmd.args(["init", "--force"]);
     cmd.assert_non_empty_stdout();
     prj
@@ -61,12 +61,21 @@ pub fn clone_remote(
 ///
 /// The name given will be used to create the directory. Generally, it should
 /// correspond to the test name.
-pub fn setup(name: &str, style: PathStyle) -> (TestProject, TestCommand) {
-    setup_project(TestProject::new(name, style))
+pub fn setup_forge(name: &str, style: PathStyle) -> (TestProject, TestCommand) {
+    setup_forge_project(TestProject::new(name, style))
 }
 
-pub fn setup_project(test: TestProject) -> (TestProject, TestCommand) {
-    let cmd = test.command();
+pub fn setup_forge_project(test: TestProject) -> (TestProject, TestCommand) {
+    let cmd = test.forge_command();
+    (test, cmd)
+}
+
+pub fn setup_cast(name: &str, style: PathStyle) -> (TestProject, TestCommand) {
+    setup_cast_project(TestProject::new(name, style))
+}
+
+pub fn setup_cast_project(test: TestProject) -> (TestProject, TestCommand) {
+    let cmd = test.cast_command();
     (test, cmd)
 }
 
@@ -147,13 +156,16 @@ impl TestProject {
     }
 
     /// Creates a file with contents `contents` in the test project's directory. The
-    /// file will be deleted with the project is dropped.
+    /// file will be deleted when the project is dropped.
     pub fn create_file(&self, path: impl AsRef<Path>, contents: &str) -> PathBuf {
         let path = path.as_ref();
         if !path.is_relative() {
             panic!("create_file(): file path is absolute");
         }
         let path = self.root().join(path);
+        if let Some(parent) = path.parent() {
+            pretty_err(parent, std::fs::create_dir_all(parent));
+        }
         let file = pretty_err(&path, File::create(&path));
         let mut writer = BufWriter::new(file);
         pretty_err(&path, writer.write_all(contents.as_bytes()));
@@ -185,8 +197,21 @@ impl TestProject {
     }
 
     /// Creates a new command that is set to use the forge executable for this project
-    pub fn command(&self) -> TestCommand {
-        let mut cmd = self.bin();
+    pub fn forge_command(&self) -> TestCommand {
+        let mut cmd = self.forge_bin();
+        cmd.current_dir(&self.inner.root());
+        TestCommand {
+            project: self.clone(),
+            cmd,
+            saved_env_vars: HashMap::new(),
+            current_dir_lock: None,
+            saved_cwd: pretty_err(".", std::env::current_dir()),
+        }
+    }
+
+    /// Creates a new command that is set to use the cast executable for this project
+    pub fn cast_command(&self) -> TestCommand {
+        let mut cmd = self.cast_bin();
         cmd.current_dir(&self.inner.root());
         TestCommand {
             project: self.clone(),
@@ -198,9 +223,15 @@ impl TestProject {
     }
 
     /// Returns the path to the forge executable.
-    pub fn bin(&self) -> process::Command {
+    pub fn forge_bin(&self) -> process::Command {
         let forge = self.root.join(format!("../forge{}", env::consts::EXE_SUFFIX));
         process::Command::new(forge)
+    }
+
+    /// Returns the path to the cast executable.
+    pub fn cast_bin(&self) -> process::Command {
+        let cast = self.root.join(format!("../cast{}", env::consts::EXE_SUFFIX));
+        process::Command::new(cast)
     }
 
     /// Returns the `Config` as spit out by `forge config`
@@ -209,7 +240,7 @@ impl TestProject {
         I: IntoIterator<Item = A>,
         A: AsRef<OsStr>,
     {
-        let mut cmd = self.bin();
+        let mut cmd = self.forge_bin();
         cmd.arg("config").arg("--root").arg(self.root()).args(args).arg("--json");
         let output = cmd.output().unwrap();
         let c = String::from_utf8_lossy(&output.stdout);
@@ -247,6 +278,7 @@ fn config_paths_exist(paths: &ProjectPathsConfig, cached: bool) {
     paths.libraries.iter().for_each(|lib| assert!(lib.exists()));
 }
 
+#[track_caller]
 pub fn pretty_err<T, E: std::error::Error>(path: impl AsRef<Path>, res: Result<T, E>) -> T {
     match res {
         Ok(t) => t,
@@ -284,8 +316,12 @@ impl TestCommand {
     }
 
     /// Resets the command
-    pub fn fuse(&mut self) -> &mut TestCommand {
-        self.set_cmd(self.project.bin())
+    pub fn forge_fuse(&mut self) -> &mut TestCommand {
+        self.set_cmd(self.project.forge_bin())
+    }
+
+    pub fn cast_fuse(&mut self) -> &mut TestCommand {
+        self.set_cmd(self.project.cast_bin())
     }
 
     /// Sets the current working directory
@@ -349,11 +385,11 @@ impl TestCommand {
 
     /// Returns the `Config` as spit out by `forge config`
     pub fn config(&mut self) -> Config {
-        self.fuse().args(["config", "--json"]);
+        self.forge_fuse().args(["config", "--json"]);
         let output = self.output();
         let c = String::from_utf8_lossy(&output.stdout);
         let config = serde_json::from_str(c.as_ref()).unwrap();
-        self.fuse();
+        self.forge_fuse();
         config
     }
 

@@ -1,6 +1,6 @@
 [package]
 name = "ui"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [dependencies]
@@ -10,3 +10,4 @@ eyre = "0.6.5"
 hex = "0.4.3"
 ethers = { git = "https://github.com/gakonst/ethers-rs" }
 forge = { path = "../forge" }
+revm = { package = "revm", git = "https://github.com/bluealloy/revm", default-features = false, features = ["std", "k256", "with-serde"] }

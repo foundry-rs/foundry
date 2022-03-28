@@ -7,6 +7,7 @@ use crate::{
         CallTrace, CallTraceArena, LogCallOrder, RawOrDecodedCall, RawOrDecodedLog,
         RawOrDecodedReturnData,
     },
+    CallKind,
 };
 use bytes::Bytes;
 use ethers::{
@@ -23,24 +24,20 @@ pub struct Tracer {
 }
 
 impl Tracer {
-    pub fn new() -> Self {
-        Default::default()
-    }
-
     pub fn start_trace(
         &mut self,
         depth: usize,
         address: Address,
         data: Vec<u8>,
         value: U256,
-        created: bool,
+        kind: CallKind,
     ) {
         self.trace_stack.push(self.traces.push_trace(
             0,
             CallTrace {
                 depth,
                 address,
-                created,
+                kind,
                 data: RawOrDecodedCall::Raw(data),
                 value,
                 ..Default::default()
@@ -68,13 +65,13 @@ where
         call: &mut CallInputs,
         _: bool,
     ) -> (Return, Gas, Bytes) {
-        if call.contract != *HARDHAT_CONSOLE_ADDRESS {
+        if call.contract != HARDHAT_CONSOLE_ADDRESS {
             self.start_trace(
                 data.subroutine.depth() as usize,
-                call.contract,
+                call.context.code_address,
                 call.input.to_vec(),
                 call.transfer.value,
-                false,
+                call.context.scheme.into(),
             );
         }
 
@@ -97,7 +94,7 @@ where
         retdata: Bytes,
         _: bool,
     ) -> (Return, Gas, Bytes) {
-        if call.contract != *HARDHAT_CONSOLE_ADDRESS {
+        if call.contract != HARDHAT_CONSOLE_ADDRESS {
             self.fill_trace(
                 matches!(status, return_ok!()),
                 gas_used(data.env.cfg.spec_id, gas.spend(), gas.refunded() as u64),
@@ -121,7 +118,7 @@ where
             get_create_address(call, nonce),
             call.init_code.to_vec(),
             call.value,
-            true,
+            CallKind::Create,
         );
 
         (Return::Continue, None, Gas::new(call.gas_limit), Bytes::new())

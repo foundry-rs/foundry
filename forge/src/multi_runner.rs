@@ -1,20 +1,14 @@
-use crate::{runner::TestResult, ContractRunner, TestFilter};
-use ethers::prelude::artifacts::CompactContractBytecode;
-use evm_adapters::{
-    evm_opts::{BackendKind, EvmOpts},
-    sputnik::cheatcodes::{CONSOLE_ABI, HEVMCONSOLE_ABI, HEVM_ABI},
-};
-use foundry_utils::PostLinkInput;
-use sputnik::{backend::Backend, Config};
-
+use crate::{ContractRunner, TestFilter, TestResult};
 use ethers::{
-    abi::{Abi, Event, Function},
-    prelude::ArtifactOutput,
-    solc::{Artifact, Project},
-    types::{Address, H256, U256},
+    abi::Abi,
+    prelude::{artifacts::CompactContractBytecode, ArtifactId, ArtifactOutput},
+    solc::{Artifact, ProjectCompileOutput},
+    types::{Address, Bytes, U256},
 };
 use eyre::Result;
-use foundry_evm::executor::{opts::EvmOpts, DatabaseRef, Executor, ExecutorBuilder, Fork, SpecId};
+use foundry_evm::executor::{
+    builder::Backend, opts::EvmOpts, DatabaseRef, Executor, ExecutorBuilder, Fork, SpecId,
+};
 use foundry_utils::PostLinkInput;
 use proptest::test_runner::TestRunner;
 use rayon::prelude::*;
@@ -61,18 +55,13 @@ impl MultiContractRunnerBuilder {
             .map(|(i, _)| (i.slug(), i.source.to_string_lossy().into()))
             .collect::<BTreeMap<String, String>>();
 
-        let contracts = contracts
-            .into_iter()
-            .map(|(i, c)| (i.slug(), c))
-            .collect::<BTreeMap<String, CompactContractBytecode>>();
-
-        let mut known_contracts: BTreeMap<String, (Abi, Vec<u8>)> = Default::default();
+        let mut known_contracts: BTreeMap<ArtifactId, (Abi, Vec<u8>)> = Default::default();
 
         // create a mapping of name => (abi, deployment code, Vec<library deployment code>)
         let mut deployable_contracts = DeployableContracts::default();
 
         foundry_utils::link(
-            &contracts,
+            BTreeMap::from_iter(contracts),
             &mut known_contracts,
             evm_opts.sender,
             &mut deployable_contracts,
@@ -81,7 +70,7 @@ impl MultiContractRunnerBuilder {
                 let PostLinkInput {
                     contract,
                     known_contracts,
-                    fname,
+                    id,
                     extra: deployable_contracts,
                     dependencies,
                 } = post_link_input;
@@ -100,18 +89,14 @@ impl MultiContractRunnerBuilder {
                     abi.functions().any(|func| func.name.starts_with("test"))
                 {
                     deployable_contracts
-                        .insert(fname.clone(), (abi.clone(), bytecode, dependencies.to_vec()));
+                        .insert(id.slug(), (abi.clone(), bytecode, dependencies.to_vec()));
                 }
 
-                let split = fname.split(':').collect::<Vec<&str>>();
-                let contract_name = if split.len() > 1 { split[1] } else { split[0] };
                 contract
                     .deployed_bytecode
                     .and_then(|d_bcode| d_bcode.bytecode)
                     .and_then(|bcode| bcode.object.into_bytes())
-                    .and_then(|bytes| {
-                        known_contracts.insert(contract_name.to_string(), (abi, bytes.to_vec()))
-                    });
+                    .and_then(|bytes| known_contracts.insert(id, (abi, bytes.to_vec())));
                 Ok(())
             },
         )?;
@@ -126,6 +111,7 @@ impl MultiContractRunnerBuilder {
             fuzzer: self.fuzzer,
             errors: Some(execution_info.2),
             source_paths,
+            fork: self.fork,
         })
     }
 
@@ -152,6 +138,12 @@ impl MultiContractRunnerBuilder {
         self.evm_spec = Some(spec);
         self
     }
+
+    #[must_use]
+    pub fn with_fork(mut self, fork: Option<Fork>) -> Self {
+        self.fork = fork;
+        self
+    }
 }
 
 /// A multi contract runner receives a set of contracts deployed in an EVM instance and proceeds
@@ -161,7 +153,7 @@ pub struct MultiContractRunner {
     /// needs to be deployed & linked against
     pub contracts: BTreeMap<String, (Abi, ethers::prelude::Bytes, Vec<ethers::prelude::Bytes>)>,
     /// Compiled contracts by name that have an Abi and runtime bytecode
-    pub known_contracts: BTreeMap<String, (Abi, Vec<u8>)>,
+    pub known_contracts: BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
     /// The EVM instance used in the test runner
     pub evm_opts: EvmOpts,
     /// The EVM spec
@@ -174,6 +166,8 @@ pub struct MultiContractRunner {
     sender: Option<Address>,
     /// A map of contract names to absolute source file paths
     pub source_paths: BTreeMap<String, String>,
+    /// The fork config
+    pub fork: Option<Fork>,
 }
 
 impl MultiContractRunner {
@@ -196,6 +190,10 @@ impl MultiContractRunner {
         stream_result: Option<Sender<(String, BTreeMap<String, TestResult>)>>,
     ) -> Result<BTreeMap<String, BTreeMap<String, TestResult>>> {
         let env = self.evm_opts.evm_env();
+
+        // the db backend that serves all the data
+        let db = Backend::new(self.fork.take(), &env);
+
         let results = self
             .contracts
             .par_iter()
@@ -208,19 +206,14 @@ impl MultiContractRunner {
                 let mut builder = ExecutorBuilder::new()
                     .with_cheatcodes(self.evm_opts.ffi)
                     .with_config(env.clone())
-                    .with_spec(self.evm_spec);
-
-                if let Some(ref url) = self.evm_opts.fork_url {
-                    let fork =
-                        Fork { url: url.clone(), pin_block: self.evm_opts.fork_block_number };
-                    builder = builder.with_fork(fork);
-                }
+                    .with_spec(self.evm_spec)
+                    .with_gas_limit(self.evm_opts.gas_limit());
 
                 if self.evm_opts.verbosity >= 3 {
                     builder = builder.with_tracing();
                 }
 
-                let executor = builder.build();
+                let executor = builder.build(db.clone());
                 let result =
                     self.run_tests(name, abi, executor, deploy_code.clone(), libs, filter)?;
                 Ok((name.clone(), result))
@@ -234,7 +227,6 @@ impl MultiContractRunner {
                 (name, result)
             })
             .collect::<BTreeMap<_, _>>();
-
         Ok(results)
     }
 
@@ -502,31 +494,26 @@ mod tests {
         // testing.
         for (_, tests) in results {
             for (test_name, result) in tests {
-                let deployment_traces = result
-                    .traces
-                    .iter()
-                    .filter(|(kind, _)| *kind == TraceKind::Deployment)
-                    .collect::<Vec<_>>();
-                let setup_traces = result
-                    .traces
-                    .iter()
-                    .filter(|(kind, _)| *kind == TraceKind::Setup)
-                    .collect::<Vec<_>>();
-                let execution_traces = result
-                    .traces
-                    .iter()
-                    .filter(|(kind, _)| *kind == TraceKind::Deployment)
-                    .collect::<Vec<_>>();
+                let deployment_traces =
+                    result.traces.iter().filter(|(kind, _)| *kind == TraceKind::Deployment);
+                let setup_traces =
+                    result.traces.iter().filter(|(kind, _)| *kind == TraceKind::Setup);
+                let execution_traces =
+                    result.traces.iter().filter(|(kind, _)| *kind == TraceKind::Deployment);
 
                 assert_eq!(
-                    deployment_traces.len(),
+                    deployment_traces.count(),
                     1,
                     "Test {} did not have exactly 1 deployment trace.",
                     test_name
                 );
-                assert!(setup_traces.len() <= 1, "Test {} had more than 1 setup trace.", test_name);
+                assert!(
+                    setup_traces.count() <= 1,
+                    "Test {} had more than 1 setup trace.",
+                    test_name
+                );
                 assert_eq!(
-                    execution_traces.len(),
+                    execution_traces.count(),
                     1,
                     "Test {} did not not have exactly 1 execution trace.",
                     test_name

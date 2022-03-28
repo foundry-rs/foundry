@@ -24,7 +24,7 @@ pub use revm::SpecId;
 /// Executor database trait
 pub use revm::db::DatabaseRef;
 
-use self::inspector::InspectorStackConfig;
+use self::inspector::{InspectorData, InspectorStackConfig};
 use crate::{debug::DebugArena, trace::CallTraceArena, CALLER};
 use bytes::Bytes;
 use ethers::{
@@ -34,7 +34,6 @@ use ethers::{
 use eyre::Result;
 use foundry_utils::IntoFunction;
 use hashbrown::HashMap;
-use inspector::InspectorStack;
 use revm::{
     db::{CacheDB, DatabaseCommit, EmptyDB},
     return_ok, Account, BlockEnv, CreateScheme, Env, Return, TransactOut, TransactTo, TxEnv, EVM,
@@ -165,23 +164,32 @@ pub struct Executor<DB: DatabaseRef> {
     pub(crate) db: CacheDB<DB>,
     env: Env,
     inspector_config: InspectorStackConfig,
+    /// The gas limit for calls and deployments. This is different from the gas limit imposed by
+    /// the passed in environment, as those limits are used by the EVM for certain opcodes like
+    /// `gaslimit`.
+    gas_limit: U256,
 }
 
 impl<DB> Executor<DB>
 where
     DB: DatabaseRef,
 {
-    pub fn new(inner_db: DB, env: Env, inspector_config: InspectorStackConfig) -> Self {
+    pub fn new(
+        inner_db: DB,
+        env: Env,
+        inspector_config: InspectorStackConfig,
+        gas_limit: U256,
+    ) -> Self {
         let mut db = CacheDB::new(inner_db);
 
         // Need to create a non-empty contract on the cheatcodes address so `extcodesize` checks
         // does not fail
         db.insert_cache(
-            *CHEATCODE_ADDRESS,
+            CHEATCODE_ADDRESS,
             revm::AccountInfo { code: Some(Bytes::from_static(&[1])), ..Default::default() },
         );
 
-        Executor { db, env, inspector_config }
+        Executor { db, env, inspector_config, gas_limit }
     }
 
     /// Set the balance of an account.
@@ -297,7 +305,7 @@ where
         // Persist the changed block environment
         self.inspector_config.block = evm.env.block.clone();
 
-        let InspectorData { logs, labels, traces, debug } = collect_inspector_states(inspector);
+        let InspectorData { logs, labels, traces, debug } = inspector.collect_inspector_states();
         Ok(RawCallResult {
             status,
             reverted: !matches!(status, return_ok!()),
@@ -396,7 +404,7 @@ where
             _ => Bytes::default(),
         };
 
-        let InspectorData { logs, labels, traces, debug } = collect_inspector_states(inspector);
+        let InspectorData { logs, labels, traces, debug } = inspector.collect_inspector_states();
         Ok(RawCallResult {
             status,
             reverted: !matches!(status, return_ok!()),
@@ -419,13 +427,19 @@ where
 
         let mut inspector = self.inspector_config.stack();
         let (status, out, gas, _) = evm.inspect_commit(&mut inspector);
-        let address = match out {
-            TransactOut::Create(_, Some(addr)) => addr,
+        let address = match status {
+            return_ok!() => {
+                if let TransactOut::Create(_, Some(addr)) = out {
+                    addr
+                } else {
+                    panic!("deployment succeeded, but we got no address. this is a bug.");
+                }
+            }
             // TODO: We should have better error handling logic in the test runner
             // regarding deployments in general
             _ => eyre::bail!("deployment failed: {:?}", status),
         };
-        let InspectorData { logs, traces, debug, .. } = collect_inspector_states(inspector);
+        let InspectorData { logs, traces, debug, .. } = inspector.collect_inspector_states();
 
         Ok(DeployResult { address, gas, logs, traces, debug })
     }
@@ -449,7 +463,8 @@ where
         let mut db = CacheDB::new(EmptyDB());
         db.insert_cache(address, self.db.basic(address));
         db.commit(state_changeset);
-        let executor = Executor::new(db, self.env.clone(), self.inspector_config.clone());
+        let executor =
+            Executor::new(db, self.env.clone(), self.inspector_config.clone(), self.gas_limit);
 
         let mut success = !reverted;
         if success {
@@ -471,7 +486,11 @@ where
             // We always set the gas price to 0 so we can execute the transaction regardless of
             // network conditions - the actual gas price is kept in `self.block` and is applied by
             // the cheatcode handler if it is enabled
-            block: BlockEnv { basefee: 0.into(), ..self.env.block.clone() },
+            block: BlockEnv {
+                basefee: 0.into(),
+                gas_limit: self.gas_limit,
+                ..self.env.block.clone()
+            },
             tx: TxEnv {
                 caller,
                 transact_to,
@@ -480,25 +499,10 @@ where
                 // As above, we set the gas price to 0.
                 gas_price: 0.into(),
                 gas_priority_fee: None,
+                gas_limit: self.gas_limit.as_u64(),
                 ..self.env.tx.clone()
             },
         }
-    }
-}
-
-struct InspectorData {
-    logs: Vec<RawLog>,
-    labels: BTreeMap<Address, String>,
-    traces: Option<CallTraceArena>,
-    debug: Option<DebugArena>,
-}
-
-fn collect_inspector_states(stack: InspectorStack) -> InspectorData {
-    InspectorData {
-        logs: stack.logs.map(|logs| logs.logs).unwrap_or_default(),
-        labels: stack.cheatcodes.map(|cheatcodes| cheatcodes.labels).unwrap_or_default(),
-        traces: stack.tracer.map(|tracer| tracer.traces),
-        debug: stack.debugger.map(|debugger| debugger.arena),
     }
 }
 

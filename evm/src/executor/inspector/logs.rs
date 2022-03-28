@@ -17,10 +17,6 @@ pub struct LogCollector {
 }
 
 impl LogCollector {
-    pub fn new() -> Self {
-        Default::default()
-    }
-
     fn hardhat_log(&mut self, input: Vec<u8>) -> (Return, Bytes) {
         // Patch the Hardhat-style selectors
         let input = patch_hardhat_console_selector(input.to_vec());
@@ -55,7 +51,7 @@ where
         call: &mut CallInputs,
         _: bool,
     ) -> (Return, Gas, Bytes) {
-        if call.contract == *HARDHAT_CONSOLE_ADDRESS {
+        if call.contract == HARDHAT_CONSOLE_ADDRESS {
             let (status, reason) = self.hardhat_log(call.input.to_vec());
             (status, Gas::new(call.gas_limit), reason)
         } else {

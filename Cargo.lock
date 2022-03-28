@@ -500,7 +500,7 @@ checksum = "df8670b8c7b9dae1793364eafadf7239c40d669904660c5960d74cfd80b46a53"
 
 [[package]]
 name = "cast"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono 0.2.25",
  "ethers-core",
@@ -715,7 +715,7 @@ dependencies = [
  "indenter",
  "once_cell",
  "owo-colors",
- "tracing-error",
+ "tracing-error 0.1.2",
 ]
 
 [[package]]
@@ -727,7 +727,7 @@ dependencies = [
  "once_cell",
  "owo-colors",
  "tracing-core",
- "tracing-error",
+ "tracing-error 0.1.2",
 ]
 
 [[package]]
@@ -1278,7 +1278,7 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#0526e920eb6623e30966a5f470fffc0dd788c874"
+source = "git+https://github.com/gakonst/ethers-rs#72dfc52ec041f4368a00aa9a27305f777ec710d8"
 dependencies = [
  "ethers-addressbook",
  "ethers-contract",
@@ -1293,7 +1293,7 @@ dependencies = [
 [[package]]
 name = "ethers-addressbook"
 version = "0.1.0"
-source = "git+https://github.com/gakonst/ethers-rs#0526e920eb6623e30966a5f470fffc0dd788c874"
+source = "git+https://github.com/gakonst/ethers-rs#72dfc52ec041f4368a00aa9a27305f777ec710d8"
 dependencies = [
  "ethers-core",
  "once_cell",
@@ -1304,7 +1304,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#0526e920eb6623e30966a5f470fffc0dd788c874"
+source = "git+https://github.com/gakonst/ethers-rs#72dfc52ec041f4368a00aa9a27305f777ec710d8"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1322,7 +1322,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#0526e920eb6623e30966a5f470fffc0dd788c874"
+source = "git+https://github.com/gakonst/ethers-rs#72dfc52ec041f4368a00aa9a27305f777ec710d8"
 dependencies = [
  "Inflector",
  "cfg-if 1.0.0",
@@ -1344,7 +1344,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#0526e920eb6623e30966a5f470fffc0dd788c874"
+source = "git+https://github.com/gakonst/ethers-rs#72dfc52ec041f4368a00aa9a27305f777ec710d8"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -1358,7 +1358,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#0526e920eb6623e30966a5f470fffc0dd788c874"
+source = "git+https://github.com/gakonst/ethers-rs#72dfc52ec041f4368a00aa9a27305f777ec710d8"
 dependencies = [
  "arrayvec 0.7.2",
  "bytes",
@@ -1384,7 +1384,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "0.2.0"
-source = "git+https://github.com/gakonst/ethers-rs#0526e920eb6623e30966a5f470fffc0dd788c874"
+source = "git+https://github.com/gakonst/ethers-rs#72dfc52ec041f4368a00aa9a27305f777ec710d8"
 dependencies = [
  "ethers-core",
  "ethers-solc",
@@ -1398,7 +1398,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#0526e920eb6623e30966a5f470fffc0dd788c874"
+source = "git+https://github.com/gakonst/ethers-rs#72dfc52ec041f4368a00aa9a27305f777ec710d8"
 dependencies = [
  "async-trait",
  "ethers-contract",
@@ -1421,7 +1421,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#0526e920eb6623e30966a5f470fffc0dd788c874"
+source = "git+https://github.com/gakonst/ethers-rs#72dfc52ec041f4368a00aa9a27305f777ec710d8"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -1453,7 +1453,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#0526e920eb6623e30966a5f470fffc0dd788c874"
+source = "git+https://github.com/gakonst/ethers-rs#72dfc52ec041f4368a00aa9a27305f777ec710d8"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1475,8 +1475,8 @@ dependencies = [
 
 [[package]]
 name = "ethers-solc"
-version = "0.1.0"
-source = "git+https://github.com/gakonst/ethers-rs#0526e920eb6623e30966a5f470fffc0dd788c874"
+version = "0.3.0"
+source = "git+https://github.com/gakonst/ethers-rs#72dfc52ec041f4368a00aa9a27305f777ec710d8"
 dependencies = [
  "colored",
  "dunce",
@@ -1612,7 +1612,7 @@ checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
 
 [[package]]
 name = "forge"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "comfy-table",
  "ethers",
@@ -1631,12 +1631,12 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
- "tracing-subscriber 0.2.25",
+ "tracing-subscriber 0.3.9",
 ]
 
 [[package]]
 name = "forge-fmt"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "indent_write",
  "pretty_assertions",
@@ -1685,7 +1685,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ansi_term",
  "atty",
@@ -1701,12 +1701,10 @@ dependencies = [
  "forge-fmt",
  "forge-node",
  "foundry-cli-test-utils",
- "foundry-config",
  "foundry-utils",
  "futures",
  "glob",
  "hex",
- "locate-cargo-manifest",
  "once_cell",
  "pretty_assertions",
  "proptest",
@@ -1722,7 +1720,8 @@ dependencies = [
  "tokio",
  "toml",
  "tracing",
- "tracing-subscriber 0.2.25",
+ "tracing-error 0.2.0",
+ "tracing-subscriber 0.3.9",
  "ui",
  "vergen",
  "walkdir",
@@ -1743,7 +1742,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-config"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "Inflector",
  "dirs-next",
@@ -1752,6 +1751,7 @@ dependencies = [
  "eyre",
  "figment",
  "pretty_assertions",
+ "regex",
  "semver",
  "serde",
  "serde_json",
@@ -1760,7 +1760,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-evm"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ansi_term",
  "bytes",
@@ -1776,15 +1776,18 @@ dependencies = [
  "revm",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
  "tokio",
  "tracing",
- "tracing-subscriber 0.2.25",
+ "tracing-error 0.2.0",
+ "tracing-subscriber 0.3.9",
+ "url",
 ]
 
 [[package]]
 name = "foundry-utils"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ethers",
  "ethers-addressbook",
@@ -2086,6 +2089,9 @@ name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "hidapi-rusb"
@@ -2390,12 +2396,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "json"
-version = "0.12.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "078e285eafdfb6c4b434e0d31e8cfcb5115b651496faca5749b88fafd4f23bfd"
-
-[[package]]
 name = "k256"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2478,9 +2478,9 @@ dependencies = [
 
 [[package]]
 name = "libc"
-version = "0.2.117"
+version = "0.2.121"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e74d72e0f9b65b5b4ca49a346af3976df0f9c61d550727f349ecd559f251a26c"
+checksum = "efaa7b300f3b5fe8eb6bf21ce3895e1751d9665086af2d64b42f19701015ff4f"
 
 [[package]]
 name = "libgit2-sys"
@@ -2519,15 +2519,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "locate-cargo-manifest"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "db985b63431fe09e8d71f50aeceffcc31e720cb86be8dad2f38d084c5a328466"
-dependencies = [
- "json",
-]
-
-[[package]]
 name = "lock_api"
 version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2543,15 +2534,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "51b9bbe6c47d51fc3e1a9b945965946b4c44142ab8792c50835a980d362c2710"
 dependencies = [
  "cfg-if 1.0.0",
-]
-
-[[package]]
-name = "matchers"
-version = "0.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f099785f7595cc4b4553a174ce30dd7589ef93391ff414dbb67f62392b9e0ce1"
-dependencies = [
- "regex-automata",
 ]
 
 [[package]]
@@ -2980,9 +2962,9 @@ checksum = "2386b4ebe91c2f7f51082d4cefa145d030e33a1842a96b12e4885cc3c01f7a55"
 
 [[package]]
 name = "parity-scale-codec"
-version = "3.1.2"
+version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e8b44461635bbb1a0300f100a841e571e7d919c81c73075ef5d152ffdb521066"
+checksum = "8483b84fb12de1dc23bf95d26030d16cea56391d136db0db37f749508104e3e6"
 dependencies = [
  "arrayvec 0.7.2",
  "bitvec 1.0.0",
@@ -2994,9 +2976,9 @@ dependencies = [
 
 [[package]]
 name = "parity-scale-codec-derive"
-version = "3.1.2"
+version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c45ed1f39709f5a89338fab50e59816b2e8815f5bb58276e7ddf9afd495f73f8"
+checksum = "7259388ceb4c23bc09caef272c9e7a732b3b8f9fbd0b41f0009a91d6548cc1d9"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -3164,7 +3146,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fabbf1ead8a5bcbc20f5f8b939ee3f5b0f6f281b6ad3468b84656b658b455259"
 dependencies = [
  "phf_macros",
- "phf_shared",
+ "phf_shared 0.10.0",
  "proc-macro-hack",
 ]
 
@@ -3194,8 +3176,8 @@ version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d5285893bb5eb82e6aaf5d59ee909a06a16737a8970984dd7746ba9283498d6"
 dependencies = [
- "phf_shared",
- "rand",
+ "phf_shared 0.10.0",
+ "rand 0.8.5",
 ]
 
 [[package]]
@@ -3204,12 +3186,21 @@ version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "58fdf3184dd560f160dd73922bea2d5cd6e8f064bf4b13110abd81b03697b4e0"
 dependencies = [
- "phf_generator",
- "phf_shared",
+ "phf_generator 0.10.0",
+ "phf_shared 0.10.0",
  "proc-macro-hack",
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "phf_shared"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c00cf8b9eafe68dde5e9eaa2cef8ee84a9336a47d566ec55ca16589633b65af7"
+dependencies = [
+ "siphasher",
 ]
 
 [[package]]
@@ -3648,23 +3639,25 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "1.2.0"
-source = "git+https://github.com/bluealloy/revm#cb5fbb9adc36c8ee127dce92259356cecbb829b8"
+source = "git+https://github.com/bluealloy/revm#eb3282dfa37bb4e97145037303dcc1853d88fe34"
 dependencies = [
  "arrayref",
  "auto_impl",
  "bytes",
  "hashbrown 0.12.0",
+ "hex",
  "num_enum",
  "primitive-types",
  "revm_precompiles",
  "rlp",
+ "serde",
  "sha3 0.10.1",
 ]
 
 [[package]]
 name = "revm_precompiles"
 version = "0.4.0"
-source = "git+https://github.com/bluealloy/revm#cb5fbb9adc36c8ee127dce92259356cecbb829b8"
+source = "git+https://github.com/bluealloy/revm#eb3282dfa37bb4e97145037303dcc1853d88fe34"
 dependencies = [
  "bytes",
  "k256",
@@ -4154,8 +4147,9 @@ dependencies = [
 
 [[package]]
 name = "solang-parser"
-version = "0.1.1"
-source = "git+https://github.com/hyperledger-labs/solang#f3e8f6fcabab91c959833cf85e3f13d327b00e38"
+version = "0.1.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a06b8bfb6c910adbada563211b876b91a058791505e4cb646591b205fa817d01"
 dependencies = [
  "lalrpop",
  "lalrpop-util",
@@ -4196,8 +4190,8 @@ checksum = "33994d0838dc2d152d17a62adf608a869b5e846b65b389af7f3dbc1de45c5b26"
 dependencies = [
  "lazy_static",
  "new_debug_unreachable",
- "parking_lot",
- "phf_shared",
+ "parking_lot 0.11.2",
+ "phf_shared 0.10.0",
  "precomputed-hash",
 ]
 
@@ -4247,8 +4241,8 @@ checksum = "6bdef32e8150c2a081110b42772ffe7d7c9032b606bc226c8260fd97e0976601"
 
 [[package]]
 name = "svm-rs"
-version = "0.2.3"
-source = "git+https://github.com/roynalnaruto/svm-rs#d8c57e26f8bacb131487116a7b3a062d86db95b1"
+version = "0.2.9"
+source = "git+https://github.com/roynalnaruto/svm-rs#a128bea693fcb3c468687dbec4312c4b00d2432e"
 dependencies = [
  "anyhow",
  "cfg-if 1.0.0",
@@ -4603,9 +4597,9 @@ checksum = "360dfd1d6d30e05fda32ace2c8c70e9c0a9da713275777f5a4dbb8a1893930c6"
 
 [[package]]
 name = "tracing"
-version = "0.1.30"
+version = "0.1.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d8d93354fe2a8e50d5953f5ae2e47a3fc2ef03292e7ea46e3cc38f549525fb9"
+checksum = "4a1bdf54a7c28a2bbf701e1d2233f6c77f473486b94bee4f9678da5a148dca7f"
 dependencies = [
  "cfg-if 1.0.0",
  "log",
@@ -4616,9 +4610,9 @@ dependencies = [
 
 [[package]]
 name = "tracing-attributes"
-version = "0.1.19"
+version = "0.1.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8276d9a4a3a558d7b7ad5303ad50b53d58264641b82914b7ada36bd762e7a716"
+checksum = "2e65ce065b4b5c53e73bb28912318cb8c9e9ad3921f1d669eb0e68b4c8143a2b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4646,6 +4640,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tracing-error"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d686ec1c0f384b1277f097b2f279a2ecc11afe8c133c1aabf036a27cb4cd206e"
+dependencies = [
+ "tracing",
+ "tracing-subscriber 0.3.9",
+]
+
+[[package]]
 name = "tracing-futures"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4667,35 +4671,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "tracing-serde"
-version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc6b213177105856957181934e4920de57730fc69bf42c37ee5bb664d406d9e1"
-dependencies = [
- "serde",
- "tracing-core",
-]
-
-[[package]]
 name = "tracing-subscriber"
 version = "0.2.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0e0d2eaa99c3c2e41547cfa109e910a68ea03823cccad4a0525dcbc9b01e8c71"
 dependencies = [
- "ansi_term",
- "chrono 0.4.19",
- "lazy_static",
- "matchers 0.0.1",
- "regex",
- "serde",
- "serde_json",
  "sharded-slab",
- "smallvec",
  "thread_local",
- "tracing",
  "tracing-core",
- "tracing-log",
- "tracing-serde",
 ]
 
 [[package]]
@@ -4704,13 +4687,16 @@ version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9e0ab7bdc962035a87fba73f3acca9b8a8d0034c2e6f60b84aeaaddddc155dce"
 dependencies = [
+ "ansi_term",
  "lazy_static",
- "matchers 0.1.0",
+ "matchers",
  "regex",
  "sharded-slab",
+ "smallvec",
  "thread_local",
  "tracing",
  "tracing-core",
+ "tracing-log",
 ]
 
 [[package]]
@@ -4777,13 +4763,14 @@ checksum = "dcf81ac59edc17cc8697ff311e8f5ef2d99fcbd9817b34cec66f90b6c3dfd987"
 
 [[package]]
 name = "ui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "crossterm 0.22.1",
  "ethers",
  "eyre",
  "forge",
  "hex",
+ "revm",
  "tui",
 ]
 

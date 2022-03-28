@@ -2,10 +2,19 @@ use clap::{Parser, Subcommand, ValueHint};
 use ethers::{solc::EvmVersion, types::Address};
 use std::{path::PathBuf, str::FromStr};
 
-use crate::cmd::{
-    bind::BindArgs, build::BuildArgs, config, create::CreateArgs, flatten, init::InitArgs,
-    install::InstallArgs, node::NodeArgs, remappings::RemappingArgs, run::RunArgs, snapshot,
-    test::TestArgs,
+use crate::cmd::forge::{
+    bind::BindArgs,
+    build::BuildArgs,
+    config,
+    create::CreateArgs,
+    flatten,
+    init::InitArgs,
+    inspect,
+    install::InstallArgs,
+    remappings::RemappingArgs,
+    run::RunArgs,
+    snapshot, test, tree,
+    verify::{VerifyArgs, VerifyCheckArgs},
 };
 use serde::Serialize;
 

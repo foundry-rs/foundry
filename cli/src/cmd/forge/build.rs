@@ -3,9 +3,10 @@
 use ethers::solc::{Project, ProjectCompileOutput};
 use std::path::PathBuf;
 
-use crate::{cmd::Cmd, opts::forge::CompilerArgs};
-
-use crate::cmd::forge::watch::WatchArgs;
+use crate::{
+    cmd::{forge::watch::WatchArgs, Cmd},
+    opts::forge::CompilerArgs,
+};
 use clap::{Parser, ValueHint};
 use ethers::solc::remappings::Remapping;
 use foundry_config::{
@@ -124,9 +125,11 @@ pub struct BuildArgs {
     pub compiler: CompilerArgs,
 
     #[clap(help = "print compiled contract names", long = "names")]
+    #[serde(skip)]
     pub names: bool,
 
     #[clap(help = "print compiled contract sizes", long = "sizes")]
+    #[serde(skip)]
     pub sizes: bool,
 
     #[clap(help = "ignore warnings with specific error codes", long)]
@@ -173,6 +176,7 @@ pub struct BuildArgs {
     pub hardhat: bool,
 
     #[clap(help = "add linked libraries", long, env = "DAPP_LIBRARIES")]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub libraries: Vec<String>,
 
     #[clap(flatten)]
@@ -214,20 +218,8 @@ impl BuildArgs {
     /// Returns the [`watchexec::InitConfig`] and [`watchexec::RuntimeConfig`] necessary to
     /// bootstrap a new [`watchexe::Watchexec`] loop.
     pub(crate) fn watchexec_config(&self) -> eyre::Result<(InitConfig, RuntimeConfig)> {
-        use crate::cmd::forge::watch;
-        let init = watch::init()?;
-        let mut runtime = watch::runtime(&self.watch)?;
-
-        // contains all the arguments `--watch p1, p2, p3`
-        let has_paths =
-            self.watch.watch.as_ref().map(|paths| !paths.is_empty()).unwrap_or_default();
-
-        if !has_paths {
-            // listen for changes in the project's src dir
-            let config = Config::from(self);
-            runtime.pathset(Some(config.src));
-        }
-        Ok((init, runtime))
+        // use the path arguments or if none where provided the `src` dir
+        self.watch.watchexec_config(|| Config::from(self).src)
     }
 
     /// Returns the remappings to add to the config
@@ -278,6 +270,14 @@ impl Provider for BuildArgs {
 
         if self.via_ir {
             dict.insert("via_ir".to_string(), true.into());
+        }
+
+        if self.names {
+            dict.insert("names".to_string(), true.into());
+        }
+
+        if self.sizes {
+            dict.insert("sizes".to_string(), true.into());
         }
 
         if self.force {

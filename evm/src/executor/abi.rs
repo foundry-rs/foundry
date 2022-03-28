@@ -1,13 +1,14 @@
-use ethers::types::{Address, Selector};
+use ethers::types::{Address, Selector, H160};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 
-/// The cheatcode handler address.
+/// The cheatcode handler address (0x7109709ECfa91a80626fF3989D68f67F5b1DD12D).
 ///
 /// This is the same address as the one used in DappTools's HEVM.
-pub static CHEATCODE_ADDRESS: Lazy<Address> = Lazy::new(|| {
-    Address::from_slice(&hex::decode("7109709ECfa91a80626fF3989D68f67F5b1DD12D").unwrap())
-});
+pub static CHEATCODE_ADDRESS: Address = H160([
+    0x71, 0x09, 0x70, 0x9E, 0xcf, 0xa9, 0x1a, 0x80, 0x62, 0x6f, 0xf3, 0x98, 0x9d, 0x68, 0xf6, 0x7f,
+    0x5b, 0x1d, 0xd1, 0x2d,
+]);
 
 // Bindings for cheatcodes
 ethers::contract::abigen!(
@@ -44,12 +45,13 @@ ethers::contract::abigen!(
 );
 pub use hevm_mod::{HEVMCalls, HEVM_ABI};
 
-/// The Hardhat console address.
+/// The Hardhat console address (0x000000000000000000636F6e736F6c652e6c6f67).
 ///
 /// See: https://github.com/nomiclabs/hardhat/blob/master/packages/hardhat-core/console.sol
-pub static HARDHAT_CONSOLE_ADDRESS: Lazy<Address> = Lazy::new(|| {
-    Address::from_slice(&hex::decode("000000000000000000636F6e736F6c652e6c6f67").unwrap())
-});
+pub static HARDHAT_CONSOLE_ADDRESS: Address = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x63, 0x6f, 0x6e, 0x73, 0x6f, 0x6c, 0x65,
+    0x2e, 0x6c, 0x6f, 0x67,
+]);
 
 // Bindings for DS-style event logs
 ethers::contract::abigen!(

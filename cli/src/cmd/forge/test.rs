@@ -125,8 +125,12 @@ pub struct TestArgs {
     debug: Option<Regex>,
 
     /// Print a gas report.
-    #[clap(long = "gas-report")]
+    #[clap(long, env = "FORGE_GAS_REPORT")]
     gas_report: bool,
+
+    /// Include the mean and median gas use of fuzz tests in the output.
+    #[clap(long, env = "FORGE_INCLUDE_FUZZ_TEST_GAS")]
+    pub include_fuzz_test_gas: bool,
 
     /// Force the process to exit with code 0, even if the tests fail.
     #[clap(long, env = "FORGE_ALLOW_FAILURE")]
@@ -177,7 +181,7 @@ impl Cmd for TestArgs {
 
         // Set up the project
         let project = config.project()?;
-        let output = super::super::compile(&project, false, false)?;
+        let output = crate::cmd::compile(&project, false, false)?;
 
         // Determine print verbosity and executor verbosity
         let verbosity = evm_opts.verbosity;
@@ -192,6 +196,7 @@ impl Cmd for TestArgs {
             .initial_balance(evm_opts.initial_balance)
             .evm_spec(evm_spec)
             .sender(evm_opts.sender)
+            .with_fork(utils::get_fork(&evm_opts, &config.rpc_storage_caching))
             .build(output, evm_opts)?;
 
         if self.debug.is_some() {
@@ -232,7 +237,7 @@ impl Cmd for TestArgs {
                     };
                     debugger.run()?;
 
-                    Ok(TestOutcome::new(results, self.allow_failure))
+                    Ok(TestOutcome::new(results, self.allow_failure, self.include_fuzz_test_gas))
                 }
                 n =>
                     Err(
@@ -248,7 +253,7 @@ impl Cmd for TestArgs {
                 filter,
                 self.json,
                 self.allow_failure,
-                (self.gas_report, config.gas_reports),
+                (self.include_fuzz_test_gas, self.gas_report, config.gas_reports),
             )
         }
     }
@@ -268,7 +273,7 @@ pub struct Test {
 
 impl Test {
     pub fn gas_used(&self) -> u64 {
-        self.result.kind.gas_used().gas()
+        self.result.kind.gas_used(true).gas()
     }
 
     /// Returns the contract name of the artifact id
@@ -286,6 +291,8 @@ impl Test {
 pub struct TestOutcome {
     /// Whether failures are allowed
     allow_failure: bool,
+    /// Whether to include fuzz test gas usage in the output
+    include_fuzz_test_gas: bool,
     /// All test results `contract -> (test name -> TestResult)`
     pub results: BTreeMap<String, BTreeMap<String, forge::TestResult>>,
 }
@@ -294,8 +301,9 @@ impl TestOutcome {
     fn new(
         results: BTreeMap<String, BTreeMap<String, forge::TestResult>>,
         allow_failure: bool,
+        include_fuzz_test_gas: bool,
     ) -> Self {
-        Self { results, allow_failure }
+        Self { results, include_fuzz_test_gas, allow_failure }
     }
 
     /// Iterator over all succeeding tests and their names
@@ -322,13 +330,13 @@ impl TestOutcome {
     }
 
     /// Checks if there are any failures and failures are disallowed
-    pub fn ensure_ok(&self) -> eyre::Result<()> {
+    pub fn ensure_ok(&self, include_fuzz_test_gas: bool) -> eyre::Result<()> {
         if !self.allow_failure {
             let failures = self.failures().count();
             if failures > 0 {
                 println!("Failed tests:");
                 for (name, result) in self.failures() {
-                    short_test_result(name, result);
+                    short_test_result(name, include_fuzz_test_gas, result);
                 }
                 println!();
 
@@ -345,7 +353,7 @@ impl TestOutcome {
     }
 }
 
-fn short_test_result(name: &str, result: &forge::TestResult) {
+fn short_test_result(name: &str, include_fuzz_test_gas: bool, result: &forge::TestResult) {
     let status = if result.success {
         Colour::Green.paint("[PASS]")
     } else {
@@ -365,7 +373,7 @@ fn short_test_result(name: &str, result: &forge::TestResult) {
         Colour::Red.paint(txt)
     };
 
-    println!("{} {} {}", status, name, result.kind.gas_used());
+    println!("{} {} {}", status, name, result.kind.gas_used(include_fuzz_test_gas));
 }
 
 /// Runs all the tests
@@ -375,17 +383,17 @@ fn test(
     filter: Filter,
     json: bool,
     allow_failure: bool,
-    (gas_reporting, gas_reports): (bool, Vec<String>),
+    (include_fuzz_test_gas, gas_reporting, gas_reports): (bool, bool, Vec<String>),
 ) -> eyre::Result<TestOutcome> {
     if json {
         let results = runner.test(&filter, None)?;
         println!("{}", serde_json::to_string(&results)?);
-        Ok(TestOutcome::new(results, allow_failure))
+        Ok(TestOutcome::new(results, allow_failure, include_fuzz_test_gas))
     } else {
         let local_identifier = LocalTraceIdentifier::new(&runner.known_contracts);
         let (tx, rx) = channel::<(String, BTreeMap<String, TestResult>)>();
 
-        thread::spawn(move || runner.test(&filter, Some(tx)).unwrap());
+        let handle = thread::spawn(move || runner.test(&filter, Some(tx)).unwrap());
 
         let mut results: BTreeMap<String, BTreeMap<String, TestResult>> = BTreeMap::new();
         let mut gas_report = GasReport::new(gas_reports);
@@ -396,57 +404,59 @@ fn test(
                 println!("Running {} {} for {}", tests.len(), term, contract_name);
             }
             for (name, result) in &mut tests {
-                short_test_result(name, result);
+                short_test_result(name, include_fuzz_test_gas, result);
 
                 // We only display logs at level 2 and above
-                if verbosity < 2 {
-                    continue
-                }
-
-                // We only decode logs from Hardhat and DS-style console events
-                let console_logs = decode_console_logs(&result.logs);
-                if !console_logs.is_empty() {
-                    println!("Logs:");
-                    for log in console_logs {
-                        println!("  {}", log);
+                if verbosity >= 2 {
+                    // We only decode logs from Hardhat and DS-style console events
+                    let console_logs = decode_console_logs(&result.logs);
+                    if !console_logs.is_empty() {
+                        println!("Logs:");
+                        for log in console_logs {
+                            println!("  {}", log);
+                        }
+                        println!();
                     }
-                    println!();
                 }
 
                 if !result.traces.is_empty() {
-                    // We only display traces at verbosity level 3 and above
-                    if verbosity < 3 {
-                        continue
-                    }
-
-                    // At verbosity level 3, we only display traces for failed tests
-                    if verbosity == 3 && result.success {
-                        continue
-                    }
-
                     // Identify addresses in each trace
                     let mut decoder =
                         CallTraceDecoder::new_with_labels(result.labeled_addresses.clone());
 
-                    println!("Traces:");
+                    // Decode the traces
+                    let mut decoded_traces = Vec::new();
                     for (kind, trace) in &mut result.traces {
                         decoder.identify(trace, &local_identifier);
 
                         let should_include = match kind {
+                            // At verbosity level 3, we only display traces for failed tests
                             // At verbosity level 4, we also display the setup trace for failed
                             // tests At verbosity level 5, we display
                             // all traces for all tests
                             TraceKind::Setup => {
                                 (verbosity >= 5) || (verbosity == 4 && !result.success)
                             }
-                            TraceKind::Execution => verbosity > 3 || !result.success,
+                            TraceKind::Execution => {
+                                verbosity > 3 || (verbosity == 3 && !result.success)
+                            }
                             _ => false,
                         };
 
-                        if should_include {
+                        // We decode the trace if we either need to build a gas report or we need
+                        // to print it
+                        if should_include || gas_reporting {
                             decoder.decode(trace);
-                            println!("{}", trace);
                         }
+
+                        if should_include {
+                            decoded_traces.push(trace.to_string());
+                        }
+                    }
+
+                    if !decoded_traces.is_empty() {
+                        println!("Traces:");
+                        decoded_traces.into_iter().for_each(|trace| println!("{}", trace));
                     }
 
                     if gas_reporting {
@@ -461,6 +471,9 @@ fn test(
             println!("{}", gas_report.finalize());
         }
 
-        Ok(TestOutcome::new(results, allow_failure))
+        // reattach the thread
+        let _ = handle.join();
+
+        Ok(TestOutcome::new(results, allow_failure, include_fuzz_test_gas))
     }
 }
