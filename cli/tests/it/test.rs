@@ -6,7 +6,7 @@ use foundry_cli_test_utils::{
 
 // import forge utils as mod
 #[allow(unused)]
-#[path = "../src/utils.rs"]
+#[path = "../../src/utils.rs"]
 mod forge_utils;
 
 // tests that direct import paths are handled correctly

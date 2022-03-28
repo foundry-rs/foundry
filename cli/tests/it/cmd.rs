@@ -11,7 +11,7 @@ use std::{env, fs};
 
 // import forge utils as mod
 #[allow(unused)]
-#[path = "../src/utils.rs"]
+#[path = "../../src/utils.rs"]
 mod forge_utils;
 
 // tests `--help` is printed to std out
@@ -165,6 +165,7 @@ forgetest_init!(can_clean_config, |prj: TestProject, mut cmd: TestCommand| {
 
 // checks that extra output works
 forgetest_init!(can_emit_extra_output, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.set_current_dir(prj.root());
     cmd.args(["build", "--extra-output", "metadata"]);
     cmd.assert_non_empty_stdout();
 
