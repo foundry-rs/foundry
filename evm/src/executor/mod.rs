@@ -302,10 +302,15 @@ where
             _ => Bytes::default(),
         };
 
+        let InspectorData { logs, labels, traces, debug, cheatcodes } =
+            inspector.collect_inspector_states();
+
         // Persist the changed block environment
         self.inspector_config.block = evm.env.block.clone();
 
-        let InspectorData { logs, labels, traces, debug } = inspector.collect_inspector_states();
+        // Persist cheatcode state
+        self.inspector_config.cheatcodes = cheatcodes;
+
         Ok(RawCallResult {
             status,
             reverted: !matches!(status, return_ok!()),
@@ -404,7 +409,8 @@ where
             _ => Bytes::default(),
         };
 
-        let InspectorData { logs, labels, traces, debug } = inspector.collect_inspector_states();
+        let InspectorData { logs, labels, traces, debug, .. } =
+            inspector.collect_inspector_states();
         Ok(RawCallResult {
             status,
             reverted: !matches!(status, return_ok!()),
@@ -439,7 +445,14 @@ where
             // regarding deployments in general
             _ => eyre::bail!("deployment failed: {:?}", status),
         };
-        let InspectorData { logs, traces, debug, .. } = inspector.collect_inspector_states();
+        let InspectorData { logs, traces, debug, cheatcodes, .. } =
+            inspector.collect_inspector_states();
+
+        // Persist the changed block environment
+        self.inspector_config.block = evm.env.block.clone();
+
+        // Persist cheatcode state
+        self.inspector_config.cheatcodes = cheatcodes;
 
         Ok(DeployResult { address, gas, logs, traces, debug })
     }

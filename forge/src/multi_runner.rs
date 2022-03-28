@@ -468,10 +468,13 @@ mod tests {
 
         for (_, SuiteResult { test_results, .. }) in suite_result {
             for (test_name, result) in test_results {
+                let logs = decode_console_logs(&result.logs);
                 assert!(
                     result.success,
-                    "Test {} did not pass as expected.\nReason: {:?}",
-                    test_name, result.reason
+                    "Test {} did not pass as expected.\nReason: {:?}\nLogs:\n{}",
+                    test_name,
+                    result.reason,
+                    logs.join("\n")
                 );
             }
         }
@@ -484,16 +487,22 @@ mod tests {
 
         for (_, SuiteResult { test_results, .. }) in suite_result {
             for (test_name, result) in test_results {
+                let logs = decode_console_logs(&result.logs);
+
                 match test_name.as_ref() {
                     "testPositive(uint256)" | "testSuccessfulFuzz(uint128,uint128)" => assert!(
                         result.success,
-                        "Test {} did not pass as expected.\nReason: {:?}",
-                        test_name, result.reason
+                        "Test {} did not pass as expected.\nReason: {:?}\nLogs:\n{}",
+                        test_name,
+                        result.reason,
+                        logs.join("\n")
                     ),
                     _ => assert!(
                         !result.success,
-                        "Test {} did not fail as expected.\nReason: {:?}",
-                        test_name, result.reason
+                        "Test {} did not fail as expected.\nReason: {:?}\nLogs:\n{}",
+                        test_name,
+                        result.reason,
+                        logs.join("\n")
                     ),
                 }
             }

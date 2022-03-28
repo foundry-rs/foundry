@@ -31,10 +31,10 @@ use std::collections::BTreeMap;
 ///
 /// Cheatcodes can be called by contracts during execution to modify the VM environment, such as
 /// mocking addresses, signatures and altering call reverts.
-#[derive(Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Cheatcodes {
     /// Whether FFI is enabled or not
-    ffi: bool,
+    pub ffi: bool,
 
     /// The block environment
     ///
