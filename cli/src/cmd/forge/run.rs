@@ -293,10 +293,8 @@ impl RunArgs {
                     dependencies,
                 } = post_link_input;
 
-                // if its the target contract, grab the info
-                if extra.no_target_name &&
-                    id.path.file_stem().unwrap().to_string_lossy() == extra.target_fname
-                {
+                // if it's the target contract, grab the info
+                if extra.no_target_name && id.source == std::path::Path::new(&extra.target_fname) {
                     if extra.matched {
                         eyre::bail!("Multiple contracts in the target path. Please specify the contract name with `-t ContractName`")
                     }
