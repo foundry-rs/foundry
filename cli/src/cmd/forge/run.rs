@@ -166,7 +166,6 @@ impl Cmd for RunArgs {
                     )
                 })
                 .collect();
-            dbg!(&source_code);
 
             let calls: Vec<DebugArena> = result.debug.expect("we should have collected debug info");
             let flattened = calls.last().expect("we should have collected debug info").flatten(0);
