@@ -11,7 +11,7 @@ use std::{env, fs};
 
 // import forge utils as mod
 #[allow(unused)]
-#[path = "../src/utils.rs"]
+#[path = "../../src/utils.rs"]
 mod forge_utils;
 
 // tests `--help` is printed to std out

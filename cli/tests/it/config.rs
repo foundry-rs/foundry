@@ -17,7 +17,7 @@ use std::{fs, path::PathBuf, str::FromStr};
 
 // import forge utils as mod
 #[allow(unused)]
-#[path = "../src/utils.rs"]
+#[path = "../../src/utils.rs"]
 mod forge_utils;
 
 // tests all config values that are in use

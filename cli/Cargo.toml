@@ -69,12 +69,8 @@ solc-asm = ["ethers/solc-sha2-asm"]
 rustls = ["ethers/rustls"]
 openssl = ["ethers/openssl"]
 
-integration-tests = []
-
-[[test]]
-name = "integration"
-path = "tests/integration.rs"
-required-features = ["integration-tests"]
+# feature for integration tests that test external projects
+external-integration-tests = []
 
 [[bin]]
 name = "cast"
