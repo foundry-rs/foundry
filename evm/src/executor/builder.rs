@@ -5,7 +5,11 @@ use revm::{
 };
 use std::{path::PathBuf, sync::Arc};
 
-use super::{fork::SharedBackend, inspector::InspectorStackConfig, Executor};
+use super::{
+    fork::SharedBackend,
+    inspector::{Cheatcodes, InspectorStackConfig},
+    Executor,
+};
 
 use ethers::types::{H160, H256, U256};
 
@@ -135,8 +139,7 @@ impl ExecutorBuilder {
     /// Enables cheatcodes on the executor.
     #[must_use]
     pub fn with_cheatcodes(mut self, ffi: bool) -> Self {
-        self.inspector_config.cheatcodes = true;
-        self.inspector_config.ffi = ffi;
+        self.inspector_config.cheatcodes = Some(Cheatcodes::new(ffi, self.env.block.clone()));
         self
     }
 

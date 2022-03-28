@@ -25,6 +25,7 @@ pub struct InspectorData {
     pub labels: BTreeMap<Address, String>,
     pub traces: Option<CallTraceArena>,
     pub debug: Option<DebugArena>,
+    pub cheatcodes: Option<Cheatcodes>,
 }
 
 /// An inspector that calls multiple inspectors in sequence.
@@ -43,9 +44,14 @@ impl InspectorStack {
     pub fn collect_inspector_states(self) -> InspectorData {
         InspectorData {
             logs: self.logs.map(|logs| logs.logs).unwrap_or_default(),
-            labels: self.cheatcodes.map(|cheatcodes| cheatcodes.labels).unwrap_or_default(),
+            labels: self
+                .cheatcodes
+                .as_ref()
+                .map(|cheatcodes| cheatcodes.labels.clone())
+                .unwrap_or_default(),
             traces: self.tracer.map(|tracer| tracer.traces),
             debug: self.debugger.map(|debugger| debugger.arena),
+            cheatcodes: self.cheatcodes,
         }
     }
 }
