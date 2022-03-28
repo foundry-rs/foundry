@@ -121,7 +121,7 @@ impl CallTraceDecoder {
                 .collect::<BTreeMap<[u8; 4], Vec<Function>>>(),
             events: CONSOLE_ABI
                 .events()
-                .map(|event| ((event.signature(), indexed_inputs(&event)), vec![event.clone()]))
+                .map(|event| ((event.signature(), indexed_inputs(event)), vec![event.clone()]))
                 .collect::<BTreeMap<(H256, usize), Vec<Event>>>(),
             errors: Abi::default(),
         }
@@ -163,7 +163,7 @@ impl CallTraceDecoder {
 
                 // Flatten events from all ABIs
                 abi.events()
-                    .map(|event| ((event.signature(), indexed_inputs(&event)), event.clone()))
+                    .map(|event| ((event.signature(), indexed_inputs(event)), event.clone()))
                     .for_each(|(sig, event)| {
                         self.events.entry(sig).or_default().push(event);
                     });
