@@ -7,7 +7,6 @@ use foundry_cli_test_utils::{
     util::{pretty_err, read_string, TestCommand, TestProject},
 };
 use foundry_config::{parse_with_profile, BasicConfig, Config, SolidityErrorCode};
-use pretty_assertions::assert_eq;
 use std::{env, fs};
 
 // import forge utils as mod
