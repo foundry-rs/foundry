@@ -898,12 +898,7 @@ impl Default for Config {
             block_number: 0,
             fork_block_number: None,
             chain_id: None,
-            // We want the gas limit to be high, but if we pick a value that is too high we end up
-            // allowing `mstore`s and `mload`s at very high memory regions, which may cause a panic.
-            //
-            // 80m gas was arbitrarily chosen, but corresponds to about 16MiB of memory if only
-            // used for `mload`/`mstore`.
-            gas_limit: 80_000_000,
+            gas_limit: u64::MAX / 2,
             gas_price: 0,
             block_base_fee_per_gas: 0,
             block_coinbase: Address::zero(),
