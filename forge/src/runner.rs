@@ -258,7 +258,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                     labeled_addresses: setup.labeled_addresses,
                 },
             )]
-            .into());
+            .into())
         }
 
         // Collect valid test functions
@@ -343,7 +343,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
             }
             Err(err) => {
                 tracing::error!(?err);
-                return Err(err.into());
+                return Err(err.into())
             }
         };
         traces.extend(execution_traces.map(|traces| (TraceKind::Execution, traces)).into_iter());
