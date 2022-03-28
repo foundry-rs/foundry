@@ -67,9 +67,7 @@ pub mod test_helpers {
             .build(Backend::simple())
     }
 
-    pub fn fuzz_executor<'a, DB: DatabaseRef>(
-        executor: &'a Executor<DB>,
-    ) -> FuzzedExecutor<'a, DB> {
+    pub fn fuzz_executor<DB: DatabaseRef>(executor: &Executor<DB>) -> FuzzedExecutor<DB> {
         let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
 
         FuzzedExecutor::new(executor, proptest::test_runner::TestRunner::new(cfg), *CALLER)

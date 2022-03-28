@@ -160,7 +160,7 @@ mod tests {
 
         let strat = proptest::strategy::Union::new_weighted(vec![
             (60, fuzz_calldata(func.clone())),
-            (40, fuzz_calldata_from_state(func.clone(), state.clone())),
+            (40, fuzz_calldata_from_state(func, state)),
         ]);
 
         let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };

@@ -1102,7 +1102,7 @@ mod tests {
                             *nested_lib_unlinked
                         );
                     }
-                    _ => assert!(false),
+                    s => panic!("unexpected slug {}", s),
                 }
                 Ok(())
             },

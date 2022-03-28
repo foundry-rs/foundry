@@ -287,7 +287,7 @@ mod tests {
         };
         match wallet.private_key() {
             Ok(_) => {
-                assert!(false, "illformed private key shouldn't decode")
+                panic!("illformed private key shouldn't decode")
             }
             Err(x) => {
                 assert!(
