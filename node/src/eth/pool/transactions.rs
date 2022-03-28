@@ -1,5 +1,6 @@
 use crate::eth::{error::PoolError, util::hex_fmt_many};
-use ethers::types::{Address, Transaction, TxHash};
+use ethers::types::{Address, TxHash};
+use forge_node_core::eth::transaction::PendingTransaction;
 use parking_lot::RwLock;
 use std::{
     cmp::Ordering,
@@ -23,8 +24,8 @@ fn to_marker(nonce: u64, from: Address) -> TxMarker {
 /// Internal Transaction type
 #[derive(Clone, PartialEq)]
 pub struct PoolTransaction {
-    /// Raw eth transaction.
-    pub raw_tx: Transaction,
+    /// the pending eth transaction
+    pub pending_transaction: PendingTransaction,
     /// Markers required by the transaction
     pub requires: Vec<TxMarker>,
     /// Markers that this transaction provides
@@ -34,17 +35,17 @@ pub struct PoolTransaction {
 impl PoolTransaction {
     /// Returns the hash of this transaction
     pub fn hash(&self) -> &TxHash {
-        &self.raw_tx.hash
+        &self.pending_transaction.hash()
     }
 }
 
 impl fmt::Debug for PoolTransaction {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         write!(fmt, "Transaction {{ ")?;
-        write!(fmt, "hash: {:?}, ", &self.raw_tx.hash)?;
+        write!(fmt, "hash: {:?}, ", &self.pending_transaction.hash())?;
         write!(fmt, "requires: [{}], ", hex_fmt_many(self.requires.iter()))?;
         write!(fmt, "provides: [{}], ", hex_fmt_many(self.provides.iter()))?;
-        write!(fmt, "raw tx: {:?}", &self.raw_tx)?;
+        write!(fmt, "raw tx: {:?}", &self.pending_transaction)?;
         write!(fmt, "}}")?;
         Ok(())
     }
@@ -58,14 +59,14 @@ pub struct PendingTransactions {
     /// markers that aren't yet provided by any transaction
     required_markers: HashMap<TxMarker, HashSet<TxHash>>,
     /// the transactions that are not ready yet are waiting for another tx to finish
-    waiting_queue: HashMap<TxHash, PendingTransaction>,
+    waiting_queue: HashMap<TxHash, PendingPoolTransaction>,
 }
 
 // == impl PendingTransactions ==
 
 impl PendingTransactions {
     /// Adds a transaction to Pending queue of transactions
-    pub fn add_transaction(&mut self, tx: PendingTransaction) {
+    pub fn add_transaction(&mut self, tx: PendingPoolTransaction) {
         assert!(!tx.is_ready(), "transaction must not be ready");
         assert!(
             !self.waiting_queue.contains_key(tx.transaction.hash()),
@@ -92,7 +93,7 @@ impl PendingTransactions {
     pub fn mark_and_unlock(
         &mut self,
         markers: impl IntoIterator<Item = impl AsRef<TxMarker>>,
-    ) -> Vec<PendingTransaction> {
+    ) -> Vec<PendingPoolTransaction> {
         let mut unlocked_ready = Vec::new();
         for mark in markers {
             let mark = mark.as_ref();
@@ -115,7 +116,7 @@ impl PendingTransactions {
 
 /// A transaction in the poo
 #[derive(Clone)]
-pub struct PendingTransaction {
+pub struct PendingPoolTransaction {
     pub transaction: Arc<PoolTransaction>,
     /// markers required and have not been satisfied yet by other transactions in the pool
     pub missing_markers: HashSet<TxMarker>,
@@ -125,7 +126,7 @@ pub struct PendingTransaction {
 
 // == impl PendingTransaction ==
 
-impl PendingTransaction {
+impl PendingPoolTransaction {
     /// Creates a new `PendingTransaction`.
     ///
     /// Determines the markers that are still missing before this transaction can be moved to the
@@ -155,7 +156,7 @@ impl PendingTransaction {
     }
 }
 
-impl fmt::Debug for PendingTransaction {
+impl fmt::Debug for PendingPoolTransaction {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         write!(fmt, "PendingTransaction {{ ")?;
         write!(fmt, "added_at: {:?}, ", self.added_at)?;
@@ -207,7 +208,7 @@ impl ReadyTransactions {
     /// or the transaction is already included
     pub fn add_transaction(
         &mut self,
-        tx: PendingTransaction,
+        tx: PendingPoolTransaction,
     ) -> Result<Vec<Arc<PoolTransaction>>, PoolError> {
         assert!(tx.is_ready(), "transaction must be ready",);
         assert!(

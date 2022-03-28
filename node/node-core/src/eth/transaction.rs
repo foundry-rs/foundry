@@ -1,6 +1,6 @@
 //! transaction related data
 
-use ethers_core::types::{transaction::eip2930::AccessListItem, Address, Bytes, U256};
+use ethers_core::types::{transaction::eip2930::AccessListItem, Address, Bytes, U256, H256, TxHash};
 use serde::{Deserialize, Serialize};
 
 /// Container type for various Ethereum transaction requests
@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 /// 1. Legacy (pre-EIP2718) [`LegacyTransactionRequest`]
 /// 2. EIP2930 (state access lists) [`EIP2930TransactionRequest`]
 /// 3. EIP1559 [`EIP1559TransactionRequest`]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum TypedTransactionRequest {
     Legacy(LegacyTransactionRequest),
     EIP2930(EIP2930TransactionRequest),
@@ -48,6 +49,8 @@ pub struct EthTransactionRequest {
     #[serde(rename = "type")]
     pub transaction_type: Option<U256>,
 }
+
+// == impl EthTransactionRequest ==
 
 impl EthTransactionRequest {
     /// Converts the request into a [TypedTransactionRequest]
@@ -159,4 +162,52 @@ pub struct EIP1559TransactionRequest {
     pub value: U256,
     pub input: Bytes,
     pub access_list: Vec<AccessListItem>,
+}
+
+/// Components of the transaction signature
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct TransactionSignatureComponents {
+    /// V field of the signature
+    pub v: u8,
+    /// R field of the signature
+    pub r: U256,
+    /// S field of the signature
+    pub s: U256,
+}
+
+/// A signed transaction without verified signature.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct UnverifiedTransaction {
+    /// raw transaction.
+    pub unsigned: TypedTransactionRequest,
+    /// the signature of the transaction
+    pub signature: TransactionSignatureComponents,
+    /// chain_id recover from signature in legacy transaction.
+    pub chain_id: Option<u64>,
+    /// Tx Hash
+    pub hash: TxHash,
+}
+
+/// A `UnverifiedTransaction` with successfully recovered `sender`.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct SignedTransaction {
+    transaction: UnverifiedTransaction,
+    sender: Address,
+}
+
+/// Represents a queued transaction
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct PendingTransaction {
+    /// the signed transaction
+    transaction: SignedTransaction
+}
+
+// == impl PendingTransaction ==
+
+impl PendingTransaction {
+
+    pub fn hash(&self) -> &TxHash {
+        &self.transaction.transaction.hash
+    }
+
 }

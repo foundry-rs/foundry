@@ -1,7 +1,7 @@
 use crate::eth::{
     error::{BlockchainError, PoolError},
     pool::transactions::{
-        PendingTransaction, PendingTransactions, PoolTransaction, ReadyTransactions,
+        PendingPoolTransaction, PendingTransactions, PoolTransaction, ReadyTransactions,
     },
 };
 use ethers::types::{Transaction, TxHash};
@@ -41,7 +41,7 @@ impl PoolInner {
         if self.contains(tx.hash()) {
             return Err(PoolError::AlreadyImported(Box::new(tx)))
         }
-        let tx = PendingTransaction::new(tx, self.ready_transactions.provided_markers());
+        let tx = PendingPoolTransaction::new(tx, self.ready_transactions.provided_markers());
         trace!(target: "txpool", "[{:?}] {:?}", tx.transaction.hash(), tx);
 
         // If all markers are not satisfied import to future
@@ -56,7 +56,7 @@ impl PoolInner {
     /// Adds the transaction to the ready queue
     fn add_ready_transaction(
         &mut self,
-        tx: PendingTransaction,
+        tx: PendingPoolTransaction,
     ) -> Result<AddedTransaction, PoolError> {
         let hash = *tx.transaction.hash();
         let mut ready = ReadyTransaction::new(hash);
