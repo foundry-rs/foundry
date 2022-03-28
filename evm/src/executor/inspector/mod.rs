@@ -40,7 +40,7 @@ impl InspectorStackConfig {
             InspectorStack { logs: Some(LogCollector::default()), ..Default::default() };
 
         stack.cheatcodes = self.cheatcodes.clone();
-        if let Some(cheatcodes) = &mut stack.cheatcodes {
+        if let Some(ref mut cheatcodes) = stack.cheatcodes {
             cheatcodes.block = Some(self.block.clone());
         }
 
