@@ -12,7 +12,10 @@ mod fuzz;
 mod util;
 
 use self::expect::{handle_expect_emit, handle_expect_revert};
-use crate::{abi::HEVMCalls, executor::CHEATCODE_ADDRESS};
+use crate::{
+    abi::HEVMCalls,
+    executor::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
+};
 use bytes::Bytes;
 use ethers::{
     abi::{AbiDecode, AbiEncode, RawLog},
@@ -100,7 +103,7 @@ where
                 Ok(retdata) => (Return::Return, Gas::new(call.gas_limit), retdata),
                 Err(err) => (Return::Revert, Gas::new(call.gas_limit), err),
             }
-        } else {
+        } else if call.contract != HARDHAT_CONSOLE_ADDRESS {
             // Handle expected calls
             if let Some(expecteds) = self.expected_calls.get_mut(&call.contract) {
                 if let Some(found_match) = expecteds.iter().position(|expected| {
@@ -139,6 +142,8 @@ where
                 }
             }
 
+            (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
+        } else {
             (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
         }
     }
@@ -208,7 +213,7 @@ where
         retdata: Bytes,
         _: bool,
     ) -> (Return, Gas, Bytes) {
-        if call.contract == CHEATCODE_ADDRESS {
+        if call.contract == CHEATCODE_ADDRESS || call.contract == HARDHAT_CONSOLE_ADDRESS {
             return (status, remaining_gas, retdata)
         }
 
