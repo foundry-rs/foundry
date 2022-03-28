@@ -21,6 +21,3 @@ codegen-units = 1
 panic = "abort"
 # We end up stripping away these symbols anyway
 debug = 0
-
-[patch."https://github.com/bluealloy/revm"]
-revm = { git = "https://github.com/onbjerg/revm", branch = "onbjerg/memory-limit" }
