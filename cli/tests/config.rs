@@ -13,7 +13,6 @@ use foundry_config::{
     caching::{CachedChains, CachedEndpoints, StorageCachingConfig},
     Config, OptimizerDetails, SolcReq,
 };
-use pretty_assertions::assert_eq;
 use std::{fs, path::PathBuf, str::FromStr};
 
 // import forge utils as mod
