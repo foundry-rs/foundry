@@ -1,5 +1,5 @@
 use crate::eth::{error::PoolError, util::hex_fmt_many};
-use ethers::types::{Address, Transaction,  TxHash};
+use ethers::types::{Address, Transaction, TxHash};
 use parking_lot::RwLock;
 use std::{
     cmp::Ordering,

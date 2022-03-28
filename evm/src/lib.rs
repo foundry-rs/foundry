@@ -17,6 +17,7 @@ pub mod fuzz;
 // Re-exports
 pub use ethers::types::Address;
 pub use hashbrown::HashMap;
+pub use revm;
 
 use once_cell::sync::Lazy;
 pub static CALLER: Lazy<Address> = Lazy::new(Address::random);
