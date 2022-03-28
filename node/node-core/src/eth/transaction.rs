@@ -1,15 +1,7 @@
 //! transaction related data
 
-use ethers_core::{
-    types::{
-        transaction::{eip2718::TypedTransaction, eip2930::AccessListItem},
-        Address, BlockNumber, Bytes, Transaction, TxHash, H256, U256,
-    },
-    utils::rlp,
-};
-use serde::{
-    de::DeserializeOwned, ser::SerializeSeq, Deserialize, Deserializer, Serialize, Serializer,
-};
+use ethers_core::types::{transaction::eip2930::AccessListItem, Address, Bytes, U256};
+use serde::{Deserialize, Serialize};
 
 /// Container type for various Ethereum transaction requests
 ///
@@ -61,7 +53,6 @@ impl EthTransactionRequest {
     /// Converts the request into a [TypedTransactionRequest]
     fn into_typed_request(self) -> Option<TypedTransactionRequest> {
         let EthTransactionRequest {
-            from,
             to,
             gas_price,
             max_fee_per_gas,
@@ -106,7 +97,7 @@ impl EthTransactionRequest {
                 }))
             }
             // EIP1559
-            (None, Some(_), access_list @ _) | (None, None, access_list @ None) => {
+            (None, Some(_), access_list) | (None, None, access_list @ None) => {
                 // Empty fields fall back to the canonical transaction schema.
                 Some(TypedTransactionRequest::EIP1559(EIP1559TransactionRequest {
                     nonce: nonce.unwrap_or(U256::zero()),
@@ -134,7 +125,7 @@ pub enum TransactionKind {
     Create,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EIP2930TransactionRequest {
     pub chain_id: u64,
     pub nonce: U256,
@@ -146,7 +137,7 @@ pub struct EIP2930TransactionRequest {
     pub access_list: Vec<AccessListItem>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LegacyTransactionRequest {
     pub nonce: U256,
     pub gas_price: U256,
@@ -157,7 +148,7 @@ pub struct LegacyTransactionRequest {
     pub chain_id: Option<u64>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EIP1559TransactionRequest {
     pub chain_id: u64,
     pub nonce: U256,

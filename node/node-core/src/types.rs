@@ -63,8 +63,8 @@ impl<'a> Deserialize<'a> for Index {
             where
                 E: Error,
             {
-                if value.starts_with("0x") {
-                    usize::from_str_radix(&value[2..], 16).map(Index).map_err(|e| {
+                if let Some(val) = value.strip_prefix("0x") {
+                    usize::from_str_radix(val, 16).map(Index).map_err(|e| {
                         Error::custom(format!("Failed to parse hex encoded index value: {}", e))
                     })
                 } else {

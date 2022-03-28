@@ -1,7 +1,6 @@
 use crate::error::Error;
 use ethers_core::types::{
-    transaction::{eip2718::TypedTransaction, eip2930::AccessListItem},
-    Address, BlockNumber, Bytes, Transaction, TxHash, U256,
+    transaction::eip2718::TypedTransaction, Address, BlockNumber, Transaction, TxHash, U256,
 };
 use serde::{
     de::DeserializeOwned, ser::SerializeSeq, Deserialize, Deserializer, Serialize, Serializer,
