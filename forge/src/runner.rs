@@ -13,7 +13,34 @@ use foundry_evm::{
 use proptest::test_runner::TestRunner;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fmt, time::Instant};
+use std::{
+    collections::BTreeMap,
+    fmt,
+    time::{Duration, Instant},
+};
+
+/// Results and duration for a set of tests included in the same test contract
+#[derive(Clone, Serialize)]
+pub struct SuiteResult {
+    /// Total duration of the test run for this block of tests
+    pub duration: Duration,
+    /// Individual test results. `test method name -> TestResult`
+    pub test_results: BTreeMap<String, TestResult>,
+}
+
+impl SuiteResult {
+    pub fn new(duration: Duration, test_results: BTreeMap<String, TestResult>) -> Self {
+        Self { duration, test_results }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.test_results.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.test_results.len()
+    }
+}
 
 /// The result of an executed solidity test
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -238,7 +265,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         &mut self,
         filter: &impl TestFilter,
         fuzzer: Option<TestRunner>,
-    ) -> Result<BTreeMap<String, TestResult>> {
+    ) -> Result<SuiteResult> {
         tracing::info!("starting tests");
         let start = Instant::now();
         let needs_setup = self.contract.functions().any(|func| func.name == "setUp");
@@ -246,19 +273,22 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         let setup = self.setup(needs_setup)?;
         if setup.setup_failed {
             // The setup failed, so we return a single test result for `setUp`
-            return Ok([(
-                "setUp()".to_string(),
-                TestResult {
-                    success: false,
-                    reason: setup.reason,
-                    counterexample: None,
-                    logs: setup.logs,
-                    kind: TestKind::Standard(0),
-                    traces: setup.traces,
-                    labeled_addresses: setup.labeled_addresses,
-                },
-            )]
-            .into())
+            return Ok(SuiteResult::new(
+                start.elapsed(),
+                [(
+                    "setUp()".to_string(),
+                    TestResult {
+                        success: false,
+                        reason: setup.reason,
+                        counterexample: None,
+                        logs: setup.logs,
+                        kind: TestKind::Standard(0),
+                        traces: setup.traces,
+                        labeled_addresses: setup.labeled_addresses,
+                    },
+                )]
+                .into(),
+            ))
         }
 
         // Collect valid test functions
@@ -285,16 +315,17 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
             })
             .collect::<Result<BTreeMap<_, _>>>()?;
 
+        let duration = start.elapsed();
         if !test_results.is_empty() {
             let successful = test_results.iter().filter(|(_, tst)| tst.success).count();
             tracing::info!(
-                duration = ?Instant::now().duration_since(start),
+                duration = ?duration,
                 "done. {}/{} successful",
                 successful,
                 test_results.len()
             );
         }
-        Ok(test_results)
+        Ok(SuiteResult::new(duration, test_results))
     }
 
     #[tracing::instrument(name = "test", skip_all, fields(name = %func.signature(), %should_fail))]
@@ -357,7 +388,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
 
         // Record test execution time
         tracing::debug!(
-            duration = ?Instant::now().duration_since(start),
+            duration = ?start.elapsed(),
             %success,
             %gas
         );
@@ -399,7 +430,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
 
         // Record test execution time
         tracing::debug!(
-            duration = ?Instant::now().duration_since(start),
+            duration = ?start.elapsed(),
             success = %result.success
         );
 
