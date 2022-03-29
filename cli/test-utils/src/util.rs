@@ -5,6 +5,7 @@ use ethers_solc::{
 };
 use foundry_config::Config;
 use once_cell::sync::Lazy;
+use parking_lot::Mutex;
 use std::{
     collections::HashMap,
     env,
@@ -17,7 +18,7 @@ use std::{
     process::{self, Command},
     sync::{
         atomic::{AtomicUsize, Ordering},
-        Arc, Mutex,
+        Arc,
     },
 };
 
@@ -200,12 +201,13 @@ impl TestProject {
     pub fn forge_command(&self) -> TestCommand {
         let mut cmd = self.forge_bin();
         cmd.current_dir(&self.inner.root());
+        let _lock = CURRENT_DIR_LOCK.lock();
         TestCommand {
             project: self.clone(),
             cmd,
             saved_env_vars: HashMap::new(),
             current_dir_lock: None,
-            saved_cwd: pretty_err(".", std::env::current_dir()),
+            saved_cwd: pretty_err("<current dir>", std::env::current_dir()),
         }
     }
 
@@ -213,12 +215,13 @@ impl TestProject {
     pub fn cast_command(&self) -> TestCommand {
         let mut cmd = self.cast_bin();
         cmd.current_dir(&self.inner.root());
+        let _lock = CURRENT_DIR_LOCK.lock();
         TestCommand {
             project: self.clone(),
             cmd,
             saved_env_vars: HashMap::new(),
             current_dir_lock: None,
-            saved_cwd: pretty_err(".", std::env::current_dir()),
+            saved_cwd: pretty_err("<current dir>", std::env::current_dir()),
         }
     }
 
@@ -263,8 +266,7 @@ impl Drop for TestCommand {
                 None => std::env::remove_var(key),
             }
         }
-        drop(self.current_dir_lock.take());
-        let _lock = CURRENT_DIR_LOCK.lock().unwrap();
+        let _lock = self.current_dir_lock.take().unwrap_or_else(|| CURRENT_DIR_LOCK.lock());
         let _ = std::env::set_current_dir(&self.saved_cwd);
     }
 }
@@ -300,7 +302,7 @@ pub struct TestCommand {
     /// The actual command we use to control the process.
     cmd: Command,
     saved_env_vars: HashMap<OsString, Option<OsString>>,
-    current_dir_lock: Option<std::sync::MutexGuard<'static, ()>>,
+    current_dir_lock: Option<parking_lot::lock_api::MutexGuard<'static, parking_lot::RawMutex, ()>>,
 }
 
 impl TestCommand {
@@ -327,7 +329,7 @@ impl TestCommand {
     /// Sets the current working directory
     pub fn set_current_dir(&mut self, p: impl AsRef<Path>) {
         drop(self.current_dir_lock.take());
-        let lock = CURRENT_DIR_LOCK.lock().unwrap();
+        let lock = CURRENT_DIR_LOCK.lock();
         self.current_dir_lock = Some(lock);
         let p = p.as_ref();
         pretty_err(p, std::env::set_current_dir(p));
