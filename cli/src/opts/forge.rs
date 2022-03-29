@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand, ValueHint};
-use ethers::{solc::EvmVersion, types::Address};
+
+use ethers::solc::{artifacts::output_selection::ContractOutputSelection, EvmVersion};
 use std::{path::PathBuf, str::FromStr};
 
 use crate::cmd::forge::{
@@ -11,6 +12,7 @@ use crate::cmd::forge::{
     init::InitArgs,
     inspect,
     install::InstallArgs,
+    node,
     remappings::RemappingArgs,
     run::RunArgs,
     snapshot, test, tree,
@@ -35,12 +37,9 @@ pub struct Opts {
 #[clap(about = "Build, test, fuzz, formally verify, debug & deploy solidity contracts.")]
 #[allow(clippy::large_enum_variant)]
 pub enum Subcommands {
-    #[clap(about = "run a JSON-RPC node")]
-    Node(NodeArgs),
-
-    #[clap(about = "test your smart contracts")]
+    #[clap(about = "Test your smart contracts")]
     #[clap(alias = "t")]
-    Test(TestArgs),
+    Test(test::TestArgs),
 
     #[clap(about = "Generate rust bindings for your smart contracts")]
     Bind(BindArgs),
