@@ -5,6 +5,7 @@ use ethers_solc::{
 };
 use foundry_config::Config;
 use once_cell::sync::Lazy;
+use parking_lot::Mutex;
 use std::{
     collections::HashMap,
     env,
@@ -17,10 +18,9 @@ use std::{
     process::{self, Command},
     sync::{
         atomic::{AtomicUsize, Ordering},
-        Arc
+        Arc,
     },
 };
-use parking_lot::Mutex;
 
 static CURRENT_DIR_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
