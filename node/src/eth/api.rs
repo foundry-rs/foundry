@@ -1,5 +1,5 @@
 use crate::eth::{
-    backend::Backend,
+    backend,
     error::{BlockchainError, Result},
     pool::{
         transactions::{to_marker, PoolTransaction},
@@ -11,7 +11,7 @@ use ethers::{
     abi::ethereum_types::H64,
     types::{
         Address, Block, BlockNumber, Bytes, FeeHistory, Filter, Log, Transaction,
-        TransactionReceipt, TxHash, H160, H256, U256, U64,
+        TransactionReceipt, TxHash, H256, U256, U64,
     },
     utils::rlp,
 };
@@ -33,7 +33,8 @@ pub struct EthApi {
     /// The transaction pool
     pool: Arc<Pool>,
     /// Holds all blockchain related data
-    backend: Arc<Backend>,
+    /// In-Memory only for now
+    backend: Arc<backend::mem::Backend>,
     /// Whether this node is mining
     is_authority: bool,
     /// available signers
@@ -73,7 +74,7 @@ impl EthApi {
 
     /// Queries the current gas limit
     fn current_gas_limit(&self) -> Result<U256> {
-        todo!()
+        Ok(self.backend.gas_limit())
     }
 
     /// Returns protocol version encoded as a string (quotes are necessary).
@@ -93,7 +94,7 @@ impl EthApi {
     /// Returns the block author.
     ///
     /// Handler for ETH RPC call: `eth_coinbase`
-    pub async fn author(&self) -> Result<H160> {
+    pub async fn author(&self) -> Result<Address> {
         todo!()
     }
 
@@ -135,13 +136,13 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_blockNumber`
     pub async fn block_number(&self) -> Result<U256> {
-        todo!()
+        Ok(self.backend.best_number().as_u64().into())
     }
 
     /// Returns balance of the given account.
     ///
     /// Handler for ETH RPC call: `eth_getBalance`
-    pub async fn balance(&self, _address: H160, _number: Option<BlockNumber>) -> Result<U256> {
+    pub async fn balance(&self, _address: Address, _number: Option<BlockNumber>) -> Result<U256> {
         todo!()
     }
 
@@ -150,7 +151,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_getStorageAt`
     pub async fn storage_at(
         &self,
-        _address: H160,
+        _address: Address,
         _index: U256,
         _number: Option<BlockNumber>,
     ) -> Result<H256> {
@@ -174,7 +175,7 @@ impl EthApi {
     /// Returns the number of transactions sent from given address at given time (block number).
     ///
     /// Handler for ETH RPC call: `eth_getTransactionCount`
-    pub fn transaction_count(&self, _address: H160, _: Option<BlockNumber>) -> Result<U256> {
+    pub fn transaction_count(&self, _address: Address, _: Option<BlockNumber>) -> Result<U256> {
         todo!()
     }
 
@@ -209,7 +210,7 @@ impl EthApi {
     /// Returns the code at given address at given time (block number).
     ///
     /// Handler for ETH RPC call: `eth_getCode`
-    pub async fn code_at(&self, _address: H160, _: Option<BlockNumber>) -> Result<Bytes> {
+    pub async fn code_at(&self, _address: Address, _: Option<BlockNumber>) -> Result<Bytes> {
         todo!()
     }
 
@@ -289,7 +290,7 @@ impl EthApi {
         if data.is_empty() {
             return Err(BlockchainError::EmptyRawTransactionData)
         }
-        let transaction: TypedTransaction = if data[0] > 0x7f {
+        let _transaction: TypedTransaction = if data[0] > 0x7f {
             // legacy transaction
             todo!("implement legacy decoding")
         } else {
