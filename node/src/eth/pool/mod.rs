@@ -1,11 +1,11 @@
 use crate::eth::{
-    error::{PoolError},
+    error::PoolError,
     pool::transactions::{
         PendingPoolTransaction, PendingTransactions, PoolTransaction, ReadyTransactions,
         TransactionsIterator,
     },
 };
-use ethers::types::{TxHash};
+use ethers::types::TxHash;
 use futures::channel::mpsc::{channel, Receiver, Sender};
 use parking_lot::{Mutex, RwLock};
 use std::{collections::VecDeque, sync::Arc};

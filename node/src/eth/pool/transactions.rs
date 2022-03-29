@@ -10,7 +10,6 @@ use std::{
     time::Instant,
 };
 
-
 /// A unique identifying marker for a transaction
 pub type TxMarker = Vec<u8>;
 
