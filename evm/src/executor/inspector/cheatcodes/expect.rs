@@ -67,8 +67,12 @@ pub fn handle_expect_revert(
             (
                 format!(
                     "Error != expected error: '{}' != '{}'",
-                    String::from_utf8_lossy(&decoded_data),
-                    String::from_utf8_lossy(expected_revert)
+                    String::from_utf8(decoded_data.to_vec())
+                        .ok()
+                        .unwrap_or_else(|| hex::encode(&decoded_data)),
+                    String::from_utf8(expected_revert.to_vec())
+                        .ok()
+                        .unwrap_or_else(|| hex::encode(&expected_revert))
                 )
                 .encode()
                 .into(),
