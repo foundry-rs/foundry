@@ -266,8 +266,7 @@ impl Drop for TestCommand {
                 None => std::env::remove_var(key),
             }
         }
-        drop(self.current_dir_lock.take());
-        let _lock = CURRENT_DIR_LOCK.lock();
+        let _lock = self.current_dir_lock.take().unwrap_or_else(|| CURRENT_DIR_LOCK.lock());
         let _ = std::env::set_current_dir(&self.saved_cwd);
     }
 }
