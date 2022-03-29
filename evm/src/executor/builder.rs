@@ -59,8 +59,6 @@ impl Fork {
             .and_then(|url| url.host().map(|host| host.to_string()))
             .unwrap_or_else(|| url.clone());
 
-        let provider = Arc::new(Provider::try_from(url).expect("Failed to establish provider"));
-
         let mut meta =
             BlockchainDbMeta { cfg_env: env.cfg.clone(), block_env: env.block.clone(), host };
 
@@ -71,8 +69,22 @@ impl Fork {
         }
 
         let db = BlockchainDb::new(meta, cache_path);
+        let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
 
-        SharedBackend::spawn_backend(provider, db, pin_block.map(Into::into))
+        if url.starts_with("http") {
+            let provider = Arc::new(Provider::try_from(url).expect("Failed to establish provider"));
+            SharedBackend::spawn_backend(provider, db, pin_block.map(Into::into), Some(rt))
+        } else if url.starts_with("ws") {
+            let provider = Arc::new(
+                rt.block_on(Provider::connect(url)).expect("Failed to establish provider"),
+            );
+            SharedBackend::spawn_backend(provider, db, pin_block.map(Into::into), Some(rt))
+        } else {
+            let provider = Arc::new(
+                rt.block_on(Provider::connect_ipc(url)).expect("Failed to establish provider"),
+            );
+            SharedBackend::spawn_backend(provider, db, pin_block.map(Into::into), Some(rt))
+        }
     }
 }
 /// Variants of a [revm::Database]

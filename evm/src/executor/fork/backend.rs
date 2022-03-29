@@ -21,6 +21,7 @@ use std::{
     pin::Pin,
     sync::mpsc::{channel as oneshot_channel, Sender as OneshotSender},
 };
+use tokio::runtime::Runtime;
 use tracing::{trace, warn};
 
 type AccountFuture<Err> =
@@ -420,7 +421,12 @@ impl SharedBackend {
     /// dropped.
     ///
     /// NOTE: this should be called with `Arc<Provider>`
-    pub fn spawn_backend<M>(provider: M, db: BlockchainDb, pin_block: Option<BlockId>) -> Self
+    pub fn spawn_backend<M>(
+        provider: M,
+        db: BlockchainDb,
+        pin_block: Option<BlockId>,
+        runtime: Option<Runtime>,
+    ) -> Self
     where
         M: Middleware + Unpin + 'static + Clone,
     {
@@ -428,7 +434,7 @@ impl SharedBackend {
         let (shutdown, shutdown_rx) = channel(1);
         let handler = BackendHandler::new(provider, db, backend_rx, shutdown_rx, pin_block);
         // spawn the provider handler to background
-        let rt = RuntimeOrHandle::new();
+        let rt = runtime.map(RuntimeOrHandle::Runtime).unwrap_or_else(RuntimeOrHandle::new);
         trace!(target: "backendhandler", "spawning Backendhandler");
         std::thread::spawn(move || match rt {
             RuntimeOrHandle::Runtime(runtime) => runtime.block_on(handler),
@@ -518,7 +524,7 @@ mod tests {
         };
 
         let db = BlockchainDb::new(meta, None);
-        let backend = SharedBackend::spawn_backend(Arc::new(provider), db.clone(), None);
+        let backend = SharedBackend::spawn_backend(Arc::new(provider), db.clone(), None, None);
 
         // some rng contract from etherscan
         let address: Address = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();

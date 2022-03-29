@@ -40,15 +40,46 @@ impl EvmOpts {
     pub fn evm_env(&self) -> revm::Env {
         if let Some(ref fork_url) = self.fork_url {
             let rt = RuntimeOrHandle::new();
-            let provider =
-                Provider::try_from(fork_url.as_str()).expect("could not instantiated provider");
-            let fut =
-                environment(&provider, self.env.chain_id, self.fork_block_number, self.sender);
-            match rt {
-                RuntimeOrHandle::Runtime(runtime) => runtime.block_on(fut),
-                RuntimeOrHandle::Handle(handle) => handle.block_on(fut),
+
+            if fork_url.starts_with("http") {
+                let fut = async {
+                    let provider = Provider::try_from(fork_url.as_str())
+                        .expect("could not instantiated provider");
+                    environment(&provider, self.env.chain_id, self.fork_block_number, self.sender)
+                        .await
+                };
+                match rt {
+                    RuntimeOrHandle::Runtime(runtime) => runtime.block_on(fut),
+                    RuntimeOrHandle::Handle(handle) => handle.block_on(fut),
+                }
+                .expect("could not instantiate forked environment")
+            } else if fork_url.starts_with("ws") {
+                let fut = async {
+                    let provider = Provider::connect(fork_url.as_str())
+                        .await
+                        .expect("could not instantiated provider");
+                    environment(&provider, self.env.chain_id, self.fork_block_number, self.sender)
+                        .await
+                };
+                match rt {
+                    RuntimeOrHandle::Runtime(runtime) => runtime.block_on(fut),
+                    RuntimeOrHandle::Handle(handle) => handle.block_on(fut),
+                }
+                .expect("could not instantiate forked environment")
+            } else {
+                let fut = async {
+                    let provider = Provider::connect_ipc(fork_url.as_str())
+                        .await
+                        .expect("could not instantiated provider");
+                    environment(&provider, self.env.chain_id, self.fork_block_number, self.sender)
+                        .await
+                };
+                match rt {
+                    RuntimeOrHandle::Runtime(runtime) => runtime.block_on(fut),
+                    RuntimeOrHandle::Handle(handle) => handle.block_on(fut),
+                }
+                .expect("could not instantiate forked environment")
             }
-            .expect("could not instantiate forked environment")
         } else {
             revm::Env {
                 block: BlockEnv {
