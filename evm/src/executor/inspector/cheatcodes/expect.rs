@@ -131,22 +131,25 @@ pub fn handle_expect_emit(state: &mut Cheatcodes, log: RawLog) {
         let expected =
             next_expect.log.as_ref().expect("we should have a log to compare against here");
         if expected.topics[0] == log.topics[0] {
-            // Topic 0 matches so the amount of topics in the expected and actual log should
-            // match here
-            let topics_match = log
-                .topics
-                .iter()
-                .skip(1)
-                .enumerate()
-                .filter(|(i, _)| next_expect.checks[*i])
-                .all(|(i, topic)| topic == &expected.topics[i + 1]);
-
-            // Maybe check data
-            next_expect.found = if next_expect.checks[3] {
-                expected.data == log.data && topics_match
+            // Topic 0 can match, but the amount of topics can differ.
+            if expected.topics.len() != log.topics.len() {
+                next_expect.found = false;
             } else {
-                topics_match
-            };
+                let topics_match = log
+                    .topics
+                    .iter()
+                    .skip(1)
+                    .enumerate()
+                    .filter(|(i, _)| next_expect.checks[*i])
+                    .all(|(i, topic)| topic == &expected.topics[i + 1]);
+
+                // Maybe check data
+                next_expect.found = if next_expect.checks[3] {
+                    expected.data == log.data && topics_match
+                } else {
+                    topics_match
+                };
+            }
         }
     }
 }
