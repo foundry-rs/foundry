@@ -393,7 +393,7 @@ where
         &self,
         specific_block: Option<T>,
         contract: A,
-    ) -> eyre::Result<RawLogs<'_, '_, M>> {
+    ) -> eyre::Result<RawLogs<'static, M>> {
         let address = match contract.into() {
             NameOrAddress::Name(ref ens_name) => self.provider.resolve_name(ens_name).await?,
             NameOrAddress::Address(addr) => addr,
@@ -1277,34 +1277,34 @@ impl SimpleCast {
     }
 }
 
-pub struct RawLogs<'a, 'b, M: Middleware> {
-    provider: &'b M,
+pub struct RawLogs<'a, M: Middleware + 'static> {
+    provider: &'static M,
     block_stream: FilterWatcher<'a, <M as Middleware>::Provider, TxHash>,
     filter: Filter,
 }
-impl<'a, 'b, M: Middleware> Unpin for RawLogs<'a, 'b, M> {}
+impl<'a, M: Middleware> Unpin for RawLogs<'a, M> {}
 
-impl<'a, 'b, M: Middleware> Stream for RawLogs<'a, 'b, M>
+impl<'a, M: Middleware> Stream for RawLogs<'a, M>
 where
-    M: Middleware,
+    M: Middleware + 'static,
 {
-    type Item = Result<Vec<Log>, <M as Middleware>::Error>;
+    type Item = Box<dyn Future<Output = Result<Vec<Log>, <M as Middleware>::Error>>>;
     fn poll_next(
         mut self: Pin<&mut Self>,
         cx: &mut TaskContext<'_>,
-    ) -> Poll<Option<Result<Vec<Log>, <M as Middleware>::Error>>> {
+    ) -> Poll<Option<Box<dyn Future<Output = Result<Vec<Log>, <M as Middleware>::Error>>>>> {
         match Pin::new(&mut self.block_stream).poll_next(cx) {
             Poll::Ready(block) => {
                 println!("New block! {:?}", block);
                 // Apply the new filter so that it shows logs from the latest block
                 let filter = self.filter.clone().at_block_hash(block.unwrap());
                 // Now that the filter is set, we ask the Provider of any logs based on the filter
-                match Pin::new(&mut self.provider.get_logs(&filter.clone())).poll(cx) {
-                    Poll::Ready(result) => Poll::Ready(Some(result)),
-                    Poll::Pending => Poll::Pending,
-                }
+                Poll::Ready(Some(Box::new(Pin::new(&mut self.provider.get_logs(&filter.clone())))))
             }
-            Poll::Pending => Poll::Pending,
+            Poll::Pending => {
+                println!("outer pending");
+                Poll::Pending
+            }
         }
     }
 }
