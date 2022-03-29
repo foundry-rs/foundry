@@ -12,6 +12,16 @@ contract Emitter {
         uint256 data
     );
 
+    /// This event has 0 indexed topics, but the one in our tests
+    /// has exactly one indexed topic. Even though both of these
+    /// events have the same topic 0, they are different and should
+    /// be non-comparable.
+    ///
+    /// Ref: issue #760
+    event SomethingElse(
+        uint256 data
+    );
+
     function emitEvent(
         uint256 topic1,
         uint256 topic2,
@@ -40,6 +50,20 @@ contract Emitter {
     ) public {
         inner.emitEvent(topic1, topic2, topic3, data);
     }
+
+    /// Ref: issue #760
+    function emitSomethingElse(uint256 data) public {
+        emit SomethingElse(data);
+    }
+}
+
+/// Emulates `Emitter` in #760
+contract LowLevelCaller {
+    function f() external {
+        address(this).call(abi.encodeWithSignature("g()"));
+    }
+
+    function g() public {}
 }
 
 contract ExpectEmitTest is DSTest {
@@ -51,6 +75,10 @@ contract ExpectEmitTest is DSTest {
         uint256 indexed topic2,
         uint256 indexed topic3,
         uint256 data
+    );
+
+    event SomethingElse(
+        uint256 indexed topic1
     );
 
     function setUp() public {
@@ -177,5 +205,27 @@ contract ExpectEmitTest is DSTest {
             [uint256(3), uint256(7)],
             [uint256(4), uint256(8)]
         );
+    }
+
+    /// Ref: issue #760
+    function testFailLowLevelWithoutEmit() public {
+        LowLevelCaller caller = new LowLevelCaller();
+
+        cheats.expectEmit(true, true, true, true);
+        emit Something(1, 2, 3, 4);
+
+        // This does not emit an event, so this test should fail
+        caller.f();
+    }
+
+    /// Ref: issue #760
+    function testFailDifferentIndexedParameters() public {
+        cheats.expectEmit(true, false, false, false);
+        emit SomethingElse(1);
+
+        // This should fail since `SomethingElse` in the test
+        // and in the `Emitter` contract have differing
+        // amounts of indexed topics.
+        emitter.emitSomethingElse(1);
     }
 }
