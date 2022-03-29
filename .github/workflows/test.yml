@@ -128,3 +128,10 @@ jobs:
 
       - name: cargo clippy
         run: cargo +nightly-2022-03-20 clippy --all --all-features -- -D warnings
+
+  cross-platform:
+    name: Cross-platform tests
+    if: github.ref == 'refs/head/master'
+    needs: [integration, lint, doc, unit]
+    uses: ./.github/workflows/cross-platform.yml
+
