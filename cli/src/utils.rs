@@ -11,7 +11,6 @@ use foundry_config::{caching::StorageCachingConfig, Config};
 use tracing_error::ErrorLayer;
 use tracing_subscriber::prelude::*;
 
-use forge::executor::SpecId;
 // reexport all `foundry_config::utils`
 #[doc(hidden)]
 pub use foundry_config::utils::*;
