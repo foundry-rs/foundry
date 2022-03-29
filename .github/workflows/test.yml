@@ -94,7 +94,7 @@ jobs:
         uses: actions/cache@v3
         with:
           path: ~/.foundry/cache
-          key: forge-rpc-cache
+          key: forge-rpc-cache-${{ hashFiles('cli/tests/it/integration.rs') }}
 
       - name: cargo test
         run: cargo test --locked --workspace --features external-integration-tests --test '*'
