@@ -76,6 +76,8 @@ jobs:
   external-integration:
     name: external integration tests
     runs-on: ubuntu-latest
+    env:
+      ETH_RPC_URL: https://eth-mainnet.alchemyapi.io/v2/Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf
     steps:
       - name: Checkout sources
         uses: actions/checkout@v2
@@ -94,7 +96,10 @@ jobs:
         uses: actions/cache@v3
         with:
           path: ~/.foundry/cache
-          key: forge-rpc-cache
+          key: rpc-cache-${{ hashFiles('cli/tests/it/integration.rs') }}
+
+      - name: Force use of HTTPS for submodules
+        run: git config --global url."https://github.com/".insteadOf "git@github.com:"
 
       - name: cargo test
         run: cargo test --locked --workspace --features external-integration-tests --test '*'

@@ -7,9 +7,7 @@ forgetest_external!(stringutils, "Arachnid/solidity-stringutils");
 forgetest_external!(multicall, "makerdao/multicall", &["--block-number", "1"]);
 forgetest_external!(lootloose, "gakonst/lootloose");
 forgetest_external!(lil_web3, "m1guelpf/lil-web3");
-// Disabled until they fix their submodules: one of them is using SSH which our GitHub action can't
-// figure out
-// forgetest_external!(maple_loan, "maple-labs/loan");
+forgetest_external!(maple_loan, "maple-labs/loan");
 
 // Forking tests
 forgetest_external!(drai, "mds1/drai", 13633752, &["--chain-id", "99"]);
