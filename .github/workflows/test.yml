@@ -98,6 +98,9 @@ jobs:
           path: ~/.foundry/cache
           key: rpc-cache-${{ hashFiles('cli/tests/it/integration.rs') }}
 
+      - name: Force use of HTTPS for submodules
+        run: git config --global url."https://github.com/".insteadOf "git@github.com:"
+
       - name: cargo test
         run: cargo test --locked --workspace --features external-integration-tests --test '*'
 
