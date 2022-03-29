@@ -168,6 +168,13 @@ impl fmt::Debug for PendingPoolTransaction {
     }
 }
 
+pub struct TransactionsIterator {
+    all: HashMap<TxHash, ReadyTransaction>,
+    awaiting: HashMap<TxHash, (usize, PoolTransactionRef)>,
+    independent: BTreeSet<PoolTransactionRef>,
+    invalid: HashSet<TxHash>,
+}
+
 /// transactions that are ready to be included in a block.
 #[derive(Debug, Clone, Default)]
 pub struct ReadyTransactions {
@@ -187,6 +194,16 @@ pub struct ReadyTransactions {
 // == impl ReadyTransactions ==
 
 impl ReadyTransactions {
+    /// Returns an iterator over all transactions
+    pub fn get_transactions(&self) -> TransactionsIterator {
+        TransactionsIterator {
+            all: self.ready_tx.read().clone(),
+            independent: self.independent_transactions.clone(),
+            awaiting: Default::default(),
+            invalid: Default::default(),
+        }
+    }
+
     /// Returns true if the transaction is part of the queue.
     pub fn contains(&self, hash: &TxHash) -> bool {
         self.ready_tx.read().contains_key(hash)

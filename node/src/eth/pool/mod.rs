@@ -5,18 +5,19 @@ use crate::eth::{
     },
 };
 use ethers::types::{Transaction, TxHash};
-use std::collections::VecDeque;
-
-use parking_lot::RwLock;
-use std::sync::Arc;
-use tracing::{debug, trace};
+use futures::channel::mpsc::{channel, Receiver, Sender};
+use parking_lot::{Mutex, RwLock};
+use std::{collections::VecDeque, sync::Arc};
+use tracing::{debug, trace, warn};
 
 pub mod transactions;
 
 /// Transaction pool that performs validation.
 pub struct Pool {
     /// processes all pending transactions
-    pool: RwLock<PoolInner>,
+    inner: RwLock<PoolInner>,
+    /// listeners for new ready transactions
+    transaction_listener: Mutex<Vec<Sender<TxHash>>>,
 }
 
 // == impl Pool ==
@@ -24,7 +25,46 @@ pub struct Pool {
 impl Pool {
     /// Adds a new transaction to the pool
     pub fn add_transaction(&self, tx: PoolTransaction) -> Result<AddedTransaction, PoolError> {
-        self.pool.write().add_transaction(tx)
+        let added = self.inner.write().add_transaction(tx)?;
+        if let AddedTransaction::Ready(ref ready) = added {
+            self.notify_listener(ready.hash)
+        }
+        Ok(added)
+    }
+
+    /// Adds a new transaction listener to the pool that gets notified about every new ready
+    /// transaction
+    pub fn add_ready_listener(&self) -> Receiver<TxHash> {
+        const TX_LISTENER_BUFFER_SIZE: usize = 2048;
+        let (tx, rx) = channel(TX_LISTENER_BUFFER_SIZE);
+        self.transaction_listener.lock().push(tx);
+        rx
+    }
+
+    /// notifies all listeners about the transaction
+    fn notify_listener(&self, hash: TxHash) {
+        let mut listener = self.transaction_listener.lock();
+        for n in (0..listener.len()).rev() {
+            let mut listener_tx = listener.swap_remove(n);
+            let retain = match listener_tx.try_send(hash) {
+                Ok(()) => true,
+                Err(e) => {
+                    if e.is_full() {
+                        warn!(
+                            target: "txpool",
+                            "[{:?}] Failed to send tx notification because channel is full",
+                            hash,
+                        );
+                        true
+                    } else {
+                        false
+                    }
+                }
+            };
+            if retain {
+                listener.push(listener_tx)
+            }
+        }
     }
 }
 
@@ -40,6 +80,11 @@ struct PoolInner {
 // == impl PoolInner ==
 
 impl PoolInner {
+    /// Returns an iterator over transactions that are ready.
+    pub fn ready(&self) {
+        self.ready_transactions.get_transactions();
+    }
+
     /// Returns true if this pool already contains the transaction
     fn contains(&self, tx_hash: &TxHash) -> bool {
         self.pending_transactions.contains(tx_hash) || self.ready_transactions.contains(tx_hash)
@@ -157,13 +202,4 @@ impl AddedTransaction {
             AddedTransaction::Pending { hash } => hash,
         }
     }
-}
-
-/// A validated transaction
-#[derive(Debug)]
-pub enum ValidatedTransaction {
-    /// Transaction that has been validated successfully.
-    Valid(Transaction),
-    /// Transaction that is invalid.
-    Invalid(TxHash, BlockchainError),
 }

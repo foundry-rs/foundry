@@ -6,14 +6,11 @@ use ethers::{
     types::BlockId,
 };
 use foundry_evm::{
-    executor::{DatabaseRef},
+    executor::DatabaseRef,
     revm::{db::CacheDB, Database, Env},
 };
-use parking_lot::{RwLock};
-use std::{
-    collections::{HashMap},
-    sync::Arc,
-};
+use parking_lot::RwLock;
+use std::{collections::HashMap, sync::Arc};
 
 /// Stores the blockchain data (blocks, transactions)
 #[derive(Clone, Default)]
