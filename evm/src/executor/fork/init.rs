@@ -24,6 +24,8 @@ pub async fn environment<M: Middleware>(
     Ok(Env {
         cfg: CfgEnv {
             chain_id: override_chain_id.unwrap_or(rpc_chain_id.as_u64()).into(),
+            // 16 MiB
+            memory_limit: 2u64.pow(24),
             ..Default::default()
         },
         block: BlockEnv {

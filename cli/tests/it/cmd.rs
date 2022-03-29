@@ -2,17 +2,16 @@
 use ansi_term::Colour;
 use ethers::solc::{artifacts::Metadata, ConfigurableContractArtifact};
 use foundry_cli_test_utils::{
-    ethers_solc::{remappings::Remapping, PathStyle},
+    ethers_solc::PathStyle,
     forgetest, forgetest_ignore, forgetest_init,
     util::{pretty_err, read_string, TestCommand, TestProject},
 };
 use foundry_config::{parse_with_profile, BasicConfig, Config, SolidityErrorCode};
-use pretty_assertions::assert_eq;
-use std::{env, fs, str::FromStr};
+use std::{env, fs};
 
 // import forge utils as mod
 #[allow(unused)]
-#[path = "../src/utils.rs"]
+#[path = "../../src/utils.rs"]
 mod forge_utils;
 
 // tests `--help` is printed to std out
@@ -30,24 +29,18 @@ forgetest!(can_clean_non_existing, |prj: TestProject, mut cmd: TestCommand| {
 
 // checks that init works
 forgetest!(can_init_repo_with_config, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.set_current_dir(prj.root());
     let foundry_toml = prj.root().join(Config::FILE_NAME);
     assert!(!foundry_toml.exists());
 
     cmd.args(["init", "--force"]).arg(prj.root());
     cmd.assert_non_empty_stdout();
 
-    cmd.set_current_dir(prj.root());
     let file = Config::find_config_file().unwrap();
     assert_eq!(foundry_toml, file);
 
     let s = read_string(&file);
-    let basic: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
-    // check ds-test is detected
-    assert_eq!(
-        basic.remappings,
-        vec![Remapping::from_str("ds-test/=lib/ds-test/src/").unwrap().into()]
-    );
-    assert_eq!(basic, Config::load_with_root(prj.root()).into_basic());
+    let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
 
     // can detect root
     assert_eq!(prj.root(), forge_utils::find_project_root_path().unwrap());
@@ -172,6 +165,7 @@ forgetest_init!(can_clean_config, |prj: TestProject, mut cmd: TestCommand| {
 
 // checks that extra output works
 forgetest_init!(can_emit_extra_output, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.set_current_dir(prj.root());
     cmd.args(["build", "--extra-output", "metadata"]);
     cmd.assert_non_empty_stdout();
 
@@ -440,9 +434,15 @@ contract BTest is DSTest {
     cmd.arg("snapshot");
 
     let out = cmd.stdout();
+
     assert!(
-        out.contains("Running 1 test for BTest.json:BTest") &&
-            out.contains("Running 1 test for ATest.json:ATest")
+        out.contains(&format!(
+            "Running 1 test for {}/src/BTest.t.sol:BTest",
+            prj.root().to_string_lossy()
+        )) && out.contains(&format!(
+            "Running 1 test for {}/src/ATest.t.sol:ATest",
+            prj.root().to_string_lossy()
+        ))
     );
 
     cmd.arg("--check");

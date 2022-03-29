@@ -77,7 +77,7 @@ impl Cmd for InitArgs {
             };
             p_println!(!quiet => "Initializing {} from {}...", root.display(), template);
             Command::new("git")
-                .args(&["clone", &template, &root.display().to_string()])
+                .args(&["clone", "--recursive", &template, &root.display().to_string()])
                 .stdout(Stdio::piped())
                 .spawn()?
                 .wait()?;

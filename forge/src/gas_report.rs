@@ -65,7 +65,9 @@ impl GasReport {
                         contract_report.size = bytes.len().into();
                     }
                     // TODO: More robust test contract filtering
-                    RawOrDecodedCall::Decoded(func, _) if !func.starts_with("test") => {
+                    RawOrDecodedCall::Decoded(func, _)
+                        if !func.starts_with("test") && func != "setUp" =>
+                    {
                         let function_report = contract_report
                             .functions
                             .entry(func.clone())

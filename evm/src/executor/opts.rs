@@ -63,6 +63,8 @@ impl EvmOpts {
                     chain_id: self.env.chain_id.unwrap_or(99).into(),
                     spec_id: SpecId::LONDON,
                     perf_all_precompiles_have_balance: false,
+                    // 16 MiB
+                    memory_limit: 2u64.pow(24),
                 },
                 tx: TxEnv {
                     gas_price: self.env.gas_price.into(),

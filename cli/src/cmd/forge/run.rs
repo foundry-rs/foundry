@@ -175,7 +175,7 @@ impl Cmd for RunArgs {
                 decoder.contracts,
                 highlevel_known_contracts
                     .into_iter()
-                    .map(|(id, artifact)| (id.slug(), artifact))
+                    .map(|(id, artifact)| (id.name, artifact))
                     .collect(),
                 source_code,
             )?;
@@ -293,20 +293,23 @@ impl RunArgs {
                     dependencies,
                 } = post_link_input;
 
-                // if its the target contract, grab the info
-                if extra.no_target_name &&
-                    id.path.file_stem().unwrap().to_string_lossy() == extra.target_fname
-                {
+                // if it's the target contract, grab the info
+                if extra.no_target_name && id.source == std::path::Path::new(&extra.target_fname) {
                     if extra.matched {
                         eyre::bail!("Multiple contracts in the target path. Please specify the contract name with `-t ContractName`")
                     }
                     *extra.dependencies = dependencies;
                     *extra.contract = contract.clone();
                     extra.matched = true;
-                } else if extra.target_fname == id.slug() {
-                    *extra.dependencies = dependencies;
-                    *extra.contract = contract.clone();
-                    extra.matched = true;
+                } else {
+                    let split: Vec<&str> = extra.target_fname.split(':').collect();
+                    let path = std::path::Path::new(split[0]);
+                    let name = split[1];
+                    if path == id.source && name == id.name {
+                        *extra.dependencies = dependencies;
+                        *extra.contract = contract.clone();
+                        extra.matched = true;
+                    }
                 }
 
                 let tc: ContractBytecode = contract.into();

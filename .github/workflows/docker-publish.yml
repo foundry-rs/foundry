@@ -62,7 +62,7 @@ jobs:
         run: |
           echo "TAGS -> ${{ steps.docker_tagging.outputs.docker_tags }}"
           echo "LABELS ->  ${{ steps.meta.outputs.labels }}"
-        
+
       # Build and push Docker image
       # https://github.com/docker/build-push-action
       - name: Build and push Docker image
