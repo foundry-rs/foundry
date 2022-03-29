@@ -1,13 +1,19 @@
 //! In memory blockchain backend
 
-use crate::eth::backend::db::Db;
+use crate::eth::{
+    backend::db::Db, error::BlockchainError, executor::Executor,
+    pool::transactions::PoolTransaction,
+};
 use ethers::{
-    prelude::{Block, BlockNumber, Transaction, TransactionReceipt, TxHash, H256, U256, U64},
-    types::BlockId,
+    prelude::{
+        Block, BlockNumber, Bytes, Transaction, TransactionReceipt, TxHash, H256, U256, U64,
+    },
+    types::{transaction::eip2930::AccessList, BlockId},
 };
 use foundry_evm::{
     executor::DatabaseRef,
-    revm::{db::CacheDB, Database, Env},
+    revm::{db::CacheDB, Database, Env, EVM},
+    Address,
 };
 use parking_lot::RwLock;
 use std::{collections::HashMap, sync::Arc};
@@ -93,6 +99,16 @@ impl Backend {
         Self::new(Arc::new(RwLock::new(db)), env)
     }
 
+    /// Mines a new block
+    ///
+    /// this will execute all transaction in the order they come in and return all the markers they
+    /// provide .
+    pub fn mine_block(&self, transactions: Vec<Arc<PoolTransaction>>) {}
+
+    fn execute_transactions(&self, transactions: Vec<Arc<PoolTransaction>>) {}
+
+    fn execute_transaction(&self, transaction: Arc<PoolTransaction>) {}
+
     /// The env data of the blockchain
     pub fn env(&self) -> &Arc<RwLock<Env>> {
         &self.env
@@ -111,5 +127,50 @@ impl Backend {
     pub fn gas_limit(&self) -> U256 {
         // TODO make this a separate value?
         self.env().read().block.gas_limit
+    }
+}
+
+impl Executor for Backend {
+    type Error = BlockchainError;
+
+    fn call(
+        source: Address,
+        target: Address,
+        input: Vec<u8>,
+        value: U256,
+        gas_limit: u64,
+        max_fee_per_gas: Option<U256>,
+        max_priority_fee_per_gas: Option<U256>,
+        nonce: Option<U256>,
+        access_list: AccessList,
+    ) -> Result<Bytes, Self::Error> {
+        todo!()
+    }
+
+    fn create(
+        source: Address,
+        init: Vec<u8>,
+        value: U256,
+        gas_limit: u64,
+        max_fee_per_gas: Option<U256>,
+        max_priority_fee_per_gas: Option<U256>,
+        nonce: Option<U256>,
+        access_list: AccessList,
+    ) -> Result<Address, Self::Error> {
+        todo!()
+    }
+
+    fn create2(
+        source: Address,
+        init: Vec<u8>,
+        salt: TxHash,
+        value: U256,
+        gas_limit: u64,
+        max_fee_per_gas: Option<U256>,
+        max_priority_fee_per_gas: Option<U256>,
+        nonce: Option<U256>,
+        access_list: AccessList,
+    ) -> Result<Address, Self::Error> {
+        unimplemented!()
     }
 }
