@@ -8,24 +8,22 @@ jobs:
   build:
     name: ${{ matrix.job.target }} (${{ matrix.job.os }})
     runs-on: ${{ matrix.job.os }}
-     strategy:
-       fail-fast: false
-        matrix:
-          job:
-            # The OS is used for the runner
-            # The platform is a generic platform name
-            # The target is used by Cargo
-            # The arch is either 386, arm64 or amd64
-            - os: ubuntu-latest
-              target: x86_64-unknown-linux-gnu
-            - os: ubuntu-latest
-              target: aarch64-unknown-linux-gnu
-            - os: macos-latest
-              target: x86_64-apple-darwin
-            - os: macos-latest
-              target: aarch64-apple-darwin
-            #- os: windows-latest
-            #  target: x86_64-pc-windows-msvc
+    strategy:
+      fail-fast: false
+      matrix:
+        job:
+          # The OS is used for the runner
+          # The target is used by Cargo
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          #- os: windows-latest
+          #  target: x86_64-pc-windows-msvc
 
     steps:
       - name: Checkout sources
