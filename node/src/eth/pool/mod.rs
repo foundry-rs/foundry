@@ -1,10 +1,11 @@
 use crate::eth::{
-    error::{BlockchainError, PoolError},
+    error::{PoolError},
     pool::transactions::{
         PendingPoolTransaction, PendingTransactions, PoolTransaction, ReadyTransactions,
+        TransactionsIterator,
     },
 };
-use ethers::types::{Transaction, TxHash};
+use ethers::types::{TxHash};
 use futures::channel::mpsc::{channel, Receiver, Sender};
 use parking_lot::{Mutex, RwLock};
 use std::{collections::VecDeque, sync::Arc};
@@ -23,6 +24,11 @@ pub struct Pool {
 // == impl Pool ==
 
 impl Pool {
+    /// Returns an iterator that yields all transactions that are currently ready
+    pub fn ready_transactions(&self) -> TransactionsIterator {
+        self.inner.read().ready_transactions()
+    }
+
     /// Adds a new transaction to the pool
     pub fn add_transaction(&self, tx: PoolTransaction) -> Result<AddedTransaction, PoolError> {
         let added = self.inner.write().add_transaction(tx)?;
@@ -44,6 +50,7 @@ impl Pool {
     /// notifies all listeners about the transaction
     fn notify_listener(&self, hash: TxHash) {
         let mut listener = self.transaction_listener.lock();
+        // this is basically a retain but with mut
         for n in (0..listener.len()).rev() {
             let mut listener_tx = listener.swap_remove(n);
             let retain = match listener_tx.try_send(hash) {
@@ -81,8 +88,8 @@ struct PoolInner {
 
 impl PoolInner {
     /// Returns an iterator over transactions that are ready.
-    pub fn ready(&self) {
-        self.ready_transactions.get_transactions();
+    fn ready_transactions(&self) -> TransactionsIterator {
+        self.ready_transactions.get_transactions()
     }
 
     /// Returns true if this pool already contains the transaction

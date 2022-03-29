@@ -10,6 +10,7 @@ use std::{
     time::Instant,
 };
 
+
 /// A unique identifying marker for a transaction
 pub type TxMarker = Vec<u8>;
 
@@ -175,6 +176,56 @@ pub struct TransactionsIterator {
     invalid: HashSet<TxHash>,
 }
 
+// == impl TransactionsIterator ==
+
+impl TransactionsIterator {
+    /// Depending on number of satisfied requirements insert given ref
+    /// either to awaiting set or to best set.
+    fn independent_or_awaiting(&mut self, satisfied: usize, tx_ref: PoolTransactionRef) {
+        if satisfied >= tx_ref.transaction.requires.len() {
+            // If we have satisfied all deps insert to best
+            self.independent.insert(tx_ref);
+        } else {
+            // otherwise we're still awaiting for some deps
+            self.awaiting.insert(*tx_ref.transaction.hash(), (satisfied, tx_ref));
+        }
+    }
+}
+
+impl Iterator for TransactionsIterator {
+    type Item = Arc<PoolTransaction>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let best = self.independent.iter().next_back()?.clone();
+            let best = self.independent.take(&best)?;
+            let hash = best.transaction.hash();
+
+            let ready =
+                if let Some(ready) = self.all.get(hash).cloned() { ready } else { continue };
+
+            // Insert transactions that just got unlocked.
+            for hash in &ready.unlocks {
+                // first check local awaiting transactions
+                let res = if let Some((mut satisfied, tx_ref)) = self.awaiting.remove(hash) {
+                    satisfied += 1;
+                    Some((satisfied, tx_ref))
+                    // then get from the pool
+                } else {
+                    self.all
+                        .get(hash)
+                        .map(|next| (next.requires_offset + 1, next.transaction.clone()))
+                };
+                if let Some((satisfied, tx_ref)) = res {
+                    self.independent_or_awaiting(satisfied, tx_ref)
+                }
+            }
+
+            return Some(best.transaction)
+        }
+    }
+}
+
 /// transactions that are ready to be included in a block.
 #[derive(Debug, Clone, Default)]
 pub struct ReadyTransactions {
@@ -240,6 +291,7 @@ impl ReadyTransactions {
         let (replaced_tx, unlocks) = self.replaced_transactions(&tx.transaction)?;
 
         let mut independent = true;
+        let mut requires_offset = 0;
         let mut ready = self.ready_tx.write();
         // Add links to transactions that unlock the current one
         for mark in &tx.transaction.requires {
@@ -249,6 +301,8 @@ impl ReadyTransactions {
                 tx.unlocks.push(hash);
                 // tx still depends on other tx
                 independent = false;
+            } else {
+                requires_offset += 1;
             }
         }
 
@@ -265,7 +319,7 @@ impl ReadyTransactions {
         }
 
         // insert to ready queue
-        ready.insert(hash, ReadyTransaction { transaction, unlocks });
+        ready.insert(hash, ReadyTransaction { transaction, unlocks, requires_offset });
 
         Ok(replaced_tx)
     }
@@ -393,6 +447,8 @@ struct ReadyTransaction {
     pub transaction: PoolTransactionRef,
     /// tracks the transactions that get unlocked by this transaction
     pub unlocks: Vec<TxHash>,
+    /// amount of required markers that are inherently provided
+    pub requires_offset: usize,
 }
 
 #[cfg(test)]
