@@ -46,6 +46,7 @@ pub mod fmt;
 pub mod init;
 pub mod inspect;
 pub mod install;
+pub mod node;
 pub mod remappings;
 pub mod run;
 pub mod snapshot;

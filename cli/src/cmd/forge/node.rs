@@ -7,34 +7,17 @@ use ethers::{
     prelude::{coins_bip39::English, MnemonicBuilder, Wallet},
     solc::EvmVersion,
 };
-use evm_adapters::{
-    evm_opts::EvmType,
-    sputnik::{PrecompileFn, PRECOMPILES_MAP},
-    FAUCET_ACCOUNT,
-};
-use forge_node::Node;
 use once_cell::sync::OnceCell;
 
+use crate::opts::evm::EvmArgs;
 use std::{collections::BTreeMap, str::FromStr};
 
 use super::Cmd;
 
-#[cfg(feature = "sputnik-evm")]
-static SPUTNIK_CONFIG: OnceCell<sputnik::Config> = OnceCell::new();
-#[cfg(feature = "sputnik-evm")]
-static SPUTNIK_VICINITY: OnceCell<sputnik::backend::MemoryVicinity> = OnceCell::new();
-#[cfg(feature = "sputnik-evm")]
-static SPUTNIK_BACKEND: OnceCell<sputnik::backend::MemoryBackend> = OnceCell::new();
-#[cfg(feature = "sputnik-evm")]
-static SPUTNIK_PRECOMPILES: OnceCell<BTreeMap<Address, PrecompileFn>> = OnceCell::new();
-
 #[derive(Clone, Debug, Parser)]
 pub struct NodeArgs {
-    #[clap(flatten)]
+    #[clap(flatten, next_help_heading = "EVM OPTIONS")]
     evm_opts: EvmArgs,
-
-    #[clap(help = "choose the evm version", long, default_value = "london")]
-    evm_version: EvmVersion,
 
     #[clap(
         long,
@@ -61,49 +44,6 @@ impl Cmd for NodeArgs {
             .gas_price(self.evm_opts.env.gas_price.unwrap_or_default())
             .genesis_accounts(self.accounts.0)
             .genesis_balance(self.balance);
-
-        match self.evm_opts.evm_type {
-            #[cfg(feature = "sputnik-evm")]
-            EvmType::Sputnik => {
-                use evm_adapters::sputnik::Executor;
-                use sputnik::backend::MemoryBackend;
-
-                SPUTNIK_CONFIG
-                    .set(sputnik_cfg(&self.evm_version))
-                    .expect("could not set EVM_CONFIG");
-
-                SPUTNIK_VICINITY
-                    .set(self.evm_opts.env.sputnik_state())
-                    .expect("could not set EVM_VICINITY");
-
-                let mut backend = MemoryBackend::new(
-                    SPUTNIK_VICINITY.get().expect("could not get EVM_VICINITY"),
-                    Default::default(),
-                );
-                let faucet =
-                    backend.state_mut().entry(*FAUCET_ACCOUNT).or_insert_with(Default::default);
-                faucet.balance = U256::MAX;
-
-                SPUTNIK_BACKEND.set(backend).expect("could not set EVM_BACKEND");
-
-                SPUTNIK_PRECOMPILES
-                    .set(PRECOMPILES_MAP.clone())
-                    .unwrap_or_else(|_| panic!("could not set EVM_PRECOMPILES"));
-
-                let evm = Executor::new_with_cheatcodes(
-                    SPUTNIK_BACKEND.get().expect("could not get EVM_BACKEND"),
-                    self.evm_opts.env.gas_limit.unwrap_or_default(),
-                    SPUTNIK_CONFIG.get().expect("could not get EVM_CONFIG"),
-                    SPUTNIK_PRECOMPILES.get().expect("could not get EVM_PRECOMPILES"),
-                    false,
-                    false,
-                    false,
-                );
-                tokio::runtime::Runtime::new()
-                    .unwrap()
-                    .block_on(Node::init_and_run(evm, node_config));
-            }
-        }
         Ok(())
     }
 }

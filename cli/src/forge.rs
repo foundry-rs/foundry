@@ -11,9 +11,6 @@ use std::process::Command;
 use clap::{IntoApp, Parser};
 use clap_complete::generate;
 
-use std::process::Command;
-
-#[tracing::instrument(err)]
 fn main() -> eyre::Result<()> {
     color_eyre::install()?;
     utils::subscriber();
