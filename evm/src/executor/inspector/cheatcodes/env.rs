@@ -4,11 +4,11 @@ use super::Cheatcodes;
 use crate::abi::HEVMCalls;
 use bytes::Bytes;
 use ethers::{
-    abi::{AbiEncode, Token, Tokenize},
+    abi::{self, AbiEncode, Token, Tokenize},
     types::{Address, H256, U256},
     utils::keccak256,
 };
-use revm::{Database, EVMData};
+use revm::{Account, AccountInfo, Database, EVMData};
 
 #[derive(Clone, Debug, Default)]
 pub struct Prank {
@@ -156,6 +156,22 @@ pub fn apply<DB: Database>(
             Ok(Bytes::new())
         }
         HEVMCalls::Accesses(inner) => Ok(accesses(state, inner.0)),
+        HEVMCalls::SetNonce(inner) => {
+            data.subroutine
+                .state()
+                .entry(inner.0)
+                .and_modify(|acc| acc.info.nonce = inner.1)
+                .or_insert_with(|| {
+                    let mut account_info = AccountInfo::default();
+                    account_info.nonce = inner.1;
+                    Account::from(account_info)
+                });
+            Ok(Bytes::new())
+        }
+        HEVMCalls::GetNonce(inner) => match data.subroutine.state().get(&inner.0) {
+            Some(account) => Ok(abi::encode(&[Token::Uint(U256::from(account.info.nonce))]).into()),
+            None => Err("Account not in state DB".to_string().encode().into()),
+        },
         _ => return None,
     })
 }

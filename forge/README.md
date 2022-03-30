@@ -295,6 +295,10 @@ interface Hevm {
     function label(address addr, string calldata label) external;
     // When fuzzing, generate new inputs if conditional not met
     function assume(bool) external;
+    // Set nonce for an account
+    function setNonce(address,uint64);
+    // Get nonce for an account
+    function getNonce(address) external returns(uint64);
 }
 ```
 ### `console.log`
