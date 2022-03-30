@@ -114,7 +114,7 @@ impl Cmd for SnapshotArgs {
                 std::process::exit(1)
             }
         } else {
-            write_to_snapshot_file(&tests, self.snap, self.include_fuzz_tests, self.format)?;
+            write_to_snapshot_file(&tests, self.snap, self.format)?;
         }
         Ok(())
     }
@@ -249,16 +249,10 @@ fn read_snapshot(path: impl AsRef<Path>) -> eyre::Result<Vec<SnapshotEntry>> {
 fn write_to_snapshot_file(
     tests: &[Test],
     path: impl AsRef<Path>,
-    include_fuzz_tests: bool,
     _format: Option<Format>,
 ) -> eyre::Result<()> {
     let mut out = String::new();
     for test in tests {
-        // Ignore fuzz tests if we're not including fuzz tests in the snapshot.
-        if matches!(test.result.kind, TestKind::Fuzz(..)) && !include_fuzz_tests {
-            continue
-        }
-
         writeln!(
             out,
             "{}:{} {}",
