@@ -8,7 +8,7 @@ use ethers::{
     types::{Address, H256, U256},
     utils::keccak256,
 };
-use revm::{Account, AccountInfo, Database, EVMData};
+use revm::{Account, Database, EVMData};
 
 #[derive(Clone, Debug, Default)]
 pub struct Prank {
@@ -162,8 +162,7 @@ pub fn apply<DB: Database>(
                 .entry(inner.0)
                 .and_modify(|acc| acc.info.nonce = inner.1)
                 .or_insert_with(|| {
-                    let mut account_info = AccountInfo::default();
-                    account_info.nonce = inner.1;
+                    let account_info = revm::AccountInfo { nonce: inner.1, ..Default::default() };
                     Account::from(account_info)
                 });
             Ok(Bytes::new())
