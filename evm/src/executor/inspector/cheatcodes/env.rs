@@ -8,7 +8,7 @@ use ethers::{
     types::{Address, H256, U256},
     utils::keccak256,
 };
-use revm::{Account, Database, EVMData};
+use revm::{Database, EVMData};
 
 #[derive(Clone, Debug, Default)]
 pub struct Prank {
@@ -157,19 +157,22 @@ pub fn apply<DB: Database>(
         }
         HEVMCalls::Accesses(inner) => Ok(accesses(state, inner.0)),
         HEVMCalls::SetNonce(inner) => {
-            data.subroutine
-                .state()
-                .entry(inner.0)
-                .and_modify(|acc| acc.info.nonce = inner.1)
-                .or_insert_with(|| {
-                    let account_info = revm::AccountInfo { nonce: inner.1, ..Default::default() };
-                    Account::from(account_info)
-                });
-            Ok(Bytes::new())
+            // TODO:  this is probably not a good long-term solution since it might mess up the gas
+            // calculations
+            data.subroutine.load_account(inner.0, data.db);
+
+            // we can safely unwrap because `load_account` insert inner.0 to DB.
+            let account = data.subroutine.state().get_mut(&inner.0).unwrap();
+            if account.info.nonce < inner.1 {
+                account.info.nonce = inner.1;
+                Ok(Bytes::new())
+            } else {
+                Err("Nonce too low.".to_string().encode().into())
+            }
         }
         HEVMCalls::GetNonce(inner) => match data.subroutine.state().get(&inner.0) {
-            Some(account) => Ok(abi::encode(&[Token::Uint(U256::from(account.info.nonce))]).into()),
-            None => Err("Account not in state DB".to_string().encode().into()),
+            Some(account) => Ok(abi::encode(&[Token::Uint(account.info.nonce.into())]).into()),
+            None => Err("Account not in state DB.".to_string().encode().into()),
         },
         _ => return None,
     })

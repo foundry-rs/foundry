@@ -60,4 +60,8 @@ interface Cheats {
     function label(address, string calldata) external;
     // If the condition is false, discard this run's fuzz inputs and generate new ones
     function assume(bool) external;
+    // Set nonce for an account
+    function setNonce(address,uint64) external;
+    // Get nonce for an account
+    function getNonce(address) external returns(uint64);
 }
