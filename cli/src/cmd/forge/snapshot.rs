@@ -4,7 +4,7 @@ use crate::cmd::{
     forge::{
         build::BuildArgs,
         test,
-        test::{Test, TestOutcome},
+        test::{custom_run, Test, TestOutcome},
     },
     Cmd,
 };
@@ -97,7 +97,7 @@ impl Cmd for SnapshotArgs {
     type Output = ();
 
     fn run(self) -> eyre::Result<()> {
-        let outcome = self.test.run()?;
+        let outcome = custom_run(self.test, self.include_fuzz_tests)?;
         outcome.ensure_ok()?;
         let tests = self.config.apply(outcome);
 
