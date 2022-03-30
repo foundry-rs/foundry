@@ -93,7 +93,7 @@ impl fmt::Display for TestKindGas {
                 write!(f, "(gas: {})", gas)
             }
             TestKindGas::Fuzz { runs, include_fuzz_test_gas, mean, median } => {
-                if *include_fuzz_test_gas {
+                if *include_fuzz_test_gas && (*mean != 0 || *median != 0) {
                     write!(f, "(runs: {}, μ: {}, ~: {})", runs, mean, median)
                 } else {
                     write!(f, "(runs: {})", runs)
@@ -109,7 +109,13 @@ impl TestKindGas {
         match self {
             TestKindGas::Standard(gas) => *gas,
             // We use the median for comparisons
-            TestKindGas::Fuzz { median, .. } => *median,
+            TestKindGas::Fuzz { median, include_fuzz_test_gas, runs, .. } => {
+                if *include_fuzz_test_gas {
+                    *median
+                } else {
+                    (*runs).try_into().unwrap()
+                }
+            }
         }
     }
 }

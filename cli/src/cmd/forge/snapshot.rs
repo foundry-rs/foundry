@@ -28,7 +28,7 @@ use watchexec::config::{InitConfig, RuntimeConfig};
 /// A regex that matches a basic snapshot entry like
 /// `Test:testDeposit() (gas: 58804)`
 pub static RE_BASIC_SNAPSHOT_ENTRY: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?P<file>(.*?)):(?P<sig>(\w+)\s*\((.*?)\))\s*\(((gas:)?\s*(?P<gas>\d+)|(runs:\s*(?P<runs>\d+),\s*μ:\s*(?P<avg>\d+),\s*~:\s*(?P<med>\d+)))\)").unwrap()
+    Regex::new(r"(?P<file>(.*?)):(?P<sig>(\w+)\s*\((.*?)\))\s*\(((gas:)?\s*(?P<gas>\d+)|(runs:\s*(?P<runs>\d+)(,\s*μ:\s*(?P<avg>\d+),\s*~:\s*(?P<med>\d+))?))\)").unwrap()
 });
 
 #[derive(Debug, Clone, Parser)]
@@ -199,21 +199,33 @@ impl FromStr for SnapshotEntry {
                                 gas_used: TestKindGas::Standard(gas.as_str().parse().unwrap()),
                             })
                         } else {
-                            cap.name("runs")
-                                .and_then(|runs| {
-                                    cap.name("avg")
-                                        .and_then(|avg| cap.name("med").map(|med| (runs, avg, med)))
-                                })
-                                .map(|(runs, avg, med)| SnapshotEntry {
-                                    contract_name: file.as_str().to_string(),
-                                    signature: sig.as_str().to_string(),
-                                    gas_used: TestKindGas::Fuzz {
-                                        include_fuzz_test_gas: true,
-                                        runs: runs.as_str().parse().unwrap(),
-                                        median: med.as_str().parse().unwrap(),
-                                        mean: avg.as_str().parse().unwrap(),
-                                    },
-                                })
+                            cap.name("runs").and_then(|runs| {
+                                if let Some(avg) = cap.name("avg") {
+                                    cap.name("med").map(|med| (runs, avg, med)).map(
+                                        |(runs, avg, med)| SnapshotEntry {
+                                            contract_name: file.as_str().to_string(),
+                                            signature: sig.as_str().to_string(),
+                                            gas_used: TestKindGas::Fuzz {
+                                                include_fuzz_test_gas: true,
+                                                runs: runs.as_str().parse().unwrap(),
+                                                median: med.as_str().parse().unwrap(),
+                                                mean: avg.as_str().parse().unwrap(),
+                                            },
+                                        },
+                                    )
+                                } else {
+                                    Some(SnapshotEntry {
+                                        contract_name: file.as_str().to_string(),
+                                        signature: sig.as_str().to_string(),
+                                        gas_used: TestKindGas::Fuzz {
+                                            include_fuzz_test_gas: false,
+                                            runs: runs.as_str().parse().unwrap(),
+                                            median: 0,
+                                            mean: 0,
+                                        },
+                                    })
+                                }
+                            })
                         }
                     })
                 })
@@ -295,6 +307,18 @@ fn check(tests: Vec<Test>, include_fuzz_test_gas: bool, snaps: Vec<SnapshotEntry
             snaps.get(&(test.contract_name().to_string(), test.signature.clone())).cloned()
         {
             let source_gas = test.result.kind.gas_used(include_fuzz_test_gas);
+            let target_gas = match (&source_gas, &target_gas) {
+                (
+                    TestKindGas::Fuzz { include_fuzz_test_gas, .. },
+                    TestKindGas::Fuzz { runs, mean, median, .. },
+                ) => TestKindGas::Fuzz {
+                    runs: *runs,
+                    include_fuzz_test_gas: *include_fuzz_test_gas,
+                    mean: *mean,
+                    median: *median,
+                },
+                _ => target_gas,
+            };
             if source_gas.gas() != target_gas.gas() {
                 eprintln!(
                     "Diff in \"{}::{}\": consumed \"{}\" gas, expected \"{}\" gas ",
