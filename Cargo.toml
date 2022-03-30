@@ -4,7 +4,6 @@ members = [
     "cast",
     "forge",
     "cli",
-    "cli/test-utils",
     "config",
     "fmt",
     "ui",
