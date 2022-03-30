@@ -1,9 +1,8 @@
-on:
-  push:
-    branches:
-      - master
+on: 
+  workflow_dispatch:
+  workflow_call:
 
-name: X-Platform Compilation
+name: cross-platform
 
 jobs:
   build:
@@ -13,32 +12,38 @@ jobs:
       fail-fast: false
       matrix:
         job:
-          - { target: x86_64-unknown-linux-gnu    , os: ubuntu-20.04                  }
-          - { target: x86_64-apple-darwin         , os: macos-10.15                   }
-      #    - { target: i686-pc-windows-msvc        , os: windows-2019                  }
-      #    - { target: x86_64-pc-windows-gnu       , os: windows-2019                  }
-      #    - { target: x86_64-pc-windows-msvc      , os: windows-2019                  }
+          # The OS is used for the runner
+          # The target is used by Cargo
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          #- os: windows-latest
+          #  target: x86_64-pc-windows-msvc
 
     steps:
-      - name: Checkout source code
+      - name: Checkout sources
         uses: actions/checkout@v2
 
       - name: Clone testdata for fmt tests
         run: make fmt-testdata
 
-      - name: Install prerequisites
-        shell: bash
+      - name: Apple M1 setup
+        if: ${{ matrix.job.target == 'aarch64-apple-darwin' }}
         run: |
-          case ${{ matrix.job.target }} in
-            arm-unknown-linux-*) sudo apt-get -y update ; sudo apt-get -y install gcc-arm-linux-gnueabihf ;;
-            aarch64-unknown-linux-gnu) sudo apt-get -y update ; sudo apt-get -y install gcc-aarch64-linux-gnu ;;
-          esac
+          echo "SDKROOT=$(xcrun -sdk macosx --show-sdk-path)" >> $GITHUB_ENV
+          echo "MACOSX_DEPLOYMENT_TARGET=$(xcrun -sdk macosx --show-sdk-platform-version)" >> $GITHUB_ENV
 
-      - name: Extract crate information
-        shell: bash
+      - name: Linux ARM setup
+        if: ${{ matrix.job.target == 'aarch64-unknown-linux-gnu' }}
         run: |
-          echo "PROJECT_NAME=$(sed -n 's/^name = "\(.*\)"/\1/p' Cargo.toml | head -n1)" >> $GITHUB_ENV
-          echo "PROJECT_VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)" >> $GITHUB_ENV
+          sudo apt-get update -y
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
 
       - name: Install Rust toolchain
         uses: actions-rs/toolchain@v1
@@ -48,7 +53,7 @@ jobs:
           override: true
           profile: minimal
 
-      - name: Show installed version information (Rust, cargo, GCC,...)
+      - name: Environment information
         shell: bash
         run: |
           gcc --version || true
@@ -62,7 +67,7 @@ jobs:
         with:
           cache-on-failure: true
 
-      - name: Build foundry and call crates
+      - name: Build
         uses: actions-rs/cargo@v1
         with:
           use-cross: ${{ matrix.job.use-cross }}

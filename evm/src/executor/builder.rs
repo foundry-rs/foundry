@@ -3,9 +3,13 @@ use revm::{
     db::{DatabaseRef, EmptyDB},
     Env, SpecId,
 };
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
-use super::{fork::SharedBackend, inspector::InspectorStackConfig, Executor};
+use super::{
+    fork::SharedBackend,
+    inspector::{Cheatcodes, InspectorStackConfig},
+    Executor,
+};
 
 use ethers::types::{H160, H256, U256};
 
@@ -55,7 +59,7 @@ impl Fork {
             .and_then(|url| url.host().map(|host| host.to_string()))
             .unwrap_or_else(|| url.clone());
 
-        let provider = Provider::try_from(url).expect("Failed to establish provider");
+        let provider = Arc::new(Provider::try_from(url).expect("Failed to establish provider"));
 
         let mut meta =
             BlockchainDbMeta { cfg_env: env.cfg.clone(), block_env: env.block.clone(), host };
@@ -135,8 +139,7 @@ impl ExecutorBuilder {
     /// Enables cheatcodes on the executor.
     #[must_use]
     pub fn with_cheatcodes(mut self, ffi: bool) -> Self {
-        self.inspector_config.cheatcodes = true;
-        self.inspector_config.ffi = ffi;
+        self.inspector_config.cheatcodes = Some(Cheatcodes::new(ffi, self.env.block.clone()));
         self
     }
 
