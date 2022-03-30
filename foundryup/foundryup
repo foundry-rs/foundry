@@ -18,6 +18,7 @@ main() {
       -v|--version)     shift; FOUNDRYUP_VERSION=$1;;
       -p|--path)        shift; FOUNDRYUP_LOCAL_REPO=$1;;
       -P|--pr)          shift; FOUNDRYUP_PR=$1;;
+      -C|--commit)      shift; FOUNDRYUP_COMMIT=$1;;
       -h|--help)
         usage
         exit 0
@@ -63,7 +64,7 @@ main() {
 
   FOUNDRYUP_REPO=${FOUNDRYUP_REPO-gakonst/foundry}
 
-  if [[ "$FOUNDRYUP_REPO" == "gakonst/foundry" && -z "$FOUNDRYUP_BRANCH" ]]; then
+  if [[ "$FOUNDRYUP_REPO" == "gakonst/foundry" && -z "$FOUNDRYUP_BRANCH" && -z "$FOUNDRYUP_COMMIT" ]]; then
     FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION-nightly}
     FOUNDRYUP_TAG=$FOUNDRYUP_VERSION
 
@@ -143,7 +144,11 @@ main() {
     cd $REPO_PATH
     ensure git fetch origin ${FOUNDRYUP_BRANCH}:remotes/origin/${FOUNDRYUP_BRANCH}
     ensure git checkout origin/${FOUNDRYUP_BRANCH}
-
+    # If set, checkout specific commit from branch
+    if [ ! -z $FOUNDRYUP_COMMIT ]; then
+      say "installing at commit ${FOUNDRYUP_COMMIT}"
+      ensure git checkout ${FOUNDRYUP_COMMIT}
+    fi
     # Build the repo and install it locally to the .foundry bin directory.
     # --root appends /bin to the directory it is given, so we pass FOUNDRY_DIR.
     RUSTFLAGS="-C target-cpu=native" ensure cargo install --path ./cli --bins --locked --force --root $FOUNDRY_DIR
@@ -171,6 +176,7 @@ OPTIONS:
     -v, --version   Install a specific version
     -b, --branch    Install a specific branch
     -P, --pr        Install a specific Pull Request
+    -C, --commit    Install a specific commit
     -r, --repo      Install a forks main branch
     -p, --path      Install a local repository
 EOF
