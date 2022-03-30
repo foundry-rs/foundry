@@ -1241,9 +1241,9 @@ dependencies = [
 [[package]]
 name = "ethers"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#f402f134a34ea514c5abd5d8272687ac7772b3cb"
+source = "git+https://github.com/ecmendenhall/ethers-rs?branch=horsefacts/report-compile-time#b4991f940326f70c0c6dddf64b5b8a6704ba6b4a"
 dependencies = [
- "ethers-addressbook",
+ "ethers-addressbook 0.1.0 (git+https://github.com/ecmendenhall/ethers-rs?branch=horsefacts/report-compile-time)",
  "ethers-contract",
  "ethers-core",
  "ethers-etherscan",
@@ -1251,6 +1251,17 @@ dependencies = [
  "ethers-providers",
  "ethers-signers",
  "ethers-solc",
+]
+
+[[package]]
+name = "ethers-addressbook"
+version = "0.1.0"
+source = "git+https://github.com/ecmendenhall/ethers-rs?branch=horsefacts/report-compile-time#b4991f940326f70c0c6dddf64b5b8a6704ba6b4a"
+dependencies = [
+ "ethers-core",
+ "once_cell",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1267,7 +1278,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#f402f134a34ea514c5abd5d8272687ac7772b3cb"
+source = "git+https://github.com/ecmendenhall/ethers-rs?branch=horsefacts/report-compile-time#b4991f940326f70c0c6dddf64b5b8a6704ba6b4a"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1285,7 +1296,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#f402f134a34ea514c5abd5d8272687ac7772b3cb"
+source = "git+https://github.com/ecmendenhall/ethers-rs?branch=horsefacts/report-compile-time#b4991f940326f70c0c6dddf64b5b8a6704ba6b4a"
 dependencies = [
  "Inflector",
  "cfg-if 1.0.0",
@@ -1307,7 +1318,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#f402f134a34ea514c5abd5d8272687ac7772b3cb"
+source = "git+https://github.com/ecmendenhall/ethers-rs?branch=horsefacts/report-compile-time#b4991f940326f70c0c6dddf64b5b8a6704ba6b4a"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -1321,7 +1332,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#f402f134a34ea514c5abd5d8272687ac7772b3cb"
+source = "git+https://github.com/ecmendenhall/ethers-rs?branch=horsefacts/report-compile-time#b4991f940326f70c0c6dddf64b5b8a6704ba6b4a"
 dependencies = [
  "arrayvec 0.7.2",
  "bytes",
@@ -1347,7 +1358,7 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "0.2.0"
-source = "git+https://github.com/gakonst/ethers-rs#f402f134a34ea514c5abd5d8272687ac7772b3cb"
+source = "git+https://github.com/ecmendenhall/ethers-rs?branch=horsefacts/report-compile-time#b4991f940326f70c0c6dddf64b5b8a6704ba6b4a"
 dependencies = [
  "ethers-core",
  "ethers-solc",
@@ -1361,7 +1372,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#f402f134a34ea514c5abd5d8272687ac7772b3cb"
+source = "git+https://github.com/ecmendenhall/ethers-rs?branch=horsefacts/report-compile-time#b4991f940326f70c0c6dddf64b5b8a6704ba6b4a"
 dependencies = [
  "async-trait",
  "ethers-contract",
@@ -1384,7 +1395,7 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#f402f134a34ea514c5abd5d8272687ac7772b3cb"
+source = "git+https://github.com/ecmendenhall/ethers-rs?branch=horsefacts/report-compile-time#b4991f940326f70c0c6dddf64b5b8a6704ba6b4a"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -1416,7 +1427,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "0.6.0"
-source = "git+https://github.com/gakonst/ethers-rs#f402f134a34ea514c5abd5d8272687ac7772b3cb"
+source = "git+https://github.com/ecmendenhall/ethers-rs?branch=horsefacts/report-compile-time#b4991f940326f70c0c6dddf64b5b8a6704ba6b4a"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -1439,7 +1450,7 @@ dependencies = [
 [[package]]
 name = "ethers-solc"
 version = "0.3.0"
-source = "git+https://github.com/gakonst/ethers-rs#f402f134a34ea514c5abd5d8272687ac7772b3cb"
+source = "git+https://github.com/ecmendenhall/ethers-rs?branch=horsefacts/report-compile-time#b4991f940326f70c0c6dddf64b5b8a6704ba6b4a"
 dependencies = [
  "colored",
  "dunce",
@@ -1725,7 +1736,7 @@ name = "foundry-utils"
 version = "0.2.0"
 dependencies = [
  "ethers",
- "ethers-addressbook",
+ "ethers-addressbook 0.1.0 (git+https://github.com/gakonst/ethers-rs)",
  "ethers-core",
  "ethers-etherscan",
  "ethers-providers",
