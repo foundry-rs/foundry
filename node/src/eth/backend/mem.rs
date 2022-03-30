@@ -10,6 +10,7 @@ use ethers::{
     },
     types::{transaction::eip2930::AccessList, BlockId},
 };
+use forge_node_core::eth::transaction::{PendingTransaction, TypedTransaction};
 use foundry_evm::{
     executor::DatabaseRef,
     revm::{db::CacheDB, Database, Env, EVM},
@@ -103,11 +104,25 @@ impl Backend {
     ///
     /// this will execute all transaction in the order they come in and return all the markers they
     /// provide .
+    ///
+    /// TODO(mattsse): currently we're assuming transaction is valid, needs an additional validation
+    /// step
     pub fn mine_block(&self, transactions: Vec<Arc<PoolTransaction>>) {}
 
     fn execute_transactions(&self, transactions: Vec<Arc<PoolTransaction>>) {}
 
-    fn execute_transaction(&self, transaction: Arc<PoolTransaction>) {}
+    fn execute_transaction(&self, transaction: Arc<PoolTransaction>) {
+        match transaction.pending_transaction.transaction {
+            TypedTransaction::Legacy(ref tx) => {
+                let mut evm = EVM::new();
+                // TODO how to execute this
+            }
+            TypedTransaction::EIP2930(ref tx) => {}
+            TypedTransaction::EIP1559(ref tx) => {}
+        }
+    }
+
+    fn build_env()
 
     /// The env data of the blockchain
     pub fn env(&self) -> &Arc<RwLock<Env>> {

@@ -494,7 +494,7 @@ impl Decodable for EIP1559Transaction {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PendingTransaction {
     /// The actual transaction
-    transaction: TypedTransaction,
+    pub transaction: TypedTransaction,
     /// hash of `transaction`, so it can easily be reused with encoding and hashing agan
     hash: TxHash,
 }
