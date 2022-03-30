@@ -20,9 +20,8 @@ fn main() -> eyre::Result<()> {
             if cmd.build_args().is_watch() {
                 utils::block_on(watch::watch_test(cmd))?;
             } else {
-                let include_fuzz_test_gas = cmd.include_fuzz_test_gas;
                 let outcome = cmd.run()?;
-                outcome.ensure_ok(include_fuzz_test_gas)?;
+                outcome.ensure_ok()?;
             }
         }
         Subcommands::Bind(cmd) => {

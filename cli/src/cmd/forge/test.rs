@@ -130,10 +130,6 @@ pub struct TestArgs {
     #[clap(long, env = "FORGE_GAS_REPORT")]
     gas_report: bool,
 
-    /// Include the mean and median gas use of fuzz tests in the output.
-    #[clap(long, env = "FORGE_INCLUDE_FUZZ_TEST_GAS")]
-    pub include_fuzz_test_gas: bool,
-
     /// Force the process to exit with code 0, even if the tests fail.
     #[clap(long, env = "FORGE_ALLOW_FAILURE")]
     allow_failure: bool,
@@ -239,7 +235,7 @@ impl Cmd for TestArgs {
                     };
                     debugger.run()?;
 
-                    Ok(TestOutcome::new(results, self.allow_failure, self.include_fuzz_test_gas))
+                    Ok(TestOutcome::new(results, self.allow_failure))
                 }
                 n =>
                     Err(
@@ -255,7 +251,7 @@ impl Cmd for TestArgs {
                 filter,
                 self.json,
                 self.allow_failure,
-                (self.include_fuzz_test_gas, self.gas_report, config.gas_reports),
+                (self.gas_report, config.gas_reports),
             )
         }
     }
@@ -275,7 +271,7 @@ pub struct Test {
 
 impl Test {
     pub fn gas_used(&self) -> u64 {
-        self.result.kind.gas_used(true).gas()
+        self.result.kind.gas_used().gas()
     }
 
     /// Returns the contract name of the artifact id
@@ -293,19 +289,13 @@ impl Test {
 pub struct TestOutcome {
     /// Whether failures are allowed
     pub allow_failure: bool,
-    /// Whether to include fuzz test gas usage in the output
-    pub include_fuzz_test_gas: bool,
     /// Results for each suite of tests `contract -> SuiteResult`
     pub results: BTreeMap<String, SuiteResult>,
 }
 
 impl TestOutcome {
-    fn new(
-        results: BTreeMap<String, SuiteResult>,
-        allow_failure: bool,
-        include_fuzz_test_gas: bool,
-    ) -> Self {
-        Self { results, include_fuzz_test_gas, allow_failure }
+    fn new(results: BTreeMap<String, SuiteResult>, allow_failure: bool) -> Self {
+        Self { results, allow_failure }
     }
 
     /// Iterator over all succeeding tests and their names
@@ -334,14 +324,14 @@ impl TestOutcome {
     }
 
     /// Checks if there are any failures and failures are disallowed
-    pub fn ensure_ok(&self, include_fuzz_test_gas: bool) -> eyre::Result<()> {
+    pub fn ensure_ok(&self) -> eyre::Result<()> {
         if !self.allow_failure {
             let failures = self.failures().count();
             if failures > 0 {
                 println!();
                 println!("Failed tests:");
                 for (name, result) in self.failures() {
-                    short_test_result(name, include_fuzz_test_gas, result);
+                    short_test_result(name, result);
                 }
                 println!();
 
@@ -377,7 +367,7 @@ impl TestOutcome {
     }
 }
 
-fn short_test_result(name: &str, include_fuzz_test_gas: bool, result: &forge::TestResult) {
+fn short_test_result(name: &str, result: &forge::TestResult) {
     let status = if result.success {
         Colour::Green.paint("[PASS]")
     } else {
@@ -397,7 +387,7 @@ fn short_test_result(name: &str, include_fuzz_test_gas: bool, result: &forge::Te
         Colour::Red.paint(txt)
     };
 
-    println!("{} {} {}", status, name, result.kind.gas_used(include_fuzz_test_gas));
+    println!("{} {} {}", status, name, result.kind.gas_used());
 }
 
 /// Runs all the tests
@@ -407,12 +397,12 @@ fn test(
     filter: Filter,
     json: bool,
     allow_failure: bool,
-    (include_fuzz_test_gas, gas_reporting, gas_reports): (bool, bool, Vec<String>),
+    (gas_reporting, gas_reports): (bool, Vec<String>),
 ) -> eyre::Result<TestOutcome> {
     if json {
         let results = runner.test(&filter, None)?;
         println!("{}", serde_json::to_string(&results)?);
-        Ok(TestOutcome::new(results, allow_failure, include_fuzz_test_gas))
+        Ok(TestOutcome::new(results, allow_failure))
     } else {
         let local_identifier = LocalTraceIdentifier::new(&runner.known_contracts);
         let (tx, rx) = channel::<(String, SuiteResult)>();
@@ -429,7 +419,7 @@ fn test(
                 println!("Running {} {} for {}", tests.len(), term, contract_name);
             }
             for (name, result) in &mut tests {
-                short_test_result(name, include_fuzz_test_gas, result);
+                short_test_result(name, result);
 
                 // We only display logs at level 2 and above
                 if verbosity >= 2 {
@@ -492,7 +482,6 @@ fn test(
             let block_outcome = TestOutcome::new(
                 [(contract_name.clone(), suite_result.clone())].into(),
                 allow_failure,
-                include_fuzz_test_gas,
             );
             println!("{}", block_outcome.summary());
             results.insert(contract_name, suite_result);
@@ -505,6 +494,6 @@ fn test(
         // reattach the thread
         let _ = handle.join();
 
-        Ok(TestOutcome::new(results, allow_failure, include_fuzz_test_gas))
+        Ok(TestOutcome::new(results, allow_failure))
     }
 }
