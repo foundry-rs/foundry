@@ -425,3 +425,50 @@ impl EthApi {
         todo!()
     }
 }
+
+// == impl EthApi forge endpoints ==
+
+impl EthApi {
+    /// Sets the reported block number
+    ///
+    /// Handler for ETH RPC call: `forge_setBlock`
+    pub async fn forge_set_block(&self, block_number: U256) -> Result<U256> {
+        todo!()
+    }
+
+    /// Sets the backend rpc url
+    ///
+    /// Handler for ETH RPC call: `forge_setRpcUrl`
+    pub async fn forge_set_rpc_url(&self, url: String) -> Result<()> {
+        todo!()
+    }
+
+    /// Sets the mining mode
+    ///
+    /// Handler for ETH RPC call: `forge_mining`
+    pub async fn forge_mining(&self) -> Result<()> {
+        todo!()
+    }
+
+    /// Sets block timestamp
+    ///
+    /// Handler for ETH RPC call: `forge_setTimestamp`
+    pub async fn forge_set_timestamp(&self) -> Result<()> {
+        todo!()
+    }
+
+    /// Turn on call traces for transactions that are returned to the user when they execute a
+    /// transaction (instead of just txhash/receipt)
+    ///
+    /// Handler for ETH RPC call: `forge_enableTraces`
+    pub async fn forge_enable_traces(&self) -> Result<()> {
+        todo!()
+    }
+
+    /// execute a transaction regardless of signature status
+    ///
+    /// Handler for ETH RPC call: `eth_sendUnsignedTransaction`
+    pub async fn eth_send_unsigned_transaction(&self) -> Result<()> {
+        todo!()
+    }
+}
