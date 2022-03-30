@@ -83,7 +83,7 @@ impl TestResult {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum TestKindGas {
     Standard(u64),
-    Fuzz { runs: usize, include_fuzz_test_gas: bool, mean: u64, median: u64 },
+    Fuzz { runs: usize, mean: u64, median: u64 },
 }
 
 impl fmt::Display for TestKindGas {
@@ -92,12 +92,8 @@ impl fmt::Display for TestKindGas {
             TestKindGas::Standard(gas) => {
                 write!(f, "(gas: {})", gas)
             }
-            TestKindGas::Fuzz { runs, include_fuzz_test_gas, mean, median } => {
-                if *include_fuzz_test_gas {
-                    write!(f, "(runs: {}, μ: {}, ~: {})", runs, mean, median)
-                } else {
-                    write!(f, "(runs: {})", runs)
-                }
+            TestKindGas::Fuzz { runs, mean, median } => {
+                write!(f, "(runs: {}, μ: {}, ~: {})", runs, mean, median)
             }
         }
     }
@@ -127,12 +123,11 @@ pub enum TestKind {
 
 impl TestKind {
     /// The gas consumed by this test
-    pub fn gas_used(&self, include_fuzz_test_gas: bool) -> TestKindGas {
+    pub fn gas_used(&self) -> TestKindGas {
         match self {
             TestKind::Standard(gas) => TestKindGas::Standard(*gas),
             TestKind::Fuzz(fuzzed) => TestKindGas::Fuzz {
                 runs: fuzzed.cases().len(),
-                include_fuzz_test_gas,
                 median: fuzzed.median_gas(false),
                 mean: fuzzed.mean_gas(false),
             },
