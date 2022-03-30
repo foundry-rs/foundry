@@ -141,7 +141,7 @@ which implements the following methods:
 - `function ffi(string[] calldata) external returns (bytes memory)` Executes the
   arguments as a command in the system shell and returns stdout. Note that this
   cheatcode means test authors can execute arbitrary code on user machines as
-  part of a call to `dapp test`, for this reason all calls to `ffi` will fail
+  part of a call to `forge test`, for this reason all calls to `ffi` will fail
   unless the `--ffi` flag is passed.
 
 - `function deal(address who, uint256 amount)`: Sets an account's balance
@@ -377,9 +377,9 @@ We also intend to add features which are not available in dapptools:
 1. Declarative deployment system based on a config file
 1. Formatting & Linting (maybe powered by
    [Solang](https://github.com/hyperledger-labs/solang))
-   1. `dapp fmt`, an automatic code formatter according to standard rules (like
+   1. `forge fmt`, an automatic code formatter according to standard rules (like
       [`prettier-plugin-solidity`](https://github.com/prettier-solidity/prettier-plugin-solidity))
-   1. `dapp lint`, a linter + static analyzer, like a combination of
+   1. `forge lint`, a linter + static analyzer, like a combination of
       [`solhint`](https://github.com/protofire/solhint) and
       [slither](https://github.com/crytic/slither/)
 1. Flamegraphs for gas profiling
