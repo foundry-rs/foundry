@@ -11,7 +11,7 @@ use crate::cmd::{
 use ansi_term::Colour;
 use clap::{Parser, ValueHint};
 use eyre::Context;
-use forge::TestKindGas;
+use forge::{TestKind, TestKindGas};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::{
@@ -36,9 +36,11 @@ pub struct SnapshotArgs {
     /// All test arguments are supported
     #[clap(flatten)]
     test: test::TestArgs,
+
     /// Additional configs for test results
     #[clap(flatten)]
     config: SnapshotConfig,
+
     #[clap(
         help = "Compare against a snapshot and display changes from the snapshot. Takes an optional snapshot file, [default: .gas-snapshot]",
         conflicts_with = "snap",
@@ -47,6 +49,7 @@ pub struct SnapshotArgs {
         value_name = "SNAPSHOT_FILE",
     )]
     diff: Option<Option<PathBuf>>,
+
     #[clap(
         help = "Run snapshot in 'check' mode and compares against an existing snapshot file, [default: .gas-snapshot]. Exits with 0 if snapshots match. Exits with 1 and prints a diff otherwise",
         conflicts_with = "diff",
@@ -55,8 +58,10 @@ pub struct SnapshotArgs {
         value_name = "SNAPSHOT_FILE",
     )]
     check: Option<Option<PathBuf>>,
+
     #[clap(help = "How to format the output.", long)]
     format: Option<Format>,
+
     #[clap(
         help = "Output file for the snapshot.",
         default_value = ".gas-snapshot",
@@ -64,6 +69,10 @@ pub struct SnapshotArgs {
         value_name = "SNAPSHOT_FILE"
     )]
     snap: PathBuf,
+
+    /// Include the mean and median gas use of fuzz tests in the snapshot.
+    #[clap(long, env = "FORGE_INCLUDE_FUZZ_TESTS")]
+    pub include_fuzz_tests: bool,
 }
 
 impl SnapshotArgs {
@@ -105,7 +114,7 @@ impl Cmd for SnapshotArgs {
                 std::process::exit(1)
             }
         } else {
-            write_to_snapshot_file(&tests, self.snap, self.format)?;
+            write_to_snapshot_file(&tests, self.snap, self.include_fuzz_tests, self.format)?;
         }
         Ok(())
     }
@@ -240,10 +249,16 @@ fn read_snapshot(path: impl AsRef<Path>) -> eyre::Result<Vec<SnapshotEntry>> {
 fn write_to_snapshot_file(
     tests: &[Test],
     path: impl AsRef<Path>,
+    include_fuzz_tests: bool,
     _format: Option<Format>,
 ) -> eyre::Result<()> {
     let mut out = String::new();
     for test in tests {
+        // Ignore fuzz tests if we're not including fuzz tests in the snapshot.
+        if matches!(test.result.kind, TestKind::Fuzz(..)) && !include_fuzz_tests {
+            continue
+        }
+
         writeln!(
             out,
             "{}:{} {}",

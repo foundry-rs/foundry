@@ -127,7 +127,7 @@ pub struct TestArgs {
     debug: Option<Regex>,
 
     /// Print a gas report.
-    #[clap(long = "gas-report")]
+    #[clap(long, env = "FORGE_GAS_REPORT")]
     gas_report: bool,
 
     /// Force the process to exit with code 0, even if the tests fail.
