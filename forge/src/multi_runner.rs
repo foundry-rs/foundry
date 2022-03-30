@@ -222,8 +222,7 @@ impl MultiContractRunner {
                     executor,
                     deploy_code.clone(),
                     libs,
-                    filter,
-                    include_fuzz_tests,
+                    (filter, include_fuzz_tests),
                 )?;
                 Ok((id.identifier(), result))
             })
@@ -253,8 +252,7 @@ impl MultiContractRunner {
         executor: Executor<DB>,
         deploy_code: Bytes,
         libs: &[Bytes],
-        filter: &impl TestFilter,
-        include_fuzz_tests: bool,
+        (filter, include_fuzz_tests): (&impl TestFilter, bool),
     ) -> Result<SuiteResult> {
         let mut runner = ContractRunner::new(
             executor,
