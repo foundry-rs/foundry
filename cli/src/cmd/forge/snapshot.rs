@@ -11,7 +11,7 @@ use crate::cmd::{
 use ansi_term::Colour;
 use clap::{Parser, ValueHint};
 use eyre::Context;
-use forge::{TestKindGas};
+use forge::TestKindGas;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::{
