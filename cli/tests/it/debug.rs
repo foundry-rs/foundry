@@ -1,45 +1,48 @@
 //! Contains various tests for checking the debugger
 use commands::*;
 use foundry_cli_test_utils::{
-    forgetest, forgetest_init,
-    stdin::StdInCommand,
+    forgetest, forgetest_ignore, forgetest_init,
     util::{TestCommand, TestProject},
 };
 
 const TEST_EXAMPLE_SIG: &str = "testExample()";
 
 /// Contains various keybinding for interacting with the debugger via stdin
+#[allow(unused)]
 mod commands {
-    fn quit() -> StdInCommand {
-        "q".into()
+    use foundry_cli_test_utils::stdin::StdInKeyCommand;
+
+    pub fn quit() -> StdInKeyCommand {
+        'q'.into()
     }
-    fn down() -> StdInCommand {
-        "j".into()
+    pub fn down() -> StdInKeyCommand {
+        'j'.into()
     }
-    fn up() -> StdInCommand {
-        "k".into()
+    pub fn up() -> StdInKeyCommand {
+        'k'.into()
     }
-    fn top_of_file() -> StdInCommand {
-        "g".into()
+    pub fn top_of_file() -> StdInKeyCommand {
+        'g'.into()
     }
-    fn bottom_of_file() -> StdInCommand {
-        "G".into()
+    pub fn bottom_of_file() -> StdInKeyCommand {
+        'G'.into()
     }
-    fn next_call() -> StdInCommand {
-        "C".into()
+    pub fn next_call() -> StdInKeyCommand {
+        'C'.into()
     }
-    fn forward() -> StdInCommand {
-        "s".into()
+    pub fn forward() -> StdInKeyCommand {
+        's'.into()
     }
-    fn backwards() -> StdInCommand {
-        "a".into()
+    pub fn backwards() -> StdInKeyCommand {
+        'a'.into()
     }
 }
 
 // tests that we can run the debugger for the template function
-forgetest_init!(can_start_debugger_for_function, |_prj: TestProject, mut cmd: TestCommand| {
-    cmd.args(["test", "--debug", TEST_EXAMPLE_SIG]);
+forgetest_ignore!(can_start_debugger_for_function, |_prj: TestProject, mut cmd: TestCommand| {
+    cmd.arg("build");
+    cmd.assert_non_empty_stdout();
+    cmd.forge_fuse().args(["test", "--debug", TEST_EXAMPLE_SIG]).root_arg();
 
-    let out = cmd.spawn_and_send_stdin([quit()]);
-    println!("{}", out);
+    let _out = cmd.spawn_and_send_stdin([quit()]);
 });

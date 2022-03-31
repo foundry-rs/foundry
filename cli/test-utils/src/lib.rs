@@ -4,8 +4,8 @@ extern crate core;
 mod macros;
 
 // Utilities for making it easier to handle tests.
-pub mod util;
 pub mod stdin;
+pub mod util;
 
 pub use util::{TestCommand, TestProject};
 

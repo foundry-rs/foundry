@@ -1,18 +1,28 @@
+use crate::stdin::{StdInKeyCommand, SAFE_TUI_WARMUP};
 use ethers_solc::{
-    ArtifactOutput,
     cache::SolFilesCache,
-    ConfigurableArtifacts, PathStyle, project_util::{copy_dir, TempProject}, ProjectPathsConfig,
+    project_util::{copy_dir, TempProject},
+    ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig,
 };
 use foundry_config::Config;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
-use std::{collections::HashMap, env, ffi::{OsStr, OsString}, fmt, fmt::Display, fs, fs::File, io::{BufWriter, Write}, path::{Path, PathBuf}, process::{self, Command}, sync::{
-    Arc,
-    atomic::{AtomicUsize, Ordering},
-}};
-use std::process::Child;
-use std::time::Duration;
-use crate::stdin::{SAFE_TICK_RATE, StdInCommand};
+use std::{
+    collections::HashMap,
+    env,
+    ffi::{OsStr, OsString},
+    fmt,
+    fmt::Display,
+    fs,
+    fs::File,
+    io::{BufWriter, Write},
+    path::{Path, PathBuf},
+    process::{self, Child, Command, Stdio},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+};
 
 static CURRENT_DIR_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
@@ -424,27 +434,35 @@ impl TestCommand {
 
     /// Spawns the command and returns the [Child] of the process
     pub fn spawn(&mut self) -> Child {
-        self.cmd.spawn().unwrap()
+        self.cmd
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .unwrap()
     }
 
     /// Spawns the command and sends all commands to the process's stdin
     ///
-    /// *NOTE*: it's expected that the instructions will terminate the command at some time, otherwise this will wait indefinitely
-    pub fn spawn_and_send_stdin<I, A>(&mut self, commands: I) -> Output  where
-        I: IntoIterator<Item = A>,
-        A: Into<StdInCommand>,  {
-        let mut child = self.spawn();
-        let mut stdin = child.stdin.take().unwrap();
+    /// *NOTE*: it's expected that the instructions will terminate the command at some time,
+    /// otherwise this will wait indefinitely
+    pub fn spawn_and_send_stdin<I, A>(&mut self, commands: I) -> Output
+    where
+        I: IntoIterator<Item = A> + Send + 'static,
+        A: Into<StdInKeyCommand>,
+    {
+        use enigo::{Enigo, Key, KeyboardControllable};
+        let child = self.spawn();
 
-        // wait one tick to warm up
-        std::thread::sleep(SAFE_TICK_RATE);
-
-        // write all commands to stdin
-        for command in commands.into_iter().map(Into::into) {
-            let StdInCommand { command, wait } = command;
-            stdin.write_all(&command).unwrap_or_else(||panic!("Failed to write {} to stdin", String::from_utf8_lossy(&command)));
-            std::thread::sleep(wait);
-        }
+        std::thread::spawn(move || {
+            std::thread::sleep(SAFE_TUI_WARMUP);
+            let mut enigo = Enigo::new();
+            for cmd in commands.into_iter().map(Into::into) {
+                let StdInKeyCommand { key, wait } = cmd;
+                enigo.key_click(Key::Layout(key));
+                std::thread::sleep(wait)
+            }
+        });
 
         let output = child.wait_with_output().unwrap();
         Output(self.expect_success(output))
@@ -564,8 +582,8 @@ pub struct Output(pub process::Output);
 
 impl fmt::Display for Output {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "stdout: {}", String::from_utf8_lossy(&output.stdout))?;
-        write!("stderr: {}", String::from_utf8_lossy(&output.stderr))
+        writeln!(f, "stdout: {}", String::from_utf8_lossy(&self.0.stdout))?;
+        write!(f, "stderr: {}", String::from_utf8_lossy(&self.0.stderr))
     }
 }
 
