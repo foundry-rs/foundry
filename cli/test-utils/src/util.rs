@@ -1,26 +1,18 @@
 use ethers_solc::{
+    ArtifactOutput,
     cache::SolFilesCache,
-    project_util::{copy_dir, TempProject},
-    ArtifactOutput, ConfigurableArtifacts, PathStyle, ProjectPathsConfig,
+    ConfigurableArtifacts, PathStyle, project_util::{copy_dir, TempProject}, ProjectPathsConfig,
 };
 use foundry_config::Config;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
-use std::{
-    collections::HashMap,
-    env,
-    ffi::{OsStr, OsString},
-    fmt::Display,
-    fs,
-    fs::File,
-    io::{BufWriter, Write},
-    path::{Path, PathBuf},
-    process::{self, Command},
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
-};
+use std::{collections::HashMap, env, ffi::{OsStr, OsString}, fmt, fmt::Display, fs, fs::File, io::{BufWriter, Write}, path::{Path, PathBuf}, process::{self, Command}, sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+}};
+use std::process::Child;
+use std::time::Duration;
+use crate::stdin::{SAFE_TICK_RATE, StdInCommand};
 
 static CURRENT_DIR_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
@@ -426,9 +418,36 @@ impl TestCommand {
 
     /// Runs the command and prints its output
     pub fn print_output(&mut self) {
-        let output = self.cmd.output().unwrap();
-        println!("stdout: {}", String::from_utf8_lossy(&output.stdout));
-        println!("stderr: {}", String::from_utf8_lossy(&output.stderr));
+        let output = Output(self.cmd.output().unwrap());
+        println!("{}", output)
+    }
+
+    /// Spawns the command and returns the [Child] of the process
+    pub fn spawn(&mut self) -> Child {
+        self.cmd.spawn().unwrap()
+    }
+
+    /// Spawns the command and sends all commands to the process's stdin
+    ///
+    /// *NOTE*: it's expected that the instructions will terminate the command at some time, otherwise this will wait indefinitely
+    pub fn spawn_and_send_stdin<I, A>(&mut self, commands: I) -> Output  where
+        I: IntoIterator<Item = A>,
+        A: Into<StdInCommand>,  {
+        let mut child = self.spawn();
+        let mut stdin = child.stdin.take().unwrap();
+
+        // wait one tick to warm up
+        std::thread::sleep(SAFE_TICK_RATE);
+
+        // write all commands to stdin
+        for command in commands.into_iter().map(Into::into) {
+            let StdInCommand { command, wait } = command;
+            stdin.write_all(&command).unwrap_or_else(||panic!("Failed to write {} to stdin", String::from_utf8_lossy(&command)));
+            std::thread::sleep(wait);
+        }
+
+        let output = child.wait_with_output().unwrap();
+        Output(self.expect_success(output))
     }
 
     /// Runs the command and asserts that it resulted in an error exit code.
@@ -537,6 +556,16 @@ impl TestCommand {
             );
         }
         out
+    }
+}
+
+/// new type wrapper type for [process::Output]
+pub struct Output(pub process::Output);
+
+impl fmt::Display for Output {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "stdout: {}", String::from_utf8_lossy(&output.stdout))?;
+        write!("stderr: {}", String::from_utf8_lossy(&output.stderr))
     }
 }
 

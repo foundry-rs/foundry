@@ -4,11 +4,6 @@ use foundry_cli_test_utils::{
     util::{TestCommand, TestProject},
 };
 
-// import forge utils as mod
-#[allow(unused)]
-#[path = "../../src/utils.rs"]
-mod forge_utils;
-
 // tests that direct import paths are handled correctly
 forgetest!(can_fuzz_array_params, |prj: TestProject, mut cmd: TestCommand| {
     prj.insert_ds_test();

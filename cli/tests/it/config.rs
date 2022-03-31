@@ -1,4 +1,5 @@
 //! Contains various tests for checking forge commands related to config values
+use super::forge_utils;
 use ethers::{
     prelude::artifacts::YulDetails,
     types::{Address, U256},
@@ -14,11 +15,6 @@ use foundry_config::{
     Config, OptimizerDetails, SolcReq,
 };
 use std::{fs, path::PathBuf, str::FromStr};
-
-// import forge utils as mod
-#[allow(unused)]
-#[path = "../../src/utils.rs"]
-mod forge_utils;
 
 // tests all config values that are in use
 forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {

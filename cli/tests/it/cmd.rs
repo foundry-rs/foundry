@@ -1,4 +1,5 @@
 //! Contains various tests for checking forge's commands
+use super::forge_utils;
 use ansi_term::Colour;
 use ethers::solc::{artifacts::Metadata, ConfigurableContractArtifact};
 use foundry_cli_test_utils::{
@@ -8,11 +9,6 @@ use foundry_cli_test_utils::{
 };
 use foundry_config::{parse_with_profile, BasicConfig, Config, SolidityErrorCode};
 use std::{env, fs};
-
-// import forge utils as mod
-#[allow(unused)]
-#[path = "../../src/utils.rs"]
-mod forge_utils;
 
 // tests `--help` is printed to std out
 forgetest!(print_help, |_: TestProject, mut cmd: TestCommand| {
