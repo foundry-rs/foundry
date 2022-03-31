@@ -1,4 +1,4 @@
-use crate::stdin::{StdInKeyCommand};
+use crate::stdin::StdInKeyCommand;
 use ethers_solc::{
     cache::SolFilesCache,
     project_util::{copy_dir, TempProject},
