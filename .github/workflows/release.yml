@@ -77,26 +77,32 @@ jobs:
           # The platform is a generic platform name
           # The target is used by Cargo
           # The arch is either 386, arm64 or amd64
+          # The svm target platform to use for the binary https://github.com/roynalnaruto/svm-rs/blob/84cbe0ac705becabdc13168bae28a45ad2299749/svm-builds/build.rs#L4-L24
           - os: ubuntu-latest
             platform: linux
             target: x86_64-unknown-linux-gnu
             arch: amd64
+            svm_target_platform: linux-amd64
           - os: ubuntu-latest
             platform: linux
             target: aarch64-unknown-linux-gnu
             arch: arm64
+            svm_target_platform: linux-aarch64
           - os: macos-latest
             platform: darwin
             target: x86_64-apple-darwin
             arch: amd64
+            svm_target_platform: macosx-amd64
           - os: macos-latest
             platform: darwin
             target: aarch64-apple-darwin
             arch: arm64
+            svm_target_platform: macosx-aarch64
           #- os: windows-latest
           #  platform: win32
           #  target: x86_64-pc-windows-msvc
           #  arch: amd64
+          #  svm_target_platform: macosx-amd64
 
     steps:
       - name: Checkout sources
@@ -129,6 +135,8 @@ jobs:
 
       - name: Build binaries
         uses: actions-rs/cargo@v1
+        env:
+          SVM_TARGET_PLATFORM: ${{ matrix.job.svm_target_platform }}
         with:
           command: build
           args: --release --bins --target ${{ matrix.job.target }}
