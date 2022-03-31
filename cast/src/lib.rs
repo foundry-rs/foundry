@@ -7,19 +7,18 @@ use ethers_core::{
         token::{LenientTokenizer, Tokenizer},
         Abi, AbiParser, Token,
     },
-    types::{transaction::eip2718::TypedTransaction, Chain, *},
+    types::{Chain, *},
     utils::{self, get_contract_address, keccak256, parse_units},
 };
 
 use ethers_etherscan::Client;
 use ethers_providers::{Middleware, PendingTransaction};
 use eyre::{Context, Result};
-use futures::future::join_all;
 use rustc_hex::{FromHexIter, ToHex};
 use std::{path::PathBuf, str::FromStr};
 pub use tx::TxBuilder;
 
-use foundry_utils::{encode_args, get_func, get_func_etherscan, to_table};
+use foundry_utils::{encode_args, to_table};
 
 mod tx;
 
@@ -53,32 +52,32 @@ where
     /// Makes a read-only call to the specified address
     ///
     /// ```no_run
-    ///
-    /// use cast::Cast;
+    /// 
+    /// use cast::{Cast, TxBuilder};
     /// use ethers_core::types::{Address, Chain};
     /// use ethers_providers::{Provider, Http};
     /// use std::{str::FromStr, convert::TryFrom};
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
-    /// let cast = Cast::new(provider);
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let sig = "function greeting(uint256 i) public returns (string)";
     /// let args = vec!["5".to_owned()];
-    /// let data = cast.call(Address::zero(), to, (sig, args), Chain::Mainnet, None, None).await?;
+    /// let mut builder = TxBuilder::new(&provider, Address::zero(), to, Chain::Mainnet, false).await?;
+    /// builder
+    ///     .set_args(&provider, sig, args).await?;
+    /// let cast = Cast::new(provider);
+    /// let data = cast.call(builder, None).await?;
     /// println!("{}", data);
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn call(
-        &self,
-        builder: TxBuilder,
-        block: Option<BlockId>,
-    ) -> Result<String> {
-        let res = self.provider.call(&builder.tx, block).await?;
+    pub async fn call(&self, builder: TxBuilder, block: Option<BlockId>) -> Result<String> {
+        let (tx, func) = builder.build();
+        let res = self.provider.call(&tx, block).await?;
 
         // decode args into tokens
-        let func = builder.func.expect("no valid function signature was provided.");
+        let func = func.expect("no valid function signature was provided.");
         let decoded = func.decode_output(res.as_ref()).wrap_err(
             "could not decode output. did you specify the wrong function return data type perhaps?",
         )?;
@@ -109,19 +108,22 @@ where
     /// Generates an access list for the specified transaction
     ///
     /// ```no_run
-    ///
-    /// use cast::Cast;
+    /// 
+    /// use cast::{Cast, TxBuilder};
     /// use ethers_core::types::{Address, Chain};
     /// use ethers_providers::{Provider, Http};
     /// use std::{str::FromStr, convert::TryFrom};
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
-    /// let cast = Cast::new(provider);
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let sig = "greeting(uint256)(string)";
     /// let args = vec!["5".to_owned()];
-    /// let access_list = cast.access_list(Address::zero(), to, (sig, args), Chain::Mainnet, None, false).await?;
+    /// let mut builder = TxBuilder::new(&provider, Address::zero(), to, Chain::Mainnet, false).await?;
+    /// builder
+    ///     .set_args(&provider, sig, args).await?;
+    /// let cast = Cast::new(provider);
+    /// let access_list = cast.access_list(&builder, None, false).await?;
     /// println!("{}", access_list);
     /// # Ok(())
     /// # }
@@ -132,7 +134,8 @@ where
         block: Option<BlockId>,
         to_json: bool,
     ) -> Result<String> {
-        let access_list = self.provider.create_access_list(&builder.tx, block).await?;
+        let (tx, _) = builder.peek();
+        let access_list = self.provider.create_access_list(tx, block).await?;
         let res = if to_json {
             serde_json::to_string(&access_list)?
         } else {
@@ -164,14 +167,13 @@ where
     /// Sends a transaction to the specified address
     ///
     /// ```no_run
-    /// use cast::Cast;
+    /// use cast::{Cast, TxBuilder};
     /// use ethers_core::types::{Address, Chain, U256};
     /// use ethers_providers::{Provider, Http};
     /// use std::{str::FromStr, convert::TryFrom};
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
-    /// let cast = Cast::new(provider);
     /// let from = "vitalik.eth";
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let sig = "greet(string)()";
@@ -179,17 +181,22 @@ where
     /// let gas = U256::from_str("200000").unwrap();
     /// let value = U256::from_str("1").unwrap();
     /// let nonce = U256::from_str("1").unwrap();
-    /// let data = cast.send(from, to, Some((sig, args)), Some(gas), None, Some(value), Some(nonce), Chain::Mainnet, None, false).await?;
+    /// let mut builder = TxBuilder::new(&provider, Address::zero(), to, Chain::Mainnet, false).await?;
+    /// builder
+    ///     .set_args(&provider, sig, args).await?
+    ///     .set_gas(gas)
+    ///     .set_value(value)
+    ///     .set_nonce(nonce);
+    /// let cast = Cast::new(provider);
+    /// let data = cast.send(builder).await?;
     /// println!("{}", *data);
     /// # Ok(())
     /// # }
     /// ```
     #[allow(clippy::too_many_arguments)]
-    pub async fn send(
-        &self,
-        builder: TxBuilder,
-    ) -> Result<PendingTransaction<'_, M::Provider>> {
-        let res = self.provider.send_transaction(builder.tx, None).await?;
+    pub async fn send(&self, builder: TxBuilder) -> Result<PendingTransaction<'_, M::Provider>> {
+        let (tx, _) = builder.build();
+        let res = self.provider.send_transaction(tx, None).await?;
 
         Ok::<_, eyre::Error>(res)
     }
@@ -255,8 +262,9 @@ where
             .etherscan_api_key(etherscan_api_key)
             .args(&self.provider, args)
             .await?;
+        let (tx, _) = builder.build();
 
-        let res = self.provider.estimate_gas(&builder.tx).await?;
+        let res = self.provider.estimate_gas(&tx).await?;
 
         Ok::<_, eyre::Error>(res)
     }
@@ -1176,7 +1184,7 @@ impl SimpleCast {
         let code = meta.source_code();
 
         if code.is_empty() {
-            return Err(eyre::eyre!("unverified contract"));
+            return Err(eyre::eyre!("unverified contract"))
         }
 
         Ok(code)

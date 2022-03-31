@@ -160,7 +160,7 @@ async fn main() -> eyre::Result<()> {
                 false,
             )
             .await?;
-            builder.set_args(&provider, &sig, args);
+            builder.set_args(&provider, &sig, args).await?;
 
             println!("{}", Cast::new(provider).access_list(&builder, block, to_json).await?);
         }

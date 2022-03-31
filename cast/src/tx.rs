@@ -14,15 +14,35 @@ use futures::future::join_all;
 use crate::strip_0x;
 
 pub struct TxBuilder {
-    pub from: H160,
-    pub to: H160,
-    pub chain: Chain,
-    pub tx: TypedTransaction,
-    pub func: Option<Function>,
-    pub etherscan_api_key: Option<String>,
+    to: H160,
+    chain: Chain,
+    tx: TypedTransaction,
+    func: Option<Function>,
+    etherscan_api_key: Option<String>,
 }
 
+///
+/// Transaction builder
+/// ```
+/// async fn foo() -> eyre::Result<()> {
+///   use ethers_core::types::{Chain, U256};
+///   use cast::{TxBuilder};
+///   let provider = ethers_providers::test_provider::MAINNET.provider();
+///   let mut builder = TxBuilder::new(&provider, "a.eth", "b.eth", Chain::Mainnet, false).await?;
+///   builder
+///       .gas(Some(U256::from(1)));
+///   let (tx, _) = builder.build();
+///   Ok(())
+/// }
+/// ```
 impl TxBuilder {
+    ///
+    /// Create a new TxBuilder
+    /// `provider` - provider to use
+    /// `from` - 'from' field. Could be an ENS name
+    /// `to` - `to`. Could be a ENS
+    /// `chain` - chain to construct the tx for
+    /// `legacy` - use type 1 transaction
     pub async fn new<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
         provider: &M,
         from: F,
@@ -39,86 +59,112 @@ impl TxBuilder {
             Eip1559TransactionRequest::new().from(from_addr).to(to_addr).into()
         };
 
-        Ok(TxBuilder {
-            from: from_addr,
-            to: to_addr,
-            chain,
-            tx,
-            func: None,
-            etherscan_api_key: None,
-        })
+        Ok(TxBuilder { to: to_addr, chain, tx, func: None, etherscan_api_key: None })
     }
-    pub fn set_gas<'a>(&'a mut self, v: U256) -> &'a mut TxBuilder {
+    ///
+    /// Set gas for tx
+    pub fn set_gas(&mut self, v: U256) -> &mut TxBuilder {
         self.tx.set_gas(v);
         self
     }
-    pub fn gas<'a>(&'a mut self, v: Option<U256>) -> &'a mut TxBuilder {
+
+    ///
+    /// Set gas for tx, if `v` is not None
+    pub fn gas(&mut self, v: Option<U256>) -> &mut TxBuilder {
         match v {
             Some(x) => self.set_gas(x),
             None => self,
         }
     }
 
-    pub fn set_gas_price<'a>(&'a mut self, v: U256) -> &'a mut TxBuilder {
+    ///
+    /// Set gas price
+    pub fn set_gas_price(&mut self, v: U256) -> &mut TxBuilder {
         self.tx.set_gas_price(v);
         self
     }
 
-    pub fn gas_price<'a>(&'a mut self, v: Option<U256>) -> &'a mut TxBuilder {
+    ///
+    /// Set gas price, if `v` is not None
+    pub fn gas_price(&mut self, v: Option<U256>) -> &mut TxBuilder {
         match v {
             Some(x) => self.set_gas_price(x),
             None => self,
         }
     }
 
-    pub fn set_value<'a>(&'a mut self, v: U256) -> &'a mut TxBuilder {
+    ///
+    /// Set value
+    pub fn set_value(&mut self, v: U256) -> &mut TxBuilder {
         self.tx.set_value(v);
         self
     }
-    pub fn value<'a>(&'a mut self, v: Option<U256>) -> &'a mut TxBuilder {
+
+    ///
+    /// Set value, if `v` is not None
+    pub fn value(&mut self, v: Option<U256>) -> &mut TxBuilder {
         match v {
             Some(x) => self.set_value(x),
             None => self,
         }
     }
-    pub fn set_nonce<'a>(&'a mut self, v: U256) -> &'a mut TxBuilder {
+
+    ///
+    /// Set nonce
+    pub fn set_nonce(&mut self, v: U256) -> &mut TxBuilder {
         self.tx.set_nonce(v);
         self
     }
-    pub fn nonce<'a>(&'a mut self, v: Option<U256>) -> &'a mut TxBuilder {
+
+    ///
+    /// Set nonce, if `v` is not None
+    pub fn nonce(&mut self, v: Option<U256>) -> &mut TxBuilder {
         match v {
             Some(x) => self.set_nonce(x),
             None => self,
         }
     }
 
-    pub fn set_etherscan_api_key<'a>(&'a mut self, v: String) -> &'a mut TxBuilder {
+    ///
+    /// Set etherscan API key. Used to look up function signature buy name
+    pub fn set_etherscan_api_key(&mut self, v: String) -> &mut TxBuilder {
         self.etherscan_api_key = Some(v);
         self
     }
-    pub fn etherscan_api_key<'a>(&'a mut self, v: Option<String>) -> &'a mut TxBuilder {
+
+    ///
+    /// Set etherscan API key, if `v` is not None
+    pub fn etherscan_api_key(&mut self, v: Option<String>) -> &mut TxBuilder {
         match v {
             Some(x) => self.set_etherscan_api_key(x),
             None => self,
         }
     }
 
-    pub async fn set_args<'a, M: Middleware>(
-        &'a mut self,
+    ///
+    /// Set function arguments
+    /// `sig` can be:
+    ///  * a fragment (`do(uint32,string)`)
+    ///  * selector + abi-encoded calldata
+    ///    (`0xcdba2fd40000000000000000000000000000000000000000000000000000000000007a69`)
+    ///  * only function name (`do`) - in this case, etherscan lookup is performed on `tx.to`'s
+    ///    contract
+    pub async fn set_args<M: Middleware>(
+        &mut self,
         provider: &M,
         sig: &str,
         args: Vec<String>,
-    ) -> Result<&'a mut TxBuilder> {
+    ) -> Result<&mut TxBuilder> {
         let args = resolve_name_args(&args, provider).await;
 
         let func = if sig.contains('(') {
-            get_func(&sig)?
+            get_func(sig)?
         } else if sig.starts_with("0x") {
             // if only calldata is provided, returning a dummy function
             get_func("x()")?
         } else {
             get_func_etherscan(
-                &sig,
+                sig,
                 self.to,
                 &args,
                 self.chain,
@@ -128,7 +174,7 @@ impl TxBuilder {
         };
 
         let data = if sig.starts_with("0x") {
-            hex::decode(strip_0x(&sig))?
+            hex::decode(strip_0x(sig))?
         } else {
             encode_args(&func, &args)?
         };
@@ -137,15 +183,30 @@ impl TxBuilder {
         self.func = Some(func);
         Ok(self)
     }
-    pub async fn args<'a, M: Middleware>(
-        &'a mut self,
+
+    ///
+    /// Set function arguments, if `value` is not None
+    pub async fn args<M: Middleware>(
+        &mut self,
         provider: &M,
         value: Option<(&str, Vec<String>)>,
-    ) -> Result<&'a mut TxBuilder> {
+    ) -> Result<&mut TxBuilder> {
         match value {
             Some((sig, args)) => self.set_args(provider, sig, args).await,
             None => Ok(self),
         }
+    }
+
+    ///
+    /// Consuming build: returns typed transaction and optional function call
+    pub fn build(self) -> (TypedTransaction, Option<Function>) {
+        (self.tx, self.func)
+    }
+
+    ///
+    /// Non-consuming build: peek into the tx content
+    pub fn peek(&self) -> (&TypedTransaction, &Option<Function>) {
+        (&self.tx, &self.func)
     }
 }
 
@@ -155,7 +216,7 @@ async fn resolve_ens<M: Middleware, T: Into<NameOrAddress>>(provider: &M, addr: 
         NameOrAddress::Address(addr) => Ok(addr),
     }
     .map_err(|x| eyre!("Failed to resolve ENS name: {}", x))?;
-    return Ok(from_addr);
+    Ok(from_addr)
 }
 
 async fn resolve_name_args<M: Middleware>(args: &[String], provider: &M) -> Vec<String> {
@@ -171,4 +232,129 @@ async fn resolve_name_args<M: Middleware>(args: &[String], provider: &M) -> Vec<
         }
     }))
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::TxBuilder;
+
+    use ethers_core::types::{
+        transaction::eip2718::TypedTransaction, Address, Chain, NameOrAddress, H160, U256,
+    };
+    use ethers_providers::{JsonRpcClient, Middleware, ProviderError};
+
+    use serde::{de::DeserializeOwned, Serialize};
+
+    use async_trait::async_trait;
+
+    use std::str::FromStr;
+
+    const ADDR_1: &str = "0000000000000000000000000000000000000001";
+    const ADDR_2: &str = "0000000000000000000000000000000000000002";
+
+    #[derive(Debug)]
+    struct MyProvider {}
+
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+    impl JsonRpcClient for MyProvider {
+        type Error = ProviderError;
+
+        async fn request<T: Serialize + Send + Sync, R: DeserializeOwned>(
+            &self,
+            _method: &str,
+            _params: T,
+        ) -> Result<R, Self::Error> {
+            unreachable!("There is no `request`");
+        }
+    }
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+    impl Middleware for MyProvider {
+        type Error = ProviderError;
+        type Provider = MyProvider;
+        type Inner = MyProvider;
+
+        fn inner(&self) -> &Self::Inner {
+            &self
+        }
+
+        async fn resolve_name(&self, ens_name: &str) -> Result<Address, Self::Error> {
+            match ens_name {
+                "a.eth" => Ok(H160::from_str(ADDR_1).unwrap()),
+                "b.eth" => Ok(H160::from_str(ADDR_2).unwrap()),
+                _ => unreachable!("don't know how to resolve {}", ens_name),
+            }
+        }
+    }
+    #[tokio::test]
+    async fn builder_new_non_legacy() -> eyre::Result<()> {
+        let provider = MyProvider {};
+        let builder = TxBuilder::new(&provider, "a.eth", "b.eth", Chain::Mainnet, false).await?;
+        let (tx, args) = builder.build();
+        assert_eq!(*tx.from().unwrap(), H160::from_str(ADDR_1).unwrap());
+        assert_eq!(*tx.to().unwrap(), NameOrAddress::Address(H160::from_str(ADDR_2).unwrap()));
+        assert_eq!(args, None);
+
+        match tx {
+            TypedTransaction::Eip1559(_) => {}
+            _ => {
+                assert!(false, "Wrong tx type");
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn builder_new_legacy() -> eyre::Result<()> {
+        let provider = MyProvider {};
+        let builder = TxBuilder::new(&provider, "a.eth", "b.eth", Chain::Mainnet, true).await?;
+        // don't check anything other than the tx type - the rest is covered in the non-legacy case
+        let (tx, _) = builder.build();
+        match tx {
+            TypedTransaction::Legacy(_) => {}
+            _ => {
+                assert!(false, "Wrong tx type");
+            }
+        }
+        Ok(())
+    }
+
+    async fn a_builder() -> (MyProvider, TxBuilder) {
+        let provider = MyProvider {};
+        let builder =
+            TxBuilder::new(&provider, "a.eth", "b.eth", Chain::Mainnet, false).await.unwrap();
+        (provider, builder)
+    }
+
+    #[tokio::test]
+    async fn builder_fields() -> eyre::Result<()> {
+        let (_, mut builder) = a_builder().await;
+        builder.gas(Some(U256::from(12u32)));
+        builder.gas_price(Some(U256::from(34u32)));
+        builder.value(Some(U256::from(56u32)));
+        builder.nonce(Some(U256::from(78u32)));
+
+        builder.etherscan_api_key(Some(String::from("what a lovely day"))); // not testing for this :-/
+        let (tx, _) = builder.build();
+
+        assert_eq!(tx.gas().unwrap().as_u32(), 12);
+        assert_eq!(tx.gas_price().unwrap().as_u32(), 34);
+        assert_eq!(tx.value().unwrap().as_u32(), 56);
+        assert_eq!(tx.nonce().unwrap().as_u32(), 78);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn builder_args() -> eyre::Result<()> {
+        let (provider, mut builder) = a_builder().await;
+        builder.args(&provider, Some(("what_a_day(int)", vec![String::from("31337")]))).await?;
+        let (_, function_maybe) = builder.build();
+
+        assert_ne!(function_maybe, None);
+        let function = function_maybe.unwrap();
+        assert_eq!(function.name, String::from("what_a_day"));
+        // could test function.inputs() but that should be covered by utils's unit test
+        Ok(())
+    }
 }
