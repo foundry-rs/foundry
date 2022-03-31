@@ -9,13 +9,14 @@ use crate::{
 };
 use ansi_term::Colour;
 use clap::{AppSettings, Parser};
+pub use config::RunTestConfig;
 use filter::Filter;
 use forge::{
     decode::decode_console_logs,
     executor::opts::EvmOpts,
     gas_report::GasReport,
     trace::{identifier::LocalTraceIdentifier, CallTraceDecoder, TraceKind},
-    MultiContractRunner, MultiContractRunnerBuilder, SuiteResult, TestFilter, TestKind,
+    MultiContractRunner, MultiContractRunnerBuilder, SuiteResult, TestFilter, TestKind, TestResult,
 };
 use foundry_config::{figment::Figment, Config};
 use regex::Regex;
@@ -23,6 +24,7 @@ use std::{
     collections::BTreeMap, path::PathBuf, str::FromStr, sync::mpsc::channel, thread, time::Duration,
 };
 
+mod config;
 mod filter;
 
 // Loads project's figment and merges the build cli arguments into it
@@ -87,7 +89,82 @@ impl Cmd for TestArgs {
     type Output = TestOutcome;
 
     fn run(self) -> eyre::Result<Self::Output> {
-        custom_run(self, true)
+        self.run_with(Default::default())
+    }
+}
+
+impl TestArgs {
+    /// Returns the [Config] and the [EvmOpts] extracted from the config
+    ///
+    /// See also [foundry_config::impl_figment_convert!]
+    pub fn config(&self) -> (Config, EvmOpts) {
+        let figment: Figment = From::from(self);
+        let evm_opts = figment.extract::<EvmOpts>().expect("EvmOpts always subset");
+        let config = Config::from_provider(figment).sanitized();
+        (config, evm_opts)
+    }
+
+    /// Execute all tests
+    pub fn run_with(mut self, test_config: RunTestConfig) -> eyre::Result<TestOutcome> {
+        let RunTestConfig { include_fuzz_tests } = test_config;
+
+        let (config, mut evm_opts) = self.config();
+
+        let fuzzer = proptest::test_runner::TestRunner::new(proptest_config(&config));
+
+        // Set up the project
+        let project = config.project()?;
+        let output = crate::cmd::compile(&project, false, false)?;
+
+        // Determine print verbosity and executor verbosity
+        let verbosity = evm_opts.verbosity;
+        if self.gas_report && evm_opts.verbosity < 3 {
+            evm_opts.verbosity = 3;
+        }
+
+        // Prepare the test builder
+        let evm_spec = crate::utils::evm_spec(&config.evm_version);
+        let mut runner = MultiContractRunnerBuilder::default()
+            .fuzzer(fuzzer)
+            .initial_balance(evm_opts.initial_balance)
+            .evm_spec(evm_spec)
+            .sender(evm_opts.sender)
+            .with_fork(utils::get_fork(&evm_opts, &config.rpc_storage_caching))
+            .build(project.paths.root, output, evm_opts)?;
+
+        if self.debug.is_some() {
+          return self.run_debug(runner)
+        }
+
+        let TestArgs { filter, json, allow_failure, gas_report, .. } = self;
+
+        test(
+            runner,
+            verbosity,
+            filter,
+            json,
+            allow_failure,
+            include_fuzz_tests,
+            (gas_report, config.gas_reports),
+        )
+    }
+
+    /// Runs the debugger
+    ///
+    /// # Errors
+    ///
+    /// This will fail if the configured [Filter] does _not_ exactly one! test
+    fn run_debug(self, runner: MultiContractRunner) -> eyre::Result<TestOutcome> {
+        let test_count = runner.count_filtered_tests(&self.filter);
+        if test_count != 1 {
+            eyre::bail!(
+                    "{} tests matched your criteria, but exactly 1 test must match in order to run the debugger.\n
+                        \n
+                        Use --match-contract and --match-path to further limit the search.", test_count)
+        }
+
+
+        todo!()
     }
 }
 
@@ -170,7 +247,7 @@ impl TestOutcome {
                 println!();
                 println!("Failed tests:");
                 for (name, result) in self.failures() {
-                    short_test_result(name, result);
+                    print_short_test_result(name, result);
                 }
                 println!();
 
@@ -208,7 +285,8 @@ impl TestOutcome {
     }
 }
 
-fn short_test_result(name: &str, result: &forge::TestResult) {
+/// Computes the test result report and prints int to stdout.
+fn print_short_test_result(name: &str, result: &forge::TestResult) {
     let status = if result.success {
         Colour::Green.paint("[PASS]")
     } else {
@@ -359,7 +437,7 @@ fn test(
                 println!("Running {} {} for {}", tests.len(), term, contract_name);
             }
             for (name, result) in &mut tests {
-                short_test_result(name, result);
+                print_short_test_result(name, result);
 
                 // We only display logs at level 2 and above
                 if verbosity >= 2 {
@@ -435,5 +513,17 @@ fn test(
         let _ = handle.join();
 
         Ok(TestOutcome::new(results, allow_failure))
+    }
+}
+
+/// Returns the fuzzer config
+pub fn proptest_config(config: &Config) -> proptest::test_runner::Config {
+    // TODO: Add CLI Options to modify the persistence
+    proptest::test_runner::Config {
+        failure_persistence: None,
+        cases: config.fuzz_runs,
+        max_local_rejects: config.fuzz_max_local_rejects,
+        max_global_rejects: config.fuzz_max_global_rejects,
+        ..Default::default()
     }
 }
