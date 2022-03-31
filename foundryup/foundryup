@@ -128,6 +128,14 @@ main() {
     say "installed - $($FOUNDRY_BIN_DIR/forge --version)"
     say "installed - $($FOUNDRY_BIN_DIR/cast --version)"
     say "done"
+    
+    if [[ $(which forge) =~ "cargo" ]]; then
+      warn "it appears your system has already has forge installed via cargo. you may need to run 'rm $(which forge)' to allow foundryup to take precedence!"
+    fi
+    
+    if [[ $(which cast) =~ "cargo" ]]; then
+      warn "it appears your system has already has cast installed via cargo. you may need to run 'rm $(which cast)' to allow foundryup to take precedence!"
+    fi
   else
     need_cmd cargo
     FOUNDRYUP_BRANCH=${FOUNDRYUP_BRANCH-master}
