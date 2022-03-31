@@ -104,6 +104,7 @@ pub struct Test {
 }
 
 impl Test {
+    /// The gas consumed by this test
     pub fn gas_used(&self) -> u64 {
         self.result.kind.gas_used().gas()
     }
@@ -119,7 +120,8 @@ impl Test {
     }
 }
 
-/// Represents the bundled results of all tests
+/// Represents the bundled results of all tests and can be used to selectively ensure all tests are
+/// good
 pub struct TestOutcome {
     /// Whether failures are allowed
     pub allow_failure: bool,
@@ -158,6 +160,9 @@ impl TestOutcome {
     }
 
     /// Checks if there are any failures and failures are disallowed
+    ///
+    /// This is a no-op if `allow_failure` is `true` otherwise this ensures that all tests are ok
+    /// and exits the program otherwise.
     pub fn ensure_ok(&self) -> eyre::Result<()> {
         if !self.allow_failure {
             let failures = self.failures().count();
@@ -181,12 +186,14 @@ impl TestOutcome {
         Ok(())
     }
 
+    /// Returns the accumulated duration of all tests
     pub fn duration(&self) -> Duration {
         self.results
             .values()
             .fold(Duration::ZERO, |acc, SuiteResult { duration, .. }| acc + *duration)
     }
 
+    /// Returns a report of all test results depending on their status.
     pub fn summary(&self) -> String {
         let failed = self.failures().count();
         let result =

@@ -3,6 +3,7 @@ use forge::TestFilter;
 use regex::Regex;
 use std::str::FromStr;
 
+/// Contains all filter arguments that are used to select certain contracts/tests
 #[derive(Debug, Clone, Parser)]
 pub struct Filter {
     /// Only run test functions matching the specified pattern.
