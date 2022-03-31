@@ -9,6 +9,7 @@ pub use runner::{ContractRunner, SuiteResult, TestKind, TestKindGas, TestResult}
 mod multi_runner;
 pub use multi_runner::{MultiContractRunner, MultiContractRunnerBuilder};
 
+/// predicate trait used to select certain tests
 pub trait TestFilter {
     fn matches_test(&self, test_name: impl AsRef<str>) -> bool;
     fn matches_contract(&self, contract_name: impl AsRef<str>) -> bool;
