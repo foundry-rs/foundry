@@ -1,4 +1,4 @@
-use crate::stdin::{StdInKeyCommand, SAFE_TUI_WARMUP};
+use crate::stdin::{StdInKeyCommand};
 use ethers_solc::{
     cache::SolFilesCache,
     project_util::{copy_dir, TempProject},
@@ -446,18 +446,19 @@ impl TestCommand {
     ///
     /// *NOTE*: it's expected that the instructions will terminate the command at some time,
     /// otherwise this will wait indefinitely
-    pub fn spawn_and_send_stdin<I, A>(&mut self, commands: I) -> Output
+    pub fn spawn_and_send_stdin<I, A>(&mut self, _commands: I) -> Output
     where
         I: IntoIterator<Item = A> + Send + 'static,
         A: Into<StdInKeyCommand>,
     {
-        use enigo::{Enigo, Key, KeyboardControllable};
         let child = self.spawn();
 
+        #[cfg(feature = "tui-tests")]
         std::thread::spawn(move || {
-            std::thread::sleep(SAFE_TUI_WARMUP);
+            use enigo::{Enigo, Key, KeyboardControllable};
+            std::thread::sleep(crate::stdin::SAFE_TUI_WARMUP);
             let mut enigo = Enigo::new();
-            for cmd in commands.into_iter().map(Into::into) {
+            for cmd in _commands.into_iter().map(Into::into) {
                 let StdInKeyCommand { key, wait } = cmd;
                 enigo.key_click(Key::Layout(key));
                 std::thread::sleep(wait)

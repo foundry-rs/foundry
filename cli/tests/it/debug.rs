@@ -1,7 +1,7 @@
 //! Contains various tests for checking the debugger
 use commands::*;
 use foundry_cli_test_utils::{
-    forgetest, forgetest_ignore, forgetest_init,
+    forgetest_ignore,
     util::{TestCommand, TestProject},
 };
 
