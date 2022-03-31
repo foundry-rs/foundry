@@ -185,6 +185,11 @@ impl MultiContractRunner {
             .count()
     }
 
+    pub fn into_test_results(mut self) {
+
+        todo!()
+    }
+
     pub fn test(
         &mut self,
         filter: &(impl TestFilter + Send + Sync),

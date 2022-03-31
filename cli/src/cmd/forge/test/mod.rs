@@ -133,7 +133,7 @@ impl TestArgs {
             .build(project.paths.root, output, evm_opts)?;
 
         if self.debug.is_some() {
-          return self.run_debug(runner)
+            return self.run_debug(runner)
         }
 
         let TestArgs { filter, json, allow_failure, gas_report, .. } = self;
@@ -162,7 +162,6 @@ impl TestArgs {
                         \n
                         Use --match-contract and --match-path to further limit the search.", test_count)
         }
-
 
         todo!()
     }
