@@ -294,13 +294,15 @@ impl RunArgs {
                 } = post_link_input;
 
                 // if it's the target contract, grab the info
-                if extra.no_target_name && id.source == std::path::Path::new(&extra.target_fname) {
-                    if extra.matched {
-                        eyre::bail!("Multiple contracts in the target path. Please specify the contract name with `-t ContractName`")
+                if extra.no_target_name {
+                    if id.source == std::path::Path::new(&extra.target_fname) {
+                        if extra.matched {
+                            eyre::bail!("Multiple contracts in the target path. Please specify the contract name with `-t ContractName`")
+                        }
+                        *extra.dependencies = dependencies;
+                        *extra.contract = contract.clone();
+                        extra.matched = true;
                     }
-                    *extra.dependencies = dependencies;
-                    *extra.contract = contract.clone();
-                    extra.matched = true;
                 } else {
                     let split: Vec<&str> = extra.target_fname.split(':').collect();
                     let path = std::path::Path::new(split[0]);
