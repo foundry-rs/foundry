@@ -7,12 +7,35 @@ use ethers_core::{
     },
 };
 use serde::{Deserialize, Serialize};
+use foundry_evm::revm;
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Log {
     pub address: Address,
     pub topics: Vec<H256>,
     pub data: Bytes,
+}
+
+impl From<revm::Log> for Log {
+    fn from(log : revm::Log) -> Self {
+        let revm::Log { address, topics, data } = log;
+        Log {
+            address,
+            topics,
+            data: data.into()
+        }
+    }
+}
+
+impl From<Log> for revm::Log {
+    fn from(log : Log) -> Self {
+        let Log { address, topics, data } = log;
+        revm::Log {
+            address,
+            topics,
+            data: data.0
+        }
+    }
 }
 
 impl rlp::Encodable for Log {
