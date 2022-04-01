@@ -8,9 +8,9 @@ use ethers::{
     prelude::{
         Block, BlockNumber, Bytes, Transaction, TransactionReceipt, TxHash, H256, U256, U64,
     },
-    types::{BlockId},
+    types::BlockId,
 };
-use forge_node_core::eth::transaction::{TypedTransaction};
+use forge_node_core::eth::transaction::TypedTransaction;
 use foundry_evm::{
     executor::DatabaseRef,
     revm::{db::CacheDB, Database, Env, TransactTo},
@@ -122,7 +122,13 @@ impl Backend {
         }
     }
 
-    fn build_env(&self, _caller: Address, _transact_to: TransactTo, _data: Bytes, _value: U256) -> Env {
+    fn build_env(
+        &self,
+        _caller: Address,
+        _transact_to: TransactTo,
+        _data: Bytes,
+        _value: U256,
+    ) -> Env {
         let _env = self.env.read().clone();
         let _now = duration_since_unix_epoch().as_secs();
         todo!()
