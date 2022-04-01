@@ -3,7 +3,7 @@
 use ethers_core::{
     types::{
         transaction::eip2930::{AccessList, AccessListItem},
-        Address, Bytes, Signature, TxHash, H256, U256,
+        Address, Bytes, RecoveryMessage, Signature, SignatureError, TxHash, H256, U256,
     },
     utils::{
         keccak256, rlp,
@@ -131,38 +131,6 @@ impl EthTransactionRequest {
     }
 }
 
-/// Components of the transaction signature
-#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
-pub struct TransactionSignature {
-    /// V field of the signature
-    pub v: u8,
-    /// R field of the signature
-    pub r: U256,
-    /// S field of the signature
-    pub s: U256,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct TransactionRecoveryId(pub u64);
-
-impl TransactionRecoveryId {
-    pub fn standard(self) -> u8 {
-        if self.0 == 27 || self.0 == 28 || self.0 > 36 {
-            ((self.0 - 1) % 2) as u8
-        } else {
-            4
-        }
-    }
-
-    pub fn chain_id(self) -> Option<u64> {
-        if self.0 > 36 {
-            Some((self.0 - 35) / 2)
-        } else {
-            None
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TransactionKind {
     Call(Address),
@@ -257,6 +225,31 @@ impl TypedTransaction {
             TypedTransaction::EIP1559(t) => t.hash(),
         }
     }
+
+    /// Recovers the Ethereum address which was used to sign the transaction.
+    pub fn recover(transaction: &TypedTransaction) -> Result<Address, SignatureError> {
+        let mut sig = [0u8; 65];
+        let hash = match transaction {
+            TypedTransaction::Legacy(tx) => {
+                sig = tx.signature.into();
+                tx.hash()
+            }
+            TypedTransaction::EIP2930(tx) => {
+                sig[0..32].copy_from_slice(&tx.r[..]);
+                sig[32..64].copy_from_slice(&tx.s[..]);
+                sig[64] = tx.odd_y_parity as u8;
+                tx.hash()
+            }
+            TypedTransaction::EIP1559(tx) => {
+                sig[0..32].copy_from_slice(&tx.r[..]);
+                sig[32..64].copy_from_slice(&tx.s[..]);
+                sig[64] = tx.odd_y_parity as u8;
+                tx.hash()
+            }
+        };
+        let sig = Signature::try_from(&sig[..])?;
+        sig.recover(hash)
+    }
 }
 
 impl Decodable for TypedTransaction {
@@ -285,7 +278,7 @@ pub struct LegacyTransaction {
     pub kind: TransactionKind,
     pub value: U256,
     pub input: Bytes,
-    pub signature: TransactionSignature,
+    pub signature: Signature,
 }
 
 impl LegacyTransaction {
@@ -330,7 +323,7 @@ impl Decodable for LegacyTransaction {
             kind: rlp.val_at(3)?,
             value: rlp.val_at(4)?,
             input: rlp.val_at::<Vec<u8>>(5)?.into(),
-            signature: TransactionSignature { v, r, s },
+            signature: Signature { v, r, s },
         })
     }
 }
