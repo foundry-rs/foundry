@@ -1667,9 +1667,13 @@ name = "forge-node-core"
 version = "0.1.0"
 dependencies = [
  "ethers-core",
+ "foundry-evm",
+ "hash-db",
+ "hash256-std-hasher",
  "rand 0.8.5",
  "serde",
  "serde_json",
+ "triehash",
 ]
 
 [[package]]
@@ -2043,6 +2047,21 @@ dependencies = [
  "tokio",
  "tokio-util 0.6.9",
  "tracing",
+]
+
+[[package]]
+name = "hash-db"
+version = "0.15.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d23bd4e7b5eda0d0f3a307e8b381fdc8ba9000f26fbe912250c0a4cc3956364a"
+
+[[package]]
+name = "hash256-std-hasher"
+version = "0.15.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "92c171d55b98633f4ed3860808f004099b36c1cc29c42cfc53aa8591b21efcf2"
+dependencies = [
+ "crunchy",
 ]
 
 [[package]]
@@ -4763,6 +4782,16 @@ dependencies = [
  "primitive-types",
  "protobuf",
  "rusb",
+]
+
+[[package]]
+name = "triehash"
+version = "0.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1631b201eb031b563d2e85ca18ec8092508e262a3196ce9bd10a67ec87b9f5c"
+dependencies = [
+ "hash-db",
+ "rlp",
 ]
 
 [[package]]
