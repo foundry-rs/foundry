@@ -14,6 +14,9 @@ pub use executor::abi;
 /// Fuzzing wrapper for executors
 pub mod fuzz;
 
+/// utils for working with revm
+pub mod utils;
+
 // Re-exports
 pub use ethers::types::Address;
 pub use hashbrown::HashMap;
