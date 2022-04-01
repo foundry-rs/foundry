@@ -357,8 +357,8 @@ impl TypedTransaction {
     }
 
     /// Recovers the Ethereum address which was used to sign the transaction.
-    pub fn recover(transaction: &TypedTransaction) -> Result<Address, SignatureError> {
-        match transaction {
+    pub fn recover(&self) -> Result<Address, SignatureError> {
+        match self {
             TypedTransaction::Legacy(tx) => tx.recover(),
             TypedTransaction::EIP2930(tx) => tx.recover(),
             TypedTransaction::EIP1559(tx) => tx.recover(),
@@ -635,6 +635,8 @@ impl Decodable for EIP1559Transaction {
 pub struct PendingTransaction {
     /// The actual transaction
     pub transaction: TypedTransaction,
+    /// the recovered sender of this transaction
+    sender: Address,
     /// hash of `transaction`, so it can easily be reused with encoding and hashing agan
     hash: TxHash,
 }
@@ -642,8 +644,11 @@ pub struct PendingTransaction {
 // == impl PendingTransaction ==
 
 impl PendingTransaction {
-    pub fn new(transaction: TypedTransaction) -> Self {
-        Self { hash: transaction.hash(), transaction }
+
+    /// Creates a new pending transaction and tries to verify transaction and recover sender.
+    pub fn new(transaction: TypedTransaction) -> Result<Self, SignatureError> {
+        let sender = transaction.recover()?;
+        Ok(Self { hash: transaction.hash(), transaction, sender })
     }
 
     pub fn nonce(&self) -> &U256 {
@@ -652,6 +657,10 @@ impl PendingTransaction {
 
     pub fn hash(&self) -> &TxHash {
         &self.hash
+    }
+
+    pub fn sender(&self) -> &Address {
+        &self.sender
     }
 }
 

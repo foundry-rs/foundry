@@ -1,19 +1,19 @@
 //! In memory blockchain backend
 
 use crate::eth::{
-    backend::db::Db, error::BlockchainError, executor::Executor,
+    backend::{db::Db, duration_since_unix_epoch},
     pool::transactions::PoolTransaction,
 };
 use ethers::{
     prelude::{
         Block, BlockNumber, Bytes, Transaction, TransactionReceipt, TxHash, H256, U256, U64,
     },
-    types::{transaction::eip2930::AccessList, BlockId},
+    types::{BlockId},
 };
-use forge_node_core::eth::transaction::{PendingTransaction, TypedTransaction};
+use forge_node_core::eth::transaction::{TypedTransaction};
 use foundry_evm::{
     executor::DatabaseRef,
-    revm::{db::CacheDB, Database, Env, EVM},
+    revm::{db::CacheDB, Database, Env, TransactTo},
     Address,
 };
 use parking_lot::RwLock;
@@ -106,23 +106,50 @@ impl Backend {
     /// provide .
     ///
     /// TODO(mattsse): currently we're assuming transaction is valid, needs an additional validation
-    /// step
-    pub fn mine_block(&self, transactions: Vec<Arc<PoolTransaction>>) {}
+    /// step: gas limit, fee
+    pub fn mine_block(&self, _transactions: Vec<Arc<PoolTransaction>>) {}
 
-    fn execute_transactions(&self, transactions: Vec<Arc<PoolTransaction>>) {}
+    fn execute_transactions(&self, _transactions: Vec<Arc<PoolTransaction>>) {}
 
     fn execute_transaction(&self, transaction: Arc<PoolTransaction>) {
         match transaction.pending_transaction.transaction {
-            TypedTransaction::Legacy(ref tx) => {
-                let mut evm = EVM::new();
+            TypedTransaction::Legacy(ref _tx) => {
+                // let mut evm = EVM::new();
                 // TODO how to execute this
             }
-            TypedTransaction::EIP2930(ref tx) => {}
-            TypedTransaction::EIP1559(ref tx) => {}
+            TypedTransaction::EIP2930(ref _tx) => {}
+            TypedTransaction::EIP1559(ref _tx) => {}
         }
     }
 
-    fn build_env()
+    fn build_env(&self, _caller: Address, _transact_to: TransactTo, _data: Bytes, _value: U256) -> Env {
+        let _env = self.env.read().clone();
+        let _now = duration_since_unix_epoch().as_secs();
+        todo!()
+        // Env {
+        //     cfg: env.cfg.clone(),
+        //     block: BlockEnv {
+        //         number: self.blockchain.storage.read().best_number.into(),
+        //         coinbase: env.block.coinbase,
+        //         timestamp: now.into(),
+        //         difficulty: env.block.difficulty,
+        //         basefee: env.block.basefee,
+        //         gas_limit: env.block.gas_limit,
+        //     },
+        //     tx: TxEnv {
+        //         caller,
+        //         transact_to,
+        //         data,
+        //         chain_id: None,
+        //         nonce: None,
+        //         value,
+        //         gas_price: 0.into(),
+        //         gas_priority_fee: None,
+        //         gas_limit: self.gas_limit.as_u64(),
+        //         access_list: vec![]
+        //     },
+        // }
+    }
 
     /// The env data of the blockchain
     pub fn env(&self) -> &Arc<RwLock<Env>> {
@@ -142,50 +169,5 @@ impl Backend {
     pub fn gas_limit(&self) -> U256 {
         // TODO make this a separate value?
         self.env().read().block.gas_limit
-    }
-}
-
-impl Executor for Backend {
-    type Error = BlockchainError;
-
-    fn call(
-        source: Address,
-        target: Address,
-        input: Vec<u8>,
-        value: U256,
-        gas_limit: u64,
-        max_fee_per_gas: Option<U256>,
-        max_priority_fee_per_gas: Option<U256>,
-        nonce: Option<U256>,
-        access_list: AccessList,
-    ) -> Result<Bytes, Self::Error> {
-        todo!()
-    }
-
-    fn create(
-        source: Address,
-        init: Vec<u8>,
-        value: U256,
-        gas_limit: u64,
-        max_fee_per_gas: Option<U256>,
-        max_priority_fee_per_gas: Option<U256>,
-        nonce: Option<U256>,
-        access_list: AccessList,
-    ) -> Result<Address, Self::Error> {
-        todo!()
-    }
-
-    fn create2(
-        source: Address,
-        init: Vec<u8>,
-        salt: TxHash,
-        value: U256,
-        gas_limit: u64,
-        max_fee_per_gas: Option<U256>,
-        max_priority_fee_per_gas: Option<U256>,
-        nonce: Option<U256>,
-        access_list: AccessList,
-    ) -> Result<Address, Self::Error> {
-        unimplemented!()
     }
 }

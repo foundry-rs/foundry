@@ -4,7 +4,7 @@ use crate::eth::pool::{transactions::PoolTransaction, Pool};
 use ethers::prelude::TxHash;
 use futures::{channel::mpsc::Receiver, stream::Fuse, Stream};
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::{HashSet},
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},

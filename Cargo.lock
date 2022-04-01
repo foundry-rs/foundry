@@ -1644,6 +1644,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "axum",
+ "bytes",
  "chrono 0.4.19",
  "ethers",
  "forge-node-core",

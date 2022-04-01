@@ -1,8 +1,5 @@
 use ethers::types::{transaction::eip2930::AccessList, Address, Bytes, H256, U256};
-use foundry_evm::{
-    revm,
-    revm::{Database, DatabaseCommit, EVM},
-};
+
 
 /// Basic [revm](foundry_evm::revm) Executor abstraction
 pub trait Executor {

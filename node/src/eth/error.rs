@@ -1,6 +1,7 @@
 //! Aggregated error type for this module
 
 use crate::eth::pool::transactions::PoolTransaction;
+use ethers::types::SignatureError;
 
 pub(crate) type Result<T> = std::result::Result<T, BlockchainError>;
 
@@ -18,6 +19,8 @@ pub enum BlockchainError {
     EmptyRawTransactionData,
     #[error("Failed to decode signed transaction")]
     FailedToDecodeSignedTransaction,
+    #[error(transparent)]
+    SignatureError(#[from] SignatureError),
 }
 
 /// Errors that can occur in the transaction pool

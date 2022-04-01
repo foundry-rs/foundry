@@ -10,6 +10,8 @@ foundry-evm = { path = "../evm" }
 forge-node-core = { path = "node-core" }
 foundry-utils = { path = "../utils" }
 
+# evm support
+bytes = "1.1.0"
 ethers = { git = "https://github.com/gakonst/ethers-rs" }
 
 # axum related

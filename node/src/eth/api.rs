@@ -27,7 +27,9 @@ use forge_node_core::{
 };
 use std::sync::Arc;
 
-/// The entry point for executing eth api RPC call - The Eth RPC interface
+/// The entry point for executing eth api RPC call - The Eth RPC interface.
+///
+/// This type is cheap to clone and can be used concurrently
 #[derive(Clone)]
 pub struct EthApi {
     /// The transaction pool
@@ -263,7 +265,7 @@ impl EthApi {
         };
 
         let transaction = self.sign_request(&from, request)?;
-        let pending_transaction = PendingTransaction::new(transaction);
+        let pending_transaction = PendingTransaction::new(transaction)?;
 
         let prev_nonce = nonce.saturating_sub(U256::one());
         let requires = if on_chain_nonce < prev_nonce {
@@ -432,14 +434,14 @@ impl EthApi {
     /// Sets the reported block number
     ///
     /// Handler for ETH RPC call: `forge_setBlock`
-    pub async fn forge_set_block(&self, block_number: U256) -> Result<U256> {
+    pub async fn forge_set_block(&self, _block_number: U256) -> Result<U256> {
         todo!()
     }
 
     /// Sets the backend rpc url
     ///
     /// Handler for ETH RPC call: `forge_setRpcUrl`
-    pub async fn forge_set_rpc_url(&self, url: String) -> Result<()> {
+    pub async fn forge_set_rpc_url(&self, _url: String) -> Result<()> {
         todo!()
     }
 
