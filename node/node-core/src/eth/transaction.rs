@@ -329,7 +329,7 @@ impl Encodable for EIP1559TransactionRequest {
 }
 
 // TODO(mattsse): there's probably some redundancy with ethers-rs TypedTransaction
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TypedTransaction {
     /// Legacy transaction type
     Legacy(LegacyTransaction),
@@ -362,6 +362,24 @@ impl TypedTransaction {
             TypedTransaction::Legacy(tx) => tx.recover(),
             TypedTransaction::EIP2930(tx) => tx.recover(),
             TypedTransaction::EIP1559(tx) => tx.recover(),
+        }
+    }
+}
+
+impl Encodable for TypedTransaction {
+    fn rlp_append(&self, s: &mut RlpStream) {
+        fn enveloped<T: Encodable>(id: u8, v: &T, s: &mut RlpStream) {
+            let encoded = rlp::encode(v);
+            let mut out = vec![0; 1 + encoded.len()];
+            out[0] = id;
+            out[1..].copy_from_slice(&encoded);
+            out.rlp_append(s)
+        }
+
+        match self {
+            TypedTransaction::Legacy(tx) => tx.rlp_append(s),
+            TypedTransaction::EIP2930(tx) => enveloped(1, tx, s),
+            TypedTransaction::EIP1559(tx) => enveloped(2, tx, s),
         }
     }
 }
@@ -644,7 +662,6 @@ pub struct PendingTransaction {
 // == impl PendingTransaction ==
 
 impl PendingTransaction {
-
     /// Creates a new pending transaction and tries to verify transaction and recover sender.
     pub fn new(transaction: TypedTransaction) -> Result<Self, SignatureError> {
         let sender = transaction.recover()?;

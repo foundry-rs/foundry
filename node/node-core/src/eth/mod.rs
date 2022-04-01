@@ -4,7 +4,9 @@ use serde::{
     de::DeserializeOwned, ser::SerializeSeq, Deserialize, Deserializer, Serialize, Serializer,
 };
 
+pub mod block;
 pub mod transaction;
+pub mod trie;
 
 /// Represents ethereum JSON-RPC API
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
