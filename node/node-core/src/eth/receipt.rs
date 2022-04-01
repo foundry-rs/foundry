@@ -6,8 +6,8 @@ use ethers_core::{
         rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream},
     },
 };
-use serde::{Deserialize, Serialize};
 use foundry_evm::revm;
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Log {
@@ -17,24 +17,16 @@ pub struct Log {
 }
 
 impl From<revm::Log> for Log {
-    fn from(log : revm::Log) -> Self {
+    fn from(log: revm::Log) -> Self {
         let revm::Log { address, topics, data } = log;
-        Log {
-            address,
-            topics,
-            data: data.into()
-        }
+        Log { address, topics, data: data.into() }
     }
 }
 
 impl From<Log> for revm::Log {
-    fn from(log : Log) -> Self {
+    fn from(log: Log) -> Self {
         let Log { address, topics, data } = log;
-        revm::Log {
-            address,
-            topics,
-            data: data.0
-        }
+        revm::Log { address, topics, data: data.0 }
     }
 }
 
