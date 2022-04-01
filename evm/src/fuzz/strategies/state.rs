@@ -1,5 +1,5 @@
 use super::fuzz_param_from_state;
-use crate::executor::StateChangeset;
+use crate::{executor::StateChangeset, utils};
 use bytes::Bytes;
 use ethers::{
     abi::{Function, RawLog},
@@ -11,7 +11,6 @@ use revm::{
     opcode, spec_opcode_gas, SpecId,
 };
 use std::{cell::RefCell, collections::HashSet, io::Write, rc::Rc};
-use crate::utils;
 
 /// A set of arbitrary 32 byte data from the VM used to generate values for the strategy.
 ///
