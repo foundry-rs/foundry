@@ -1,5 +1,6 @@
 //! transaction related data
 
+use crate::eth::utils::enveloped;
 use ethers_core::{
     types::{
         transaction::eip2930::{AccessList, AccessListItem},
@@ -368,14 +369,6 @@ impl TypedTransaction {
 
 impl Encodable for TypedTransaction {
     fn rlp_append(&self, s: &mut RlpStream) {
-        fn enveloped<T: Encodable>(id: u8, v: &T, s: &mut RlpStream) {
-            let encoded = rlp::encode(v);
-            let mut out = vec![0; 1 + encoded.len()];
-            out[0] = id;
-            out[1..].copy_from_slice(&encoded);
-            out.rlp_append(s)
-        }
-
         match self {
             TypedTransaction::Legacy(tx) => tx.rlp_append(s),
             TypedTransaction::EIP2930(tx) => enveloped(1, tx, s),

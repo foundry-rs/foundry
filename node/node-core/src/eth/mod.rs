@@ -5,8 +5,10 @@ use serde::{
 };
 
 pub mod block;
+pub mod receipt;
 pub mod transaction;
 pub mod trie;
+pub mod utils;
 
 /// Represents ethereum JSON-RPC API
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]

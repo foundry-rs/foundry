@@ -19,7 +19,6 @@ pub struct Block {
 // == impl Block ==
 
 impl Block {
-    #[must_use]
     pub fn new(
         partial_header: PartialHeader,
         transactions: Vec<TypedTransaction>,
@@ -75,7 +74,6 @@ pub struct Header {
 // == impl Header ==
 
 impl Header {
-    #[must_use]
     pub fn new(partial_header: PartialHeader, ommers_hash: H256, transactions_root: H256) -> Self {
         Self {
             parent_hash: partial_header.parent_hash,
@@ -96,7 +94,6 @@ impl Header {
         }
     }
 
-    #[must_use]
     pub fn hash(&self) -> H256 {
         H256::from_slice(keccak256(&rlp::encode(self)).as_slice())
     }
