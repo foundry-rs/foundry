@@ -1,7 +1,5 @@
 use crate::{error::RpcError, eth::transaction::EthTransactionRequest};
-use ethers_core::types::{
-    transaction::eip2718::TypedTransaction, Address, BlockNumber, Transaction, TxHash, U256,
-};
+use ethers_core::types::{Address, BlockNumber, Transaction, TxHash, U256};
 use serde::{
     de::DeserializeOwned, ser::SerializeSeq, Deserialize, Deserializer, Serialize, Serializer,
 };

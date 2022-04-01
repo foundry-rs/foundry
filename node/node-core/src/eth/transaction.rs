@@ -3,7 +3,7 @@
 use ethers_core::{
     types::{
         transaction::eip2930::{AccessList, AccessListItem},
-        Address, Bytes, RecoveryMessage, Signature, SignatureError, TxHash, H256, U256,
+        Address, Bytes, Signature, SignatureError, TxHash, H256, U256,
     },
     utils::{
         keccak256, rlp,
@@ -174,6 +174,45 @@ pub struct EIP2930TransactionRequest {
     pub access_list: Vec<AccessListItem>,
 }
 
+impl EIP2930TransactionRequest {
+    pub fn hash(&self) -> H256 {
+        let encoded = rlp::encode(self);
+        let mut out = vec![0; 1 + encoded.len()];
+        out[0] = 1;
+        out[1..].copy_from_slice(&encoded);
+        H256::from_slice(keccak256(&out).as_slice())
+    }
+}
+
+impl From<EIP2930Transaction> for EIP2930TransactionRequest {
+    fn from(tx: EIP2930Transaction) -> Self {
+        Self {
+            chain_id: tx.chain_id,
+            nonce: tx.nonce,
+            gas_price: tx.gas_price,
+            gas_limit: tx.gas_limit,
+            kind: tx.kind,
+            value: tx.value,
+            input: tx.input,
+            access_list: tx.access_list.0,
+        }
+    }
+}
+
+impl Encodable for EIP2930TransactionRequest {
+    fn rlp_append(&self, s: &mut RlpStream) {
+        s.begin_list(8);
+        s.append(&self.chain_id);
+        s.append(&self.nonce);
+        s.append(&self.gas_price);
+        s.append(&self.gas_limit);
+        s.append(&self.kind);
+        s.append(&self.value);
+        s.append(&self.input.as_ref());
+        s.append_list(&self.access_list);
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LegacyTransactionRequest {
     pub nonce: U256,
@@ -183,6 +222,54 @@ pub struct LegacyTransactionRequest {
     pub value: U256,
     pub input: Bytes,
     pub chain_id: Option<u64>,
+}
+
+// == impl LegacyTransactionRequest ==
+
+impl LegacyTransactionRequest {
+    pub fn hash(&self) -> H256 {
+        H256::from_slice(keccak256(&rlp::encode(self)).as_slice())
+    }
+}
+
+impl From<LegacyTransaction> for LegacyTransactionRequest {
+    fn from(tx: LegacyTransaction) -> Self {
+        let chain_id = tx.chain_id();
+        Self {
+            nonce: tx.nonce,
+            gas_price: tx.gas_price,
+            gas_limit: tx.gas_limit,
+            kind: tx.kind,
+            value: tx.value,
+            input: tx.input,
+            chain_id,
+        }
+    }
+}
+
+impl Encodable for LegacyTransactionRequest {
+    fn rlp_append(&self, s: &mut RlpStream) {
+        if let Some(chain_id) = self.chain_id {
+            s.begin_list(9);
+            s.append(&self.nonce);
+            s.append(&self.gas_price);
+            s.append(&self.gas_limit);
+            s.append(&self.kind);
+            s.append(&self.value);
+            s.append(&self.input.as_ref());
+            s.append(&chain_id);
+            s.append(&0_u8);
+            s.append(&0_u8);
+        } else {
+            s.begin_list(6);
+            s.append(&self.nonce);
+            s.append(&self.gas_price);
+            s.append(&self.gas_limit);
+            s.append(&self.kind);
+            s.append(&self.value);
+            s.append(&self.input.as_ref());
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -196,6 +283,49 @@ pub struct EIP1559TransactionRequest {
     pub value: U256,
     pub input: Bytes,
     pub access_list: Vec<AccessListItem>,
+}
+
+// == impl EIP1559TransactionRequest ==
+
+impl EIP1559TransactionRequest {
+    pub fn hash(&self) -> H256 {
+        let encoded = rlp::encode(self);
+        let mut out = vec![0; 1 + encoded.len()];
+        out[0] = 2;
+        out[1..].copy_from_slice(&encoded);
+        H256::from_slice(keccak256(&out).as_slice())
+    }
+}
+
+impl From<EIP1559Transaction> for EIP1559TransactionRequest {
+    fn from(t: EIP1559Transaction) -> Self {
+        Self {
+            chain_id: t.chain_id,
+            nonce: t.nonce,
+            max_priority_fee_per_gas: t.max_priority_fee_per_gas,
+            max_fee_per_gas: t.max_fee_per_gas,
+            gas_limit: t.gas_limit,
+            kind: t.kind,
+            value: t.value,
+            input: t.input,
+            access_list: t.access_list.0,
+        }
+    }
+}
+
+impl Encodable for EIP1559TransactionRequest {
+    fn rlp_append(&self, s: &mut RlpStream) {
+        s.begin_list(9);
+        s.append(&self.chain_id);
+        s.append(&self.nonce);
+        s.append(&self.max_priority_fee_per_gas);
+        s.append(&self.max_fee_per_gas);
+        s.append(&self.gas_limit);
+        s.append(&self.kind);
+        s.append(&self.value);
+        s.append(&self.input.as_ref());
+        s.append_list(&self.access_list);
+    }
 }
 
 // TODO(mattsse): there's probably some redundancy with ethers-rs TypedTransaction
@@ -228,27 +358,11 @@ impl TypedTransaction {
 
     /// Recovers the Ethereum address which was used to sign the transaction.
     pub fn recover(transaction: &TypedTransaction) -> Result<Address, SignatureError> {
-        let mut sig = [0u8; 65];
-        let hash = match transaction {
-            TypedTransaction::Legacy(tx) => {
-                sig = tx.signature.into();
-                tx.hash()
-            }
-            TypedTransaction::EIP2930(tx) => {
-                sig[0..32].copy_from_slice(&tx.r[..]);
-                sig[32..64].copy_from_slice(&tx.s[..]);
-                sig[64] = tx.odd_y_parity as u8;
-                tx.hash()
-            }
-            TypedTransaction::EIP1559(tx) => {
-                sig[0..32].copy_from_slice(&tx.r[..]);
-                sig[32..64].copy_from_slice(&tx.s[..]);
-                sig[64] = tx.odd_y_parity as u8;
-                tx.hash()
-            }
-        };
-        let sig = Signature::try_from(&sig[..])?;
-        sig.recover(hash)
+        match transaction {
+            TypedTransaction::Legacy(tx) => tx.recover(),
+            TypedTransaction::EIP2930(tx) => tx.recover(),
+            TypedTransaction::EIP1559(tx) => tx.recover(),
+        }
     }
 }
 
@@ -288,6 +402,19 @@ impl LegacyTransaction {
 
     pub fn hash(&self) -> H256 {
         H256::from_slice(keccak256(&rlp::encode(self)).as_slice())
+    }
+
+    /// Recovers the Ethereum address which was used to sign the transaction.
+    pub fn recover(&self) -> Result<Address, SignatureError> {
+        self.signature.recover(LegacyTransactionRequest::from(self.clone()).hash())
+    }
+
+    pub fn chain_id(&self) -> Option<u64> {
+        if self.signature.v > 36 {
+            Some((self.signature.v - 35) / 2)
+        } else {
+            None
+        }
     }
 }
 
@@ -354,6 +481,16 @@ impl EIP2930Transaction {
         out[0] = 1;
         out[1..].copy_from_slice(&encoded);
         H256::from_slice(keccak256(&out).as_slice())
+    }
+
+    /// Recovers the Ethereum address which was used to sign the transaction.
+    pub fn recover(&self) -> Result<Address, SignatureError> {
+        let mut sig = [0u8; 65];
+        sig[0..32].copy_from_slice(&self.r[..]);
+        sig[32..64].copy_from_slice(&self.s[..]);
+        sig[64] = self.odd_y_parity as u8;
+        let signature = Signature::try_from(&sig[..])?;
+        signature.recover(EIP2930TransactionRequest::from(self.clone()).hash())
     }
 }
 
@@ -432,6 +569,16 @@ impl EIP1559Transaction {
         out[1..].copy_from_slice(&encoded);
         H256::from_slice(keccak256(&out).as_slice())
     }
+
+    /// Recovers the Ethereum address which was used to sign the transaction.
+    pub fn recover(&self) -> Result<Address, SignatureError> {
+        let mut sig = [0u8; 65];
+        sig[0..32].copy_from_slice(&self.r[..]);
+        sig[32..64].copy_from_slice(&self.s[..]);
+        sig[64] = self.odd_y_parity as u8;
+        let signature = Signature::try_from(&sig[..])?;
+        signature.recover(EIP1559TransactionRequest::from(self.clone()).hash())
+    }
 }
 
 impl Encodable for EIP1559Transaction {
@@ -505,5 +652,36 @@ impl PendingTransaction {
 
     pub fn hash(&self) -> &TxHash {
         &self.hash
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethers_core::utils::hex;
+
+    #[test]
+    fn can_recover_sender() {
+        let bytes = hex::decode("f85f800182520894095e7baea6a6c7c4c2dfeb977efac326af552d870a801ba048b55bfa915ac795c431978d8a6a992b628d557da5ff759b307d495a36649353a0efffd310ac743f371de3b9f7f9cb56c0b28ad43601b4ab949f53faa07bd2c804").unwrap();
+
+        let tx: TypedTransaction = rlp::decode(&bytes).expect("decoding TypedTransaction failed");
+        let tx = match tx {
+            TypedTransaction::Legacy(tx) => tx,
+            _ => panic!("Invalid typed transaction"),
+        };
+        assert_eq!(tx.input, b"".into());
+        assert_eq!(tx.gas_price, U256::from(0x01u64));
+        assert_eq!(tx.gas_limit, U256::from(0x5208u64));
+        assert_eq!(tx.nonce, U256::from(0x00u64));
+        if let TransactionKind::Call(ref to) = tx.kind {
+            assert_eq!(*to, "095e7baea6a6c7c4c2dfeb977efac326af552d87".parse().unwrap());
+        } else {
+            panic!();
+        }
+        assert_eq!(tx.value, U256::from(0x0au64));
+        assert_eq!(
+            tx.recover().unwrap(),
+            "0f65fe9276bc9a24ae7083ae28e2660ef72df99e".parse().unwrap()
+        );
     }
 }

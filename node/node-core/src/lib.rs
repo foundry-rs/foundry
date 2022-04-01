@@ -1,3 +1,5 @@
+extern crate core;
+
 /// JSON-RPC request bindings
 pub mod request;
 
