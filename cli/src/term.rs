@@ -17,6 +17,7 @@ use std::{
         mpsc::{self, TryRecvError},
         Arc, Mutex,
     },
+    time::Duration,
 };
 
 /// Some spinners
@@ -228,8 +229,15 @@ impl Reporter for SpinnerReporter {
         self.solc_io_report.log_compiler_input(input);
     }
 
-    fn on_solc_success(&self, _solc: &Solc, _version: &Version, output: &CompilerOutput) {
+    fn on_solc_success(
+        &self,
+        _solc: &Solc,
+        _version: &Version,
+        output: &CompilerOutput,
+        duration: &Duration,
+    ) {
         self.solc_io_report.log_compiler_output(output);
+        self.send_msg(format!("Solc finished in {:.2?}", duration));
     }
 
     /// Invoked before a new [`Solc`] bin is installed
