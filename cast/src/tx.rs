@@ -13,20 +13,23 @@ use futures::future::join_all;
 
 use crate::strip_0x;
 
-pub struct TxBuilder {
+pub struct TxBuilder<'a, M: Middleware> {
     to: H160,
     chain: Chain,
     tx: TypedTransaction,
     func: Option<Function>,
     etherscan_api_key: Option<String>,
+    provider: &'a M,
 }
 
-///
+pub type TxBuilderOutput = (TypedTransaction, Option<Function>);
+pub type TxBuilderPeekOutput<'a> = (&'a TypedTransaction, &'a Option<Function>);
+
 /// Transaction builder
 /// ```
 /// async fn foo() -> eyre::Result<()> {
 ///   use ethers_core::types::{Chain, U256};
-///   use cast::{TxBuilder};
+///   use cast::TxBuilder;
 ///   let provider = ethers_providers::test_provider::MAINNET.provider();
 ///   let mut builder = TxBuilder::new(&provider, "a.eth", "b.eth", Chain::Mainnet, false).await?;
 ///   builder
@@ -35,21 +38,20 @@ pub struct TxBuilder {
 ///   Ok(())
 /// }
 /// ```
-impl TxBuilder {
-    ///
+impl<'a, M: Middleware> TxBuilder<'a, M> {
     /// Create a new TxBuilder
     /// `provider` - provider to use
     /// `from` - 'from' field. Could be an ENS name
     /// `to` - `to`. Could be a ENS
     /// `chain` - chain to construct the tx for
     /// `legacy` - use type 1 transaction
-    pub async fn new<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
-        provider: &M,
+    pub async fn new<F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
+        provider: &'a M,
         from: F,
         to: T,
         chain: Chain,
         legacy: bool,
-    ) -> Result<TxBuilder> {
+    ) -> Result<TxBuilder<'a, M>> {
         let from_addr = resolve_ens(provider, from).await?;
         let to_addr = resolve_ens(provider, foundry_utils::resolve_addr(to, chain)?).await?;
 
@@ -59,89 +61,79 @@ impl TxBuilder {
             Eip1559TransactionRequest::new().from(from_addr).to(to_addr).into()
         };
 
-        Ok(TxBuilder { to: to_addr, chain, tx, func: None, etherscan_api_key: None })
+        Ok(Self { to: to_addr, chain, tx, func: None, etherscan_api_key: None, provider })
     }
-    ///
+
     /// Set gas for tx
-    pub fn set_gas(&mut self, v: U256) -> &mut TxBuilder {
+    pub fn set_gas(&mut self, v: U256) -> &mut Self {
         self.tx.set_gas(v);
         self
     }
 
-    ///
     /// Set gas for tx, if `v` is not None
-    pub fn gas(&mut self, v: Option<U256>) -> &mut TxBuilder {
-        match v {
-            Some(x) => self.set_gas(x),
-            None => self,
+    pub fn gas(&mut self, v: Option<U256>) -> &mut Self {
+        if let Some(value) = v {
+            self.set_gas(value);
         }
+        self
     }
 
-    ///
     /// Set gas price
-    pub fn set_gas_price(&mut self, v: U256) -> &mut TxBuilder {
+    pub fn set_gas_price(&mut self, v: U256) -> &mut Self {
         self.tx.set_gas_price(v);
         self
     }
 
-    ///
     /// Set gas price, if `v` is not None
-    pub fn gas_price(&mut self, v: Option<U256>) -> &mut TxBuilder {
-        match v {
-            Some(x) => self.set_gas_price(x),
-            None => self,
+    pub fn gas_price(&mut self, v: Option<U256>) -> &mut Self {
+        if let Some(value) = v {
+            self.set_gas_price(value);
         }
+        self
     }
 
-    ///
     /// Set value
-    pub fn set_value(&mut self, v: U256) -> &mut TxBuilder {
+    pub fn set_value(&mut self, v: U256) -> &mut Self {
         self.tx.set_value(v);
         self
     }
 
-    ///
     /// Set value, if `v` is not None
-    pub fn value(&mut self, v: Option<U256>) -> &mut TxBuilder {
-        match v {
-            Some(x) => self.set_value(x),
-            None => self,
+    pub fn value(&mut self, v: Option<U256>) -> &mut Self {
+        if let Some(value) = v {
+            self.set_value(value);
         }
+        self
     }
 
-    ///
     /// Set nonce
-    pub fn set_nonce(&mut self, v: U256) -> &mut TxBuilder {
+    pub fn set_nonce(&mut self, v: U256) -> &mut Self {
         self.tx.set_nonce(v);
         self
     }
 
-    ///
     /// Set nonce, if `v` is not None
-    pub fn nonce(&mut self, v: Option<U256>) -> &mut TxBuilder {
-        match v {
-            Some(x) => self.set_nonce(x),
-            None => self,
+    pub fn nonce(&mut self, v: Option<U256>) -> &mut Self {
+        if let Some(value) = v {
+            self.set_nonce(value);
         }
+        self
     }
 
-    ///
     /// Set etherscan API key. Used to look up function signature buy name
-    pub fn set_etherscan_api_key(&mut self, v: String) -> &mut TxBuilder {
+    pub fn set_etherscan_api_key(&mut self, v: String) -> &mut Self {
         self.etherscan_api_key = Some(v);
         self
     }
 
-    ///
     /// Set etherscan API key, if `v` is not None
-    pub fn etherscan_api_key(&mut self, v: Option<String>) -> &mut TxBuilder {
-        match v {
-            Some(x) => self.set_etherscan_api_key(x),
-            None => self,
+    pub fn etherscan_api_key(&mut self, v: Option<String>) -> &mut Self {
+        if let Some(value) = v {
+            self.set_etherscan_api_key(value);
         }
+        self
     }
 
-    ///
     /// Set function arguments
     /// `sig` can be:
     ///  * a fragment (`do(uint32,string)`)
@@ -149,13 +141,12 @@ impl TxBuilder {
     ///    (`0xcdba2fd40000000000000000000000000000000000000000000000000000000000007a69`)
     ///  * only function name (`do`) - in this case, etherscan lookup is performed on `tx.to`'s
     ///    contract
-    pub async fn set_args<M: Middleware>(
+    pub async fn set_args(
         &mut self,
-        provider: &M,
         sig: &str,
         args: Vec<String>,
-    ) -> Result<&mut TxBuilder> {
-        let args = resolve_name_args(&args, provider).await;
+    ) -> Result<&mut TxBuilder<'a, M>> {
+        let args = resolve_name_args(&args, self.provider).await;
 
         let func = if sig.contains('(') {
             get_func(sig)?
@@ -184,28 +175,24 @@ impl TxBuilder {
         Ok(self)
     }
 
-    ///
     /// Set function arguments, if `value` is not None
-    pub async fn args<M: Middleware>(
+    pub async fn args(
         &mut self,
-        provider: &M,
         value: Option<(&str, Vec<String>)>,
-    ) -> Result<&mut TxBuilder> {
-        match value {
-            Some((sig, args)) => self.set_args(provider, sig, args).await,
-            None => Ok(self),
+    ) -> Result<&mut TxBuilder<'a, M>> {
+        if let Some((sig, args)) = value {
+            return self.set_args(sig, args).await
         }
+        Ok(self)
     }
 
-    ///
     /// Consuming build: returns typed transaction and optional function call
-    pub fn build(self) -> (TypedTransaction, Option<Function>) {
+    pub fn build(self) -> TxBuilderOutput {
         (self.tx, self.func)
     }
 
-    ///
     /// Non-consuming build: peek into the tx content
-    pub fn peek(&self) -> (&TypedTransaction, &Option<Function>) {
+    pub fn peek(&self) -> TxBuilderPeekOutput {
         (&self.tx, &self.func)
     }
 }
@@ -320,20 +307,16 @@ mod tests {
         Ok(())
     }
 
-    async fn a_builder() -> (MyProvider, TxBuilder) {
-        let provider = MyProvider {};
-        let builder =
-            TxBuilder::new(&provider, "a.eth", "b.eth", Chain::Mainnet, false).await.unwrap();
-        (provider, builder)
-    }
-
     #[tokio::test]
     async fn builder_fields() -> eyre::Result<()> {
-        let (_, mut builder) = a_builder().await;
-        builder.gas(Some(U256::from(12u32)));
-        builder.gas_price(Some(U256::from(34u32)));
-        builder.value(Some(U256::from(56u32)));
-        builder.nonce(Some(U256::from(78u32)));
+        let provider = MyProvider {};
+        let mut builder =
+            TxBuilder::new(&provider, "a.eth", "b.eth", Chain::Mainnet, false).await.unwrap();
+        builder
+            .gas(Some(U256::from(12u32)))
+            .gas_price(Some(U256::from(34u32)))
+            .value(Some(U256::from(56u32)))
+            .nonce(Some(U256::from(78u32)));
 
         builder.etherscan_api_key(Some(String::from("what a lovely day"))); // not testing for this :-/
         let (tx, _) = builder.build();
@@ -347,8 +330,10 @@ mod tests {
 
     #[tokio::test]
     async fn builder_args() -> eyre::Result<()> {
-        let (provider, mut builder) = a_builder().await;
-        builder.args(&provider, Some(("what_a_day(int)", vec![String::from("31337")]))).await?;
+        let provider = MyProvider {};
+        let mut builder =
+            TxBuilder::new(&provider, "a.eth", "b.eth", Chain::Mainnet, false).await.unwrap();
+        builder.args(Some(("what_a_day(int)", vec![String::from("31337")]))).await?;
         let (_, function_maybe) = builder.build();
 
         assert_ne!(function_maybe, None);

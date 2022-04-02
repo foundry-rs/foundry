@@ -17,6 +17,7 @@ use eyre::{Context, Result};
 use rustc_hex::{FromHexIter, ToHex};
 use std::{path::PathBuf, str::FromStr};
 pub use tx::TxBuilder;
+use tx::{TxBuilderOutput, TxBuilderPeekOutput};
 
 use foundry_utils::{encode_args, to_table};
 
@@ -65,15 +66,20 @@ where
     /// let args = vec!["5".to_owned()];
     /// let mut builder = TxBuilder::new(&provider, Address::zero(), to, Chain::Mainnet, false).await?;
     /// builder
-    ///     .set_args(&provider, sig, args).await?;
+    ///     .set_args(sig, args).await?;
+    /// let builder_output = builder.build();
     /// let cast = Cast::new(provider);
-    /// let data = cast.call(builder, None).await?;
+    /// let data = cast.call(builder_output, None).await?;
     /// println!("{}", data);
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn call(&self, builder: TxBuilder, block: Option<BlockId>) -> Result<String> {
-        let (tx, func) = builder.build();
+    pub async fn call<'a>(
+        &self,
+        builder_output: TxBuilderOutput,
+        block: Option<BlockId>,
+    ) -> Result<String> {
+        let (tx, func) = builder_output;
         let res = self.provider.call(&tx, block).await?;
 
         // decode args into tokens
@@ -121,20 +127,21 @@ where
     /// let args = vec!["5".to_owned()];
     /// let mut builder = TxBuilder::new(&provider, Address::zero(), to, Chain::Mainnet, false).await?;
     /// builder
-    ///     .set_args(&provider, sig, args).await?;
-    /// let cast = Cast::new(provider);
-    /// let access_list = cast.access_list(&builder, None, false).await?;
+    ///     .set_args(sig, args).await?;
+    /// let builder_output = builder.peek();
+    /// let cast = Cast::new(&provider);
+    /// let access_list = cast.access_list(builder_output, None, false).await?;
     /// println!("{}", access_list);
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn access_list(
+    pub async fn access_list<'a>(
         &self,
-        builder: &TxBuilder,
+        builder_output: TxBuilderPeekOutput<'a>,
         block: Option<BlockId>,
         to_json: bool,
     ) -> Result<String> {
-        let (tx, _) = builder.peek();
+        let (tx, _) = builder_output;
         let access_list = self.provider.create_access_list(tx, block).await?;
         let res = if to_json {
             serde_json::to_string(&access_list)?
@@ -183,19 +190,22 @@ where
     /// let nonce = U256::from_str("1").unwrap();
     /// let mut builder = TxBuilder::new(&provider, Address::zero(), to, Chain::Mainnet, false).await?;
     /// builder
-    ///     .set_args(&provider, sig, args).await?
+    ///     .set_args(sig, args).await?
     ///     .set_gas(gas)
     ///     .set_value(value)
     ///     .set_nonce(nonce);
+    /// let builder_output = builder.build();
     /// let cast = Cast::new(provider);
-    /// let data = cast.send(builder).await?;
+    /// let data = cast.send(builder_output).await?;
     /// println!("{}", *data);
     /// # Ok(())
     /// # }
     /// ```
-    #[allow(clippy::too_many_arguments)]
-    pub async fn send(&self, builder: TxBuilder) -> Result<PendingTransaction<'_, M::Provider>> {
-        let (tx, _) = builder.build();
+    pub async fn send<'a>(
+        &self,
+        builder_output: TxBuilderOutput,
+    ) -> Result<PendingTransaction<'_, M::Provider>> {
+        let (tx, _) = builder_output;
         let res = self.provider.send_transaction(tx, None).await?;
 
         Ok::<_, eyre::Error>(res)
@@ -229,42 +239,33 @@ where
     /// Estimates the gas cost of a transaction
     ///
     /// ```no_run
-    /// use cast::Cast;
+    /// use cast::{Cast, TxBuilder};
     /// use ethers_core::types::{Address, Chain, U256};
     /// use ethers_providers::{Provider, Http};
     /// use std::{str::FromStr, convert::TryFrom};
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
-    /// let cast = Cast::new(provider);
     /// let from = "vitalik.eth";
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let sig = "greet(string)()";
     /// let args = vec!["5".to_owned()];
     /// let value = U256::from_str("1").unwrap();
-    /// let data = cast.estimate(from, to, Some((sig, args)), Some(value), Chain::Mainnet, None).await?;
+    /// let mut builder = TxBuilder::new(&provider, from, to, Chain::Mainnet, false).await?;
+    /// builder
+    ///     .set_value(value)
+    ///     .set_args(sig, args).await?;
+    /// let builder_output = builder.peek();
+    /// let cast = Cast::new(&provider);
+    /// let data = cast.estimate(builder_output).await?;
     /// println!("{}", data);
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn estimate<F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
-        &self,
-        from: F,
-        to: T,
-        args: Option<(&str, Vec<String>)>,
-        value: Option<U256>,
-        chain: Chain,
-        etherscan_api_key: Option<String>,
-    ) -> Result<U256> {
-        let mut builder = TxBuilder::new(&self.provider, from, to, chain, false).await?;
-        builder
-            .value(value)
-            .etherscan_api_key(etherscan_api_key)
-            .args(&self.provider, args)
-            .await?;
-        let (tx, _) = builder.build();
+    pub async fn estimate<'a>(&self, builder_output: TxBuilderPeekOutput<'a>) -> Result<U256> {
+        let (tx, _) = builder_output;
 
-        let res = self.provider.estimate_gas(&tx).await?;
+        let res = self.provider.estimate_gas(tx).await?;
 
         Ok::<_, eyre::Error>(res)
     }

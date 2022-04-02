@@ -160,9 +160,10 @@ async fn main() -> eyre::Result<()> {
                 false,
             )
             .await?;
-            builder.set_args(&provider, &sig, args).await?;
+            builder.set_args(&sig, args).await?;
+            let builder_output = builder.peek();
 
-            println!("{}", Cast::new(provider).access_list(&builder, block, to_json).await?);
+            println!("{}", Cast::new(&provider).access_list(builder_output, block, to_json).await?);
         }
         Subcommands::Block { rpc_url, block, full, field, to_json } => {
             let provider = Provider::try_from(rpc_url)?;
@@ -182,8 +183,9 @@ async fn main() -> eyre::Result<()> {
                 false,
             )
             .await?;
-            builder.set_args(&provider, &sig, args).await?.etherscan_api_key(eth.etherscan_api_key);
-            println!("{}", Cast::new(provider).call(builder, block).await?);
+            builder.set_args(&sig, args).await?.etherscan_api_key(eth.etherscan_api_key);
+            let builder_output = builder.build();
+            println!("{}", Cast::new(provider).call(builder_output, block).await?);
         }
         Subcommands::Calldata { sig, args } => {
             println!("{}", SimpleCast::calldata(sig, &args)?);
@@ -333,18 +335,18 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::Estimate { eth, to, sig, args, value } => {
             let provider = Provider::try_from(eth.rpc_url()?)?;
-            let cast = Cast::new(&provider);
             let from = eth.sender().await;
-            let gas = cast
-                .estimate(
-                    from,
-                    to,
-                    Some((sig.as_str(), args)),
-                    value,
-                    eth.chain,
-                    eth.etherscan_api_key,
-                )
+
+            let mut builder = TxBuilder::new(&provider, from, to, eth.chain, false).await?;
+            builder
+                .etherscan_api_key(eth.etherscan_api_key)
+                .value(value)
+                .set_args(sig.as_str(), args)
                 .await?;
+
+            let builder_output = builder.peek();
+
+            let gas = Cast::new(&provider).estimate(builder_output).await?;
             println!("{}", gas);
         }
         Subcommands::CalldataDecode { sig, calldata } => {
@@ -738,17 +740,18 @@ where
     let params = if !sig.is_empty() { Some((&sig[..], params)) } else { None };
     let mut builder = TxBuilder::new(&provider, from, to, chain, legacy).await?;
     builder
-        .args(&provider, params)
+        .args(params)
         .await?
         .gas(gas)
         .gas_price(gas_price)
         .value(value)
         .nonce(nonce)
         .etherscan_api_key(etherscan_api_key);
+    let builder_output = builder.build();
 
     let cast = Cast::new(provider);
 
-    let pending_tx = cast.send(builder).await?;
+    let pending_tx = cast.send(builder_output).await?;
     let tx_hash = *pending_tx;
 
     if cast_async {
