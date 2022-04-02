@@ -14,18 +14,22 @@ use ethers::{
     types::U256,
 };
 use serde::{Deserialize, Serialize};
-use std::fmt::{self, Write};
+use std::{
+    collections::BTreeMap,
+    fmt::{self, Write},
+};
 
 /// An arena of [CallTraceNode]s
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CallTraceArena {
     /// The arena of nodes
     pub arena: Vec<CallTraceNode>,
+    pub codes: BTreeMap<Address, Vec<u8>>,
 }
 
 impl Default for CallTraceArena {
     fn default() -> Self {
-        CallTraceArena { arena: vec![Default::default()] }
+        CallTraceArena { arena: vec![Default::default()], codes: BTreeMap::default() }
     }
 }
 
@@ -69,7 +73,7 @@ impl CallTraceArena {
                     None
                 }
             } else {
-                None
+                self.codes.get(&node.trace.address)
             };
 
             (&node.trace.address, code)

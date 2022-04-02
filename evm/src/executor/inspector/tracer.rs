@@ -100,6 +100,13 @@ where
                 gas_used(data.env.cfg.spec_id, gas.spend(), gas.refunded() as u64),
                 retdata.to_vec(),
             );
+
+            if !self.traces.codes.contains_key(&call.context.code_address) {
+                let account = data.db.basic(call.context.code_address);
+                if let Some(code) = account.code {
+                    self.traces.codes.insert(call.context.code_address, code.to_vec());
+                }
+            }
         }
 
         (status, gas, retdata)
