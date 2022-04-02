@@ -45,13 +45,23 @@ impl Tracer {
         ));
     }
 
-    pub fn fill_trace(&mut self, success: bool, cost: u64, output: Vec<u8>) {
+    pub fn fill_trace(
+        &mut self,
+        success: bool,
+        cost: u64,
+        output: Vec<u8>,
+        address: Option<Address>,
+    ) {
         let trace = &mut self.traces.arena
             [self.trace_stack.pop().expect("more traces were filled than started")]
         .trace;
         trace.success = success;
         trace.gas_cost = cost;
         trace.output = RawOrDecodedReturnData::Raw(output);
+
+        if let Some(address) = address {
+            trace.address = address;
+        }
     }
 }
 
@@ -99,6 +109,7 @@ where
                 matches!(status, return_ok!()),
                 gas_used(data.env.cfg.spec_id, gas.spend(), gas.refunded() as u64),
                 retdata.to_vec(),
+                None,
             );
         }
 
@@ -147,6 +158,7 @@ where
             matches!(status, return_ok!()),
             gas_used(data.env.cfg.spec_id, gas.spend(), gas.refunded() as u64),
             code,
+            address,
         );
 
         (status, address, gas, retdata)
