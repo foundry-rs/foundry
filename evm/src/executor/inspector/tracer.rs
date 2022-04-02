@@ -101,12 +101,14 @@ where
                 retdata.to_vec(),
             );
 
-            if !self.traces.codes.contains_key(&call.context.code_address) {
+            self.traces.codes.entry(call.context.code_address).or_insert_with(|| {
                 let account = data.db.basic(call.context.code_address);
                 if let Some(code) = account.code {
-                    self.traces.codes.insert(call.context.code_address, code.to_vec());
+                    code.to_vec()
+                } else {
+                    vec![]
                 }
-            }
+            });
         }
 
         (status, gas, retdata)
