@@ -135,9 +135,9 @@ dependencies = [
 
 [[package]]
 name = "async-trait"
-version = "0.1.52"
+version = "0.1.53"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "061a7acccaa286c011ddc30970520b98fa40e00c9d644633fb26b5fc63a265e3"
+checksum = "ed6aa3524a2dfcf9fe180c51eae2b58738348d819517ceadf95789c51fff7600"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -475,6 +475,7 @@ checksum = "df8670b8c7b9dae1793364eafadf7239c40d669904660c5960d74cfd80b46a53"
 name = "cast"
 version = "0.2.0"
 dependencies = [
+ "async-trait",
  "chrono 0.2.25",
  "ethers-core",
  "ethers-etherscan",
@@ -485,7 +486,10 @@ dependencies = [
  "futures",
  "hex",
  "rustc-hex",
+ "serde",
  "serde_json",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]
