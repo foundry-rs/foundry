@@ -229,21 +229,32 @@ async fn main() -> eyre::Result<()> {
             gas,
             gas_price,
             value,
-            nonce,
+            mut nonce,
             legacy,
             confirmations,
             to_json,
+            resend,
         } => {
             let provider = Provider::try_from(eth.rpc_url()?)?;
             let chain_id = Cast::new(&provider).chain_id().await?;
             let sig = sig.unwrap_or_default();
 
             if let Ok(Some(signer)) = eth.signer_with(chain_id, provider.clone()).await {
+                let from = match &signer {
+                    WalletType::Ledger(leger) => leger.address(),
+                    WalletType::Local(local) => local.address(),
+                    WalletType::Trezor(trezor) => trezor.address(),
+                };
+
+                if resend {
+                    nonce = Some(provider.get_transaction_count(from, None).await?);
+                }
+
                 match signer {
                     WalletType::Ledger(signer) => {
                         cast_send(
                             &signer,
-                            signer.address(),
+                            from,
                             to,
                             (sig, args),
                             gas,
@@ -262,7 +273,7 @@ async fn main() -> eyre::Result<()> {
                     WalletType::Local(signer) => {
                         cast_send(
                             &signer,
-                            signer.address(),
+                            from,
                             to,
                             (sig, args),
                             gas,
@@ -281,7 +292,7 @@ async fn main() -> eyre::Result<()> {
                     WalletType::Trezor(signer) => {
                         cast_send(
                             &signer,
-                            signer.address(),
+                            from,
                             to,
                             (sig, args),
                             gas,
@@ -299,6 +310,10 @@ async fn main() -> eyre::Result<()> {
                     }
                 }
             } else if let Some(from) = eth.from {
+                if resend {
+                    nonce = Some(provider.get_transaction_count(from, None).await?);
+                }
+
                 cast_send(
                     provider,
                     from,
