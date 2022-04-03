@@ -163,6 +163,7 @@ pub fn apply<DB: Database>(
 
             // we can safely unwrap because `load_account` insert inner.0 to DB.
             let account = data.subroutine.state().get_mut(&inner.0).unwrap();
+            // nonce must increment only
             if account.info.nonce < inner.1 {
                 account.info.nonce = inner.1;
                 Ok(Bytes::new())
