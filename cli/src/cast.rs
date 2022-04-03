@@ -228,7 +228,7 @@ async fn main() -> eyre::Result<()> {
             gas,
             gas_price,
             value,
-            nonce,
+            mut nonce,
             legacy,
             confirmations,
             to_json,
@@ -245,11 +245,9 @@ async fn main() -> eyre::Result<()> {
                     WalletType::Trezor(trezor) => trezor.address(),
                 };
 
-                let nonce = if resend {
-                    Some(provider.get_transaction_count(from, None).await?)
-                } else {
-                    nonce
-                };
+                if resend {
+                    nonce = Some(provider.get_transaction_count(from, None).await?);
+                }
 
                 match signer {
                     WalletType::Ledger(signer) => {
@@ -311,11 +309,10 @@ async fn main() -> eyre::Result<()> {
                     }
                 }
             } else if let Some(from) = eth.from {
-                let nonce = if resend {
-                    Some(provider.get_transaction_count(from, None).await?)
-                } else {
-                    nonce
-                };
+                if resend {
+                    nonce = Some(provider.get_transaction_count(from, None).await?);
+                }
+
                 cast_send(
                     provider,
                     from,

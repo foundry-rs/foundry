@@ -254,7 +254,7 @@ pub enum Subcommands {
         confirmations: usize,
         #[clap(long = "json", short = 'j')]
         to_json: bool,
-        #[clap(long = "resend", help = "reuse nonce")]
+        #[clap(long = "resend", help = "reuse account latest nonce", conflicts_with = "nonce")]
         resend: bool,
     },
     #[clap(name = "publish")]
