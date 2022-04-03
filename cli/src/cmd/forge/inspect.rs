@@ -5,6 +5,7 @@ use crate::{
         forge::build::{self, BuildArgs},
         Cmd,
     },
+    compile,
     opts::forge::CompilerArgs,
 };
 use clap::Parser;
@@ -156,7 +157,7 @@ impl Cmd for InspectArgs {
 
         // Build the project
         let project = modified_build_args.project()?;
-        let outcome = super::super::suppress_compile(&project)?;
+        let outcome = compile::suppress_compile(&project)?;
 
         // Find the artifact
         let found_artifact = outcome.find(&contract);

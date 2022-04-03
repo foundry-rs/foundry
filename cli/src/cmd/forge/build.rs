@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use crate::{
     cmd::{forge::watch::WatchArgs, Cmd},
+    compile,
     opts::forge::CompilerArgs,
 };
 use clap::{Parser, ValueHint};
@@ -195,7 +196,7 @@ impl Cmd for BuildArgs {
     type Output = ProjectCompileOutput;
     fn run(self) -> eyre::Result<Self::Output> {
         let project = self.project()?;
-        crate::cmd::utils::compile(&project, self.names, self.sizes)
+        compile::compile(&project, self.names, self.sizes)
     }
 }
 

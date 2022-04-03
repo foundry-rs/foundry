@@ -15,7 +15,7 @@ use eyre::Result;
 use foundry_utils::parse_tokens;
 use std::fs;
 
-use crate::opts::forge::ContractInfo;
+use crate::{compile, opts::forge::ContractInfo};
 use clap::{Parser, ValueHint};
 use std::{path::PathBuf, sync::Arc};
 
@@ -70,7 +70,7 @@ impl Cmd for CreateArgs {
     fn run(self) -> Result<Self::Output> {
         // Find Project & Compile
         let project = self.opts.project()?;
-        let compiled = crate::cmd::utils::compile(&project, self.opts.names, self.opts.sizes)?;
+        let compiled = compile::compile(&project, self.opts.names, self.opts.sizes)?;
 
         // Get ABI and BIN
         let (abi, bin, _) =

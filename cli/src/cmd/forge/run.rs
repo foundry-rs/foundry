@@ -1,5 +1,6 @@
 use crate::{
-    cmd::{compile_files, forge::build::BuildArgs, Cmd},
+    cmd::{forge::build::BuildArgs, Cmd},
+    compile,
     opts::evm::EvmArgs,
     utils,
 };
@@ -248,7 +249,7 @@ impl RunArgs {
     pub fn build(&self, config: &Config, evm_opts: &EvmOpts) -> eyre::Result<BuildOutput> {
         let target_contract = dunce::canonicalize(&self.path)?;
         let project = config.ephemeral_no_artifacts_project()?;
-        let output = compile_files(&project, vec![target_contract])?;
+        let output = compile::compile_files(&project, vec![target_contract])?;
 
         let (contracts, sources) = output.into_artifacts_with_sources();
         let contracts: BTreeMap<ArtifactId, CompactContractBytecode> =

@@ -4,11 +4,14 @@ use crate::{
         forge::{build::BuildArgs, run::RunArgs},
         Cmd,
     },
+    compile::ProjectCompiler,
     opts::evm::EvmArgs,
     utils,
+    utils::FoundryPathExt,
 };
 use ansi_term::Colour;
 use clap::{AppSettings, Parser};
+use ethers::solc::FileFilter;
 use forge::{
     decode::decode_console_logs,
     executor::opts::EvmOpts,
@@ -19,7 +22,12 @@ use forge::{
 use foundry_config::{figment::Figment, Config};
 use regex::Regex;
 use std::{
-    collections::BTreeMap, path::PathBuf, str::FromStr, sync::mpsc::channel, thread, time::Duration,
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+    str::FromStr,
+    sync::mpsc::channel,
+    thread,
+    time::Duration,
 };
 
 #[derive(Debug, Clone, Parser)]
@@ -51,8 +59,30 @@ pub struct Filter {
     pub path_pattern: Option<regex::Regex>,
 
     /// Only run tests in source files that do not match the specified pattern.
-    #[clap(long = "no-match-path", alias = "nmp", conflicts_with = "pattern")]
+    #[clap(
+    name = "no-match-path",
+    long = "no-match-path", alias = "nmp", conflicts_with = "pattern",
+    parse(try_from_str = parse_line_matching_regex)
+    )]
     pub path_pattern_inverse: Option<regex::Regex>,
+}
+
+impl FileFilter for Filter {
+    /// Returns true if the file regex pattern match the `file`
+    ///
+    /// If no file regex is set this returns true if the file ends with `.t.sol`, see
+    /// [FoundryPathExr::is_sol_test()]
+    fn is_match(&self, file: &Path) -> bool {
+        if let Some(file) = file.as_os_str().to_str() {
+            if let Some(ref re_path) = self.path_pattern {
+                return re_path.is_match(file)
+            }
+            if let Some(ref re_path) = self.test_pattern_inverse {
+                return !re_path.is_match(file)
+            }
+        }
+        file.is_sol_test()
+    }
 }
 
 impl TestFilter for Filter {
@@ -154,6 +184,15 @@ impl TestArgs {
     /// Returns the flattened [`Filter`] arguments
     pub fn filter(&self) -> &Filter {
         &self.filter
+    }
+
+    /// Returns the currently configured [Config] and the extracted [EvmOpts] from that config
+    pub fn config_and_evm_opts(&self) -> eyre::Result<(Config, EvmOpts)> {
+        // merge all configs
+        let figment: Figment = self.into();
+        let evm_opts = figment.extract()?;
+        let config = Config::from_provider(figment).sanitized();
+        Ok((config, evm_opts))
     }
 }
 
@@ -300,9 +339,7 @@ fn short_test_result(name: &str, result: &forge::TestResult) {
 
 pub fn custom_run(mut args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<TestOutcome> {
     // Merge all configs
-    let figment: Figment = From::from(&args);
-    let mut evm_opts = figment.extract::<EvmOpts>()?;
-    let config = Config::from_provider(figment).sanitized();
+    let (config, mut evm_opts) = args.config_and_evm_opts()?;
 
     // Setup the fuzzer
     // TODO: Add CLI Options to modify the persistence
@@ -317,7 +354,8 @@ pub fn custom_run(mut args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<
 
     // Set up the project
     let project = config.project()?;
-    let output = crate::cmd::compile(&project, false, false)?;
+
+    let output = ProjectCompiler::default().compile_sparse(&project, args.filter.clone())?;
 
     // Determine print verbosity and executor verbosity
     let verbosity = evm_opts.verbosity;
@@ -503,4 +541,11 @@ fn test(
 
         Ok(TestOutcome::new(results, allow_failure))
     }
+}
+
+/// prefixes the `re` [Regex] argument with a caret (`^`).
+/// If a caret is at the beginning of the entire regular expression, it matches the beginning of a
+/// line.
+fn parse_line_matching_regex(re: &str) -> Result<Regex, regex::Error> {
+    format!("^{}", re).parse()
 }
