@@ -4,7 +4,7 @@ pub mod compile;
 mod term;
 mod utils;
 
-use cast::{Cast, SimpleCast};
+use cast::{Cast, SimpleCast, TxBuilder};
 mod opts;
 use cast::InterfacePath;
 use ethers::{
@@ -16,7 +16,7 @@ use ethers::{
     },
     providers::{Middleware, Provider},
     signers::{LocalWallet, Signer},
-    types::{Address, Chain, NameOrAddress, Signature, U256, U64},
+    types::{Address, Chain, NameOrAddress, Signature, U256},
     utils::get_contract_address,
 };
 use opts::{
@@ -37,9 +37,8 @@ use std::{
 use clap::{IntoApp, Parser};
 use clap_complete::generate;
 
-use crate::utils::read_secret;
+use crate::{cmd::Cmd, utils::read_secret};
 use eyre::WrapErr;
-use futures::join;
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
@@ -154,19 +153,18 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::AccessList { eth, address, sig, args, block, to_json } => {
             let provider = Provider::try_from(eth.rpc_url()?)?;
-            println!(
-                "{}",
-                Cast::new(provider)
-                    .access_list(
-                        eth.from.unwrap_or(Address::zero()),
-                        address,
-                        (&sig, args),
-                        eth.chain,
-                        block,
-                        to_json,
-                    )
-                    .await?
-            );
+            let mut builder = TxBuilder::new(
+                &provider,
+                eth.from.unwrap_or(Address::zero()),
+                address,
+                eth.chain,
+                false,
+            )
+            .await?;
+            builder.set_args(&sig, args).await?;
+            let builder_output = builder.peek();
+
+            println!("{}", Cast::new(&provider).access_list(builder_output, block, to_json).await?);
         }
         Subcommands::Block { rpc_url, block, full, field, to_json } => {
             let provider = Provider::try_from(rpc_url)?;
@@ -178,19 +176,17 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::Call { eth, address, sig, args, block } => {
             let provider = Provider::try_from(eth.rpc_url()?)?;
-            println!(
-                "{}",
-                Cast::new(provider)
-                    .call(
-                        eth.from.unwrap_or(Address::zero()),
-                        address,
-                        (&sig, args),
-                        eth.chain,
-                        eth.etherscan_api_key,
-                        block
-                    )
-                    .await?
-            );
+            let mut builder = TxBuilder::new(
+                &provider,
+                eth.from.unwrap_or(Address::zero()),
+                address,
+                eth.chain,
+                false,
+            )
+            .await?;
+            builder.set_args(&sig, args).await?.etherscan_api_key(eth.etherscan_api_key);
+            let builder_output = builder.build();
+            println!("{}", Cast::new(provider).call(builder_output, block).await?);
         }
         Subcommands::Calldata { sig, args } => {
             println!("{}", SimpleCast::calldata(sig, &args)?);
@@ -340,18 +336,18 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::Estimate { eth, to, sig, args, value } => {
             let provider = Provider::try_from(eth.rpc_url()?)?;
-            let cast = Cast::new(&provider);
             let from = eth.sender().await;
-            let gas = cast
-                .estimate(
-                    from,
-                    to,
-                    Some((sig.as_str(), args)),
-                    value,
-                    eth.chain,
-                    eth.etherscan_api_key,
-                )
+
+            let mut builder = TxBuilder::new(&provider, from, to, eth.chain, false).await?;
+            builder
+                .etherscan_api_key(eth.etherscan_api_key)
+                .value(value)
+                .set_args(sig.as_str(), args)
                 .await?;
+
+            let builder_output = builder.peek();
+
+            let gas = Cast::new(&provider).estimate(builder_output).await?;
             println!("{}", gas);
         }
         Subcommands::CalldataDecode { sig, calldata } => {
@@ -532,75 +528,32 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).nonce(who, block).await?);
         }
-        Subcommands::EtherscanSource { chain, address, etherscan_api_key } => {
-            println!(
-                "{}",
-                SimpleCast::etherscan_source(chain.inner, address, etherscan_api_key).await?
-            );
+        Subcommands::EtherscanSource { chain, address, directory, etherscan_api_key } => {
+            match directory {
+                Some(dir) => {
+                    SimpleCast::expand_etherscan_source_to_directory(
+                        chain.inner,
+                        address,
+                        etherscan_api_key,
+                        dir,
+                    )
+                    .await?
+                }
+                None => {
+                    println!(
+                        "{}",
+                        SimpleCast::etherscan_source(chain.inner, address, etherscan_api_key)
+                            .await?
+                    );
+                }
+            }
         }
         Subcommands::Sig { sig } => {
             let contract = BaseContract::from(parse_abi(&[&sig]).unwrap());
             let selector = contract.abi().functions().last().unwrap().short_signature();
             println!("0x{}", hex::encode(selector));
         }
-        Subcommands::FindBlock { timestamp, rpc_url } => {
-            let ts_target = U256::from(timestamp);
-            let provider = Provider::try_from(rpc_url)?;
-            let last_block_num = provider.get_block_number().await?;
-            let cast_provider = Cast::new(provider);
-
-            let res = join!(cast_provider.timestamp(last_block_num), cast_provider.timestamp(1));
-            let ts_block_latest = res.0.unwrap();
-            let ts_block_1 = res.1.unwrap();
-
-            let block_num = if ts_block_latest.lt(&ts_target) {
-                // If the most recent block's timestamp is below the target, return it
-                last_block_num
-            } else if ts_block_1.gt(&ts_target) {
-                // If the target timestamp is below block 1's timestamp, return that
-                U64::from(1)
-            } else {
-                // Otherwise, find the block that is closest to the timestamp
-                let mut low_block = U64::from(1); // block 0 has a timestamp of 0: https://github.com/ethereum/go-ethereum/issues/17042#issuecomment-559414137
-                let mut high_block = last_block_num;
-                let mut matching_block: Option<U64> = None;
-                while high_block.gt(&low_block) && matching_block.is_none() {
-                    // Get timestamp of middle block (this approach approach to avoids overflow)
-                    let high_minus_low_over_2 = high_block
-                        .checked_sub(low_block)
-                        .ok_or_else(|| eyre::eyre!("unexpected underflow"))
-                        .unwrap()
-                        .checked_div(U64::from(2))
-                        .unwrap();
-                    let mid_block = high_block.checked_sub(high_minus_low_over_2).unwrap();
-                    let ts_mid_block = cast_provider.timestamp(mid_block).await?;
-
-                    // Check if we've found a match or should keep searching
-                    if ts_mid_block.eq(&ts_target) {
-                        matching_block = Some(mid_block)
-                    } else if high_block.checked_sub(low_block).unwrap().eq(&U64::from(1)) {
-                        // The target timestamp is in between these blocks. This rounds to the
-                        // highest block if timestamp is equidistant between blocks
-                        let res = join!(
-                            cast_provider.timestamp(high_block),
-                            cast_provider.timestamp(low_block)
-                        );
-                        let ts_high = res.0.unwrap();
-                        let ts_low = res.1.unwrap();
-                        let high_diff = ts_high.checked_sub(ts_target).unwrap();
-                        let low_diff = ts_target.checked_sub(ts_low).unwrap();
-                        let is_low = low_diff.lt(&high_diff);
-                        matching_block = if is_low { Some(low_block) } else { Some(high_block) }
-                    } else if ts_mid_block.lt(&ts_target) {
-                        low_block = mid_block;
-                    } else {
-                        high_block = mid_block;
-                    }
-                }
-                matching_block.unwrap_or(low_block)
-            };
-            println!("{}", block_num);
-        }
+        Subcommands::FindBlock(cmd) => cmd.run()?.await?,
         Subcommands::Wallet { command } => match command {
             WalletSubcommands::New { path, password, unsafe_password } => {
                 let mut rng = thread_rng();
@@ -783,14 +736,23 @@ async fn cast_send<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>
 where
     M::Error: 'static,
 {
-    let cast = Cast::new(provider);
-
     let sig = args.0;
     let params = args.1;
     let params = if !sig.is_empty() { Some((&sig[..], params)) } else { None };
-    let pending_tx = cast
-        .send(from, to, params, gas, gas_price, value, nonce, chain, etherscan_api_key, legacy)
-        .await?;
+    let mut builder = TxBuilder::new(&provider, from, to, chain, legacy).await?;
+    builder
+        .args(params)
+        .await?
+        .gas(gas)
+        .gas_price(gas_price)
+        .value(value)
+        .nonce(nonce)
+        .etherscan_api_key(etherscan_api_key);
+    let builder_output = builder.build();
+
+    let cast = Cast::new(provider);
+
+    let pending_tx = cast.send(builder_output).await?;
     let tx_hash = *pending_tx;
 
     if cast_async {

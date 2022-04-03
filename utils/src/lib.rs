@@ -9,7 +9,10 @@ use ethers_core::{
     types::*,
 };
 use ethers_etherscan::Client;
-use ethers_solc::artifacts::{BytecodeObject, CompactBytecode, CompactContractBytecode};
+use ethers_solc::{
+    artifacts::{BytecodeObject, CompactBytecode, CompactContractBytecode},
+    ArtifactId,
+};
 use eyre::{Result, WrapErr};
 use serde::Deserialize;
 use std::{
@@ -86,6 +89,107 @@ impl fmt::Display for PossibleSigs {
     }
 }
 
+#[derive(Debug)]
+pub struct PostLinkInput<'a, T, U> {
+    pub contract: CompactContractBytecode,
+    pub known_contracts: &'a mut BTreeMap<ArtifactId, T>,
+    pub id: ArtifactId,
+    pub extra: &'a mut U,
+    pub dependencies: Vec<ethers_core::types::Bytes>,
+}
+
+pub fn link<T, U>(
+    contracts: BTreeMap<ArtifactId, CompactContractBytecode>,
+    known_contracts: &mut BTreeMap<ArtifactId, T>,
+    sender: Address,
+    extra: &mut U,
+    link_key_construction: impl Fn(String, String) -> (String, String, String),
+    post_link: impl Fn(PostLinkInput<T, U>) -> eyre::Result<()>,
+) -> eyre::Result<()> {
+    // we dont use mainnet state for evm_opts.sender so this will always be 1
+    // I am leaving this here so that in the future if this needs to change,
+    // its easy to find.
+    let nonce = U256::one();
+
+    // create a mapping of fname => Vec<(fname, file, key)>,
+    let link_tree: BTreeMap<String, Vec<(String, String, String)>> = contracts
+        .iter()
+        .map(|(id, contract)| {
+            (
+                id.slug(),
+                contract
+                    .all_link_references()
+                    .iter()
+                    .flat_map(|(file, link)| {
+                        link.keys()
+                            .map(|key| link_key_construction(file.to_string(), key.to_string()))
+                    })
+                    .collect::<Vec<(String, String, String)>>(),
+            )
+        })
+        .collect();
+
+    let contracts_by_slug = contracts
+        .iter()
+        .map(|(i, c)| (i.slug(), c.clone()))
+        .collect::<BTreeMap<String, CompactContractBytecode>>();
+
+    for (id, contract) in contracts.into_iter() {
+        let (abi, maybe_deployment_bytes, maybe_runtime) = (
+            contract.abi.as_ref(),
+            contract.bytecode.as_ref(),
+            contract.deployed_bytecode.as_ref(),
+        );
+
+        if let (Some(abi), Some(bytecode), Some(runtime)) =
+            (abi, maybe_deployment_bytes, maybe_runtime)
+        {
+            // we are going to mutate, but library contract addresses may change based on
+            // the test so we clone
+            let mut target_bytecode = bytecode.clone();
+            let mut rt = runtime.clone();
+            let mut target_bytecode_runtime = rt.bytecode.expect("No target runtime").clone();
+
+            // instantiate a vector that gets filled with library deployment bytecode
+            let mut dependencies = vec![];
+
+            match bytecode.object {
+                BytecodeObject::Unlinked(_) => {
+                    // link needed
+                    recurse_link(
+                        id.slug(),
+                        (&mut target_bytecode, &mut target_bytecode_runtime),
+                        &contracts_by_slug,
+                        &link_tree,
+                        &mut dependencies,
+                        nonce,
+                        sender,
+                    );
+                }
+                BytecodeObject::Bytecode(ref bytes) => {
+                    if bytes.as_ref().is_empty() {
+                        // abstract, skip
+                        continue
+                    }
+                }
+            }
+
+            rt.bytecode = Some(target_bytecode_runtime);
+            let tc = CompactContractBytecode {
+                abi: Some(abi.clone()),
+                bytecode: Some(target_bytecode),
+                deployed_bytecode: Some(rt),
+            };
+
+            let post_link_input =
+                PostLinkInput { contract: tc, known_contracts, id, extra, dependencies };
+
+            post_link(post_link_input)?;
+        }
+    }
+    Ok(())
+}
+
 /// Recursively links bytecode given a target contract artifact name, the bytecode(s) to be linked,
 /// a mapping of contract artifact name to bytecode, a dependency mapping, a mutable list that
 /// will be filled with the predeploy libraries, initial nonce, and the sender.
@@ -149,8 +253,6 @@ pub fn recurse_link<'a>(
     }
 }
 
-const BASE_TX_COST: u64 = 21000;
-
 /// Helper trait for converting types to Functions. Helpful for allowing the `call`
 /// function on the EVM to be generic over `String`, `&str` and `Function`.
 pub trait IntoFunction {
@@ -183,26 +285,9 @@ impl<'a> IntoFunction for &'a str {
     }
 }
 
-/// Given a gas value and a calldata array, it subtracts the calldata cost from the
-/// gas value, as well as the 21k base gas cost for all transactions.
-pub fn remove_extra_costs(gas: U256, calldata: &[u8]) -> U256 {
-    let mut calldata_cost = 0;
-    for i in calldata {
-        if *i != 0 {
-            // TODO: Check if EVM pre-eip2028 and charge 64
-            // GTXDATANONZERO = 16
-            calldata_cost += 16
-        } else {
-            // GTXDATAZERO = 4
-            calldata_cost += 4;
-        }
-    }
-    gas.saturating_sub(calldata_cost.into()).saturating_sub(BASE_TX_COST.into())
-}
-
 /// Flattens a group of contracts into maps of all events and functions
 pub fn flatten_known_contracts(
-    contracts: &BTreeMap<String, (Abi, Vec<u8>)>,
+    contracts: &BTreeMap<ArtifactId, (Abi, Vec<u8>)>,
 ) -> (BTreeMap<[u8; 4], Function>, BTreeMap<H256, Event>, Abi) {
     let flattened_funcs: BTreeMap<[u8; 4], Function> = contracts
         .iter()
@@ -388,7 +473,7 @@ pub async fn get_func_etherscan(
     contract: Address,
     args: &[String],
     chain: Chain,
-    etherscan_api_key: String,
+    etherscan_api_key: &str,
 ) -> Result<Function> {
     let client = Client::new(chain, etherscan_api_key)?;
     let metadata = &client.contract_source_code(contract).await?.items[0];
@@ -903,106 +988,6 @@ pub fn abi_to_solidity(contract_abi: &Abi, mut contract_name: &str) -> Result<St
     })
 }
 
-#[derive(Debug)]
-pub struct PostLinkInput<'a, T, U> {
-    pub contract: CompactContractBytecode,
-    pub known_contracts: &'a mut BTreeMap<String, T>,
-    pub fname: String,
-    pub extra: &'a mut U,
-    pub dependencies: Vec<ethers_core::types::Bytes>,
-}
-
-pub fn link<T, U>(
-    contracts: &BTreeMap<String, CompactContractBytecode>,
-    known_contracts: &mut BTreeMap<String, T>,
-    sender: Address,
-    extra: &mut U,
-    link_key_construction: impl Fn(String, String) -> (String, String, String),
-    post_link: impl Fn(PostLinkInput<T, U>) -> eyre::Result<()>,
-) -> eyre::Result<()> {
-    // we dont use mainnet state for evm_opts.sender so this will always be 1
-    // I am leaving this here so that in the future if this needs to change,
-    // its easy to find.
-    let nonce = U256::one();
-
-    // create a mapping of fname => Vec<(fname, file, key)>,
-    let link_tree: BTreeMap<String, Vec<(String, String, String)>> = contracts
-        .iter()
-        .map(|(fname, contract)| {
-            (
-                fname.to_string(),
-                contract
-                    .all_link_references()
-                    .iter()
-                    .flat_map(|(file, link)| {
-                        link.keys()
-                            .map(|key| link_key_construction(file.to_string(), key.to_string()))
-                    })
-                    .collect::<Vec<(String, String, String)>>(),
-            )
-        })
-        .collect();
-
-    for fname in contracts.keys() {
-        let (abi, maybe_deployment_bytes, maybe_runtime) = if let Some(c) = contracts.get(fname) {
-            (c.abi.as_ref(), c.bytecode.as_ref(), c.deployed_bytecode.as_ref())
-        } else {
-            (None, None, None)
-        };
-        if let (Some(abi), Some(bytecode), Some(runtime)) =
-            (abi, maybe_deployment_bytes, maybe_runtime)
-        {
-            // we are going to mutate, but library contract addresses may change based on
-            // the test so we clone
-            let mut target_bytecode = bytecode.clone();
-            let mut rt = runtime.clone();
-            let mut target_bytecode_runtime = rt.bytecode.expect("No target runtime").clone();
-
-            // instantiate a vector that gets filled with library deployment bytecode
-            let mut dependencies = vec![];
-
-            match bytecode.object {
-                BytecodeObject::Unlinked(_) => {
-                    // link needed
-                    recurse_link(
-                        fname.to_string(),
-                        (&mut target_bytecode, &mut target_bytecode_runtime),
-                        contracts,
-                        &link_tree,
-                        &mut dependencies,
-                        nonce,
-                        sender,
-                    );
-                }
-                BytecodeObject::Bytecode(ref bytes) => {
-                    if bytes.as_ref().is_empty() {
-                        // abstract, skip
-                        continue
-                    }
-                }
-            }
-
-            rt.bytecode = Some(target_bytecode_runtime);
-            let tc = CompactContractBytecode {
-                abi: Some(abi.clone()),
-                bytecode: Some(target_bytecode),
-                deployed_bytecode: Some(rt),
-            };
-
-            let post_link_input = PostLinkInput {
-                contract: tc,
-                known_contracts,
-                fname: fname.to_string(),
-                extra,
-                dependencies,
-            };
-
-            post_link(post_link_input)?;
-        }
-    }
-    Ok(())
-}
-
 /// Enables tracing
 #[cfg(any(feature = "test"))]
 pub fn init_tracing_subscriber() {
@@ -1020,90 +1005,104 @@ mod tests {
         solc::{artifacts::CompactContractBytecode, Project, ProjectPathsConfig},
         types::{Address, Bytes},
     };
-    use std::path::PathBuf;
 
     #[test]
-    #[ignore] // TODO: This needs to be re-enabled one it's fixed in ethers-solc.
     fn test_linking() {
-        let lib_test_json_lib_test = "6101d1610053600b82828239805160001a607314610046577f4e487b7100000000000000000000000000000000000000000000000000000000600052600060045260246000fd5b30600052607381538281f3fe73000000000000000000000000000000000000000030146080604052600436106100355760003560e01c806314ba3f121461003a575b600080fd5b610054600480360381019061004f91906100bb565b61006a565b60405161006191906100f7565b60405180910390f35b60006064826100799190610141565b9050919050565b600080fd5b6000819050919050565b61009881610085565b81146100a357600080fd5b50565b6000813590506100b58161008f565b92915050565b6000602082840312156100d1576100d0610080565b5b60006100df848285016100a6565b91505092915050565b6100f181610085565b82525050565b600060208201905061010c60008301846100e8565b92915050565b7f4e487b7100000000000000000000000000000000000000000000000000000000600052601160045260246000fd5b600061014c82610085565b915061015783610085565b9250817fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff04831182151516156101905761018f610112565b5b82820290509291505056fea264697066735822122089bbb5614fb9e62f207b40682b397b25f2000c514857bf7959055b0d9b5dcfbf64736f6c634300080b0033";
-        let lib_test_nested_json_lib_test_nested = "610266610053600b82828239805160001a607314610046577f4e487b7100000000000000000000000000000000000000000000000000000000600052600060045260246000fd5b30600052607381538281f3fe73000000000000000000000000000000000000000030146080604052600436106100355760003560e01c80639acc23361461003a575b600080fd5b610054600480360381019061004f9190610116565b61006a565b604051610061919061015c565b60405180910390f35b60007347e9fbef8c83a1714f1951f142132e6e90f5fa5d6314ba3f1260656040518263ffffffff1660e01b81526004016100a491906101bc565b602060405180830381865af41580156100c1573d6000803e3d6000fd5b505050506040513d601f19601f820116820180604052508101906100e59190610203565b9050919050565b600080fd5b600381106100fe57600080fd5b50565b600081359050610110816100f1565b92915050565b60006020828403121561012c5761012b6100ec565b5b600061013a84828501610101565b91505092915050565b6000819050919050565b61015681610143565b82525050565b6000602082019050610171600083018461014d565b92915050565b6000819050919050565b6000819050919050565b60006101a66101a161019c84610177565b610181565b610143565b9050919050565b6101b68161018b565b82525050565b60006020820190506101d160008301846101ad565b92915050565b6101e081610143565b81146101eb57600080fd5b50565b6000815190506101fd816101d7565b92915050565b600060208284031215610219576102186100ec565b5b6000610227848285016101ee565b9150509291505056fea26469706673582212204d96467c5d42f97ecaa460cca5137364d61ae850ee0be7c2d9c5ffb045bf8dc364736f6c634300080b0033";
-        let contract_names = [
-            "DsTestMini.json:DsTestMini",
-            "LibLinkingTest.json:LibLinkingTest",
-            "LibTest.json:LibTest",
-            "LibTestNested.json:LibTestNested",
-            "Main.json:Main",
+        let mut contract_names = [
+            "DSTest.json:DSTest",
+            "Lib.json:Lib",
+            "LibraryConsumer.json:LibraryConsumer",
+            "LibraryLinkingTest.json:LibraryLinkingTest",
+            "NestedLib.json:NestedLib",
         ];
+        contract_names.sort_unstable();
 
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/linking");
-        let paths = ProjectPathsConfig::builder().root(&root).sources(&root).build().unwrap();
+        let paths = ProjectPathsConfig::builder()
+            .root("../testdata")
+            .sources("../testdata")
+            .build()
+            .unwrap();
 
         let project = Project::builder().paths(paths).ephemeral().no_artifacts().build().unwrap();
 
         let output = project.compile().unwrap();
         let contracts = output
             .into_artifacts()
-            .map(|(i, c)| (i.slug(), c.into_contract_bytecode()))
-            .collect::<BTreeMap<String, CompactContractBytecode>>();
+            .filter(|(i, _)| contract_names.contains(&i.slug().as_str()))
+            .map(|(id, c)| (id, c.into_contract_bytecode()))
+            .collect::<BTreeMap<ArtifactId, CompactContractBytecode>>();
 
-        let mut known_contracts: BTreeMap<String, (Abi, Vec<u8>)> = Default::default();
+        let mut known_contracts: BTreeMap<ArtifactId, (Abi, Vec<u8>)> = Default::default();
         let mut deployable_contracts: BTreeMap<String, (Abi, Bytes, Vec<Bytes>)> =
             Default::default();
 
-        assert_eq!(&contracts.keys().collect::<Vec<&String>>()[..], &contract_names[..]);
+        let mut res = contracts.keys().map(|i| i.slug()).collect::<Vec<String>>();
+        res.sort_unstable();
+        assert_eq!(&res[..], &contract_names[..]);
+
+        let lib_linked = hex::encode(
+            &contracts
+                .iter()
+                .find(|(i, _)| i.slug() == "Lib.json:Lib")
+                .unwrap()
+                .1
+                .bytecode
+                .clone()
+                .expect("library had no bytecode")
+                .object
+                .into_bytes()
+                .expect("could not get bytecode as bytes"),
+        );
+        let nested_lib_unlinked = &contracts
+            .iter()
+            .find(|(i, _)| i.slug() == "NestedLib.json:NestedLib")
+            .unwrap()
+            .1
+            .bytecode
+            .as_ref()
+            .expect("nested library had no bytecode")
+            .object
+            .as_str()
+            .expect("could not get bytecode as str")
+            .to_string();
 
         link(
-            &contracts,
+            contracts,
             &mut known_contracts,
             Address::default(),
             &mut deployable_contracts,
             |file, key| (format!("{}.json:{}", key, key), file, key),
             |post_link_input| {
-                match post_link_input.fname.as_str() {
-                    "DsTestMini.json:DsTestMini" => {
+                match post_link_input.id.slug().as_str() {
+                    "DSTest.json:DSTest" => {
                         assert_eq!(post_link_input.dependencies.len(), 0);
                     }
-                    "LibLinkingTest.json:LibLinkingTest" => {
+                    "LibraryLinkingTest.json:LibraryLinkingTest" => {
                         assert_eq!(post_link_input.dependencies.len(), 3);
-                        assert_eq!(
-                            hex::encode(post_link_input.dependencies[0].clone()),
-                            lib_test_json_lib_test
-                        );
-                        assert_eq!(
-                            hex::encode(post_link_input.dependencies[1].clone()),
-                            lib_test_json_lib_test
-                        );
-                        assert_eq!(
-                            hex::encode(post_link_input.dependencies[2].clone()),
-                            lib_test_nested_json_lib_test_nested
+                        assert_eq!(hex::encode(&post_link_input.dependencies[0]), lib_linked);
+                        assert_eq!(hex::encode(&post_link_input.dependencies[1]), lib_linked);
+                        assert_ne!(
+                            hex::encode(&post_link_input.dependencies[2]),
+                            *nested_lib_unlinked
                         );
                     }
-                    "LibTest.json:LibTest" => {
+                    "Lib.json:Lib" => {
                         assert_eq!(post_link_input.dependencies.len(), 0);
                     }
-                    "LibTestNested.json:LibTestNested" => {
+                    "NestedLib.json:NestedLib" => {
                         assert_eq!(post_link_input.dependencies.len(), 1);
-                        assert_eq!(
-                            hex::encode(post_link_input.dependencies[0].clone()),
-                            lib_test_json_lib_test
-                        );
+                        assert_eq!(hex::encode(&post_link_input.dependencies[0]), lib_linked);
                     }
-                    "Main.json:Main" => {
+                    "LibraryConsumer.json:LibraryConsumer" => {
                         assert_eq!(post_link_input.dependencies.len(), 3);
-                        assert_eq!(
-                            hex::encode(post_link_input.dependencies[0].clone()),
-                            lib_test_json_lib_test
-                        );
-                        assert_eq!(
-                            hex::encode(post_link_input.dependencies[1].clone()),
-                            lib_test_json_lib_test
-                        );
-                        assert_eq!(
-                            hex::encode(post_link_input.dependencies[2].clone()),
-                            lib_test_nested_json_lib_test_nested
+                        assert_eq!(hex::encode(&post_link_input.dependencies[0]), lib_linked);
+                        assert_eq!(hex::encode(&post_link_input.dependencies[1]), lib_linked);
+                        assert_ne!(
+                            hex::encode(&post_link_input.dependencies[2]),
+                            *nested_lib_unlinked
                         );
                     }
-                    _ => assert!(false),
+                    s => panic!("unexpected slug {}", s),
                 }
                 Ok(())
             },
@@ -1190,19 +1189,30 @@ mod tests {
     #[test]
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn abi2solidity() {
-        let contract_abi: Abi =
-            serde_json::from_slice(&std::fs::read("testdata/interfaceTestABI.json").unwrap())
-                .unwrap();
+        let contract_abi: Abi = serde_json::from_slice(
+            &std::fs::read("../testdata/fixtures/SolidityGeneration/InterfaceABI.json").unwrap(),
+        )
+        .unwrap();
         assert_eq!(
-            std::str::from_utf8(&std::fs::read("testdata/interfaceTest.sol").unwrap())
+            std::str::from_utf8(
+                &std::fs::read(
+                    "../testdata/fixtures/SolidityGeneration/GeneratedNamedInterface.sol"
+                )
                 .unwrap()
-                .to_string(),
+            )
+            .unwrap()
+            .to_string(),
             abi_to_solidity(&contract_abi, "test").unwrap()
         );
         assert_eq!(
-            std::str::from_utf8(&std::fs::read("testdata/interfaceTestNoName.sol").unwrap())
+            std::str::from_utf8(
+                &std::fs::read(
+                    "../testdata/fixtures/SolidityGeneration/GeneratedUnnamedInterface.sol"
+                )
                 .unwrap()
-                .to_string(),
+            )
+            .unwrap()
+            .to_string(),
             abi_to_solidity(&contract_abi, "").unwrap()
         );
     }

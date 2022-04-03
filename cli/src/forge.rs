@@ -4,9 +4,7 @@ mod opts;
 mod term;
 mod utils;
 
-use crate::cmd::{watch, Cmd};
-
-use ethers::solc::{Project, ProjectPathsConfig};
+use crate::cmd::{forge::watch, Cmd};
 use opts::forge::{Dependency, Opts, Subcommands};
 use std::process::Command;
 
@@ -32,7 +30,7 @@ fn main() -> eyre::Result<()> {
         }
         Subcommands::Build(cmd) => {
             if cmd.is_watch() {
-                utils::block_on(crate::cmd::watch::watch_build(cmd))?;
+                utils::block_on(crate::cmd::forge::watch::watch_build(cmd))?;
             } else {
                 cmd.run()?;
             }
@@ -41,10 +39,10 @@ fn main() -> eyre::Result<()> {
             cmd.run()?;
         }
         Subcommands::VerifyContract(args) => {
-            utils::block_on(cmd::verify::run_verify(&args))?;
+            utils::block_on(cmd::forge::verify::run_verify(&args))?;
         }
         Subcommands::VerifyCheck(args) => {
-            utils::block_on(cmd::verify::run_verify_check(&args))?;
+            utils::block_on(cmd::forge::verify::run_verify_check(&args))?;
         }
         Subcommands::Create(cmd) => {
             cmd.run()?;
@@ -78,13 +76,15 @@ fn main() -> eyre::Result<()> {
             generate(shell, &mut Opts::command(), "forge", &mut std::io::stdout())
         }
         Subcommands::Clean { root } => {
-            let root = root.unwrap_or_else(|| std::env::current_dir().unwrap());
-            let paths = ProjectPathsConfig::builder().root(&root).build()?;
-            let project = Project::builder().paths(paths).build()?;
-            project.cleanup()?;
+            let config = utils::load_config_with_root(root);
+            config.project()?.cleanup()?;
         }
         Subcommands::Snapshot(cmd) => {
-            cmd.run()?;
+            if cmd.is_watch() {
+                utils::block_on(crate::cmd::forge::watch::watch_snapshot(cmd))?;
+            } else {
+                cmd.run()?;
+            }
         }
         // Subcommands::Fmt(cmd) => {
         //     cmd.run()?;

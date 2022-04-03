@@ -93,6 +93,13 @@ block_base_fee_per_gas = 0
 block_coinbase = '0x0000000000000000000000000000000000000000'
 block_timestamp = 0
 block_difficulty = 0
+# caches storage retrieved locally for certain chains and endpoints
+# can also be restrictied to `chains = ["optimism", "mainnet"]`
+# by default all endpoints will be cached, alternative options are "remote" for only caching non localhost endpoints and "<regex>"
+# to disable storage caching entirely set `no_storage_caching = true`
+rpc_storage_caching = { chains = "all", endpoints = "all" }
+# this overrides `rpc_storage_caching` entirely
+no_storage_caching = false
 ```
 
 ##### Additional Optimizer settings

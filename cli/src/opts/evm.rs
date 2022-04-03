@@ -1,7 +1,6 @@
 //! cli arguments for configuring the evm settings
 use clap::Parser;
 use ethers::types::{Address, U256};
-use evm_adapters::evm_opts::EvmType;
 use foundry_config::{
     figment::{
         self,
@@ -27,7 +26,7 @@ use serde::Serialize;
 //
 // ```ignore
 // use foundry_config::Config;
-// use evm_adapter::EvmOpts;
+// use forge::executor::opts::EvmOpts;
 // # fn t(args: EvmArgs) {
 // let figment = Config::figment_with_root(".").merge(args);
 // let opts = figment.extract::<EvmOpts>().unwrap()
@@ -36,55 +35,63 @@ use serde::Serialize;
 // See also [`BuildArgs`]
 #[derive(Debug, Clone, Parser, Serialize)]
 pub struct EvmArgs {
-    #[clap(flatten)]
-    #[serde(flatten)]
-    pub env: EnvArgs,
-
-    #[clap(
-        long,
-        short,
-        help = "the EVM type you want to use (e.g. sputnik)",
-        default_value = "sputnik"
-    )]
-    pub evm_type: EvmType,
-
-    #[clap(help = "fetch state over a remote instead of starting from empty state", long, short)]
-    #[clap(alias = "rpc-url")]
+    /// Fetch state over a remote endpoint instead of starting from an empty state.
+    ///
+    /// If you want to fetch state from a specific block number, see --fork-block-number.
+    #[clap(long, short, alias = "rpc-url")]
     #[serde(rename = "eth_rpc_url", skip_serializing_if = "Option::is_none")]
     pub fork_url: Option<String>,
 
-    #[clap(help = "pins the block number for the state fork", long)]
+    /// Fetch state from a specific block number over a remote endpoint.
+    ///
+    /// See --fork-url.
+    #[clap(long, requires = "fork-url")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_block_number: Option<u64>,
 
-    #[clap(help = "the initial balance of each deployed test contract", long)]
+    /// Disables storage caching entirely. This overrides any settings made in
+    /// [foundry_config::caching::StorageCachingConfig]
+    ///
+    /// See --fork-url.
+    #[clap(
+        long,
+        requires = "fork-url",
+        help = "Explicitly disables the use of storage. All storage slots are read entirely from the endpoint."
+    )]
+    #[serde(skip)]
+    pub no_storage_caching: bool,
+
+    /// The initial balance of deployed test contracts.
+    #[clap(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub initial_balance: Option<U256>,
 
-    #[clap(help = "the address which will be executing all tests", long)]
+    /// The address which will be executing tests.
+    #[clap(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sender: Option<Address>,
 
+    /// Enable the FFI cheatcode.
     #[clap(help = "enables the FFI cheatcode", long)]
     #[serde(skip)]
     pub ffi: bool,
 
-    #[clap(
-        help = r#"Verbosity mode of EVM output as number of occurences of the `v` flag (-v, -vv, -vvv, etc.)
-    2: print test logs for all tests
-    3: print test trace for failing tests
-    4: always print test trace, print setup for failing tests
-    5: always print test trace and setup
-"#,
-        long,
-        short,
-        parse(from_occurrences)
-    )]
+    /// Verbosity of the EVM.
+    ///
+    /// Pass multiple times to increase the verbosity (e.g. -v, -vv, -vvv).
+    ///
+    /// Verbosity levels:
+    ///   2: Print logs for all tests
+    ///   3: Print execution traces for failing tests
+    ///   4: Print execution traces for all tests, and setup traces for failing tests
+    ///   5: Print execution and setup traces for all tests
+    #[clap(long, short, parse(from_occurrences))]
     #[serde(skip)]
     pub verbosity: u8,
 
-    #[clap(help = "enable debugger", long)]
-    pub debug: bool,
+    #[clap(flatten)]
+    #[serde(flatten)]
+    pub env: EnvArgs,
 }
 
 // Make this set of options a `figment::Provider` so that it can be merged into the `Config`
@@ -107,51 +114,65 @@ impl Provider for EvmArgs {
             dict.insert("ffi".to_string(), self.ffi.into());
         }
 
+        if self.no_storage_caching {
+            dict.insert("no_storage_caching".to_string(), self.no_storage_caching.into());
+        }
+
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }
 
+/// Configures the executor environment during tests.
 #[derive(Debug, Clone, Default, Parser, Serialize)]
+#[clap(next_help_heading = "EXECUTOR ENVIRONMENT CONFIG")]
 pub struct EnvArgs {
-    // structopt does not let use `u64::MAX`:
-    // https://doc.rust-lang.org/std/primitive.u64.html#associatedconstant.MAX
-    #[clap(help = "the block gas limit", long)]
+    /// The block gas limit.
+    #[clap(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gas_limit: Option<u64>,
 
-    #[clap(help = "the chainid opcode value", long)]
+    /// The chain ID.
+    #[clap(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chain_id: Option<u64>,
 
-    #[clap(help = "the tx.gasprice value during EVM execution", long)]
+    /// The gas price.
+    #[clap(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gas_price: Option<u64>,
 
-    #[clap(help = "the base fee in a block", long)]
+    /// The base fee in a block.
+    #[clap(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_base_fee_per_gas: Option<u64>,
 
-    #[clap(help = "the tx.origin value during EVM execution", long)]
+    /// The transaction origin.
+    #[clap(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tx_origin: Option<Address>,
 
-    #[clap(help = "the block.coinbase value during EVM execution", long)]
+    /// The coinbase of the block.
+    #[clap(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_coinbase: Option<Address>,
-    #[clap(help = "the block.timestamp value during EVM execution", long)]
+
+    /// The timestamp of the block.
+    #[clap(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_timestamp: Option<u64>,
 
-    #[clap(help = "the block.number value during EVM execution", long)]
+    /// The block number.
+    #[clap(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_number: Option<u64>,
 
-    #[clap(help = "the block.difficulty value during EVM execution", long)]
+    /// The block difficulty.
+    #[clap(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_difficulty: Option<u64>,
 
-    #[clap(help = "the block.gaslimit value during EVM execution", long)]
+    /// The block gas limit.
+    #[clap(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_gas_limit: Option<u64>,
-    // TODO: Add configuration option for base fee.
 }

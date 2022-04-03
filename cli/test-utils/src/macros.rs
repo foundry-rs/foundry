@@ -39,7 +39,21 @@ macro_rules! forgetest {
     ($test:ident, $style:expr, $fun:expr) => {
         #[test]
         fn $test() {
-            let (prj, cmd) = $crate::util::setup(stringify!($test), $style);
+            let (prj, cmd) = $crate::util::setup_forge(stringify!($test), $style);
+            $fun(prj, cmd);
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! casttest {
+    ($test:ident, $fun:expr) => {
+        $crate::casttest!($test, $crate::ethers_solc::PathStyle::Dapptools, $fun);
+    };
+    ($test:ident, $style:expr, $fun:expr) => {
+        #[test]
+        fn $test() {
+            let (prj, cmd) = $crate::util::setup_cast(stringify!($test), $style);
             $fun(prj, cmd);
         }
     };
@@ -55,7 +69,7 @@ macro_rules! forgetest_ignore {
         #[test]
         #[ignore]
         fn $test() {
-            let (prj, cmd) = $crate::util::setup(stringify!($test), $style);
+            let (prj, cmd) = $crate::util::setup_forge(stringify!($test), $style);
             $fun(prj, cmd);
         }
     };
@@ -70,7 +84,7 @@ macro_rules! forgetest_init {
     ($test:ident, $style:expr, $fun:expr) => {
         #[test]
         fn $test() {
-            let (prj, cmd) = $crate::util::setup(stringify!($test), $style);
+            let (prj, cmd) = $crate::util::setup_forge(stringify!($test), $style);
             $crate::util::initialize(prj.root());
             $fun(prj, cmd);
         }
@@ -122,15 +136,21 @@ macro_rules! forgetest_external {
                 return
             };
 
-            let (prj, mut cmd) = $crate::util::setup(stringify!($test), $style);
+            let (prj, mut cmd) = $crate::util::setup_forge(stringify!($test), $style);
 
             // Wipe the default structure
             prj.wipe();
 
             // Clone the external repository
             let git_clone =
-                $crate::util::clone_remote(&format!("https://github.com/{}", $repo), prj.root());
-            assert!(git_clone, "could not clone repository");
+                $crate::util::clone_remote(&format!("https://github.com/{}", $repo), prj.root())
+                    .expect("Could not clone repository. Is git installed?");
+            assert!(
+                git_clone.status.success(),
+                "could not clone repository:\nstdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&git_clone.stdout),
+                String::from_utf8_lossy(&git_clone.stderr)
+            );
 
             // We just run make install, but we do not care if it worked or not,
             // since some repositories do not have that target
