@@ -8,7 +8,7 @@ use crate::{
     opts::forge::CompilerArgs,
 };
 use clap::{Parser, ValueHint};
-use ethers::solc::remappings::Remapping;
+use ethers::solc::{remappings::Remapping, utils::canonicalized};
 use foundry_config::{
     figment::{
         self,
@@ -24,10 +24,17 @@ use watchexec::config::{InitConfig, RuntimeConfig};
 // Loads project's figment and merges the build cli arguments into it
 impl<'a> From<&'a BuildArgs> for Figment {
     fn from(args: &'a BuildArgs) -> Self {
-        let figment = if let Some(root) = args.root.clone() {
-            Config::figment_with_root(root)
+        let figment = if let Some(ref config_path) = args.config_path {
+            if !config_path.exists() {
+                panic!("error: config-path `{}` does not exist", config_path.display())
+            }
+            if !config_path.ends_with(Config::FILE_NAME) {
+                panic!("error: the config-path must be a path to a foundry.toml file")
+            }
+            let config_path = canonicalized(config_path);
+            Config::figment_with_root(config_path.parent().unwrap())
         } else {
-            Config::figment_with_root(find_project_root_path().unwrap())
+            Config::figment_with_root(args.project_root())
         };
 
         // remappings should stack
@@ -43,7 +50,13 @@ impl<'a> From<&'a BuildArgs> for Figment {
 impl<'a> From<&'a BuildArgs> for Config {
     fn from(args: &'a BuildArgs) -> Self {
         let figment: Figment = args.into();
-        Config::from_provider(figment).sanitized()
+        let mut config = Config::from_provider(figment).sanitized();
+        // if `--config-path` is set we need to adjust the config's root path to the actual root
+        // path for the project, otherwise it will the parent dir of the `--config-path`
+        if args.config_path.is_some() {
+            config.__root = args.project_root().into();
+        }
+        config
     }
 }
 
@@ -189,6 +202,14 @@ pub struct BuildArgs {
     )]
     #[serde(skip)]
     pub via_ir: bool,
+
+    #[clap(
+        help = "path to the foundry.toml",
+        long = "config-path",
+        value_hint = ValueHint::FilePath
+    )]
+    #[serde(skip)]
+    pub config_path: Option<PathBuf>,
 }
 
 impl Cmd for BuildArgs {
@@ -208,6 +229,13 @@ impl BuildArgs {
     pub fn project(&self) -> eyre::Result<Project> {
         let config: Config = self.into();
         Ok(config.project()?)
+    }
+
+    /// Returns the root directory to use for configuring the [Project]
+    ///
+    /// This will be the `--root` argument if provided, otherwise see [find_project_root_path()]
+    fn project_root(&self) -> PathBuf {
+        self.root.clone().unwrap_or_else(|| find_project_root_path().unwrap())
     }
 
     /// Returns whether `BuildArgs` was configured with `--watch`
