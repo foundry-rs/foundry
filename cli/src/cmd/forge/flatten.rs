@@ -90,6 +90,7 @@ impl Cmd for FlattenArgs {
             libraries: vec![],
             watch: Default::default(),
             via_ir: false,
+            config_path: None,
         };
 
         let config = Config::from(&build_args);
