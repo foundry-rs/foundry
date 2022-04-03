@@ -22,7 +22,7 @@ use crate::caching::StorageCachingConfig;
 use ethers_core::types::{Address, U256};
 pub use ethers_solc::artifacts::OptimizerDetails;
 use ethers_solc::{
-    artifacts::{output_selection::ContractOutputSelection, Optimizer, Settings},
+    artifacts::{output_selection::ContractOutputSelection, BytecodeHash, Optimizer, Settings},
     cache::SOLIDITY_FILES_CACHE_FILENAME,
     error::SolcError,
     remappings::{RelativeRemapping, Remapping},
@@ -212,6 +212,11 @@ pub struct Config {
     /// Disables storage caching entirely. This overrides any settings made in
     /// `rpc_storage_caching`
     pub no_storage_caching: bool,
+    /// Whether to include the metadata hash.
+    ///
+    /// The metadata hash is machine dependent. By default, this is set to [BytecodeHash::None] to allow for deterministic code, See: <https://docs.soliditylang.org/en/latest/metadata.html>
+    #[serde(with = "from_str_lowercase")]
+    pub bytecode_hash: BytecodeHash,
     /// The root path where the config detection started from, `Config::with_root`
     #[doc(hidden)]
     //  We're skipping serialization here, so it won't be included in the [`Config::to_string()`]
@@ -551,6 +556,7 @@ impl Config {
             optimizer,
             evm_version: Some(self.evm_version),
             libraries,
+            metadata: Some(self.bytecode_hash.into()),
             ..Default::default()
         }
         .with_extra_output(self.configured_artifacts_handler().output_selection())
@@ -914,6 +920,7 @@ impl Default for Config {
             via_ir: false,
             rpc_storage_caching: Default::default(),
             no_storage_caching: false,
+            bytecode_hash: BytecodeHash::None,
         }
     }
 }
@@ -1600,6 +1607,7 @@ mod tests {
                 remappings = ["ds-test=lib/ds-test/"]
                 via_ir = true
                 rpc_storage_caching = { chains = [1, "optimism", 999999], endpoints = "all"}
+                bytecode_hash = "ipfs"
             "#,
             )?;
 
@@ -1622,6 +1630,7 @@ mod tests {
                         ]),
                         endpoints: CachedEndpoints::All
                     },
+                    bytecode_hash: BytecodeHash::Ipfs,
                     ..Config::default()
                 }
             );
