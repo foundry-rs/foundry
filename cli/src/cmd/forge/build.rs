@@ -177,6 +177,7 @@ pub struct BuildArgs {
     pub hardhat: bool,
 
     #[clap(help = "add linked libraries", long, env = "DAPP_LIBRARIES")]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub libraries: Vec<String>,
 
     #[clap(flatten)]

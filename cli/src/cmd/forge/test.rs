@@ -7,9 +7,11 @@ use crate::{
     compile::ProjectCompiler,
     opts::evm::EvmArgs,
     utils,
+    utils::FoundryPathExt,
 };
 use ansi_term::Colour;
 use clap::{AppSettings, Parser};
+use ethers::solc::FileFilter;
 use forge::{
     decode::decode_console_logs,
     executor::opts::EvmOpts,
@@ -20,11 +22,13 @@ use forge::{
 use foundry_config::{figment::Figment, Config};
 use regex::Regex;
 use std::{
-    collections::BTreeMap, path::PathBuf, str::FromStr, sync::mpsc::channel, thread, time::Duration,
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+    str::FromStr,
+    sync::mpsc::channel,
+    thread,
+    time::Duration,
 };
-use std::path::Path;
-use ethers::solc::FileFilter;
-use crate::utils::FoundryPathExt;
 
 #[derive(Debug, Clone, Parser)]
 pub struct Filter {
@@ -538,7 +542,6 @@ fn test(
         Ok(TestOutcome::new(results, allow_failure))
     }
 }
-
 
 /// prefixes the `re` [Regex] argument with a caret (`^`).
 /// If a caret is at the beginning of the entire regular expression, it matches the beginning of a

@@ -1,12 +1,10 @@
-use crate::{opts::forge::ContractInfo};
+use crate::opts::forge::ContractInfo;
 use ethers::{
     abi::Abi,
-    prelude::{
-        artifacts::{CompactBytecode, CompactDeployedBytecode},
-    },
+    prelude::artifacts::{CompactBytecode, CompactDeployedBytecode},
     solc::cache::SolFilesCache,
 };
-use std::{path::PathBuf};
+use std::path::PathBuf;
 
 /// Common trait for all cli commands
 pub trait Cmd: clap::Parser + Sized {
@@ -15,8 +13,6 @@ pub trait Cmd: clap::Parser + Sized {
 }
 
 use ethers::solc::{artifacts::CompactContractBytecode, Project, ProjectCompileOutput};
-
-
 
 /// Given a project and its compiled artifacts, proceeds to return the ABI, Bytecode and
 /// Runtime Bytecode of the given contract.
