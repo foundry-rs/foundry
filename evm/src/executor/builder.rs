@@ -3,7 +3,7 @@ use revm::{
     db::{DatabaseRef, EmptyDB},
     Env, SpecId,
 };
-use std::{path::PathBuf, sync::Arc};
+use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
 
 use super::{
     fork::SharedBackend,
@@ -61,8 +61,11 @@ impl Fork {
 
         let provider = Arc::new(Provider::try_from(url).expect("Failed to establish provider"));
 
-        let mut meta =
-            BlockchainDbMeta { cfg_env: env.cfg.clone(), block_env: env.block.clone(), host };
+        let mut meta = BlockchainDbMeta {
+            cfg_env: env.cfg.clone(),
+            block_env: env.block.clone(),
+            hosts: BTreeSet::from([host]),
+        };
 
         // update the meta to match the forked config
         meta.cfg_env.chain_id = chain_id.into();

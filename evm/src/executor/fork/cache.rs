@@ -3,7 +3,13 @@ use ethers::types::{Address, H256, U256};
 use parking_lot::RwLock;
 use revm::AccountInfo;
 use serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer};
-use std::{collections::BTreeMap, fs, io::BufWriter, path::PathBuf, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    io::BufWriter,
+    path::PathBuf,
+    sync::Arc,
+};
 use tracing::{trace, trace_span, warn};
 use tracing_error::InstrumentResult;
 
@@ -37,7 +43,9 @@ impl BlockchainDb {
             .as_ref()
             .and_then(|p| {
                 JsonBlockCacheDB::load(p).ok().filter(|cache| {
-                    if meta != *cache.meta().read() {
+                    let mut existing = cache.meta().write();
+                    existing.hosts.extend(meta.hosts.clone());
+                    if meta != *existing {
                         warn!(target:"cache", "non-matching block metadata");
                         false
                     } else {
@@ -77,11 +85,54 @@ impl BlockchainDb {
 }
 
 /// relevant identifying markers in the context of [BlockchainDb]
-#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, Serialize)]
 pub struct BlockchainDbMeta {
     pub cfg_env: revm::CfgEnv,
     pub block_env: revm::BlockEnv,
-    pub host: String,
+    /// all the hosts used to connect to
+    pub hosts: BTreeSet<String>,
+}
+
+// ignore hosts to not invalidate the cache when different endpoints are used, as it's commonly the
+// case for http vs ws endpoints
+impl PartialEq for BlockchainDbMeta {
+    fn eq(&self, other: &Self) -> bool {
+        self.cfg_env == other.cfg_env && self.block_env == other.block_env
+    }
+}
+
+impl<'de> Deserialize<'de> for BlockchainDbMeta {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        // custom deserialize impl to not break existing cache files
+        #[derive(Deserialize)]
+        struct Meta {
+            cfg_env: revm::CfgEnv,
+            block_env: revm::BlockEnv,
+            /// all the hosts used to connect to
+            #[serde(alias = "host")]
+            hosts: Hosts,
+        }
+
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Hosts {
+            Multi(BTreeSet<String>),
+            Single(String),
+        }
+
+        let Meta { cfg_env, block_env, hosts } = Meta::deserialize(deserializer)?;
+        Ok(Self {
+            cfg_env,
+            block_env,
+            hosts: match hosts {
+                Hosts::Multi(hosts) => hosts,
+                Hosts::Single(host) => BTreeSet::from([host]),
+            },
+        })
+    }
 }
 
 /// In Memory cache containing all fetched accounts and storage slots

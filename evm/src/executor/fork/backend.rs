@@ -497,7 +497,7 @@ mod tests {
         types::Address,
     };
 
-    use std::{convert::TryFrom, path::PathBuf, sync::Arc};
+    use std::{collections::BTreeSet, convert::TryFrom, path::PathBuf, sync::Arc};
 
     use super::*;
     const ENDPOINT: &str = "https://mainnet.infura.io/v3/c60b0bb42f8a4c6481ecd229eddaca27";
@@ -508,7 +508,7 @@ mod tests {
         let meta = BlockchainDbMeta {
             cfg_env: Default::default(),
             block_env: Default::default(),
-            host: ENDPOINT.to_string(),
+            hosts: BTreeSet::from([ENDPOINT.to_string()]),
         };
 
         let db = BlockchainDb::new(meta, None);
@@ -586,7 +586,7 @@ mod tests {
         let meta = BlockchainDbMeta {
             cfg_env: Default::default(),
             block_env: revm::BlockEnv { number: block_num.into(), ..Default::default() },
-            host: "mainnet.infura.io".to_string(),
+            hosts: Default::default(),
         };
 
         let db = BlockchainDb::new(meta, Some(cache_path));
