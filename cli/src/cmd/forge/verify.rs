@@ -8,7 +8,10 @@ use clap::Parser;
 use ethers::{
     abi::Address,
     etherscan::{contract::VerifyContract, Client},
+    solc::{artifacts::Source, AggregatedCompilerOutput, CompilerInput, Solc},
 };
+use semver::Version;
+use std::collections::BTreeMap;
 
 /// Verification arguments
 #[derive(Debug, Clone, Parser)]
@@ -92,6 +95,17 @@ impl VerifyArgs {
             .flatten(&project.root().join(self.contract.path.as_ref().unwrap()))
             .map_err(|err| eyre::eyre!("Failed to flatten contract: {}", err))?;
 
+        if !self.force {
+            // solc dry run
+            self.check_flattened(contract.clone()).await.map_err(|err| {
+                eyre::eyre!(
+                    "Failed to compile the flattened code locally: `{}`\
+To skip this solc dry, have a look at the  `--force` flag of this command.",
+                    err
+                )
+            })?;
+        }
+
         let etherscan = Client::new(self.chain_id.try_into()?, &self.etherscan_key)
             .map_err(|err| eyre::eyre!("Failed to create etherscan client: {}", err))?;
 
@@ -136,6 +150,39 @@ impl VerifyArgs {
             resp.result,
             etherscan.address_url(self.address)
         );
+        Ok(())
+    }
+
+    /// Attempts to compile the flattened content locally with the compiler version
+    async fn check_flattened(&self, content: impl Into<String>) -> eyre::Result<()> {
+        let version: Version = self.compiler_version.parse()?;
+        let solc = if let Some(solc) = Solc::find_svm_installed_version(&self.compiler_version)? {
+            solc
+        } else {
+            Solc::install(&version).await?
+        };
+        let input = CompilerInput {
+            language: "Solidity".to_string(),
+            sources: BTreeMap::from([("constract.sol".into(), Source { content: content.into() })]),
+            settings: Default::default(),
+        };
+
+        let out = solc.compile(&input)?;
+        if out.has_error() {
+            let mut o = AggregatedCompilerOutput::default();
+            o.extend(version, out);
+            eprintln!("{}", o.diagnostics(&[]));
+
+            eprintln!(
+                r#"Failed to compile the flattened code locally.
+This could be a bug, please inspect the outout of `forge flatten {}` and report an issue.
+To skip this solc dry, have a look at the  `--force` flag of this command.
+"#,
+                self.contract.path.as_ref().expect("Path is some;")
+            );
+            std::process::exit(1)
+        }
+
         Ok(())
     }
 }
