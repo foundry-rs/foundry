@@ -5,10 +5,15 @@ use crate::eth::{
     pool::transactions::PoolTransaction,
 };
 use ethers::{
-    prelude::{Block, BlockNumber, Transaction, TransactionReceipt, TxHash, H256, U256, U64},
+    prelude::{BlockNumber, Transaction, TransactionReceipt, TxHash, H256, U256, U64},
     types::BlockId,
 };
 
+use forge_node_core::eth::{
+    block::{Block, BlockInfo},
+    receipt::TypedReceipt,
+    transaction::TransactionInfo,
+};
 use foundry_evm::{
     executor::DatabaseRef,
     revm::{db::CacheDB, Database, Env},
@@ -20,7 +25,7 @@ use std::{collections::HashMap, sync::Arc};
 #[derive(Clone, Default)]
 struct BlockchainStorage {
     /// all stored blocks (block hash -> block)
-    blocks: HashMap<H256, Block<TxHash>>,
+    blocks: HashMap<H256, Block>,
     /// mapping from block number -> block hash
     hashes: HashMap<U64, H256>,
     /// The current best hash
@@ -35,7 +40,7 @@ struct BlockchainStorage {
     genesis_hash: H256,
     /// Mapping from the transaction hash to a tuple containing the transaction as well as the
     /// transaction receipt
-    transactions: HashMap<TxHash, (Transaction, TransactionReceipt)>,
+    transactions: HashMap<TxHash, (TransactionInfo, TypedReceipt)>,
 }
 
 impl BlockchainStorage {
@@ -106,17 +111,24 @@ impl Backend {
     /// step: gas limit, fee
     pub fn mine_block(&self, transactions: Vec<Arc<PoolTransaction>>) {
         // acquire all locks
-        let env = self.env.write();
+        let mut env = self.env.write();
         let mut db = self.db.write();
-        let storage = self.blockchain.storage.write();
+        let mut storage = self.blockchain.storage.write();
 
-        let _miner = TransactionExecutor {
+        let executor = TransactionExecutor {
             db: &mut *db,
             pending: transactions.into_iter(),
             block_env: env.block.clone(),
             cfg_env: env.cfg.clone(),
             parent_hash: storage.finalized_hash,
         };
+
+        // update block numbers
+        storage.finalized_number = env.block.number.as_u64().into();
+        env.block.number = env.block.number.saturating_add(U256::one());
+        storage.best_number = env.block.number.as_u64().into();
+
+        let BlockInfo { block, transactions, receipts } = executor.create_block();
 
         // TODO update env
     }

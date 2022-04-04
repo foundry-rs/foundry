@@ -44,19 +44,19 @@ impl MinedTransaction {
             TypedTransaction::Legacy(_) => TypedReceipt::Legacy(EIP658Receipt {
                 status_code,
                 gas_used: used_gas,
-                logs_bloom :bloom,
+                logs_bloom: bloom,
                 logs,
             }),
             TypedTransaction::EIP2930(_) => TypedReceipt::EIP2930(EIP2930Receipt {
                 status_code,
                 gas_used: used_gas,
-                logs_bloom:bloom,
+                logs_bloom: bloom,
                 logs,
             }),
             TypedTransaction::EIP1559(_) => TypedReceipt::EIP1559(EIP1559Receipt {
                 status_code,
                 gas_used: used_gas,
-                logs_bloom:bloom,
+                logs_bloom: bloom,
                 logs,
             }),
         }
