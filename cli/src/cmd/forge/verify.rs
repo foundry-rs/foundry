@@ -39,6 +39,99 @@ pub struct VerifyArgs {
     opts: CoreFlattenArgs,
 }
 
+impl VerifyArgs {
+    /// Run the verify command to submit the contract's source code for verification on etherscan
+    pub async fn run(&self) -> eyre::Result<()> {
+        if self.contract.path.is_none() {
+            eyre::bail!("Contract info must be provided in the format <path>:<name>")
+        }
+
+        let CoreFlattenArgs {
+            root,
+            contracts,
+            remappings,
+            remappings_env,
+            cache_path,
+            lib_paths,
+            hardhat,
+        } = self.opts.clone();
+
+        let build_args = BuildArgs {
+            root,
+            contracts,
+            remappings,
+            remappings_env,
+            cache_path,
+            lib_paths,
+            out_path: None,
+            compiler: Default::default(),
+            names: false,
+            sizes: false,
+            ignored_error_codes: vec![],
+            no_auto_detect: false,
+            use_solc: None,
+            offline: false,
+            force: false,
+            hardhat,
+            libraries: vec![],
+            watch: Default::default(),
+            via_ir: false,
+            config_path: None,
+        };
+
+        let project = build_args.project()?;
+        let contract = project
+            .flatten(&project.root().join(self.contract.path.as_ref().unwrap()))
+            .map_err(|err| eyre::eyre!("Failed to flatten contract: {}", err))?;
+
+        let etherscan = Client::new(self.chain_id.try_into()?, &self.etherscan_key)
+            .map_err(|err| eyre::eyre!("Failed to create etherscan client: {}", err))?;
+
+        let mut verify_args = VerifyContract::new(
+            self.address,
+            self.contract.name.clone(),
+            contract,
+            self.compiler_version.clone(),
+        )
+        .constructor_arguments(self.constructor_args.clone());
+
+        if let Some(optimizations) = self.num_of_optimizations {
+            verify_args = verify_args.optimization(true).runs(optimizations);
+        } else {
+            verify_args = verify_args.optimization(false);
+        }
+
+        let resp = etherscan
+            .submit_contract_verification(&verify_args)
+            .await
+            .map_err(|err| eyre::eyre!("Failed to submit contract verification: {}", err))?;
+
+        if resp.status == "0" {
+            if resp.message == "Contract source code already verified" {
+                println!("Contract source code already verified.");
+                return Ok(())
+            }
+
+            eyre::bail!(
+                "Encountered an error verifying this contract:\nResponse: `{}`\nDetails: `{}`",
+                resp.message,
+                resp.result
+            );
+        }
+
+        println!(
+            r#"Submitted contract for verification:
+                Response: `{}`
+                GUID: `{}`
+                url: {}#code"#,
+            resp.message,
+            resp.result,
+            etherscan.address_url(self.address)
+        );
+        Ok(())
+    }
+}
+
 /// Check verification status arguments
 #[derive(Debug, Clone, Parser)]
 pub struct VerifyCheckArgs {
@@ -53,119 +146,31 @@ pub struct VerifyCheckArgs {
     etherscan_key: String,
 }
 
-/// Run the verify command to submit the contract's source code for verification on etherscan
-pub async fn run_verify(args: &VerifyArgs) -> eyre::Result<()> {
-    if args.contract.path.is_none() {
-        eyre::bail!("Contract info must be provided in the format <path>:<name>")
-    }
+impl VerifyCheckArgs {
+    /// Executes the command to check verification status on Etherscan
+    pub async fn run(&self) -> eyre::Result<()> {
+        let etherscan = Client::new(self.chain_id.try_into()?, &self.etherscan_key)
+            .map_err(|err| eyre::eyre!("Failed to create etherscan client: {}", err))?;
 
-    let CoreFlattenArgs {
-        root,
-        contracts,
-        remappings,
-        remappings_env,
-        cache_path,
-        lib_paths,
-        hardhat,
-    } = args.opts.clone();
+        let resp = etherscan
+            .check_contract_verification_status(self.guid.clone())
+            .await
+            .map_err(|err| eyre::eyre!("Failed to request verification status: {}", err))?;
 
-    let build_args = BuildArgs {
-        root,
-        contracts,
-        remappings,
-        remappings_env,
-        cache_path,
-        lib_paths,
-        out_path: None,
-        compiler: Default::default(),
-        names: false,
-        sizes: false,
-        ignored_error_codes: vec![],
-        no_auto_detect: false,
-        use_solc: None,
-        offline: false,
-        force: false,
-        hardhat,
-        libraries: vec![],
-        watch: Default::default(),
-        via_ir: false,
-        config_path: None,
-    };
+        if resp.status == "0" {
+            if resp.result == "Pending in queue" {
+                println!("Verification is pending...");
+                return Ok(())
+            }
 
-    let project = build_args.project()?;
-    let contract = project
-        .flatten(&project.root().join(args.contract.path.as_ref().unwrap()))
-        .map_err(|err| eyre::eyre!("Failed to flatten contract: {}", err))?;
-
-    let etherscan = Client::new(args.chain_id.try_into()?, &args.etherscan_key)
-        .map_err(|err| eyre::eyre!("Failed to create etherscan client: {}", err))?;
-
-    let mut verify_args = VerifyContract::new(
-        args.address,
-        args.contract.name.clone(),
-        contract,
-        args.compiler_version.clone(),
-    )
-    .constructor_arguments(args.constructor_args.clone());
-
-    if let Some(optimizations) = args.num_of_optimizations {
-        verify_args = verify_args.optimization(true).runs(optimizations);
-    } else {
-        verify_args = verify_args.optimization(false);
-    }
-
-    let resp = etherscan
-        .submit_contract_verification(&verify_args)
-        .await
-        .map_err(|err| eyre::eyre!("Failed to submit contract verification: {}", err))?;
-
-    if resp.status == "0" {
-        if resp.message == "Contract source code already verified" {
-            println!("Contract source code already verified.");
-            return Ok(())
+            eyre::bail!(
+                "Contract verification failed:\nResponse: `{}`\nDetails: `{}`",
+                resp.message,
+                resp.result
+            );
         }
 
-        eyre::bail!(
-            "Encountered an error verifying this contract:\nResponse: `{}`\nDetails: `{}`",
-            resp.message,
-            resp.result
-        );
+        println!("Contract successfully verified.");
+        Ok(())
     }
-
-    println!(
-        r#"Submitted contract for verification:
-                Response: `{}`
-                GUID: `{}`
-                url: {}#code"#,
-        resp.message,
-        resp.result,
-        etherscan.address_url(args.address)
-    );
-    Ok(())
-}
-
-pub async fn run_verify_check(args: &VerifyCheckArgs) -> eyre::Result<()> {
-    let etherscan = Client::new(args.chain_id.try_into()?, &args.etherscan_key)
-        .map_err(|err| eyre::eyre!("Failed to create etherscan client: {}", err))?;
-
-    let resp = etherscan
-        .check_contract_verification_status(args.guid.clone())
-        .await
-        .map_err(|err| eyre::eyre!("Failed to request verification status: {}", err))?;
-
-    if resp.status == "0" {
-        if resp.result == "Pending in queue" {
-            println!("Verification is pending...");
-            return Ok(())
-        }
-
-        eyre::bail!(
-            "Contract verification failed:\nResponse: `{}`\nDetails: `{}`",
-            resp.message,
-            resp.result
-        );
-    }
-
-    println!("Contract successfully verified.");
-    Ok(())
 }
