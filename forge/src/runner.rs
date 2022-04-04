@@ -260,6 +260,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         &mut self,
         filter: &impl TestFilter,
         fuzzer: Option<TestRunner>,
+        include_fuzz_tests: bool,
     ) -> Result<SuiteResult> {
         tracing::info!("starting tests");
         let start = Instant::now();
@@ -291,7 +292,11 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
             .contract
             .functions()
             .into_iter()
-            .filter(|func| func.name.starts_with("test") && filter.matches_test(func.signature()))
+            .filter(|func| {
+                func.name.starts_with("test") &&
+                    filter.matches_test(func.signature()) &&
+                    (include_fuzz_tests || func.inputs.is_empty())
+            })
             .map(|func| (func, func.name.starts_with("testFail")))
             .collect();
 

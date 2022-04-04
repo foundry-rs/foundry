@@ -7,18 +7,21 @@ use ethers_core::{
         token::{LenientTokenizer, Tokenizer},
         Abi, AbiParser, Token,
     },
-    types::{transaction::eip2718::TypedTransaction, Chain, *},
+    types::{Chain, *},
     utils::{self, get_contract_address, keccak256, parse_units},
 };
 
 use ethers_etherscan::Client;
 use ethers_providers::{Middleware, PendingTransaction};
 use eyre::{Context, Result};
-use futures::future::join_all;
 use rustc_hex::{FromHexIter, ToHex};
 use std::{path::PathBuf, str::FromStr};
+pub use tx::TxBuilder;
+use tx::{TxBuilderOutput, TxBuilderPeekOutput};
 
-use foundry_utils::{encode_args, get_func, get_func_etherscan, to_table};
+use foundry_utils::{encode_args, to_table};
+
+mod tx;
 
 // TODO: CastContract with common contract initializers? Same for CastProviders?
 
@@ -51,34 +54,32 @@ where
     ///
     /// ```no_run
     /// 
-    /// use cast::Cast;
+    /// use cast::{Cast, TxBuilder};
     /// use ethers_core::types::{Address, Chain};
     /// use ethers_providers::{Provider, Http};
     /// use std::{str::FromStr, convert::TryFrom};
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
-    /// let cast = Cast::new(provider);
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let sig = "function greeting(uint256 i) public returns (string)";
     /// let args = vec!["5".to_owned()];
-    /// let data = cast.call(Address::zero(), to, (sig, args), Chain::Mainnet, None, None).await?;
+    /// let mut builder = TxBuilder::new(&provider, Address::zero(), to, Chain::Mainnet, false).await?;
+    /// builder
+    ///     .set_args(sig, args).await?;
+    /// let builder_output = builder.build();
+    /// let cast = Cast::new(provider);
+    /// let data = cast.call(builder_output, None).await?;
     /// println!("{}", data);
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn call<F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
+    pub async fn call<'a>(
         &self,
-        from: F,
-        to: T,
-        args: (&str, Vec<String>),
-        chain: Chain,
-        etherscan_api_key: Option<String>,
+        builder_output: TxBuilderOutput,
         block: Option<BlockId>,
     ) -> Result<String> {
-        let (tx, func) = self
-            .build_tx(from, to, Some(args), None, None, None, None, chain, etherscan_api_key, false)
-            .await?;
+        let (tx, func) = builder_output;
         let res = self.provider.call(&tx, block).await?;
 
         // decode args into tokens
@@ -114,35 +115,34 @@ where
     ///
     /// ```no_run
     /// 
-    /// use cast::Cast;
+    /// use cast::{Cast, TxBuilder};
     /// use ethers_core::types::{Address, Chain};
     /// use ethers_providers::{Provider, Http};
     /// use std::{str::FromStr, convert::TryFrom};
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
-    /// let cast = Cast::new(provider);
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let sig = "greeting(uint256)(string)";
     /// let args = vec!["5".to_owned()];
-    /// let access_list = cast.access_list(Address::zero(), to, (sig, args), Chain::Mainnet, None, false).await?;
+    /// let mut builder = TxBuilder::new(&provider, Address::zero(), to, Chain::Mainnet, false).await?;
+    /// builder
+    ///     .set_args(sig, args).await?;
+    /// let builder_output = builder.peek();
+    /// let cast = Cast::new(&provider);
+    /// let access_list = cast.access_list(builder_output, None, false).await?;
     /// println!("{}", access_list);
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn access_list<F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
+    pub async fn access_list<'a>(
         &self,
-        from: F,
-        to: T,
-        args: (&str, Vec<String>),
-        chain: Chain,
+        builder_output: TxBuilderPeekOutput<'a>,
         block: Option<BlockId>,
         to_json: bool,
     ) -> Result<String> {
-        let (tx, _) =
-            self.build_tx(from, to, Some(args), None, None, None, None, chain, None, false).await?;
-
-        let access_list = self.provider.create_access_list(&tx, block).await?;
+        let (tx, _) = builder_output;
+        let access_list = self.provider.create_access_list(tx, block).await?;
         let res = if to_json {
             serde_json::to_string(&access_list)?
         } else {
@@ -174,14 +174,13 @@ where
     /// Sends a transaction to the specified address
     ///
     /// ```no_run
-    /// use cast::Cast;
+    /// use cast::{Cast, TxBuilder};
     /// use ethers_core::types::{Address, Chain, U256};
     /// use ethers_providers::{Provider, Http};
     /// use std::{str::FromStr, convert::TryFrom};
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
-    /// let cast = Cast::new(provider);
     /// let from = "vitalik.eth";
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let sig = "greet(string)()";
@@ -189,39 +188,24 @@ where
     /// let gas = U256::from_str("200000").unwrap();
     /// let value = U256::from_str("1").unwrap();
     /// let nonce = U256::from_str("1").unwrap();
-    /// let data = cast.send(from, to, Some((sig, args)), Some(gas), None, Some(value), Some(nonce), Chain::Mainnet, None, false).await?;
+    /// let mut builder = TxBuilder::new(&provider, Address::zero(), to, Chain::Mainnet, false).await?;
+    /// builder
+    ///     .set_args(sig, args).await?
+    ///     .set_gas(gas)
+    ///     .set_value(value)
+    ///     .set_nonce(nonce);
+    /// let builder_output = builder.build();
+    /// let cast = Cast::new(provider);
+    /// let data = cast.send(builder_output).await?;
     /// println!("{}", *data);
     /// # Ok(())
     /// # }
     /// ```
-    #[allow(clippy::too_many_arguments)]
-    pub async fn send<F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
+    pub async fn send<'a>(
         &self,
-        from: F,
-        to: T,
-        args: Option<(&str, Vec<String>)>,
-        gas: Option<U256>,
-        gas_price: Option<U256>,
-        value: Option<U256>,
-        nonce: Option<U256>,
-        chain: Chain,
-        etherscan_api_key: Option<String>,
-        legacy: bool,
+        builder_output: TxBuilderOutput,
     ) -> Result<PendingTransaction<'_, M::Provider>> {
-        let (tx, _) = self
-            .build_tx(
-                from,
-                to,
-                args,
-                gas,
-                gas_price,
-                value,
-                nonce,
-                chain,
-                etherscan_api_key,
-                legacy,
-            )
-            .await?;
+        let (tx, _) = builder_output;
         let res = self.provider.send_transaction(tx, None).await?;
 
         Ok::<_, eyre::Error>(res)
@@ -255,123 +239,35 @@ where
     /// Estimates the gas cost of a transaction
     ///
     /// ```no_run
-    /// use cast::Cast;
+    /// use cast::{Cast, TxBuilder};
     /// use ethers_core::types::{Address, Chain, U256};
     /// use ethers_providers::{Provider, Http};
     /// use std::{str::FromStr, convert::TryFrom};
     ///
     /// # async fn foo() -> eyre::Result<()> {
     /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
-    /// let cast = Cast::new(provider);
     /// let from = "vitalik.eth";
     /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
     /// let sig = "greet(string)()";
     /// let args = vec!["5".to_owned()];
     /// let value = U256::from_str("1").unwrap();
-    /// let data = cast.estimate(from, to, Some((sig, args)), Some(value), Chain::Mainnet, None).await?;
+    /// let mut builder = TxBuilder::new(&provider, from, to, Chain::Mainnet, false).await?;
+    /// builder
+    ///     .set_value(value)
+    ///     .set_args(sig, args).await?;
+    /// let builder_output = builder.peek();
+    /// let cast = Cast::new(&provider);
+    /// let data = cast.estimate(builder_output).await?;
     /// println!("{}", data);
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn estimate<F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
-        &self,
-        from: F,
-        to: T,
-        args: Option<(&str, Vec<String>)>,
-        value: Option<U256>,
-        chain: Chain,
-        etherscan_api_key: Option<String>,
-    ) -> Result<U256> {
-        let (tx, _) = self
-            .build_tx(from, to, args, None, None, value, None, chain, etherscan_api_key, false)
-            .await?;
-        let res = self.provider.estimate_gas(&tx).await?;
+    pub async fn estimate<'a>(&self, builder_output: TxBuilderPeekOutput<'a>) -> Result<U256> {
+        let (tx, _) = builder_output;
+
+        let res = self.provider.estimate_gas(tx).await?;
 
         Ok::<_, eyre::Error>(res)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    async fn build_tx<F: Into<NameOrAddress>, T: Into<NameOrAddress>>(
-        &self,
-        from: F,
-        to: T,
-        args: Option<(&str, Vec<String>)>,
-        gas: Option<U256>,
-        gas_price: Option<U256>,
-        value: Option<U256>,
-        nonce: Option<U256>,
-        chain: Chain,
-        etherscan_api_key: Option<String>,
-        legacy: bool,
-    ) -> Result<(TypedTransaction, Option<ethers_core::abi::Function>)> {
-        let from = match from.into() {
-            NameOrAddress::Name(ref ens_name) => self.provider.resolve_name(ens_name).await?,
-            NameOrAddress::Address(addr) => addr,
-        };
-
-        // Queries the addressbook for the address if present.
-        let to = foundry_utils::resolve_addr(to, chain)?;
-
-        let to = match to {
-            NameOrAddress::Name(ref ens_name) => self.provider.resolve_name(ens_name).await?,
-            NameOrAddress::Address(addr) => addr,
-        };
-
-        // make the call
-        let mut tx: TypedTransaction = if chain.is_legacy() || legacy {
-            TransactionRequest::new().from(from).to(to).into()
-        } else {
-            Eip1559TransactionRequest::new().from(from).to(to).into()
-        };
-
-        let func = if let Some((sig, args)) = args {
-            let args = resolve_name_args(&args, &self.provider).await;
-
-            let func = if sig.contains('(') {
-                get_func(sig)?
-            } else if sig.starts_with("0x") {
-                // if only calldata is provided, returning a dummy function
-                get_func("x()")?
-            } else {
-                get_func_etherscan(
-                    sig,
-                    to,
-                    &args,
-                    chain,
-                    etherscan_api_key.expect("Must set ETHERSCAN_API_KEY"),
-                )
-                .await?
-            };
-
-            let data = if sig.starts_with("0x") {
-                hex::decode(strip_0x(sig))?
-            } else {
-                encode_args(&func, &args)?
-            };
-
-            tx.set_data(data.into());
-            Some(func)
-        } else {
-            None
-        };
-
-        if let Some(gas) = gas {
-            tx.set_gas(gas);
-        }
-
-        if let Some(gas_price) = gas_price {
-            tx.set_gas_price(gas_price)
-        }
-
-        if let Some(value) = value {
-            tx.set_value(value);
-        }
-
-        if let Some(nonce) = nonce {
-            tx.set_nonce(nonce);
-        }
-
-        Ok((tx, func))
     }
 
     /// ```no_run
@@ -1349,21 +1245,6 @@ impl SimpleCast {
 
 fn strip_0x(s: &str) -> &str {
     s.strip_prefix("0x").unwrap_or(s)
-}
-
-async fn resolve_name_args<M: Middleware>(args: &[String], provider: &M) -> Vec<String> {
-    join_all(args.iter().map(|arg| async {
-        if arg.contains('.') {
-            let addr = provider.resolve_name(arg).await;
-            match addr {
-                Ok(addr) => format!("0x{}", hex::encode(addr.as_bytes())),
-                Err(_) => arg.to_string(),
-            }
-        } else {
-            arg.to_string()
-        }
-    }))
-    .await
 }
 
 #[cfg(test)]

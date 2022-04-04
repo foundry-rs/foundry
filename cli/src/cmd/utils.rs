@@ -1,13 +1,10 @@
-use crate::{opts::forge::ContractInfo, term};
+use crate::opts::forge::ContractInfo;
 use ethers::{
     abi::Abi,
-    prelude::{
-        artifacts::{CompactBytecode, CompactDeployedBytecode},
-        report::NoReporter,
-    },
+    prelude::artifacts::{CompactBytecode, CompactDeployedBytecode},
     solc::cache::SolFilesCache,
 };
-use std::{collections::BTreeMap, path::PathBuf};
+use std::path::PathBuf;
 
 /// Common trait for all cli commands
 pub trait Cmd: clap::Parser + Sized {
@@ -15,114 +12,7 @@ pub trait Cmd: clap::Parser + Sized {
     fn run(self) -> eyre::Result<Self::Output>;
 }
 
-use ethers::solc::{artifacts::CompactContractBytecode, Artifact, Project, ProjectCompileOutput};
-
-use foundry_utils::to_table;
-
-/// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
-/// compilation was successful or if there was a cache hit.
-pub fn compile(
-    project: &Project,
-    print_names: bool,
-    print_sizes: bool,
-) -> eyre::Result<ProjectCompileOutput> {
-    if !project.paths.sources.exists() {
-        eyre::bail!(
-            r#"no contracts to compile, contracts folder "{}" does not exist.
-Check the configured workspace settings:
-{}
-If you are in a subdirectory in a Git repository, try adding `--root .`"#,
-            project.paths.sources.display(),
-            project.paths
-        );
-    }
-
-    let output = term::with_spinner_reporter(|| project.compile())?;
-
-    if output.has_compiler_errors() {
-        eyre::bail!(output.to_string())
-    } else if output.is_unchanged() {
-        println!("No files changed, compilation skipped");
-    } else {
-        // print the compiler output / warnings
-        println!("{}", output);
-
-        // print any sizes or names
-        if print_names {
-            let compiled_contracts = output.compiled_contracts_by_compiler_version();
-            for (version, contracts) in compiled_contracts.into_iter() {
-                println!(
-                    "  compiler version: {}.{}.{}",
-                    version.major, version.minor, version.patch
-                );
-                for (name, _) in contracts {
-                    println!("    - {}", name);
-                }
-            }
-        }
-        if print_sizes {
-            // add extra newline if names were already printed
-            if print_names {
-                println!();
-            }
-            let compiled_contracts = output.compiled_contracts_by_compiler_version();
-            let mut sizes = BTreeMap::new();
-            for (_, contracts) in compiled_contracts.into_iter() {
-                for (name, contract) in contracts {
-                    let size = contract
-                        .get_bytecode_bytes()
-                        .map(|bytes| bytes.0.len())
-                        .unwrap_or_default();
-                    sizes.insert(name, size);
-                }
-            }
-            let json = serde_json::to_value(&sizes)?;
-            println!("name             size (bytes)");
-            println!("-----------------------------");
-            println!("{}", to_table(json));
-        }
-    }
-
-    Ok(output)
-}
-
-/// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
-/// compilation was successful or if there was a cache hit.
-/// Doesn't print anything to stdout, thus is "suppressed".
-pub fn suppress_compile(project: &Project) -> eyre::Result<ProjectCompileOutput> {
-    if !project.paths.sources.exists() {
-        eyre::bail!(
-            r#"no contracts to compile, contracts folder "{}" does not exist.
-Check the configured workspace settings:
-{}
-If you are in a subdirectory in a Git repository, try adding `--root .`"#,
-            project.paths.sources.display(),
-            project.paths
-        );
-    }
-
-    let output = ethers::solc::report::with_scoped(
-        &ethers::solc::report::Report::new(NoReporter::default()),
-        || project.compile(),
-    )?;
-
-    if output.has_compiler_errors() {
-        eyre::bail!(output.to_string())
-    }
-
-    Ok(output)
-}
-
-/// Compile a set of files not necessarily included in the `project`'s source dir
-pub fn compile_files(project: &Project, files: Vec<PathBuf>) -> eyre::Result<ProjectCompileOutput> {
-    let output = term::with_spinner_reporter(|| project.compile_files(files))?;
-
-    if output.has_compiler_errors() {
-        eyre::bail!(output.to_string())
-    }
-    println!("{}", output);
-    Ok(output)
-}
+use ethers::solc::{artifacts::CompactContractBytecode, Project, ProjectCompileOutput};
 
 /// Given a project and its compiled artifacts, proceeds to return the ABI, Bytecode and
 /// Runtime Bytecode of the given contract.

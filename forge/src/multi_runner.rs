@@ -189,6 +189,7 @@ impl MultiContractRunner {
         &mut self,
         filter: &(impl TestFilter + Send + Sync),
         stream_result: Option<Sender<(String, SuiteResult)>>,
+        include_fuzz_tests: bool,
     ) -> Result<BTreeMap<String, SuiteResult>> {
         let env = self.evm_opts.evm_env();
 
@@ -221,7 +222,7 @@ impl MultiContractRunner {
                     executor,
                     deploy_code.clone(),
                     libs,
-                    filter,
+                    (filter, include_fuzz_tests),
                 )?;
                 Ok((id.identifier(), result))
             })
@@ -251,7 +252,7 @@ impl MultiContractRunner {
         executor: Executor<DB>,
         deploy_code: Bytes,
         libs: &[Bytes],
-        filter: &impl TestFilter,
+        (filter, include_fuzz_tests): (&impl TestFilter, bool),
     ) -> Result<SuiteResult> {
         let mut runner = ContractRunner::new(
             executor,
@@ -262,7 +263,7 @@ impl MultiContractRunner {
             self.errors.as_ref(),
             libs,
         );
-        runner.run_tests(filter, self.fuzzer.clone())
+        runner.run_tests(filter, self.fuzzer.clone(), include_fuzz_tests)
     }
 }
 
@@ -351,7 +352,7 @@ mod tests {
     #[test]
     fn test_core() {
         let mut runner = runner();
-        let results = runner.test(&Filter::new(".*", ".*", ".*core"), None).unwrap();
+        let results = runner.test(&Filter::new(".*", ".*", ".*core"), None, true).unwrap();
 
         assert_multiple(
             &results,
@@ -400,7 +401,7 @@ mod tests {
     #[test]
     fn test_logs() {
         let mut runner = runner();
-        let results = runner.test(&Filter::new(".*", ".*", ".*logs"), None).unwrap();
+        let results = runner.test(&Filter::new(".*", ".*", ".*logs"), None, true).unwrap();
 
         assert_multiple(
             &results,
@@ -464,7 +465,7 @@ mod tests {
     #[test]
     fn test_cheats() {
         let mut runner = runner();
-        let suite_result = runner.test(&Filter::new(".*", ".*", ".*cheats"), None).unwrap();
+        let suite_result = runner.test(&Filter::new(".*", ".*", ".*cheats"), None, true).unwrap();
 
         for (_, SuiteResult { test_results, .. }) in suite_result {
             for (test_name, result) in test_results {
@@ -483,7 +484,7 @@ mod tests {
     #[test]
     fn test_fuzz() {
         let mut runner = runner();
-        let suite_result = runner.test(&Filter::new(".*", ".*", ".*fuzz"), None).unwrap();
+        let suite_result = runner.test(&Filter::new(".*", ".*", ".*fuzz"), None, true).unwrap();
 
         for (_, SuiteResult { test_results, .. }) in suite_result {
             for (test_name, result) in test_results {
@@ -512,7 +513,7 @@ mod tests {
     #[test]
     fn test_trace() {
         let mut runner = tracing_runner();
-        let suite_result = runner.test(&Filter::new(".*", ".*", ".*trace"), None).unwrap();
+        let suite_result = runner.test(&Filter::new(".*", ".*", ".*trace"), None, true).unwrap();
 
         // TODO: This trace test is very basic - it is probably a good candidate for snapshot
         // testing.
@@ -549,7 +550,8 @@ mod tests {
     #[test]
     fn test_doesnt_run_abstract_contract() {
         let mut runner = runner();
-        let results = runner.test(&Filter::new(".*", ".*", ".*core/Abstract.t.sol"), None).unwrap();
+        let results =
+            runner.test(&Filter::new(".*", ".*", ".*core/Abstract.t.sol"), None, true).unwrap();
         assert!(results.get("core/Abstract.t.sol:AbstractTestBase").is_none());
         assert!(results.get("core/Abstract.t.sol:AbstractTest").is_some());
     }

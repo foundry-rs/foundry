@@ -4,14 +4,14 @@ use crate::cmd::{
     forge::{
         build::BuildArgs,
         test,
-        test::{Test, TestOutcome},
+        test::{custom_run, Test, TestOutcome},
     },
     Cmd,
 };
 use ansi_term::Colour;
 use clap::{Parser, ValueHint};
 use eyre::Context;
-use forge::{TestKind, TestKindGas};
+use forge::TestKindGas;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::{
@@ -97,7 +97,7 @@ impl Cmd for SnapshotArgs {
     type Output = ();
 
     fn run(self) -> eyre::Result<()> {
-        let outcome = self.test.run()?;
+        let outcome = custom_run(self.test, self.include_fuzz_tests)?;
         outcome.ensure_ok()?;
         let tests = self.config.apply(outcome);
 
@@ -114,7 +114,7 @@ impl Cmd for SnapshotArgs {
                 std::process::exit(1)
             }
         } else {
-            write_to_snapshot_file(&tests, self.snap, self.include_fuzz_tests, self.format)?;
+            write_to_snapshot_file(&tests, self.snap, self.format)?;
         }
         Ok(())
     }
@@ -249,16 +249,10 @@ fn read_snapshot(path: impl AsRef<Path>) -> eyre::Result<Vec<SnapshotEntry>> {
 fn write_to_snapshot_file(
     tests: &[Test],
     path: impl AsRef<Path>,
-    include_fuzz_tests: bool,
     _format: Option<Format>,
 ) -> eyre::Result<()> {
     let mut out = String::new();
     for test in tests {
-        // Ignore fuzz tests if we're not including fuzz tests in the snapshot.
-        if matches!(test.result.kind, TestKind::Fuzz(..)) && !include_fuzz_tests {
-            continue
-        }
-
         writeln!(
             out,
             "{}:{} {}",

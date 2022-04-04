@@ -1,5 +1,6 @@
 use crate::{
-    cmd::{compile_files, forge::build::BuildArgs, Cmd},
+    cmd::{forge::build::BuildArgs, Cmd},
+    compile,
     opts::evm::EvmArgs,
     utils,
 };
@@ -248,7 +249,7 @@ impl RunArgs {
     pub fn build(&self, config: &Config, evm_opts: &EvmOpts) -> eyre::Result<BuildOutput> {
         let target_contract = dunce::canonicalize(&self.path)?;
         let project = config.ephemeral_no_artifacts_project()?;
-        let output = compile_files(&project, vec![target_contract])?;
+        let output = compile::compile_files(&project, vec![target_contract])?;
 
         let (contracts, sources) = output.into_artifacts_with_sources();
         let contracts: BTreeMap<ArtifactId, CompactContractBytecode> =
@@ -294,13 +295,15 @@ impl RunArgs {
                 } = post_link_input;
 
                 // if it's the target contract, grab the info
-                if extra.no_target_name && id.source == std::path::Path::new(&extra.target_fname) {
-                    if extra.matched {
-                        eyre::bail!("Multiple contracts in the target path. Please specify the contract name with `-t ContractName`")
+                if extra.no_target_name {
+                    if id.source == std::path::Path::new(&extra.target_fname) {
+                        if extra.matched {
+                            eyre::bail!("Multiple contracts in the target path. Please specify the contract name with `-t ContractName`")
+                        }
+                        *extra.dependencies = dependencies;
+                        *extra.contract = contract.clone();
+                        extra.matched = true;
                     }
-                    *extra.dependencies = dependencies;
-                    *extra.contract = contract.clone();
-                    extra.matched = true;
                 } else {
                     let split: Vec<&str> = extra.target_fname.split(':').collect();
                     let path = std::path::Path::new(split[0]);
