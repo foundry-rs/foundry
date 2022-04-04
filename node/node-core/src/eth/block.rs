@@ -7,6 +7,17 @@ use ethers_core::{
     },
 };
 use serde::{Deserialize, Serialize};
+use crate::eth::receipt::TypedReceipt;
+use crate::eth::transaction::TransactionInfo;
+
+
+/// Container type that gathers all block data
+#[derive(Debug, Clone)]
+pub struct BlockInfo {
+    pub block: Block,
+    pub transactions: Vec<TransactionInfo>,
+    pub receipts: Vec<TypedReceipt>,
+}
 
 /// ethereum block
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

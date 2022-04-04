@@ -53,7 +53,7 @@ impl rlp::Decodable for Log {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EIP658Receipt {
     pub status_code: u8,
-    pub used_gas: U256,
+    pub gas_used: U256,
     pub logs_bloom: Bloom,
     pub logs: Vec<Log>,
 }
@@ -62,7 +62,7 @@ impl rlp::Encodable for EIP658Receipt {
     fn rlp_append(&self, stream: &mut rlp::RlpStream) {
         stream.begin_list(4);
         stream.append(&self.status_code);
-        stream.append(&self.used_gas);
+        stream.append(&self.gas_used);
         stream.append(&self.logs_bloom);
         stream.append_list(&self.logs);
     }
@@ -72,7 +72,7 @@ impl rlp::Decodable for EIP658Receipt {
     fn decode(rlp: &rlp::Rlp) -> Result<Self, rlp::DecoderError> {
         let result = EIP658Receipt {
             status_code: rlp.val_at(0)?,
-            used_gas: rlp.val_at(1)?,
+            gas_used: rlp.val_at(1)?,
             logs_bloom: rlp.val_at(2)?,
             logs: rlp.list_at(3)?,
         };
@@ -92,6 +92,30 @@ pub enum TypedReceipt {
     EIP2930(EIP2930Receipt),
     /// EIP-1559 receipt
     EIP1559(EIP1559Receipt),
+}
+
+
+// == impl TypedReceipt ==
+
+impl TypedReceipt {
+
+    /// Returns the gas used by the transactions
+    pub fn gas_used(&self) -> U256 {
+        match self {
+            TypedReceipt::Legacy(r) | TypedReceipt::EIP2930(r) | TypedReceipt::EIP1559(r) => {
+                r.gas_used
+            }
+        }
+    }
+
+    /// Returns the gas used by the transactions
+    pub fn logs_bloom(&self) -> &Bloom {
+        match self {
+            TypedReceipt::Legacy(r) | TypedReceipt::EIP2930(r) | TypedReceipt::EIP1559(r) => {
+                &r.logs_bloom
+            }
+        }
+    }
 }
 
 impl Encodable for TypedReceipt {

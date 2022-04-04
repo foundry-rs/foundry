@@ -5,7 +5,6 @@ pub mod backend;
 
 pub mod error;
 
-pub mod executor;
 mod fees;
 pub mod miner;
 pub mod pool;

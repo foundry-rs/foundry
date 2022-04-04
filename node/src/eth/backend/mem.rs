@@ -1,14 +1,17 @@
 //! In memory blockchain backend
 
-use crate::eth::{backend::db::Db, pool::transactions::PoolTransaction};
+use crate::eth::{
+    backend::{db::Db, executor::TransactionExecutor},
+    pool::transactions::PoolTransaction,
+};
 use ethers::{
     prelude::{Block, BlockNumber, Transaction, TransactionReceipt, TxHash, H256, U256, U64},
     types::BlockId,
 };
-use forge_node_core::eth::{block::Header, receipt::Log, transaction::PendingTransaction};
+
 use foundry_evm::{
     executor::DatabaseRef,
-    revm::{self, db::CacheDB, BlockEnv, CfgEnv, Database, Env, Return, TransactOut},
+    revm::{db::CacheDB, Database, Env},
 };
 use parking_lot::RwLock;
 use std::{collections::HashMap, sync::Arc};
@@ -102,13 +105,17 @@ impl Backend {
     /// TODO(mattsse): currently we're assuming transaction is valid, needs an additional validation
     /// step: gas limit, fee
     pub fn mine_block(&self, transactions: Vec<Arc<PoolTransaction>>) {
+        // acquire all locks
         let env = self.env.write();
         let mut db = self.db.write();
-        let _miner = TransactionMiner {
+        let storage = self.blockchain.storage.write();
+
+        let _miner = TransactionExecutor {
             db: &mut *db,
             pending: transactions.into_iter(),
             block_env: env.block.clone(),
             cfg_env: env.cfg.clone(),
+            parent_hash: storage.finalized_hash,
         };
 
         // TODO update env
@@ -132,68 +139,5 @@ impl Backend {
     pub fn gas_limit(&self) -> U256 {
         // TODO make this a separate value?
         self.env().read().block.gas_limit
-    }
-}
-
-/// Represents a transacted(on the DB) transaction
-struct MinedTransaction {
-    transaction: Arc<PoolTransaction>,
-    exit: Return,
-    out: TransactOut,
-    gas: u64,
-    logs: Vec<Log>,
-}
-
-/// An executer for a series of transactions
-struct TransactionMiner<Db> {
-    db: Db,
-    pending: std::vec::IntoIter<Arc<PoolTransaction>>,
-    block_env: BlockEnv,
-    cfg_env: CfgEnv,
-}
-
-impl<DB: Db> TransactionMiner<DB> {
-    fn mine_block(self) {
-        let mut transactions = Vec::new();
-        // let mut statuses = Vec::new();
-        let mut receipts = Vec::new();
-        // let mut logs_bloom = Bloom::default();
-        // let mut cumulative_gas_used = U256::zero();
-
-        for (_idx, tx) in self.enumerate() {
-            let MinedTransaction { transaction, exit: _, out: _, gas: _, logs } = tx;
-            transactions.push(transaction.pending_transaction.transaction.clone());
-            receipts.push(logs.clone());
-        }
-
-        let _ommers: Vec<Header> = Vec::new();
-        // let receipts_root = trie::ordered_trie_root(receipts.iter().map(|r| rlp::encode(r)));
-    }
-
-    fn env_for(&self, tx: &PendingTransaction) -> Env {
-        Env { cfg: self.cfg_env.clone(), block: self.block_env.clone(), tx: tx.to_revm_tx_env() }
-    }
-}
-
-impl<DB: Db> Iterator for TransactionMiner<DB> {
-    type Item = MinedTransaction;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let transaction = self.pending.next()?;
-
-        let mut evm = revm::EVM::new();
-        evm.env = self.env_for(&transaction.pending_transaction);
-        evm.database(&mut self.db);
-
-        // transact and commit the transaction
-        let (exit, out, gas, logs) = evm.transact_commit();
-
-        Some(MinedTransaction {
-            transaction,
-            exit,
-            out,
-            gas,
-            logs: logs.into_iter().map(Into::into).collect(),
-        })
     }
 }

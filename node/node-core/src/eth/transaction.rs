@@ -11,11 +11,13 @@ use ethers_core::{
         rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream},
     },
 };
+use ethers_core::types::Bloom;
 use foundry_evm::{
     revm::{CreateScheme, TransactTo, TxEnv},
     utils::h256_to_u256_be,
 };
 use serde::{Deserialize, Serialize};
+use crate::eth::receipt::Log;
 
 /// Container type for various Ethereum transaction requests
 ///
@@ -140,6 +142,19 @@ impl EthTransactionRequest {
 pub enum TransactionKind {
     Call(Address),
     Create,
+}
+
+// == impl TransactionKind ==
+
+impl TransactionKind {
+
+    /// If this transaction is a call this returns the address of the callee
+    pub fn as_call(&self) -> Option<&Address> {
+        match self {
+            TransactionKind::Call(to) => {Some(to)}
+            TransactionKind::Create => {None}
+        }
+    }
 }
 
 impl Encodable for TransactionKind {
@@ -369,6 +384,20 @@ impl TypedTransaction {
             TypedTransaction::EIP2930(tx) => tx.recover(),
             TypedTransaction::EIP1559(tx) => tx.recover(),
         }
+    }
+
+    /// Returns what kind of transaction this is
+    pub fn kind(&self) -> &TransactionKind{
+        match self {
+            TypedTransaction::Legacy(tx) => &tx.kind,
+            TypedTransaction::EIP2930(tx) => &tx.kind,
+            TypedTransaction::EIP1559(tx) => &tx.kind,
+        }
+    }
+
+    /// Returns the callee if this transaction is a call
+    pub fn to(&self) -> Option<&Address> {
+       self.kind().as_call()
     }
 }
 
@@ -767,6 +796,18 @@ impl PendingTransaction {
             }
         }
     }
+}
+
+/// Represents all relevant information of an executed transaction
+#[derive(Debug, Eq, PartialEq, Clone, Default)]
+pub struct TransactionInfo {
+    pub transaction_hash: H256,
+    pub transaction_index: u32,
+    pub from: Address,
+    pub to: Option<Address>,
+    pub contract_address: Option<Address>,
+    pub logs: Vec<Log>,
+    pub logs_bloom: Bloom,
 }
 
 #[cfg(test)]

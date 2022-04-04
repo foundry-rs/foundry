@@ -7,6 +7,8 @@ pub mod db;
 /// In-memory Backend
 pub mod mem;
 
+pub mod executor;
+
 /// Returns the current duration since unix epoch.
 pub fn duration_since_unix_epoch() -> Duration {
     use std::time::SystemTime;
