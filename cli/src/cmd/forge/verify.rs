@@ -10,6 +10,7 @@ use ethers::{
     etherscan::{contract::VerifyContract, Client},
     solc::{artifacts::Source, AggregatedCompilerOutput, CompilerInput, Solc},
 };
+use foundry_config::Chain;
 use semver::Version;
 use std::collections::BTreeMap;
 
@@ -31,9 +32,12 @@ pub struct VerifyArgs {
     #[clap(long, help = "the number of optimization runs used")]
     num_of_optimizations: Option<u32>,
 
-    // TODO: Allow choosing network using the provider or chainid as string
-    #[clap(long, help = "the chain id of the network you are verifying for", default_value = "1")]
-    chain_id: u64,
+    #[clap(
+        long,
+        help = "the chain id of the network you are verifying for",
+        default_value = "mainnet"
+    )]
+    chain_id: Chain,
 
     #[clap(help = "your etherscan api key", env = "ETHERSCAN_API_KEY")]
     etherscan_key: String,
@@ -160,7 +164,7 @@ To skip this solc dry, have a look at the  `--force` flag of this command.",
     ///
     /// # Errors
     ///
-    /// If it failed to installa missing solc compiler
+    /// If it failed to install a missing solc compiler
     ///
     /// # Exits
     ///
@@ -206,9 +210,12 @@ pub struct VerifyCheckArgs {
     #[clap(help = "the verification guid")]
     guid: String,
 
-    // TODO: Allow choosing network using the provider or chainid as string
-    #[clap(long, help = "the chain id of the network you are verifying for", default_value = "1")]
-    chain_id: u64,
+    #[clap(
+        long,
+        help = "the chain id of the network you are verifying for",
+        default_value = "mainnet"
+    )]
+    chain_id: Chain,
 
     #[clap(help = "your etherscan api key", env = "ETHERSCAN_API_KEY")]
     etherscan_key: String,
