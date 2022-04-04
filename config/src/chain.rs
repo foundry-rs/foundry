@@ -1,3 +1,4 @@
+use ethers_core::types::ParseChainError;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::{fmt, str::FromStr};
 
@@ -52,6 +53,17 @@ impl From<Chain> for u64 {
         match c {
             Chain::Named(c) => c as u64,
             Chain::Id(id) => id,
+        }
+    }
+}
+
+impl TryFrom<Chain> for ethers_core::types::Chain {
+    type Error = ParseChainError;
+
+    fn try_from(chain: Chain) -> Result<Self, Self::Error> {
+        match chain {
+            Chain::Named(chain) => Ok(chain),
+            Chain::Id(id) => id.try_into(),
         }
     }
 }
