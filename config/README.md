@@ -102,6 +102,9 @@ rpc_storage_caching = { chains = "all", endpoints = "all" }
 no_storage_caching = false
 # don't include the metadata hash, to allow for deterministic code: https://docs.soliditylang.org/en/latest/metadata.html, solc's default is "ipfs"
 bytecode_hash = "none"
+# If this option is enabled, Solc is instructed to generate output (bytecode) only for the required contracts
+# this can reduce compile time for `forge test` a bit but is considered experimental at this point.
+sparse_mode = false
 ```
 
 ##### Additional Optimizer settings
