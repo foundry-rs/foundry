@@ -153,7 +153,20 @@ To skip this solc dry, have a look at the  `--force` flag of this command.",
         Ok(())
     }
 
-    /// Attempts to compile the flattened content locally with the compiler version
+    /// Attempts to compile the flattened content locally with the compiler version.
+    ///
+    /// This expects the completely flattened `content´ and will try to compile it using the
+    /// provided compiler. If the compiler is missing it will be installed.
+    ///
+    /// # Errors
+    ///
+    /// If it failed to installa missing solc compiler
+    ///
+    /// # Exits
+    ///
+    /// If the solc compiler output contains errors, this could either be due to a bug in the
+    /// flattening code or could to conflict in the flattened code, for example if there are
+    /// multiple interfaces with the same name.
     async fn check_flattened(&self, content: impl Into<String>) -> eyre::Result<()> {
         let version: Version = self.compiler_version.parse()?;
         let solc = if let Some(solc) = Solc::find_svm_installed_version(&self.compiler_version)? {
