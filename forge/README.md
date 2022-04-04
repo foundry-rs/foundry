@@ -170,6 +170,10 @@ which implements the following methods:
 
 - `function assume(bool) external`: When fuzzing, generate new inputs if conditional not met
 
+- `function setNonce(address account, uint64 nonce) external`: Set nonce for an account, increment only.
+
+- `function getNonce(address account)`: Get nonce for an account.
+
 The below example uses the `warp` cheatcode to override the timestamp & `expectRevert` to expect a specific revert string:
 
 ```solidity
@@ -295,6 +299,10 @@ interface Hevm {
     function label(address addr, string calldata label) external;
     // When fuzzing, generate new inputs if conditional not met
     function assume(bool) external;
+    // Set nonce for an account, increment only
+    function setNonce(address,uint64) external;
+    // Get nonce for an account
+    function getNonce(address) external returns(uint64);
 }
 ```
 ### `console.log`

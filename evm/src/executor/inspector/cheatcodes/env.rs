@@ -4,7 +4,7 @@ use super::Cheatcodes;
 use crate::abi::HEVMCalls;
 use bytes::Bytes;
 use ethers::{
-    abi::{AbiEncode, Token, Tokenize},
+    abi::{self, AbiEncode, Token, Tokenize},
     types::{Address, H256, U256},
     utils::keccak256,
 };
@@ -156,6 +156,30 @@ pub fn apply<DB: Database>(
             Ok(Bytes::new())
         }
         HEVMCalls::Accesses(inner) => Ok(accesses(state, inner.0)),
+        HEVMCalls::SetNonce(inner) => {
+            // TODO:  this is probably not a good long-term solution since it might mess up the gas
+            // calculations
+            data.subroutine.load_account(inner.0, data.db);
+
+            // we can safely unwrap because `load_account` insert inner.0 to DB.
+            let account = data.subroutine.state().get_mut(&inner.0).unwrap();
+            // nonce must increment only
+            if account.info.nonce < inner.1 {
+                account.info.nonce = inner.1;
+                Ok(Bytes::new())
+            } else {
+                Err(format!("Nonce lower than account's current nonce. Please provide a higher nonce than {}", account.info.nonce).encode().into())
+            }
+        }
+        HEVMCalls::GetNonce(inner) => {
+            // TODO:  this is probably not a good long-term solution since it might mess up the gas
+            // calculations
+            data.subroutine.load_account(inner.0, data.db);
+
+            // we can safely unwrap because `load_account` insert inner.0 to DB.
+            let account = data.subroutine.state().get(&inner.0).unwrap();
+            Ok(abi::encode(&[Token::Uint(account.info.nonce.into())]).into())
+        }
         _ => return None,
     })
 }
