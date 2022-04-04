@@ -100,6 +100,8 @@ block_difficulty = 0
 rpc_storage_caching = { chains = "all", endpoints = "all" }
 # this overrides `rpc_storage_caching` entirely
 no_storage_caching = false
+# don't include the metadata hash, to allow for deterministic code: https://docs.soliditylang.org/en/latest/metadata.html, solc's default is "ipfs"
+bytecode_hash = "none"
 ```
 
 ##### Additional Optimizer settings
