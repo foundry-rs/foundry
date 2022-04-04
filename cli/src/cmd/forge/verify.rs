@@ -157,6 +157,22 @@ To skip this solc dry, have a look at the  `--force` flag of this command.",
         Ok(())
     }
 
+    /// Parses the [Version] from the provided compiler version
+    ///
+    /// All etherscan supported compiler versions are listed here <https://etherscan.io/solcversions>
+    ///
+    /// **Note:** this is only for local compilation as a dry run, therefore this will return a
+    /// sanitized variant of the specific version so that it can be installed. This is merely
+    /// intended to ensure the flattened code can be compiled without errors.
+    ///
+    /// # Example
+    ///
+    /// the `compiler_version` `v0.8.7+commit.e28d00a7` will be returned as `0.8.7`
+    fn sanitized_solc_version(&self) -> eyre::Result<Version> {
+        let v: Version = self.compiler_version.trim_start_matches("v").parse()?;
+        Ok(Version::new(v.major, v.minor, v.patch))
+    }
+
     /// Attempts to compile the flattened content locally with the compiler version.
     ///
     /// This expects the completely flattened `content´ and will try to compile it using the
@@ -172,8 +188,8 @@ To skip this solc dry, have a look at the  `--force` flag of this command.",
     /// flattening code or could to conflict in the flattened code, for example if there are
     /// multiple interfaces with the same name.
     async fn check_flattened(&self, content: impl Into<String>) -> eyre::Result<()> {
-        let version: Version = self.compiler_version.parse()?;
-        let solc = if let Some(solc) = Solc::find_svm_installed_version(&self.compiler_version)? {
+        let version: Version = self.sanitized_solc_version()?;
+        let solc = if let Some(solc) = Solc::find_svm_installed_version(version.to_string())? {
             solc
         } else {
             Solc::install(&version).await?
