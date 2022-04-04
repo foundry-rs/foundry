@@ -238,11 +238,12 @@ impl CallTraceDecoder {
                                         .collect()
                                 })
                             } else {
-                                func.decode_input(&bytes[4..])
-                                    .expect("bad function input decode")
-                                    .iter()
-                                    .map(|token| self.apply_label(token))
-                                    .collect()
+                                match func.decode_input(&bytes[4..]) {
+                                    Ok(v) => {
+                                        v.iter().map(|token| self.apply_label(token)).collect()
+                                    }
+                                    Err(_) => Vec::new(),
+                                }
                             }
                         } else {
                             Vec::new()
