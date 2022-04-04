@@ -355,7 +355,7 @@ pub fn custom_run(mut args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<
     // Set up the project
     let project = config.project()?;
 
-    let output = ProjectCompiler::default().compile_sparse(&project, args.filter.clone())?;
+    let output = ProjectCompiler::default().compile(&project)?;
 
     // Determine print verbosity and executor verbosity
     let verbosity = evm_opts.verbosity;
