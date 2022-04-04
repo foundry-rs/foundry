@@ -168,7 +168,7 @@ pub fn apply<DB: Database>(
                 account.info.nonce = inner.1;
                 Ok(Bytes::new())
             } else {
-                Err("Nonce too low.".to_string().encode().into())
+                Err(format!("Nonce lower than account's current nonce. Please provide a higher nonce than {}", account.info.nonce).to_string().encode().into())
             }
         }
         HEVMCalls::GetNonce(inner) => match data.subroutine.state().get(&inner.0) {
