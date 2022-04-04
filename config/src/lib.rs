@@ -217,6 +217,12 @@ pub struct Config {
     /// The metadata hash is machine dependent. By default, this is set to [BytecodeHash::None] to allow for deterministic code, See: <https://docs.soliditylang.org/en/latest/metadata.html>
     #[serde(with = "from_str_lowercase")]
     pub bytecode_hash: BytecodeHash,
+    /// Whether to compile in sparse mode
+    ///
+    /// If this option is enabled, only the required contracts/files will be selected to be
+    /// included in solc's output selection, see also
+    /// [OutputSelection](ethers_solc::artifacts::output_selection::OutputSelection)
+    pub sparse_mode: bool,
     /// The root path where the config detection started from, `Config::with_root`
     #[doc(hidden)]
     //  We're skipping serialization here, so it won't be included in the [`Config::to_string()`]
@@ -921,6 +927,7 @@ impl Default for Config {
             rpc_storage_caching: Default::default(),
             no_storage_caching: false,
             bytecode_hash: BytecodeHash::None,
+            sparse_mode: false,
         }
     }
 }
