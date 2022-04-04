@@ -37,6 +37,14 @@ pub struct VerifyArgs {
 
     #[clap(flatten)]
     opts: CoreFlattenArgs,
+
+    #[clap(
+        short,
+        long,
+        help = r#"usually the command will try to compile the flattened code locally first to ensure it's valid.
+This flag we skip that process and send the content directly to the endpoint."#
+    )]
+    force: bool,
 }
 
 impl VerifyArgs {
