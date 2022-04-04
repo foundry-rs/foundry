@@ -16,8 +16,4 @@ contract GetNonceTest is DSTest {
         uint64 nonce2 = cheats.getNonce(address(this));
         assertEq(nonce1 + 2, nonce2);
     }
-
-    function testFailNotExistAccount() public {
-        cheats.getNonce(address(1337));
-    }
 }

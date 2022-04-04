@@ -168,13 +168,18 @@ pub fn apply<DB: Database>(
                 account.info.nonce = inner.1;
                 Ok(Bytes::new())
             } else {
-                Err(format!("Nonce lower than account's current nonce. Please provide a higher nonce than {}", account.info.nonce).to_string().encode().into())
+                Err(format!("Nonce lower than account's current nonce. Please provide a higher nonce than {}", account.info.nonce).encode().into())
             }
         }
-        HEVMCalls::GetNonce(inner) => match data.subroutine.state().get(&inner.0) {
-            Some(account) => Ok(abi::encode(&[Token::Uint(account.info.nonce.into())]).into()),
-            None => Err("Account not in state DB.".to_string().encode().into()),
-        },
+        HEVMCalls::GetNonce(inner) => {
+            // TODO:  this is probably not a good long-term solution since it might mess up the gas
+            // calculations
+            data.subroutine.load_account(inner.0, data.db);
+
+            // we can safely unwrap because `load_account` insert inner.0 to DB.
+            let account = data.subroutine.state().get(&inner.0).unwrap();
+            Ok(abi::encode(&[Token::Uint(account.info.nonce.into())]).into())
+        }
         _ => return None,
     })
 }
