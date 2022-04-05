@@ -31,7 +31,13 @@ impl Future for NodeService {
 
         while let Poll::Ready(transactions) = pin.miner.poll(&pin.pool, cx) {
             // miner returned a set of transaction to put into a new block
-            let _ = pin.backend.mine_block(transactions);
+            let block_number = pin.backend.mine_block(transactions.clone());
+
+            // prune all the markers the mined transactions provide
+            pin.pool.prune_markers(
+                block_number,
+                transactions.into_iter().flat_map(|tx| tx.provides.clone()),
+            );
         }
 
         Poll::Pending

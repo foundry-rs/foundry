@@ -20,6 +20,7 @@ use foundry_evm::{
 };
 use parking_lot::RwLock;
 use std::{collections::HashMap, sync::Arc};
+use tracing::trace;
 
 /// Stores the blockchain data (blocks, transactions)
 #[derive(Clone, Default)]
@@ -109,7 +110,7 @@ impl Backend {
     ///
     /// TODO(mattsse): currently we're assuming all transactions are valid:
     ///  needs an additional validation step: gas limit, fee
-    pub fn mine_block(&self, pool_transactions: Vec<Arc<PoolTransaction>>) {
+    pub fn mine_block(&self, pool_transactions: Vec<Arc<PoolTransaction>>) -> U64 {
         // acquire all locks
         let mut env = self.env.write();
         let mut db = self.db.write();
@@ -125,23 +126,28 @@ impl Backend {
 
         let BlockInfo { block, transactions, receipts } = executor.create_block();
 
+        let block_hash = block.header.hash();
+        let block_number: U64 = env.block.number.as_u64().into();
+
+        trace!(target: "backed", "Created block {} with {} tx: [{:?}]", block_number, transactions.len(), block_hash);
+
         // update block metadata
-        storage.finalized_number = env.block.number.as_u64().into();
+        storage.finalized_number = block_number;
         env.block.number = env.block.number.saturating_add(U256::one());
         storage.best_number = env.block.number.as_u64().into();
 
-        storage.finalized_hash = block.header.hash();
+        storage.finalized_hash = block_hash;
         storage.best_hash = storage.finalized_hash;
 
-        let hash = storage.finalized_hash;
-        let number = storage.finalized_number;
-        storage.blocks.insert(hash, block);
-        storage.hashes.insert(number, hash);
+        storage.blocks.insert(block_hash, block);
+        storage.hashes.insert(block_number, block_hash);
 
         // insert all transactions
         for (tx, receipt) in transactions.into_iter().zip(receipts) {
             storage.transactions.insert(tx.transaction_hash, (tx, receipt));
         }
+
+        block_number
     }
 
     /// The env data of the blockchain

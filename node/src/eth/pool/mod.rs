@@ -2,10 +2,10 @@ use crate::eth::{
     error::PoolError,
     pool::transactions::{
         PendingPoolTransaction, PendingTransactions, PoolTransaction, ReadyTransactions,
-        TransactionsIterator,
+        TransactionsIterator, TxMarker,
     },
 };
-use ethers::types::TxHash;
+use ethers::types::{TxHash, U64};
 use futures::channel::mpsc::{channel, Receiver, Sender};
 use parking_lot::{Mutex, RwLock};
 use std::{collections::VecDeque, sync::Arc};
@@ -27,6 +27,14 @@ impl Pool {
     /// Returns an iterator that yields all transactions that are currently ready
     pub fn ready_transactions(&self) -> TransactionsIterator {
         self.inner.read().ready_transactions()
+    }
+
+    /// Removes ready transactions for the given iterator of identifying markers.
+    ///
+    /// For each marker we can remove transactions in the pool that either provide the marker
+    /// directly or are a dependency of the transaction associated with that marker.
+    pub fn prune_markers(&self, block_number: U64, _tags: impl IntoIterator<Item = TxMarker>) {
+        debug!(target: "txpool", "pruning transactions for block {}", block_number);
     }
 
     /// Adds a new transaction to the pool
@@ -166,6 +174,48 @@ impl PoolInner {
 
         Ok(AddedTransaction::Ready(ready))
     }
+
+    /// Prunes the transactions that provide the given markers
+    ///
+    /// This will effectively remove those transactions that satisfy the markers and transactions
+    /// from the pending queue might get promoted to if the markers unlock them.
+    pub fn prune_tags(&mut self, markers: impl IntoIterator<Item = TxMarker>) -> PruneResult {
+        let mut imports = vec![];
+        let mut pruned = vec![];
+
+        for marker in markers {
+            // mark as satisfied and store the transactions that got unlocked
+            imports.extend(self.pending_transactions.mark_and_unlock(Some(&marker)));
+            // prune transactions
+            pruned.extend(self.ready_transactions.prune_tags(marker.clone()));
+        }
+
+        let mut promoted = vec![];
+        let mut failed = vec![];
+        for tx in imports {
+            let hash = *tx.transaction.hash();
+            match self.add_ready_transaction(tx) {
+                Ok(res) => promoted.push(res),
+                Err(e) => {
+                    warn!(target: "txpool", "Failed to promote tx [{:?}] : {:?}", hash, e);
+                    failed.push(hash)
+                }
+            }
+        }
+
+        PruneResult { pruned, failed, promoted }
+    }
+}
+
+/// Represents the outcome of a prune
+#[derive(Debug)]
+pub struct PruneResult {
+    /// a list of added transactions that a pruned marker satisfied
+    pub promoted: Vec<AddedTransaction>,
+    /// all transactions that  failed to be promoted and now are discarded
+    pub failed: Vec<TxHash>,
+    /// all transactions that were pruned from the ready pool
+    pub pruned: Vec<Arc<PoolTransaction>>,
 }
 
 #[derive(Debug, Clone)]

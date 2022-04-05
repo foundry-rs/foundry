@@ -360,6 +360,81 @@ impl ReadyTransactions {
         self.remove_with_markers(tx_hashes.to_vec(), None)
     }
 
+    /// Removes the transactions that provide the marker
+    ///
+    /// This will also remove all transactions that lead to the transaction that provides the
+    /// marker.
+    pub fn prune_tags(&mut self, marker: TxMarker) -> Vec<Arc<PoolTransaction>> {
+        let mut removed_tx = vec![];
+
+        // the markers to remove
+        let mut remove = vec![marker];
+
+        while let Some(marker) = remove.pop() {
+            let res = self
+                .provided_markers
+                .remove(&marker)
+                .and_then(|hash| self.ready_tx.write().remove(&hash));
+
+            if let Some(tx) = res {
+                let unlocks = tx.unlocks;
+                self.independent_transactions.remove(&tx.transaction);
+                let tx = tx.transaction.transaction;
+
+                // also prune previous transactions
+                {
+                    let hash = tx.hash();
+                    let mut ready = self.ready_tx.write();
+
+                    let mut previous_markers = |marker| -> Option<Vec<TxMarker>> {
+                        let prev_hash = self.provided_markers.get(marker)?;
+                        let tx2 = ready.get_mut(prev_hash)?;
+                        // remove hash
+                        if let Some(idx) = tx2.unlocks.iter().position(|i| i == hash) {
+                            tx2.unlocks.swap_remove(idx);
+                        }
+                        if tx2.unlocks.is_empty() {
+                            Some(tx2.transaction.transaction.provides.clone())
+                        } else {
+                            None
+                        }
+                    };
+
+                    // find previous transactions
+                    for marker in &tx.requires {
+                        if let Some(mut tags_to_remove) = previous_markers(marker) {
+                            remove.append(&mut tags_to_remove);
+                        }
+                    }
+                }
+
+                // add the transactions that just got unlocked to independent set
+                for hash in unlocks {
+                    if let Some(tx) = self.ready_tx.write().get_mut(&hash) {
+                        tx.requires_offset += 1;
+                        if tx.requires_offset == tx.transaction.transaction.requires.len() {
+                            self.independent_transactions.insert(tx.transaction.clone());
+                        }
+                    }
+                }
+                // finally, remove the markers that this transaction provides
+                let current_marker = &marker;
+                for marker in &tx.provides {
+                    let removed = self.provided_markers.remove(marker);
+                    assert_eq!(
+                        removed.as_ref(),
+                        if current_marker == marker { None } else { Some(tx.hash()) },
+                        "The pool contains exactly one transaction providing given tag; the removed transaction
+						claims to provide that tag, so it has to be mapped to it's hash; qed"
+                    );
+                }
+                removed_tx.push(tx);
+            }
+        }
+
+        removed_tx
+    }
+
     /// Removes transactions and those that depend on them and satisfy at least one marker in the
     /// given filter set.
     fn remove_with_markers(
