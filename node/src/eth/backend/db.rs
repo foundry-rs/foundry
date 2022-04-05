@@ -8,7 +8,7 @@ use foundry_evm::{
 };
 
 /// This bundles all required revm traits
-pub trait Db: DatabaseRef + Database + DatabaseCommit + Send + Sync {}
+pub trait Db: DatabaseRef + Database + DatabaseCommit + Send + Sync + 'static {}
 
 // no auto_impl for &mut DatabaseRef but need to implement to satisfy `Db` trait
 impl<'a> DatabaseRef for &'a mut (dyn Db + 'a) {
@@ -33,4 +33,4 @@ impl<'a> DatabaseRef for &'a mut (dyn Db + 'a) {
 impl<'a> Db for &'a mut (dyn Db + 'a) {}
 
 /// Implement the helper
-impl<ExtDB: DatabaseRef + Send + Sync> Db for CacheDB<ExtDB> {}
+impl<ExtDB: DatabaseRef + Send + Sync + 'static> Db for CacheDB<ExtDB> {}

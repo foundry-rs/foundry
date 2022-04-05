@@ -5,7 +5,7 @@ use crate::eth::{
     pool::transactions::PoolTransaction,
 };
 use ethers::{
-    prelude::{BlockNumber, Transaction, TransactionReceipt, TxHash, H256, U256, U64},
+    prelude::{BlockNumber, TxHash, H256, U256, U64},
     types::BlockId,
 };
 
@@ -105,11 +105,11 @@ impl Backend {
     /// Mines a new block and stores it.
     ///
     /// this will execute all transaction in the order they come in and return all the markers they
-    /// provide .
+    /// provide.
     ///
-    /// TODO(mattsse): currently we're assuming transaction is valid, needs an additional validation
-    /// step: gas limit, fee
-    pub fn mine_block(&self, transactions: Vec<Arc<PoolTransaction>>) {
+    /// TODO(mattsse): currently we're assuming all transactions are valid:
+    ///  needs an additional validation step: gas limit, fee
+    pub fn mine_block(&self, pool_transactions: Vec<Arc<PoolTransaction>>) {
         // acquire all locks
         let mut env = self.env.write();
         let mut db = self.db.write();
@@ -117,20 +117,31 @@ impl Backend {
 
         let executor = TransactionExecutor {
             db: &mut *db,
-            pending: transactions.into_iter(),
+            pending: pool_transactions.into_iter(),
             block_env: env.block.clone(),
             cfg_env: env.cfg.clone(),
             parent_hash: storage.finalized_hash,
         };
 
-        // update block numbers
+        let BlockInfo { block, transactions, receipts } = executor.create_block();
+
+        // update block metadata
         storage.finalized_number = env.block.number.as_u64().into();
         env.block.number = env.block.number.saturating_add(U256::one());
         storage.best_number = env.block.number.as_u64().into();
 
-        let BlockInfo { block, transactions, receipts } = executor.create_block();
+        storage.finalized_hash = block.header.hash();
+        storage.best_hash = storage.finalized_hash;
 
-        // TODO update env
+        let hash = storage.finalized_hash;
+        let number = storage.finalized_number;
+        storage.blocks.insert(hash, block);
+        storage.hashes.insert(number, hash);
+
+        // insert all transactions
+        for (tx, receipt) in transactions.into_iter().zip(receipts) {
+            storage.transactions.insert(tx.transaction_hash, (tx, receipt));
+        }
     }
 
     /// The env data of the blockchain

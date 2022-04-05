@@ -19,8 +19,8 @@ use foundry_evm::{
 };
 use std::sync::Arc;
 
-/// Represents a transacted(on the DB) transaction
-pub struct MinedTransaction {
+/// Represents an executed transaction (transacted on the DB)
+pub struct ExecutedTransaction {
     transaction: Arc<PoolTransaction>,
     exit: Return,
     out: TransactOut,
@@ -28,9 +28,9 @@ pub struct MinedTransaction {
     logs: Vec<Log>,
 }
 
-// == impl MinedTransaction ==
+// == impl ExecutedTransaction ==
 
-impl MinedTransaction {
+impl ExecutedTransaction {
     /// Creates the receipt for the transaction
     fn create_receipt(&self) -> TypedReceipt {
         let used_gas: U256 = self.gas.into();
@@ -64,9 +64,9 @@ impl MinedTransaction {
 }
 
 /// An executer for a series of transactions
-pub struct TransactionExecutor<Db> {
+pub struct TransactionExecutor<'a, Db: ?Sized> {
     /// where to insert the transactions
-    pub db: Db,
+    pub db: &'a mut Db,
     /// all pending transactions
     pub pending: std::vec::IntoIter<Arc<PoolTransaction>>,
     pub block_env: BlockEnv,
@@ -74,7 +74,7 @@ pub struct TransactionExecutor<Db> {
     pub parent_hash: H256,
 }
 
-impl<DB: Db> TransactionExecutor<DB> {
+impl<'a, DB: Db + ?Sized> TransactionExecutor<'a, DB> {
     /// Executes all transactions and puts them in a new block
     pub fn create_block(self) -> BlockInfo {
         let mut transactions = Vec::new();
@@ -91,7 +91,7 @@ impl<DB: Db> TransactionExecutor<DB> {
         for (idx, tx) in self.enumerate() {
             let receipt = tx.create_receipt();
             cumulative_gas_used = cumulative_gas_used.saturating_add(receipt.gas_used());
-            let MinedTransaction { transaction, logs, out, .. } = tx;
+            let ExecutedTransaction { transaction, logs, out, .. } = tx;
             logs_bloom(logs.clone(), &mut bloom);
 
             let contract_address = if let TransactOut::Create(_, contract_address) = out {
@@ -143,8 +143,8 @@ impl<DB: Db> TransactionExecutor<DB> {
     }
 }
 
-impl<DB: Db> Iterator for TransactionExecutor<DB> {
-    type Item = MinedTransaction;
+impl<'a, DB: Db + ?Sized> Iterator for TransactionExecutor<'a, DB> {
+    type Item = ExecutedTransaction;
 
     fn next(&mut self) -> Option<Self::Item> {
         let transaction = self.pending.next()?;
@@ -156,7 +156,7 @@ impl<DB: Db> Iterator for TransactionExecutor<DB> {
         // transact and commit the transaction
         let (exit, out, gas, logs) = evm.transact_commit();
 
-        Some(MinedTransaction {
+        Some(ExecutedTransaction {
             transaction,
             exit,
             out,
