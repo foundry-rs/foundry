@@ -1,6 +1,10 @@
 use crate::eth::error::BlockchainError;
-use ethers::types::Address;
+use ethers::{
+    core::k256::ecdsa::SigningKey,
+    prelude::{Address, Wallet},
+};
 use forge_node_core::eth::transaction::{TypedTransaction, TypedTransactionRequest};
+use std::collections::HashMap;
 
 /// A transaction signer
 pub trait Signer: Send + Sync {
@@ -14,4 +18,29 @@ pub trait Signer: Send + Sync {
     ) -> Result<TypedTransaction, BlockchainError>;
 }
 
-// TODO implement a dev signer
+pub struct DevSigner {
+    accounts: HashMap<Address, Wallet<SigningKey>>,
+}
+
+impl DevSigner {
+    pub fn new(accounts: HashMap<Address, Wallet<SigningKey>>) -> Self {
+        Self { accounts }
+    }
+}
+
+impl Signer for DevSigner {
+    fn accounts(&self) -> Vec<Address> {
+        self.accounts.keys().copied().collect()
+    }
+
+    fn sign(
+        &self,
+        _request: TypedTransactionRequest,
+        address: &Address,
+    ) -> Result<TypedTransaction, BlockchainError> {
+        let _signer =
+            self.accounts.get(address).ok_or(BlockchainError::NoSignerAvailable)?;
+
+        todo!("Need to unify ethers_core and node_core types first")
+    }
+}

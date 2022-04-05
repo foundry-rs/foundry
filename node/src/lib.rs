@@ -8,6 +8,7 @@ use crate::{
 pub use config::NodeConfig;
 use foundry_evm::{revm, revm::BlockEnv};
 
+use crate::eth::sign::{DevSigner, Signer};
 use parking_lot::RwLock;
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -49,7 +50,7 @@ pub fn spawn(config: NodeConfig) -> (EthApi, JoinHandle<hyper::Result<()>>) {
         gas_price: _,
         genesis_accounts: _,
         genesis_balance: _,
-        accounts: _,
+        accounts,
         automine,
         port,
         max_transactions,
@@ -73,7 +74,9 @@ pub fn spawn(config: NodeConfig) -> (EthApi, JoinHandle<hyper::Result<()>>) {
     // only memory based backend for now
     let backend = Arc::new(mem::Backend::empty(Arc::new(RwLock::new(env))));
 
-    let api = EthApi::new(Arc::clone(&pool), Arc::clone(&backend), Default::default());
+    let dev_signer: Box<dyn Signer> = Box::new(DevSigner::new(accounts));
+
+    let api = EthApi::new(Arc::clone(&pool), Arc::clone(&backend), Arc::new(vec![dev_signer]));
 
     let node_service = NodeService::new(pool, backend, mode);
 
