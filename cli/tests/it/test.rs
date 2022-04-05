@@ -32,3 +32,28 @@ contract ATest is DSTest {
     cmd.arg("test");
     cmd.stdout().contains("[PASS]")
 });
+
+// tests that `bytecode_hash` will be sanitized
+forgetest!(can_test_pre_bytecode_hash, |prj: TestProject, mut cmd: TestCommand| {
+    prj.insert_ds_test();
+
+    prj.inner()
+        .add_source(
+            "ATest.t.sol",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+// pre bytecode hash version, was introduced in 0.6.0
+pragma solidity 0.5.17;
+import "./test.sol";
+contract ATest is DSTest {
+    function testArray(uint64[2] calldata values) external {
+        assertTrue(true);
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    cmd.arg("test");
+    cmd.stdout().contains("[PASS]")
+});
