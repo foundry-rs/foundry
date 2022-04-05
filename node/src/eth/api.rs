@@ -23,7 +23,7 @@ use forge_node_core::{
         },
         EthRequest,
     },
-    response::{ResponseResult, RpcResponse},
+    response::ResponseResult,
     types::{Index, Work},
 };
 use std::sync::Arc;

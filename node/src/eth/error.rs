@@ -2,12 +2,9 @@
 
 use crate::eth::pool::transactions::PoolTransaction;
 use ethers::types::SignatureError;
-use forge_node_core::{
-    error::RpcError,
-    response::{ResponseResult, RpcResponse},
-};
+use forge_node_core::{error::RpcError, response::ResponseResult};
 use serde::Serialize;
-use tracing::{error, trace};
+use tracing::error;
 
 pub(crate) type Result<T> = std::result::Result<T, BlockchainError>;
 
@@ -79,7 +76,7 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 }
                 BlockchainError::SignatureError(err) => RpcError::invalid_params(err.to_string()),
                 BlockchainError::RpcUnimplemented => {
-                    { RpcError::internal_error_with("Not implemented") }.into()
+                    RpcError::internal_error_with("Not implemented")
                 }
             }
             .into(),

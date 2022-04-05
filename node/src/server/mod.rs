@@ -17,9 +17,3 @@ pub fn serve(addr: SocketAddr, api: EthApi) -> impl Future<Output = hyper::Resul
         .into_make_service();
     Server::bind(&addr).serve(svc)
 }
-
-pub(crate) fn init_tracing() {
-    tracing_subscriber::FmtSubscriber::builder()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
-}

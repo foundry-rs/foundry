@@ -97,3 +97,10 @@ pub fn spawn(config: NodeConfig) -> (EthApi, JoinHandle<hyper::Result<()>>) {
 
     (api, handle)
 }
+
+#[allow(unused)]
+pub(crate) fn init_tracing() {
+    tracing_subscriber::FmtSubscriber::builder()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
+}
