@@ -9,6 +9,7 @@ use ethers::{
     types::BlockId,
 };
 
+use crate::revm::db::DatabaseRef;
 use ethers::types::Address;
 use forge_node_core::eth::{
     block::{Block, BlockInfo},
@@ -98,6 +99,21 @@ impl Backend {
     /// Creates a new empty blockchain backend
     pub fn empty(env: Arc<RwLock<Env>>) -> Self {
         let db = CacheDB::default();
+        Self::new(Arc::new(RwLock::new(db)), env)
+    }
+
+    /// Initialises the balance of the given accounts
+    pub fn with_genesis_balance(
+        env: Arc<RwLock<Env>>,
+        balance: U256,
+        accounts: impl IntoIterator<Item = Address>,
+    ) -> Self {
+        let mut db = CacheDB::default();
+        for account in accounts {
+            let mut info = db.basic(account);
+            info.balance = balance;
+            db.insert_cache(account, info);
+        }
         Self::new(Arc::new(RwLock::new(db)), env)
     }
 

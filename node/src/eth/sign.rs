@@ -38,8 +38,7 @@ impl Signer for DevSigner {
         _request: TypedTransactionRequest,
         address: &Address,
     ) -> Result<TypedTransaction, BlockchainError> {
-        let _signer =
-            self.accounts.get(address).ok_or(BlockchainError::NoSignerAvailable)?;
+        let _signer = self.accounts.get(address).ok_or(BlockchainError::NoSignerAvailable)?;
 
         todo!("Need to unify ethers_core and node_core types first")
     }
