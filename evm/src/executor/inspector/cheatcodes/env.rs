@@ -10,6 +10,20 @@ use ethers::{
 };
 use revm::{Database, EVMData};
 
+
+#[derive(Clone, Debug, Default)]
+pub struct Broadcast {
+    /// Address of the transaction origin
+    pub origin: Address,
+    /// Original caller
+    pub original_caller: Address,
+    /// Depth of the broadcast
+    pub depth: u64,
+    /// Whether or not the prank stops by itself after the next call
+    pub single_call: bool,
+}
+
+
 #[derive(Clone, Debug, Default)]
 pub struct Prank {
     /// Address of the contract that initiated the prank
@@ -26,6 +40,27 @@ pub struct Prank {
     pub single_call: bool,
 }
 
+fn broadcast(
+    state: &mut Cheatcodes,
+    origin: Address,
+    original_caller: Address,
+    depth: u64,
+    single_call: bool,
+) -> Result<Bytes, Bytes> {
+    let broadcast = Broadcast { origin, original_caller, depth, single_call };
+
+    if state.prank.is_some() {
+        return Err("You have an active prank. Broadcasting and pranks are not compatible. Disable one or the other".to_string().encode().into())
+    }
+
+    if state.broadcast.is_some() {
+        return Err("You have an active broadcast already.".to_string().encode().into())
+    }
+
+    state.broadcast = Some(broadcast);
+    Ok(Bytes::new())
+}
+
 fn prank(
     state: &mut Cheatcodes,
     prank_caller: Address,
@@ -39,6 +74,10 @@ fn prank(
 
     if state.prank.is_some() {
         return Err("You have an active prank already.".to_string().encode().into())
+    }
+
+    if state.broadcast.is_some() {
+        return Err("You cannot `prank` for a broadcasted transaction. Pass the desired tx.origin into the broadcast cheatcode call".to_string().encode().into())
     }
 
     state.prank = Some(prank);
@@ -156,6 +195,16 @@ pub fn apply<DB: Database>(
             Ok(Bytes::new())
         }
         HEVMCalls::Accesses(inner) => Ok(accesses(state, inner.0)),
+        HEVMCalls::Broadcast(inner) => {
+            broadcast(state, inner.0, caller, data.subroutine.depth(), true)
+        }
+        HEVMCalls::StartBroadcast(inner) => {
+            broadcast(state, inner.0, caller, data.subroutine.depth(), false)
+        }
+        HEVMCalls::StopBroadcast(_inner) => {
+            state.broadcast = None;
+            Ok(Bytes::new())
+        }
         _ => return None,
     })
 }

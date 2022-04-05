@@ -14,6 +14,7 @@ use crate::cmd::forge::{
     install::InstallArgs,
     remappings::RemappingArgs,
     run::RunArgs,
+    script::ScriptArgs,
     snapshot, test, tree,
     verify::{VerifyArgs, VerifyCheckArgs},
 };
@@ -39,6 +40,10 @@ pub enum Subcommands {
     #[clap(about = "Test your smart contracts")]
     #[clap(alias = "t")]
     Test(test::TestArgs),
+
+    #[clap(about = "Run a smart contract as a script, building transactions that will be sent onchain.")]
+    #[clap(alias = "s")]
+    Script(ScriptArgs),
 
     #[clap(about = "Generate rust bindings for your smart contracts")]
     Bind(BindArgs),

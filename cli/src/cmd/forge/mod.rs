@@ -48,6 +48,7 @@ pub mod inspect;
 pub mod install;
 pub mod remappings;
 pub mod run;
+pub mod script;
 pub mod snapshot;
 pub mod test;
 pub mod tree;

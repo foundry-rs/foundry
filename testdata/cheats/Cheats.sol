@@ -60,4 +60,10 @@ interface Cheats {
     function label(address, string calldata) external;
     // If the condition is false, discard this run's fuzz inputs and generate new ones
     function assume(bool) external;
+    // Has the next call (at this call depth only) create a transaction, that can later be signed and sent onchain
+    function broadcast(address) external;
+    // Has the all subsequent calls (at tis call depth only) create transactions, that can later be signed and sent onchain
+    function startBroadcast(address) external;
+    // Stops generating onchain transactions
+    function stopBroadcast() external;
 }

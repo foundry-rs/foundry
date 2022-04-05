@@ -41,6 +41,9 @@ ethers::contract::abigen!(
             getCode(string)
             label(address,string)
             assume(bool)
+            broadcast(address)
+            startBroadcast(address)
+            stopBroadcast(address)
     ]"#,
 );
 pub use hevm_mod::{HEVMCalls, HEVM_ABI};

@@ -11,21 +11,18 @@ mod fuzz;
 /// Utility cheatcodes (`sign` etc.)
 mod util;
 
-use self::expect::{handle_expect_emit, handle_expect_revert};
+use self::{env::Broadcast, expect::{handle_expect_emit, handle_expect_revert}};
 use crate::{
     abi::HEVMCalls,
     executor::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
 };
 use bytes::Bytes;
-use ethers::{
-    abi::{AbiDecode, AbiEncode, RawLog},
-    types::{Address, H256},
-};
+use ethers::{abi::{AbiDecode, AbiEncode, RawLog}, types::{Address, H256, NameOrAddress, transaction::eip2718::TypedTransaction, TransactionRequest}};
 use revm::{
     opcode, BlockEnv, CallInputs, CreateInputs, Database, EVMData, Gas, Inspector, Interpreter,
     Return,
 };
-use std::collections::BTreeMap;
+use std::collections::{VecDeque, BTreeMap};
 
 /// An inspector that handles calls to various cheatcodes, each with their own behavior.
 ///
@@ -62,6 +59,12 @@ pub struct Cheatcodes {
 
     /// Expected emits
     pub expected_emits: Vec<ExpectedEmit>,
+
+    /// Current broadcasting information
+    pub broadcast: Option<Broadcast>,
+
+    /// Scripting based transactions
+    pub broadcastable_transactions: VecDeque<TypedTransaction>
 }
 
 impl Cheatcodes {
@@ -139,6 +142,34 @@ where
                     if let Some(new_origin) = prank.new_origin {
                         data.env.tx.caller = new_origin;
                     }
+                }
+            }
+
+            // Apply our broadcast
+            if let Some(broadcast) = &self.broadcast {
+                // We only apply a broadcast *to a specific depth*.
+                //
+                // We do this because any subsequent contract calls *must* exist on chain and
+                // we only want to grab *this* call, not internal ones
+                if data.subroutine.depth() == broadcast.depth &&
+                    call.context.caller == broadcast.original_caller
+                {
+                    // At the target depth we set `msg.sender` & tx.origin.
+                    // We are simulating the caller as being an EOA, so *both* must be set to the broadcast.origin.
+                    call.context.caller = broadcast.origin;
+                    call.transfer.source = broadcast.origin;
+                    // Add a `legacy` transaction to the VecDeque. We use a legacy transaction here
+                    // because we only need the from, to, value, and data. We can later change this into 1559,
+                    // in the cli package, relatively easily once we know the target chain supports EIP-1559.
+                    self.broadcastable_transactions.push_back(TypedTransaction::Legacy(
+                        TransactionRequest {
+                            from: Some(broadcast.origin),
+                            to: Some(NameOrAddress::Address(call.contract)),
+                            value: Some(call.transfer.value),
+                            data: Some(call.input.clone().into()),
+                            ..Default::default()
+                        }
+                    ));
                 }
             }
 
@@ -225,6 +256,14 @@ where
             }
         }
 
+        // Clean up broadcast
+        if let Some(broadcast) = &self.broadcast {
+            data.env.tx.caller = broadcast.original_caller;
+            if broadcast.single_call {
+                std::mem::take(&mut self.broadcast);
+            }
+        }
+
         // Handle expected reverts
         if let Some(expected_revert) = &self.expected_revert {
             if data.subroutine.depth() <= expected_revert.depth {
@@ -308,6 +347,34 @@ where
             }
         }
 
+        // Apply our broadcast
+        if let Some(broadcast) = &self.broadcast {
+            // We only apply a broadcast *to a specific depth*.
+            //
+            // We do this because any subsequent contract calls *must* exist on chain and
+            // we only want to grab *this* call, not internal ones
+            println!("create has broadcast, {:?} {:?} {:?} {:?}", data.subroutine.depth(), broadcast.depth, call.caller, broadcast.original_caller);
+            if data.subroutine.depth() == broadcast.depth &&
+                call.caller == broadcast.original_caller
+            {
+                // At the target depth we set `msg.sender` & tx.origin.
+                // We are simulating the caller as being an EOA, so *both* must be set to the broadcast.origin.
+                call.caller = broadcast.origin;
+                // Add a `legacy` transaction to the VecDeque. We use a legacy transaction here
+                // because we only need the from, to, value, and data. We can later change this into 1559,
+                // in the cli package, relatively easily once we know the target chain supports EIP-1559.
+                self.broadcastable_transactions.push_back(TypedTransaction::Legacy(
+                    TransactionRequest {
+                        from: Some(broadcast.origin),
+                        to: None,
+                        value: Some(call.value),
+                        data: Some(call.init_code.clone().into()),
+                        ..Default::default()
+                    }
+                ));
+            }
+        }
+
         (Return::Continue, None, Gas::new(call.gas_limit), Bytes::new())
     }
 
@@ -325,6 +392,14 @@ where
             data.env.tx.caller = prank.prank_origin;
             if prank.single_call {
                 std::mem::take(&mut self.prank);
+            }
+        }
+
+        // Clean up broadcasts
+        if let Some(broadcast) = &self.broadcast {
+            data.env.tx.caller = broadcast.original_caller;
+            if broadcast.single_call {
+                std::mem::take(&mut self.broadcast);
             }
         }
 
