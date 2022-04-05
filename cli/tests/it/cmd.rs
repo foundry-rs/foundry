@@ -1,6 +1,9 @@
 //! Contains various tests for checking forge's commands
 use ansi_term::Colour;
-use ethers::solc::{artifacts::Metadata, ConfigurableContractArtifact};
+use ethers::solc::{
+    artifacts::{BytecodeHash, Metadata},
+    ConfigurableContractArtifact,
+};
 use foundry_cli_test_utils::{
     ethers_solc::PathStyle,
     forgetest, forgetest_ignore, forgetest_init,
@@ -365,6 +368,9 @@ Gas used: 3957
 
 // tests that the `inspect` command works correctly
 forgetest!(can_execute_inspect_command, |prj: TestProject, mut cmd: TestCommand| {
+    // explicitly set to include the ipfs bytecode hash
+    let config = Config { bytecode_hash: BytecodeHash::Ipfs, ..Default::default() };
+    prj.write_config(config);
     let contract_name = "Foo";
     let _ = prj
         .inner()

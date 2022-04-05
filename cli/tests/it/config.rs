@@ -80,6 +80,8 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
             endpoints: CachedEndpoints::Remote,
         },
         no_storage_caching: true,
+        bytecode_hash: Default::default(),
+        sparse_mode: true,
         __non_exhaustive: (),
     };
     prj.write_config(input.clone());

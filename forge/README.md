@@ -170,6 +170,10 @@ which implements the following methods:
 
 - `function assume(bool) external`: When fuzzing, generate new inputs if conditional not met
 
+- `function setNonce(address account, uint64 nonce) external`: Set nonce for an account, increment only.
+
+- `function getNonce(address account)`: Get nonce for an account.
+
 The below example uses the `warp` cheatcode to override the timestamp & `expectRevert` to expect a specific revert string:
 
 ```solidity
@@ -295,6 +299,10 @@ interface Hevm {
     function label(address addr, string calldata label) external;
     // When fuzzing, generate new inputs if conditional not met
     function assume(bool) external;
+    // Set nonce for an account, increment only
+    function setNonce(address,uint64) external;
+    // Get nonce for an account
+    function getNonce(address) external returns(uint64);
 }
 ```
 ### `console.log`
@@ -304,7 +312,7 @@ We support the logging functionality from Hardhat's `console.log`.
 
 If you are on a hardhat project, `import hardhat/console.sol` should just work if you use `forge test --hh`.
 
-If no, there is an implementation contract [here](https://github.com/gakonst/foundry/blob/master/evm-adapters/testdata/console.sol). We currently recommend that you copy this contract, place it in your `test` folder, and import it into the contract where you wish to use `console.log`, though there should be more streamlined functionality soon.
+If no, there is an implementation contract [here](https://raw.githubusercontent.com/NomicFoundation/hardhat/master/packages/hardhat-core/console.sol). We currently recommend that you copy this contract, place it in your `test` folder, and import it into the contract where you wish to use `console.log`, though there should be more streamlined functionality soon.
 
 Usage follows the same format as [Hardhat](https://hardhat.org/hardhat-network/reference/#console-log):
 ```solidity

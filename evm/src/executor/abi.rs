@@ -41,6 +41,8 @@ ethers::contract::abigen!(
             getCode(string)
             label(address,string)
             assume(bool)
+            setNonce(address,uint64)
+            getNonce(address)
     ]"#,
 );
 pub use hevm_mod::{HEVMCalls, HEVM_ABI};
