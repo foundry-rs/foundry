@@ -41,7 +41,7 @@ impl Future for NodeService {
             let block_number = pin.backend.mine_block(transactions.clone());
 
             // prune all the markers the mined transactions provide
-            pin.pool.prune_markers(
+            let _ = pin.pool.prune_markers(
                 block_number,
                 transactions.into_iter().flat_map(|tx| tx.provides.clone()),
             );

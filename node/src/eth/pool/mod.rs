@@ -34,8 +34,13 @@ impl Pool {
     ///
     /// For each marker we can remove transactions in the pool that either provide the marker
     /// directly or are a dependency of the transaction associated with that marker.
-    pub fn prune_markers(&self, block_number: U64, _tags: impl IntoIterator<Item = TxMarker>) {
+    pub fn prune_markers(
+        &self,
+        block_number: U64,
+        markers: impl IntoIterator<Item = TxMarker>,
+    ) -> PruneResult {
         debug!(target: "txpool", "pruning transactions for block {}", block_number);
+        self.inner.write().prune_markers(markers)
     }
 
     /// Adds a new transaction to the pool
@@ -180,7 +185,7 @@ impl PoolInner {
     ///
     /// This will effectively remove those transactions that satisfy the markers and transactions
     /// from the pending queue might get promoted to if the markers unlock them.
-    pub fn prune_tags(&mut self, markers: impl IntoIterator<Item = TxMarker>) -> PruneResult {
+    pub fn prune_markers(&mut self, markers: impl IntoIterator<Item = TxMarker>) -> PruneResult {
         let mut imports = vec![];
         let mut pruned = vec![];
 
