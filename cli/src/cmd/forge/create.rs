@@ -11,7 +11,7 @@ use ethers::{
     types::{transaction::eip2718::TypedTransaction, Chain, U256},
 };
 
-use eyre::Result;
+use eyre::{Context, Result};
 use foundry_utils::parse_tokens;
 use std::fs;
 
@@ -140,7 +140,15 @@ impl CreateArgs {
         let provider = Arc::new(provider);
         let factory = ContractFactory::new(abi, bin, provider.clone());
 
-        let deployer = factory.deploy_tokens(args)?;
+        let is_args_empty = args.is_empty();
+        let deployer =
+            factory.deploy_tokens(args).context("Failed to deploy contract").map_err(|e| {
+                if is_args_empty {
+                    e.wrap_err("No arguments provided for contract constructor. Consider --constructor-args or --constructor-args-path")
+                } else {
+                    e
+                }
+            })?;
         let is_legacy =
             self.legacy || Chain::try_from(chain).map(|x| Chain::is_legacy(&x)).unwrap_or_default();
         let mut deployer = if is_legacy { deployer.legacy() } else { deployer };
