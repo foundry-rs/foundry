@@ -1,4 +1,4 @@
-use std::fmt::{self, Write};
+use std::fmt;
 
 /// wrapper type that displays byte as hex
 pub struct HexDisplay<'a>(&'a [u8]);

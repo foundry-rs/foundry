@@ -18,7 +18,8 @@ use ethers::{
 use forge_node_core::{
     eth::{
         transaction::{
-            EthTransactionRequest, PendingTransaction, TypedTransaction, TypedTransactionRequest,
+            EthTransactionRequest, LegacyTransaction, PendingTransaction, TypedTransaction,
+            TypedTransactionRequest,
         },
         EthRequest,
     },
@@ -144,7 +145,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_getBalance`
     pub async fn balance(&self, address: Address, number: Option<BlockNumber>) -> Result<U256> {
         let number = number.unwrap_or(BlockNumber::Latest);
-        return match number {
+        match number {
             BlockNumber::Latest | BlockNumber::Pending => Ok(self.backend.current_balance(address)),
             BlockNumber::Number(num) => {
                 if num != self.backend.best_number() {
@@ -188,7 +189,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_getTransactionCount`
     pub fn transaction_count(&self, address: Address, number: Option<BlockNumber>) -> Result<U256> {
         let number = number.unwrap_or(BlockNumber::Latest);
-        return match number {
+        match number {
             BlockNumber::Latest | BlockNumber::Pending => Ok(self.backend.current_nonce(address)),
             BlockNumber::Number(num) => {
                 if num != self.backend.best_number() {
@@ -312,14 +313,17 @@ impl EthApi {
         if data.is_empty() {
             return Err(BlockchainError::EmptyRawTransactionData)
         }
-        let _transaction: TypedTransaction = if data[0] > 0x7f {
+        let transaction = if data[0] > 0x7f {
             // legacy transaction
-            todo!("implement legacy decoding")
+            match rlp::decode::<LegacyTransaction>(data) {
+                Ok(transaction) => TypedTransaction::Legacy(transaction),
+                Err(_) => return Err(BlockchainError::FailedToDecodeSignedTransaction),
+            }
         } else {
             // the [TypedTransaction] requires a valid rlp input,
             // but EIP-1559 prepends a version byte, so we need to encode the data first to get a
-            // valid rlp and then the decode implementation will strip to check the transaction
-            // version byte.
+            // valid rlp and then rlp decode impl of `TypedTransaction` will remove and check the
+            // version byte
             let extend = rlp::encode(&data);
             match rlp::decode::<TypedTransaction>(&extend[..]) {
                 Ok(transaction) => transaction,
@@ -327,7 +331,25 @@ impl EthApi {
             }
         };
 
-        todo!()
+        let pending_transaction = PendingTransaction::new(transaction)?;
+        let on_chain_nonce = self.backend.current_nonce(*pending_transaction.sender());
+        let nonce = *pending_transaction.transaction.nonce();
+        let prev_nonce = nonce.saturating_sub(U256::one());
+
+        let requires = if on_chain_nonce < prev_nonce {
+            vec![to_marker(prev_nonce.as_u64(), *pending_transaction.sender())]
+        } else {
+            vec![]
+        };
+
+        let pool_transaction = PoolTransaction {
+            requires,
+            provides: vec![to_marker(nonce.as_u64(), *pending_transaction.sender())],
+            pending_transaction,
+        };
+
+        let tx = self.pool.add_transaction(pool_transaction)?;
+        Ok(*tx.hash())
     }
 
     /// Call contract, returning the output data.
