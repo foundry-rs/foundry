@@ -2,7 +2,7 @@
 
 use crate::eth::pool::transactions::PoolTransaction;
 use ethers::types::SignatureError;
-use forge_node_core::{error::RpcError, response::ResponseResult};
+use foundry_node_core::{error::RpcError, response::ResponseResult};
 use serde::Serialize;
 use tracing::error;
 

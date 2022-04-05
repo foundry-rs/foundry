@@ -8,7 +8,7 @@ use axum::{
     response::IntoResponse,
     Json,
 };
-use forge_node_core::{
+use foundry_node_core::{
     error::RpcError,
     eth::EthRequest,
     request::{Request, RpcCall, RpcMethodCall},

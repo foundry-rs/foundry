@@ -1661,45 +1661,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "forge-node"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "axum",
- "bytes",
- "chrono 0.4.19",
- "ethers",
- "forge-node-core",
- "foundry-evm",
- "foundry-utils",
- "futures",
- "hyper",
- "parking_lot 0.12.0",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "tower",
- "tower-http",
- "tracing",
- "tracing-subscriber 0.3.9",
-]
-
-[[package]]
-name = "forge-node-core"
-version = "0.1.0"
-dependencies = [
- "ethers-core",
- "foundry-evm",
- "hash-db",
- "hash256-std-hasher",
- "rand 0.8.5",
- "serde",
- "serde_json",
- "triehash",
-]
-
-[[package]]
 name = "form_urlencoded"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1725,8 +1686,9 @@ dependencies = [
  "eyre",
  "forge",
  "forge-fmt",
- "forge-node",
  "foundry-cli-test-utils",
+ "foundry-config",
+ "foundry-node",
  "foundry-utils",
  "futures",
  "glob",
@@ -1810,6 +1772,45 @@ dependencies = [
  "tracing-error 0.2.0",
  "tracing-subscriber 0.3.9",
  "url",
+]
+
+[[package]]
+name = "foundry-node"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "bytes",
+ "chrono 0.4.19",
+ "ethers",
+ "foundry-evm",
+ "foundry-node-core",
+ "foundry-utils",
+ "futures",
+ "hyper",
+ "parking_lot 0.12.0",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tower",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber 0.3.9",
+]
+
+[[package]]
+name = "foundry-node-core"
+version = "0.1.0"
+dependencies = [
+ "ethers-core",
+ "foundry-evm",
+ "hash-db",
+ "hash256-std-hasher",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "triehash",
 ]
 
 [[package]]

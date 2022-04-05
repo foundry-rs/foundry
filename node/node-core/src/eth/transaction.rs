@@ -1,23 +1,21 @@
 //! transaction related data
 
-use crate::eth::utils::enveloped;
+use crate::eth::{receipt::Log, utils::enveloped};
 use ethers_core::{
     types::{
         transaction::eip2930::{AccessList, AccessListItem},
-        Address, Bytes, Signature, SignatureError, TxHash, H256, U256,
+        Address, Bloom, Bytes, Signature, SignatureError, TxHash, H256, U256,
     },
     utils::{
         keccak256, rlp,
         rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream},
     },
 };
-use ethers_core::types::Bloom;
 use foundry_evm::{
     revm::{CreateScheme, TransactTo, TxEnv},
     utils::h256_to_u256_be,
 };
 use serde::{Deserialize, Serialize};
-use crate::eth::receipt::Log;
 
 /// Container type for various Ethereum transaction requests
 ///
@@ -147,12 +145,11 @@ pub enum TransactionKind {
 // == impl TransactionKind ==
 
 impl TransactionKind {
-
     /// If this transaction is a call this returns the address of the callee
     pub fn as_call(&self) -> Option<&Address> {
         match self {
-            TransactionKind::Call(to) => {Some(to)}
-            TransactionKind::Create => {None}
+            TransactionKind::Call(to) => Some(to),
+            TransactionKind::Create => None,
         }
     }
 }
@@ -387,7 +384,7 @@ impl TypedTransaction {
     }
 
     /// Returns what kind of transaction this is
-    pub fn kind(&self) -> &TransactionKind{
+    pub fn kind(&self) -> &TransactionKind {
         match self {
             TypedTransaction::Legacy(tx) => &tx.kind,
             TypedTransaction::EIP2930(tx) => &tx.kind,
@@ -397,7 +394,7 @@ impl TypedTransaction {
 
     /// Returns the callee if this transaction is a call
     pub fn to(&self) -> Option<&Address> {
-       self.kind().as_call()
+        self.kind().as_call()
     }
 }
 

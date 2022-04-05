@@ -94,11 +94,9 @@ pub enum TypedReceipt {
     EIP1559(EIP1559Receipt),
 }
 
-
 // == impl TypedReceipt ==
 
 impl TypedReceipt {
-
     /// Returns the gas used by the transactions
     pub fn gas_used(&self) -> U256 {
         match self {

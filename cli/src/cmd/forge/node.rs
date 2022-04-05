@@ -1,18 +1,12 @@
 use clap::Parser;
 use ethers::{
-    core::{
-        k256::ecdsa::SigningKey,
-        types::{Address, U256},
-    },
+    core::{k256::ecdsa::SigningKey, types::U256},
     prelude::{coins_bip39::English, MnemonicBuilder, Wallet},
-    solc::EvmVersion,
 };
-use once_cell::sync::OnceCell;
 
 use crate::opts::evm::EvmArgs;
-use std::{collections::BTreeMap, str::FromStr};
-
-use super::Cmd;
+use foundry_node::NodeConfig;
+use std::str::FromStr;
 
 #[derive(Clone, Debug, Parser)]
 pub struct NodeArgs {
@@ -34,17 +28,20 @@ pub struct NodeArgs {
     balance: U256,
 }
 
-impl Cmd for NodeArgs {
-    type Output = ();
-
-    fn run(self) -> eyre::Result<Self::Output> {
-        let node_config = forge_node::NodeConfig::new()
+impl NodeArgs {
+    pub fn into_node_config(self) -> NodeConfig {
+        NodeConfig::default()
             .chain_id(self.evm_opts.env.chain_id.unwrap_or_default())
             .gas_limit(self.evm_opts.env.gas_limit.unwrap_or_default())
             .gas_price(self.evm_opts.env.gas_price.unwrap_or_default())
             .genesis_accounts(self.accounts.0)
-            .genesis_balance(self.balance);
-        Ok(())
+            .genesis_balance(self.balance)
+    }
+
+    pub async fn run(self) -> eyre::Result<()> {
+        let (_api, handle) = foundry_node::spawn(self.into_node_config());
+
+        Ok(handle.await??)
     }
 }
 

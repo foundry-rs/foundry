@@ -29,7 +29,7 @@ fn main() -> eyre::Result<()> {
             cmd.run()?;
         }
         Subcommands::Node(cmd) => {
-            cmd.run()?;
+            utils::block_on(cmd.run())?;
         }
         Subcommands::Build(cmd) => {
             if cmd.is_watch() {

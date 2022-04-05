@@ -7,15 +7,15 @@ use ethers::{
     types::{Bloom, H256, U256},
     utils::rlp,
 };
-use forge_node_core::eth::{
+use foundry_evm::{
+    revm,
+    revm::{BlockEnv, CfgEnv, Env, Return, TransactOut},
+};
+use foundry_node_core::eth::{
     block::{Block, BlockInfo, Header, PartialHeader},
     receipt::{EIP1559Receipt, EIP2930Receipt, EIP658Receipt, Log, TypedReceipt},
     transaction::{PendingTransaction, TransactionInfo, TypedTransaction},
     trie,
-};
-use foundry_evm::{
-    revm,
-    revm::{BlockEnv, CfgEnv, Env, Return, TransactOut},
 };
 use std::sync::Arc;
 

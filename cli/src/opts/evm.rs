@@ -11,7 +11,6 @@ use foundry_config::{
     Config,
 };
 use serde::Serialize;
-use sputnik::backend::MemoryVicinity;
 
 // `EvmArgs` and `EnvArgs` take the highest precedence in the Config/Figment hierarchy.
 // All vars are opt-in, their default values are expected to be set by the

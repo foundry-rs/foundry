@@ -11,12 +11,12 @@ use ethers::{
 
 use crate::revm::db::DatabaseRef;
 use ethers::types::Address;
-use forge_node_core::eth::{
+use foundry_evm::revm::{db::CacheDB, Env};
+use foundry_node_core::eth::{
     block::{Block, BlockInfo},
     receipt::TypedReceipt,
     transaction::TransactionInfo,
 };
-use foundry_evm::revm::{db::CacheDB, Env};
 use parking_lot::RwLock;
 use std::{collections::HashMap, sync::Arc};
 use tracing::trace;

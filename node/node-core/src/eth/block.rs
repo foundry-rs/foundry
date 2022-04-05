@@ -1,4 +1,8 @@
-use crate::eth::{transaction::TypedTransaction, trie};
+use crate::eth::{
+    receipt::TypedReceipt,
+    transaction::{TransactionInfo, TypedTransaction},
+    trie,
+};
 use ethers_core::{
     types::{Address, Bloom, Bytes, H256, U256, U64},
     utils::{
@@ -7,9 +11,6 @@ use ethers_core::{
     },
 };
 use serde::{Deserialize, Serialize};
-use crate::eth::receipt::TypedReceipt;
-use crate::eth::transaction::TransactionInfo;
-
 
 /// Container type that gathers all block data
 #[derive(Debug, Clone)]

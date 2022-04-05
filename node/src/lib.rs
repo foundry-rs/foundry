@@ -32,10 +32,10 @@ pub mod eth;
 /// # Example
 ///
 /// ```rust
-/// # use forge_node::NodeConfig;
+/// # use foundry_node::NodeConfig;
 /// # async fn spawn() {
 /// let config = NodeConfig::default();
-/// let(api, handle) = forge_node::spawn(config);
+/// let(api, handle) = foundry_node::spawn(config);
 ///
 /// // use api
 ///

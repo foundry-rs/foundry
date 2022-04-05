@@ -123,7 +123,7 @@ pub enum Subcommands {
     #[clap(about = "Display a tree visualization of the project's dependency graph")]
     Tree(tree::TreeArgs),
 
-    #[structopt(about = "run a JSON-RPC node")]
+    #[clap(about = "run a JSON-RPC node")]
     Node(node::NodeArgs),
 }
 

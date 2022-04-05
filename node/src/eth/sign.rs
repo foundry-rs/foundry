@@ -3,7 +3,7 @@ use ethers::{
     core::k256::ecdsa::SigningKey,
     prelude::{Address, Wallet},
 };
-use forge_node_core::eth::transaction::{TypedTransaction, TypedTransactionRequest};
+use foundry_node_core::eth::transaction::{TypedTransaction, TypedTransactionRequest};
 use std::collections::HashMap;
 
 /// A transaction signer

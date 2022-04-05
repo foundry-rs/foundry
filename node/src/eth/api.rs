@@ -15,7 +15,7 @@ use ethers::{
     },
     utils::rlp,
 };
-use forge_node_core::{
+use foundry_node_core::{
     eth::{
         transaction::{
             EthTransactionRequest, LegacyTransaction, PendingTransaction, TypedTransaction,
