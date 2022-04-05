@@ -27,7 +27,11 @@ pub use revm::db::DatabaseRef;
 use self::inspector::{InspectorData, InspectorStackConfig};
 use crate::{debug::DebugArena, trace::CallTraceArena, CALLER};
 use bytes::Bytes;
-use ethers::{abi::{Abi, Detokenize, RawLog, Tokenize}, prelude::{Address, U256, decode_function_data, encode_function_data}, types::transaction::eip2718::TypedTransaction};
+use ethers::{
+    abi::{Abi, Detokenize, RawLog, Tokenize},
+    prelude::{decode_function_data, encode_function_data, Address, U256},
+    types::transaction::eip2718::TypedTransaction,
+};
 use eyre::Result;
 use foundry_utils::IntoFunction;
 use hashbrown::HashMap;
@@ -35,7 +39,7 @@ use revm::{
     db::{CacheDB, DatabaseCommit, EmptyDB},
     return_ok, Account, BlockEnv, CreateScheme, Env, Return, TransactOut, TransactTo, TxEnv, EVM,
 };
-use std::collections::{VecDeque, BTreeMap};
+use std::collections::{BTreeMap, VecDeque};
 
 /// A mapping of addresses to their changed state.
 pub type StateChangeset = HashMap<Address, Account>;

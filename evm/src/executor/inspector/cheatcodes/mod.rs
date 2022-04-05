@@ -11,18 +11,26 @@ mod fuzz;
 /// Utility cheatcodes (`sign` etc.)
 mod util;
 
-use self::{env::Broadcast, expect::{handle_expect_emit, handle_expect_revert}};
+use self::{
+    env::Broadcast,
+    expect::{handle_expect_emit, handle_expect_revert},
+};
 use crate::{
     abi::HEVMCalls,
     executor::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
 };
 use bytes::Bytes;
-use ethers::{abi::{AbiDecode, AbiEncode, RawLog}, types::{Address, H256, NameOrAddress, transaction::eip2718::TypedTransaction, TransactionRequest}};
+use ethers::{
+    abi::{AbiDecode, AbiEncode, RawLog},
+    types::{
+        transaction::eip2718::TypedTransaction, Address, NameOrAddress, TransactionRequest, H256,
+    },
+};
 use revm::{
     opcode, BlockEnv, CallInputs, CreateInputs, Database, EVMData, Gas, Inspector, Interpreter,
     Return,
 };
-use std::collections::{VecDeque, BTreeMap};
+use std::collections::{BTreeMap, VecDeque};
 
 /// An inspector that handles calls to various cheatcodes, each with their own behavior.
 ///
@@ -64,7 +72,7 @@ pub struct Cheatcodes {
     pub broadcast: Option<Broadcast>,
 
     /// Scripting based transactions
-    pub broadcastable_transactions: VecDeque<TypedTransaction>
+    pub broadcastable_transactions: VecDeque<TypedTransaction>,
 }
 
 impl Cheatcodes {
@@ -155,12 +163,14 @@ where
                     call.context.caller == broadcast.original_caller
                 {
                     // At the target depth we set `msg.sender` & tx.origin.
-                    // We are simulating the caller as being an EOA, so *both* must be set to the broadcast.origin.
+                    // We are simulating the caller as being an EOA, so *both* must be set to the
+                    // broadcast.origin.
                     call.context.caller = broadcast.origin;
                     call.transfer.source = broadcast.origin;
                     // Add a `legacy` transaction to the VecDeque. We use a legacy transaction here
-                    // because we only need the from, to, value, and data. We can later change this into 1559,
-                    // in the cli package, relatively easily once we know the target chain supports EIP-1559.
+                    // because we only need the from, to, value, and data. We can later change this
+                    // into 1559, in the cli package, relatively easily once we
+                    // know the target chain supports EIP-1559.
                     self.broadcastable_transactions.push_back(TypedTransaction::Legacy(
                         TransactionRequest {
                             from: Some(broadcast.origin),
@@ -168,7 +178,7 @@ where
                             value: Some(call.transfer.value),
                             data: Some(call.input.clone().into()),
                             ..Default::default()
-                        }
+                        },
                     ));
                 }
             }
@@ -353,16 +363,17 @@ where
             //
             // We do this because any subsequent contract calls *must* exist on chain and
             // we only want to grab *this* call, not internal ones
-            println!("create has broadcast, {:?} {:?} {:?} {:?}", data.subroutine.depth(), broadcast.depth, call.caller, broadcast.original_caller);
             if data.subroutine.depth() == broadcast.depth &&
                 call.caller == broadcast.original_caller
             {
                 // At the target depth we set `msg.sender` & tx.origin.
-                // We are simulating the caller as being an EOA, so *both* must be set to the broadcast.origin.
+                // We are simulating the caller as being an EOA, so *both* must be set to the
+                // broadcast.origin.
                 call.caller = broadcast.origin;
                 // Add a `legacy` transaction to the VecDeque. We use a legacy transaction here
-                // because we only need the from, to, value, and data. We can later change this into 1559,
-                // in the cli package, relatively easily once we know the target chain supports EIP-1559.
+                // because we only need the from, to, value, and data. We can later change this into
+                // 1559, in the cli package, relatively easily once we know the
+                // target chain supports EIP-1559.
                 self.broadcastable_transactions.push_back(TypedTransaction::Legacy(
                     TransactionRequest {
                         from: Some(broadcast.origin),
@@ -370,7 +381,7 @@ where
                         value: Some(call.value),
                         data: Some(call.init_code.clone().into()),
                         ..Default::default()
-                    }
+                    },
                 ));
             }
         }

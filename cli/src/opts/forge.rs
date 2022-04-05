@@ -41,7 +41,9 @@ pub enum Subcommands {
     #[clap(alias = "t")]
     Test(test::TestArgs),
 
-    #[clap(about = "Run a smart contract as a script, building transactions that will be sent onchain.")]
+    #[clap(
+        about = "Run a smart contract as a script, building transactions that will be sent onchain."
+    )]
     #[clap(alias = "s")]
     Script(ScriptArgs),
 

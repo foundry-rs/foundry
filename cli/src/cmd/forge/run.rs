@@ -8,7 +8,7 @@ use ansi_term::Colour;
 use clap::{Parser, ValueHint};
 use ethers::{
     abi::{Abi, RawLog},
-    prelude::ArtifactId,
+    prelude::{ArtifactId},
     solc::{
         artifacts::{CompactContractBytecode, ContractBytecode, ContractBytecodeSome},
         Project,
@@ -284,7 +284,7 @@ impl RunArgs {
                 dependencies: &mut run_dependencies,
                 matched: false,
             },
-            |file, key| (format!("{}:{}", file, key), file, key),
+            |file, key| (format!("{}.json:{}", key, key), file, key),
             |post_link_input| {
                 let PostLinkInput {
                     contract,

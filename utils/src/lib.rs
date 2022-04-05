@@ -89,6 +89,26 @@ impl fmt::Display for PossibleSigs {
     }
 }
 
+/// Very simple fuzzy matching of contract bytecode.
+///
+/// Will fail for small contracts that are essentially all immutable variables.
+pub fn diff_score(a: &[u8], b: &[u8]) -> f64 {
+    let cutoff_len = usize::min(a.len(), b.len());
+    if cutoff_len == 0 {
+        return 1.0
+    }
+
+    let a = &a[..cutoff_len];
+    let b = &b[..cutoff_len];
+    let mut diff_chars = 0;
+    for i in 0..cutoff_len {
+        if a[i] != b[i] {
+            diff_chars += 1;
+        }
+    }
+    diff_chars as f64 / cutoff_len as f64
+}
+
 #[derive(Debug)]
 pub struct PostLinkInput<'a, T, U> {
     pub contract: CompactContractBytecode,
@@ -110,7 +130,26 @@ pub fn link<T, U>(
     // I am leaving this here so that in the future if this needs to change,
     // its easy to find.
     let nonce = U256::one();
+    link_with_nonce(
+        contracts,
+        known_contracts,
+        sender,
+        nonce,
+        extra,
+        link_key_construction,
+        post_link,
+    )
+}
 
+pub fn link_with_nonce<T, U>(
+    contracts: BTreeMap<ArtifactId, CompactContractBytecode>,
+    known_contracts: &mut BTreeMap<ArtifactId, T>,
+    sender: Address,
+    nonce: U256,
+    extra: &mut U,
+    link_key_construction: impl Fn(String, String) -> (String, String, String),
+    post_link: impl Fn(PostLinkInput<T, U>) -> eyre::Result<()>,
+) -> eyre::Result<()> {
     // create a mapping of fname => Vec<(fname, file, key)>,
     let link_tree: BTreeMap<String, Vec<(String, String, String)>> = contracts
         .iter()

@@ -10,7 +10,6 @@ use ethers::{
 };
 use revm::{Database, EVMData};
 
-
 #[derive(Clone, Debug, Default)]
 pub struct Broadcast {
     /// Address of the transaction origin
@@ -22,7 +21,6 @@ pub struct Broadcast {
     /// Whether or not the prank stops by itself after the next call
     pub single_call: bool,
 }
-
 
 #[derive(Clone, Debug, Default)]
 pub struct Prank {
