@@ -10,10 +10,7 @@ use ethers::{
     abi::{Abi, RawLog},
     prelude::ArtifactId,
     solc::artifacts::{CompactContractBytecode, ContractBytecode, ContractBytecodeSome},
-    types::{
-        transaction::eip2718::TypedTransaction, Address, Bytes, TransactionRequest,
-        U256,
-    },
+    types::{transaction::eip2718::TypedTransaction, Address, Bytes, TransactionRequest, U256},
 };
 use forge::{
     debug::DebugArena,

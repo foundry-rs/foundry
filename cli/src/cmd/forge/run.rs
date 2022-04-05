@@ -8,7 +8,7 @@ use ansi_term::Colour;
 use clap::{Parser, ValueHint};
 use ethers::{
     abi::{Abi, RawLog},
-    prelude::{ArtifactId},
+    prelude::ArtifactId,
     solc::{
         artifacts::{CompactContractBytecode, ContractBytecode, ContractBytecodeSome},
         Project,
