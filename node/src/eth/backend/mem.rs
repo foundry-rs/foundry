@@ -181,6 +181,11 @@ impl Backend {
         self.db.read().basic(address).balance
     }
 
+    /// Returns balance of the given account.
+    pub fn current_nonce(&self, address: Address) -> U256 {
+        self.db.read().basic(address).nonce.into()
+    }
+
     pub fn gas_limit(&self) -> U256 {
         // TODO make this a separate value?
         self.env().read().block.gas_limit

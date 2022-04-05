@@ -186,8 +186,19 @@ impl EthApi {
     /// Returns the number of transactions sent from given address at given time (block number).
     ///
     /// Handler for ETH RPC call: `eth_getTransactionCount`
-    pub fn transaction_count(&self, _address: Address, _: Option<BlockNumber>) -> Result<U256> {
-        todo!()
+    pub fn transaction_count(&self, address: Address, number: Option<BlockNumber>) -> Result<U256> {
+        let number = number.unwrap_or(BlockNumber::Latest);
+        return match number {
+            BlockNumber::Latest | BlockNumber::Pending => Ok(self.backend.current_nonce(address)),
+            BlockNumber::Number(num) => {
+                if num != self.backend.best_number() {
+                    Err(BlockchainError::RpcUnimplemented)
+                } else {
+                    Ok(self.backend.current_nonce(address))
+                }
+            }
+            _ => Err(BlockchainError::RpcUnimplemented),
+        }
     }
 
     /// Returns the number of transactions in a block with given hash.
