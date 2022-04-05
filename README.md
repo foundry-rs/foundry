@@ -65,6 +65,16 @@ cargo build --release
 
 Or via `cargo install --git https://github.com/gakonst/foundry --locked`
 
+### Installing via Docker
+
+Foundry maintains a [Docker image repository](https://github.com/gakonst/foundry/pkgs/container/foundry).
+
+You can pull the latest release image like so:  
+```sh
+docker pull ghcr.io/gakonst/foundry:latest
+```
+For examples and guides on using this image, see the [Docker section](https://onbjerg.github.io/foundry-book/tutorials/foundry-docker.html) in the book.
+
 ### Releases
 
 You can manually download nightly releases

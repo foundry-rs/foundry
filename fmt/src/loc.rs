@@ -1,6 +1,6 @@
 use solang_parser::pt::{
-    AssemblyExpression, AssemblyStatement, ContractPart, FunctionDefinition, Import, Loc,
-    SourceUnitPart, Statement,
+    CodeLocation, ContractPart, FunctionDefinition, Import, Loc, SourceUnitPart, YulExpression,
+    YulStatement,
 };
 
 pub trait LineOfCode {
@@ -44,44 +44,35 @@ impl LineOfCode for ContractPart {
     }
 }
 
-impl LineOfCode for Statement {
-    fn loc(&self) -> Loc {
-        self.loc()
-    }
-}
-
-impl LineOfCode for AssemblyStatement {
+impl LineOfCode for YulStatement {
     fn loc(&self) -> Loc {
         match self {
-            AssemblyStatement::Assign(loc, _, _) |
-            AssemblyStatement::If(loc, _, _) |
-            AssemblyStatement::For(loc, _, _, _, _) |
-            AssemblyStatement::Switch(loc, _, _, _) |
-            AssemblyStatement::Leave(loc) |
-            AssemblyStatement::Break(loc) |
-            AssemblyStatement::VariableDeclaration(loc, _, _) |
-            AssemblyStatement::Block(loc, _) |
-            AssemblyStatement::Continue(loc) => *loc,
-            AssemblyStatement::Expression(expr) => expr.loc(),
-            AssemblyStatement::FunctionDefinition(f) => f.loc,
-            AssemblyStatement::FunctionCall(f) => f.loc,
+            YulStatement::Assign(loc, _, _) |
+            YulStatement::If(loc, _, _) |
+            YulStatement::Leave(loc) |
+            YulStatement::Break(loc) |
+            YulStatement::VariableDeclaration(loc, _, _) |
+            YulStatement::Continue(loc) => *loc,
+            YulStatement::For(f) => f.loc,
+            YulStatement::Block(b) => b.loc,
+            YulStatement::Switch(s) => s.loc,
+            YulStatement::FunctionDefinition(f) => f.loc,
+            YulStatement::FunctionCall(f) => f.loc,
         }
     }
 }
 
-impl LineOfCode for AssemblyExpression {
+impl LineOfCode for YulExpression {
     fn loc(&self) -> Loc {
-        *match self {
-            AssemblyExpression::BoolLiteral(loc, _, _) |
-            AssemblyExpression::NumberLiteral(loc, _, _) |
-            AssemblyExpression::HexNumberLiteral(loc, _, _) |
-            AssemblyExpression::Assign(loc, _, _) |
-            AssemblyExpression::LetAssign(loc, _, _) |
-            AssemblyExpression::Member(loc, _, _) |
-            AssemblyExpression::Subscript(loc, _, _) => loc,
-            AssemblyExpression::StringLiteral(literal, _) => &literal.loc,
-            AssemblyExpression::Variable(ident) => &ident.loc,
-            AssemblyExpression::FunctionCall(f) => &f.loc,
+        match self {
+            YulExpression::BoolLiteral(loc, _, _) |
+            YulExpression::NumberLiteral(loc, _, _) |
+            YulExpression::HexNumberLiteral(loc, _, _) |
+            YulExpression::Member(loc, _, _) => *loc,
+            YulExpression::StringLiteral(literal, _) => literal.loc,
+            YulExpression::Variable(ident) => ident.loc,
+            YulExpression::FunctionCall(f) => f.loc,
+            YulExpression::HexStringLiteral(lit, _) => lit.loc,
         }
     }
 }

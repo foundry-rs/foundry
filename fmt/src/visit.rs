@@ -63,7 +63,7 @@ pub trait Visitor {
         Ok(())
     }
 
-    fn visit_assembly(&mut self, stmt: &mut AssemblyStatement) -> VResult {
+    fn visit_assembly(&mut self, stmt: &mut YulStatement) -> VResult {
         self.visit_source(stmt.loc())?;
 
         Ok(())

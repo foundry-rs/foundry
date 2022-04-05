@@ -987,59 +987,61 @@ impl Ui for Tui {
                     // Move down
                     KeyCode::Char('j') | KeyCode::Down => {
                         // Grab number of times to do it
-                        if event.modifiers.contains(KeyModifiers::CONTROL) {
-                            let max_mem = (debug_call[draw_memory.inner_call_index].1
-                                [self.current_step]
-                                .memory
-                                .len() /
-                                32)
-                            .saturating_sub(1);
-                            if draw_memory.current_mem_startline < max_mem {
-                                draw_memory.current_mem_startline += 1;
-                            }
-                        } else {
-                            for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
-                                if self.current_step < opcode_list.len() - 1 {
-                                    self.current_step += 1;
-                                } else if draw_memory.inner_call_index < debug_call.len() - 1 {
-                                    draw_memory.inner_call_index += 1;
-                                    self.current_step = 0;
+                        for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
+                            if event.modifiers.contains(KeyModifiers::CONTROL) {
+                                let max_mem = (debug_call[draw_memory.inner_call_index].1
+                                    [self.current_step]
+                                    .memory
+                                    .len() /
+                                    32)
+                                .saturating_sub(1);
+                                if draw_memory.current_mem_startline < max_mem {
+                                    draw_memory.current_mem_startline += 1;
                                 }
+                            } else if self.current_step < opcode_list.len() - 1 {
+                                self.current_step += 1;
+                            } else if draw_memory.inner_call_index < debug_call.len() - 1 {
+                                draw_memory.inner_call_index += 1;
+                                self.current_step = 0;
                             }
-                            self.key_buffer.clear();
                         }
+                        self.key_buffer.clear();
                     }
                     KeyCode::Char('J') => {
-                        let max_stack = debug_call[draw_memory.inner_call_index].1
-                            [self.current_step]
-                            .stack
-                            .len()
-                            .saturating_sub(1);
-                        if draw_memory.current_stack_startline < max_stack {
-                            draw_memory.current_stack_startline += 1;
+                        for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
+                            let max_stack = debug_call[draw_memory.inner_call_index].1
+                                [self.current_step]
+                                .stack
+                                .len()
+                                .saturating_sub(1);
+                            if draw_memory.current_stack_startline < max_stack {
+                                draw_memory.current_stack_startline += 1;
+                            }
                         }
+                        self.key_buffer.clear();
                     }
                     // Move up
                     KeyCode::Char('k') | KeyCode::Up => {
-                        if event.modifiers.contains(KeyModifiers::CONTROL) {
-                            draw_memory.current_mem_startline =
-                                draw_memory.current_mem_startline.saturating_sub(1);
-                        } else {
-                            for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
-                                if self.current_step > 0 {
-                                    self.current_step -= 1;
-                                } else if draw_memory.inner_call_index > 0 {
-                                    draw_memory.inner_call_index -= 1;
-                                    self.current_step =
-                                        debug_call[draw_memory.inner_call_index].1.len() - 1;
-                                }
+                        for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
+                            if event.modifiers.contains(KeyModifiers::CONTROL) {
+                                draw_memory.current_mem_startline =
+                                    draw_memory.current_mem_startline.saturating_sub(1);
+                            } else if self.current_step > 0 {
+                                self.current_step -= 1;
+                            } else if draw_memory.inner_call_index > 0 {
+                                draw_memory.inner_call_index -= 1;
+                                self.current_step =
+                                    debug_call[draw_memory.inner_call_index].1.len() - 1;
                             }
-                            self.key_buffer.clear();
                         }
+                        self.key_buffer.clear();
                     }
                     KeyCode::Char('K') => {
-                        draw_memory.current_stack_startline =
-                            draw_memory.current_stack_startline.saturating_sub(1);
+                        for _ in 0..Tui::buffer_as_number(&self.key_buffer, 1) {
+                            draw_memory.current_stack_startline =
+                                draw_memory.current_stack_startline.saturating_sub(1);
+                        }
+                        self.key_buffer.clear();
                     }
                     // Go to top of file
                     KeyCode::Char('g') => {

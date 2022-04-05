@@ -1,9 +1,10 @@
 pub mod cmd;
+pub mod compile;
 
 mod term;
 mod utils;
 
-use cast::{Cast, SimpleCast};
+use cast::{Cast, SimpleCast, TxBuilder};
 mod opts;
 use cast::InterfacePath;
 use ethers::{
@@ -152,19 +153,18 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::AccessList { eth, address, sig, args, block, to_json } => {
             let provider = Provider::try_from(eth.rpc_url()?)?;
-            println!(
-                "{}",
-                Cast::new(provider)
-                    .access_list(
-                        eth.from.unwrap_or(Address::zero()),
-                        address,
-                        (&sig, args),
-                        eth.chain,
-                        block,
-                        to_json,
-                    )
-                    .await?
-            );
+            let mut builder = TxBuilder::new(
+                &provider,
+                eth.from.unwrap_or(Address::zero()),
+                address,
+                eth.chain,
+                false,
+            )
+            .await?;
+            builder.set_args(&sig, args).await?;
+            let builder_output = builder.peek();
+
+            println!("{}", Cast::new(&provider).access_list(builder_output, block, to_json).await?);
         }
         Subcommands::Block { rpc_url, block, full, field, to_json } => {
             let provider = Provider::try_from(rpc_url)?;
@@ -176,19 +176,17 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::Call { eth, address, sig, args, block } => {
             let provider = Provider::try_from(eth.rpc_url()?)?;
-            println!(
-                "{}",
-                Cast::new(provider)
-                    .call(
-                        eth.from.unwrap_or(Address::zero()),
-                        address,
-                        (&sig, args),
-                        eth.chain,
-                        eth.etherscan_api_key,
-                        block
-                    )
-                    .await?
-            );
+            let mut builder = TxBuilder::new(
+                &provider,
+                eth.from.unwrap_or(Address::zero()),
+                address,
+                eth.chain,
+                false,
+            )
+            .await?;
+            builder.set_args(&sig, args).await?.etherscan_api_key(eth.etherscan_api_key);
+            let builder_output = builder.build();
+            println!("{}", Cast::new(provider).call(builder_output, block).await?);
         }
         Subcommands::Calldata { sig, args } => {
             println!("{}", SimpleCast::calldata(sig, &args)?);
@@ -231,21 +229,32 @@ async fn main() -> eyre::Result<()> {
             gas,
             gas_price,
             value,
-            nonce,
+            mut nonce,
             legacy,
             confirmations,
             to_json,
+            resend,
         } => {
             let provider = Provider::try_from(eth.rpc_url()?)?;
             let chain_id = Cast::new(&provider).chain_id().await?;
             let sig = sig.unwrap_or_default();
 
             if let Ok(Some(signer)) = eth.signer_with(chain_id, provider.clone()).await {
+                let from = match &signer {
+                    WalletType::Ledger(leger) => leger.address(),
+                    WalletType::Local(local) => local.address(),
+                    WalletType::Trezor(trezor) => trezor.address(),
+                };
+
+                if resend {
+                    nonce = Some(provider.get_transaction_count(from, None).await?);
+                }
+
                 match signer {
                     WalletType::Ledger(signer) => {
                         cast_send(
                             &signer,
-                            signer.address(),
+                            from,
                             to,
                             (sig, args),
                             gas,
@@ -264,7 +273,7 @@ async fn main() -> eyre::Result<()> {
                     WalletType::Local(signer) => {
                         cast_send(
                             &signer,
-                            signer.address(),
+                            from,
                             to,
                             (sig, args),
                             gas,
@@ -283,7 +292,7 @@ async fn main() -> eyre::Result<()> {
                     WalletType::Trezor(signer) => {
                         cast_send(
                             &signer,
-                            signer.address(),
+                            from,
                             to,
                             (sig, args),
                             gas,
@@ -301,6 +310,10 @@ async fn main() -> eyre::Result<()> {
                     }
                 }
             } else if let Some(from) = eth.from {
+                if resend {
+                    nonce = Some(provider.get_transaction_count(from, None).await?);
+                }
+
                 cast_send(
                     provider,
                     from,
@@ -338,18 +351,18 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::Estimate { eth, to, sig, args, value } => {
             let provider = Provider::try_from(eth.rpc_url()?)?;
-            let cast = Cast::new(&provider);
             let from = eth.sender().await;
-            let gas = cast
-                .estimate(
-                    from,
-                    to,
-                    Some((sig.as_str(), args)),
-                    value,
-                    eth.chain,
-                    eth.etherscan_api_key,
-                )
+
+            let mut builder = TxBuilder::new(&provider, from, to, eth.chain, false).await?;
+            builder
+                .etherscan_api_key(eth.etherscan_api_key)
+                .value(value)
+                .set_args(sig.as_str(), args)
                 .await?;
+
+            let builder_output = builder.peek();
+
+            let gas = Cast::new(&provider).estimate(builder_output).await?;
             println!("{}", gas);
         }
         Subcommands::CalldataDecode { sig, calldata } => {
@@ -738,14 +751,23 @@ async fn cast_send<M: Middleware, F: Into<NameOrAddress>, T: Into<NameOrAddress>
 where
     M::Error: 'static,
 {
-    let cast = Cast::new(provider);
-
     let sig = args.0;
     let params = args.1;
     let params = if !sig.is_empty() { Some((&sig[..], params)) } else { None };
-    let pending_tx = cast
-        .send(from, to, params, gas, gas_price, value, nonce, chain, etherscan_api_key, legacy)
-        .await?;
+    let mut builder = TxBuilder::new(&provider, from, to, chain, legacy).await?;
+    builder
+        .args(params)
+        .await?
+        .gas(gas)
+        .gas_price(gas_price)
+        .value(value)
+        .nonce(nonce)
+        .etherscan_api_key(etherscan_api_key);
+    let builder_output = builder.build();
+
+    let cast = Cast::new(provider);
+
+    let pending_tx = cast.send(builder_output).await?;
     let tx_hash = *pending_tx;
 
     if cast_async {

@@ -41,6 +41,8 @@ ethers::contract::abigen!(
             getCode(string)
             label(address,string)
             assume(bool)
+            setNonce(address,uint64)
+            getNonce(address)
             broadcast(address)
             startBroadcast(address)
             stopBroadcast(address)

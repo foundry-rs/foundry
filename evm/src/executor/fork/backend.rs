@@ -347,11 +347,7 @@ where
         }
 
         // the handler is finished if the request channel was closed and all requests are processed
-        if pin.incoming.is_done() &&
-            pin.pending_requests.is_empty() &&
-            pin.shutdown.is_done() &&
-            pin.shutdown.is_done()
-        {
+        if pin.incoming.is_done() && pin.pending_requests.is_empty() && pin.shutdown.is_done() {
             trace!(target: "backendhandler", "finished");
             return Poll::Ready(())
         }
@@ -396,19 +392,17 @@ impl Drop for SharedBackend {
     fn drop(&mut self) {
         // disconnect the command channel
         self.backend.disconnect();
-        if self.backend.is_closed() {
-            tracing::trace!( target: "sharedbackend", "shutting down");
-            // was the last sender, let the handler know and wait until it gracefully shut down
-            let (ack, rx) = oneshot_channel();
+        tracing::trace!( target: "sharedbackend", "shutting down");
+        // was the last sender, let the handler know and wait until it gracefully shut down
+        let (ack, rx) = oneshot_channel();
 
-            if self.shutdown.try_send(ack).is_ok() {
-                tracing::trace!( target: "sharedbackend", "waiting for ack");
-                if let Err(err) = rx.recv() {
-                    warn!(target: "sharedbackend", "Failed to receive ack:{}", err);
-                }
+        if self.shutdown.try_send(ack).is_ok() {
+            tracing::trace!( target: "sharedbackend", "waiting for ack");
+            if let Err(err) = rx.recv() {
+                warn!(target: "sharedbackend", "Failed to receive ack:{}", err);
             }
-            tracing::trace!( target: "sharedbackend", "shut down");
         }
+        tracing::trace!( target: "sharedbackend", "shut down");
     }
 }
 
@@ -503,7 +497,7 @@ mod tests {
         types::Address,
     };
 
-    use std::{convert::TryFrom, path::PathBuf, sync::Arc};
+    use std::{collections::BTreeSet, convert::TryFrom, path::PathBuf, sync::Arc};
 
     use super::*;
     const ENDPOINT: &str = "https://mainnet.infura.io/v3/c60b0bb42f8a4c6481ecd229eddaca27";
@@ -514,7 +508,7 @@ mod tests {
         let meta = BlockchainDbMeta {
             cfg_env: Default::default(),
             block_env: Default::default(),
-            host: ENDPOINT.to_string(),
+            hosts: BTreeSet::from([ENDPOINT.to_string()]),
         };
 
         let db = BlockchainDb::new(meta, None);
@@ -592,7 +586,7 @@ mod tests {
         let meta = BlockchainDbMeta {
             cfg_env: Default::default(),
             block_env: revm::BlockEnv { number: block_num.into(), ..Default::default() },
-            host: "mainnet.infura.io".to_string(),
+            hosts: Default::default(),
         };
 
         let db = BlockchainDb::new(meta, Some(cache_path));
