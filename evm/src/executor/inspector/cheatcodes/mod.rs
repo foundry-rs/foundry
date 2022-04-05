@@ -359,21 +359,10 @@ where
 
         // Apply our broadcast
         if let Some(broadcast) = &self.broadcast {
-            // We only apply a broadcast *to a specific depth*.
-            //
-            // We do this because any subsequent contract calls *must* exist on chain and
-            // we only want to grab *this* call, not internal ones
             if data.subroutine.depth() == broadcast.depth &&
                 call.caller == broadcast.original_caller
             {
-                // At the target depth we set `msg.sender` & tx.origin.
-                // We are simulating the caller as being an EOA, so *both* must be set to the
-                // broadcast.origin.
                 call.caller = broadcast.origin;
-                // Add a `legacy` transaction to the VecDeque. We use a legacy transaction here
-                // because we only need the from, to, value, and data. We can later change this into
-                // 1559, in the cli package, relatively easily once we know the
-                // target chain supports EIP-1559.
                 self.broadcastable_transactions.push_back(TypedTransaction::Legacy(
                     TransactionRequest {
                         from: Some(broadcast.origin),
