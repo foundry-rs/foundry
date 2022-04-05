@@ -23,8 +23,15 @@ pub struct NodeService {
     miner: MiningMode,
 }
 
+impl NodeService {
+    pub fn new(pool: Arc<Pool>, backend: Arc<backend::mem::Backend>, miner: MiningMode) -> Self {
+        Self { pool, backend, miner }
+    }
+}
+
 impl Future for NodeService {
-    type Output = ();
+    // TODO this is out of convenience as this gets joined with the server
+    type Output = hyper::Result<()>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let pin = self.get_mut();

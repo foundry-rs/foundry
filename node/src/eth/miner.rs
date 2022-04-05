@@ -2,7 +2,11 @@
 
 use crate::eth::pool::{transactions::PoolTransaction, Pool};
 use ethers::prelude::TxHash;
-use futures::{channel::mpsc::Receiver, stream::Fuse, Stream};
+use futures::{
+    channel::mpsc::{Receiver},
+    stream::{Fuse, Stream, StreamExt},
+    Future, FutureExt,
+};
 use std::{
     collections::HashSet,
     pin::Pin,
@@ -24,6 +28,18 @@ pub enum MiningMode {
 }
 
 impl MiningMode {
+    pub fn instant(max_transactions: usize, listener: Receiver<TxHash>) -> Self {
+        MiningMode::Instant(ReadyTransactionMiner {
+            max_transactions,
+            ready: Default::default(),
+            rx: listener.fuse(),
+        })
+    }
+
+    pub fn interval(duration: Duration) -> Self {
+        MiningMode::FixedBlockTime(FixedBlockTimeMiner::new(duration))
+    }
+
     /// polls the [Pool] and returns those transactions that should be put in a block, if any.
     pub fn poll(
         &mut self,

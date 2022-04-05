@@ -2,13 +2,15 @@ use std::{collections::HashMap, time::Duration};
 
 use ethers::{
     core::k256::ecdsa::SigningKey,
-    prelude::{Address, Wallet, U256, U64},
+    prelude::{Address, Wallet, U256},
 };
+
+pub const NODE_PORT: u16 = 8545;
 
 /// Configurations of the EVM node
 pub struct NodeConfig {
     /// Chain ID of the EVM chain
-    pub(crate) chain_id: U64,
+    pub(crate) chain_id: u64,
     /// Default gas limit for all txs
     pub(crate) gas_limit: U256,
     /// Default gas price for all txs
@@ -21,18 +23,25 @@ pub struct NodeConfig {
     pub(crate) accounts: HashMap<Address, Wallet<SigningKey>>,
     /// Configured block time for the EVM chain. Use `None` to mine a new block for every tx
     pub(crate) automine: Option<Duration>,
+    /// port to use for the server
+    pub(crate) port: u16,
+    /// maximumg number of transactions in a block
+    pub(crate) max_transactions: usize,
 }
 
 impl Default for NodeConfig {
     fn default() -> Self {
         Self {
-            chain_id: U64::one(),
+            chain_id: 1337,
             gas_limit: U256::from(100_000),
             gas_price: U256::from(1_000_000_000),
             genesis_accounts: Vec::new(),
             genesis_balance: U256::zero(),
             accounts: HashMap::new(),
             automine: None,
+            port: NODE_PORT,
+            // TODO make this something dependent on block capacity
+            max_transactions: 1_000,
         }
     }
 }
@@ -46,7 +55,7 @@ impl NodeConfig {
 
     /// Sets the chain ID
     #[must_use]
-    pub fn chain_id<U: Into<U64>>(mut self, chain_id: U) -> Self {
+    pub fn chain_id<U: Into<u64>>(mut self, chain_id: U) -> Self {
         self.chain_id = chain_id.into();
         self
     }

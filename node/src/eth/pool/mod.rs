@@ -14,6 +14,7 @@ use tracing::{debug, trace, warn};
 pub mod transactions;
 
 /// Transaction pool that performs validation.
+#[derive(Default)]
 pub struct Pool {
     /// processes all pending transactions
     inner: RwLock<PoolInner>,

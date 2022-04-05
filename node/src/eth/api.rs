@@ -47,6 +47,15 @@ pub struct EthApi {
 // === impl Eth RPC API ===
 
 impl EthApi {
+    /// Creates a new instance
+    pub fn new(
+        pool: Arc<Pool>,
+        backend: Arc<backend::mem::Backend>,
+        signers: Arc<Vec<Box<dyn Signer>>>,
+    ) -> Self {
+        Self { pool, backend, is_authority: true, signers }
+    }
+
     /// Executes the [EthRequest] and returns an RPC [RpcResponse]
     pub async fn execute(&self, request: EthRequest) -> RpcResponse {
         match request {

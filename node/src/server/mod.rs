@@ -9,6 +9,7 @@ use tower_http::trace::TraceLayer;
 mod handler;
 
 /// Configures an [axum::Server] that handles [EthApi] related JSON-RPC calls via HTTP
+// TODO unify http and ws with wrapper type that impl FromRequest and returns based on the uri
 pub fn http_server(addr: SocketAddr, api: EthApi) -> impl Future<Output = hyper::Result<()>> {
     let svc = Router::new()
         .route("/", post(handler::handle_rpc))
