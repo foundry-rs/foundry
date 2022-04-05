@@ -9,6 +9,7 @@ use ethers::{
     types::BlockId,
 };
 
+use ethers::types::Address;
 use forge_node_core::eth::{
     block::{Block, BlockInfo},
     receipt::TypedReceipt,
@@ -133,8 +134,8 @@ impl Backend {
 
         // update block metadata
         storage.finalized_number = block_number;
+        storage.best_number = block_number;
         env.block.number = env.block.number.saturating_add(U256::one());
-        storage.best_number = env.block.number.as_u64().into();
 
         storage.finalized_hash = block_hash;
         storage.best_hash = storage.finalized_hash;
@@ -163,6 +164,21 @@ impl Backend {
     /// Returns the current best number of the chain
     pub fn best_number(&self) -> U64 {
         self.blockchain.storage.read().best_number
+    }
+
+    /// Returns the client coinbase address.
+    pub fn coinbase(&self) -> Address {
+        self.env.read().block.coinbase
+    }
+
+    /// Returns the client coinbase address.
+    pub fn chain_id(&self) -> U256 {
+        self.env.read().cfg.chain_id
+    }
+
+    /// Returns balance of the given account.
+    pub fn current_balance(&self, address: Address) -> U256 {
+        self.db.read().basic(address).balance
     }
 
     pub fn gas_limit(&self) -> U256 {

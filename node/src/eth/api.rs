@@ -41,8 +41,6 @@ pub struct EthApi {
     is_authority: bool,
     /// available signers
     signers: Arc<Vec<Box<dyn Signer>>>,
-
-    chain_id: Option<U64>,
 }
 
 // === impl Eth RPC API ===
@@ -93,11 +91,11 @@ impl EthApi {
         Ok(U256::zero())
     }
 
-    /// Returns the block author.
+    /// Returns the client coinbase address.
     ///
     /// Handler for ETH RPC call: `eth_coinbase`
-    pub async fn author(&self) -> Result<Address> {
-        todo!()
+    pub fn author(&self) -> Result<Address> {
+        Ok(self.backend.coinbase())
     }
 
     /// Returns true if client is actively mining new blocks.
@@ -113,14 +111,14 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_chainId`
     pub fn chain_id(&self) -> Result<Option<U64>> {
-        Ok(self.chain_id)
+        Ok(Some(self.backend.chain_id().as_u64().into()))
     }
 
     /// Returns the current gas_price
     ///
     /// Handler for ETH RPC call: `eth_gasPrice`
     pub fn gas_price(&self) -> Result<U256> {
-        todo!()
+        Err(BlockchainError::RpcUnimplemented)
     }
 
     /// Returns the accounts list
@@ -134,7 +132,7 @@ impl EthApi {
         Ok(accounts)
     }
 
-    /// Returns the highest block number.
+    /// Returns the number of most recent block.
     ///
     /// Handler for ETH RPC call: `eth_blockNumber`
     pub async fn block_number(&self) -> Result<U256> {
@@ -144,8 +142,19 @@ impl EthApi {
     /// Returns balance of the given account.
     ///
     /// Handler for ETH RPC call: `eth_getBalance`
-    pub async fn balance(&self, _address: Address, _number: Option<BlockNumber>) -> Result<U256> {
-        todo!()
+    pub async fn balance(&self, address: Address, number: Option<BlockNumber>) -> Result<U256> {
+        let number = number.unwrap_or(BlockNumber::Latest);
+        return match number {
+            BlockNumber::Latest | BlockNumber::Pending => Ok(self.backend.current_balance(address)),
+            BlockNumber::Number(num) => {
+                if num != self.backend.best_number() {
+                    Err(BlockchainError::RpcUnimplemented)
+                } else {
+                    Ok(self.backend.current_balance(address))
+                }
+            }
+            _ => Err(BlockchainError::RpcUnimplemented),
+        }
     }
 
     /// Returns content of the storage at given address.

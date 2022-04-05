@@ -21,6 +21,8 @@ pub enum BlockchainError {
     FailedToDecodeSignedTransaction,
     #[error(transparent)]
     SignatureError(#[from] SignatureError),
+    #[error("Rpc Endpoint not implemented")]
+    RpcUnimplemented,
 }
 
 /// Errors that can occur in the transaction pool
