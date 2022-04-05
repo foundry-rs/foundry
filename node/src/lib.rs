@@ -79,7 +79,7 @@ pub fn spawn(config: NodeConfig) -> (EthApi, JoinHandle<hyper::Result<()>>) {
 
     let socket = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port);
 
-    let serve = server::http_server(socket, api.clone());
+    let serve = server::serve(socket, api.clone());
 
     // spawn the server and the node service and poll as long as both are running
     let handle = tokio::task::spawn(async move {
