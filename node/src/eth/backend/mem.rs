@@ -15,10 +15,7 @@ use forge_node_core::eth::{
     receipt::TypedReceipt,
     transaction::TransactionInfo,
 };
-use foundry_evm::{
-    executor::DatabaseRef,
-    revm::{db::CacheDB, Database, Env},
-};
+use foundry_evm::revm::{db::CacheDB, Env};
 use parking_lot::RwLock;
 use std::{collections::HashMap, sync::Arc};
 use tracing::trace;

@@ -3,7 +3,6 @@ use crate::{
     request::{Id, Version},
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{Error, Value};
 
 /// Response of a _single_ rpc call
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]

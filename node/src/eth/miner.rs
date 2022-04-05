@@ -5,7 +5,6 @@ use ethers::prelude::TxHash;
 use futures::{
     channel::mpsc::Receiver,
     stream::{Fuse, Stream, StreamExt},
-    Future, FutureExt,
 };
 use std::{
     collections::HashSet,
