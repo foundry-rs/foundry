@@ -30,7 +30,7 @@ impl NodeService {
 }
 
 impl Future for NodeService {
-    // TODO this is out of convenience as this gets joined with the server
+    // Note: this is out of convenience as this gets joined with the server
     type Output = hyper::Result<()>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {

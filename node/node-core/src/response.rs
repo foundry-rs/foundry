@@ -3,6 +3,7 @@ use crate::{
     request::{Id, Version},
 };
 use serde::{Deserialize, Serialize};
+use serde_json::{Error, Value};
 
 /// Response of a _single_ rpc call
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
@@ -60,7 +61,6 @@ impl From<RpcError> for ResponseResult {
         ResponseResult::error(err)
     }
 }
-
 /// Synchronous response
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]

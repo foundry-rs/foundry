@@ -34,12 +34,25 @@ impl RpcError {
         Self::new(ErrorCode::InvalidRequest)
     }
 
+    /// Creates a new `InternalError`
+    pub const fn internal_error() -> Self {
+        Self::new(ErrorCode::InternalError)
+    }
+
     /// Creates a new `InvalidParams`
     pub fn invalid_params<M>(message: M) -> Self
     where
         M: Into<String>,
     {
         RpcError { code: ErrorCode::InvalidParams, message: message.into().into(), data: None }
+    }
+
+    /// Creates a new `InternalError` with a message
+    pub fn internal_error_with<M>(message: M) -> Self
+    where
+        M: Into<String>,
+    {
+        RpcError { code: ErrorCode::InternalError, message: message.into().into(), data: None }
     }
 }
 

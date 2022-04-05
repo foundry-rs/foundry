@@ -1,6 +1,6 @@
 use crate::eth::{
     backend,
-    error::{BlockchainError, Result},
+    error::{BlockchainError, Result, ToRpcResponseResult},
     pool::{
         transactions::{to_marker, PoolTransaction},
         Pool,
@@ -23,7 +23,7 @@ use forge_node_core::{
         },
         EthRequest,
     },
-    response::RpcResponse,
+    response::{ResponseResult, RpcResponse},
     types::{Index, Work},
 };
 use std::sync::Arc;
@@ -57,16 +57,18 @@ impl EthApi {
     }
 
     /// Executes the [EthRequest] and returns an RPC [RpcResponse]
-    pub async fn execute(&self, request: EthRequest) -> RpcResponse {
+    pub async fn execute(&self, request: EthRequest) -> ResponseResult {
         match request {
-            EthRequest::EthGetBalance(_, _) => {}
-            EthRequest::EthGetTransactionByHash(_) => {}
+            EthRequest::EthGetBalance(addr, block) => {
+                self.balance(addr, Some(block)).to_rpc_result()
+            }
+            EthRequest::EthGetTransactionByHash(hash) => {
+                self.transaction_by_hash(hash).to_rpc_result()
+            }
             EthRequest::EthSendTransaction(request) => {
-                self.send_transaction(*request).await;
+                self.send_transaction(*request).to_rpc_result()
             }
         }
-
-        todo!()
     }
 
     fn sign_request(
@@ -152,7 +154,7 @@ impl EthApi {
     /// Returns balance of the given account.
     ///
     /// Handler for ETH RPC call: `eth_getBalance`
-    pub async fn balance(&self, address: Address, number: Option<BlockNumber>) -> Result<U256> {
+    pub fn balance(&self, address: Address, number: Option<BlockNumber>) -> Result<U256> {
         let number = number.unwrap_or(BlockNumber::Latest);
         match number {
             BlockNumber::Latest | BlockNumber::Pending => Ok(self.backend.current_balance(address)),
@@ -249,7 +251,7 @@ impl EthApi {
     /// Sends a transaction
     ///
     /// Handler for ETH RPC call: `eth_sendTransaction`
-    pub async fn send_transaction(&self, request: EthTransactionRequest) -> Result<TxHash> {
+    pub fn send_transaction(&self, request: EthTransactionRequest) -> Result<TxHash> {
         let from = request.from.map(Ok).unwrap_or_else(|| {
             self.accounts()?.get(0).cloned().ok_or(BlockchainError::NoSignerAvailable)
         })?;
@@ -386,7 +388,7 @@ impl EthApi {
     /// Get transaction by its hash.
     ///
     /// Handler for ETH RPC call: `eth_getTransactionByHash`
-    pub async fn transaction_by_hash(&self, _: H256) -> Result<Option<Transaction>> {
+    pub fn transaction_by_hash(&self, _: H256) -> Result<Option<Transaction>> {
         todo!()
     }
 

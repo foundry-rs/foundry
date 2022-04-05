@@ -83,7 +83,10 @@ async fn execute_method_call(call: RpcMethodCall, api: EthApi) -> RpcResponse {
                 RpcResponse::new(id, RpcError::invalid_params(msg))
             }
         }
-        Ok(req) => api.execute(req).await,
+        Ok(req) => {
+            let result = api.execute(req).await;
+            RpcResponse::new(id, result)
+        }
     }
 }
 
