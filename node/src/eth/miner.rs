@@ -3,7 +3,7 @@
 use crate::eth::pool::{transactions::PoolTransaction, Pool};
 use ethers::prelude::TxHash;
 use futures::{
-    channel::mpsc::{Receiver},
+    channel::mpsc::Receiver,
     stream::{Fuse, Stream, StreamExt},
     Future, FutureExt,
 };

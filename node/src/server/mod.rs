@@ -1,7 +1,11 @@
 //! Bootstrap [axum] servers
 
 use crate::eth::EthApi;
-use axum::{handler::post, AddExtensionLayer, Router, Server};
+use axum::{
+    extract::{Extension},
+    routing::{post},
+    Router, Server,
+};
 use std::{future::Future, net::SocketAddr};
 use tower_http::trace::TraceLayer;
 
@@ -13,7 +17,7 @@ mod handler;
 pub fn http_server(addr: SocketAddr, api: EthApi) -> impl Future<Output = hyper::Result<()>> {
     let svc = Router::new()
         .route("/", post(handler::handle_rpc))
-        .layer(AddExtensionLayer::new(api))
+        .layer(Extension(api))
         .layer(TraceLayer::new_for_http())
         .into_make_service();
     Server::bind(&addr).serve(svc)
@@ -23,7 +27,7 @@ pub fn http_server(addr: SocketAddr, api: EthApi) -> impl Future<Output = hyper:
 pub fn ws_server(addr: SocketAddr, api: EthApi) -> impl Future<Output = hyper::Result<()>> {
     let svc = Router::new()
         .route("/", post(handler::ws_handler))
-        .layer(AddExtensionLayer::new(api))
+        .layer(Extension(api))
         .layer(TraceLayer::new_for_http())
         .into_make_service();
     Server::bind(&addr).serve(svc)
