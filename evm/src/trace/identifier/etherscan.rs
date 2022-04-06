@@ -20,6 +20,7 @@ impl EtherscanIdentifier {
         chain: Option<impl Into<Chain>>,
         etherscan_api_key: String,
         cache_path: Option<PathBuf>,
+        ttl: Duration,
     ) -> Self {
         if let Some(cache_path) = &cache_path {
             if let Err(err) = std::fs::create_dir_all(cache_path.join("sources")) {
@@ -30,7 +31,8 @@ impl EtherscanIdentifier {
         Self {
             client: chain
                 .map(|chain| {
-                    etherscan::Client::new_cached(chain.into(), etherscan_api_key, cache_path).ok()
+                    etherscan::Client::new_cached(chain.into(), etherscan_api_key, cache_path, ttl)
+                        .ok()
                 })
                 .flatten(),
         }
