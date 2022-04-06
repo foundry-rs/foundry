@@ -430,11 +430,7 @@ impl EthApi {
     /// Estimate gas needed for execution of given contract.
     ///
     /// Handler for ETH RPC call: `eth_estimateGas`
-    pub fn estimate_gas(
-        &self,
-        _request: CallRequest,
-        _number: Option<BlockNumber>,
-    ) -> Result<U256> {
+    pub fn estimate_gas(&self, request: CallRequest, _: Option<BlockNumber>) -> Result<U256> {
         Err(BlockchainError::RpcUnimplemented)
     }
 

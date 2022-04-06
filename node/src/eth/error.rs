@@ -18,6 +18,8 @@ pub enum BlockchainError {
     ChainIdNotAvailable,
     #[error("Invalid Transaction")]
     InvalidTransaction,
+    #[error("Invalid input: `max_priority_fee_per_gas` greater than `max_fee_per_gas`")]
+    InvalidFeeInput,
     #[error("Transaction data is empty")]
     EmptyRawTransactionData,
     #[error("Failed to decode signed transaction")]
@@ -81,6 +83,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 BlockchainError::RpcUnimplemented => {
                     RpcError::internal_error_with("Not implemented")
                 }
+                BlockchainError::InvalidFeeInput => RpcError::invalid_params(
+                    "Invalid input: `max_priority_fee_per_gas` greater than `max_fee_per_gas`",
+                ),
             }
             .into(),
         }
