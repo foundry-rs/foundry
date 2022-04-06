@@ -5,6 +5,7 @@ mod term;
 mod utils;
 
 use cast::{Cast, SimpleCast, TxBuilder};
+use foundry_config::Config;
 mod opts;
 use cast::InterfacePath;
 use ethers::{
@@ -188,6 +189,33 @@ async fn main() -> eyre::Result<()> {
             let builder_output = builder.build();
             println!("{}", Cast::new(provider).call(builder_output, block).await?);
         }
+        Subcommands::ConfigRPC { config_rpc } => {
+            let config: Config = config_rpc.into();
+            println!("{}", config.eth_rpc_url.unwrap_or_else(|| "not set".to_string()));
+        }
+
+        Subcommands::ConfigCall(config_call) => {
+            let config: Config = (&config_call).into();
+            // println!("{}", config.eth_rpc_url.unwrap_or_else(|| "not set".to_string()));
+            let provider = Provider::try_from(
+                config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
+            )?;
+            let mut builder = TxBuilder::new(
+                &provider,
+                config_call.eth.from.unwrap_or(Address::zero()),
+                config_call.address,
+                config_call.eth.chain,
+                false,
+            )
+            .await?;
+            builder
+                .set_args(&config_call.sig, config_call.args)
+                .await?
+                .etherscan_api_key(config_call.eth.etherscan_api_key);
+            let builder_output = builder.build();
+            println!("{}", Cast::new(provider).call(builder_output, config_call.block).await?);
+        }
+
         Subcommands::Calldata { sig, args } => {
             println!("{}", SimpleCast::calldata(sig, &args)?);
         }
