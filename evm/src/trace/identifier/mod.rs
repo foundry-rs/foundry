@@ -14,6 +14,7 @@ pub trait TraceIdentifier {
     ///
     /// The tuple is of the format `(contract, label, abi)`, where `contract` is intended to be of
     /// the format `"<artifact>:<contract>"`, e.g. `"Foo.json:Foo"`.
+    #[allow(clippy::type_complexity)]
     fn identify_addresses(
         &self,
         addresses: Vec<(&Address, Option<&Vec<u8>>)>,

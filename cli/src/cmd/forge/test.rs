@@ -442,6 +442,7 @@ pub fn custom_run(mut args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<
 }
 
 /// Runs all the tests
+#[allow(clippy::too_many_arguments)]
 fn test(
     config: Config,
     mut runner: MultiContractRunner,
@@ -466,7 +467,7 @@ fn test(
         let etherscan_identifier = EtherscanIdentifier::new(
             remote_chain_id,
             config.etherscan_api_key.unwrap_or_default(),
-            remote_chain_id.map(|chain_id| Config::foundry_etherscan_cache_dir(chain_id)).flatten(),
+            remote_chain_id.and_then(Config::foundry_etherscan_cache_dir),
             cache_ttl,
         );
 

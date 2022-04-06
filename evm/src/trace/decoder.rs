@@ -151,11 +151,11 @@ impl CallTraceDecoder {
         identifier.identify_addresses(unidentified_addresses).iter().for_each(
             |(address, contract, label, abi)| {
                 if let Some(contract) = contract {
-                    self.contracts.entry(*address).or_insert(contract.to_string());
+                    self.contracts.entry(*address).or_insert_with(|| contract.to_string());
                 }
 
                 if let Some(label) = label {
-                    self.labels.entry(*address).or_insert(label.to_string());
+                    self.labels.entry(*address).or_insert_with(|| label.to_string());
                 }
 
                 if let Some(abi) = abi {

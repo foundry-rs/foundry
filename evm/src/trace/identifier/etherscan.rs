@@ -29,12 +29,9 @@ impl EtherscanIdentifier {
         }
 
         Self {
-            client: chain
-                .map(|chain| {
-                    etherscan::Client::new_cached(chain.into(), etherscan_api_key, cache_path, ttl)
-                        .ok()
-                })
-                .flatten(),
+            client: chain.and_then(|chain| {
+                etherscan::Client::new_cached(chain.into(), etherscan_api_key, cache_path, ttl).ok()
+            }),
         }
     }
 }
@@ -55,17 +52,13 @@ impl TraceIdentifier for EtherscanIdentifier {
                         loop {
                             match client.contract_source_code(*addr).await {
                                 Ok(mut metadata) => {
-                                    break metadata
-                                        .items
-                                        .pop()
-                                        .map(|item| {
-                                            Some((
-                                                *addr,
-                                                item.contract_name,
-                                                serde_json::from_str(&item.abi).ok()?,
-                                            ))
-                                        })
-                                        .flatten()
+                                    break metadata.items.pop().and_then(|item| {
+                                        Some((
+                                            *addr,
+                                            item.contract_name,
+                                            serde_json::from_str(&item.abi).ok()?,
+                                        ))
+                                    })
                                 }
                                 Err(etherscan::errors::EtherscanError::RateLimitExceeded) => {
                                     sleep(Duration::from_secs(1)).await;
@@ -87,11 +80,10 @@ impl TraceIdentifier for EtherscanIdentifier {
                     }
                 })
                 .map(|(addr, label, abi): (Address, String, ethers::abi::Abi)| {
-                    (addr, Some(label.clone()), Some(label.clone()), Some(Cow::Owned(abi.clone())))
+                    (addr, Some(label.clone()), Some(label), Some(Cow::Owned(abi)))
                 })
                 .collect();
-            let rt = tokio::runtime::Runtime::new().expect("could not start tokio rt");
-            rt.block_on(stream)
+            foundry_utils::RuntimeOrHandle::new().block_on(stream)
         } else {
             Vec::new()
         }

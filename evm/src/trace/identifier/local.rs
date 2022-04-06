@@ -34,7 +34,7 @@ impl TraceIdentifier for LocalTraceIdentifier {
                 code.map(|code| {
                     self.local_contracts
                         .iter()
-                        .find(|(known_code, _)| diff_score(known_code, &code) < 0.1)
+                        .find(|(known_code, _)| diff_score(known_code, code) < 0.1)
                         .map_or((*addr, None, None, None), |(_, (name, abi))| {
                             (
                                 *addr,
