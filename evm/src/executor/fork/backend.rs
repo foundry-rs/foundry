@@ -11,7 +11,7 @@ use ethers::{
 use foundry_utils::RuntimeOrHandle;
 use futures::{
     channel::mpsc::{channel, Receiver, Sender},
-    stream::{Fuse, Stream, StreamExt},
+    stream::Stream,
     task::{Context, Poll},
     Future, FutureExt,
 };
@@ -61,11 +61,9 @@ struct BackendHandler<M: Middleware> {
     /// Listeners that wait for a `get_block` response
     block_requests: HashMap<u64, Vec<OneshotSender<H256>>>,
     /// Incoming commands.
-    incoming: Fuse<Receiver<BackendRequest>>,
+    incoming: Receiver<BackendRequest>,
     /// unprocessed queued requests
     queued_requests: VecDeque<BackendRequest>,
-    /// shutdown signal
-    shutdown: Fuse<Receiver<OneshotSender<()>>>,
     /// The block to fetch data from.
     // This is an `Option` so that we can have less code churn in the functions below
     block_id: Option<BlockId>,
@@ -79,7 +77,6 @@ where
         provider: M,
         db: BlockchainDb,
         rx: Receiver<BackendRequest>,
-        shutdown: Receiver<OneshotSender<()>>,
         block_id: Option<BlockId>,
     ) -> Self {
         Self {
@@ -90,8 +87,7 @@ where
             storage_requests: Default::default(),
             block_requests: Default::default(),
             queued_requests: Default::default(),
-            incoming: rx.fuse(),
-            shutdown: shutdown.fuse(),
+            incoming: rx,
             block_id,
         }
     }
@@ -245,8 +241,17 @@ where
             }
 
             // receive new requests to delegate to the underlying provider
-            while let Poll::Ready(Some(req)) = Pin::new(&mut pin.incoming).poll_next(cx) {
-                pin.queued_requests.push_back(req);
+            loop {
+                match Pin::new(&mut pin.incoming).poll_next(cx) {
+                    Poll::Ready(Some(req)) => {
+                        pin.queued_requests.push_back(req);
+                    }
+                    Poll::Ready(None) => {
+                        trace!(target: "backendhandler", "last sender dropped, ready to drop (&flush cache)");
+                        return Poll::Ready(())
+                    }
+                    _ => break,
+                }
             }
 
             // poll all requests in progress
@@ -328,33 +333,17 @@ where
             // If no new requests have been queued, break to
             // be polled again later.
             if pin.queued_requests.is_empty() {
-                break
+                return Poll::Pending
             }
         }
+    }
+}
 
-        if let Poll::Ready(Some(ack)) = Pin::new(&mut pin.shutdown).poll_next(cx) {
-            trace!(target: "backendhandler", "received shutdown signal from sender");
-            if pin.incoming.is_done() {
-                // if this channel is closed, this means the message is coming from the last sender
-                // which is being dropped therefor we can exit after flushing the cache, if caching
-                // is enabled
-
-                trace!(target: "backendhandler", "flushing cache");
-                pin.db.cache().flush();
-
-                if let Err(err) = ack.send(()) {
-                    warn!(target: "backendhandler", "Failed to send shutdown ack:{}", err);
-                }
-                trace!(target: "backendhandler", "finished");
-                return Poll::Ready(())
-            }
-
-            // signaling back
-            if let Err(err) = ack.send(()) {
-                warn!(target: "backendhandler", "Failed to send shutdown ack:{}", err);
-            }
-        }
-        Poll::Pending
+impl<M: Middleware> Drop for BackendHandler<M> {
+    fn drop(&mut self) {
+        trace!(target: "backendhandler", "flushing cache");
+        self.db.cache().flush();
+        trace!(target: "backendhandler", "flushing cache finished");
     }
 }
 
@@ -384,27 +373,6 @@ where
 pub struct SharedBackend {
     /// channel used for sending commands related to database operations
     backend: Sender<BackendRequest>,
-    /// channel to ensure the [BackendHandler] shutdowns gracefully
-    ///
-    /// This is essentially used to sync the last [SharedBackend] with the [BackendHandler]
-    shutdown: Sender<OneshotSender<()>>,
-}
-
-impl Drop for SharedBackend {
-    fn drop(&mut self) {
-        // disconnect the command channel
-        self.backend.disconnect();
-        tracing::trace!( target: "sharedbackend", "shutting down");
-        // was the last sender, let the handler know and wait until it gracefully shut down
-        let (ack, rx) = oneshot_channel();
-
-        if self.shutdown.try_send(ack).is_ok() {
-            tracing::trace!( target: "sharedbackend", "waiting for ack");
-            if let Err(err) = rx.recv() {
-                warn!(target: "sharedbackend", "Failed to receive ack:{}", err);
-            }
-        }
-    }
 }
 
 impl SharedBackend {
@@ -420,8 +388,7 @@ impl SharedBackend {
         M: Middleware + Unpin + 'static + Clone,
     {
         let (backend, backend_rx) = channel(1);
-        let (shutdown, shutdown_rx) = channel(1);
-        let handler = BackendHandler::new(provider, db, backend_rx, shutdown_rx, pin_block);
+        let handler = BackendHandler::new(provider, db, backend_rx, pin_block);
         // spawn the provider handler to background
         let rt = RuntimeOrHandle::new();
         trace!(target: "backendhandler", "spawning Backendhandler");
@@ -430,7 +397,7 @@ impl SharedBackend {
             RuntimeOrHandle::Handle(handle) => handle.block_on(handler),
         });
 
-        Self { backend, shutdown }
+        Self { backend }
     }
 
     fn do_get_basic(&self, address: Address) -> eyre::Result<AccountInfo> {
