@@ -12,10 +12,13 @@ use crate::eth::sign::{DevSigner, Signer as EthSigner};
 use ethers::signers::Signer;
 use parking_lot::RwLock;
 use std::{
+    future::Future,
     net::{IpAddr, Ipv4Addr, SocketAddr},
+    pin::Pin,
     sync::Arc,
+    task::{Context, Poll},
 };
-use tokio::task::JoinHandle;
+use tokio::task::{JoinError, JoinHandle};
 
 mod service;
 
@@ -43,7 +46,7 @@ pub mod eth;
 /// handle.await.unwrap();
 /// # }
 /// ```
-pub fn spawn(config: NodeConfig) -> (EthApi, JoinHandle<hyper::Result<()>>) {
+pub fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
     // set everything up
     let NodeConfig {
         chain_id,
@@ -55,7 +58,7 @@ pub fn spawn(config: NodeConfig) -> (EthApi, JoinHandle<hyper::Result<()>>) {
         automine,
         port,
         max_transactions,
-    } = config;
+    } = config.clone();
 
     // configure the revm environment
     let env = revm::Env {
@@ -93,7 +96,7 @@ pub fn spawn(config: NodeConfig) -> (EthApi, JoinHandle<hyper::Result<()>>) {
     let serve = server::serve(socket, api.clone());
 
     // spawn the server and the node service and poll as long as both are running
-    let handle = tokio::task::spawn(async move {
+    let inner = tokio::task::spawn(async move {
         loop {
             tokio::select! {
                 res = serve => {
@@ -106,7 +109,37 @@ pub fn spawn(config: NodeConfig) -> (EthApi, JoinHandle<hyper::Result<()>>) {
         }
     });
 
+    let handle = NodeHandle { config, inner, address: socket };
+
     (api, handle)
+}
+
+/// A handle to the spawned node and server
+pub struct NodeHandle {
+    config: NodeConfig,
+    address: SocketAddr,
+    inner: JoinHandle<hyper::Result<()>>,
+}
+
+impl NodeHandle {
+    /// The [NodeConfig] the node was launched with
+    pub fn config(&self) -> &NodeConfig {
+        &self.config
+    }
+
+    /// The address of the launched server
+    pub fn socket_address(&self) -> &SocketAddr {
+        &self.address
+    }
+}
+
+impl Future for NodeHandle {
+    type Output = Result<hyper::Result<()>, JoinError>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let pin = self.get_mut();
+        Pin::new(&mut pin.inner).poll(cx)
+    }
 }
 
 #[allow(unused)]

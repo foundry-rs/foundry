@@ -147,7 +147,7 @@ impl EthApi {
     /// Returns the number of most recent block.
     ///
     /// Handler for ETH RPC call: `eth_blockNumber`
-    pub async fn block_number(&self) -> Result<U256> {
+    pub fn block_number(&self) -> Result<U256> {
         Ok(self.backend.best_number().as_u64().into())
     }
 

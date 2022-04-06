@@ -8,6 +8,7 @@ use ethers::{
 pub const NODE_PORT: u16 = 8545;
 
 /// Configurations of the EVM node
+#[derive(Debug, Clone)]
 pub struct NodeConfig {
     /// Chain ID of the EVM chain
     pub(crate) chain_id: u64,
@@ -92,6 +93,13 @@ impl NodeConfig {
     #[must_use]
     pub fn automine<D: Into<Duration>>(mut self, block_time: D) -> Self {
         self.automine = Some(block_time.into());
+        self
+    }
+
+    /// Sets the port to use
+    #[must_use]
+    pub fn port(mut self, port: u16) -> Self {
+        self.port = port;
         self
     }
 }
