@@ -57,6 +57,7 @@ pub fn spawn(config: NodeConfig) -> (EthApi, JoinHandle<hyper::Result<()>>) {
         max_transactions,
     } = config;
 
+    // configure the revm environment
     let env = revm::Env {
         cfg: CfgEnv { ..Default::default() },
         block: BlockEnv { gas_limit, ..Default::default() },
@@ -68,6 +69,7 @@ pub fn spawn(config: NodeConfig) -> (EthApi, JoinHandle<hyper::Result<()>>) {
     let mode = if let Some(automine) = automine {
         MiningMode::interval(automine)
     } else {
+        // get a listener for ready transactions
         let listener = pool.add_ready_listener();
         MiningMode::instant(max_transactions, listener)
     };
@@ -81,6 +83,7 @@ pub fn spawn(config: NodeConfig) -> (EthApi, JoinHandle<hyper::Result<()>>) {
 
     let dev_signer: Box<dyn EthSigner> = Box::new(DevSigner::new(accounts));
 
+    // create the cloneable api wrapper
     let api = EthApi::new(Arc::clone(&pool), Arc::clone(&backend), Arc::new(vec![dev_signer]));
 
     let node_service = NodeService::new(pool, backend, mode);

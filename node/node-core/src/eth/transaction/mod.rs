@@ -3,7 +3,11 @@
 use crate::eth::{receipt::Log, utils::enveloped};
 use ethers_core::{
     types::{
-        transaction::eip2930::{AccessList, AccessListItem},
+        transaction::{
+            eip2930::{
+                AccessList, AccessListItem,
+            },
+        },
         Address, Bloom, Bytes, Signature, SignatureError, TxHash, H256, U256,
     },
     utils::{
@@ -16,6 +20,8 @@ use foundry_evm::{
     utils::h256_to_u256_be,
 };
 use serde::{Deserialize, Serialize};
+
+mod ethers_compat;
 
 /// Container type for various Ethereum transaction requests
 ///

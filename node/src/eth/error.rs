@@ -1,7 +1,7 @@
 //! Aggregated error type for this module
 
 use crate::eth::pool::transactions::PoolTransaction;
-use ethers::types::SignatureError;
+use ethers::{signers::WalletError, types::SignatureError};
 use foundry_node_core::{error::RpcError, response::ResponseResult};
 use serde::Serialize;
 use tracing::error;
@@ -24,6 +24,8 @@ pub enum BlockchainError {
     FailedToDecodeSignedTransaction,
     #[error(transparent)]
     SignatureError(#[from] SignatureError),
+    #[error(transparent)]
+    WalletError(#[from] WalletError),
     #[error("Rpc Endpoint not implemented")]
     RpcUnimplemented,
 }
@@ -75,6 +77,7 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                     RpcError::invalid_params("Failed to decode transaction")
                 }
                 BlockchainError::SignatureError(err) => RpcError::invalid_params(err.to_string()),
+                BlockchainError::WalletError(err) => RpcError::invalid_params(err.to_string()),
                 BlockchainError::RpcUnimplemented => {
                     RpcError::internal_error_with("Not implemented")
                 }
