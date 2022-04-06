@@ -99,8 +99,8 @@ impl EthApi {
             EthRequest::EthGetCodeAt(addr, block) => self.code_at(addr, block).to_rpc_result(),
             EthRequest::EthSendRawTransaction(tx) => self.send_raw_transaction(tx).to_rpc_result(),
             EthRequest::EthCall(call, block) => self.call(call, block).to_rpc_result(),
-            EthRequest::EthEstimateGas(call, block) => {
-                self.estimate_gas(call, block).to_rpc_result()
+            EthRequest::EthEstimateGas(param) => {
+                self.estimate_gas(param.value, param.block).to_rpc_result()
             }
             EthRequest::EthGetTransactionByBlockHashAndIndex(hash, index) => {
                 self.transaction_by_block_hash_and_index(hash, index).to_rpc_result()
@@ -186,11 +186,8 @@ impl EthApi {
         Ok(Some(self.backend.chain_id().as_u64().into()))
     }
 
-    /// Returns the current gas_price
-    ///
-    /// Handler for ETH RPC call: `eth_gasPrice`
     pub fn gas_price(&self) -> Result<U256> {
-        Err(BlockchainError::RpcUnimplemented)
+        Ok(self.backend.gas_price())
     }
 
     /// Returns the accounts list
@@ -438,7 +435,7 @@ impl EthApi {
         _request: CallRequest,
         _number: Option<BlockNumber>,
     ) -> Result<U256> {
-        todo!()
+        Err(BlockchainError::RpcUnimplemented)
     }
 
     /// Get transaction by its hash.

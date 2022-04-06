@@ -7,7 +7,8 @@ use ethers_core::{
     abi::ethereum_types::H64,
     types::{Address, BlockNumber, Bytes, Transaction, TxHash, H256, U256},
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+use serde::de::DeserializeOwned;
 
 pub mod block;
 pub mod call;
@@ -73,7 +74,7 @@ pub enum EthRequest {
     EthCall(CallRequest, Option<BlockNumber>),
 
     #[serde(rename = "eth_estimateGas")]
-    EthEstimateGas(CallRequest, Option<BlockNumber>),
+    EthEstimateGas(WithBlockParameter<CallRequest>),
 
     #[serde(rename = "eth_getTransactionByHash")]
     EthGetTransactionByHash(TxHash),
@@ -107,6 +108,46 @@ pub enum EthRequest {
 
     #[serde(rename = "eth_feeHistory")]
     EthFeeHistory(U256, BlockNumber, Option<Vec<f64>>),
+}
+
+/// Represents a payload followed by an optional `block` value
+/// serialized as sequence of length 1: `[value, block?]`
+#[derive(Clone, Debug, PartialEq)]
+pub struct WithBlockParameter<T> {
+    pub value: T,
+    pub block: Option<BlockNumber>
+}
+
+impl<'de, T:DeserializeOwned> Deserialize<'de> for WithBlockParameter<T> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
+
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum WithDefaultBlock<T> {
+            Value(T),
+            ValueBlock(T, Option<BlockNumber>)
+        }
+
+        let mut seq = Vec::<WithDefaultBlock<T>>::deserialize(deserializer)?;
+
+        if seq.len() != 1 {
+            return Err(serde::de::Error::custom(format!(
+                "expected params sequence with length 1 but got {}",
+                seq.len()
+            )))
+        }
+
+        let val = match seq.remove(0) {
+            WithDefaultBlock::Value(value) => {
+                WithBlockParameter {value, block:None}
+            }
+            WithDefaultBlock::ValueBlock(value, block) => {
+                WithBlockParameter {value, block}
+            }
+        };
+
+       Ok(val)
+    }
 }
 
 #[allow(unused)]

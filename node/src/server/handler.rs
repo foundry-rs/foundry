@@ -66,6 +66,7 @@ async fn handle_call(call: RpcCall, api: EthApi) -> Option<RpcResponse> {
 
 /// Executes a valid RPC method call
 async fn execute_method_call(call: RpcMethodCall, api: EthApi) -> RpcResponse {
+    trace!(target: "rpc", "received method call {:?}", call);
     let RpcMethodCall { jsonrpc: _, method, params, id } = call;
 
     let params: serde_json::Value = params.into();

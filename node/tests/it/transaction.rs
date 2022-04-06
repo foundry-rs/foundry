@@ -11,6 +11,7 @@ async fn can_send_transaction() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_transfer_eth() {
+    init_tracing();
     let (_api, handle) = spawn(NodeConfig::default().port(next_port()));
     let provider = handle.http_provider();
 
@@ -25,7 +26,8 @@ async fn can_transfer_eth() {
     let _balance_before = provider.get_balance(from, None).await.unwrap();
 
     // broadcast it via the eth_sendTransaction API
-    let _tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap();
+    let tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap();
 
+    dbg!(tx);
     // provider.get_transaction();
 }

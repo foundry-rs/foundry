@@ -98,18 +98,21 @@ pub struct Backend {
     blockchain: Blockchain,
     /// env data of the chain
     env: Arc<RwLock<Env>>,
+
+    /// Default gas price for all transactions
+    gas_price: U256,
 }
 
 impl Backend {
     /// Create a new instance of in-mem backend.
-    pub fn new(db: Arc<RwLock<dyn Db>>, env: Arc<RwLock<Env>>) -> Self {
-        Self { db, blockchain: Blockchain::default(), env }
+    pub fn new(db: Arc<RwLock<dyn Db>>, env: Arc<RwLock<Env>>, gas_price: U256) -> Self {
+        Self { db, blockchain: Blockchain::default(), env, gas_price }
     }
 
     /// Creates a new empty blockchain backend
-    pub fn empty(env: Arc<RwLock<Env>>) -> Self {
+    pub fn empty(env: Arc<RwLock<Env>>, gas_price: U256) -> Self {
         let db = CacheDB::default();
-        Self::new(Arc::new(RwLock::new(db)), env)
+        Self::new(Arc::new(RwLock::new(db)), env, gas_price)
     }
 
     /// Initialises the balance of the given accounts
@@ -117,6 +120,7 @@ impl Backend {
         env: Arc<RwLock<Env>>,
         balance: U256,
         accounts: impl IntoIterator<Item = Address>,
+        gas_price: U256,
     ) -> Self {
         let mut db = CacheDB::default();
         for account in accounts {
@@ -124,7 +128,7 @@ impl Backend {
             info.balance = balance;
             db.insert_cache(account, info);
         }
-        Self::new(Arc::new(RwLock::new(db)), env)
+        Self::new(Arc::new(RwLock::new(db)), env, gas_price)
     }
 
     /// Mines a new block and stores it.
@@ -219,6 +223,10 @@ impl Backend {
         self.env().read().block.basefee
     }
 
+    pub fn gas_price(&self) -> U256 {
+        self.gas_price
+    }
+
     /// returns all receipts for the given transactions
     fn get_receipts(&self, tx_hashes: impl IntoIterator<Item = TxHash>) -> Vec<TypedReceipt> {
         let storage = self.blockchain.storage.read();
@@ -260,9 +268,10 @@ impl Backend {
         let effective_gas_price = match transaction {
             TypedTransaction::Legacy(t) => t.gas_price,
             TypedTransaction::EIP2930(t) => t.gas_price,
-            TypedTransaction::EIP1559(t) => {
-                self.base_fee().checked_add(t.max_priority_fee_per_gas).unwrap_or_else(U256::max_value)
-            }
+            TypedTransaction::EIP1559(t) => self
+                .base_fee()
+                .checked_add(t.max_priority_fee_per_gas)
+                .unwrap_or_else(U256::max_value),
         };
 
         Some(TransactionReceipt {

@@ -57,14 +57,15 @@ pub fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
     let NodeConfig {
         chain_id,
         gas_limit,
-        gas_price: _,
         genesis_accounts,
         genesis_balance,
         accounts,
         automine,
         port,
         max_transactions,
-        silent: _,
+        silent,
+        gas_price,
+        ..
     } = config.clone();
 
     // configure the revm environment
@@ -89,6 +90,7 @@ pub fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
         Arc::new(RwLock::new(env)),
         genesis_balance,
         genesis_accounts.into_iter().map(|acc| acc.address()),
+        gas_price,
     ));
 
     let dev_signer: Box<dyn EthSigner> = Box::new(DevSigner::new(accounts));
