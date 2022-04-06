@@ -464,6 +464,7 @@ mod tests {
         providers::{Http, Provider},
         types::Address,
     };
+    use tokio::runtime::Runtime;
 
     use std::{collections::BTreeSet, convert::TryFrom, path::PathBuf, sync::Arc};
 
@@ -535,21 +536,24 @@ mod tests {
             chain_id: 1,
         };
 
-        let backend = fork.spawn_backend(&env);
-
         // some rng contract from etherscan
         let address: Address = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();
-
-        let idx = U256::from(0u64);
-        let _value = backend.storage(address, idx);
-        let _account = backend.basic(address);
-
-        // fill some slots
         let num_slots = 10u64;
-        for idx in 1..num_slots {
-            let _ = backend.storage(address, idx.into());
-        }
-        drop(backend);
+
+        let runtime = Runtime::new().expect("Failed to start runtime");
+        runtime.block_on(async move {
+            let backend = fork.spawn_backend(&env);
+
+            let idx = U256::from(0u64);
+            let _value = backend.storage(address, idx);
+            let _account = backend.basic(address);
+
+            // fill some slots
+            for idx in 1..num_slots {
+                let _ = backend.storage(address, idx.into());
+            }
+        });
+        drop(runtime);
 
         let meta = BlockchainDbMeta {
             cfg_env: Default::default(),
