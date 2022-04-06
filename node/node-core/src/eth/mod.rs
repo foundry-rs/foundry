@@ -64,7 +64,7 @@ pub enum EthRequest {
     #[serde(rename = "eth_getCode")]
     EthGetCodeAt(Address, Option<BlockNumber>),
 
-    #[serde(rename = "eth_sendTransaction")]
+    #[serde(rename = "eth_sendTransaction", with = "sequence")]
     EthSendTransaction(Box<EthTransactionRequest>),
 
     #[serde(rename = "eth_sendTransaction")]
@@ -76,7 +76,7 @@ pub enum EthRequest {
     #[serde(rename = "eth_estimateGas")]
     EthEstimateGas(WithBlockParameter<CallRequest>),
 
-    #[serde(rename = "eth_getTransactionByHash")]
+    #[serde(rename = "eth_getTransactionByHash", with = "sequence")]
     EthGetTransactionByHash(TxHash),
 
     #[serde(rename = "eth_getTransactionByBlockHashAndIndex")]

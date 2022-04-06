@@ -1,5 +1,9 @@
 use crate::{init_tracing, next_port};
-use ethers::{providers::Middleware, signers::Signer, types::TransactionRequest};
+use ethers::{
+    providers::Middleware,
+    signers::Signer,
+    types::{TransactionRequest, U256},
+};
 use foundry_node::{spawn, NodeConfig};
 
 #[tokio::test(flavor = "multi_thread")]
@@ -21,12 +25,17 @@ async fn can_transfer_eth() {
 
     let amount = handle.genesis_balance().checked_div(2u64.into()).unwrap();
 
-    let tx = TransactionRequest::new().to(to).value(amount).from(from);
+    let tx = TransactionRequest::new()
+        .to(to)
+        .value(amount)
+        .gas_price(handle.gas_price())
+        .gas(U256::max_value())
+        .from(from);
 
     let _balance_before = provider.get_balance(from, None).await.unwrap();
 
     // broadcast it via the eth_sendTransaction API
-    let tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap();
+    let tx = provider.send_transaction(tx, None).await.unwrap().await;
 
     dbg!(tx);
     // provider.get_transaction();

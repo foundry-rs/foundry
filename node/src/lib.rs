@@ -175,6 +175,11 @@ impl NodeHandle {
     pub fn genesis_balance(&self) -> U256 {
         self.config.genesis_balance
     }
+
+    /// Default gas price for all txs
+    pub fn gas_price(&self) -> U256 {
+        self.config.gas_price
+    }
 }
 
 impl Future for NodeHandle {

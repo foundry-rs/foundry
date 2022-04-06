@@ -67,9 +67,10 @@ async fn handle_call(call: RpcCall, api: EthApi) -> Option<RpcResponse> {
 /// Executes a valid RPC method call
 async fn execute_method_call(call: RpcMethodCall, api: EthApi) -> RpcResponse {
     trace!(target: "rpc", "received method call {:?}", call);
-    let RpcMethodCall { jsonrpc: _, method, params, id } = call;
+    let RpcMethodCall { method, params, id, .. } = call;
 
     let params: serde_json::Value = params.into();
+    let m = method.clone();
     let call = serde_json::json!({
         "method": method,
         "params": params
@@ -78,6 +79,7 @@ async fn execute_method_call(call: RpcMethodCall, api: EthApi) -> RpcResponse {
     match serde_json::from_value::<EthRequest>(call) {
         Err(err) => {
             let msg = err.to_string();
+            warn!(target: "rpc", "failed to deserialize method `{}`: {}", m, msg);
             if msg.contains("unknown variant") {
                 RpcResponse::new(id, RpcError::method_not_found())
             } else {
@@ -86,6 +88,7 @@ async fn execute_method_call(call: RpcMethodCall, api: EthApi) -> RpcResponse {
         }
         Ok(req) => {
             let result = api.execute(req).await;
+            trace!(target: "rpc", "sending rpc result {:?}", result);
             RpcResponse::new(id, result)
         }
     }
