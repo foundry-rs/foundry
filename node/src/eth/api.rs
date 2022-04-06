@@ -444,8 +444,9 @@ impl EthApi {
     /// Get transaction by its hash.
     ///
     /// Handler for ETH RPC call: `eth_getTransactionByHash`
-    pub fn transaction_by_hash(&self, _: H256) -> Result<Option<Transaction>> {
-        todo!()
+    pub fn transaction_by_hash(&self, hash: H256) -> Result<Option<Transaction>> {
+        // TODO also check pending tx
+        Ok(self.backend.transaction_by_hash(hash))
     }
 
     /// Returns transaction at given block hash and index.

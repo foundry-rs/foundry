@@ -10,12 +10,15 @@ use ethers::{
 };
 
 use crate::revm::db::DatabaseRef;
-use ethers::types::Address;
+use ethers::{
+    types::{Address, Transaction},
+    utils::{keccak256, rlp},
+};
 use foundry_evm::revm::{db::CacheDB, Env};
 use foundry_node_core::eth::{
     block::{Block, BlockInfo},
     receipt::TypedReceipt,
-    transaction::TransactionInfo,
+    transaction::{TransactionInfo, TypedTransaction},
 };
 use parking_lot::RwLock;
 use std::{collections::HashMap, sync::Arc};
@@ -40,7 +43,7 @@ struct BlockchainStorage {
     genesis_hash: H256,
     /// Mapping from the transaction hash to a tuple containing the transaction as well as the
     /// transaction receipt
-    transactions: HashMap<TxHash, (TransactionInfo, TypedReceipt)>,
+    transactions: HashMap<TxHash, MinedTransaction>,
 }
 
 impl BlockchainStorage {
@@ -53,6 +56,13 @@ impl BlockchainStorage {
             BlockNumber::Number(num) => self.hashes.get(&num).copied(),
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct MinedTransaction {
+    pub info: TransactionInfo,
+    pub receipt: TypedReceipt,
+    pub block_hash: H256,
 }
 
 /// A simple in-memory blockchain
@@ -143,7 +153,7 @@ impl Backend {
         let block_hash = block.header.hash();
         let block_number: U64 = env.block.number.as_u64().into();
 
-        trace!(target: "backed", "Created block {} with {} tx: [{:?}]", block_number, transactions.len(), block_hash);
+        trace!(target: "backend", "Created block {} with {} tx: [{:?}]", block_number, transactions.len(), block_hash);
 
         // update block metadata
         storage.finalized_number = block_number;
@@ -157,8 +167,9 @@ impl Backend {
         storage.hashes.insert(block_number, block_hash);
 
         // insert all transactions
-        for (tx, receipt) in transactions.into_iter().zip(receipts) {
-            storage.transactions.insert(tx.transaction_hash, (tx, receipt));
+        for (info, receipt) in transactions.into_iter().zip(receipts) {
+            let mined_tx = MinedTransaction { info, receipt, block_hash };
+            storage.transactions.insert(mined_tx.info.transaction_hash, mined_tx);
         }
 
         block_number
@@ -203,4 +214,66 @@ impl Backend {
         // TODO make this a separate value?
         self.env().read().block.gas_limit
     }
+
+    pub fn base_fee(&self) -> U256 {
+        self.env().read().block.basefee
+    }
+
+    pub fn transaction_by_hash(&self, hash: H256) -> Option<Transaction> {
+        let MinedTransaction { info, block_hash, .. } =
+            self.blockchain.storage.read().transactions.get(&hash)?.clone();
+
+        let block = self.blockchain.storage.read().blocks.get(&block_hash).cloned()?;
+
+        let tx = block.transactions.get(info.transaction_index as usize)?.clone();
+
+        Some(transaction_build(tx, Some(block), Some(info), true, Some(self.base_fee())))
+    }
+}
+
+pub fn transaction_build(
+    eth_transaction: TypedTransaction,
+    block: Option<Block>,
+    info: Option<TransactionInfo>,
+    is_eip1559: bool,
+    base_fee: Option<U256>,
+) -> Transaction {
+    let mut transaction: Transaction = eth_transaction.clone().into();
+
+    if let TypedTransaction::EIP1559(_) = eth_transaction {
+        if block.is_none() && info.is_none() {
+            // If transaction is not mined yet, gas price is considered just max fee per gas.
+            transaction.gas_price = transaction.max_fee_per_gas;
+        } else {
+            // If transaction is already mined, gas price is considered base fee + priority fee.
+            // A.k.a. effective gas price.
+            let base_fee = base_fee.unwrap_or(U256::zero());
+            let max_priority_fee_per_gas =
+                transaction.max_priority_fee_per_gas.unwrap_or(U256::zero());
+            transaction.gas_price = Some(
+                base_fee.checked_add(max_priority_fee_per_gas).unwrap_or_else(U256::max_value),
+            );
+        }
+    } else if !is_eip1559 {
+        // This is a pre-eip1559 support transaction a.k.a. txns on frontier before we introduced
+        // EIP1559 support in pallet-ethereum schema V2.
+        // They do not include `maxFeePerGas`, `maxPriorityFeePerGas` or `type` fields.
+        transaction.max_fee_per_gas = None;
+        transaction.max_priority_fee_per_gas = None;
+        transaction.transaction_type = None;
+    }
+
+    // Block hash.
+    transaction.block_hash =
+        block.as_ref().map(|block| H256::from(keccak256(&rlp::encode(&block.header))));
+    // Block number.
+    transaction.block_number = block.as_ref().map(|block| block.header.number.as_u64().into());
+    // Transaction index.
+    transaction.transaction_index = info.as_ref().map(|status| status.transaction_index.into());
+
+    transaction.from = eth_transaction.recover().unwrap();
+
+    transaction.to = info.as_ref().map_or(eth_transaction.to().cloned(), |status| status.to);
+
+    transaction
 }

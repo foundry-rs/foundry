@@ -1,7 +1,7 @@
 use std::{collections::HashMap, time::Duration};
 
 use ethers::{
-    core::{k256::ecdsa::SigningKey, rand},
+    core::k256::ecdsa::SigningKey,
     prelude::{Address, Wallet, U256},
     signers::{coins_bip39::English, MnemonicBuilder, Signer},
     utils::WEI_IN_ETHER,
@@ -125,17 +125,14 @@ impl NodeConfig {
 }
 
 /// Generates random private-public key pair which can be used for signing messages
-pub fn random_wallets(num: usize) -> Vec<Wallet<SigningKey>> {
-    let mut wallets = Vec::with_capacity(num);
-    let mut rng = rand::thread_rng();
+pub fn random_wallets(num_accounts: usize) -> Vec<Wallet<SigningKey>> {
+    let builder = MnemonicBuilder::<English>::default()
+        .phrase("member yard spread wall vanish absorb hill lawn fetch equal purse shiver");
+    let mut wallets = Vec::with_capacity(num_accounts);
 
-    while wallets.len() < num {
-        if let Ok(wallet) =
-            MnemonicBuilder::<English>::default().word_count(24).build_random(&mut rng)
-        {
-            wallets.push(wallet)
-        }
+    for i in 0..num_accounts {
+        let wallet = builder.clone().index(i as u32).unwrap().build().unwrap();
+        wallets.push(wallet)
     }
-
     wallets
 }

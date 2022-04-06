@@ -2,13 +2,16 @@
 
 use crate::eth::transaction::{
     EIP1559TransactionRequest, EIP2930TransactionRequest, LegacyTransactionRequest,
-    TypedTransactionRequest,
+    TypedTransaction, TypedTransactionRequest,
 };
-use ethers_core::types::{
-    transaction::eip2718::TypedTransaction as EthersTypedTransactionRequest,
-    Eip1559TransactionRequest as EthersEip1559TransactionRequest,
-    Eip2930TransactionRequest as EthersEip2930TransactionRequest,
-    TransactionRequest as EthersLegacyTransactionRequest,
+use ethers_core::{
+    types::{
+        transaction::eip2718::TypedTransaction as EthersTypedTransactionRequest, Address,
+        Eip1559TransactionRequest as EthersEip1559TransactionRequest,
+        Eip2930TransactionRequest as EthersEip2930TransactionRequest,
+        Transaction as EthersTransaction, TransactionRequest as EthersLegacyTransactionRequest,
+        U256, U64,
+    },
 };
 
 impl From<TypedTransactionRequest> for EthersTypedTransactionRequest {
@@ -85,6 +88,77 @@ impl From<TypedTransactionRequest> for EthersTypedTransactionRequest {
                     chain_id: Some(chain_id.into()),
                 })
             }
+        }
+    }
+}
+
+impl From<TypedTransaction> for EthersTransaction {
+    fn from(transaction: TypedTransaction) -> Self {
+        let hash = transaction.hash();
+        match transaction {
+            TypedTransaction::Legacy(t) => EthersTransaction {
+                hash,
+                nonce: t.nonce,
+                block_hash: None,
+                block_number: None,
+                transaction_index: None,
+                from: Address::default(),
+                to: None,
+                value: t.value,
+                gas_price: Some(t.gas_price),
+                max_fee_per_gas: Some(t.gas_price),
+                max_priority_fee_per_gas: Some(t.gas_price),
+                gas: t.gas_limit,
+                input: t.input.clone(),
+                chain_id: t.chain_id().map(Into::into),
+                v: t.signature.v.into(),
+                r: t.signature.r,
+                s: t.signature.s,
+                access_list: None,
+                transaction_type: Some(0u64.into()),
+            },
+            TypedTransaction::EIP2930(t) => EthersTransaction {
+                hash,
+                nonce: t.nonce,
+                block_hash: None,
+                block_number: None,
+                transaction_index: None,
+                from: Address::default(),
+                to: None,
+                value: t.value,
+                gas_price: Some(t.gas_price),
+                max_fee_per_gas: Some(t.gas_price),
+                max_priority_fee_per_gas: Some(t.gas_price),
+                gas: t.gas_limit,
+                input: t.input.clone(),
+                chain_id: Some(t.chain_id.into()),
+                v: U64::from(t.odd_y_parity as u8),
+                r: U256::from(t.r.as_bytes()),
+                s: U256::from(t.s.as_bytes()),
+                access_list: Some(t.access_list),
+                transaction_type: Some(1u64.into()),
+            },
+            TypedTransaction::EIP1559(t) => EthersTransaction {
+                hash,
+                nonce: t.nonce,
+                block_hash: None,
+                block_number: None,
+                transaction_index: None,
+                from: Address::default(),
+                to: None,
+                value: t.value,
+                gas_price: None,
+                max_fee_per_gas: Some(t.max_fee_per_gas),
+                max_priority_fee_per_gas: Some(t.max_priority_fee_per_gas),
+                gas: t.gas_limit,
+                input: t.input.clone(),
+                chain_id: Some(t.chain_id.into()),
+                v: U64::from(t.odd_y_parity as u8),
+                r: U256::from(t.r.as_bytes()),
+                s: U256::from(t.s.as_bytes()),
+                access_list: Some(t.access_list),
+                transaction_type: Some(2u64.into()),
+            },
         }
     }
 }

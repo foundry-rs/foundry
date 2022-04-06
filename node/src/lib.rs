@@ -10,6 +10,8 @@ use foundry_evm::{revm, revm::BlockEnv};
 
 use crate::eth::sign::{DevSigner, Signer as EthSigner};
 use ethers::{
+    core::k256::ecdsa::SigningKey,
+    prelude::Wallet,
     providers::{Http, Provider},
     signers::Signer,
     types::{Address, U256},
@@ -155,6 +157,11 @@ impl NodeHandle {
     /// Signer accounts that can sign messages/transactions from the EVM node
     pub fn dev_accounts(&self) -> impl Iterator<Item = Address> + '_ {
         self.config.accounts.keys().cloned()
+    }
+
+    /// Signer accounts that can sign messages/transactions from the EVM node
+    pub fn dev_wallets(&self) -> impl Iterator<Item = Wallet<SigningKey>> + '_ {
+        self.config.accounts.values().cloned()
     }
 
     /// Accounts that will be initialised with `genesis_balance` in the genesis block
