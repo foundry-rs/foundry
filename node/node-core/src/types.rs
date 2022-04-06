@@ -29,7 +29,7 @@ impl Serialize for Work {
 }
 
 /// A hex encoded or decimal index
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub struct Index(usize);
 
 impl From<Index> for usize {

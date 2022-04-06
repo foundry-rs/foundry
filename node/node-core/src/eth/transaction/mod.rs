@@ -3,11 +3,7 @@
 use crate::eth::{receipt::Log, utils::enveloped};
 use ethers_core::{
     types::{
-        transaction::{
-            eip2930::{
-                AccessList, AccessListItem,
-            },
-        },
+        transaction::eip2930::{AccessList, AccessListItem},
         Address, Bloom, Bytes, Signature, SignatureError, TxHash, H256, U256,
     },
     utils::{

@@ -88,5 +88,3 @@ impl From<TypedTransactionRequest> for EthersTypedTransactionRequest {
         }
     }
 }
-
-
