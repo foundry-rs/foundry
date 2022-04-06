@@ -108,7 +108,7 @@ impl NodeConfig {
 
     /// Makes the node silent to not emit anything on stdout
     #[must_use]
-    pub fn silent(mut self) -> Self {
+    pub fn silent(self) -> Self {
         self.set_silent(true)
     }
 

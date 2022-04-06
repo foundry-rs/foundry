@@ -10,13 +10,15 @@ use crate::eth::{
 use ethers::{
     abi::ethereum_types::H64,
     types::{
-        Address, Block, BlockNumber, Bytes, FeeHistory, Filter, Log, Transaction,
-        TransactionReceipt, TxHash, H256, U256, U64,
+        Address, Block, BlockNumber, Bytes, FeeHistory, Log, Transaction, TransactionReceipt,
+        TxHash, H256, U256, U64,
     },
     utils::rlp,
 };
 use foundry_node_core::{
     eth::{
+        call::CallRequest,
+        filter::Filter,
         transaction::{
             EthTransactionRequest, LegacyTransaction, PendingTransaction, TypedTransaction,
             TypedTransactionRequest,
@@ -59,14 +61,72 @@ impl EthApi {
     /// Executes the [EthRequest] and returns an RPC [RpcResponse]
     pub async fn execute(&self, request: EthRequest) -> ResponseResult {
         match request {
-            EthRequest::EthGetBalance(addr, block) => {
-                self.balance(addr, Some(block)).to_rpc_result()
-            }
+            EthRequest::EthGetBalance(addr, block) => self.balance(addr, block).to_rpc_result(),
             EthRequest::EthGetTransactionByHash(hash) => {
                 self.transaction_by_hash(hash).to_rpc_result()
             }
             EthRequest::EthSendTransaction(request) => {
                 self.send_transaction(*request).to_rpc_result()
+            }
+            EthRequest::EthChainId => self.chain_id().to_rpc_result(),
+            EthRequest::EthGasPrice => self.gas_price().to_rpc_result(),
+            EthRequest::EthAccounts => self.accounts().to_rpc_result(),
+            EthRequest::EthBlockNumber => self.block_number().to_rpc_result(),
+            EthRequest::EthGetStorageAt(addr, slot, block) => {
+                self.storage_at(addr, slot, block).to_rpc_result()
+            }
+            EthRequest::EthGetBlockByHash(hash, full) => {
+                self.block_by_hash(hash, full).to_rpc_result()
+            }
+            EthRequest::EthGetBlockByNumber(num, full) => {
+                self.block_by_number(num, full).to_rpc_result()
+            }
+            EthRequest::EthGetTransactionCount(addr, block) => {
+                self.transaction_count(addr, block).to_rpc_result()
+            }
+            EthRequest::EthGetTransactionCountByHash(hash) => {
+                self.block_transaction_count_by_hash(hash).to_rpc_result()
+            }
+            EthRequest::EthGetTransactionCountByNumber(num) => {
+                self.block_transaction_count_by_number(num).to_rpc_result()
+            }
+            EthRequest::EthGetUnclesCountByHash(hash) => {
+                self.block_uncles_count_by_hash(hash).to_rpc_result()
+            }
+            EthRequest::EthGetUnclesCountByNumber(num) => {
+                self.block_uncles_count_by_number(num).to_rpc_result()
+            }
+            EthRequest::EthGetCodeAt(addr, block) => self.code_at(addr, block).to_rpc_result(),
+            EthRequest::EthSendRawTransaction(tx) => self.send_raw_transaction(tx).to_rpc_result(),
+            EthRequest::EthCall(call, block) => self.call(call, block).to_rpc_result(),
+            EthRequest::EthEstimateGas(call, block) => {
+                self.estimate_gas(call, block).to_rpc_result()
+            }
+            EthRequest::EthGetTransactionByBlockHashAndIndex(hash, index) => {
+                self.transaction_by_block_hash_and_index(hash, index).to_rpc_result()
+            }
+            EthRequest::EthGetTransactionByBlockNumberAndIndex(num, index) => {
+                self.transaction_by_block_number_and_index(num, index).to_rpc_result()
+            }
+            EthRequest::EthGetTransactionReceipt(tx) => {
+                self.transaction_receipt(tx).to_rpc_result()
+            }
+            EthRequest::EthGetUncleByBlockHashAndIndex(hash, index) => {
+                self.uncle_by_block_hash_and_index(hash, index).to_rpc_result()
+            }
+            EthRequest::EthGetUncleByBlockNumberAndIndex(num, index) => {
+                self.uncle_by_block_number_and_index(num, index).to_rpc_result()
+            }
+            EthRequest::EthGetLogs(filter) => self.logs(filter).to_rpc_result(),
+            EthRequest::EthGetWork => self.work().to_rpc_result(),
+            EthRequest::EthSubmitWork(nonce, pow, digest) => {
+                self.submit_work(nonce, pow, digest).to_rpc_result()
+            }
+            EthRequest::EthSubmitHashRate(rate, id) => {
+                self.submit_hashrate(rate, id).to_rpc_result()
+            }
+            EthRequest::EthFeeHistory(count, newest, reward_percentiles) => {
+                self.fee_history(count, newest, reward_percentiles).to_rpc_result()
             }
         }
     }
@@ -92,14 +152,14 @@ impl EthApi {
     /// Returns protocol version encoded as a string (quotes are necessary).
     ///
     /// Handler for ETH RPC call: `eth_protocolVersion`
-    pub async fn protocol_version(&self) -> Result<u64> {
+    pub fn protocol_version(&self) -> Result<u64> {
         Ok(1)
     }
 
     /// Returns the number of hashes per second that the node is mining with.
     ///
     /// Handler for ETH RPC call: `eth_hashrate`
-    pub async fn hashrate(&self) -> Result<U256> {
+    pub fn hashrate(&self) -> Result<U256> {
         Ok(U256::zero())
     }
 
@@ -113,7 +173,7 @@ impl EthApi {
     /// Returns true if client is actively mining new blocks.
     ///
     /// Handler for ETH RPC call: `eth_mining`
-    pub async fn is_mining(&self) -> Result<bool> {
+    pub fn is_mining(&self) -> Result<bool> {
         Ok(self.is_authority)
     }
 
@@ -172,7 +232,7 @@ impl EthApi {
     /// Returns content of the storage at given address.
     ///
     /// Handler for ETH RPC call: `eth_getStorageAt`
-    pub async fn storage_at(
+    pub fn storage_at(
         &self,
         _address: Address,
         _index: U256,
@@ -184,14 +244,14 @@ impl EthApi {
     /// Returns block with given hash.
     ///
     /// Handler for ETH RPC call: `eth_getBlockByHash`
-    pub async fn block_by_hash(&self, _hash: H256, _full: bool) -> Result<Option<Block<TxHash>>> {
+    pub fn block_by_hash(&self, _hash: H256, _full: bool) -> Result<Option<Block<TxHash>>> {
         todo!()
     }
 
     /// Returns block with given number.
     ///
     /// Handler for ETH RPC call: `eth_getBlockByNumber`
-    pub async fn block_by_number(&self, _: BlockNumber, _: bool) -> Result<Option<Block<TxHash>>> {
+    pub fn block_by_number(&self, _: BlockNumber, _: bool) -> Result<Option<Block<TxHash>>> {
         todo!()
     }
 
@@ -216,35 +276,35 @@ impl EthApi {
     /// Returns the number of transactions in a block with given hash.
     ///
     /// Handler for ETH RPC call: `eth_getBlockTransactionCountByHash`
-    pub async fn block_transaction_count_by_hash(&self, _: H256) -> Result<Option<U256>> {
+    pub fn block_transaction_count_by_hash(&self, _: H256) -> Result<Option<U256>> {
         todo!()
     }
 
     /// Returns the number of transactions in a block with given block number.
     ///
     /// Handler for ETH RPC call: `eth_getBlockTransactionCountByNumber`
-    pub async fn block_transaction_count_by_number(&self, _: BlockNumber) -> Result<Option<U256>> {
+    pub fn block_transaction_count_by_number(&self, _: BlockNumber) -> Result<Option<U256>> {
         todo!()
     }
 
     /// Returns the number of uncles in a block with given hash.
     ///
     /// Handler for ETH RPC call: `eth_getUncleCountByBlockHash`
-    pub async fn block_uncles_count_by_hash(&self, _: H256) -> Result<U256> {
+    pub fn block_uncles_count_by_hash(&self, _: H256) -> Result<U256> {
         todo!()
     }
 
     /// Returns the number of uncles in a block with given block number.
     ///
     /// Handler for ETH RPC call: `eth_getUncleCountByBlockNumber`
-    pub async fn block_uncles_count_by_number(&self, _: BlockNumber) -> Result<U256> {
+    pub fn block_uncles_count_by_number(&self, _: BlockNumber) -> Result<U256> {
         todo!()
     }
 
     /// Returns the code at given address at given time (block number).
     ///
     /// Handler for ETH RPC call: `eth_getCode`
-    pub async fn code_at(&self, _address: Address, _: Option<BlockNumber>) -> Result<Bytes> {
+    pub fn code_at(&self, _address: Address, _: Option<BlockNumber>) -> Result<Bytes> {
         todo!()
     }
 
@@ -319,7 +379,7 @@ impl EthApi {
     /// Sends signed transaction, returning its hash.
     ///
     /// Handler for ETH RPC call: `eth_sendRawTransaction`
-    pub async fn send_raw_transaction(&self, tx: Bytes) -> Result<TxHash> {
+    pub fn send_raw_transaction(&self, tx: Bytes) -> Result<TxHash> {
         let data = tx.as_ref();
         if data.is_empty() {
             return Err(BlockchainError::EmptyRawTransactionData)
@@ -366,20 +426,16 @@ impl EthApi {
     /// Call contract, returning the output data.
     ///
     /// Handler for ETH RPC call: `eth_call`
-    pub async fn call(
-        &self,
-        _request: TypedTransaction,
-        _number: Option<BlockNumber>,
-    ) -> Result<Bytes> {
+    pub fn call(&self, _request: CallRequest, _number: Option<BlockNumber>) -> Result<Bytes> {
         todo!()
     }
 
     /// Estimate gas needed for execution of given contract.
     ///
     /// Handler for ETH RPC call: `eth_estimateGas`
-    pub async fn estimate_gas(
+    pub fn estimate_gas(
         &self,
-        _request: TypedTransaction,
+        _request: CallRequest,
         _number: Option<BlockNumber>,
     ) -> Result<U256> {
         todo!()
@@ -395,7 +451,7 @@ impl EthApi {
     /// Returns transaction at given block hash and index.
     ///
     /// Handler for ETH RPC call: `eth_getTransactionByBlockHashAndIndex`
-    pub async fn transaction_by_block_hash_and_index(
+    pub fn transaction_by_block_hash_and_index(
         &self,
         _: H256,
         _: Index,
@@ -406,7 +462,7 @@ impl EthApi {
     /// Returns transaction by given block number and index.
     ///
     /// Handler for ETH RPC call: `eth_getTransactionByBlockNumberAndIndex`
-    pub async fn transaction_by_block_number_and_index(
+    pub fn transaction_by_block_number_and_index(
         &self,
         _: BlockNumber,
         _: Index,
@@ -417,16 +473,24 @@ impl EthApi {
     /// Returns transaction receipt by transaction hash.
     ///
     /// Handler for ETH RPC call: `eth_getTransactionReceipt`
-    pub async fn transaction_receipt(&self, _hash: H256) -> Result<Option<TransactionReceipt>> {
+    pub fn transaction_receipt(&self, _hash: H256) -> Result<Option<TransactionReceipt>> {
         todo!()
     }
 
     /// Returns an uncles at given block and index.
     ///
     /// Handler for ETH RPC call: `eth_getUncleByBlockHashAndIndex`
-    pub async fn uncle_by_block_hash_and_index(
+    pub fn uncle_by_block_hash_and_index(
         &self,
         _: H256,
+        _: Index,
+    ) -> Result<Option<Block<TxHash>>> {
+        Ok(None)
+    }
+
+    pub fn uncle_by_block_number_and_index(
+        &self,
+        _: BlockNumber,
         _: Index,
     ) -> Result<Option<Block<TxHash>>> {
         Ok(None)
@@ -435,35 +499,35 @@ impl EthApi {
     /// Returns logs matching given filter object.
     ///
     /// Handler for ETH RPC call: `eth_getLogs`
-    pub async fn logs(&self, _: Filter) -> Result<Vec<Log>> {
+    pub fn logs(&self, _: Filter) -> Result<Vec<Log>> {
         todo!()
     }
 
     /// Returns the hash of the current block, the seedHash, and the boundary condition to be met.
     ///
     /// Handler for ETH RPC call: `eth_getWork`
-    pub async fn work(&self) -> Result<Work> {
+    pub fn work(&self) -> Result<Work> {
         todo!()
     }
 
     /// Used for submitting a proof-of-work solution.
     ///
     /// Handler for ETH RPC call: `eth_submitWork`
-    pub async fn submit_work(&self, _: H64, _: H256, _: H256) -> Result<bool> {
+    pub fn submit_work(&self, _: H64, _: H256, _: H256) -> Result<bool> {
         todo!()
     }
 
     /// Used for submitting mining hashrate.
     ///
     /// Handler for ETH RPC call: `eth_submitHashrate`
-    pub async fn submit_hashrate(&self, _: U256, _: H256) -> Result<bool> {
+    pub fn submit_hashrate(&self, _: U256, _: H256) -> Result<bool> {
         todo!()
     }
 
     /// Introduced in EIP-1159 for getting information on the appropriate priority fee to use.
     ///
     /// Handler for ETH RPC call: `eth_feeHistory`
-    pub async fn fee_history(
+    pub fn fee_history(
         &self,
         _block_count: U256,
         _newest_block: BlockNumber,
@@ -476,7 +540,7 @@ impl EthApi {
     /// Leverages the already existing fee history cache.
     ///
     /// Handler for ETH RPC call: `eth_maxPriorityFeePerGas`
-    pub async fn max_priority_fee_per_gas(&self) -> Result<U256> {
+    pub fn max_priority_fee_per_gas(&self) -> Result<U256> {
         todo!()
     }
 }
@@ -487,28 +551,28 @@ impl EthApi {
     /// Sets the reported block number
     ///
     /// Handler for ETH RPC call: `forge_setBlock`
-    pub async fn forge_set_block(&self, _block_number: U256) -> Result<U256> {
+    pub fn forge_set_block(&self, _block_number: U256) -> Result<U256> {
         todo!()
     }
 
     /// Sets the backend rpc url
     ///
     /// Handler for ETH RPC call: `forge_setRpcUrl`
-    pub async fn forge_set_rpc_url(&self, _url: String) -> Result<()> {
+    pub fn forge_set_rpc_url(&self, _url: String) -> Result<()> {
         todo!()
     }
 
     /// Sets the mining mode
     ///
     /// Handler for ETH RPC call: `forge_mining`
-    pub async fn forge_mining(&self) -> Result<()> {
+    pub fn forge_mining(&self) -> Result<()> {
         todo!()
     }
 
     /// Sets block timestamp
     ///
     /// Handler for ETH RPC call: `forge_setTimestamp`
-    pub async fn forge_set_timestamp(&self) -> Result<()> {
+    pub fn forge_set_timestamp(&self) -> Result<()> {
         todo!()
     }
 
@@ -516,14 +580,14 @@ impl EthApi {
     /// transaction (instead of just txhash/receipt)
     ///
     /// Handler for ETH RPC call: `forge_enableTraces`
-    pub async fn forge_enable_traces(&self) -> Result<()> {
+    pub fn forge_enable_traces(&self) -> Result<()> {
         todo!()
     }
 
     /// execute a transaction regardless of signature status
     ///
     /// Handler for ETH RPC call: `eth_sendUnsignedTransaction`
-    pub async fn eth_send_unsigned_transaction(&self) -> Result<()> {
+    pub fn eth_send_unsigned_transaction(&self) -> Result<()> {
         todo!()
     }
 }
