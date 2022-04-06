@@ -24,6 +24,8 @@ pub use revm::SpecId;
 /// Executor database trait
 pub use revm::db::DatabaseRef;
 
+pub use revm::Env;
+
 use self::inspector::{InspectorData, InspectorStackConfig};
 use crate::{debug::DebugArena, trace::CallTraceArena, CALLER};
 use bytes::Bytes;
@@ -36,7 +38,7 @@ use foundry_utils::IntoFunction;
 use hashbrown::HashMap;
 use revm::{
     db::{CacheDB, DatabaseCommit, EmptyDB},
-    return_ok, Account, BlockEnv, CreateScheme, Env, Return, TransactOut, TransactTo, TxEnv, EVM,
+    return_ok, Account, BlockEnv, CreateScheme, Return, TransactOut, TransactTo, TxEnv, EVM,
 };
 use std::collections::BTreeMap;
 
@@ -161,7 +163,7 @@ pub struct Executor<DB: DatabaseRef> {
     // Also, if we stored the VM here we would still need to
     // take `&mut self` when we are not committing to the database, since
     // we need to set `evm.env`.
-    pub(crate) db: CacheDB<DB>,
+    pub db: CacheDB<DB>,
     env: Env,
     inspector_config: InspectorStackConfig,
     /// The gas limit for calls and deployments. This is different from the gas limit imposed by
