@@ -335,23 +335,25 @@ where
         if let Poll::Ready(Some(ack)) = Pin::new(&mut pin.shutdown).poll_next(cx) {
             trace!(target: "backendhandler", "received shutdown signal from sender");
             if pin.incoming.is_done() {
+                // if this channel is closed, this means the message is coming from the last sender
+                // which is being dropped therefor we can exit after flushing the cache, if caching
+                // is enabled
+
                 trace!(target: "backendhandler", "flushing cache");
-                // if request channel was closed, flush the cached storage to disk, if caching is
-                // enabled
                 pin.db.cache().flush();
+
+                if let Err(err) = ack.send(()) {
+                    warn!(target: "backendhandler", "Failed to send shutdown ack:{}", err);
+                }
+                trace!(target: "backendhandler", "finished");
+                return Poll::Ready(())
             }
+
             // signaling back
             if let Err(err) = ack.send(()) {
                 warn!(target: "backendhandler", "Failed to send shutdown ack:{}", err);
             }
         }
-
-        // the handler is finished if the request channel was closed and all requests are processed
-        if pin.incoming.is_done() && pin.pending_requests.is_empty() && pin.shutdown.is_done() {
-            trace!(target: "backendhandler", "finished");
-            return Poll::Ready(())
-        }
-        trace!( target: "backendhandler", "pending");
         Poll::Pending
     }
 }
@@ -402,7 +404,6 @@ impl Drop for SharedBackend {
                 warn!(target: "sharedbackend", "Failed to receive ack:{}", err);
             }
         }
-        tracing::trace!( target: "sharedbackend", "shut down");
     }
 }
 
