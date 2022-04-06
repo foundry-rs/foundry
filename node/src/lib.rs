@@ -58,6 +58,7 @@ pub fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
         automine,
         port,
         max_transactions,
+        silent,
     } = config.clone();
 
     // configure the revm environment
@@ -130,6 +131,16 @@ impl NodeHandle {
     /// The address of the launched server
     pub fn socket_address(&self) -> &SocketAddr {
         &self.address
+    }
+
+    /// Returns the http endpoint
+    pub fn http_endpoint(&self) -> String {
+        format!("http://{}", self.socket_address())
+    }
+
+    /// Returns the websocket endpoint
+    pub fn ws_endpoint(&self) -> String {
+        format!("ws://{}", self.socket_address())
     }
 }
 

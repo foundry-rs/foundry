@@ -28,6 +28,8 @@ pub struct NodeConfig {
     pub(crate) port: u16,
     /// maximumg number of transactions in a block
     pub(crate) max_transactions: usize,
+    /// don't print anything on startup
+    pub(crate) silent: bool,
 }
 
 impl Default for NodeConfig {
@@ -43,6 +45,7 @@ impl Default for NodeConfig {
             port: NODE_PORT,
             // TODO make this something dependent on block capacity
             max_transactions: 1_000,
+            silent: false,
         }
     }
 }
@@ -100,6 +103,18 @@ impl NodeConfig {
     #[must_use]
     pub fn port(mut self, port: u16) -> Self {
         self.port = port;
+        self
+    }
+
+    /// Makes the node silent to not emit anything on stdout
+    #[must_use]
+    pub fn silent(mut self) -> Self {
+        self.set_silent(true)
+    }
+
+    #[must_use]
+    pub fn set_silent(mut self, silent: bool) -> Self {
+        self.silent = silent;
         self
     }
 }
