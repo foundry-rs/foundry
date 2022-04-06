@@ -1,8 +1,10 @@
 use std::{collections::HashMap, time::Duration};
 
 use ethers::{
-    core::k256::ecdsa::SigningKey,
+    core::{k256::ecdsa::SigningKey, rand},
     prelude::{Address, Wallet, U256},
+    signers::{coins_bip39::English, MnemonicBuilder, Signer},
+    utils::WEI_IN_ETHER,
 };
 
 pub const NODE_PORT: u16 = 8545;
@@ -34,13 +36,16 @@ pub struct NodeConfig {
 
 impl Default for NodeConfig {
     fn default() -> Self {
+        // generate some random wallets
+        let genesis_accounts = random_wallets(10);
         Self {
             chain_id: 1337,
             gas_limit: U256::from(100_000),
             gas_price: U256::from(1_000_000_000),
-            genesis_accounts: Vec::new(),
-            genesis_balance: U256::zero(),
-            accounts: HashMap::new(),
+            accounts: genesis_accounts.iter().map(|w| (w.address(), w.clone())).collect(),
+            genesis_accounts,
+            // 100ETH default balance
+            genesis_balance: WEI_IN_ETHER.saturating_mul(100u64.into()),
             automine: None,
             port: NODE_PORT,
             // TODO make this something dependent on block capacity
@@ -117,4 +122,20 @@ impl NodeConfig {
         self.silent = silent;
         self
     }
+}
+
+/// Generates random private-public key pair which can be used for signing messages
+pub fn random_wallets(num: usize) -> Vec<Wallet<SigningKey>> {
+    let mut wallets = Vec::with_capacity(num);
+    let mut rng = rand::thread_rng();
+
+    while wallets.len() < num {
+        if let Ok(wallet) =
+            MnemonicBuilder::<English>::default().word_count(24).build_random(&mut rng)
+        {
+            wallets.push(wallet)
+        }
+    }
+
+    wallets
 }

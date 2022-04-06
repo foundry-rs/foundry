@@ -9,7 +9,11 @@ pub use config::NodeConfig;
 use foundry_evm::{revm, revm::BlockEnv};
 
 use crate::eth::sign::{DevSigner, Signer as EthSigner};
-use ethers::signers::Signer;
+use ethers::{
+    providers::{Http, Provider},
+    signers::Signer,
+    types::{Address, U256},
+};
 use parking_lot::RwLock;
 use std::{
     future::Future,
@@ -141,6 +145,26 @@ impl NodeHandle {
     /// Returns the websocket endpoint
     pub fn ws_endpoint(&self) -> String {
         format!("ws://{}", self.socket_address())
+    }
+
+    /// Returns a Provider for the http endpoint
+    pub fn http_provider(&self) -> Provider<Http> {
+        Provider::<Http>::try_from(self.http_endpoint()).unwrap()
+    }
+
+    /// Signer accounts that can sign messages/transactions from the EVM node
+    pub fn dev_accounts(&self) -> impl Iterator<Item = Address> + '_ {
+        self.config.accounts.keys().cloned()
+    }
+
+    /// Accounts that will be initialised with `genesis_balance` in the genesis block
+    pub fn genesis_accounts(&self) -> impl Iterator<Item = Address> + '_ {
+        self.config.genesis_accounts.iter().map(|w| w.address())
+    }
+
+    /// Native token balance of every genesis account in the genesis block
+    pub fn genesis_balance(&self) -> U256 {
+        self.config.genesis_balance
     }
 }
 

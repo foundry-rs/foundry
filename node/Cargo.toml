@@ -35,3 +35,6 @@ serde = { version = "1.0", features = ["derive"] }
 thiserror = "1.0.30"
 async-trait = "0.1.53"
 
+[dev-dependencies]
+ethers = { git = "https://github.com/gakonst/ethers-rs", features = ["abigen"] }
+tokio = { version = "1.10", features = ["full"] }

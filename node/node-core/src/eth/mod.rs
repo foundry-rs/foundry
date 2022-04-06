@@ -33,82 +33,83 @@ pub enum EthRequest {
     #[serde(rename = "eth_blockNumber")]
     EthBlockNumber,
 
-    #[serde(rename = "eth_getBalance", with = "sequence")]
+    #[serde(rename = "eth_getBalance")]
     EthGetBalance(Address, Option<BlockNumber>),
 
-    #[serde(rename = "eth_getStorageAt", with = "sequence")]
+    #[serde(rename = "eth_getStorageAt")]
     EthGetStorageAt(Address, U256, Option<BlockNumber>),
 
-    #[serde(rename = "eth_getBlockByHash", with = "sequence")]
-    EthGetBlockByHash(U256, bool),
+    #[serde(rename = "eth_getBlockByHash")]
+    EthGetBlockByHash(H256, bool),
 
-    #[serde(rename = "eth_getBlockByNumber", with = "sequence")]
+    #[serde(rename = "eth_getBlockByNumber")]
     EthGetBlockByNumber(BlockNumber, bool),
 
-    #[serde(rename = "eth_getTransactionCount", with = "sequence")]
+    #[serde(rename = "eth_getTransactionCount")]
     EthGetTransactionCount(Address, Option<BlockNumber>),
 
-    #[serde(rename = "eth_getBlockTransactionCountByHash", with = "sequence")]
+    #[serde(rename = "eth_getBlockTransactionCountByHash")]
     EthGetTransactionCountByHash(H256),
 
-    #[serde(rename = "eth_getBlockTransactionCountByNumber", with = "sequence")]
+    #[serde(rename = "eth_getBlockTransactionCountByNumber")]
     EthGetTransactionCountByNumber(BlockNumber),
 
-    #[serde(rename = "eth_getUncleCountByBlockHash", with = "sequence")]
+    #[serde(rename = "eth_getUncleCountByBlockHash")]
     EthGetUnclesCountByHash(H256),
 
-    #[serde(rename = "eth_getUncleCountByBlockNumber", with = "sequence")]
+    #[serde(rename = "eth_getUncleCountByBlockNumber")]
     EthGetUnclesCountByNumber(BlockNumber),
 
-    #[serde(rename = "eth_getCode", with = "sequence")]
+    #[serde(rename = "eth_getCode")]
     EthGetCodeAt(Address, Option<BlockNumber>),
 
-    #[serde(rename = "eth_sendTransaction", with = "sequence")]
+    #[serde(rename = "eth_sendTransaction")]
     EthSendTransaction(Box<EthTransactionRequest>),
 
-    #[serde(rename = "eth_sendTransaction", with = "sequence")]
+    #[serde(rename = "eth_sendTransaction")]
     EthSendRawTransaction(Bytes),
 
-    #[serde(rename = "eth_call", with = "sequence")]
+    #[serde(rename = "eth_call")]
     EthCall(CallRequest, Option<BlockNumber>),
 
-    #[serde(rename = "eth_estimateGas", with = "sequence")]
+    #[serde(rename = "eth_estimateGas")]
     EthEstimateGas(CallRequest, Option<BlockNumber>),
 
-    #[serde(rename = "eth_getTransactionByHash", with = "sequence")]
+    #[serde(rename = "eth_getTransactionByHash")]
     EthGetTransactionByHash(TxHash),
 
-    #[serde(rename = "eth_getTransactionByBlockHashAndIndex", with = "sequence")]
+    #[serde(rename = "eth_getTransactionByBlockHashAndIndex")]
     EthGetTransactionByBlockHashAndIndex(TxHash, Index),
 
-    #[serde(rename = "eth_getTransactionByBlockNumberAndIndex", with = "sequence")]
+    #[serde(rename = "eth_getTransactionByBlockNumberAndIndex")]
     EthGetTransactionByBlockNumberAndIndex(BlockNumber, Index),
 
-    #[serde(rename = "eth_getTransactionReceipt", with = "sequence")]
+    #[serde(rename = "eth_getTransactionReceipt")]
     EthGetTransactionReceipt(H256),
 
-    #[serde(rename = "eth_getUncleByBlockHashAndIndex", with = "sequence")]
+    #[serde(rename = "eth_getUncleByBlockHashAndIndex")]
     EthGetUncleByBlockHashAndIndex(H256, Index),
 
-    #[serde(rename = "eth_getUncleByBlockNumberAndIndex", with = "sequence")]
+    #[serde(rename = "eth_getUncleByBlockNumberAndIndex")]
     EthGetUncleByBlockNumberAndIndex(BlockNumber, Index),
 
-    #[serde(rename = "eth_getLogs", with = "sequence")]
+    #[serde(rename = "eth_getLogs")]
     EthGetLogs(Filter),
 
     #[serde(rename = "eth_getWork")]
     EthGetWork,
 
-    #[serde(rename = "eth_submitWork", with = "sequence")]
+    #[serde(rename = "eth_submitWork")]
     EthSubmitWork(H64, H256, H256),
 
-    #[serde(rename = "eth_submitHashrate", with = "sequence")]
+    #[serde(rename = "eth_submitHashrate")]
     EthSubmitHashRate(U256, H256),
 
-    #[serde(rename = "eth_feeHistory", with = "sequence")]
+    #[serde(rename = "eth_feeHistory")]
     EthFeeHistory(U256, BlockNumber, Option<Vec<f64>>),
 }
 
+#[allow(unused)]
 mod sequence {
     use serde::{
         de::DeserializeOwned, ser::SerializeSeq, Deserialize, Deserializer, Serialize, Serializer,
@@ -159,18 +160,16 @@ mod tests {
     fn test_serde_eth_storage() {
         let s = r#"{"method": "eth_getStorageAt", "params": ["0x295a70b2de5e3953354a6a8344e616ed314d7251", "0x0", "latest"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
-
+        dbg!(value.clone());
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
 
     #[test]
-    fn test_serde_req() {
-        let mut rng = rand::thread_rng();
+    fn test_serde_eth_balance() {
+        let s = r#"{"method": "eth_getBalance", "params": ["0x295a70b2de5e3953354a6a8344e616ed314d7251", "latest"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
 
-        let _val = EthRequest::EthGetBalance(
-            Address::random(),
-            Some(BlockNumber::Number(rng.gen::<u64>().into())),
-        );
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
 
     #[test]
