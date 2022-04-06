@@ -1,6 +1,6 @@
 //! general eth api tests
 
-use crate::{init_tracing, next_port};
+use crate::{next_port};
 use ethers::types::U256;
 use foundry_node::{spawn, NodeConfig};
 

@@ -58,7 +58,7 @@ pub fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
         automine,
         port,
         max_transactions,
-        silent,
+        silent: _,
     } = config.clone();
 
     // configure the revm environment
