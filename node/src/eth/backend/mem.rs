@@ -11,13 +11,13 @@ use ethers::{
 
 use crate::revm::db::DatabaseRef;
 use ethers::{
-    types::{Address, Transaction},
+    types::{Address, Log, Transaction, TransactionReceipt},
     utils::{keccak256, rlp},
 };
 use foundry_evm::revm::{db::CacheDB, Env};
 use foundry_node_core::eth::{
     block::{Block, BlockInfo},
-    receipt::TypedReceipt,
+    receipt::{EIP658Receipt, TypedReceipt},
     transaction::{TransactionInfo, TypedTransaction},
 };
 use parking_lot::RwLock;
@@ -217,6 +217,94 @@ impl Backend {
 
     pub fn base_fee(&self) -> U256 {
         self.env().read().block.basefee
+    }
+
+    /// returns all receipts for the given transactions
+    fn get_receipts(&self, tx_hashes: impl IntoIterator<Item = TxHash>) -> Vec<TypedReceipt> {
+        let storage = self.blockchain.storage.read();
+        let mut receipts = vec![];
+
+        for hash in tx_hashes {
+            if let Some(tx) = storage.transactions.get(&hash) {
+                receipts.push(tx.receipt.clone());
+            }
+        }
+
+        receipts
+    }
+
+    pub fn transaction_receipt(&self, hash: H256) -> Option<TransactionReceipt> {
+        let MinedTransaction { info, receipt, block_hash, .. } =
+            self.blockchain.storage.read().transactions.get(&hash)?.clone();
+
+        let EIP658Receipt { status_code, gas_used, logs_bloom, logs } = receipt.into();
+
+        let index = info.transaction_index as usize;
+
+        let block = self.blockchain.storage.read().blocks.get(&block_hash).cloned()?;
+
+        // TODO store cumulative gas used in receipt instead
+        let receipts = self.get_receipts(block.transactions.iter().map(|tx| tx.hash()));
+
+        let mut cumulative_gas_used = U256::zero();
+        for receipt in receipts.iter().take(index) {
+            cumulative_gas_used = cumulative_gas_used.saturating_add(receipt.gas_used());
+        }
+        cumulative_gas_used = cumulative_gas_used.saturating_sub(gas_used);
+
+        let mut cumulative_receipts = receipts;
+        cumulative_receipts.truncate(index + 1);
+
+        let transaction = block.transactions[index].clone();
+
+        let effective_gas_price = match transaction {
+            TypedTransaction::Legacy(t) => t.gas_price,
+            TypedTransaction::EIP2930(t) => t.gas_price,
+            TypedTransaction::EIP1559(t) => {
+                self.base_fee().checked_add(t.max_priority_fee_per_gas).unwrap_or_else(U256::max_value)
+            }
+        };
+
+        Some(TransactionReceipt {
+            transaction_hash: info.transaction_hash,
+            transaction_index: info.transaction_index.into(),
+            block_hash: Some(block_hash),
+            block_number: Some(block.header.number.as_u64().into()),
+            cumulative_gas_used,
+            gas_used: Some(gas_used),
+            contract_address: info.contract_address,
+            logs: {
+                let mut pre_receipts_log_index = None;
+                if !cumulative_receipts.is_empty() {
+                    cumulative_receipts.truncate(cumulative_receipts.len() - 1);
+                    pre_receipts_log_index =
+                        Some(cumulative_receipts.iter().map(|_r| logs.len() as u32).sum::<u32>());
+                }
+                logs.iter()
+                    .enumerate()
+                    .map(|(i, log)| Log {
+                        address: log.address,
+                        topics: log.topics.clone(),
+                        data: log.data.clone(),
+                        block_hash: Some(block_hash),
+                        block_number: Some(block.header.number.as_u64().into()),
+                        transaction_hash: Some(info.transaction_hash),
+                        transaction_index: Some(info.transaction_index.into()),
+                        log_index: Some(U256::from(
+                            (pre_receipts_log_index.unwrap_or(0)) + i as u32,
+                        )),
+                        transaction_log_index: Some(U256::from(i)),
+                        log_type: None,
+                        removed: None,
+                    })
+                    .collect()
+            },
+            status: Some(status_code.into()),
+            root: None,
+            logs_bloom,
+            transaction_type: None,
+            effective_gas_price: Some(effective_gas_price),
+        })
     }
 
     pub fn transaction_by_hash(&self, hash: H256) -> Option<Transaction> {

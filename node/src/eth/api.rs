@@ -474,8 +474,8 @@ impl EthApi {
     /// Returns transaction receipt by transaction hash.
     ///
     /// Handler for ETH RPC call: `eth_getTransactionReceipt`
-    pub fn transaction_receipt(&self, _hash: H256) -> Result<Option<TransactionReceipt>> {
-        todo!()
+    pub fn transaction_receipt(&self, hash: H256) -> Result<Option<TransactionReceipt>> {
+        Ok(self.backend.transaction_receipt(hash))
     }
 
     /// Returns an uncles at given block and index.
