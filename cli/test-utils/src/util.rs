@@ -368,6 +368,17 @@ impl TestCommand {
         std::env::set_var(key, v.to_string());
     }
 
+    /// Unsets the environment variable `k`. The variable will be re-added
+    /// when the command is dropped.
+    pub fn temp_unset_env(&mut self, k: impl AsRef<str>) {
+        let key = k.as_ref();
+        if !self.saved_env_vars.contains_key(OsStr::new(key)) {
+            self.saved_env_vars.insert(key.into(), std::env::var_os(key));
+        }
+
+        std::env::remove_var(key);
+    }
+
     /// Unsets the environment variable `k`
     pub fn unset_env(&mut self, k: impl AsRef<str>) {
         let key = k.as_ref();
