@@ -221,7 +221,7 @@ To join the Foundry community, you can use our
 [main telegram](https://t.me/foundry_rs) to chat with us!
 
 To receive help with Foundry, you can use our
-[support telegram](https://t.me/+pqodMdZCoQQyZGI6) to asky any questions you may
+[support telegram](https://t.me/+pqodMdZCoQQyZGI6) to ask any questions you may
 have.
 
 ## Acknowledgements
