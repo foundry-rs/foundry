@@ -110,18 +110,16 @@ impl EtherscanFetcher {
     }
 
     fn queue_next_reqs(&mut self) {
-        if self.in_progress.len() < self.concurrency {
-            while let Some(addr) = self.queue.pop() {
+        while self.in_progress.len() < self.concurrency {
+            if let Some(addr) = self.queue.pop() {
                 let client = self.client.clone();
                 trace!(target: "etherscanidentifier", "fetching info for {:?}", addr);
                 self.in_progress.push(Box::pin(async move {
                     let res = client.contract_source_code(addr).await;
                     (addr, res)
                 }));
-
-                if self.in_progress.len() == self.concurrency {
-                    break
-                }
+            } else {
+                break
             }
         }
     }
