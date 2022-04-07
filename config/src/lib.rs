@@ -134,6 +134,8 @@ pub struct Config {
     pub verbosity: u8,
     /// url of the rpc server that should be used for any rpc calls
     pub eth_rpc_url: Option<String>,
+    /// etherscan API key
+    pub etherscan_api_key: Option<String>,
     /// list of solidity error codes to always silence in the compiler output
     pub ignored_error_codes: Vec<SolidityErrorCode>,
     /// The number of test cases that must execute for each property test
@@ -729,6 +731,11 @@ impl Config {
         Self::foundry_dir().map(|p| p.join("cache"))
     }
 
+    /// Returns the path to foundry's etherscan cache dir `~/.foundry/cache/<chain>/etherscan`
+    pub fn foundry_etherscan_cache_dir(chain_id: impl Into<Chain>) -> Option<PathBuf> {
+        Some(Self::foundry_cache_dir()?.join(chain_id.into().to_string()).join("etherscan"))
+    }
+
     /// Returns the path to the cache file of the `block` on the `chain`
     /// `~/.foundry/cache/<chain>/<block>/storage.json`
     pub fn foundry_block_cache_file(chain_id: impl Into<Chain>, block: u64) -> Option<PathBuf> {
@@ -801,6 +808,7 @@ impl From<Config> for Figment {
             .merge(Env::prefixed("DAPP_").ignore(&["REMAPPINGS", "LIBRARIES"]).global())
             .merge(Env::prefixed("DAPP_TEST_").global())
             .merge(DappEnvCompatProvider)
+            .merge(Env::raw().only(&["ETH_RPC_URL", "ETHERSCAN_API_KEY"]))
             .merge(
                 Env::prefixed("FOUNDRY_").ignore(&["PROFILE", "REMAPPINGS", "LIBRARIES"]).global(),
             )
@@ -918,6 +926,7 @@ impl Default for Config {
             block_difficulty: 0,
             block_gas_limit: None,
             eth_rpc_url: None,
+            etherscan_api_key: None,
             verbosity: 0,
             remappings: vec![],
             libraries: vec![],

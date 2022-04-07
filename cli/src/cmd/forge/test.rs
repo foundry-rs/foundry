@@ -16,7 +16,10 @@ use forge::{
     decode::decode_console_logs,
     executor::opts::EvmOpts,
     gas_report::GasReport,
-    trace::{identifier::LocalTraceIdentifier, CallTraceDecoder, TraceKind},
+    trace::{
+        identifier::{EtherscanIdentifier, LocalTraceIdentifier},
+        CallTraceDecoder, TraceKind,
+    },
     MultiContractRunner, MultiContractRunnerBuilder, SuiteResult, TestFilter, TestKind,
 };
 use foundry_config::{figment::Figment, Config};
@@ -426,40 +429,57 @@ pub fn custom_run(mut args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<
     } else {
         let TestArgs { filter, .. } = args;
         test(
+            config,
             runner,
             verbosity,
             filter,
             args.json,
             args.allow_failure,
             include_fuzz_tests,
-            (args.gas_report, config.gas_reports),
+            args.gas_report,
         )
     }
 }
 
 /// Runs all the tests
+#[allow(clippy::too_many_arguments)]
 fn test(
+    config: Config,
     mut runner: MultiContractRunner,
     verbosity: u8,
     filter: Filter,
     json: bool,
     allow_failure: bool,
     include_fuzz_tests: bool,
-    (gas_reporting, gas_reports): (bool, Vec<String>),
+    gas_reporting: bool,
 ) -> eyre::Result<TestOutcome> {
     if json {
         let results = runner.test(&filter, None, include_fuzz_tests)?;
         println!("{}", serde_json::to_string(&results)?);
         Ok(TestOutcome::new(results, allow_failure))
     } else {
+        // Set up identifiers
         let local_identifier = LocalTraceIdentifier::new(&runner.known_contracts);
+        let remote_chain_id = runner.evm_opts.get_remote_chain_id();
+        // Do not re-query etherscan for contracts that you've already queried today.
+        // TODO: Make this configurable.
+        let cache_ttl = Duration::from_secs(24 * 60 * 60);
+        let etherscan_identifier = EtherscanIdentifier::new(
+            remote_chain_id,
+            config.etherscan_api_key,
+            remote_chain_id.and_then(Config::foundry_etherscan_cache_dir),
+            cache_ttl,
+        );
+
+        // Set up test reporter channel
         let (tx, rx) = channel::<(String, SuiteResult)>();
 
+        // Run tests
         let handle =
             thread::spawn(move || runner.test(&filter, Some(tx), include_fuzz_tests).unwrap());
 
         let mut results: BTreeMap<String, SuiteResult> = BTreeMap::new();
-        let mut gas_report = GasReport::new(gas_reports);
+        let mut gas_report = GasReport::new(config.gas_reports);
         for (contract_name, suite_result) in rx {
             let mut tests = suite_result.test_results.clone();
             println!();
@@ -492,6 +512,7 @@ fn test(
                     let mut decoded_traces = Vec::new();
                     for (kind, trace) in &mut result.traces {
                         decoder.identify(trace, &local_identifier);
+                        decoder.identify(trace, &etherscan_identifier);
 
                         let should_include = match kind {
                             // At verbosity level 3, we only display traces for failed tests
