@@ -172,7 +172,7 @@ pub struct TransactionsIterator {
     all: HashMap<TxHash, ReadyTransaction>,
     awaiting: HashMap<TxHash, (usize, PoolTransactionRef)>,
     independent: BTreeSet<PoolTransactionRef>,
-    invalid: HashSet<TxHash>,
+    _invalid: HashSet<TxHash>,
 }
 
 // == impl TransactionsIterator ==
@@ -250,7 +250,7 @@ impl ReadyTransactions {
             all: self.ready_tx.read().clone(),
             independent: self.independent_transactions.clone(),
             awaiting: Default::default(),
-            invalid: Default::default(),
+            _invalid: Default::default(),
         }
     }
 
