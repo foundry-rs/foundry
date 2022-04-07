@@ -434,7 +434,7 @@ impl EthApi {
             request.max_priority_fee_per_gas,
         )?;
 
-        let out = match self.backend.call(request, fees) {
+        let out = match self.backend.call(request, fees).0 {
             TransactOut::None => Default::default(),
             TransactOut::Call(out) => out.to_vec().into(),
             TransactOut::Create(out, _) => out.to_vec().into(),
@@ -445,8 +445,15 @@ impl EthApi {
     /// Estimate gas needed for execution of given contract.
     ///
     /// Handler for ETH RPC call: `eth_estimateGas`
-    pub fn estimate_gas(&self, _request: CallRequest, _: Option<BlockNumber>) -> Result<U256> {
-        Err(BlockchainError::RpcUnimplemented)
+    pub fn estimate_gas(&self, request: CallRequest, _: Option<BlockNumber>) -> Result<U256> {
+        let fees = FeeDetails::new(
+            request.gas_price,
+            request.max_fee_per_gas,
+            request.max_priority_fee_per_gas,
+        )?;
+        let gas = self.backend.call(request, fees).1;
+
+        Err(gas.into())
     }
 
     /// Get transaction by its hash.

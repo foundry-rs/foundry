@@ -233,7 +233,7 @@ impl Backend {
     }
 
     /// Executes the `CallRequest` without writing to the DB
-    pub fn call(&self, request: CallRequest, fee_details: FeeDetails) -> TransactOut {
+    pub fn call(&self, request: CallRequest, fee_details: FeeDetails) -> (TransactOut, u64) {
         let CallRequest { from, to, gas, value, data, nonce, access_list, .. } = request;
 
         let FeeDetails { gas_price, max_fee_per_gas, max_priority_fee_per_gas } = fee_details;
@@ -262,7 +262,8 @@ impl Backend {
         evm.env = env;
         evm.database(&*db);
 
-        evm.transact_ref().1
+        let (_, out, gas, _, _) = evm.transact_ref();
+        (out, gas)
     }
 
     /// returns all receipts for the given transactions
