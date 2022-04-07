@@ -26,7 +26,7 @@ Foundry consists of:
 **Need help getting started with Foundry? Read the [📖 Foundry
 Book][foundry-book] (WIP)!**
 
-[foundry-book]: https://onbjerg.github.io/foundry-book/
+[foundry-book]: https://book.getfoundry.sh/
 
 ![demo](./assets/demo.gif)
 
@@ -73,7 +73,7 @@ You can pull the latest release image like so:
 ```sh
 docker pull ghcr.io/gakonst/foundry:latest
 ```
-For examples and guides on using this image, see the [Docker section](https://onbjerg.github.io/foundry-book/tutorials/foundry-docker.html) in the book.
+For examples and guides on using this image, see the [Docker section](https://book.getfoundry.sh/tutorials/foundry-docker.html) in the book.
 
 ### Releases
 
@@ -167,9 +167,9 @@ You can find additional setup guides in the [Foundry Book][foundry-book]:
 - [Setting up VSCode][vscode-setup]
 - [Shell autocompletions][shell-setup]
 
-[vscode-setup]: https://onbjerg.github.io/foundry-book/config/vscode.html
+[vscode-setup]: https://book.getfoundry.sh/config/vscode.html
 [shell-setup]:
-  https://onbjerg.github.io/foundry-book/config/shell-autocompletion.html
+  https://book.getfoundry.sh/config/shell-autocompletion.html
 
 ### Troubleshooting Installation
 
