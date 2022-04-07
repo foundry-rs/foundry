@@ -40,10 +40,6 @@ struct BlockchainStorage {
     best_hash: H256,
     /// The current best block number
     best_number: U64,
-    /// last finalized block hash
-    finalized_hash: H256,
-    /// last finalized block number
-    finalized_number: U64,
     /// genesis hash of the chain
     genesis_hash: H256,
     /// Mapping from the transaction hash to a tuple containing the transaction as well as the
@@ -197,12 +193,15 @@ impl Backend {
         let mut db = self.db.write();
         let mut storage = self.blockchain.storage.write();
 
+        // increase block number for this block
+        env.block.number = env.block.number.saturating_add(U256::one());
+
         let executor = TransactionExecutor {
             db: &mut *db,
             pending: pool_transactions.into_iter(),
             block_env: env.block.clone(),
             cfg_env: env.cfg.clone(),
-            parent_hash: storage.finalized_hash,
+            parent_hash: storage.best_hash,
         };
 
         let BlockInfo { block, transactions, receipts } = executor.create_block();
@@ -213,12 +212,8 @@ impl Backend {
         trace!(target: "backend", "Created block {} with {} tx: [{:?}]", block_number, transactions.len(), block_hash);
 
         // update block metadata
-        storage.finalized_number = block_number;
         storage.best_number = block_number;
-        env.block.number = env.block.number.saturating_add(U256::one());
-
-        storage.finalized_hash = block_hash;
-        storage.best_hash = storage.finalized_hash;
+        storage.best_hash = block_hash;
 
         storage.blocks.insert(block_hash, block);
         storage.hashes.insert(block_number, block_hash);
@@ -379,11 +374,11 @@ pub fn transaction_build(
 
     if let TypedTransaction::EIP1559(_) = eth_transaction {
         if block.is_none() && info.is_none() {
-            // If transaction is not mined yet, gas price is considered just max fee per gas.
+            // transaction is not mined yet, gas price is considered just `max_fee_per_gas`
             transaction.gas_price = transaction.max_fee_per_gas;
         } else {
-            // If transaction is already mined, gas price is considered base fee + priority fee.
-            // A.k.a. effective gas price.
+            // if transaction is already mined, gas price is considered base fee + priority fee: the
+            // effective gas price.
             let base_fee = base_fee.unwrap_or(U256::zero());
             let max_priority_fee_per_gas =
                 transaction.max_priority_fee_per_gas.unwrap_or(U256::zero());
@@ -392,20 +387,16 @@ pub fn transaction_build(
             );
         }
     } else if !is_eip1559 {
-        // This is a pre-eip1559 support transaction a.k.a. txns on frontier before we introduced
-        // EIP1559 support in pallet-ethereum schema V2.
-        // They do not include `maxFeePerGas`, `maxPriorityFeePerGas` or `type` fields.
         transaction.max_fee_per_gas = None;
         transaction.max_priority_fee_per_gas = None;
         transaction.transaction_type = None;
     }
 
-    // Block hash.
     transaction.block_hash =
         block.as_ref().map(|block| H256::from(keccak256(&rlp::encode(&block.header))));
-    // Block number.
+
     transaction.block_number = block.as_ref().map(|block| block.header.number.as_u64().into());
-    // Transaction index.
+
     transaction.transaction_index = info.as_ref().map(|status| status.transaction_index.into());
 
     transaction.from = eth_transaction.recover().unwrap();

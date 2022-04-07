@@ -25,17 +25,26 @@ async fn can_transfer_eth() {
 
     let amount = handle.genesis_balance().checked_div(2u64.into()).unwrap();
 
-    let tx = TransactionRequest::new()
-        .to(to)
-        .value(amount)
-        .gas_price(handle.gas_price())
-        .gas(U256::max_value())
-        .from(from);
+    let tx =
+        TransactionRequest::new().to(to).value(amount).gas_price(handle.gas_price()).from(from);
 
-    let _balance_before = provider.get_balance(from, None).await.unwrap();
+    // craft the tx
+    let tx = TransactionRequest::new().to(to).value(1000).from(from); // specify the `from` field so that the client knows which account to use
+
+    let balance_before = provider.get_balance(from, None).await.unwrap();
 
     // broadcast it via the eth_sendTransaction API
-    let tx = provider.send_transaction(tx, None).await.unwrap().await;
+    let tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap();
+
+    println!("{}", serde_json::to_string(&tx).unwrap());
+
+    let nonce1 =
+        provider.get_transaction_count(from, Some(BlockNumber::Latest.into())).await.unwrap();
+
+    assert!(nonce2 < nonce1);
+
+    let balance_after = provider.get_balance(from, None).await.unwrap();
+    assert!(balance_after < balance_before);
 
     dbg!(tx);
     // provider.get_transaction();

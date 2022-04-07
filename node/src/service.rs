@@ -7,6 +7,7 @@ use std::{
     sync::Arc,
     task::{Context, Poll},
 };
+use tracing::trace;
 
 /// The type that drives the blockchain's state
 ///
@@ -39,12 +40,13 @@ impl Future for NodeService {
         while let Poll::Ready(transactions) = pin.miner.poll(&pin.pool, cx) {
             // miner returned a set of transaction to put into a new block
             let block_number = pin.backend.mine_block(transactions.clone());
-
+            trace!(target: "node", "mined block {}", block_number);
             // prune all the markers the mined transactions provide
-            let _ = pin.pool.prune_markers(
+            let res = pin.pool.prune_markers(
                 block_number,
                 transactions.into_iter().flat_map(|tx| tx.provides.clone()),
             );
+            trace!(target: "node", "pruned transaction markers {:?}", res);
         }
 
         Poll::Pending
