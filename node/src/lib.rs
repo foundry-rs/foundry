@@ -63,7 +63,7 @@ pub fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
         automine,
         port,
         max_transactions,
-        silent,
+        silent: _,
         gas_price,
         ..
     } = config.clone();

@@ -1,11 +1,15 @@
-use crate::eth::{
-    backend,
-    error::{BlockchainError, Result, ToRpcResponseResult},
-    pool::{
-        transactions::{to_marker, PoolTransaction},
-        Pool,
+use crate::{
+    eth::{
+        backend,
+        error::{BlockchainError, Result, ToRpcResponseResult},
+        fees::FeeDetails,
+        pool::{
+            transactions::{to_marker, PoolTransaction},
+            Pool,
+        },
+        sign::Signer,
     },
-    sign::Signer,
+    revm::TransactOut,
 };
 use ethers::{
     abi::ethereum_types::H64,
@@ -423,14 +427,25 @@ impl EthApi {
     /// Call contract, returning the output data.
     ///
     /// Handler for ETH RPC call: `eth_call`
-    pub fn call(&self, _request: CallRequest, _number: Option<BlockNumber>) -> Result<Bytes> {
-        todo!()
+    pub fn call(&self, request: CallRequest, _number: Option<BlockNumber>) -> Result<Bytes> {
+        let fees = FeeDetails::new(
+            request.gas_price,
+            request.max_fee_per_gas,
+            request.max_priority_fee_per_gas,
+        )?;
+
+        let out = match self.backend.call(request, fees) {
+            TransactOut::None => Default::default(),
+            TransactOut::Call(out) => out.to_vec().into(),
+            TransactOut::Create(out, _) => out.to_vec().into(),
+        };
+        Ok(out)
     }
 
     /// Estimate gas needed for execution of given contract.
     ///
     /// Handler for ETH RPC call: `eth_estimateGas`
-    pub fn estimate_gas(&self, request: CallRequest, _: Option<BlockNumber>) -> Result<U256> {
+    pub fn estimate_gas(&self, _request: CallRequest, _: Option<BlockNumber>) -> Result<U256> {
         Err(BlockchainError::RpcUnimplemented)
     }
 

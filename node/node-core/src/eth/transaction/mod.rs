@@ -13,9 +13,9 @@ use ethers_core::{
 };
 use foundry_evm::{
     revm::{CreateScheme, TransactTo, TxEnv},
-    utils::h256_to_u256_be,
 };
 use serde::{Deserialize, Serialize};
+use crate::eth::utils::to_access_list;
 
 mod ethers_compat;
 
@@ -709,14 +709,6 @@ impl PendingTransaction {
     /// Converts the [PendingTransaction] into the [TxEnv] context that [`revm`](foundry_evm)
     /// expects.
     pub fn to_revm_tx_env(&self) -> TxEnv {
-        fn to_access_list(list: Vec<AccessListItem>) -> Vec<(Address, Vec<U256>)> {
-            list.into_iter()
-                .map(|item| {
-                    (item.address, item.storage_keys.into_iter().map(h256_to_u256_be).collect())
-                })
-                .collect()
-        }
-
         fn transact_to(kind: &TransactionKind) -> TransactTo {
             match kind {
                 TransactionKind::Call(c) => TransactTo::Call(*c),
