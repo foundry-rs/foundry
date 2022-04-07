@@ -1,9 +1,8 @@
 # <h1 align="center">Foundry</h1>
 
-![Github Actions](https://img.shields.io/github/workflow/status/gakonst/foundry/test?style=flat-square)
-[![Telegram Chat][tg-badge]][tg-url] [![Telegram Support][tg-support-badge]][tg-support-url]
-[![Crates.io][crates-badge]][crates-url]
+![Github Actions][gha-badge] [![Telegram Chat][tg-badge]][tg-url] [![Telegram Support][tg-support-badge]][tg-support-url] [![Crates.io][crates-badge]][crates-url]
 
+[gha-badge]: https://img.shields.io/github/workflow/status/gakonst/foundry/test?style=flat-square
 [crates-badge]: https://img.shields.io/crates/v/foundry.svg?style=flat-square
 [crates-url]: https://crates.io/crates/foundry-rs
 [tg-badge]:
@@ -23,14 +22,13 @@ Foundry consists of:
 - [**Cast**](./cast): Swiss army knife for interacting with EVM smart contracts,
   sending transactions and getting chain data.
 
-**Need help getting started with Foundry? Read the [📖 Foundry
-Book][foundry-book] (WIP)!**
+**Need help getting started with Foundry? Read the [📖 Foundry Book][foundry-book] (WIP)!**
 
-[foundry-book]: https://book.getfoundry.sh/
-
-![demo](./assets/demo.gif)
+![Demo](./assets/demo.gif)
 
 ## Installation
+
+*Having issues? See the [troubleshooting section](#troubleshooting-installation)*.
 
 First run the command below to get `foundryup`, the Foundry toolchain installer:
 
@@ -40,27 +38,20 @@ curl -L https://foundry.paradigm.xyz | bash
 
 If you do not want to use the redirect, feel free to manually download the
 foundryup installation script from
-[here](https://raw.githubusercontent.com/gakonst/foundry/master/foundryup/install).
+[here](https://raw.githubusercontent.com/gakonst/foundry/master/foundryup/foundryup).
 
-Then, in a new terminal session or after reloading your `PATH`, run it to get
-the latest `forge` and `cast` binaries:
+Then, run `foundryup` in a new terminal session or after reloading your `PATH`.
 
-```sh
-foundryup
-```
-
-Advanced ways to use `foundryup`, and other documentation, can be found in the
-[foundryup package](./foundryup/README.md). Happy forging!
+Other ways to use `foundryup`, and other documentation, can be found [here](./foundryup). Happy forging!
 
 ### Installing from source
 
 For people that want to install from source, you can do so like below:
 
-```
+```sh
 git clone https://github.com/gakonst/foundry
 cd foundry
-cargo build --release
-# copy the binaries under `./target/release/{forge, cast}` to your $PATH.
+cargo install --path ./cli --bins --locked --force
 ```
 
 Or via `cargo install --git https://github.com/gakonst/foundry --locked`
@@ -75,15 +66,11 @@ docker pull ghcr.io/gakonst/foundry:latest
 ```
 For examples and guides on using this image, see the [Docker section](https://book.getfoundry.sh/tutorials/foundry-docker.html) in the book.
 
-### Releases
+### Manual download
 
-You can manually download nightly releases
-[here](https://github.com/gakonst/foundry/releases).
+You can manually download nightly releases [here](https://github.com/gakonst/foundry/releases).
 
 ## Forge
-
-More documentation can be found in the [forge package](./forge/README.md) and in
-the [CLI README](./cli/README.md).
 
 ### Features
 
@@ -105,71 +92,68 @@ the [CLI README](./cli/README.md).
   package manager
 - **Fast CI** with the [Foundry GitHub action][foundry-gha].
 
-[foundry-gha]: https://github.com/onbjerg/foundry-toolchain
-
 ### How Fast?
 
-Forge is quite fast at both compiling (leveraging the
-[ethers-solc](https://github.com/gakonst/ethers-rs/tree/master/ethers-solc/)
-package) and testing.
+Forge is quite fast at both compiling (leveraging [ethers-solc][ethers-solc]) and testing.
 
-Some benchmarks below:
+See the benchmarks below. More benchmarks can be found in the [v0.2.0 announcement post][benchmark-post] and in the [Convex Shutdown Simulation][convex] repository.
 
-| Project                                             | Forge | DappTools | Speedup |
-| --------------------------------------------------- | ----- | --------- | ------- |
-| [guni-lev](https://github.com/hexonaut/guni-lev/)   | 28.6s | 2m36s     | 5.45x   |
-| [solmate](https://github.com/Rari-Capital/solmate/) | 6s    | 46s       | 7.66x   |
-| [geb](https://github.com/reflexer-labs/geb)         | 11s   | 40s       | 3.63x   |
-| [vaults](https://github.com/rari-capital/vaults)    | 1.4s  | 5.5s      | 3.9x    |
+**Testing Benchmarks**
 
-It also works with "non-standard" directory structures (i.e. contracts not in
-`src/`, libraries not in `lib/`). When
-[tested](https://twitter.com/gakonst/status/1461289225337421829) with
-[`openzeppelin-contracts`](https://github.com/OpenZeppelin/openzeppelin-contracts),
-Hardhat compilation took 15.244s, whereas Forge took 9.449 (~4s cached)
+| Project                         | Forge | DappTools | Speedup |
+| ------------------------------- | ----- | --------- | ------- |
+| [maple-finance/loans][loans]    | 800ms | 4m28s     | 335x    |
+| [Rari-Capital/solmate][solmate] | 2.8s  | 6m34s     | 140x    |
+| [reflexer-labs/geb][geb]        | 0.4s  | 23s       | 57.5x   |
+| [Rari-Capital/vaults][vaults]   | 0.28s | 6.5s      | 23x     |
+
+*Note: In the above benchmarks, compilation was always skipped*
+
+**Compilation Benchmarks**
+
+<img alt="Compilation benchmarks" src="./assets/compilation-benchmark.png" height="420px" />
+
+**Takeaway: Forge compilation is consistently faster by a factor of 1.7-11.3x, depending on the amount of caching involved.**
 
 ## Cast
 
 Cast is a swiss army knife for interacting with Ethereum applications from the
 command line.
 
-More documentation can be found in the [cast package](./cast/README.md).
+More documentation can be found in the [cast package](./cast).
 
-## Setup
+## Configuration
 
-### Configuring Foundry
+### Using `foundry.toml`
 
-Foundry is designed to be very configurable. You can create a TOML file called
-[`foundry.toml`](./config/README.md) place it in the project or any other parent
-directory, and it will apply the options in that file. See
+Foundry is designed to be very configurable. You can configure Foundry using a file called
+[`foundry.toml`](./config) in the root of your project, or any other parent
+director. See
 [config package](./config/README.md#all-options) for all available options.
 
-Configurations can be arbitrarily namespaced by profiles. Foundry's default
-configuration is also named `default`. The selected profile is the value of the
-`FOUNDRY_PROFILE` environment variable, or if it is not set, "default".
-`FOUNDRY_` or `DAPP_` prefixed environment variables, like `FOUNDRY_SRC` take
-precedence, [see "Default Profile"](./config/README.md#default-profile)
+Configuration can be arbitrarily namespaced by profiles. The default profile is named `default` (see ["Default Profile"](./config/README.md#default-profile)).
+
+You can select another profile using the `FOUNDRY_PROFILE` environment variable.
+You can also override parts of your configuration using `FOUNDRY_` or `DAPP_` prefixed environment variables, like `FOUNDRY_SRC`.
 
 `forge init` creates a basic, extendable `foundry.toml` file.
 
-To set all `.dapprc` env vars run `source .dapprc` beforehand.
-
-To see all currently set options run `forge config`, to only see the basic
-options (as set with `forge init`) run `forge config --basic`, this can be used
+To see the your current configuration, run `forge config`. To see only basic
+options (as set with `forge init`), run `forge config --basic`. This can be used
 to create a new `foundry.toml` file with `forge config --basic > foundry.toml`.
-By default `forge config` shows the currently selected foundry profile and its
-values. It also accepts the same arguments as `forge build`.
 
-### Additional Setup
+By default `forge config` shows the currently selected foundry profile and its values. It also accepts the same arguments as `forge build`.
 
-You can find additional setup guides in the [Foundry Book][foundry-book]:
+### DappTools Compatibility
+
+You can re-use your `.dapprc` environment variabless by running `source .dapprc` beforehand using a Foundry tool.
+
+### Additional Configuration
+
+You can find additional setup and configurations guides in the [Foundry Book][foundry-book]:
 
 - [Setting up VSCode][vscode-setup]
 - [Shell autocompletions][shell-setup]
-
-[vscode-setup]: https://book.getfoundry.sh/config/vscode.html
-[shell-setup]:
-  https://book.getfoundry.sh/config/shell-autocompletion.html
 
 ### Troubleshooting Installation
 
@@ -198,14 +182,8 @@ forge: /lib/x86_64-linux-gnu/libc.so.6: version 'GLIBC_2.29' not found (required
 
 There are 2 workarounds:
 
-1. Build from source using the following command:
-
-```
-foundryup -b master
-```
-
-2. For a solution using Docker, refer to this article:
-   https://kobzol.github.io/rust/ci/2021/05/07/building-rust-binaries-in-ci-that-work-with-older-glibc.html#solution
+1. Building from source: ``foundryup -b master``
+2. [Using Docker](https://book.getfoundry.sh/getting-started/installation.html#using-with-docker)
 
 ## Contributing
 
@@ -213,16 +191,16 @@ See our [contributing guidelines](./CONTRIBUTING.md).
 
 ## Getting Help
 
-First, see if the answer to your question can be found in the API documentation.
-If the answer is not there, try opening an
-[issue](https://github.com/gakonst/foundry/issues/new) with the question.
+First, see if the answer to your question can be found in [book][foundry-book], or in the relevant crate.
 
-To join the Foundry community, you can use our
-[main telegram](https://t.me/foundry_rs) to chat with us!
+If the answer is not there:
 
-To receive help with Foundry, you can use our
-[support telegram](https://t.me/+pqodMdZCoQQyZGI6) to ask any questions you may
-have.
+- Join the [support Telegram][tg-support-url] to get help, or
+- Open a [discussion](https://github.com/gakonst/foundry/discussions/new) with your question, or
+- Open an issue with [the bug](https://github.com/gakonst/foundry/issues/new)
+
+If you want to contribute, or follow along with contributor discussion,
+you can use our [main telegram](https://t.me/foundry_rs) to chat with us about the development of Foundry!
 
 ## Acknowledgements
 
@@ -244,3 +222,16 @@ have.
   [contributors](https://github.com/gakonst/foundry/graphs/contributors) to the
   [ethers-rs](https://github.com/gakonst/ethers-rs) &
   [foundry](https://github.com/gakonst/foundry) repositories and chatrooms.
+
+[foundry-book]: https://book.getfoundry.sh
+[foundry-gha]: https://github.com/onbjerg/foundry-toolchain
+[ethers-solc]: https://github.com/gakonst/ethers-rs/tree/master/ethers-solc/
+[loans]: https://github.com/maple-finance/loans
+[solmate]: https://github.com/Rari-Capital/solmate/
+[geb]: https://github.com/reflexer-labs/geb
+[vaults]: https://github.com/rari-capital/vaults
+[benchmark-post]: https://www.paradigm.xyz/2022/03/foundry-02#blazing-fast-compilation--testing
+[convex]: https://github.com/mds1/convex-shutdown-simulation
+[vscode-setup]: https://book.getfoundry.sh/config/vscode.html
+[shell-setup]:
+  https://book.getfoundry.sh/config/shell-autocompletion.html
