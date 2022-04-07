@@ -1,5 +1,6 @@
 use super::{
-    CallTraceArena, RawOrDecodedCall, RawOrDecodedLog, RawOrDecodedReturnData, TraceIdentifier,
+    identifier::TraceIdentifier, CallTraceArena, RawOrDecodedCall, RawOrDecodedLog,
+    RawOrDecodedReturnData,
 };
 use crate::abi::{CHEATCODE_ADDRESS, CONSOLE_ABI, HEVM_ABI};
 use ethers::{
@@ -140,22 +141,26 @@ impl CallTraceDecoder {
     ///
     /// Unknown contracts are contracts that either lack a label or an ABI.
     pub fn identify(&mut self, trace: &CallTraceArena, identifier: &impl TraceIdentifier) {
-        trace.addresses_iter().for_each(|(address, code)| {
-            // We only try to identify addresses with missing data
-            if self.labels.contains_key(address) && self.contracts.contains_key(address) {
-                return
+        let unidentified_addresses = trace
+            .addresses()
+            .into_iter()
+            .filter(|(address, _)| {
+                !self.labels.contains_key(address) || !self.contracts.contains_key(address)
+            })
+            .collect();
+
+        identifier.identify_addresses(unidentified_addresses).iter().for_each(|identity| {
+            let address = identity.address;
+
+            if let Some(contract) = &identity.contract {
+                self.contracts.entry(address).or_insert_with(|| contract.to_string());
             }
 
-            let (contract, label, abi) = identifier.identify_address(address, code);
-            if let Some(contract) = contract {
-                self.contracts.entry(*address).or_insert(contract);
+            if let Some(label) = &identity.label {
+                self.labels.entry(address).or_insert_with(|| label.to_string());
             }
 
-            if let Some(label) = label {
-                self.labels.entry(*address).or_insert(label);
-            }
-
-            if let Some(abi) = abi {
+            if let Some(abi) = &identity.abi {
                 // Store known functions for the address
                 abi.functions()
                     .map(|func| (func.short_signature(), func.clone()))
