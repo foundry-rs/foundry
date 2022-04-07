@@ -35,6 +35,7 @@ pub mod test_helpers {
         fuzz::FuzzedExecutor,
         CALLER,
     };
+    use foundry_utils::RuntimeOrHandle;
     use std::str::FromStr;
 
     pub static PROJECT: Lazy<Project> = Lazy::new(|| {
@@ -62,10 +63,8 @@ pub mod test_helpers {
     });
 
     pub fn test_executor() -> Executor<Backend> {
-        ExecutorBuilder::new()
-            .with_cheatcodes(false)
-            .with_config((*EVM_OPTS).evm_env())
-            .build(Backend::simple())
+        let env = RuntimeOrHandle::new().block_on((*EVM_OPTS).evm_env());
+        ExecutorBuilder::new().with_cheatcodes(false).with_config(env).build(Backend::simple())
     }
 
     pub fn fuzz_executor<DB: DatabaseRef>(executor: &Executor<DB>) -> FuzzedExecutor<DB> {

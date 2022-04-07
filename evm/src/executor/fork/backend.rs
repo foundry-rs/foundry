@@ -8,7 +8,6 @@ use ethers::{
     types::{Address, BlockId, Bytes, H160, H256, U256},
     utils::keccak256,
 };
-use foundry_utils::RuntimeOrHandle;
 use futures::{
     channel::mpsc::{channel, Receiver, Sender},
     stream::Stream,
@@ -383,19 +382,15 @@ impl SharedBackend {
     /// dropped.
     ///
     /// NOTE: this should be called with `Arc<Provider>`
-    pub fn spawn_backend<M>(provider: M, db: BlockchainDb, pin_block: Option<BlockId>) -> Self
+    pub async fn spawn_backend<M>(provider: M, db: BlockchainDb, pin_block: Option<BlockId>) -> Self
     where
         M: Middleware + Unpin + 'static + Clone,
     {
         let (backend, backend_rx) = channel(1);
         let handler = BackendHandler::new(provider, db, backend_rx, pin_block);
         // spawn the provider handler to background
-        let rt = RuntimeOrHandle::new();
         trace!(target: "backendhandler", "spawning Backendhandler");
-        std::thread::spawn(move || match rt {
-            RuntimeOrHandle::Runtime(runtime) => runtime.block_on(handler),
-            RuntimeOrHandle::Handle(handle) => handle.block_on(handler),
-        });
+        tokio::spawn(handler);
 
         Self { backend }
     }
@@ -464,7 +459,7 @@ mod tests {
         providers::{Http, Provider},
         types::Address,
     };
-    use tokio::runtime::Runtime;
+    use foundry_utils::RuntimeOrHandle;
 
     use std::{collections::BTreeSet, convert::TryFrom, path::PathBuf, sync::Arc};
 
@@ -481,7 +476,9 @@ mod tests {
         };
 
         let db = BlockchainDb::new(meta, None);
-        let backend = SharedBackend::spawn_backend(Arc::new(provider), db.clone(), None);
+        let runtime = RuntimeOrHandle::new();
+        let backend =
+            runtime.block_on(SharedBackend::spawn_backend(Arc::new(provider), db.clone(), None));
 
         // some rng contract from etherscan
         let address: Address = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();
@@ -536,23 +533,22 @@ mod tests {
             chain_id: 1,
         };
 
+        let runtime = RuntimeOrHandle::new();
+        let backend = runtime.block_on(fork.spawn_backend(&env));
+
         // some rng contract from etherscan
         let address: Address = "63091244180ae240c87d1f528f5f269134cb07b3".parse().unwrap();
+
+        let idx = U256::from(0u64);
+        let _value = backend.storage(address, idx);
+        let _account = backend.basic(address);
+
+        // fill some slots
         let num_slots = 10u64;
-
-        let runtime = Runtime::new().expect("Failed to start runtime");
-        runtime.block_on(async move {
-            let backend = fork.spawn_backend(&env);
-
-            let idx = U256::from(0u64);
-            let _value = backend.storage(address, idx);
-            let _account = backend.basic(address);
-
-            // fill some slots
-            for idx in 1..num_slots {
-                let _ = backend.storage(address, idx.into());
-            }
-        });
+        for idx in 1..num_slots {
+            let _ = backend.storage(address, idx.into());
+        }
+        drop(backend);
         drop(runtime);
 
         let meta = BlockchainDbMeta {

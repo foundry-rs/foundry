@@ -51,7 +51,7 @@ impl Fork {
     /// The `SharedBackend` returned is connected to a background thread that communicates with the
     /// endpoint via channels and is intended to be cloned when multiple [revm::Database] are
     /// required. See also [crate::executor::fork::SharedBackend]
-    pub fn spawn_backend(self, env: &Env) -> SharedBackend {
+    pub async fn spawn_backend(self, env: &Env) -> SharedBackend {
         let Fork { cache_path, url, pin_block, chain_id } = self;
 
         let host = Url::parse(&url)
@@ -75,7 +75,7 @@ impl Fork {
 
         let db = BlockchainDb::new(meta, cache_path);
 
-        SharedBackend::spawn_backend(provider, db, pin_block.map(Into::into))
+        SharedBackend::spawn_backend(provider, db, pin_block.map(Into::into)).await
     }
 }
 /// Variants of a [revm::Database]
@@ -90,9 +90,9 @@ pub enum Backend {
 
 impl Backend {
     /// Instantiates a new backend union based on whether there was or not a fork url specified
-    pub fn new(fork: Option<Fork>, env: &Env) -> Self {
+    pub async fn new(fork: Option<Fork>, env: &Env) -> Self {
         if let Some(fork) = fork {
-            Backend::Forked(fork.spawn_backend(env))
+            Backend::Forked(fork.spawn_backend(env).await)
         } else {
             Self::simple()
         }
