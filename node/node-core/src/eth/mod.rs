@@ -67,11 +67,11 @@ pub enum EthRequest {
     #[serde(rename = "eth_sendTransaction", with = "sequence")]
     EthSendTransaction(Box<EthTransactionRequest>),
 
-    #[serde(rename = "eth_sendTransaction")]
+    #[serde(rename = "eth_sendRawTransaction", with = "sequence")]
     EthSendRawTransaction(Bytes),
 
     #[serde(rename = "eth_call")]
-    EthCall(CallRequest, Option<BlockNumber>),
+    EthCall(WithBlockParameter<CallRequest>),
 
     #[serde(rename = "eth_estimateGas")]
     EthEstimateGas(WithBlockParameter<CallRequest>),
@@ -106,7 +106,7 @@ pub enum EthRequest {
     #[serde(rename = "eth_submitHashrate", with = "sequence")]
     EthSubmitHashRate(U256, H256),
 
-    #[serde(rename = "eth_feeHistory")]
+    #[serde(rename = "eth_feeHistory", with = "sequence")]
     EthFeeHistory(U256, BlockNumber, Option<Vec<f64>>),
 }
 

@@ -49,7 +49,7 @@ pub struct EthApi {
     /// available signers
     signers: Arc<Vec<Box<dyn Signer>>>,
     /// data required for `eth_feeHistory`
-    fee_history_cache: FeeHistoryCache,
+    _fee_history_cache: FeeHistoryCache,
 }
 
 // === impl Eth RPC API ===
@@ -62,7 +62,7 @@ impl EthApi {
         signers: Arc<Vec<Box<dyn Signer>>>,
         fee_history_cache: FeeHistoryCache,
     ) -> Self {
-        Self { pool, backend, is_authority: true, signers, fee_history_cache }
+        Self { pool, backend, is_authority: true, signers, _fee_history_cache: fee_history_cache }
     }
 
     /// Executes the [EthRequest] and returns an RPC [RpcResponse]
@@ -105,7 +105,7 @@ impl EthApi {
             }
             EthRequest::EthGetCodeAt(addr, block) => self.code_at(addr, block).to_rpc_result(),
             EthRequest::EthSendRawTransaction(tx) => self.send_raw_transaction(tx).to_rpc_result(),
-            EthRequest::EthCall(call, block) => self.call(call, block).to_rpc_result(),
+            EthRequest::EthCall(param) => self.call(param.value, param.block).to_rpc_result(),
             EthRequest::EthEstimateGas(param) => {
                 self.estimate_gas(param.value, param.block).to_rpc_result()
             }

@@ -8,7 +8,7 @@ use crate::eth::{
 use ethers::types::{TxHash, U64};
 use futures::channel::mpsc::{channel, Receiver, Sender};
 use parking_lot::{Mutex, RwLock};
-use std::{collections::VecDeque, sync::Arc};
+use std::{collections::VecDeque, fmt, sync::Arc};
 use tracing::{debug, trace, warn};
 
 pub mod transactions;
@@ -214,7 +214,6 @@ impl PoolInner {
 }
 
 /// Represents the outcome of a prune
-#[derive(Debug)]
 pub struct PruneResult {
     /// a list of added transactions that a pruned marker satisfied
     pub promoted: Vec<AddedTransaction>,
@@ -222,6 +221,25 @@ pub struct PruneResult {
     pub failed: Vec<TxHash>,
     /// all transactions that were pruned from the ready pool
     pub pruned: Vec<Arc<PoolTransaction>>,
+}
+
+impl fmt::Debug for PruneResult {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        write!(fmt, "PruneResult {{ ")?;
+        write!(
+            fmt,
+            "promoted: {:?}, ",
+            self.promoted.iter().map(|tx| *tx.hash()).collect::<Vec<_>>()
+        )?;
+        write!(fmt, "failed: {:?}, ", self.failed)?;
+        write!(
+            fmt,
+            "pruned: {:?}, ",
+            self.pruned.iter().map(|tx| *tx.pending_transaction.hash()).collect::<Vec<_>>()
+        )?;
+        write!(fmt, "}}")?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]

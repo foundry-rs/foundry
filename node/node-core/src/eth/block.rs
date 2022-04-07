@@ -156,7 +156,7 @@ impl rlp::Decodable for Header {
 }
 
 /// Partial header definition without ommers hash and transactions root
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct PartialHeader {
     pub parent_hash: H256,
     pub beneficiary: Address,

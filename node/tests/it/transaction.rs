@@ -1,6 +1,7 @@
 use crate::{init_tracing, next_port};
-use ethers::{providers::Middleware, signers::Signer, types::TransactionRequest};
+use ethers::prelude::{abigen, Middleware, Signer, SignerMiddleware, TransactionRequest};
 use foundry_node::{spawn, NodeConfig};
+use std::sync::Arc;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_send_transaction() {
@@ -43,4 +44,21 @@ async fn can_transfer_eth() {
     let to_balance = provider.get_balance(to, None).await.unwrap();
 
     assert_eq!(balance_before.saturating_add(amount), to_balance);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_deploy_greeter() {
+    abigen!(Greeter, "test-data/greeter.json");
+
+    init_tracing();
+    let (_api, handle) = spawn(NodeConfig::default().port(next_port()));
+    let provider = handle.http_provider();
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let greeter_contract =
+        Greeter::deploy(client, "Hello World!".to_string()).unwrap().legacy().send().await.unwrap();
+
+    dbg!(greeter_contract);
 }
