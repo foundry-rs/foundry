@@ -466,7 +466,7 @@ fn test(
         let cache_ttl = Duration::from_secs(24 * 60 * 60);
         let etherscan_identifier = EtherscanIdentifier::new(
             remote_chain_id,
-            config.etherscan_api_key.unwrap_or_default(),
+            config.etherscan_api_key,
             remote_chain_id.and_then(Config::foundry_etherscan_cache_dir),
             cache_ttl,
         );
