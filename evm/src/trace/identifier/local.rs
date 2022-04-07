@@ -1,4 +1,4 @@
-use super::TraceIdentifier;
+use super::{AddressIdentity, TraceIdentifier};
 use ethers::{
     abi::{Abi, Address},
     prelude::ArtifactId,
@@ -27,22 +27,21 @@ impl TraceIdentifier for LocalTraceIdentifier {
     fn identify_addresses(
         &self,
         addresses: Vec<(&Address, Option<&Vec<u8>>)>,
-    ) -> Vec<(Address, Option<String>, Option<String>, Option<Cow<Abi>>)> {
+    ) -> Vec<AddressIdentity> {
         addresses
             .into_iter()
-            .filter_map(|(addr, code)| {
-                code.map(|code| {
-                    self.local_contracts
-                        .iter()
-                        .find(|(known_code, _)| diff_score(known_code, code) < 0.1)
-                        .map_or((*addr, None, None, None), |(_, (name, abi))| {
-                            (
-                                *addr,
-                                Some(name.clone()),
-                                Some(name.clone()),
-                                Some(Cow::Borrowed(abi)),
-                            )
-                        })
+            .filter_map(|(address, code)| {
+                let code = code?;
+                let (_, (name, abi)) = self
+                    .local_contracts
+                    .iter()
+                    .find(|(known_code, _)| diff_score(known_code, code) < 0.1)?;
+
+                Some(AddressIdentity {
+                    address: *address,
+                    contract: Some(name.clone()),
+                    label: Some(name.clone()),
+                    abi: Some(Cow::Borrowed(abi)),
                 })
             })
             .collect()

@@ -1,5 +1,6 @@
 use super::{
-    CallTraceArena, RawOrDecodedCall, RawOrDecodedLog, RawOrDecodedReturnData, TraceIdentifier,
+    identifier::TraceIdentifier, CallTraceArena, RawOrDecodedCall, RawOrDecodedLog,
+    RawOrDecodedReturnData,
 };
 use crate::abi::{CHEATCODE_ADDRESS, CONSOLE_ABI, HEVM_ABI};
 use ethers::{
@@ -148,41 +149,41 @@ impl CallTraceDecoder {
             })
             .collect();
 
-        identifier.identify_addresses(unidentified_addresses).iter().for_each(
-            |(address, contract, label, abi)| {
-                if let Some(contract) = contract {
-                    self.contracts.entry(*address).or_insert_with(|| contract.to_string());
-                }
+        identifier.identify_addresses(unidentified_addresses).iter().for_each(|identity| {
+            let address = identity.address;
 
-                if let Some(label) = label {
-                    self.labels.entry(*address).or_insert_with(|| label.to_string());
-                }
+            if let Some(contract) = &identity.contract {
+                self.contracts.entry(address).or_insert_with(|| contract.to_string());
+            }
 
-                if let Some(abi) = abi {
-                    // Store known functions for the address
-                    abi.functions()
-                        .map(|func| (func.short_signature(), func.clone()))
-                        .for_each(|(sig, func)| self.functions.entry(sig).or_default().push(func));
+            if let Some(label) = &identity.label {
+                self.labels.entry(address).or_insert_with(|| label.to_string());
+            }
 
-                    // Flatten events from all ABIs
-                    abi.events()
-                        .map(|event| ((event.signature(), indexed_inputs(event)), event.clone()))
-                        .for_each(|(sig, event)| {
-                            self.events.entry(sig).or_default().push(event);
-                        });
+            if let Some(abi) = &identity.abi {
+                // Store known functions for the address
+                abi.functions()
+                    .map(|func| (func.short_signature(), func.clone()))
+                    .for_each(|(sig, func)| self.functions.entry(sig).or_default().push(func));
 
-                    // Flatten errors from all ABIs
-                    abi.errors().for_each(|error| {
-                        let entry = self
-                            .errors
-                            .errors
-                            .entry(error.name.clone())
-                            .or_insert_with(Default::default);
-                        entry.push(error.clone());
+                // Flatten events from all ABIs
+                abi.events()
+                    .map(|event| ((event.signature(), indexed_inputs(event)), event.clone()))
+                    .for_each(|(sig, event)| {
+                        self.events.entry(sig).or_default().push(event);
                     });
-                }
-            },
-        );
+
+                // Flatten errors from all ABIs
+                abi.errors().for_each(|error| {
+                    let entry = self
+                        .errors
+                        .errors
+                        .entry(error.name.clone())
+                        .or_insert_with(Default::default);
+                    entry.push(error.clone());
+                });
+            }
+        });
     }
 
     pub fn decode(&self, traces: &mut CallTraceArena) {

@@ -2,7 +2,6 @@
 ///
 /// Identifiers figure out what ABIs and labels belong to all the addresses of the trace.
 pub mod identifier;
-pub use identifier::TraceIdentifier;
 
 mod decoder;
 pub use decoder::CallTraceDecoder;
@@ -73,7 +72,7 @@ impl CallTraceArena {
                     }
                 }
 
-                (&node.trace.address, code)
+                (&node.trace.address, None)
             })
             .collect()
     }

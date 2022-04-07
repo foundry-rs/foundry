@@ -1,9 +1,5 @@
-use super::TraceIdentifier;
-use ethers::{
-    abi::{Abi, Address},
-    etherscan,
-    types::Chain,
-};
+use super::{AddressIdentity, TraceIdentifier};
+use ethers::{abi::Address, etherscan, types::Chain};
 use futures::stream::{self, StreamExt};
 use std::{borrow::Cow, path::PathBuf};
 use tokio::time::{sleep, Duration};
@@ -40,7 +36,7 @@ impl TraceIdentifier for EtherscanIdentifier {
     fn identify_addresses(
         &self,
         addresses: Vec<(&Address, Option<&Vec<u8>>)>,
-    ) -> Vec<(Address, Option<String>, Option<String>, Option<Cow<Abi>>)> {
+    ) -> Vec<AddressIdentity> {
         if let Some(client) = &self.client {
             let stream = stream::iter(addresses.into_iter().map(futures::future::ready))
                 .buffered(10)
@@ -79,8 +75,8 @@ impl TraceIdentifier for EtherscanIdentifier {
                         }
                     }
                 })
-                .map(|(addr, label, abi): (Address, String, ethers::abi::Abi)| {
-                    (addr, Some(label.clone()), Some(label), Some(Cow::Owned(abi)))
+                .map(|(address, label, abi): (Address, String, ethers::abi::Abi)| {
+                    AddressIdentity { address, label: Some(label.clone()), contract: Some(label), abi: Some(Cow::Owned(abi)) }
                 })
                 .collect();
             foundry_utils::RuntimeOrHandle::new().block_on(stream)
