@@ -173,7 +173,7 @@ macro_rules! forgetest_external {
                 cmd.set_env("FOUNDRY_FORK_BLOCK_NUMBER", stringify!($fork_block));
             } else {
                 // Clear out `ETH_RPC_URL` so non-forking tests do not end up forking anyway
-                cmd.temp_unset_env("ETH_RPC_URL");
+                cmd.unset_env("ETH_RPC_URL");
             }
             cmd.assert_non_empty_stdout();
         }
