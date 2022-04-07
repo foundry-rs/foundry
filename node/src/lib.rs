@@ -16,7 +16,7 @@ use ethers::{
     signers::Signer,
     types::{Address, U256},
 };
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use std::{
     future::Future,
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -94,9 +94,15 @@ pub fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
     ));
 
     let dev_signer: Box<dyn EthSigner> = Box::new(DevSigner::new(accounts));
+    let fee_history_cache = Arc::new(Mutex::new(Default::default()));
 
     // create the cloneable api wrapper
-    let api = EthApi::new(Arc::clone(&pool), Arc::clone(&backend), Arc::new(vec![dev_signer]));
+    let api = EthApi::new(
+        Arc::clone(&pool),
+        Arc::clone(&backend),
+        Arc::new(vec![dev_signer]),
+        fee_history_cache,
+    );
 
     let node_service = NodeService::new(pool, backend, mode);
 

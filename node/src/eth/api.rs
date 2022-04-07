@@ -2,7 +2,7 @@ use crate::{
     eth::{
         backend,
         error::{BlockchainError, Result, ToRpcResponseResult},
-        fees::FeeDetails,
+        fees::{FeeDetails, FeeHistoryCache},
         pool::{
             transactions::{to_marker, PoolTransaction},
             Pool,
@@ -48,6 +48,8 @@ pub struct EthApi {
     is_authority: bool,
     /// available signers
     signers: Arc<Vec<Box<dyn Signer>>>,
+    /// data required for `eth_feeHistory`
+    fee_history_cache: FeeHistoryCache,
 }
 
 // === impl Eth RPC API ===
@@ -58,8 +60,9 @@ impl EthApi {
         pool: Arc<Pool>,
         backend: Arc<backend::mem::Backend>,
         signers: Arc<Vec<Box<dyn Signer>>>,
+        fee_history_cache: FeeHistoryCache,
     ) -> Self {
-        Self { pool, backend, is_authority: true, signers }
+        Self { pool, backend, is_authority: true, signers, fee_history_cache }
     }
 
     /// Executes the [EthRequest] and returns an RPC [RpcResponse]
@@ -252,8 +255,8 @@ impl EthApi {
     /// Returns block with given number.
     ///
     /// Handler for ETH RPC call: `eth_getBlockByNumber`
-    pub fn block_by_number(&self, _: BlockNumber, _: bool) -> Result<Option<Block<TxHash>>> {
-        Err(BlockchainError::RpcUnimplemented)
+    pub fn block_by_number(&self, number: BlockNumber, _: bool) -> Result<Option<Block<TxHash>>> {
+        Ok(self.backend.block_by_number(number))
     }
 
     /// Returns the number of transactions sent from given address at given time (block number).
@@ -545,10 +548,15 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_feeHistory`
     pub fn fee_history(
         &self,
-        _block_count: U256,
-        _newest_block: BlockNumber,
-        _reward_percentiles: Option<Vec<f64>>,
+        block_count: U256,
+        newest_block: BlockNumber,
+        reward_percentiles: Option<Vec<f64>>,
     ) -> Result<FeeHistory> {
+        // The max supported range size is 1024 by spec.
+        let range_limit = U256::from(1024);
+        let block_count =
+            if block_count > range_limit { range_limit.as_u64() } else { block_count.as_u64() };
+
         Err(BlockchainError::RpcUnimplemented)
     }
 

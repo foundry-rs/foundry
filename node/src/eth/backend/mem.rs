@@ -9,9 +9,12 @@ use ethers::{
     types::BlockId,
 };
 
-use crate::{eth::fees::FeeDetails, revm::db::DatabaseRef};
+use crate::{
+    eth::{backend::duration_since_unix_epoch, fees::FeeDetails},
+    revm::db::DatabaseRef,
+};
 use ethers::{
-    types::{Address, Log, Transaction, TransactionReceipt},
+    types::{Address, Block as EthersBlock, Log, Transaction, TransactionReceipt},
     utils::{keccak256, rlp},
 };
 use foundry_evm::{
@@ -19,7 +22,7 @@ use foundry_evm::{
     revm::{db::CacheDB, CreateScheme, Env, Return, TransactOut, TransactTo, TxEnv},
 };
 use foundry_node_core::eth::{
-    block::{Block, BlockInfo},
+    block::{Block, BlockInfo, Header, PartialHeader},
     call::CallRequest,
     receipt::{EIP658Receipt, TypedReceipt},
     transaction::{TransactionInfo, TypedTransaction},
@@ -30,7 +33,7 @@ use std::{collections::HashMap, sync::Arc};
 use tracing::trace;
 
 /// Stores the blockchain data (blocks, transactions)
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct BlockchainStorage {
     /// all stored blocks (block hash -> block)
     blocks: HashMap<H256, Block>,
@@ -45,6 +48,29 @@ struct BlockchainStorage {
     /// Mapping from the transaction hash to a tuple containing the transaction as well as the
     /// transaction receipt
     transactions: HashMap<TxHash, MinedTransaction>,
+}
+
+impl Default for BlockchainStorage {
+    fn default() -> Self {
+        // create a dummy genesis block
+        let partial_header = PartialHeader {
+            timestamp: duration_since_unix_epoch().as_secs(),
+            ..Default::default()
+        };
+        let block = Block::new(partial_header, vec![], vec![]);
+        let genesis_hash = block.header.hash();
+        let best_hash = genesis_hash;
+        let best_number: U64 = 0u64.into();
+
+        Self {
+            blocks: HashMap::from([(genesis_hash, block)]),
+            hashes: HashMap::from([(best_number, genesis_hash)]),
+            best_hash,
+            best_number,
+            genesis_hash,
+            transactions: Default::default(),
+        }
+    }
 }
 
 impl BlockchainStorage {
@@ -277,6 +303,73 @@ impl Backend {
         }
 
         receipts
+    }
+
+    pub fn block_by_number(&self, number: BlockNumber) -> Option<EthersBlock<TxHash>> {
+        let block = {
+            let storage = self.blockchain.storage.read();
+            let hash = match number {
+                BlockNumber::Latest => storage.best_hash,
+                BlockNumber::Earliest => storage.genesis_hash,
+                BlockNumber::Pending => return None,
+                BlockNumber::Number(num) => *storage.hashes.get(&num)?,
+            };
+            storage.blocks.get(&hash)?.clone()
+        };
+        let size = U256::from(rlp::encode(&block).len() as u32);
+
+        let Block { header, transactions, .. } = block;
+
+        let hash = header.hash();
+        let Header {
+            parent_hash,
+            ommers_hash,
+            beneficiary,
+            state_root,
+            transactions_root,
+            receipts_root,
+            logs_bloom,
+            difficulty,
+            number,
+            gas_limit,
+            gas_used,
+            timestamp,
+            extra_data,
+            mix_hash,
+            nonce,
+        } = header;
+
+        let block = EthersBlock {
+            hash: Some(hash),
+            parent_hash,
+            uncles_hash: ommers_hash,
+            author: beneficiary,
+            state_root,
+            transactions_root,
+            receipts_root,
+            number: Some(number.as_u64().into()),
+            gas_used,
+            gas_limit,
+            extra_data,
+            logs_bloom: Some(logs_bloom),
+            timestamp: timestamp.into(),
+            difficulty,
+            total_difficulty: None,
+            seal_fields: {
+                let mut arr = [0u8; 8];
+                nonce.to_big_endian(&mut arr);
+                vec![mix_hash.as_bytes().to_vec().into(), arr.to_vec().into()]
+            },
+            uncles: vec![],
+            transactions: transactions.into_iter().map(|tx| tx.hash()).collect(),
+            size: Some(size),
+            mix_hash: Some(mix_hash),
+            nonce: Some(nonce),
+            // TODO check
+            base_fee_per_gas: Some(self.base_fee()),
+        };
+
+        Some(block)
     }
 
     /// Returns the transaction receipt for the given hash
