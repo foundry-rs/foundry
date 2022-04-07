@@ -59,7 +59,6 @@ pub struct ClapChain {
 }
 
 #[derive(Parser, Debug, Clone, Serialize)]
-
 pub struct EthereumOpts {
     #[clap(env = "ETH_RPC_URL", long = "rpc-url", help = "The tracing / archival node's URL")]
     pub rpc_url: Option<String>,

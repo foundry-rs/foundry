@@ -12,10 +12,12 @@ use foundry_config::{
         value::{Dict, Map, Value},
         Metadata, Profile,
     },
-    find_project_root_path, Config,
+    impl_figment_no_root_convert, Config,
 };
 
 use serde::Serialize;
+
+impl_figment_no_root_convert!(CallArgs);
 
 #[derive(Debug, Clone, Parser, Serialize)]
 pub struct CallArgs {
@@ -34,17 +36,6 @@ pub struct CallArgs {
     pub eth: EthereumOpts,
 }
 
-impl<'a> From<&'a CallArgs> for Config {
-    fn from(args: &'a CallArgs) -> Self {
-        let config = Config::figment_with_root(find_project_root_path().unwrap())
-            .merge(args)
-            .extract::<Config>()
-            .unwrap_or_else(|err| panic!("{}", err));
-
-        config
-    }
-}
-
 impl figment::Provider for CallArgs {
     fn metadata(&self) -> Metadata {
         Metadata::named("Call args provider")
@@ -58,8 +49,8 @@ impl figment::Provider for CallArgs {
             dict.insert("eth_rpc_url".to_string(), Value::from(rpc_url.to_string()));
         }
 
-        if let Some(_) = self.eth.from {
-            dict.insert("sender".to_string(), Value::from(dict.get("from").unwrap().clone()));
+        if let Some(from) = self.eth.from {
+            dict.insert("sender".to_string(), Value::from(format!("{:?}", from)));
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
