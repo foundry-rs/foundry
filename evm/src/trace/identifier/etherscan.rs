@@ -24,7 +24,7 @@ impl EtherscanIdentifier {
     ) -> Self {
         if let Some(cache_path) = &cache_path {
             if let Err(err) = std::fs::create_dir_all(cache_path.join("sources")) {
-                warn!("could not create etherscan cache dir: {:?}", err);
+                warn!(target: "etherscanidentifier", "could not create etherscan cache dir: {:?}", err);
             }
         }
 
@@ -48,7 +48,7 @@ impl TraceIdentifier for EtherscanIdentifier {
                     let client = client.clone();
                     async move {
                         let mut i = 0;
-                        trace!("requesting etherscan info for contract {addr}");
+                        trace!(target: "etherscanidentifier", "requesting etherscan info for contract {:?}", addr);
                         loop {
                             match client.contract_source_code(*addr).await {
                                 Ok(mut metadata) => {
@@ -62,17 +62,17 @@ impl TraceIdentifier for EtherscanIdentifier {
                                 }
                                 Err(etherscan::errors::EtherscanError::RateLimitExceeded) => {
                                     sleep(Duration::from_secs(1)).await;
-                                    trace!("rate limit exceeded on attempt {i}");
+                                    trace!(target: "etherscanidentifier", "rate limit exceeded on attempt {}", i);
                                     i += 1;
                                     if i < 5 {
                                         continue
                                     } else {
-                                        warn!("no more retries left for request");
+                                        warn!(target: "etherscanidentifier", "no more retries left for request");
                                         break None
                                     }
                                 }
                                 Err(err) => {
-                                    warn!("could not get etherscan info: {:?}", err);
+                                    warn!(target: "etherscanidentifier", "could not get etherscan info: {:?}", err);
                                     break None
                                 }
                             }
