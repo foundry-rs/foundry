@@ -16,7 +16,7 @@ use ethers::{
 };
 use foundry_evm::{
     revm,
-    revm::{db::CacheDB, CreateScheme, Env, TransactOut, TransactTo, TxEnv},
+    revm::{db::CacheDB, CreateScheme, Env, Return, TransactOut, TransactTo, TxEnv},
 };
 use foundry_node_core::eth::{
     block::{Block, BlockInfo},
@@ -228,7 +228,11 @@ impl Backend {
     }
 
     /// Executes the `CallRequest` without writing to the DB
-    pub fn call(&self, request: CallRequest, fee_details: FeeDetails) -> (TransactOut, u64) {
+    pub fn call(
+        &self,
+        request: CallRequest,
+        fee_details: FeeDetails,
+    ) -> (Return, TransactOut, u64) {
         let CallRequest { from, to, gas, value, data, nonce, access_list, .. } = request;
 
         let FeeDetails { gas_price, max_fee_per_gas, max_priority_fee_per_gas } = fee_details;
@@ -257,8 +261,8 @@ impl Backend {
         evm.env = env;
         evm.database(&*db);
 
-        let (_, out, gas, _, _) = evm.transact_ref();
-        (out, gas)
+        let (exit, out, gas, _, _) = evm.transact_ref();
+        (exit, out, gas)
     }
 
     /// returns all receipts for the given transactions

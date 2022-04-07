@@ -1,9 +1,5 @@
 use crate::{init_tracing, next_port};
-use ethers::{
-    providers::Middleware,
-    signers::Signer,
-    types::{TransactionRequest},
-};
+use ethers::{providers::Middleware, signers::Signer, types::TransactionRequest};
 use foundry_node::{spawn, NodeConfig};
 
 #[tokio::test(flavor = "multi_thread")]

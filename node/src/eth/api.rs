@@ -239,21 +239,21 @@ impl EthApi {
         _index: U256,
         _number: Option<BlockNumber>,
     ) -> Result<H256> {
-        todo!()
+        Err(BlockchainError::RpcUnimplemented)
     }
 
     /// Returns block with given hash.
     ///
     /// Handler for ETH RPC call: `eth_getBlockByHash`
     pub fn block_by_hash(&self, _hash: H256, _full: bool) -> Result<Option<Block<TxHash>>> {
-        todo!()
+        Err(BlockchainError::RpcUnimplemented)
     }
 
     /// Returns block with given number.
     ///
     /// Handler for ETH RPC call: `eth_getBlockByNumber`
     pub fn block_by_number(&self, _: BlockNumber, _: bool) -> Result<Option<Block<TxHash>>> {
-        todo!()
+        Err(BlockchainError::RpcUnimplemented)
     }
 
     /// Returns the number of transactions sent from given address at given time (block number).
@@ -278,35 +278,35 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_getBlockTransactionCountByHash`
     pub fn block_transaction_count_by_hash(&self, _: H256) -> Result<Option<U256>> {
-        todo!()
+        Err(BlockchainError::RpcUnimplemented)
     }
 
     /// Returns the number of transactions in a block with given block number.
     ///
     /// Handler for ETH RPC call: `eth_getBlockTransactionCountByNumber`
     pub fn block_transaction_count_by_number(&self, _: BlockNumber) -> Result<Option<U256>> {
-        todo!()
+        Err(BlockchainError::RpcUnimplemented)
     }
 
     /// Returns the number of uncles in a block with given hash.
     ///
     /// Handler for ETH RPC call: `eth_getUncleCountByBlockHash`
     pub fn block_uncles_count_by_hash(&self, _: H256) -> Result<U256> {
-        todo!()
+        Err(BlockchainError::RpcUnimplemented)
     }
 
     /// Returns the number of uncles in a block with given block number.
     ///
     /// Handler for ETH RPC call: `eth_getUncleCountByBlockNumber`
     pub fn block_uncles_count_by_number(&self, _: BlockNumber) -> Result<U256> {
-        todo!()
+        Err(BlockchainError::RpcUnimplemented)
     }
 
     /// Returns the code at given address at given time (block number).
     ///
     /// Handler for ETH RPC call: `eth_getCode`
     pub fn code_at(&self, _address: Address, _: Option<BlockNumber>) -> Result<Bytes> {
-        todo!()
+        Err(BlockchainError::RpcUnimplemented)
     }
 
     /// Sends a transaction
@@ -434,7 +434,7 @@ impl EthApi {
             request.max_priority_fee_per_gas,
         )?;
 
-        let out = match self.backend.call(request, fees).0 {
+        let out = match self.backend.call(request, fees).1 {
             TransactOut::None => Default::default(),
             TransactOut::Call(out) => out.to_vec().into(),
             TransactOut::Create(out, _) => out.to_vec().into(),
@@ -451,7 +451,7 @@ impl EthApi {
             request.max_fee_per_gas,
             request.max_priority_fee_per_gas,
         )?;
-        let gas = self.backend.call(request, fees).1;
+        let gas = self.backend.call(request, fees).2;
 
         Ok(gas.into())
     }
@@ -472,7 +472,7 @@ impl EthApi {
         _: H256,
         _: Index,
     ) -> Result<Option<Transaction>> {
-        todo!()
+        Err(BlockchainError::RpcUnimplemented)
     }
 
     /// Returns transaction by given block number and index.
@@ -483,7 +483,7 @@ impl EthApi {
         _: BlockNumber,
         _: Index,
     ) -> Result<Option<Transaction>> {
-        todo!()
+        Err(BlockchainError::RpcUnimplemented)
     }
 
     /// Returns transaction receipt by transaction hash.
@@ -516,28 +516,28 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_getLogs`
     pub fn logs(&self, _: Filter) -> Result<Vec<Log>> {
-        todo!()
+        Err(BlockchainError::RpcUnimplemented)
     }
 
     /// Returns the hash of the current block, the seedHash, and the boundary condition to be met.
     ///
     /// Handler for ETH RPC call: `eth_getWork`
     pub fn work(&self) -> Result<Work> {
-        todo!()
+        Err(BlockchainError::RpcUnimplemented)
     }
 
     /// Used for submitting a proof-of-work solution.
     ///
     /// Handler for ETH RPC call: `eth_submitWork`
     pub fn submit_work(&self, _: H64, _: H256, _: H256) -> Result<bool> {
-        todo!()
+        Err(BlockchainError::RpcUnimplemented)
     }
 
     /// Used for submitting mining hashrate.
     ///
     /// Handler for ETH RPC call: `eth_submitHashrate`
     pub fn submit_hashrate(&self, _: U256, _: H256) -> Result<bool> {
-        todo!()
+        Err(BlockchainError::RpcUnimplemented)
     }
 
     /// Introduced in EIP-1159 for getting information on the appropriate priority fee to use.
@@ -549,7 +549,7 @@ impl EthApi {
         _newest_block: BlockNumber,
         _reward_percentiles: Option<Vec<f64>>,
     ) -> Result<FeeHistory> {
-        todo!()
+        Err(BlockchainError::RpcUnimplemented)
     }
 
     /// Introduced in EIP-1159, a Geth-specific and simplified priority fee oracle.
@@ -557,7 +557,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_maxPriorityFeePerGas`
     pub fn max_priority_fee_per_gas(&self) -> Result<U256> {
-        todo!()
+        Err(BlockchainError::RpcUnimplemented)
     }
 }
 
@@ -568,28 +568,28 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `forge_setBlock`
     pub fn forge_set_block(&self, _block_number: U256) -> Result<U256> {
-        todo!()
+        Err(BlockchainError::RpcUnimplemented)
     }
 
     /// Sets the backend rpc url
     ///
     /// Handler for ETH RPC call: `forge_setRpcUrl`
     pub fn forge_set_rpc_url(&self, _url: String) -> Result<()> {
-        todo!()
+        Err(BlockchainError::RpcUnimplemented)
     }
 
     /// Sets the mining mode
     ///
     /// Handler for ETH RPC call: `forge_mining`
     pub fn forge_mining(&self) -> Result<()> {
-        todo!()
+        Err(BlockchainError::RpcUnimplemented)
     }
 
     /// Sets block timestamp
     ///
     /// Handler for ETH RPC call: `forge_setTimestamp`
     pub fn forge_set_timestamp(&self) -> Result<()> {
-        todo!()
+        Err(BlockchainError::RpcUnimplemented)
     }
 
     /// Turn on call traces for transactions that are returned to the user when they execute a
@@ -597,13 +597,13 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `forge_enableTraces`
     pub fn forge_enable_traces(&self) -> Result<()> {
-        todo!()
+        Err(BlockchainError::RpcUnimplemented)
     }
 
     /// execute a transaction regardless of signature status
     ///
     /// Handler for ETH RPC call: `eth_sendUnsignedTransaction`
     pub fn eth_send_unsigned_transaction(&self) -> Result<()> {
-        todo!()
+        Err(BlockchainError::RpcUnimplemented)
     }
 }
