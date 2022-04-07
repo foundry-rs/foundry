@@ -1674,6 +1674,7 @@ dependencies = [
  "foundry-utils",
  "futures",
  "glob",
+ "globset",
  "hex",
  "once_cell",
  "pretty_assertions",
