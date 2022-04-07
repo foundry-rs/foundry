@@ -1,18 +1,10 @@
-use crate::{init_tracing, next_port};
+use crate::next_port;
 use ethers::prelude::{abigen, Middleware, Signer, SignerMiddleware, TransactionRequest};
 use foundry_node::{spawn, NodeConfig};
 use std::sync::Arc;
 
 #[tokio::test(flavor = "multi_thread")]
-async fn can_send_transaction() {
-    init_tracing();
-
-    let (_api, _handle) = spawn(NodeConfig::default().port(next_port()));
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn can_transfer_eth() {
-    init_tracing();
     let (_api, handle) = spawn(NodeConfig::default().port(next_port()));
     let provider = handle.http_provider();
 
@@ -50,7 +42,6 @@ async fn can_transfer_eth() {
 async fn can_deploy_greeter() {
     abigen!(Greeter, "test-data/greeter.json");
 
-    init_tracing();
     let (_api, handle) = spawn(NodeConfig::default().port(next_port()));
     let provider = handle.http_provider();
 
@@ -61,6 +52,5 @@ async fn can_deploy_greeter() {
         Greeter::deploy(client, "Hello World!".to_string()).unwrap().legacy().send().await.unwrap();
 
     let greeting = greeter_contract.greet().call().await.unwrap();
-
-    dbg!(greeting);
+    assert_eq!("Hello World!", greeting);
 }

@@ -282,12 +282,16 @@ impl Backend {
             access_list: to_access_list(access_list.unwrap_or_default().0),
         };
 
+        trace!(target: "backend", "calling with {:?}", env.tx);
+
         let db = self.db.read();
         let mut evm = revm::EVM::new();
         evm.env = env;
         evm.database(&*db);
 
         let (exit, out, gas, _, _) = evm.transact_ref();
+        trace!(target: "backend", "call return {:?} out: {:?} gas {}", exit, out, gas);
+
         (exit, out, gas)
     }
 

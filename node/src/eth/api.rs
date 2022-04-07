@@ -549,12 +549,12 @@ impl EthApi {
     pub fn fee_history(
         &self,
         block_count: U256,
-        newest_block: BlockNumber,
-        reward_percentiles: Option<Vec<f64>>,
+        _newest_block: BlockNumber,
+        _reward_percentiles: Option<Vec<f64>>,
     ) -> Result<FeeHistory> {
         // The max supported range size is 1024 by spec.
         let range_limit = U256::from(1024);
-        let block_count =
+        let _block_count =
             if block_count > range_limit { range_limit.as_u64() } else { block_count.as_u64() };
 
         Err(BlockchainError::RpcUnimplemented)
