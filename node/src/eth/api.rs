@@ -105,9 +105,9 @@ impl EthApi {
             }
             EthRequest::EthGetCodeAt(addr, block) => self.code_at(addr, block).to_rpc_result(),
             EthRequest::EthSendRawTransaction(tx) => self.send_raw_transaction(tx).to_rpc_result(),
-            EthRequest::EthCall(param) => self.call(param.value, param.block).to_rpc_result(),
-            EthRequest::EthEstimateGas(param) => {
-                self.estimate_gas(param.value, param.block).to_rpc_result()
+            EthRequest::EthCall(call, block) => self.call(call, block).to_rpc_result(),
+            EthRequest::EthEstimateGas(call, block) => {
+                self.estimate_gas(call, block).to_rpc_result()
             }
             EthRequest::EthGetTransactionByBlockHashAndIndex(hash, index) => {
                 self.transaction_by_block_hash_and_index(hash, index).to_rpc_result()

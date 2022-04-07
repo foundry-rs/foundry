@@ -7,8 +7,7 @@ use ethers_core::{
     abi::ethereum_types::H64,
     types::{Address, BlockNumber, Bytes, Transaction, TxHash, H256, U256},
 };
-use serde::{Deserialize, Deserializer, Serialize};
-use serde::de::DeserializeOwned;
+use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize};
 
 pub mod block;
 pub mod call;
@@ -71,10 +70,10 @@ pub enum EthRequest {
     EthSendRawTransaction(Bytes),
 
     #[serde(rename = "eth_call")]
-    EthCall(WithBlockParameter<CallRequest>),
+    EthCall(CallRequest, #[serde(default)] Option<BlockNumber>),
 
     #[serde(rename = "eth_estimateGas")]
-    EthEstimateGas(WithBlockParameter<CallRequest>),
+    EthEstimateGas(CallRequest, #[serde(default)] Option<BlockNumber>),
 
     #[serde(rename = "eth_getTransactionByHash", with = "sequence")]
     EthGetTransactionByHash(TxHash),
@@ -115,17 +114,19 @@ pub enum EthRequest {
 #[derive(Clone, Debug, PartialEq)]
 pub struct WithBlockParameter<T> {
     pub value: T,
-    pub block: Option<BlockNumber>
+    pub block: Option<BlockNumber>,
 }
 
-impl<'de, T:DeserializeOwned> Deserialize<'de> for WithBlockParameter<T> {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
-
+impl<'de, T: DeserializeOwned> Deserialize<'de> for WithBlockParameter<T> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
         #[derive(Deserialize)]
         #[serde(untagged)]
         enum WithDefaultBlock<T> {
             Value(T),
-            ValueBlock(T, Option<BlockNumber>)
+            ValueBlock(T, BlockNumber),
         }
 
         let mut seq = Vec::<WithDefaultBlock<T>>::deserialize(deserializer)?;
@@ -138,15 +139,13 @@ impl<'de, T:DeserializeOwned> Deserialize<'de> for WithBlockParameter<T> {
         }
 
         let val = match seq.remove(0) {
-            WithDefaultBlock::Value(value) => {
-                WithBlockParameter {value, block:None}
-            }
+            WithDefaultBlock::Value(value) => WithBlockParameter { value, block: None },
             WithDefaultBlock::ValueBlock(value, block) => {
-                WithBlockParameter {value, block}
+                WithBlockParameter { value, block: Some(block) }
             }
         };
 
-       Ok(val)
+        Ok(val)
     }
 }
 
@@ -195,14 +194,24 @@ pub enum EthResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::Rng;
 
     #[test]
     fn test_serde_eth_storage() {
         let s = r#"{"method": "eth_getStorageAt", "params": ["0x295a70b2de5e3953354a6a8344e616ed314d7251", "0x0", "latest"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
-        dbg!(value.clone());
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_eth_call() {
+        let req = r#"{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}"#;
+        let _req = serde_json::from_str::<CallRequest>(req).unwrap();
+
+        let s = r#"{"method": "eth_call", "params":  [{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"},"latest"]}"#;
+        let _req = serde_json::from_str::<EthRequest>(s).unwrap();
+
+        let s = r#"{"method": "eth_call", "params":  [{"data":"0xcfae3217","from":"0xd84de507f3fada7df80908082d3239466db55a71","to":"0xcbe828fdc46e3b1c351ec90b1a5e7d9742c0398d"}]}"#;
+        let _req = serde_json::from_str::<EthRequest>(s).unwrap();
     }
 
     #[test]

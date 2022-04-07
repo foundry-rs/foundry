@@ -60,5 +60,7 @@ async fn can_deploy_greeter() {
     let greeter_contract =
         Greeter::deploy(client, "Hello World!".to_string()).unwrap().legacy().send().await.unwrap();
 
-    dbg!(greeter_contract);
+    let greeting = greeter_contract.greet().call().await.unwrap();
+
+    dbg!(greeting);
 }

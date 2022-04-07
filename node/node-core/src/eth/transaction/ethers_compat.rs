@@ -4,14 +4,11 @@ use crate::eth::transaction::{
     EIP1559TransactionRequest, EIP2930TransactionRequest, LegacyTransactionRequest,
     TypedTransaction, TypedTransactionRequest,
 };
-use ethers_core::{
-    types::{
-        transaction::eip2718::TypedTransaction as EthersTypedTransactionRequest, Address,
-        Eip1559TransactionRequest as EthersEip1559TransactionRequest,
-        Eip2930TransactionRequest as EthersEip2930TransactionRequest,
-        Transaction as EthersTransaction, TransactionRequest as EthersLegacyTransactionRequest,
-        U256, U64,
-    },
+use ethers_core::types::{
+    transaction::eip2718::TypedTransaction as EthersTypedTransactionRequest, Address,
+    Eip1559TransactionRequest as EthersEip1559TransactionRequest,
+    Eip2930TransactionRequest as EthersEip2930TransactionRequest, Transaction as EthersTransaction,
+    TransactionRequest as EthersLegacyTransactionRequest, U256, U64,
 };
 
 impl From<TypedTransactionRequest> for EthersTypedTransactionRequest {

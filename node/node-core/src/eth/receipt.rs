@@ -116,7 +116,6 @@ impl TypedReceipt {
     }
 }
 
-
 impl Encodable for TypedReceipt {
     fn rlp_append(&self, s: &mut RlpStream) {
         match self {

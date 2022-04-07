@@ -1,8 +1,9 @@
-use ethers_core::types::{Address, U256};
-use ethers_core::types::transaction::eip2930::AccessListItem;
-use ethers_core::utils::{
-    rlp,
-    rlp::{Encodable, RlpStream},
+use ethers_core::{
+    types::{transaction::eip2930::AccessListItem, Address, U256},
+    utils::{
+        rlp,
+        rlp::{Encodable, RlpStream},
+    },
 };
 use foundry_evm::utils::h256_to_u256_be;
 
@@ -14,11 +15,8 @@ pub fn enveloped<T: Encodable>(id: u8, v: &T, s: &mut RlpStream) {
     out.rlp_append(s)
 }
 
-
 pub fn to_access_list(list: Vec<AccessListItem>) -> Vec<(Address, Vec<U256>)> {
     list.into_iter()
-        .map(|item| {
-            (item.address, item.storage_keys.into_iter().map(h256_to_u256_be).collect())
-        })
+        .map(|item| (item.address, item.storage_keys.into_iter().map(h256_to_u256_be).collect()))
         .collect()
 }

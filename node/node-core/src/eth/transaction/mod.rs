@@ -1,6 +1,9 @@
 //! transaction related data
 
-use crate::eth::{receipt::Log, utils::enveloped};
+use crate::eth::{
+    receipt::Log,
+    utils::{enveloped, to_access_list},
+};
 use ethers_core::{
     types::{
         transaction::eip2930::{AccessList, AccessListItem},
@@ -11,11 +14,8 @@ use ethers_core::{
         rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream},
     },
 };
-use foundry_evm::{
-    revm::{CreateScheme, TransactTo, TxEnv},
-};
+use foundry_evm::revm::{CreateScheme, TransactTo, TxEnv};
 use serde::{Deserialize, Serialize};
-use crate::eth::utils::to_access_list;
 
 mod ethers_compat;
 
