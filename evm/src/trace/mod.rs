@@ -67,15 +67,11 @@ impl CallTraceArena {
         self.arena
             .iter()
             .map(|node| {
-                let code = if node.trace.created() {
+                if node.trace.created() {
                     if let RawOrDecodedReturnData::Raw(bytes) = &node.trace.output {
-                        Some(bytes)
-                    } else {
-                        None
+                        return (&node.trace.address, Some(bytes))
                     }
-                } else {
-                    None
-                };
+                }
 
                 (&node.trace.address, code)
             })
