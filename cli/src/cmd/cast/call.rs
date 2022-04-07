@@ -39,7 +39,7 @@ impl<'a> From<&'a CallArgs> for Config {
         let config = Config::figment_with_root(find_project_root_path().unwrap())
             .merge(args)
             .extract::<Config>()
-            .unwrap();
+            .unwrap_or_else(|err| panic!("{}", err));
 
         config
     }
@@ -47,17 +47,19 @@ impl<'a> From<&'a CallArgs> for Config {
 
 impl figment::Provider for CallArgs {
     fn metadata(&self) -> Metadata {
-        Metadata::named("RPC url provider")
+        Metadata::named("Call args provider")
     }
 
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
         let value = Value::serialize(self)?;
-        // let error = InvalidType(self.to_actual(), "map".into());
         let mut dict = value.into_dict().unwrap();
 
-        // let rpc = self.eth.rpc_url().map_err(|err| err.to_string())?;
         if let Some(rpc_url) = &self.eth.rpc_url {
             dict.insert("eth_rpc_url".to_string(), Value::from(rpc_url.to_string()));
+        }
+
+        if let Some(_) = self.eth.from {
+            dict.insert("sender".to_string(), Value::from(dict.get("from").unwrap().clone()));
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))

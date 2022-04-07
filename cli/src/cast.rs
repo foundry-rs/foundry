@@ -178,13 +178,13 @@ async fn main() -> eyre::Result<()> {
 
         Subcommands::Call(config_call) => {
             let config: Config = (&config_call).into();
-            // println!("{}", config.eth_rpc_url.unwrap_or_else(|| "not set".to_string()));
             let provider = Provider::try_from(
                 config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
             )?;
+
             let mut builder = TxBuilder::new(
                 &provider,
-                config_call.eth.from.unwrap_or(Address::zero()),
+                config.sender,
                 config_call.address,
                 config_call.eth.chain,
                 false,
