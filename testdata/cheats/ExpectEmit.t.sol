@@ -51,6 +51,9 @@ contract Emitter {
         inner.emitEvent(topic1, topic2, topic3, data);
     }
 
+    /// Ref: issue #1214
+    function doesNothing() public pure {}
+
     /// Ref: issue #760
     function emitSomethingElse(uint256 data) public {
         emit SomethingElse(data);
@@ -227,5 +230,23 @@ contract ExpectEmitTest is DSTest {
         // and in the `Emitter` contract have differing
         // amounts of indexed topics.
         emitter.emitSomethingElse(1);
+    }
+
+    /// This test will fail if we check that all expected logs were emitted
+    /// after every call from the same depth as the call that invoked the cheatcode.
+    ///
+    /// Expected emits should only be checked when the call from which the cheatcode
+    /// was invoked ends.
+    ///
+    /// Ref: issue #1214
+    function testExpectEmitIsCheckedWhenCurrentCallTerminates() public {
+        cheats.expectEmit(true, true, true, true);
+        emitter.doesNothing();
+        emit Something(1, 2, 3, 4);
+
+        // This should fail since `SomethingElse` in the test
+        // and in the `Emitter` contract have differing
+        // amounts of indexed topics.
+        emitter.emitEvent(1, 2, 3, 4);
     }
 }
