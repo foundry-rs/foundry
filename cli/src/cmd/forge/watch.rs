@@ -5,8 +5,9 @@ use crate::{
     utils::{self, FoundryPathExt},
 };
 use clap::Parser;
-use regex::Regex;
-use std::{convert::Infallible, path::PathBuf, str::FromStr, sync::Arc};
+
+use foundry_config::Config;
+use std::{collections::HashSet, convert::Infallible, path::PathBuf, sync::Arc};
 use tracing::trace;
 use watchexec::{
     action::{Action, Outcome, PreSpawn},
@@ -33,15 +34,21 @@ pub struct WatchArgs {
     /// using an integer with the `ms` suffix may be more convenient.
     /// When using --poll mode, you'll want a larger duration, or risk
     /// overloading disk I/O.
-    #[clap(short = 'd', long = "delay", forbid_empty_values = true)]
+    #[clap(
+        short = 'd',
+        long = "delay",
+        forbid_empty_values = true,
+        help = "File updates debounce delay. Only take action (detect changes) after this time period has passed."
+    )]
     pub delay: Option<String>,
 
-    /// Don’t restart command while it’s still running
-    #[clap(long = "no-restart")]
+    #[clap(long = "no-restart", help = "Don’t restart command while it’s still running.")]
     pub no_restart: bool,
 
-    /// Explicitly run all tests on change
-    #[clap(long = "run-all")]
+    #[clap(
+        long = "run-all",
+        help = "By default, only the tests of the last modified test file are executed. This explicitly runs all tests when a change is made."
+    )]
     pub run_all: bool,
 
     /// Watch specific file(s) or folder(s)
@@ -53,7 +60,8 @@ pub struct WatchArgs {
         value_name = "PATH",
         min_values = 0,
         multiple_values = true,
-        multiple_occurrences = false
+        multiple_occurrences = false,
+        help = "Watches the given files or folders for changes. If no paths are specified, the source directory of the project is watched."
     )]
     pub watch: Option<Vec<PathBuf>>,
 }
@@ -139,14 +147,13 @@ pub async fn watch_test(args: TestArgs) -> eyre::Result<()> {
         args.filter().contract_pattern.is_some() ||
         args.build_args().watch.run_all;
 
-    on_action(
-        args.build_args().watch.clone(),
-        runtime,
-        Arc::clone(&wx),
-        cmd,
-        WatchTestState { no_reconfigure, last_test_files: Default::default() },
-        on_test,
-    );
+    let config: Config = args.build_args().into();
+    let state = WatchTestState {
+        project_root: config.__root.0,
+        no_reconfigure,
+        last_test_files: Default::default(),
+    };
+    on_action(args.build_args().watch.clone(), runtime, Arc::clone(&wx), cmd, state, on_test);
 
     // start executing the command immediately
     wx.send_event(Event::default()).await?;
@@ -157,18 +164,20 @@ pub async fn watch_test(args: TestArgs) -> eyre::Result<()> {
 
 #[derive(Debug, Clone)]
 struct WatchTestState {
+    /// the root directory of the project
+    project_root: PathBuf,
     /// marks whether we can reconfigure the watcher command with the `--match-path` arg
     no_reconfigure: bool,
     /// Tracks the last changed test files, if any so that if a non-test file was modified we run
     /// this file instead *Note:* this is a vec, so we can also watch out for changes
     /// introduced by `forge fmt`
-    last_test_files: Vec<String>,
+    last_test_files: HashSet<String>,
 }
 
 /// The `on_action` hook for `forge test --watch`
 fn on_test(action: OnActionState<WatchTestState>) {
     let OnActionState { args, runtime, action, wx, cmd, other } = action;
-    let WatchTestState { no_reconfigure, last_test_files } = other;
+    let WatchTestState { project_root, no_reconfigure, last_test_files } = other;
 
     if no_reconfigure {
         // nothing to reconfigure
@@ -177,7 +186,7 @@ fn on_test(action: OnActionState<WatchTestState>) {
 
     let mut cmd = cmd.clone();
 
-    let mut changed_sol_test_files: Vec<_> = action
+    let mut changed_sol_test_files: HashSet<_> = action
         .events
         .iter()
         .flat_map(|e| e.paths())
@@ -186,41 +195,69 @@ fn on_test(action: OnActionState<WatchTestState>) {
         .map(str::to_string)
         .collect();
 
-    if changed_sol_test_files.is_empty() {
-        if last_test_files.is_empty() {
-            return
-        }
-        // reuse the old test files if a non test file was changed
-        changed_sol_test_files = last_test_files;
-    }
-
     // replace `--match-path` | `-mp` argument
     if let Some(pos) = cmd.iter().position(|arg| arg == "--match-path" || arg == "-mp") {
         // --match-path requires 1 argument
         cmd.drain(pos..=(pos + 1));
     }
 
-    // append `--match-path` regex
-    let re_str = format!("({})", changed_sol_test_files.join("|"));
-    if let Ok(re) = Regex::from_str(&re_str) {
-        let mut new_cmd = cmd.clone();
-        new_cmd.push("--match-path".to_string());
-        new_cmd.push(re.to_string());
-        // reconfigure the executor with a new runtime
+    if changed_sol_test_files.len() > 1 ||
+        (changed_sol_test_files.is_empty() && last_test_files.is_empty())
+    {
+        // this could happen if multiple files were changed at once, for example `forge fmt` was
+        // run, or if no test files were changed and no previous test files were modified in which
+        // case we simply run all
         let mut config = runtime.clone();
-        config.command(new_cmd);
+        config.command(cmd.clone());
         // re-register the action
         on_action(
             args.clone(),
             config,
             wx,
             cmd,
-            WatchTestState { no_reconfigure, last_test_files: changed_sol_test_files },
+            WatchTestState {
+                project_root,
+                no_reconfigure,
+                last_test_files: changed_sol_test_files,
+            },
             on_test,
         );
-    } else {
-        eprintln!("failed to parse new regex {}", re_str);
+        return
     }
+
+    if changed_sol_test_files.is_empty() {
+        // reuse the old test files if a non-test file was changed
+        changed_sol_test_files = last_test_files;
+    }
+
+    // append `--match-path` glob
+    let mut file = changed_sol_test_files.clone().into_iter().next().expect("test file present");
+
+    // remove the project root dir from the detected file
+    if let Some(root) = project_root.as_os_str().to_str() {
+        if let Some(f) = file.strip_prefix(root) {
+            file = f.trim_start_matches('/').to_string();
+        }
+    }
+
+    let mut new_cmd = cmd.clone();
+    new_cmd.push("--match-path".to_string());
+    new_cmd.push(file);
+    trace!("reconfigure test command {:?}", new_cmd);
+
+    // reconfigure the executor with a new runtime
+    let mut config = runtime.clone();
+    config.command(new_cmd);
+
+    // re-register the action
+    on_action(
+        args.clone(),
+        config,
+        wx,
+        cmd,
+        WatchTestState { project_root, no_reconfigure, last_test_files: changed_sol_test_files },
+        on_test,
+    );
 }
 
 /// Returns the env args without the `--watch` flag from the args for the Watchexec command
@@ -330,7 +367,7 @@ fn on_action<F, T>(
         });
 
         // mattsse: could be made into flag to never clear the shell
-        let clear = true;
+        let clear = false;
         let when_running = match (clear, on_busy) {
             (_, "do-nothing") => Outcome::DoNothing,
             (true, "restart") => {

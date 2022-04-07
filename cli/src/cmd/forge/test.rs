@@ -27,7 +27,6 @@ use regex::Regex;
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
-    str::FromStr,
     sync::mpsc::channel,
     thread,
     time::Duration,
@@ -35,39 +34,40 @@ use std::{
 
 #[derive(Debug, Clone, Parser)]
 pub struct Filter {
-    /// Only run test functions matching the specified pattern.
+    /// Only run test functions matching the specified regex pattern.
     ///
     /// Deprecated: See --match-test
     #[clap(long = "match", short = 'm')]
     pub pattern: Option<regex::Regex>,
 
-    /// Only run test functions matching the specified pattern.
+    /// Only run test functions matching the specified regex pattern.
     #[clap(long = "match-test", alias = "mt", conflicts_with = "pattern")]
     pub test_pattern: Option<regex::Regex>,
 
-    /// Only run test functions that do not match the specified pattern.
+    /// Only run test functions that do not match the specified regex pattern.
     #[clap(long = "no-match-test", alias = "nmt", conflicts_with = "pattern")]
     pub test_pattern_inverse: Option<regex::Regex>,
 
-    /// Only run tests in contracts matching the specified pattern.
+    /// Only run tests in contracts matching the specified regex pattern.
     #[clap(long = "match-contract", alias = "mc", conflicts_with = "pattern")]
     pub contract_pattern: Option<regex::Regex>,
 
-    /// Only run tests in contracts that do not match the specified pattern.
+    /// Only run tests in contracts that do not match the specified regex pattern.
     #[clap(long = "no-match-contract", alias = "nmc", conflicts_with = "pattern")]
-    contract_pattern_inverse: Option<regex::Regex>,
+    pub contract_pattern_inverse: Option<regex::Regex>,
 
-    /// Only run tests in source files matching the specified pattern.
+    /// Only run tests in source files matching the specified glob pattern.
     #[clap(long = "match-path", alias = "mp", conflicts_with = "pattern")]
-    pub path_pattern: Option<regex::Regex>,
+    pub path_pattern: Option<globset::Glob>,
 
-    /// Only run tests in source files that do not match the specified pattern.
+    /// Only run tests in source files that do not match the specified glob pattern.
     #[clap(
-    name = "no-match-path",
-    long = "no-match-path", alias = "nmp", conflicts_with = "pattern",
-    parse(try_from_str = parse_line_matching_regex)
+        name = "no-match-path",
+        long = "no-match-path",
+        alias = "nmp",
+        conflicts_with = "pattern"
     )]
-    pub path_pattern_inverse: Option<regex::Regex>,
+    pub path_pattern_inverse: Option<globset::Glob>,
 }
 
 impl FileFilter for Filter {
@@ -77,11 +77,11 @@ impl FileFilter for Filter {
     /// [FoundryPathExr::is_sol_test()]
     fn is_match(&self, file: &Path) -> bool {
         if let Some(file) = file.as_os_str().to_str() {
-            if let Some(ref re_path) = self.path_pattern {
-                return re_path.is_match(file)
+            if let Some(ref glob) = self.path_pattern {
+                return glob.compile_matcher().is_match(file)
             }
-            if let Some(ref re_path) = self.test_pattern_inverse {
-                return !re_path.is_match(file)
+            if let Some(ref glob) = self.path_pattern_inverse {
+                return !glob.compile_matcher().is_match(file)
             }
         }
         file.is_sol_test()
@@ -120,13 +120,11 @@ impl TestFilter for Filter {
     fn matches_path(&self, path: impl AsRef<str>) -> bool {
         let mut ok = true;
         let path = path.as_ref();
-        if let Some(re) = &self.path_pattern {
-            let re = Regex::from_str(&format!("^{}", re.as_str())).unwrap();
-            ok &= re.is_match(path);
+        if let Some(ref glob) = self.path_pattern {
+            ok &= glob.compile_matcher().is_match(path);
         }
-        if let Some(re) = &self.path_pattern_inverse {
-            let re = Regex::from_str(&format!("^{}", re.as_str())).unwrap();
-            ok &= !re.is_match(path);
+        if let Some(ref glob) = self.path_pattern_inverse {
+            ok &= !glob.compile_matcher().is_match(path);
         }
         ok
     }
@@ -566,11 +564,4 @@ fn test(
 
         Ok(TestOutcome::new(results, allow_failure))
     }
-}
-
-/// prefixes the `re` [Regex] argument with a caret (`^`).
-/// If a caret is at the beginning of the entire regular expression, it matches the beginning of a
-/// line.
-fn parse_line_matching_regex(re: &str) -> Result<Regex, regex::Error> {
-    format!("^{}", re).parse()
 }

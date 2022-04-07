@@ -57,3 +57,27 @@ contract ATest is DSTest {
     cmd.arg("test");
     cmd.stdout().contains("[PASS]")
 });
+
+// tests that `bytecode_hash` will be sanitized
+forgetest!(can_test_with_match_path, |prj: TestProject, mut cmd: TestCommand| {
+    prj.insert_ds_test();
+
+    prj.inner()
+        .add_source(
+            "ATest.t.sol",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+import "./test.sol";
+contract ATest is DSTest {
+    function testArray(uint64[2] calldata values) external {
+        assertTrue(true);
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    cmd.args(["test", "--match-path", "*src/ATest.t.sol"]);
+    cmd.stdout().contains("[PASS]")
+});
