@@ -6,5 +6,4 @@
 //! [`foundry_config::Config`].
 
 pub mod call;
-pub mod config_rpc;
 pub mod find_block;

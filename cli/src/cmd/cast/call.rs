@@ -1,22 +1,18 @@
-use crate::{
-    cmd::Cmd,
-    opts::{
-        cast::{parse_block_id, parse_name_or_address},
-        EthereumOpts,
-    },
+use crate::opts::{
+    cast::{parse_block_id, parse_name_or_address},
+    EthereumOpts,
 };
-use cast::Cast;
+
 use clap::Parser;
 use ethers::types::{BlockId, NameOrAddress};
 use eyre::Result;
 use foundry_config::{
     figment::{
         self,
-        error::Kind::InvalidType,
         value::{Dict, Map, Value},
-        Figment, Metadata, Profile, Provider,
+        Metadata, Profile,
     },
-    find_project_root_path, remappings_from_env_var, Config,
+    find_project_root_path, Config,
 };
 
 use serde::Serialize;

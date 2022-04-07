@@ -8,7 +8,7 @@ use ethers::{
 
 use super::{ClapChain, EthereumOpts, Wallet};
 use crate::{
-    cmd::cast::{call::CallArgs, config_rpc::ConfigRPCArgs, find_block::FindBlockArgs},
+    cmd::cast::{call::CallArgs, find_block::FindBlockArgs},
     utils::parse_u256,
 };
 
@@ -140,25 +140,7 @@ pub enum Subcommands {
     },
     #[clap(name = "call")]
     #[clap(about = "Perform a local call to <to> without publishing a transaction.")]
-    Call {
-        #[clap(help = "the address you want to query", parse(try_from_str = parse_name_or_address))]
-        address: NameOrAddress,
-        sig: String,
-        args: Vec<String>,
-        #[clap(long, short, help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
-        block: Option<BlockId>,
-        #[clap(flatten)]
-        eth: EthereumOpts,
-    },
-    #[clap(name = "config-rpc")]
-    #[clap(about = "Get the RPC url from config")]
-    ConfigRPC {
-        #[clap(flatten)]
-        config_rpc: ConfigRPCArgs,
-    },
-    #[clap(name = "config-call")]
-    #[clap(about = "call that consumes config items")]
-    ConfigCall(CallArgs),
+    Call(CallArgs),
     #[clap(about = "Pack a signature and an argument list into hexadecimal calldata.")]
     Calldata {
         #[clap(

@@ -175,26 +175,8 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).block_number().await?);
         }
-        Subcommands::Call { eth, address, sig, args, block } => {
-            let provider = Provider::try_from(eth.rpc_url()?)?;
-            let mut builder = TxBuilder::new(
-                &provider,
-                eth.from.unwrap_or(Address::zero()),
-                address,
-                eth.chain,
-                false,
-            )
-            .await?;
-            builder.set_args(&sig, args).await?.etherscan_api_key(eth.etherscan_api_key);
-            let builder_output = builder.build();
-            println!("{}", Cast::new(provider).call(builder_output, block).await?);
-        }
-        Subcommands::ConfigRPC { config_rpc } => {
-            let config: Config = config_rpc.into();
-            println!("{}", config.eth_rpc_url.unwrap_or_else(|| "not set".to_string()));
-        }
 
-        Subcommands::ConfigCall(config_call) => {
+        Subcommands::Call(config_call) => {
             let config: Config = (&config_call).into();
             // println!("{}", config.eth_rpc_url.unwrap_or_else(|| "not set".to_string()));
             let provider = Provider::try_from(
