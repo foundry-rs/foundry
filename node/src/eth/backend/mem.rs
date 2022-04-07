@@ -293,7 +293,8 @@ impl Backend {
         for receipt in receipts.iter().take(index) {
             cumulative_gas_used = cumulative_gas_used.saturating_add(receipt.gas_used());
         }
-        cumulative_gas_used = cumulative_gas_used.saturating_sub(gas_used);
+
+        // cumulative_gas_used = cumulative_gas_used.saturating_sub(gas_used);
 
         let mut cumulative_receipts = receipts;
         cumulative_receipts.truncate(index + 1);

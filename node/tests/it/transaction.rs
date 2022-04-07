@@ -2,7 +2,7 @@ use crate::{init_tracing, next_port};
 use ethers::{
     providers::Middleware,
     signers::Signer,
-    types::{TransactionRequest, U256},
+    types::{TransactionRequest},
 };
 use foundry_node::{spawn, NodeConfig};
 
@@ -23,29 +23,28 @@ async fn can_transfer_eth() {
     let from = accounts[0].address();
     let to = accounts[1].address();
 
+    let nonce = provider.get_transaction_count(from, None).await.unwrap();
+    assert!(nonce.is_zero());
+
+    let balance_before = provider.get_balance(to, None).await.unwrap();
+
     let amount = handle.genesis_balance().checked_div(2u64.into()).unwrap();
 
-    let tx =
-        TransactionRequest::new().to(to).value(amount).gas_price(handle.gas_price()).from(from);
-
     // craft the tx
-    let tx = TransactionRequest::new().to(to).value(1000).from(from); // specify the `from` field so that the client knows which account to use
-
-    let balance_before = provider.get_balance(from, None).await.unwrap();
+    // specify the `from` field so that the client knows which account to use
+    let tx = TransactionRequest::new().to(to).value(amount).from(from);
 
     // broadcast it via the eth_sendTransaction API
-    let tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap();
+    let tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
 
-    println!("{}", serde_json::to_string(&tx).unwrap());
+    assert_eq!(tx.block_number, Some(1u64.into()));
+    assert_eq!(tx.transaction_index, 0u64.into());
 
-    let nonce1 =
-        provider.get_transaction_count(from, Some(BlockNumber::Latest.into())).await.unwrap();
+    let nonce = provider.get_transaction_count(from, None).await.unwrap();
 
-    assert!(nonce2 < nonce1);
+    assert_eq!(nonce, 1u64.into());
 
-    let balance_after = provider.get_balance(from, None).await.unwrap();
-    assert!(balance_after < balance_before);
+    let to_balance = provider.get_balance(to, None).await.unwrap();
 
-    dbg!(tx);
-    // provider.get_transaction();
+    assert_eq!(balance_before.saturating_add(amount), to_balance);
 }
