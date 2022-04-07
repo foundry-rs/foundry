@@ -8,7 +8,7 @@ use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use std::{
     env,
-    ffi::{OsStr},
+    ffi::OsStr,
     fmt::Display,
     fs,
     fs::File,
@@ -369,7 +369,7 @@ impl TestCommand {
 
     /// Returns the `Config` as spit out by `forge config`
     pub fn config(&mut self) -> Config {
-        self.forge_fuse().args(["config", "--json"]);
+        self.cmd.args(["config", "--json"]);
         let output = self.output();
         let c = String::from_utf8_lossy(&output.stdout);
         let config = serde_json::from_str(c.as_ref()).unwrap();
