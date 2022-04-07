@@ -219,7 +219,9 @@ where
 
         // Clean up pranks
         if let Some(prank) = &self.prank {
-            data.env.tx.caller = prank.prank_origin;
+            if data.subroutine.depth() == prank.depth {
+                data.env.tx.caller = prank.prank_origin;
+            }
             if prank.single_call {
                 std::mem::take(&mut self.prank);
             }
@@ -322,7 +324,9 @@ where
     ) -> (Return, Option<Address>, Gas, Bytes) {
         // Clean up pranks
         if let Some(prank) = &self.prank {
-            data.env.tx.caller = prank.prank_origin;
+            if data.subroutine.depth() == prank.depth {
+                data.env.tx.caller = prank.prank_origin;
+            }
             if prank.single_call {
                 std::mem::take(&mut self.prank);
             }
