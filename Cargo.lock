@@ -682,9 +682,9 @@ dependencies = [
 
 [[package]]
 name = "color-eyre"
-version = "0.5.11"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f1885697ee8a177096d42f158922251a41973117f6d8a234cee94b9509157b7"
+checksum = "8ebf286c900a6d5867aeff75cfee3192857bb7f24b547d4f0df2ed6baa812c90"
 dependencies = [
  "backtrace",
  "color-spantrace",
@@ -692,19 +692,19 @@ dependencies = [
  "indenter",
  "once_cell",
  "owo-colors",
- "tracing-error 0.1.2",
+ "tracing-error",
 ]
 
 [[package]]
 name = "color-spantrace"
-version = "0.1.6"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6eee477a4a8a72f4addd4de416eb56d54bc307b284d6601bafdee1f4ea462d1"
+checksum = "1ba75b3d9449ecdccb27ecbc479fdc0b87fa2dd43d2f8298f9bf0e59aacc8dce"
 dependencies = [
  "once_cell",
  "owo-colors",
  "tracing-core",
- "tracing-error 0.1.2",
+ "tracing-error",
 ]
 
 [[package]]
@@ -1630,7 +1630,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
- "tracing-subscriber 0.3.10",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -1690,8 +1690,8 @@ dependencies = [
  "tokio",
  "toml",
  "tracing",
- "tracing-error 0.2.0",
- "tracing-subscriber 0.3.10",
+ "tracing-error",
+ "tracing-subscriber",
  "ui",
  "vergen",
  "walkdir",
@@ -1751,8 +1751,8 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
- "tracing-error 0.2.0",
- "tracing-subscriber 0.3.10",
+ "tracing-error",
+ "tracing-subscriber",
  "url",
 ]
 
@@ -1774,7 +1774,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
- "tracing-subscriber 0.3.10",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -2974,9 +2974,9 @@ dependencies = [
 
 [[package]]
 name = "owo-colors"
-version = "1.3.0"
+version = "3.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2386b4ebe91c2f7f51082d4cefa145d030e33a1842a96b12e4885cc3c01f7a55"
+checksum = "5e72e30578e0d0993c8ae20823dd9cff2bc5517d2f586a8aef462a581e8a03eb"
 
 [[package]]
 name = "parity-scale-codec"
@@ -4613,22 +4613,12 @@ dependencies = [
 
 [[package]]
 name = "tracing-error"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4d7c0b83d4a500748fa5879461652b361edf5c9d51ede2a2ac03875ca185e24"
-dependencies = [
- "tracing",
- "tracing-subscriber 0.2.25",
-]
-
-[[package]]
-name = "tracing-error"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d686ec1c0f384b1277f097b2f279a2ecc11afe8c133c1aabf036a27cb4cd206e"
 dependencies = [
  "tracing",
- "tracing-subscriber 0.3.10",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -4654,20 +4644,9 @@ dependencies = [
 
 [[package]]
 name = "tracing-subscriber"
-version = "0.2.25"
+version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e0d2eaa99c3c2e41547cfa109e910a68ea03823cccad4a0525dcbc9b01e8c71"
-dependencies = [
- "sharded-slab",
- "thread_local",
- "tracing-core",
-]
-
-[[package]]
-name = "tracing-subscriber"
-version = "0.3.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9df98b037d039d03400d9dd06b0f8ce05486b5f25e9a2d7d36196e142ebbc52"
+checksum = "9e0ab7bdc962035a87fba73f3acca9b8a8d0034c2e6f60b84aeaaddddc155dce"
 dependencies = [
  "ansi_term",
  "lazy_static",
