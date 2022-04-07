@@ -453,7 +453,7 @@ impl EthApi {
         )?;
         let gas = self.backend.call(request, fees).1;
 
-        Err(gas.into())
+        Ok(gas.into())
     }
 
     /// Get transaction by its hash.
