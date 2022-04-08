@@ -116,7 +116,7 @@ pub async fn run_verify(args: &VerifyArgs) -> eyre::Result<()> {
 
         (
             serde_json::to_string(&input)
-                .map_err(|err| eyre::eyre!("Failed to parse standard json input: {}", err)),
+                .map_err(|err| eyre::eyre!("Failed to parse standard json input: {}", err))?,
             format!(
                 "{}:{}",
                 &project.root().join(args.contract.path.as_ref().unwrap()).to_string_lossy(),
