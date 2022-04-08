@@ -61,6 +61,11 @@ impl Pool {
         rx
     }
 
+    /// Remove the given transactions from the pool
+    pub fn remove_invalid(&self, tx_hashes: Vec<TxHash>) -> Vec<Arc<PoolTransaction>> {
+        self.inner.write().remove_invalid(tx_hashes)
+    }
+
     /// notifies all listeners about the transaction
     fn notify_listener(&self, hash: TxHash) {
         let mut listener = self.transaction_listener.lock();
@@ -210,6 +215,22 @@ impl PoolInner {
         }
 
         PruneResult { pruned, failed, promoted }
+    }
+
+    /// Remove the given transactions from the pool
+    pub fn remove_invalid(&mut self, tx_hashes: Vec<TxHash>) -> Vec<Arc<PoolTransaction>> {
+        // early exit in case there is no invalid transactions.
+        if tx_hashes.is_empty() {
+            return vec![]
+        }
+        trace!(target: "txpool", "Removing invalid transactions: {:?}", tx_hashes);
+
+        let mut removed = self.ready_transactions.remove_with_markers(tx_hashes.clone(), None);
+        removed.extend(self.pending_transactions.remove(tx_hashes));
+
+        trace!(target: "txpool", "Removed invalid transactions: {:?}", removed);
+
+        removed
     }
 }
 

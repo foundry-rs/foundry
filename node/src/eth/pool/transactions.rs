@@ -114,6 +114,30 @@ impl PendingTransactions {
 
         unlocked_ready
     }
+
+    /// Removes the transactions associated with the given hashes
+    ///
+    /// Returns all removed transactions.
+    pub fn remove(&mut self, hashes: Vec<TxHash>) -> Vec<Arc<PoolTransaction>> {
+        let mut removed = vec![];
+        for hash in hashes {
+            if let Some(waiting_tx) = self.waiting_queue.remove(&hash) {
+                for marker in waiting_tx.missing_markers {
+                    let remove = if let Some(required) = self.required_markers.get_mut(&marker) {
+                        required.remove(&hash);
+                        required.is_empty()
+                    } else {
+                        false
+                    };
+                    if remove {
+                        self.required_markers.remove(&marker);
+                    }
+                }
+                removed.push(waiting_tx.transaction)
+            }
+        }
+        removed
+    }
 }
 
 /// A transaction in the poo
@@ -437,7 +461,7 @@ impl ReadyTransactions {
 
     /// Removes transactions and those that depend on them and satisfy at least one marker in the
     /// given filter set.
-    fn remove_with_markers(
+    pub fn remove_with_markers(
         &mut self,
         mut tx_hashes: Vec<TxHash>,
         marker_filter: Option<HashSet<TxMarker>>,
