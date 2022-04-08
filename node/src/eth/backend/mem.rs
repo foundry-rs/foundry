@@ -11,6 +11,7 @@ use ethers::{
 
 use crate::{
     eth::{backend::duration_since_unix_epoch, error::InvalidTransactionError, fees::FeeDetails},
+    fork::ForkInfo,
     revm::db::DatabaseRef,
 };
 use ethers::{
@@ -114,6 +115,18 @@ pub struct Blockchain {
 }
 
 impl Blockchain {
+    pub fn forked(block_number: u64, block_hash: H256) -> Self {
+        let storage = BlockchainStorage {
+            blocks: Default::default(),
+            hashes: HashMap::from([(block_number.into(), block_hash)]),
+            best_hash: block_hash,
+            best_number: block_number.into(),
+            genesis_hash: Default::default(),
+            transactions: Default::default(),
+        };
+        Self { storage: Arc::new(RwLock::new(storage)) }
+    }
+
     /// returns the header hash of given block
     pub fn hash(&self, id: BlockId) -> Option<H256> {
         match id {
@@ -141,12 +154,14 @@ pub struct Backend {
     env: Arc<RwLock<Env>>,
     /// Default gas price for all transactions
     gas_price: U256,
+    /// this is set if this is currently forked off another client
+    fork: Option<ForkInfo>,
 }
 
 impl Backend {
     /// Create a new instance of in-mem backend.
     pub fn new(db: Arc<RwLock<dyn Db>>, env: Arc<RwLock<Env>>, gas_price: U256) -> Self {
-        Self { db, blockchain: Blockchain::default(), env, gas_price }
+        Self { db, blockchain: Blockchain::default(), env, gas_price, fork: None }
     }
 
     /// Creates a new empty blockchain backend
@@ -161,6 +176,7 @@ impl Backend {
         balance: U256,
         accounts: impl IntoIterator<Item = Address>,
         gas_price: U256,
+        fork: Option<ForkInfo>,
     ) -> Self {
         let mut db = CacheDB::default();
         for account in accounts {
@@ -168,7 +184,14 @@ impl Backend {
             info.balance = balance;
             db.insert_cache(account, info);
         }
-        Self::new(Arc::new(RwLock::new(db)), env, gas_price)
+
+        let blockchain = if let Some(ref fork) = fork {
+            Blockchain::forked(fork.block_number, fork.block_hash)
+        } else {
+            Default::default()
+        };
+
+        Self { db: Arc::new(RwLock::new(db)), blockchain, env, gas_price, fork }
     }
 
     /// The env data of the blockchain

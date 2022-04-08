@@ -1,11 +1,19 @@
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
+use crate::{eth::backend::db::Db, fork::ForkInfo, revm::db::CacheDB};
 use ethers::{
     core::k256::ecdsa::SigningKey,
     prelude::{Address, Wallet, U256},
+    providers::{Middleware, Provider},
     signers::{coins_bip39::English, MnemonicBuilder, Signer},
     utils::WEI_IN_ETHER,
 };
+use foundry_evm::{
+    executor::fork::{BlockchainDb, BlockchainDbMeta, SharedBackend},
+    revm,
+    revm::{BlockEnv, CfgEnv, TxEnv},
+};
+use parking_lot::RwLock;
 
 pub const NODE_PORT: u16 = 8545;
 
@@ -142,12 +150,62 @@ impl NodeConfig {
         self.fork_block_number = Some(fork_block_number.into());
         self
     }
-}
 
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct ForkInfo {
-    pub url: String,
-    pub block_number: u64,
+    pub(crate) async fn bootstrap(&self) {
+        // configure the revm environment
+        let mut env = revm::Env {
+            cfg: CfgEnv { ..Default::default() },
+            block: BlockEnv { gas_limit: self.gas_limit, ..Default::default() },
+            tx: TxEnv { chain_id: Some(self.chain_id), ..Default::default() },
+        };
+
+        let (_db, _fork): (Arc<RwLock<dyn Db>>, Option<ForkInfo>) = if let Some(eth_rpc_url) =
+            self.eth_rpc_url.clone()
+        {
+            // TODO make provider agnostic
+            let provider = Arc::new(
+                Provider::try_from(&eth_rpc_url).expect("Failed to establish provider to fork url"),
+            );
+
+            let fork_block_number = if let Some(fork_block_number) = self.fork_block_number {
+                fork_block_number
+            } else {
+                provider.get_block_number().await.expect("Failed to get fork block number").as_u64()
+            };
+            env.block.number = fork_block_number.into();
+
+            let block_hash =
+                provider.get_block(fork_block_number).await.unwrap().unwrap().hash.unwrap();
+
+            let meta = BlockchainDbMeta::new(env.clone(), eth_rpc_url.clone());
+
+            // TODO support cache path
+            let db = BlockchainDb::new(meta, None);
+
+            let backend = SharedBackend::spawn_backend(
+                Arc::clone(&provider),
+                db,
+                Some(fork_block_number.into()),
+            );
+            let _db = RwLock::new(backend);
+
+            let _fork =
+                ForkInfo { eth_rpc_url, block_number: fork_block_number, block_hash, provider };
+
+            // (db, Some(fork))
+            todo!()
+        } else {
+            (Arc::new(RwLock::new(CacheDB::default())), None)
+        };
+
+        // // only memory based backend for now
+        // let backend = Arc::new(mem::Backend::with_genesis_balance(
+        //     Arc::new(RwLock::new(env)),
+        //     self.genesis_balance,
+        //     self.genesis_accounts.iter().map(|acc| acc.address()),
+        //     self.gas_price,
+        // ));
+    }
 }
 
 /// Generates random private-public key pair which can be used for signing messages

@@ -11,11 +11,12 @@ use foundry_evm::{revm, revm::BlockEnv};
 use crate::eth::sign::{DevSigner, Signer as EthSigner};
 use ethers::{
     core::k256::ecdsa::SigningKey,
-    prelude::Wallet,
+    prelude::{Middleware, Wallet},
     providers::{Http, Provider},
     signers::Signer,
     types::{Address, U256},
 };
+
 use parking_lot::{Mutex, RwLock};
 use std::{
     future::Future,
@@ -32,6 +33,7 @@ mod service;
 pub mod server;
 
 pub mod eth;
+pub mod fork;
 
 /// Creates the node and runs the server
 ///
@@ -65,7 +67,8 @@ pub async fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
         max_transactions,
         silent: _,
         gas_price,
-        ..
+        fork_block_number: _,
+        eth_rpc_url: _,
     } = config.clone();
 
     // configure the revm environment
@@ -91,6 +94,7 @@ pub async fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
         genesis_balance,
         genesis_accounts.into_iter().map(|acc| acc.address()),
         gas_price,
+        None,
     ));
 
     let dev_signer: Box<dyn EthSigner> = Box::new(DevSigner::new(accounts));
