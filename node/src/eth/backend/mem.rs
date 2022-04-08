@@ -50,6 +50,20 @@ struct BlockchainStorage {
     transactions: HashMap<TxHash, MinedTransaction>,
 }
 
+impl BlockchainStorage {
+    #[allow(unused)]
+    pub fn empty() -> Self {
+        Self {
+            blocks: Default::default(),
+            hashes: Default::default(),
+            best_hash: Default::default(),
+            best_number: Default::default(),
+            genesis_hash: Default::default(),
+            transactions: Default::default(),
+        }
+    }
+}
+
 impl Default for BlockchainStorage {
     fn default() -> Self {
         // create a dummy genesis block

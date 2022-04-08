@@ -54,6 +54,14 @@ impl RpcError {
     {
         RpcError { code: ErrorCode::InternalError, message: message.into().into(), data: None }
     }
+
+    /// Creates a new rpc error for when a transaction was rejected
+    pub fn transaction_rejected<M>(message: M) -> Self
+        where
+            M: Into<String>,
+    {
+        RpcError { code: ErrorCode::TransactionRejected, message: message.into().into(), data: None }
+    }
 }
 
 impl fmt::Display for RpcError {
@@ -76,6 +84,8 @@ pub enum ErrorCode {
     InvalidParams,
     /// internal call error
     InternalError,
+    /// Failed to send transaction, See also <https://github.com/MetaMask/eth-rpc-errors/blob/main/src/error-constants.ts>
+    TransactionRejected,
     /// Used for server specific errors.
     ServerError(i64),
 }
@@ -89,6 +99,7 @@ impl ErrorCode {
             ErrorCode::MethodNotFound => -32601,
             ErrorCode::InvalidParams => -32602,
             ErrorCode::InternalError => -32603,
+            ErrorCode::TransactionRejected => -32003,
             ErrorCode::ServerError(c) => c,
         }
     }
@@ -101,6 +112,7 @@ impl ErrorCode {
             ErrorCode::MethodNotFound => "Method not found",
             ErrorCode::InvalidParams => "Invalid params",
             ErrorCode::InternalError => "Internal error",
+            ErrorCode::TransactionRejected => "Transaction rejected",
             ErrorCode::ServerError(_) => "Server error",
         }
     }

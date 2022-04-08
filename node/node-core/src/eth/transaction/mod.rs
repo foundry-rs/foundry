@@ -277,8 +277,8 @@ impl Encodable for LegacyTransactionRequest {
             s.append(&self.value);
             s.append(&self.input.as_ref());
             s.append(&chain_id);
-            s.append(&0_u8);
-            s.append(&0_u8);
+            s.append(&0u8);
+            s.append(&0u8);
         } else {
             s.begin_list(6);
             s.append(&self.nonce);
@@ -572,12 +572,12 @@ impl Decodable for EIP2930Transaction {
             access_list: rlp.val_at(7)?,
             odd_y_parity: rlp.val_at(8)?,
             r: {
-                let mut rarr = [0_u8; 32];
+                let mut rarr = [0u8; 32];
                 rlp.val_at::<U256>(9)?.to_big_endian(&mut rarr);
                 H256::from(rarr)
             },
             s: {
-                let mut sarr = [0_u8; 32];
+                let mut sarr = [0u8; 32];
                 rlp.val_at::<U256>(10)?.to_big_endian(&mut sarr);
                 H256::from(sarr)
             },
@@ -661,12 +661,12 @@ impl Decodable for EIP1559Transaction {
             access_list: rlp.val_at(8)?,
             odd_y_parity: rlp.val_at(9)?,
             r: {
-                let mut rarr = [0_u8; 32];
+                let mut rarr = [0u8; 32];
                 rlp.val_at::<U256>(10)?.to_big_endian(&mut rarr);
                 H256::from(rarr)
             },
             s: {
-                let mut sarr = [0_u8; 32];
+                let mut sarr = [0u8; 32];
                 rlp.val_at::<U256>(11)?.to_big_endian(&mut sarr);
                 H256::from(sarr)
             },
