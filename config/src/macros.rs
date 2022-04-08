@@ -94,3 +94,22 @@ macro_rules! impl_figment_convert {
         }
     };
 }
+/// A macro to implement converters from a type to [`Config`] and [`figment::Figment`]
+#[macro_export]
+macro_rules! impl_figment_convert_cast {
+    ($name:ty) => {
+        impl<'a> From<&'a $name> for $crate::figment::Figment {
+            fn from(args: &'a $name) -> Self {
+                $crate::Config::figment_with_root($crate::find_project_root_path().unwrap())
+                    .merge(args)
+            }
+        }
+
+        impl<'a> From<&'a $name> for Config {
+            fn from(args: &'a $name) -> Self {
+                let figment: $crate::figment::Figment = args.into();
+                $crate::Config::from_provider(figment).sanitized()
+            }
+        }
+    };
+}
