@@ -110,10 +110,13 @@ pub async fn run_verify(args: &VerifyArgs) -> eyre::Result<()> {
             args.contract.name.clone(),
         )
     } else {
+        let input = project
+            .standard_json_input(&project.root().join(args.contract.path.as_ref().unwrap()))
+            .map_err(|err| eyre::eyre!("Failed to get standard json input: {}", err))?;
+
         (
-            project
-                .standard_json_input(&project.root().join(args.contract.path.as_ref().unwrap()))
-                .map_err(|err| eyre::eyre!("Failed to get standard json input: {}", err))?,
+            serde_json::to_string(&input)
+                .map_err(|err| eyre::eyre!("Failed to parse standard json input: {}", err)),
             format!(
                 "{}:{}",
                 &project.root().join(args.contract.path.as_ref().unwrap()).to_string_lossy(),
