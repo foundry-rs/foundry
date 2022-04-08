@@ -808,7 +808,7 @@ impl From<Config> for Figment {
             .merge(Env::prefixed("DAPP_").ignore(&["REMAPPINGS", "LIBRARIES"]).global())
             .merge(Env::prefixed("DAPP_TEST_").global())
             .merge(DappEnvCompatProvider)
-            .merge(Env::raw().only(&["ETH_RPC_URL", "ETHERSCAN_API_KEY"]))
+            .merge(Env::raw().only(&["ETHERSCAN_API_KEY"]))
             .merge(
                 Env::prefixed("FOUNDRY_").ignore(&["PROFILE", "REMAPPINGS", "LIBRARIES"]).global(),
             )
