@@ -12,12 +12,12 @@ use foundry_config::{
         value::{Dict, Map, Value},
         Metadata, Profile,
     },
-    impl_figment_no_root_convert, Config,
+    impl_figment_convert_cast, Config,
 };
 
 use serde::Serialize;
 
-impl_figment_no_root_convert!(CallArgs);
+impl_figment_convert_cast!(CallArgs);
 
 #[derive(Debug, Clone, Parser, Serialize)]
 pub struct CallArgs {
