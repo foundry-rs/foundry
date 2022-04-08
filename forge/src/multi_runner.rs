@@ -9,7 +9,7 @@ use eyre::Result;
 use foundry_evm::executor::{
     builder::Backend, opts::EvmOpts, DatabaseRef, Executor, ExecutorBuilder, Fork, SpecId,
 };
-use foundry_utils::PostLinkInput;
+use foundry_utils::{PostLinkInput, RuntimeOrHandle};
 use proptest::test_runner::TestRunner;
 use rayon::prelude::*;
 use std::{collections::BTreeMap, marker::Sync, path::Path, sync::mpsc::Sender};
@@ -191,10 +191,11 @@ impl MultiContractRunner {
         stream_result: Option<Sender<(String, SuiteResult)>>,
         include_fuzz_tests: bool,
     ) -> Result<BTreeMap<String, SuiteResult>> {
-        let env = self.evm_opts.evm_env();
+        let runtime = RuntimeOrHandle::new();
+        let env = runtime.block_on(self.evm_opts.evm_env());
 
         // the db backend that serves all the data
-        let db = Backend::new(self.fork.take(), &env);
+        let db = runtime.block_on(Backend::new(self.fork.take(), &env));
 
         let results = self
             .contracts
