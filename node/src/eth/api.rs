@@ -327,6 +327,7 @@ impl EthApi {
 
         let max_fee_per_gas = request.max_fee_per_gas;
         let gas_price = request.gas_price;
+
         let gas_limit = request.gas.map(Ok).unwrap_or_else(|| self.current_gas_limit())?;
 
         let request = match request.into_typed_request() {
@@ -456,12 +457,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_estimateGas`
     pub fn estimate_gas(&self, request: CallRequest, _: Option<BlockNumber>) -> Result<U256> {
-        let fees = FeeDetails::new(
-            request.gas_price,
-            request.max_fee_per_gas,
-            request.max_priority_fee_per_gas,
-        )?;
-        let gas = self.backend.call(request, fees).2;
+        let gas = self.backend.call(request, FeeDetails::zero()).2;
 
         Ok(gas.into())
     }

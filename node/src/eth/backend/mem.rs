@@ -245,7 +245,6 @@ impl Backend {
         if account.balance < req_funds {
             return Err(InvalidTransactionError::Payment)
         }
-
         Ok(())
     }
 

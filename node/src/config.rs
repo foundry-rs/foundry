@@ -41,7 +41,7 @@ impl Default for NodeConfig {
         Self {
             chain_id: 1337,
             gas_limit: U256::from(6_721_975),
-            gas_price: U256::from(1_000_000_000),
+            gas_price: U256::from(20_000_000_000u64),
             accounts: genesis_accounts.iter().map(|w| (w.address(), w.clone())).collect(),
             genesis_accounts,
             // 100ETH default balance

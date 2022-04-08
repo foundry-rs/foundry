@@ -31,7 +31,7 @@ pub struct FeeHistoryCacheItem {
     pub rewards: Vec<u64>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default, Clone)]
 pub struct FeeDetails {
     pub gas_price: Option<U256>,
     pub max_fee_per_gas: Option<U256>,
@@ -39,6 +39,14 @@ pub struct FeeDetails {
 }
 
 impl FeeDetails {
+    pub fn zero() -> Self {
+        Self {
+            gas_price: Some(U256::zero()),
+            max_fee_per_gas: Some(U256::zero()),
+            max_priority_fee_per_gas: Some(U256::zero()),
+        }
+    }
+
     pub fn new(
         request_gas_price: Option<U256>,
         request_max_fee: Option<U256>,
