@@ -130,13 +130,13 @@ pub enum Subcommands {
         #[clap(long = "json", short = 'j')]
         to_json: bool,
         #[clap(long, env = "ETH_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
     },
     #[clap(name = "block-number")]
     #[clap(about = "Prints latest block number")]
     BlockNumber {
         #[clap(long, env = "ETH_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
     },
     #[clap(name = "call")]
     #[clap(about = "Perform a local call to <to> without publishing a transaction.")]
@@ -157,25 +157,25 @@ pub enum Subcommands {
     #[clap(about = "Prints symbolic name of current blockchain by checking genesis hash")]
     Chain {
         #[clap(long, env = "ETH_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
     },
     #[clap(name = "chain-id")]
     #[clap(about = "Returns ethereum chain id")]
     ChainId {
         #[clap(long, env = "ETH_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
     },
     #[clap(name = "client")]
     #[clap(about = "Returns the current client version")]
     Client {
         #[clap(long, env = "ETH_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
     },
     #[clap(name = "compute-address")]
     #[clap(about = "Returns the computed address from a given address and nonce pair")]
     ComputeAddress {
         #[clap(long, env = "ETH_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
         #[clap(help = "the address to create from")]
         address: String,
         #[clap(long, help = "address nonce", parse(try_from_str = parse_u256))]
@@ -192,7 +192,7 @@ pub enum Subcommands {
         #[clap(long = "json", short = 'j')]
         to_json: bool,
         #[clap(long, env = "ETH_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
     },
     #[clap(name = "receipt")]
     #[clap(about = "Print information about the transaction receipt for <tx-hash>")]
@@ -211,7 +211,7 @@ pub enum Subcommands {
         #[clap(long = "json", short = 'j')]
         to_json: bool,
         #[clap(long, env = "ETH_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
     },
     #[clap(name = "send")]
     #[clap(about = "Publish a transaction signed by <from> to call <to> with <data>")]
@@ -395,7 +395,7 @@ pub enum Subcommands {
     #[clap(about = "Prints current gas price of target chain")]
     GasPrice {
         #[clap(short, long, env = "ETH_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
     },
     #[clap(name = "keccak")]
     #[clap(about = "Keccak-256 hashes arbitrary data")]
@@ -406,7 +406,7 @@ pub enum Subcommands {
         #[clap(help = "the account you want to resolve")]
         who: Option<String>,
         #[clap(short, long, env = "ETH_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
         #[clap(long, short, help = "do a forward resolution to ensure the ENS name is correct")]
         verify: bool,
     },
@@ -416,7 +416,7 @@ pub enum Subcommands {
         #[clap(help = "the account you want to resolve")]
         who: Option<Address>,
         #[clap(short, long, env = "ETH_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
         #[clap(long, short, help = "do a forward resolution to ensure the address is correct")]
         verify: bool,
     },

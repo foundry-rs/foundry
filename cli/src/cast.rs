@@ -168,10 +168,12 @@ async fn main() -> eyre::Result<()> {
             println!("{}", Cast::new(&provider).access_list(builder_output, block, to_json).await?);
         }
         Subcommands::Block { rpc_url, block, full, field, to_json } => {
+            let rpc_url = consume_config_rpc_url(rpc_url);
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).block(block, full, field, to_json).await?);
         }
         Subcommands::BlockNumber { rpc_url } => {
+            let rpc_url = consume_config_rpc_url(rpc_url);
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).block_number().await?);
         }
@@ -202,18 +204,25 @@ async fn main() -> eyre::Result<()> {
             println!("{}", SimpleCast::calldata(sig, &args)?);
         }
         Subcommands::Chain { rpc_url } => {
+            let rpc_url = consume_config_rpc_url(rpc_url);
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).chain().await?);
         }
         Subcommands::ChainId { rpc_url } => {
+            let rpc_url = consume_config_rpc_url(rpc_url);
+
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).chain_id().await?);
         }
         Subcommands::Client { rpc_url } => {
+            let rpc_url = consume_config_rpc_url(rpc_url);
+
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", provider.client_version().await?);
         }
         Subcommands::ComputeAddress { rpc_url, address, nonce } => {
+            let rpc_url = consume_config_rpc_url(rpc_url);
+
             let pubkey = Address::from_str(&address).expect("invalid pubkey provided");
             let provider = Provider::try_from(rpc_url)?;
             let addr = Cast::new(&provider).compute_address(pubkey, nonce).await?;
@@ -227,6 +236,7 @@ async fn main() -> eyre::Result<()> {
             println!("{}", SimpleCast::namehash(&name)?);
         }
         Subcommands::Tx { rpc_url, hash, field, to_json } => {
+            let rpc_url = consume_config_rpc_url(rpc_url);
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(&provider).transaction(hash, field, to_json).await?)
         }
@@ -345,6 +355,7 @@ async fn main() -> eyre::Result<()> {
                 eyre::bail!("No wallet or sender address provided.")
             }
         }
+        // TODO: Publish does not need EthereumOpts, just rpc-url.
         Subcommands::PublishTx { eth, raw_tx, cast_async } => {
             let provider = Provider::try_from(eth.rpc_url()?)?;
             let cast = Cast::new(&provider);
@@ -450,6 +461,7 @@ async fn main() -> eyre::Result<()> {
             );
         }
         Subcommands::GasPrice { rpc_url } => {
+            let rpc_url = consume_config_rpc_url(rpc_url);
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).gas_price().await?);
         }
@@ -503,6 +515,7 @@ async fn main() -> eyre::Result<()> {
             }
         }
         Subcommands::ResolveName { who, rpc_url, verify } => {
+            let rpc_url = consume_config_rpc_url(rpc_url);
             let provider = Provider::try_from(rpc_url)?;
             let who = unwrap_or_stdin(who)?;
             let address = provider.resolve_name(&who).await?;
@@ -517,6 +530,7 @@ async fn main() -> eyre::Result<()> {
             println!("{:?}", address);
         }
         Subcommands::LookupAddress { who, rpc_url, verify } => {
+            let rpc_url = consume_config_rpc_url(rpc_url);
             let provider = Provider::try_from(rpc_url)?;
             let who = unwrap_or_stdin(who)?;
             let name = provider.lookup_address(who).await?;
@@ -541,6 +555,7 @@ async fn main() -> eyre::Result<()> {
             println!("{}", serde_json::to_string(&value)?);
         }
         Subcommands::Receipt { hash, field, to_json, rpc_url, cast_async, confirmations } => {
+            let rpc_url = consume_config_rpc_url(rpc_url);
             let provider = Provider::try_from(rpc_url)?;
             println!(
                 "{}",
@@ -788,4 +803,13 @@ where
     }
 
     Ok(())
+}
+
+pub fn consume_config_rpc_url(rpc_url: Option<String>) -> String {
+    match rpc_url {
+        Some(rpc_url) => rpc_url,
+        None => Config::load()
+            .eth_rpc_url
+            .expect("No eth_rpc_url set in foundry.toml or given as cli argument"),
+    }
 }
