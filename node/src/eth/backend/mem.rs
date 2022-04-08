@@ -240,8 +240,7 @@ impl Backend {
         let max_cost = tx.max_cost();
         let value = tx.value();
         // check sufficient funds: `gas * price + value`
-        let req_funds =
-            max_cost.checked_add(value).ok_or_else(|| InvalidTransactionError::Payment)?;
+        let req_funds = max_cost.checked_add(value).ok_or(InvalidTransactionError::Payment)?;
 
         if account.balance < req_funds {
             return Err(InvalidTransactionError::Payment)
