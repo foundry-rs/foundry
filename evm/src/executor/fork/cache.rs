@@ -12,6 +12,7 @@ use std::{
 };
 use tracing::{trace, trace_span, warn};
 use tracing_error::InstrumentResult;
+use url::Url;
 
 pub type StorageInfo = BTreeMap<U256, U256>;
 
@@ -91,6 +92,22 @@ pub struct BlockchainDbMeta {
     pub block_env: revm::BlockEnv,
     /// all the hosts used to connect to
     pub hosts: BTreeSet<String>,
+}
+
+impl BlockchainDbMeta {
+    /// Creates a new instance
+    pub fn new(env: revm::Env, url: String) -> Self {
+        let host = Url::parse(&url)
+            .ok()
+            .and_then(|url| url.host().map(|host| host.to_string()))
+            .unwrap_or(url);
+
+        BlockchainDbMeta {
+            cfg_env: env.cfg.clone(),
+            block_env: env.block,
+            hosts: BTreeSet::from([host]),
+        }
+    }
 }
 
 // ignore hosts to not invalidate the cache when different endpoints are used, as it's commonly the
