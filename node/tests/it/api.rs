@@ -6,7 +6,7 @@ use foundry_node::{spawn, NodeConfig};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_block_number() {
-    let (api, handle) = spawn(NodeConfig::default().port(next_port()));
+    let (api, handle) = spawn(NodeConfig::default().port(next_port())).await;
 
     let block_num = api.block_number().unwrap();
     assert_eq!(block_num, U256::zero());
@@ -19,7 +19,7 @@ async fn can_get_block_number() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_dev_get_balance() {
-    let (_api, handle) = spawn(NodeConfig::default().port(next_port()));
+    let (_api, handle) = spawn(NodeConfig::default().port(next_port())).await;
     let provider = handle.http_provider();
 
     let genesis_balance = handle.genesis_balance();

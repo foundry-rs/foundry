@@ -32,6 +32,10 @@ pub struct NodeConfig {
     pub(crate) max_transactions: usize,
     /// don't print anything on startup
     pub(crate) silent: bool,
+    /// url of the rpc server that should be used for any rpc calls
+    pub(crate) eth_rpc_url: Option<String>,
+    /// pins the block number for the state fork
+    pub(crate) fork_block_number: Option<u64>,
 }
 
 impl Default for NodeConfig {
@@ -51,6 +55,8 @@ impl Default for NodeConfig {
             // TODO make this something dependent on block capacity
             max_transactions: 1_000,
             silent: false,
+            eth_rpc_url: None,
+            fork_block_number: None,
         }
     }
 }
@@ -122,6 +128,26 @@ impl NodeConfig {
         self.silent = silent;
         self
     }
+
+    /// Sets the `eth_rpc_url` to use when forking
+    #[must_use]
+    pub fn eth_rpc_url<U: Into<String>>(mut self, eth_rpc_url: U) -> Self {
+        self.eth_rpc_url = Some(eth_rpc_url.into());
+        self
+    }
+
+    /// Sets the `fork_block_number` to use to fork off from
+    #[must_use]
+    pub fn fork_block_number<U: Into<u64>>(mut self, fork_block_number: U) -> Self {
+        self.fork_block_number = Some(fork_block_number.into());
+        self
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct ForkInfo {
+    pub url: String,
+    pub block_number: u64,
 }
 
 /// Generates random private-public key pair which can be used for signing messages

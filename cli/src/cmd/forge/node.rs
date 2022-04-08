@@ -38,8 +38,9 @@ impl NodeArgs {
             .genesis_balance(self.balance)
     }
 
+    /// Starts the node
     pub async fn run(self) -> eyre::Result<()> {
-        let (_api, handle) = foundry_node::spawn(self.into_node_config());
+        let (_api, handle) = foundry_node::spawn(self.into_node_config()).await;
 
         Ok(handle.await??)
     }

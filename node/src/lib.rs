@@ -44,7 +44,7 @@ pub mod eth;
 /// # use foundry_node::NodeConfig;
 /// # async fn spawn() {
 /// let config = NodeConfig::default();
-/// let(api, handle) = foundry_node::spawn(config);
+/// let (api, handle) = foundry_node::spawn(config).await;
 ///
 /// // use api
 ///
@@ -52,7 +52,7 @@ pub mod eth;
 /// handle.await.unwrap();
 /// # }
 /// ```
-pub fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
+pub async fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
     // set everything up
     let NodeConfig {
         chain_id,

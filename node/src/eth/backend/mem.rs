@@ -139,7 +139,6 @@ pub struct Backend {
     blockchain: Blockchain,
     /// env data of the chain
     env: Arc<RwLock<Env>>,
-
     /// Default gas price for all transactions
     gas_price: U256,
 }

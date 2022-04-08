@@ -360,12 +360,11 @@ pub enum TypedTransaction {
 // == impl TypedTransaction ==
 
 impl TypedTransaction {
-
     pub fn gas_price(&self) -> U256 {
         match self {
             TypedTransaction::Legacy(tx) => tx.gas_price,
             TypedTransaction::EIP2930(tx) => tx.gas_price,
-            TypedTransaction::EIP1559(tx) => tx.max_fee_per_gas
+            TypedTransaction::EIP1559(tx) => tx.max_fee_per_gas,
         }
     }
 
@@ -415,8 +414,7 @@ impl TypedTransaction {
                 max_priority_fee_per_gas: None,
                 value: t.value,
                 chain_id: Some(t.chain_id),
-                access_list: t.access_list
-                    .clone(),
+                access_list: t.access_list.clone(),
             },
             TypedTransaction::EIP1559(t) => TransactionEssentials {
                 kind: t.kind,
@@ -428,13 +426,11 @@ impl TypedTransaction {
                 max_priority_fee_per_gas: Some(t.max_priority_fee_per_gas),
                 value: t.value,
                 chain_id: Some(t.chain_id),
-                access_list: t
-                    .access_list
-                    .clone(),
+                access_list: t.access_list.clone(),
             },
         }
     }
-    
+
     pub fn nonce(&self) -> &U256 {
         match self {
             TypedTransaction::Legacy(t) => t.nonce(),

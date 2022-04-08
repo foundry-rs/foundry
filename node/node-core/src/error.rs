@@ -57,10 +57,14 @@ impl RpcError {
 
     /// Creates a new rpc error for when a transaction was rejected
     pub fn transaction_rejected<M>(message: M) -> Self
-        where
-            M: Into<String>,
+    where
+        M: Into<String>,
     {
-        RpcError { code: ErrorCode::TransactionRejected, message: message.into().into(), data: None }
+        RpcError {
+            code: ErrorCode::TransactionRejected,
+            message: message.into().into(),
+            data: None,
+        }
     }
 }
 
