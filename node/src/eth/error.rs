@@ -16,20 +16,22 @@ pub enum BlockchainError {
     NoSignerAvailable,
     #[error("Chain Id not available")]
     ChainIdNotAvailable,
-    #[error("Invalid Transaction")]
-    InvalidTransaction,
     #[error("Invalid input: `max_priority_fee_per_gas` greater than `max_fee_per_gas`")]
     InvalidFeeInput,
     #[error("Transaction data is empty")]
     EmptyRawTransactionData,
     #[error("Failed to decode signed transaction")]
     FailedToDecodeSignedTransaction,
+    #[error("Failed to decode transaction")]
+    FailedToDecodeTransaction,
     #[error(transparent)]
     SignatureError(#[from] SignatureError),
     #[error(transparent)]
     WalletError(#[from] WalletError),
     #[error("Rpc Endpoint not implemented")]
     RpcUnimplemented,
+    #[error(transparent)]
+    InvalidTransaction(#[from] InvalidTransactionError),
 }
 
 /// Errors that can occur in the transaction pool
@@ -37,10 +39,24 @@ pub enum BlockchainError {
 pub enum PoolError {
     #[error("Transaction with cyclic dependent transactions")]
     CyclicTransaction,
-    #[error("Invalid transaction")]
-    InvalidTransaction(),
     #[error("Tx: [{0:?}] already imported")]
     AlreadyImported(Box<PoolTransaction>),
+}
+
+/// An error due to invalid transaction
+#[derive(thiserror::Error, Debug)]
+pub enum InvalidTransactionError {
+    /// Represents the inability to cover max cost + value (account balance too low).
+    #[error("Insufficient funds for gas * price + value")]
+    Payment,
+    /// General error when transaction is outdated, nonce too low
+    #[error("Transaction is outdated")]
+    Outdated,
+    /// The transaction would exhaust gas resources of current block.
+    ///
+    /// But transaction is still valid.
+    #[error("Insufficient funds for gas * price + value")]
+    ExhaustsGasResources,
 }
 
 /// Helper trait to easily convert results to rpc results
@@ -69,13 +85,16 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 BlockchainError::ChainIdNotAvailable => {
                     RpcError::invalid_params("Chain Id not available")
                 }
-                BlockchainError::InvalidTransaction => {
-                    RpcError::invalid_params("Invalid transaction")
+                BlockchainError::InvalidTransaction(err) => {
+                    RpcError::transaction_rejected(err.to_string())
                 }
                 BlockchainError::EmptyRawTransactionData => {
                     RpcError::invalid_params("Empty transaction data")
                 }
                 BlockchainError::FailedToDecodeSignedTransaction => {
+                    RpcError::invalid_params("Failed to decode transaction")
+                }
+                BlockchainError::FailedToDecodeTransaction => {
                     RpcError::invalid_params("Failed to decode transaction")
                 }
                 BlockchainError::SignatureError(err) => RpcError::invalid_params(err.to_string()),

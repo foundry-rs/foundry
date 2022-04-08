@@ -10,7 +10,7 @@ use ethers::{
 };
 
 use crate::{
-    eth::{backend::duration_since_unix_epoch, fees::FeeDetails},
+    eth::{backend::duration_since_unix_epoch, error::InvalidTransactionError, fees::FeeDetails},
     revm::db::DatabaseRef,
 };
 use ethers::{
@@ -25,7 +25,7 @@ use foundry_node_core::eth::{
     block::{Block, BlockInfo, Header, PartialHeader},
     call::CallRequest,
     receipt::{EIP658Receipt, TypedReceipt},
-    transaction::{TransactionInfo, TypedTransaction},
+    transaction::{PendingTransaction, TransactionInfo, TypedTransaction},
     utils::to_access_list,
 };
 use parking_lot::RwLock;
@@ -218,6 +218,36 @@ impl Backend {
 
     pub fn gas_price(&self) -> U256 {
         self.gas_price
+    }
+
+    /// Validates the transaction's validity when it comes to nonce, payment
+    ///
+    /// This is intended to be checked before the transaction makes it into the pool and whether it
+    /// should rather be outright rejected if the sender has insufficient funds.
+    pub fn validate_transaction(
+        &self,
+        tx: &PendingTransaction,
+    ) -> Result<(), InvalidTransactionError> {
+        let sender = *tx.sender();
+        let tx = &tx.transaction;
+        let account = self.db.read().basic(sender);
+
+        // check nonce
+        if tx.nonce().as_u64() < account.nonce {
+            return Err(InvalidTransactionError::Payment)
+        }
+
+        let max_cost = tx.max_cost();
+        let value = tx.value();
+        // check sufficient funds: `gas * price + value`
+        let req_funds =
+            max_cost.checked_add(value).ok_or_else(|| InvalidTransactionError::Payment)?;
+
+        if account.balance < req_funds {
+            return Err(InvalidTransactionError::Payment)
+        }
+
+        Ok(())
     }
 
     /// Mines a new block and stores it.

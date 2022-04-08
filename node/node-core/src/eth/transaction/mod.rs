@@ -360,6 +360,81 @@ pub enum TypedTransaction {
 // == impl TypedTransaction ==
 
 impl TypedTransaction {
+
+    pub fn gas_price(&self) -> U256 {
+        match self {
+            TypedTransaction::Legacy(tx) => tx.gas_price,
+            TypedTransaction::EIP2930(tx) => tx.gas_price,
+            TypedTransaction::EIP1559(tx) => tx.max_fee_per_gas
+        }
+    }
+
+    pub fn gas_limit(&self) -> U256 {
+        match self {
+            TypedTransaction::Legacy(tx) => tx.gas_limit,
+            TypedTransaction::EIP2930(tx) => tx.gas_limit,
+            TypedTransaction::EIP1559(tx) => tx.gas_limit,
+        }
+    }
+
+    pub fn value(&self) -> U256 {
+        match self {
+            TypedTransaction::Legacy(tx) => tx.value,
+            TypedTransaction::EIP2930(tx) => tx.value,
+            TypedTransaction::EIP1559(tx) => tx.value,
+        }
+    }
+
+    /// Max cost of the transaction
+    pub fn max_cost(&self) -> U256 {
+        self.gas_limit().saturating_mul(self.gas_price())
+    }
+
+    /// Returns a helper type that contains commonly used values as fields
+    pub fn essentials(&self) -> TransactionEssentials {
+        match self {
+            TypedTransaction::Legacy(t) => TransactionEssentials {
+                kind: t.kind,
+                input: t.input.clone(),
+                nonce: t.nonce,
+                gas_limit: t.gas_limit,
+                gas_price: Some(t.gas_price),
+                max_fee_per_gas: None,
+                max_priority_fee_per_gas: None,
+                value: t.value,
+                chain_id: t.chain_id(),
+                access_list: Default::default(),
+            },
+            TypedTransaction::EIP2930(t) => TransactionEssentials {
+                kind: t.kind,
+                input: t.input.clone(),
+                nonce: t.nonce,
+                gas_limit: t.gas_limit,
+                gas_price: Some(t.gas_price),
+                max_fee_per_gas: None,
+                max_priority_fee_per_gas: None,
+                value: t.value,
+                chain_id: Some(t.chain_id),
+                access_list: t.access_list
+                    .clone(),
+            },
+            TypedTransaction::EIP1559(t) => TransactionEssentials {
+                kind: t.kind,
+                input: t.input.clone(),
+                nonce: t.nonce,
+                gas_limit: t.gas_limit,
+                gas_price: None,
+                max_fee_per_gas: Some(t.max_fee_per_gas),
+                max_priority_fee_per_gas: Some(t.max_priority_fee_per_gas),
+                value: t.value,
+                chain_id: Some(t.chain_id),
+                access_list: t
+                    .access_list
+                    .clone(),
+            },
+        }
+    }
+    
     pub fn nonce(&self) -> &U256 {
         match self {
             TypedTransaction::Legacy(t) => t.nonce(),
@@ -672,6 +747,20 @@ impl Decodable for EIP1559Transaction {
             },
         })
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TransactionEssentials {
+    pub kind: TransactionKind,
+    pub input: Bytes,
+    pub nonce: U256,
+    pub gas_limit: U256,
+    pub gas_price: Option<U256>,
+    pub max_fee_per_gas: Option<U256>,
+    pub max_priority_fee_per_gas: Option<U256>,
+    pub value: U256,
+    pub chain_id: Option<u64>,
+    pub access_list: AccessList,
 }
 
 /// Queued transaction

@@ -357,11 +357,14 @@ impl EthApi {
                 }
                 TypedTransactionRequest::EIP1559(m)
             }
-            _ => return Err(BlockchainError::InvalidTransaction),
+            _ => return Err(BlockchainError::FailedToDecodeTransaction),
         };
 
         let transaction = self.sign_request(&from, request)?;
         let pending_transaction = PendingTransaction::new(transaction)?;
+
+        // pre-validate
+        self.backend.validate_transaction(&pending_transaction)?;
 
         let prev_nonce = nonce.saturating_sub(U256::one());
         let requires = if on_chain_nonce < prev_nonce {
@@ -407,6 +410,10 @@ impl EthApi {
         };
 
         let pending_transaction = PendingTransaction::new(transaction)?;
+
+        // pre-validate
+        self.backend.validate_transaction(&pending_transaction)?;
+
         let on_chain_nonce = self.backend.current_nonce(*pending_transaction.sender());
         let nonce = *pending_transaction.transaction.nonce();
         let prev_nonce = nonce.saturating_sub(U256::one());
