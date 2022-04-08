@@ -2,7 +2,6 @@ use ethers::{
     providers::{Middleware, Provider},
     types::{Address, Chain, U256},
 };
-use foundry_utils::RuntimeOrHandle;
 use revm::{BlockEnv, CfgEnv, SpecId, TxEnv};
 use serde::{Deserialize, Serialize};
 
@@ -37,18 +36,13 @@ pub struct EvmOpts {
 }
 
 impl EvmOpts {
-    pub fn evm_env(&self) -> revm::Env {
+    pub async fn evm_env(&self) -> revm::Env {
         if let Some(ref fork_url) = self.fork_url {
-            let rt = RuntimeOrHandle::new();
             let provider =
                 Provider::try_from(fork_url.as_str()).expect("could not instantiated provider");
-            let fut =
-                environment(&provider, self.env.chain_id, self.fork_block_number, self.sender);
-            match rt {
-                RuntimeOrHandle::Runtime(runtime) => runtime.block_on(fut),
-                RuntimeOrHandle::Handle(handle) => handle.block_on(fut),
-            }
-            .expect("could not instantiate forked environment")
+            environment(&provider, self.env.chain_id, self.fork_block_number, self.sender)
+                .await
+                .expect("could not instantiate forked environment")
         } else {
             revm::Env {
                 block: BlockEnv {

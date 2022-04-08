@@ -24,6 +24,8 @@ use foundry_config::{
     Config,
 };
 
+use serde::Serialize;
+
 const FLASHBOTS_URL: &str = "https://rpc.flashbots.net";
 
 // Helper for exposing enum values for `Chain`
@@ -56,7 +58,7 @@ pub struct ClapChain {
     pub inner: Chain,
 }
 
-#[derive(Parser, Debug, Clone)]
+#[derive(Parser, Debug, Clone, Serialize)]
 pub struct EthereumOpts {
     #[clap(env = "ETH_RPC_URL", long = "rpc-url", help = "The tracing / archival node's URL")]
     pub rpc_url: Option<String>,
@@ -65,6 +67,7 @@ pub struct EthereumOpts {
     pub from: Option<Address>,
 
     #[clap(flatten)]
+    #[serde(skip)]
     pub wallet: Wallet,
 
     #[clap(long, help = "Use the flashbots RPC URL (https://rpc.flashbots.net)")]
@@ -74,6 +77,7 @@ pub struct EthereumOpts {
     pub etherscan_api_key: Option<String>,
 
     #[clap(long, env = "CHAIN", default_value = "mainnet")]
+    #[serde(skip)]
     pub chain: Chain,
 }
 
@@ -170,7 +174,7 @@ pub enum WalletType {
     Trezor(SignerMiddleware<Provider<Http>, Trezor>),
 }
 
-#[derive(Parser, Debug, Clone)]
+#[derive(Parser, Debug, Clone, Serialize)]
 #[cfg_attr(not(doc), allow(missing_docs))]
 #[cfg_attr(
     doc,

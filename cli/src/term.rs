@@ -258,9 +258,9 @@ impl Reporter for SpinnerReporter {
 
     fn on_unresolved_import(&self, import: &Path, remappings: &[Remapping]) {
         self.send_msg(format!(
-            "Unable to resolve import: \"{}\" with remappings:\n    {}",
+            "Unable to resolve import: \"{}\" with remappings:\n        {}",
             import.display(),
-            remappings.iter().map(|r| r.to_string()).collect::<Vec<_>>().join("\n    ")
+            remappings.iter().map(|r| r.to_string()).collect::<Vec<_>>().join("\n        ")
         ));
     }
 }
@@ -293,5 +293,24 @@ mod tests {
         }
 
         s.finish("Done".to_string());
+    }
+
+    #[test]
+    #[ignore]
+    fn can_format_properly() {
+        let r = SpinnerReporter::spawn();
+        let remappings: Vec<Remapping> = vec![
+            "library/=library/src/".parse().unwrap(),
+            "weird-erc20/=lib/weird-erc20/src/".parse().unwrap(),
+            "ds-test/=lib/ds-test/src/".parse().unwrap(),
+            "openzeppelin-contracts/=lib/openzeppelin-contracts/contracts/".parse().unwrap(),
+        ];
+        r.on_unresolved_import(&Path::new("hardhat/console.sol"), &remappings);
+        // formats:
+        // [⠒] Unable to resolve import: "hardhat/console.sol" with remappings:
+        //     library/=library/src/
+        //     weird-erc20/=lib/weird-erc20/src/
+        //     ds-test/=lib/ds-test/src/
+        //     openzeppelin-contracts/=lib/openzeppelin-contracts/contracts/
     }
 }

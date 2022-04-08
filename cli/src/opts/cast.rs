@@ -7,7 +7,10 @@ use ethers::{
 };
 
 use super::{ClapChain, EthereumOpts, Wallet};
-use crate::{cmd::cast::find_block::FindBlockArgs, utils::parse_u256};
+use crate::{
+    cmd::cast::{call::CallArgs, find_block::FindBlockArgs},
+    utils::parse_u256,
+};
 
 #[derive(Debug, Subcommand)]
 #[clap(about = "Perform Ethereum RPC calls from the comfort of your command line.")]
@@ -137,16 +140,7 @@ pub enum Subcommands {
     },
     #[clap(name = "call")]
     #[clap(about = "Perform a local call to <to> without publishing a transaction.")]
-    Call {
-        #[clap(help = "the address you want to query", parse(try_from_str = parse_name_or_address))]
-        address: NameOrAddress,
-        sig: String,
-        args: Vec<String>,
-        #[clap(long, short, help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
-        block: Option<BlockId>,
-        #[clap(flatten)]
-        eth: EthereumOpts,
-    },
+    Call(CallArgs),
     #[clap(about = "Pack a signature and an argument list into hexadecimal calldata.")]
     Calldata {
         #[clap(
@@ -575,7 +569,7 @@ pub enum WalletSubcommands {
     },
 }
 
-fn parse_name_or_address(s: &str) -> eyre::Result<NameOrAddress> {
+pub fn parse_name_or_address(s: &str) -> eyre::Result<NameOrAddress> {
     Ok(if s.starts_with("0x") {
         NameOrAddress::Address(s.parse::<Address>()?)
     } else {
@@ -583,7 +577,7 @@ fn parse_name_or_address(s: &str) -> eyre::Result<NameOrAddress> {
     })
 }
 
-fn parse_block_id(s: &str) -> eyre::Result<BlockId> {
+pub fn parse_block_id(s: &str) -> eyre::Result<BlockId> {
     Ok(match s {
         "earliest" => BlockId::Number(BlockNumber::Earliest),
         "latest" => BlockId::Number(BlockNumber::Latest),
