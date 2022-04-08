@@ -170,8 +170,10 @@ macro_rules! forgetest_external {
             ]);
             cmd.set_env("FOUNDRY_FUZZ_RUNS", "1");
             if $fork_block > 0 {
-                cmd.set_env("FOUNDRY_ETH_RPC_URL", std::env::var("ETH_RPC_URL").unwrap());
                 cmd.set_env("FOUNDRY_FORK_BLOCK_NUMBER", stringify!($fork_block));
+            } else {
+                // Clear out `ETH_RPC_URL` so non-forking tests do not end up forking anyway
+                cmd.unset_env("ETH_RPC_URL");
             }
             cmd.assert_non_empty_stdout();
         }

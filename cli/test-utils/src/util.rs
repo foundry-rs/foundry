@@ -7,9 +7,8 @@ use foundry_config::Config;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use std::{
-    collections::HashMap,
     env,
-    ffi::{OsStr, OsString},
+    ffi::OsStr,
     fmt::Display,
     fs,
     fs::File,
@@ -205,7 +204,6 @@ impl TestProject {
         TestCommand {
             project: self.clone(),
             cmd,
-            saved_env_vars: HashMap::new(),
             current_dir_lock: None,
             saved_cwd: pretty_err("<current dir>", std::env::current_dir()),
         }
@@ -219,7 +217,6 @@ impl TestProject {
         TestCommand {
             project: self.clone(),
             cmd,
-            saved_env_vars: HashMap::new(),
             current_dir_lock: None,
             saved_cwd: pretty_err("<current dir>", std::env::current_dir()),
         }
@@ -260,12 +257,6 @@ impl TestProject {
 
 impl Drop for TestCommand {
     fn drop(&mut self) {
-        for (key, value) in self.saved_env_vars.iter() {
-            match value {
-                Some(val) => std::env::set_var(key, val),
-                None => std::env::remove_var(key),
-            }
-        }
         let _lock = self.current_dir_lock.take().unwrap_or_else(|| CURRENT_DIR_LOCK.lock());
         let _ = std::env::set_current_dir(&self.saved_cwd);
     }
@@ -301,7 +292,6 @@ pub struct TestCommand {
     project: TestProject,
     /// The actual command we use to control the process.
     cmd: Command,
-    saved_env_vars: HashMap<OsString, Option<OsString>>,
     current_dir_lock: Option<parking_lot::lock_api::MutexGuard<'static, parking_lot::RawMutex, ()>>,
 }
 
@@ -357,22 +347,14 @@ impl TestCommand {
         self.arg("--root").arg(root)
     }
 
-    /// Set the environment variable `k` to value `v`. The variable will be
-    /// removed when the command is dropped.
-    pub fn set_env(&mut self, k: impl AsRef<str>, v: impl Display) {
-        let key = k.as_ref();
-        if !self.saved_env_vars.contains_key(OsStr::new(key)) {
-            self.saved_env_vars.insert(key.into(), std::env::var_os(key));
-        }
-
-        std::env::set_var(key, v.to_string());
+    /// Set the environment variable `k` to value `v` for the command.
+    pub fn set_env(&mut self, k: impl AsRef<OsStr>, v: impl Display) {
+        self.cmd.env(k, v.to_string());
     }
 
-    /// Unsets the environment variable `k`
-    pub fn unset_env(&mut self, k: impl AsRef<str>) {
-        let key = k.as_ref();
-        let _ = self.saved_env_vars.remove(OsStr::new(key));
-        std::env::remove_var(key);
+    /// Unsets the environment variable `k` for the command.
+    pub fn unset_env(&mut self, k: impl AsRef<OsStr>) {
+        self.cmd.env_remove(k);
     }
 
     /// Set the working directory for this command.
@@ -387,7 +369,7 @@ impl TestCommand {
 
     /// Returns the `Config` as spit out by `forge config`
     pub fn config(&mut self) -> Config {
-        self.forge_fuse().args(["config", "--json"]);
+        self.cmd.args(["config", "--json"]);
         let output = self.output();
         let c = String::from_utf8_lossy(&output.stdout);
         let config = serde_json::from_str(c.as_ref()).unwrap();

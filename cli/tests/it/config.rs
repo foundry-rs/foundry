@@ -136,7 +136,7 @@ forgetest_init!(can_override_config, |prj: TestProject, mut cmd: TestCommand| {
     );
 
     // env vars work
-    cmd.set_env("DAPP_REMAPPINGS", "ds-test/=lib/ds-test/from-env/");
+    std::env::set_var("DAPP_REMAPPINGS", "ds-test/=lib/ds-test/from-env/");
     let config = forge_utils::load_config();
     assert_eq!(
         format!("ds-test/={}/", prj.root().join("lib/ds-test/from-env").display()),
@@ -156,7 +156,7 @@ forgetest_init!(can_override_config, |prj: TestProject, mut cmd: TestCommand| {
         Remapping::from(config.remappings[1].clone()).to_string()
     );
 
-    cmd.unset_env("DAPP_REMAPPINGS");
+    std::env::remove_var("DAPP_REMAPPINGS");
     pretty_err(&remappings_txt, fs::remove_file(&remappings_txt));
 
     cmd.set_cmd(prj.forge_bin()).args(["config", "--basic"]);
@@ -192,7 +192,7 @@ forgetest_init!(can_get_evm_opts, |prj: TestProject, mut cmd: TestCommand| {
     assert_eq!(config.eth_rpc_url, Some(url.to_string()));
     assert!(config.ffi);
 
-    cmd.set_env("FOUNDRY_ETH_RPC_URL", url);
+    std::env::set_var("FOUNDRY_ETH_RPC_URL", url);
     let figment = Config::figment_with_root(prj.root()).merge(("debug", false));
     let evm_opts: EvmOpts = figment.extract().unwrap();
     assert_eq!(evm_opts.fork_url, Some(url.to_string()));
