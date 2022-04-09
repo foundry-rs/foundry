@@ -935,7 +935,7 @@ impl Default for Config {
             via_ir: false,
             rpc_storage_caching: Default::default(),
             no_storage_caching: false,
-            bytecode_hash: BytecodeHash::None,
+            bytecode_hash: BytecodeHash::Ipfs,
             sparse_mode: false,
         }
     }
