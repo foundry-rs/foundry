@@ -16,6 +16,7 @@ use ethers::{
     types::{Address, U256},
 };
 
+use ethers::providers::Ws;
 use parking_lot::Mutex;
 use std::{
     future::Future,
@@ -146,6 +147,13 @@ impl NodeHandle {
     /// Returns a Provider for the http endpoint
     pub fn http_provider(&self) -> Provider<Http> {
         Provider::<Http>::try_from(self.http_endpoint()).unwrap()
+    }
+
+    /// Connects to the websocket Provider of the node
+    pub async fn ws_provider(&self) -> Provider<Ws> {
+        Provider::new(
+            Ws::connect(self.ws_endpoint()).await.expect("Failed to connect to node's websocket"),
+        )
     }
 
     /// Signer accounts that can sign messages/transactions from the EVM node

@@ -2,6 +2,7 @@ use std::sync::atomic::{AtomicU16, Ordering};
 
 mod api;
 mod transaction;
+mod wsapi;
 
 // keeps track of ports that can be used
 pub static NEXT_PORT: AtomicU16 = AtomicU16::new(8545);
