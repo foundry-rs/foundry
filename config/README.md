@@ -87,6 +87,7 @@ sender = '0x00a329c0648769a73afac7f9381e08fb43dbea72'
 tx_origin = '0x00a329c0648769a73afac7f9381e08fb43dbea72'
 initial_balance = '0xffffffffffffffffffffffff'
 block_number = 0
+# NOTE due to a toml-rs limitation, this value needs to be a string if the desired gas limit exceeds `i64::MAX` (9223372036854775807)
 gas_limit = 9223372036854775807
 gas_price = 0
 block_base_fee_per_gas = 0

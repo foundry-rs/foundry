@@ -155,7 +155,7 @@ pub struct Config {
     /// the chainid opcode value
     pub chain_id: Option<Chain>,
     /// Block gas limit
-    pub gas_limit: u64,
+    pub gas_limit: GasLimit,
     /// `tx.gasprice` value during EVM execution"
     pub gas_price: u64,
     /// the base fee in a block
@@ -167,7 +167,7 @@ pub struct Config {
     /// the `block.difficulty` value during EVM execution
     pub block_difficulty: u64,
     /// the `block.gaslimit` value during EVM execution
-    pub block_gas_limit: Option<u64>,
+    pub block_gas_limit: Option<GasLimit>,
     /// Additional output selection for all contracts
     /// such as "ir", "devodc", "storageLayout", etc.
     /// See [Solc Compiler Api](https://docs.soliditylang.org/en/latest/using-the-compiler.html#compiler-api)
@@ -918,9 +918,7 @@ impl Default for Config {
             block_number: 0,
             fork_block_number: None,
             chain_id: None,
-            // toml-rs can't handle larger number because integers are stored signed
-            // https://github.com/alexcrichton/toml-rs/issues/256
-            gas_limit: u64::MAX / 2,
+            gas_limit: i64::MAX.into(),
             gas_price: 0,
             block_base_fee_per_gas: 0,
             block_coinbase: Address::zero(),
@@ -940,6 +938,76 @@ impl Default for Config {
             bytecode_hash: BytecodeHash::None,
             sparse_mode: false,
         }
+    }
+}
+
+/// Wrapper for the config's `gas_limit` value necessary because toml-rs can't handle larger number because integers are stored signed: <https://github.com/alexcrichton/toml-rs/issues/256>
+///
+/// Due to this limitation this type will be serialized/deserialized as String if it's larger than
+/// `i64`
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GasLimit(pub u64);
+
+impl From<u64> for GasLimit {
+    fn from(gas: u64) -> Self {
+        Self(gas)
+    }
+}
+impl From<i64> for GasLimit {
+    fn from(gas: i64) -> Self {
+        Self(gas as u64)
+    }
+}
+impl From<i32> for GasLimit {
+    fn from(gas: i32) -> Self {
+        Self(gas as u64)
+    }
+}
+impl From<u32> for GasLimit {
+    fn from(gas: u32) -> Self {
+        Self(gas as u64)
+    }
+}
+
+impl From<GasLimit> for u64 {
+    fn from(gas: GasLimit) -> Self {
+        gas.0
+    }
+}
+
+impl Serialize for GasLimit {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        if self.0 > i64::MAX as u64 {
+            serializer.serialize_str(&self.0.to_string())
+        } else {
+            serializer.serialize_u64(self.0)
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for GasLimit {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        use serde::de::Error;
+
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Gas {
+            Number(u64),
+            Text(String),
+        }
+
+        let gas = match Gas::deserialize(deserializer)? {
+            Gas::Number(num) => GasLimit(num),
+            Gas::Text(s) => GasLimit(s.parse().map_err(D::Error::custom)?),
+        };
+
+        Ok(gas)
     }
 }
 
@@ -1605,6 +1673,28 @@ mod tests {
                     Remapping::from_str("some-source/=some-source").unwrap(),
                 ],
             );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_large_gas_limit() {
+        figment::Jail::expect_with(|jail| {
+            let gas = u64::MAX;
+            jail.create_file(
+                "foundry.toml",
+                &format!(
+                    r#"
+                [default]
+                gas_limit = "{}"
+            "#,
+                    gas
+                ),
+            )?;
+
+            let config = Config::load();
+            assert_eq!(config, Config { gas_limit: gas.into(), ..Config::default() });
 
             Ok(())
         });
