@@ -61,7 +61,6 @@ This flag we skip that process and send the content directly to the endpoint."#
 }
 
 impl VerifyArgs {
-
     /// Run the verify command to submit the contract's source code for verification on etherscan
     pub async fn run(&self) -> eyre::Result<()> {
         if self.contract.path.is_none() {
@@ -128,7 +127,7 @@ impl VerifyArgs {
             )
         };
 
-        if  !self.force {
+        if !self.force {
             // solc dry run
             self.check_flattened(source.clone()).await.map_err(|err| {
                 eyre::eyre!(
@@ -164,10 +163,10 @@ To skip this solc dry, have a look at the  `--force` flag of this command.",
             }
 
             eyre::bail!(
-            "Encountered an error verifying this contract:\nResponse: `{}`\nDetails: `{}`",
-            resp.message,
-            resp.result
-        );
+                "Encountered an error verifying this contract:\nResponse: `{}`\nDetails: `{}`",
+                resp.message,
+                resp.result
+            );
         }
 
         println!(
@@ -252,16 +251,15 @@ pub struct VerifyCheckArgs {
     guid: String,
 
     #[clap(
-    long,
-    help = "the chain id of the network you are verifying for",
-    default_value = "mainnet"
+        long,
+        help = "the chain id of the network you are verifying for",
+        default_value = "mainnet"
     )]
     chain_id: Chain,
 
     #[clap(help = "your etherscan api key", env = "ETHERSCAN_API_KEY")]
     etherscan_key: String,
 }
-
 
 impl VerifyCheckArgs {
     /// Executes the command to check verification status on Etherscan
