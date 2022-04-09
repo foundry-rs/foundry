@@ -7,7 +7,10 @@ use crate::{
 use clap::Parser;
 use ethers::{
     abi::Address,
-    etherscan::{contract::VerifyContract, Client},
+    etherscan::{
+        contract::{CodeFormat, VerifyContract},
+        Client,
+    },
     solc::{artifacts::Source, AggregatedCompilerOutput, CompilerInput, Solc},
 };
 use foundry_config::Chain;
@@ -67,6 +70,46 @@ impl VerifyArgs {
             eyre::bail!("Contract info must be provided in the format <path>:<name>")
         }
 
+        let verify_args = self.create_verify_request()?;
+
+        let etherscan = Client::new(self.chain_id.try_into()?, &self.etherscan_key)
+            .map_err(|err| eyre::eyre!("Failed to create etherscan client: {}", err))?;
+
+        let resp = etherscan
+            .submit_contract_verification(&verify_args)
+            .await
+            .map_err(|err| eyre::eyre!("Failed to submit contract verification: {}", err))?;
+
+        if resp.status == "0" {
+            if resp.message == "Contract source code already verified" {
+                println!("Contract source code already verified.");
+                return Ok(())
+            }
+
+            eyre::bail!(
+                "Encountered an error verifying this contract:\nResponse: `{}`\nDetails: `{}`",
+                resp.message,
+                resp.result
+            );
+        }
+
+        println!(
+            r#"Submitted contract for verification:
+                Response: `{}`
+                GUID: `{}`
+                url: {}#code"#,
+            resp.message,
+            resp.result,
+            etherscan.address_url(self.address)
+        );
+        Ok(())
+    }
+
+    /// Creates the `VerifyContract` etherescan request in order to verify the contract
+    ///
+    /// If `--flatten` is set to `true` then this will send with [`CodeFormat::SingleFile`]
+    /// otherwise this will use the [`CodeFormat::StandardJsonInput`]
+    fn create_verify_request(&self) -> eyre::Result<VerifyContract> {
         let CoreFlattenArgs {
             root,
             contracts,
@@ -102,83 +145,55 @@ impl VerifyArgs {
 
         let project = build_args.project()?;
 
-        let (source, contract_name) = if self.flatten {
+        let (source, contract_name, code_format) = if self.flatten {
             // NOTE: user need to set bytecodehash='ipfs' for this otherwise verification won't work
             // see: https://github.com/gakonst/foundry/issues/1236
-            (
-                project
-                    .flatten(&project.root().join(self.contract.path.as_ref().unwrap()))
-                    .map_err(|err| eyre::eyre!("Failed to flatten contract: {}", err))?,
-                self.contract.name.clone(),
-            )
+
+            let source = project
+                .flatten(&project.root().join(self.contract.path.as_ref().unwrap()))
+                .map_err(|err| eyre::eyre!("Failed to flatten contract: {}", err))?;
+
+            if !self.force {
+                // solc dry run of flattened code
+                self.check_flattened(source.clone()).map_err(|err| {
+                    eyre::eyre!(
+                        "Failed to compile the flattened code locally: `{}`\
+To skip this solc dry, have a look at the  `--force` flag of this command.",
+                        err
+                    )
+                })?;
+            }
+
+            (source, self.contract.name.clone(), CodeFormat::SingleFile)
         } else {
             let input = project
                 .standard_json_input(&project.root().join(self.contract.path.as_ref().unwrap()))
                 .map_err(|err| eyre::eyre!("Failed to get standard json input: {}", err))?;
 
-            (
-                serde_json::to_string(&input)
-                    .map_err(|err| eyre::eyre!("Failed to parse standard json input: {}", err))?,
-                format!(
-                    "{}:{}",
-                    &project.root().join(self.contract.path.as_ref().unwrap()).to_string_lossy(),
-                    self.contract.name.clone()
-                ),
-            )
+            let source = serde_json::to_string(&input)
+                .map_err(|err| eyre::eyre!("Failed to parse standard json input: {}", err))?;
+
+            let contract_name = format!(
+                "{}:{}",
+                &project.root().join(self.contract.path.as_ref().unwrap()).to_string_lossy(),
+                self.contract.name.clone()
+            );
+
+            (source, contract_name, CodeFormat::StandardJsonInput)
         };
-
-        if !self.force {
-            // solc dry run
-            self.check_flattened(source.clone()).await.map_err(|err| {
-                eyre::eyre!(
-                    "Failed to compile the flattened code locally: `{}`\
-To skip this solc dry, have a look at the  `--force` flag of this command.",
-                    err
-                )
-            })?;
-        }
-
-        let etherscan = Client::new(self.chain_id.try_into()?, &self.etherscan_key)
-            .map_err(|err| eyre::eyre!("Failed to create etherscan client: {}", err))?;
 
         let mut verify_args =
             VerifyContract::new(self.address, contract_name, source, self.compiler_version.clone())
-                .constructor_arguments(self.constructor_args.clone());
+                .constructor_arguments(self.constructor_args.clone())
+                .code_format(code_format);
 
-        if let Some(optimizations) = self.num_of_optimizations {
-            verify_args = verify_args.optimization(true).runs(optimizations);
+        verify_args = if let Some(optimizations) = self.num_of_optimizations {
+            verify_args.optimization(true).runs(optimizations)
         } else {
-            verify_args = verify_args.optimization(false);
-        }
+            verify_args.optimization(false)
+        };
 
-        let resp = etherscan
-            .submit_contract_verification(&verify_args)
-            .await
-            .map_err(|err| eyre::eyre!("Failed to submit contract verification: {}", err))?;
-
-        if resp.status == "0" {
-            if resp.message == "Contract source code already verified" {
-                println!("Contract source code already verified.");
-                return Ok(())
-            }
-
-            eyre::bail!(
-                "Encountered an error verifying this contract:\nResponse: `{}`\nDetails: `{}`",
-                resp.message,
-                resp.result
-            );
-        }
-
-        println!(
-            r#"Submitted contract for verification:
-                Response: `{}`
-                GUID: `{}`
-                url: {}#code"#,
-            resp.message,
-            resp.result,
-            etherscan.address_url(self.address)
-        );
-        Ok(())
+        Ok(verify_args)
     }
 
     /// Parses the [Version] from the provided compiler version
@@ -193,7 +208,7 @@ To skip this solc dry, have a look at the  `--force` flag of this command.",
     ///
     /// the `compiler_version` `v0.8.7+commit.e28d00a7` will be returned as `0.8.7`
     fn sanitized_solc_version(&self) -> eyre::Result<Version> {
-        let v: Version = self.compiler_version.trim_start_matches("v").parse()?;
+        let v: Version = self.compiler_version.trim_start_matches('v').parse()?;
         Ok(Version::new(v.major, v.minor, v.patch))
     }
 
@@ -211,12 +226,12 @@ To skip this solc dry, have a look at the  `--force` flag of this command.",
     /// If the solc compiler output contains errors, this could either be due to a bug in the
     /// flattening code or could to conflict in the flattened code, for example if there are
     /// multiple interfaces with the same name.
-    async fn check_flattened(&self, content: impl Into<String>) -> eyre::Result<()> {
+    fn check_flattened(&self, content: impl Into<String>) -> eyre::Result<()> {
         let version: Version = self.sanitized_solc_version()?;
         let solc = if let Some(solc) = Solc::find_svm_installed_version(version.to_string())? {
             solc
         } else {
-            Solc::install(&version).await?
+            Solc::blocking_install(&version)?
         };
         let input = CompilerInput {
             language: "Solidity".to_string(),
