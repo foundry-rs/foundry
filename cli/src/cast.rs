@@ -180,6 +180,7 @@ async fn main() -> eyre::Result<()> {
 
         Subcommands::Call(config_call) => {
             let config: Config = (&config_call).into();
+
             let provider = Provider::try_from(
                 config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
             )?;
@@ -195,7 +196,7 @@ async fn main() -> eyre::Result<()> {
             builder
                 .set_args(&config_call.sig, config_call.args)
                 .await?
-                .etherscan_api_key(config_call.eth.etherscan_api_key);
+                .etherscan_api_key(config_call.eth.etherscan_key);
             let builder_output = builder.build();
             println!("{}", Cast::new(provider).call(builder_output, config_call.block).await?);
         }
@@ -282,7 +283,7 @@ async fn main() -> eyre::Result<()> {
                             value,
                             nonce,
                             eth.chain,
-                            eth.etherscan_api_key,
+                            eth.etherscan_key,
                             cast_async,
                             legacy,
                             confirmations,
@@ -301,7 +302,7 @@ async fn main() -> eyre::Result<()> {
                             value,
                             nonce,
                             eth.chain,
-                            eth.etherscan_api_key,
+                            eth.etherscan_key,
                             cast_async,
                             legacy,
                             confirmations,
@@ -320,7 +321,7 @@ async fn main() -> eyre::Result<()> {
                             value,
                             nonce,
                             eth.chain,
-                            eth.etherscan_api_key,
+                            eth.etherscan_key,
                             cast_async,
                             legacy,
                             confirmations,
@@ -344,7 +345,7 @@ async fn main() -> eyre::Result<()> {
                     value,
                     nonce,
                     eth.chain,
-                    eth.etherscan_api_key,
+                    eth.etherscan_key,
                     cast_async,
                     legacy,
                     confirmations,
@@ -376,7 +377,7 @@ async fn main() -> eyre::Result<()> {
 
             let mut builder = TxBuilder::new(&provider, from, to, eth.chain, false).await?;
             builder
-                .etherscan_api_key(eth.etherscan_api_key)
+                .etherscan_api_key(eth.etherscan_key)
                 .value(value)
                 .set_args(sig.as_str(), args)
                 .await?;
@@ -386,32 +387,29 @@ async fn main() -> eyre::Result<()> {
             let gas = Cast::new(&provider).estimate(builder_output).await?;
             println!("{}", gas);
         }
-        // Subcommands::ConfigEstimate(estimate_args) => {
-        //     let config: Config = (&estimate_args).into();
-        //     let provider = Provider::try_from(
-        //         config
-        //             .eth_rpc_url
-        //             .expect("No eth_rpc_url set in foundry.toml or given as cli argument"),
-        //     )?;
-        //     let from = match estimate_args.eth.sender().await {
-        //         Address::zero => config.sender,
-        //         from => from,
-        //     };
+        Subcommands::ConfigEstimate(estimate_args) => {
+            let config: Config = (&estimate_args).into();
+            println!("{:?}", config);
+            let provider = Provider::try_from(
+                config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
+            )?;
 
-        //     let mut builder =
-        //         TxBuilder::new(&provider, from, to, estimate_args.eth.chain_id.unwrap(), false)
-        //             .await?;
-        //     builder
-        //         .etherscan_api_key(config.etherscan_api_key)
-        //         .value(value)
-        //         .set_args(sig.as_str(), args)
-        //         .await?;
+            let from = estimate_args.eth.sender().await;
 
-        //     let builder_output = builder.peek();
+            let mut builder =
+                TxBuilder::new(&provider, from, estimate_args.to, estimate_args.eth.chain, false)
+                    .await?;
+            builder
+                .etherscan_api_key(config.etherscan_api_key)
+                .value(estimate_args.value)
+                .set_args(estimate_args.sig.as_str(), estimate_args.args)
+                .await?;
 
-        //     let gas = Cast::new(&provider).estimate(builder_output).await?;
-        //     println!("{}", gas);
-        // }
+            let builder_output = builder.peek();
+
+            let gas = Cast::new(&provider).estimate(builder_output).await?;
+            println!("{}", gas);
+        }
         Subcommands::CalldataDecode { sig, calldata } => {
             let tokens = SimpleCast::abi_decode(&sig, &calldata, true)?;
             let tokens = foundry_utils::format_tokens(&tokens);
@@ -711,7 +709,7 @@ async fn main() -> eyre::Result<()> {
                     rpc_url: Some("http://localhost:8545".to_string()),
                     flashbots: false,
                     chain: Chain::Mainnet,
-                    etherscan_api_key: None,
+                    etherscan_key: None,
                 }
                 .signer(0.into())
                 .await?
@@ -732,7 +730,7 @@ async fn main() -> eyre::Result<()> {
                     rpc_url: Some("http://localhost:8545".to_string()),
                     flashbots: false,
                     chain: Chain::Mainnet,
-                    etherscan_api_key: None,
+                    etherscan_key: None,
                 }
                 .signer(0.into())
                 .await?

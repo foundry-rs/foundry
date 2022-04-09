@@ -74,7 +74,7 @@ pub struct EthereumOpts {
     pub flashbots: bool,
 
     #[clap(long, env = "ETHERSCAN_API_KEY")]
-    pub etherscan_api_key: Option<String>,
+    pub etherscan_key: Option<String>,
 
     #[clap(long, env = "CHAIN", default_value = "mainnet")]
     #[serde(skip)]
