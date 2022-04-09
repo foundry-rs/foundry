@@ -238,8 +238,8 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_getStorageAt`
     pub fn storage_at(
         &self,
-        _address: Address,
-        _index: U256,
+        address: Address,
+        index: U256,
         _number: Option<BlockNumber>,
     ) -> Result<H256> {
         Err(BlockchainError::RpcUnimplemented)
@@ -248,8 +248,8 @@ impl EthApi {
     /// Returns block with given hash.
     ///
     /// Handler for ETH RPC call: `eth_getBlockByHash`
-    pub fn block_by_hash(&self, _hash: H256, _full: bool) -> Result<Option<Block<TxHash>>> {
-        Err(BlockchainError::RpcUnimplemented)
+    pub fn block_by_hash(&self, hash: H256, _full: bool) -> Result<Option<Block<TxHash>>> {
+        Ok(self.backend.block_by_hash(hash))
     }
 
     /// Returns block with given number.

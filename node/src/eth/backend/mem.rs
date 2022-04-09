@@ -378,6 +378,11 @@ impl Backend {
         receipts
     }
 
+    pub fn block_by_hash(&self, hash: H256) -> Option<EthersBlock<TxHash>> {
+        let block = self.blockchain.storage.read().blocks.get(&hash)?.clone();
+        self.convert_block(block)
+    }
+
     pub fn block_by_number(&self, number: BlockNumber) -> Option<EthersBlock<TxHash>> {
         let block = {
             let storage = self.blockchain.storage.read();
@@ -389,6 +394,12 @@ impl Backend {
             };
             storage.blocks.get(&hash)?.clone()
         };
+
+        self.convert_block(block)
+    }
+
+    /// Takes a block as it's stored internally and returns the eth api conform block format
+    fn convert_block(&self, block: Block) -> Option<EthersBlock<TxHash>> {
         let size = U256::from(rlp::encode(&block).len() as u32);
 
         let Block { header, transactions, .. } = block;
