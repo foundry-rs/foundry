@@ -54,3 +54,20 @@ async fn can_deploy_greeter() {
     let greeting = greeter_contract.greet().call().await.unwrap();
     assert_eq!("Hello World!", greeting);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_deploy_greeter_ws() {
+    abigen!(Greeter, "test-data/greeter.json");
+
+    let (_api, handle) = spawn(NodeConfig::default().port(next_port())).await;
+    let provider = handle.ws_provider().await;
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let greeter_contract =
+        Greeter::deploy(client, "Hello World!".to_string()).unwrap().legacy().send().await.unwrap();
+
+    let greeting = greeter_contract.greet().call().await.unwrap();
+    assert_eq!("Hello World!", greeting);
+}
