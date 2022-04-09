@@ -175,9 +175,8 @@ pub struct MemDb {
 }
 
 impl MemDb {
-
     // Inserts the account, replacing it if it exists already
-    pub fn do_insert_account(&self,  address: Address, account: AccountInfo) {
+    pub fn do_insert_account(&self, address: Address, account: AccountInfo) {
         self.accounts.write().insert(address, account);
     }
 
@@ -221,12 +220,11 @@ impl MemDb {
             }
         }
     }
-
 }
 
 impl DatabaseCommit for MemDb {
     fn commit(&mut self, changes: Map<Address, Account>) {
-       self.do_commit(changes)
+        self.do_commit(changes)
     }
 }
 
