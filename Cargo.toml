@@ -11,6 +11,27 @@ members = [
     "evm"
 ]
 
+[profile.dev]
+# Disabling debug info speeds up builds a bunch,
+# and we don't rely on it for debugging that much
+debug = 0
+
+[profile.dev.package]
+# These speed up local tests
+ethers-solc.opt-level = 3
+
+# local "release" mode
+[profile.local]
+inherits = "dev"
+opt-level = 3
+# Set this to 1 or 2 to get more useful backtraces
+debug = 0
+panic = 'unwind'
+# better recompile times
+incremental = true
+codegen-units = 16
+
+
 [profile.release]
 # Optimize for binary size, but keep loop vectorization
 opt-level = "s"
