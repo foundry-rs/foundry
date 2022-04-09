@@ -238,8 +238,8 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_getStorageAt`
     pub fn storage_at(
         &self,
-        address: Address,
-        index: U256,
+        _address: Address,
+        _index: U256,
         _number: Option<BlockNumber>,
     ) -> Result<H256> {
         Err(BlockchainError::RpcUnimplemented)

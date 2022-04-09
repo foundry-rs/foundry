@@ -199,6 +199,11 @@ impl Backend {
         Self { db, blockchain, env, gas_price, fork }
     }
 
+    /// Whether we're forked off some remote client
+    pub fn is_fork(&self) -> bool {
+        self.fork.is_some()
+    }
+
     /// The env data of the blockchain
     pub fn env(&self) -> &Arc<RwLock<Env>> {
         &self.env

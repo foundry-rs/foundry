@@ -1,11 +1,6 @@
 use crate::eth::EthApi;
 use axum::{
-    extract::{
-        rejection::JsonRejection,
-        ws::{Message, WebSocket},
-        Extension, WebSocketUpgrade,
-    },
-    response::IntoResponse,
+    extract::{rejection::JsonRejection, Extension},
     Json,
 };
 use foundry_node_core::{
@@ -27,12 +22,15 @@ pub async fn handle_rpc(
             warn!("invalid request={:?}", err);
             Response::error(RpcError::invalid_request()).into()
         }
-        Ok(req) => handle_request(req.0, api).await.unwrap().into(),
+        Ok(req) => handle_request(req.0, api)
+            .await
+            .unwrap_or_else(|| Response::error(RpcError::invalid_request()))
+            .into(),
     }
 }
 
 /// handle the JSON-RPC [Request]
-async fn handle_request(req: Request, api: EthApi) -> Option<Response> {
+pub async fn handle_request(req: Request, api: EthApi) -> Option<Response> {
     /// processes batch calls
     fn responses_as_batch(outs: Vec<Option<RpcResponse>>) -> Option<Response> {
         let batch: Vec<_> = outs.into_iter().flatten().collect();
@@ -91,49 +89,5 @@ async fn execute_method_call(call: RpcMethodCall, api: EthApi) -> RpcResponse {
             trace!(target: "rpc", "sending rpc result {:?}", result);
             RpcResponse::new(id, result)
         }
-    }
-}
-
-/// Handles incoming Websocket upgrade
-pub async fn ws_handler(
-    ws: WebSocketUpgrade,
-    Extension(api): Extension<EthApi>,
-) -> impl IntoResponse {
-    ws.on_upgrade(|socket| handle_ws_socket(socket, api))
-}
-
-async fn handle_ws_socket(mut socket: WebSocket, _api: EthApi) {
-    if let Some(msg) = socket.recv().await {
-        if let Ok(msg) = msg {
-            match msg {
-                Message::Text(t) => {
-                    println!("client send str: {:?}", t);
-                }
-                Message::Binary(_) => {
-                    println!("client send binary data");
-                }
-                Message::Ping(_) => {
-                    println!("socket ping");
-                }
-                Message::Pong(_) => {
-                    println!("socket pong");
-                }
-                Message::Close(_) => {
-                    println!("client disconnected");
-                    return
-                }
-            }
-        } else {
-            println!("client disconnected");
-            return
-        }
-    }
-
-    loop {
-        if socket.send(Message::Text(String::from("Hi!"))).await.is_err() {
-            println!("client disconnected");
-            return
-        }
-        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
     }
 }

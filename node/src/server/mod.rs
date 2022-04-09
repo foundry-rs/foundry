@@ -7,11 +7,12 @@ use tower_http::trace::TraceLayer;
 
 /// handlers for axum server
 mod handler;
+mod ws;
 
 /// Configures an [axum::Server] that handles [EthApi] related JSON-RPC calls via HTTP
 pub fn serve(addr: SocketAddr, api: EthApi) -> impl Future<Output = hyper::Result<()>> {
     let svc = Router::new()
-        .route("/", post(handler::handle_rpc).get(handler::ws_handler))
+        .route("/", post(handler::handle_rpc).get(ws::ws_handler))
         .layer(Extension(api))
         .layer(TraceLayer::new_for_http())
         .into_make_service();
