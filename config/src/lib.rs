@@ -808,7 +808,7 @@ impl From<Config> for Figment {
             .merge(Env::prefixed("DAPP_").ignore(&["REMAPPINGS", "LIBRARIES"]).global())
             .merge(Env::prefixed("DAPP_TEST_").global())
             .merge(DappEnvCompatProvider)
-            .merge(Env::raw().only(&["ETH_RPC_URL", "ETHERSCAN_API_KEY"]))
+            .merge(Env::raw().only(&["ETHERSCAN_API_KEY"]))
             .merge(
                 Env::prefixed("FOUNDRY_").ignore(&["PROFILE", "REMAPPINGS", "LIBRARIES"]).global(),
             )
@@ -918,6 +918,8 @@ impl Default for Config {
             block_number: 0,
             fork_block_number: None,
             chain_id: None,
+            // toml-rs can't handle larger number because integers are stored signed
+            // https://github.com/alexcrichton/toml-rs/issues/256
             gas_limit: u64::MAX / 2,
             gas_price: 0,
             block_base_fee_per_gas: 0,
