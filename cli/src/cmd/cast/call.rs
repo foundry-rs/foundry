@@ -1,3 +1,4 @@
+//! cast call subcommand
 use crate::opts::{
     cast::{parse_block_id, parse_name_or_address},
     EthereumOpts,
@@ -44,8 +45,9 @@ impl figment::Provider for CallArgs {
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
         let value = Value::serialize(self)?;
         let mut dict = value.into_dict().unwrap();
+        let rpc_url = self.eth.rpc_url().map_err(|err| err.to_string())?;
 
-        if let Some(rpc_url) = &self.eth.rpc_url {
+        if rpc_url != "http://localhost:8545" {
             dict.insert("eth_rpc_url".to_string(), Value::from(rpc_url.to_string()));
         }
 

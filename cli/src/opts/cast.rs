@@ -275,6 +275,7 @@ pub enum Subcommands {
         #[clap(flatten)]
         eth: EthereumOpts,
     },
+    // ConfigEstimate(EstimateArgs),
     #[clap(name = "--calldata-decode")]
     #[clap(about = "Decode ABI-encoded hex input data. Use `--abi-decode` to decode output data")]
     CalldataDecode {

@@ -386,6 +386,32 @@ async fn main() -> eyre::Result<()> {
             let gas = Cast::new(&provider).estimate(builder_output).await?;
             println!("{}", gas);
         }
+        // Subcommands::ConfigEstimate(estimate_args) => {
+        //     let config: Config = (&estimate_args).into();
+        //     let provider = Provider::try_from(
+        //         config
+        //             .eth_rpc_url
+        //             .expect("No eth_rpc_url set in foundry.toml or given as cli argument"),
+        //     )?;
+        //     let from = match estimate_args.eth.sender().await {
+        //         Address::zero => config.sender,
+        //         from => from,
+        //     };
+
+        //     let mut builder =
+        //         TxBuilder::new(&provider, from, to, estimate_args.eth.chain_id.unwrap(), false)
+        //             .await?;
+        //     builder
+        //         .etherscan_api_key(config.etherscan_api_key)
+        //         .value(value)
+        //         .set_args(sig.as_str(), args)
+        //         .await?;
+
+        //     let builder_output = builder.peek();
+
+        //     let gas = Cast::new(&provider).estimate(builder_output).await?;
+        //     println!("{}", gas);
+        // }
         Subcommands::CalldataDecode { sig, calldata } => {
             let tokens = SimpleCast::abi_decode(&sig, &calldata, true)?;
             let tokens = foundry_utils::format_tokens(&tokens);
