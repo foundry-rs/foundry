@@ -2,6 +2,10 @@
 name = "foundry-evm"
 version = "0.2.0"
 edition = "2021"
+license = "MIT OR Apache-2.0"
+readme = "../README.md"
+repository = "https://github.com/gakonst/foundry"
+keywords = ["ethereum", "web3", "evm"]
 
 # TODO: We can probably reduce dependencies here or in the forge crate
 [dependencies]
