@@ -1,6 +1,11 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
-use crate::{eth::backend::db::Db, fork::ForkInfo, revm::db::CacheDB};
+use crate::{
+    eth::backend::db::{Db, ForkedDatabase},
+    fork::ForkInfo,
+    mem,
+    revm::db::CacheDB,
+};
 use ethers::{
     core::k256::ecdsa::SigningKey,
     prelude::{Address, Wallet, U256},
@@ -151,7 +156,11 @@ impl NodeConfig {
         self
     }
 
-    pub(crate) async fn bootstrap(&self) {
+    /// Configures everything related to env, backend and database and returns the
+    /// [Backend](mem::Backend)
+    ///
+    /// *Note*: only memory based backend for now
+    pub(crate) async fn setup(&self) -> mem::Backend {
         // configure the revm environment
         let mut env = revm::Env {
             cfg: CfgEnv { ..Default::default() },
@@ -159,7 +168,7 @@ impl NodeConfig {
             tx: TxEnv { chain_id: Some(self.chain_id), ..Default::default() },
         };
 
-        let (_db, _fork): (Arc<RwLock<dyn Db>>, Option<ForkInfo>) = if let Some(eth_rpc_url) =
+        let (db, fork): (Arc<RwLock<dyn Db>>, Option<ForkInfo>) = if let Some(eth_rpc_url) =
             self.eth_rpc_url.clone()
         {
             // TODO make provider agnostic
@@ -180,31 +189,39 @@ impl NodeConfig {
             let meta = BlockchainDbMeta::new(env.clone(), eth_rpc_url.clone());
 
             // TODO support cache path
-            let db = BlockchainDb::new(meta, None);
+            let block_chain_db = BlockchainDb::new(meta, None);
+            let db = Arc::clone(block_chain_db.db());
 
+            // This will spawn the background service that will use the provider to fetch blockchain
+            // data from the other client
             let backend = SharedBackend::spawn_backend(
                 Arc::clone(&provider),
-                db,
+                block_chain_db,
                 Some(fork_block_number.into()),
-            );
-            let _db = RwLock::new(backend);
+            )
+            .await;
 
-            let _fork =
+            let db = Arc::new(RwLock::new(ForkedDatabase::new(backend, db)));
+
+            let fork =
                 ForkInfo { eth_rpc_url, block_number: fork_block_number, block_hash, provider };
 
-            // (db, Some(fork))
-            todo!()
+            (db, Some(fork))
         } else {
             (Arc::new(RwLock::new(CacheDB::default())), None)
         };
 
-        // // only memory based backend for now
-        // let backend = Arc::new(mem::Backend::with_genesis_balance(
-        //     Arc::new(RwLock::new(env)),
-        //     self.genesis_balance,
-        //     self.genesis_accounts.iter().map(|acc| acc.address()),
-        //     self.gas_price,
-        // ));
+        // only memory based backend for now
+        let backend = mem::Backend::with_genesis_balance(
+            db,
+            Arc::new(RwLock::new(env)),
+            self.genesis_balance,
+            self.genesis_accounts.iter().map(|acc| acc.address()),
+            self.gas_price,
+            fork,
+        );
+
+        backend
     }
 }
 

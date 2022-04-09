@@ -5,7 +5,7 @@ use crate::{
     U256,
 };
 use bytes::Bytes;
-use ethers::prelude::{H160, H256};
+use ethers::prelude::{Address, H256};
 use foundry_evm::{
     executor::{
         fork::{MemDb, SharedBackend},
@@ -17,13 +17,24 @@ use foundry_evm::{
 use std::sync::Arc;
 
 /// This bundles all required revm traits
-pub trait Db: DatabaseRef + Database + DatabaseCommit + Send + Sync + 'static {}
+pub trait Db: DatabaseRef + Database + DatabaseCommit + Send + Sync + 'static {
+    /// Inserts an account
+    fn insert_account(&mut self, address: Address, account: AccountInfo);
+}
 
 /// Implement the helper for revm's db
-impl<ExtDB: DatabaseRef + Send + Sync + 'static> Db for CacheDB<ExtDB> {}
+impl<ExtDB: DatabaseRef + Send + Sync + 'static> Db for CacheDB<ExtDB> {
+    fn insert_account(&mut self, address: Address, account: AccountInfo) {
+        self.insert_cache(address, account)
+    }
+}
 
 /// Implement the helper for the fork database
-impl Db for ForkedDatabase {}
+impl Db for ForkedDatabase {
+    fn insert_account(&mut self, address: Address, account: AccountInfo) {
+        self.db.do_insert_account(address, account)
+    }
+}
 
 /// a [revm::Database] that's forked off another client
 ///
@@ -43,8 +54,15 @@ pub struct ForkedDatabase {
     db: Arc<MemDb>,
 }
 
+impl ForkedDatabase {
+    /// Creates a new instance of this DB
+    pub fn new(backend: SharedBackend, db: Arc<MemDb>) -> Self {
+        Self { backend, db }
+    }
+}
+
 impl Database for ForkedDatabase {
-    fn basic(&mut self, address: H160) -> AccountInfo {
+    fn basic(&mut self, address: Address) -> AccountInfo {
         self.backend.basic(address)
     }
 
@@ -52,7 +70,7 @@ impl Database for ForkedDatabase {
         self.backend.code_by_hash(code_hash)
     }
 
-    fn storage(&mut self, address: H160, index: U256) -> U256 {
+    fn storage(&mut self, address: Address, index: U256) -> U256 {
         self.backend.storage(address, index)
     }
 
@@ -62,7 +80,7 @@ impl Database for ForkedDatabase {
 }
 
 impl DatabaseRef for ForkedDatabase {
-    fn basic(&self, address: H160) -> AccountInfo {
+    fn basic(&self, address: Address) -> AccountInfo {
         self.backend.basic(address)
     }
 
@@ -70,7 +88,7 @@ impl DatabaseRef for ForkedDatabase {
         self.backend.code_by_hash(code_hash)
     }
 
-    fn storage(&self, address: H160, index: U256) -> U256 {
+    fn storage(&self, address: Address, index: U256) -> U256 {
         self.backend.storage(address, index)
     }
 
@@ -80,7 +98,7 @@ impl DatabaseRef for ForkedDatabase {
 }
 
 impl DatabaseCommit for ForkedDatabase {
-    fn commit(&mut self, changes: Map<H160, Account>) {
+    fn commit(&mut self, changes: Map<Address, Account>) {
         self.db.do_commit(changes)
     }
 }

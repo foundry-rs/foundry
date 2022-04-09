@@ -2,22 +2,21 @@ mod config;
 
 use crate::{
     eth::{backend::mem, miner::MiningMode, pool::Pool, EthApi},
-    revm::{CfgEnv, TxEnv},
     service::NodeService,
 };
 pub use config::NodeConfig;
-use foundry_evm::{revm, revm::BlockEnv};
+use foundry_evm::revm;
 
 use crate::eth::sign::{DevSigner, Signer as EthSigner};
 use ethers::{
     core::k256::ecdsa::SigningKey,
-    prelude::{Middleware, Wallet},
+    prelude::Wallet,
     providers::{Http, Provider},
     signers::Signer,
     types::{Address, U256},
 };
 
-use parking_lot::{Mutex, RwLock};
+use parking_lot::Mutex;
 use std::{
     future::Future,
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -55,28 +54,20 @@ pub mod fork;
 /// # }
 /// ```
 pub async fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
-    // set everything up
+    let backend = Arc::new(config.setup().await);
+
     let NodeConfig {
-        chain_id,
-        gas_limit,
-        genesis_accounts,
-        genesis_balance,
+        chain_id: _,
+        gas_limit: _,
+        genesis_accounts: _,
+        genesis_balance: _,
         accounts,
         automine,
         port,
         max_transactions,
-        silent: _,
-        gas_price,
-        fork_block_number: _,
-        eth_rpc_url: _,
+        gas_price: _,
+        ..
     } = config.clone();
-
-    // configure the revm environment
-    let env = revm::Env {
-        cfg: CfgEnv { ..Default::default() },
-        block: BlockEnv { gas_limit, ..Default::default() },
-        tx: TxEnv { chain_id: Some(chain_id), ..Default::default() },
-    };
 
     let pool = Arc::new(Pool::default());
 
@@ -87,15 +78,6 @@ pub async fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
         let listener = pool.add_ready_listener();
         MiningMode::instant(max_transactions, listener)
     };
-
-    // only memory based backend for now
-    let backend = Arc::new(mem::Backend::with_genesis_balance(
-        Arc::new(RwLock::new(env)),
-        genesis_balance,
-        genesis_accounts.into_iter().map(|acc| acc.address()),
-        gas_price,
-        None,
-    ));
 
     let dev_signer: Box<dyn EthSigner> = Box::new(DevSigner::new(accounts));
     let fee_history_cache = Arc::new(Mutex::new(Default::default()));

@@ -12,7 +12,6 @@ use ethers::{
 use crate::{
     eth::{backend::duration_since_unix_epoch, error::InvalidTransactionError, fees::FeeDetails},
     fork::ForkInfo,
-    revm::db::DatabaseRef,
 };
 use ethers::{
     types::{Address, Block as EthersBlock, Log, Transaction, TransactionReceipt},
@@ -172,26 +171,32 @@ impl Backend {
 
     /// Initialises the balance of the given accounts
     pub fn with_genesis_balance(
+        db: Arc<RwLock<dyn Db>>,
         env: Arc<RwLock<Env>>,
         balance: U256,
         accounts: impl IntoIterator<Item = Address>,
         gas_price: U256,
         fork: Option<ForkInfo>,
     ) -> Self {
-        let mut db = CacheDB::default();
-        for account in accounts {
-            let mut info = db.basic(account);
-            info.balance = balance;
-            db.insert_cache(account, info);
+        // insert genesis accounts
+        {
+            let mut db = db.write();
+            for account in accounts {
+                let mut info = db.basic(account);
+                info.balance = balance;
+                db.insert_account(account, info);
+            }
         }
 
+        // if this is a fork then adjust the blockchain storage
         let blockchain = if let Some(ref fork) = fork {
+            trace!(target: "backend", "using forked blockchain at {}", fork.block_number);
             Blockchain::forked(fork.block_number, fork.block_hash)
         } else {
             Default::default()
         };
 
-        Self { db: Arc::new(RwLock::new(db)), blockchain, env, gas_price, fork }
+        Self { db, blockchain, env, gas_price, fork }
     }
 
     /// The env data of the blockchain

@@ -176,6 +176,11 @@ pub struct MemDb {
 
 impl MemDb {
 
+    // Inserts the account, replacing it if it exists already
+    pub fn do_insert_account(&self,  address: Address, account: AccountInfo) {
+        self.accounts.write().insert(address, account);
+    }
+
     /// The implementation of [DatabaseCommit::commit()]
     pub fn do_commit(&self, changes: Map<Address, Account>) {
         let mut storage = self.storage.write();
