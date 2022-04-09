@@ -1,8 +1,8 @@
 use crate::{
     eth::{
         backend,
-        error::{BlockchainError, Result, ToRpcResponseResult},
-        fees::{FeeDetails, FeeHistoryCache},
+        error::{BlockchainError, FeeHistoryError, Result, ToRpcResponseResult},
+        fees::{FeeDetails, FeeHistory, FeeHistoryCache},
         pool::{
             transactions::{to_marker, PoolTransaction},
             Pool,
@@ -14,8 +14,8 @@ use crate::{
 use ethers::{
     abi::ethereum_types::H64,
     types::{
-        Address, Block, BlockNumber, Bytes, FeeHistory, Log, Transaction, TransactionReceipt,
-        TxHash, H256, U256, U64,
+        Address, Block, BlockNumber, Bytes, Log, Transaction, TransactionReceipt, TxHash, H256,
+        U256, U64,
     },
     utils::rlp,
 };
@@ -49,7 +49,7 @@ pub struct EthApi {
     /// available signers
     signers: Arc<Vec<Box<dyn Signer>>>,
     /// data required for `eth_feeHistory`
-    _fee_history_cache: FeeHistoryCache,
+    fee_history_cache: FeeHistoryCache,
 }
 
 // === impl Eth RPC API ===
@@ -62,7 +62,7 @@ impl EthApi {
         signers: Arc<Vec<Box<dyn Signer>>>,
         fee_history_cache: FeeHistoryCache,
     ) -> Self {
-        Self { pool, backend, is_authority: true, signers, _fee_history_cache: fee_history_cache }
+        Self { pool, backend, is_authority: true, signers, fee_history_cache }
     }
 
     /// Executes the [EthRequest] and returns an RPC [RpcResponse]
@@ -549,18 +549,96 @@ impl EthApi {
     /// Introduced in EIP-1159 for getting information on the appropriate priority fee to use.
     ///
     /// Handler for ETH RPC call: `eth_feeHistory`
+    ///
+    /// TODO actually track fee history
     pub fn fee_history(
         &self,
         block_count: U256,
-        _newest_block: BlockNumber,
-        _reward_percentiles: Option<Vec<f64>>,
+        newest_block: BlockNumber,
+        reward_percentiles: Vec<f64>,
     ) -> Result<FeeHistory> {
-        // The max supported range size is 1024 by spec.
-        let range_limit = U256::from(1024);
-        let _block_count =
+        // max number of blocks in the requested range
+        const MAX_BLOCK_COUNT: u64 = 1024u64;
+
+        let range_limit = U256::from(MAX_BLOCK_COUNT);
+        let block_count =
             if block_count > range_limit { range_limit.as_u64() } else { block_count.as_u64() };
 
-        Err(BlockchainError::RpcUnimplemented)
+        let number = match newest_block {
+            BlockNumber::Latest | BlockNumber::Pending => self.backend.best_number().as_u64(),
+            BlockNumber::Earliest => 0,
+            BlockNumber::Number(n) => n.as_u64(),
+        };
+
+        // highest and lowest block num in the requested range
+        let highest = number;
+        let lowest = highest.saturating_sub(block_count);
+
+        if lowest < self.backend.best_number().as_u64() {
+            return Err(FeeHistoryError::InvalidBlockRange.into())
+        }
+
+        let fee_history = self.fee_history_cache.lock();
+
+        let mut response = FeeHistory {
+            oldest_block: U256::from(lowest),
+            base_fee_per_gas: Vec::new(),
+            gas_used_ratio: Vec::new(),
+            reward: None,
+        };
+
+        let mut rewards = Vec::new();
+        // iter over the requested block range
+        for n in lowest..highest + 1 {
+            // <https://eips.ethereum.org/EIPS/eip-1559>
+            if let Some(block) = fee_history.get(&n) {
+                response.base_fee_per_gas.push(U256::from(block.base_fee));
+                response.gas_used_ratio.push(block.gas_used_ratio);
+
+                // requested percentiles
+                if !reward_percentiles.is_empty() {
+                    let mut block_rewards = Vec::new();
+                    let resolution_per_percentile: f64 = 2.0;
+                    for p in &reward_percentiles {
+                        let p = p.clamp(0.0, 100.0);
+                        let index = ((p.round() / 2f64) * 2f64) * resolution_per_percentile;
+                        let reward = if let Some(r) = block.rewards.get(index as usize) {
+                            U256::from(*r)
+                        } else {
+                            U256::zero()
+                        };
+                        block_rewards.push(reward);
+                    }
+                    rewards.push(block_rewards);
+                }
+            }
+        }
+
+        response.reward = Some(rewards);
+
+        // calculate next base fee
+        if let (Some(last_gas_used), Some(last_fee_per_gas)) =
+            (response.gas_used_ratio.last(), response.base_fee_per_gas.last())
+        {
+            let elasticity = self.backend.elasticity();
+            let last_fee_per_gas = last_fee_per_gas.as_u64() as f64;
+            if last_gas_used > &0.5 {
+                // increase base gas
+                let increase = ((last_gas_used - 0.5) * 2f64) * elasticity;
+                let new_base_fee = (last_fee_per_gas + (last_fee_per_gas * increase)) as u64;
+                response.base_fee_per_gas.push(U256::from(new_base_fee));
+            } else if last_gas_used < &0.5 {
+                // decrease gas
+                let increase = ((0.5 - last_gas_used) * 2f64) * elasticity;
+                let new_base_fee = (last_fee_per_gas - (last_fee_per_gas * increase)) as u64;
+                response.base_fee_per_gas.push(U256::from(new_base_fee));
+            } else {
+                // same base gas
+                response.base_fee_per_gas.push(U256::from(last_fee_per_gas as u64));
+            }
+        }
+
+        Ok(response)
     }
 
     /// Introduced in EIP-1159, a Geth-specific and simplified priority fee oracle.

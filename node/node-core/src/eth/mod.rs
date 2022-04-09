@@ -105,8 +105,31 @@ pub enum EthRequest {
     #[serde(rename = "eth_submitHashrate", with = "sequence")]
     EthSubmitHashRate(U256, H256),
 
-    #[serde(rename = "eth_feeHistory", with = "sequence")]
-    EthFeeHistory(U256, BlockNumber, Option<Vec<f64>>),
+    #[serde(rename = "eth_feeHistory")]
+    EthFeeHistory(
+        #[serde(deserialize_with = "deserialize_number")] U256,
+        BlockNumber,
+        #[serde(default)] Vec<f64>,
+    ),
+}
+
+fn deserialize_number<'de, D>(deserializer: D) -> Result<U256, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Numeric {
+        U256(U256),
+        Num(u64),
+    }
+
+    let num = match Numeric::deserialize(deserializer)? {
+        Numeric::U256(n) => n,
+        Numeric::Num(n) => U256::from(n),
+    };
+
+    Ok(num)
 }
 
 /// Represents a payload followed by an optional `block` value

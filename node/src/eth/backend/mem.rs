@@ -252,6 +252,12 @@ impl Backend {
         self.gas_price
     }
 
+    /// Return the base fee at the given height
+    pub fn elasticity(&self) -> f64 {
+        // default elasticity
+        0.125
+    }
+
     /// Validates the transaction's validity when it comes to nonce, payment
     ///
     /// This is intended to be checked before the transaction makes it into the pool and whether it

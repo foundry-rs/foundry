@@ -32,6 +32,8 @@ pub enum BlockchainError {
     RpcUnimplemented,
     #[error(transparent)]
     InvalidTransaction(#[from] InvalidTransactionError),
+    #[error(transparent)]
+    FeeHistory(#[from] FeeHistoryError),
 }
 
 /// Errors that can occur in the transaction pool
@@ -41,6 +43,13 @@ pub enum PoolError {
     CyclicTransaction,
     #[error("Tx: [{0:?}] already imported")]
     AlreadyImported(Box<PoolTransaction>),
+}
+
+/// Errors that can occur with `eth_feeHistory`
+#[derive(thiserror::Error, Debug)]
+pub enum FeeHistoryError {
+    #[error("Requested block range is out of bounds")]
+    InvalidBlockRange,
 }
 
 /// An error due to invalid transaction
@@ -88,6 +97,7 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 BlockchainError::InvalidTransaction(err) => {
                     RpcError::transaction_rejected(err.to_string())
                 }
+                BlockchainError::FeeHistory(err) => RpcError::invalid_params(err.to_string()),
                 BlockchainError::EmptyRawTransactionData => {
                     RpcError::invalid_params("Empty transaction data")
                 }
