@@ -35,6 +35,12 @@ pub struct VerifyArgs {
     #[clap(help = "your etherscan api key", env = "ETHERSCAN_API_KEY")]
     etherscan_key: String,
 
+    #[clap(
+        help = "flatten the source code. Make sure to use bytecodehash='ipfs'",
+        long = "flatten"
+    )]
+    flatten: bool,
+
     #[clap(flatten)]
     opts: CoreFlattenArgs,
 }
@@ -93,20 +99,38 @@ pub async fn run_verify(args: &VerifyArgs) -> eyre::Result<()> {
     };
 
     let project = build_args.project()?;
-    let contract = project
-        .flatten(&project.root().join(args.contract.path.as_ref().unwrap()))
-        .map_err(|err| eyre::eyre!("Failed to flatten contract: {}", err))?;
+
+    let (source, contract_name) = if args.flatten {
+        // NOTE: user need to set bytecodehash='ipfs' for this otherwise verification won't work
+        // see: https://github.com/gakonst/foundry/issues/1236
+        (
+            project
+                .flatten(&project.root().join(args.contract.path.as_ref().unwrap()))
+                .map_err(|err| eyre::eyre!("Failed to flatten contract: {}", err))?,
+            args.contract.name.clone(),
+        )
+    } else {
+        let input = project
+            .standard_json_input(&project.root().join(args.contract.path.as_ref().unwrap()))
+            .map_err(|err| eyre::eyre!("Failed to get standard json input: {}", err))?;
+
+        (
+            serde_json::to_string(&input)
+                .map_err(|err| eyre::eyre!("Failed to parse standard json input: {}", err))?,
+            format!(
+                "{}:{}",
+                &project.root().join(args.contract.path.as_ref().unwrap()).to_string_lossy(),
+                args.contract.name.clone()
+            ),
+        )
+    };
 
     let etherscan = Client::new(args.chain_id.try_into()?, &args.etherscan_key)
         .map_err(|err| eyre::eyre!("Failed to create etherscan client: {}", err))?;
 
-    let mut verify_args = VerifyContract::new(
-        args.address,
-        args.contract.name.clone(),
-        contract,
-        args.compiler_version.clone(),
-    )
-    .constructor_arguments(args.constructor_args.clone());
+    let mut verify_args =
+        VerifyContract::new(args.address, contract_name, source, args.compiler_version.clone())
+            .constructor_arguments(args.constructor_args.clone());
 
     if let Some(optimizations) = args.num_of_optimizations {
         verify_args = verify_args.optimization(true).runs(optimizations);
