@@ -1816,6 +1816,7 @@ dependencies = [
  "axum",
  "bytes",
  "chrono 0.4.19",
+ "colored",
  "ethers",
  "foundry-evm",
  "foundry-node-core",

@@ -1,3 +1,4 @@
+use colored::Colorize;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use crate::{
@@ -11,7 +12,7 @@ use ethers::{
     prelude::{Address, Wallet, U256},
     providers::{Middleware, Provider},
     signers::{coins_bip39::English, MnemonicBuilder, Signer},
-    utils::WEI_IN_ETHER,
+    utils::{format_ether, hex, WEI_IN_ETHER},
 };
 use foundry_evm::{
     executor::fork::{BlockchainDb, BlockchainDbMeta, SharedBackend},
@@ -26,29 +27,29 @@ pub const NODE_PORT: u16 = 8545;
 #[derive(Debug, Clone)]
 pub struct NodeConfig {
     /// Chain ID of the EVM chain
-    pub(crate) chain_id: u64,
+    pub chain_id: u64,
     /// Default gas limit for all txs
-    pub(crate) gas_limit: U256,
+    pub gas_limit: U256,
     /// Default gas price for all txs
-    pub(crate) gas_price: U256,
+    pub gas_price: U256,
     /// Signer accounts that will be initialised with `genesis_balance` in the genesis block
-    pub(crate) genesis_accounts: Vec<Wallet<SigningKey>>,
+    pub genesis_accounts: Vec<Wallet<SigningKey>>,
     /// Native token balance of every genesis account in the genesis block
-    pub(crate) genesis_balance: U256,
+    pub genesis_balance: U256,
     /// Signer accounts that can sign messages/transactions from the EVM node
-    pub(crate) accounts: HashMap<Address, Wallet<SigningKey>>,
+    pub accounts: HashMap<Address, Wallet<SigningKey>>,
     /// Configured block time for the EVM chain. Use `None` to mine a new block for every tx
-    pub(crate) automine: Option<Duration>,
+    pub automine: Option<Duration>,
     /// port to use for the server
-    pub(crate) port: u16,
+    pub port: u16,
     /// maximumg number of transactions in a block
-    pub(crate) max_transactions: usize,
+    pub max_transactions: usize,
     /// don't print anything on startup
-    pub(crate) silent: bool,
+    pub silent: bool,
     /// url of the rpc server that should be used for any rpc calls
-    pub(crate) eth_rpc_url: Option<String>,
+    pub eth_rpc_url: Option<String>,
     /// pins the block number for the state fork
-    pub(crate) fork_block_number: Option<u64>,
+    pub fork_block_number: Option<u64>,
 }
 
 impl Default for NodeConfig {
@@ -156,6 +157,60 @@ impl NodeConfig {
         self
     }
 
+    /// Prints the config info
+    pub fn print(&self) {
+        if self.silent {
+            return
+        }
+        println!("  {}", BANNER.green());
+        println!("      {}", "https://github.com/gakonst/foundry".green());
+
+        print!(
+            r#"
+Available Accounts
+==================
+"#
+        );
+        let balance = format_ether(self.genesis_balance);
+        for (idx, wallet) in self.genesis_accounts.iter().enumerate() {
+            println!("({}) {:?} ({} ETH)", idx, wallet.address(), balance);
+        }
+        println!();
+
+        print!(
+            r#"
+Private Keys
+==================
+"#
+        );
+
+        for (idx, wallet) in self.genesis_accounts.iter().enumerate() {
+            let hex = hex::encode(wallet.signer().to_bytes());
+            println!("({}) 0x{}", idx, hex);
+        }
+
+        // TODO also print the Mnemonic used to gen keys
+
+        print!(
+            r#"
+Gas Price
+==================
+{}
+"#,
+            format!("{}", self.gas_price).green()
+        );
+
+        print!(
+            r#"
+Gas Limit
+==================
+{}
+
+"#,
+            format!("{}", self.gas_limit).green()
+        );
+    }
+
     /// Configures everything related to env, backend and database and returns the
     /// [Backend](mem::Backend)
     ///
@@ -237,3 +292,12 @@ pub fn random_wallets(num_accounts: usize) -> Vec<Wallet<SigningKey>> {
     }
     wallets
 }
+
+const BANNER: &str = r#"
+                          _   _
+                         (_) | |
+   __ _   _ __   __   __  _  | |
+  / _` | | '_ \  \ \ / / | | | |
+ | (_| | | | | |  \ V /  | | | |
+  \__,_| |_| |_|   \_/   |_| |_|
+"#;

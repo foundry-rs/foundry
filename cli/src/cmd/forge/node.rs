@@ -16,26 +16,24 @@ pub struct NodeArgs {
     #[clap(
         long,
         help = "either a comma-separated hex-encoded list of private keys, or a mnemonic phrase",
-        default_value = "20,test test test test test test test test test test test junk"
+        default_value = "10,test test test test test test test test test test test junk"
     )]
     accounts: SignerAccounts,
 
-    #[clap(
-        long,
-        help = "the balance of every genesis account",
-        default_value = "0xffffffffffffffffffffffff"
-    )]
-    balance: U256,
+    #[clap(long, help = "the balance of every genesis account")]
+    balance: Option<U256>,
 }
 
 impl NodeArgs {
     pub fn into_node_config(self) -> NodeConfig {
+        let NodeConfig { chain_id, gas_limit, gas_price, genesis_balance, .. } =
+            NodeConfig::default();
         NodeConfig::default()
-            .chain_id(self.evm_opts.env.chain_id.unwrap_or_default())
-            .gas_limit(self.evm_opts.env.gas_limit.unwrap_or_default())
-            .gas_price(self.evm_opts.env.gas_price.unwrap_or_default())
+            .chain_id(self.evm_opts.env.chain_id.unwrap_or(chain_id))
+            .gas_limit(self.evm_opts.env.gas_limit.unwrap_or(gas_limit.as_u64()))
+            .gas_price(self.evm_opts.env.gas_price.unwrap_or(gas_price.as_u64()))
             .genesis_accounts(self.accounts.0)
-            .genesis_balance(self.balance)
+            .genesis_balance(self.balance.unwrap_or(genesis_balance))
     }
 
     /// Starts the node

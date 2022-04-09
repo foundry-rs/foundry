@@ -113,6 +113,8 @@ pub async fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
 
     let handle = NodeHandle { config, inner, address: socket };
 
+    handle.print();
+
     (api, handle)
 }
 
@@ -127,6 +129,14 @@ impl NodeHandle {
     /// The [NodeConfig] the node was launched with
     pub fn config(&self) -> &NodeConfig {
         &self.config
+    }
+
+    /// Prints the launch info
+    pub(crate) fn print(&self) {
+        self.config.print();
+        if !self.config.silent {
+            println!("Listening on {}", self.socket_address())
+        }
     }
 
     /// The address of the launched server
