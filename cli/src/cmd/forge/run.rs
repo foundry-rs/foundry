@@ -26,7 +26,7 @@ use forge::{
     CALLER,
 };
 use foundry_config::{figment::Figment, Config};
-use foundry_utils::{encode_args, IntoFunction, PostLinkInput};
+use foundry_utils::{encode_args, IntoFunction, PostLinkInput, RuntimeOrHandle};
 use std::{collections::BTreeMap, path::PathBuf};
 use ui::{TUIExitReason, Tui, Ui};
 
@@ -98,9 +98,11 @@ impl Cmd for RunArgs {
         let bytecode = bytecode.expect("no bytecode for contract").object.into_bytes().unwrap();
         let needs_setup = abi.functions().any(|func| func.name == "setUp");
 
-        let env = evm_opts.evm_env();
+        let runtime = RuntimeOrHandle::new();
+        let env = runtime.block_on(evm_opts.evm_env());
         // the db backend that serves all the data
-        let db = Backend::new(utils::get_fork(&evm_opts, &config.rpc_storage_caching), &env);
+        let db = runtime
+            .block_on(Backend::new(utils::get_fork(&evm_opts, &config.rpc_storage_caching), &env));
 
         let mut builder = ExecutorBuilder::new()
             .with_cheatcodes(evm_opts.ffi)
@@ -144,6 +146,9 @@ impl Cmd for RunArgs {
         };
 
         // Identify addresses in each trace
+        // TODO: Could we use the Etherscan identifier here? Main issue: Pulling source code and
+        // bytecode. Might be better to wait for an interactive debugger where we can do this on
+        // the fly while retaining access to the database?
         let local_identifier = LocalTraceIdentifier::new(&known_contracts);
         let mut decoder = CallTraceDecoder::new_with_labels(result.labeled_addresses.clone());
         for (_, trace) in &mut result.traces {

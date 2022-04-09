@@ -3,7 +3,7 @@ use revm::{
     db::{DatabaseRef, EmptyDB},
     Env, SpecId,
 };
-use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 
 use super::{
     fork::SharedBackend,
@@ -16,7 +16,6 @@ use ethers::types::{H160, H256, U256};
 use crate::executor::fork::{BlockchainDb, BlockchainDbMeta};
 
 use revm::AccountInfo;
-use url::Url;
 
 #[derive(Default, Debug)]
 pub struct ExecutorBuilder {
@@ -51,21 +50,13 @@ impl Fork {
     /// The `SharedBackend` returned is connected to a background thread that communicates with the
     /// endpoint via channels and is intended to be cloned when multiple [revm::Database] are
     /// required. See also [crate::executor::fork::SharedBackend]
-    pub fn spawn_backend(self, env: &Env) -> SharedBackend {
+    pub async fn spawn_backend(self, env: &Env) -> SharedBackend {
         let Fork { cache_path, url, pin_block, chain_id } = self;
 
-        let host = Url::parse(&url)
-            .ok()
-            .and_then(|url| url.host().map(|host| host.to_string()))
-            .unwrap_or_else(|| url.clone());
+        let provider =
+            Arc::new(Provider::try_from(url.clone()).expect("Failed to establish provider"));
 
-        let provider = Arc::new(Provider::try_from(url).expect("Failed to establish provider"));
-
-        let mut meta = BlockchainDbMeta {
-            cfg_env: env.cfg.clone(),
-            block_env: env.block.clone(),
-            hosts: BTreeSet::from([host]),
-        };
+        let mut meta = BlockchainDbMeta::new(env.clone(), url);
 
         // update the meta to match the forked config
         meta.cfg_env.chain_id = chain_id.into();
@@ -75,7 +66,7 @@ impl Fork {
 
         let db = BlockchainDb::new(meta, cache_path);
 
-        SharedBackend::spawn_backend(provider, db, pin_block.map(Into::into))
+        SharedBackend::spawn_backend(provider, db, pin_block.map(Into::into)).await
     }
 }
 /// Variants of a [revm::Database]
@@ -90,9 +81,9 @@ pub enum Backend {
 
 impl Backend {
     /// Instantiates a new backend union based on whether there was or not a fork url specified
-    pub fn new(fork: Option<Fork>, env: &Env) -> Self {
+    pub async fn new(fork: Option<Fork>, env: &Env) -> Self {
         if let Some(fork) = fork {
-            Backend::Forked(fork.spawn_backend(env))
+            Backend::Forked(fork.spawn_backend(env).await)
         } else {
             Self::simple()
         }

@@ -1,8 +1,7 @@
 use ethers::{
     providers::{Middleware, Provider},
-    types::{Address, U256},
+    types::{Address, Chain, U256},
 };
-use foundry_utils::RuntimeOrHandle;
 use revm::{BlockEnv, CfgEnv, SpecId, TxEnv};
 use serde::{Deserialize, Serialize};
 
@@ -37,18 +36,13 @@ pub struct EvmOpts {
 }
 
 impl EvmOpts {
-    pub fn evm_env(&self) -> revm::Env {
+    pub async fn evm_env(&self) -> revm::Env {
         if let Some(ref fork_url) = self.fork_url {
-            let rt = RuntimeOrHandle::new();
             let provider =
                 Provider::try_from(fork_url.as_str()).expect("could not instantiated provider");
-            let fut =
-                environment(&provider, self.env.chain_id, self.fork_block_number, self.sender);
-            match rt {
-                RuntimeOrHandle::Runtime(runtime) => runtime.block_on(fut),
-                RuntimeOrHandle::Handle(handle) => handle.block_on(fut),
-            }
-            .expect("could not instantiate forked environment")
+            environment(&provider, self.env.chain_id, self.fork_block_number, self.sender)
+                .await
+                .expect("could not instantiate forked environment")
         } else {
             revm::Env {
                 block: BlockEnv {
@@ -86,23 +80,28 @@ impl EvmOpts {
     ///   - the chain if `fork_url` is set and the endpoints returned its chain id successfully
     ///   - mainnet otherwise
     pub fn get_chain_id(&self) -> u64 {
-        use ethers::types::Chain;
         if let Some(id) = self.env.chain_id {
             return id
         }
+        self.get_remote_chain_id().map_or(Chain::Mainnet as u64, |id| id as u64)
+    }
+
+    /// Returns the chain ID from the RPC, if any.
+    pub fn get_remote_chain_id(&self) -> Option<Chain> {
         if let Some(ref url) = self.fork_url {
             if url.contains("mainnet") {
                 tracing::trace!("auto detected mainnet chain from url {}", url);
-                return Chain::Mainnet as u64
+                return Some(Chain::Mainnet)
             }
             let provider = Provider::try_from(url.as_str())
                 .unwrap_or_else(|_| panic!("Failed to establish provider to {}", url));
 
             if let Ok(id) = foundry_utils::RuntimeOrHandle::new().block_on(provider.get_chainid()) {
-                return id.as_u64()
+                return Chain::try_from(id.as_u64()).ok()
             }
         }
-        Chain::Mainnet as u64
+
+        None
     }
 }
 

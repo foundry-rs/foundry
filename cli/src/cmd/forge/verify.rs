@@ -42,6 +42,12 @@ pub struct VerifyArgs {
     #[clap(help = "your etherscan api key", env = "ETHERSCAN_API_KEY")]
     etherscan_key: String,
 
+    #[clap(
+        help = "flatten the source code. Make sure to use bytecodehash='ipfs'",
+        long = "flatten"
+    )]
+    flatten: bool,
+
     #[clap(flatten)]
     opts: CoreFlattenArgs,
 
@@ -55,6 +61,7 @@ This flag we skip that process and send the content directly to the endpoint."#
 }
 
 impl VerifyArgs {
+
     /// Run the verify command to submit the contract's source code for verification on etherscan
     pub async fn run(&self) -> eyre::Result<()> {
         if self.contract.path.is_none() {
@@ -95,13 +102,35 @@ impl VerifyArgs {
         };
 
         let project = build_args.project()?;
-        let contract = project
-            .flatten(&project.root().join(self.contract.path.as_ref().unwrap()))
-            .map_err(|err| eyre::eyre!("Failed to flatten contract: {}", err))?;
 
-        if !self.force {
+        let (source, contract_name) = if self.flatten {
+            // NOTE: user need to set bytecodehash='ipfs' for this otherwise verification won't work
+            // see: https://github.com/gakonst/foundry/issues/1236
+            (
+                project
+                    .flatten(&project.root().join(self.contract.path.as_ref().unwrap()))
+                    .map_err(|err| eyre::eyre!("Failed to flatten contract: {}", err))?,
+                self.contract.name.clone(),
+            )
+        } else {
+            let input = project
+                .standard_json_input(&project.root().join(self.contract.path.as_ref().unwrap()))
+                .map_err(|err| eyre::eyre!("Failed to get standard json input: {}", err))?;
+
+            (
+                serde_json::to_string(&input)
+                    .map_err(|err| eyre::eyre!("Failed to parse standard json input: {}", err))?,
+                format!(
+                    "{}:{}",
+                    &project.root().join(self.contract.path.as_ref().unwrap()).to_string_lossy(),
+                    self.contract.name.clone()
+                ),
+            )
+        };
+
+        if  !self.force {
             // solc dry run
-            self.check_flattened(contract.clone()).await.map_err(|err| {
+            self.check_flattened(source.clone()).await.map_err(|err| {
                 eyre::eyre!(
                     "Failed to compile the flattened code locally: `{}`\
 To skip this solc dry, have a look at the  `--force` flag of this command.",
@@ -113,13 +142,9 @@ To skip this solc dry, have a look at the  `--force` flag of this command.",
         let etherscan = Client::new(self.chain_id.try_into()?, &self.etherscan_key)
             .map_err(|err| eyre::eyre!("Failed to create etherscan client: {}", err))?;
 
-        let mut verify_args = VerifyContract::new(
-            self.address,
-            self.contract.name.clone(),
-            contract,
-            self.compiler_version.clone(),
-        )
-        .constructor_arguments(self.constructor_args.clone());
+        let mut verify_args =
+            VerifyContract::new(self.address, contract_name, source, self.compiler_version.clone())
+                .constructor_arguments(self.constructor_args.clone());
 
         if let Some(optimizations) = self.num_of_optimizations {
             verify_args = verify_args.optimization(true).runs(optimizations);
@@ -139,10 +164,10 @@ To skip this solc dry, have a look at the  `--force` flag of this command.",
             }
 
             eyre::bail!(
-                "Encountered an error verifying this contract:\nResponse: `{}`\nDetails: `{}`",
-                resp.message,
-                resp.result
-            );
+            "Encountered an error verifying this contract:\nResponse: `{}`\nDetails: `{}`",
+            resp.message,
+            resp.result
+        );
         }
 
         println!(
@@ -227,15 +252,16 @@ pub struct VerifyCheckArgs {
     guid: String,
 
     #[clap(
-        long,
-        help = "the chain id of the network you are verifying for",
-        default_value = "mainnet"
+    long,
+    help = "the chain id of the network you are verifying for",
+    default_value = "mainnet"
     )]
     chain_id: Chain,
 
     #[clap(help = "your etherscan api key", env = "ETHERSCAN_API_KEY")]
     etherscan_key: String,
 }
+
 
 impl VerifyCheckArgs {
     /// Executes the command to check verification status on Etherscan

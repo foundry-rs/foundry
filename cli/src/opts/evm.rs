@@ -118,6 +118,10 @@ impl Provider for EvmArgs {
             dict.insert("no_storage_caching".to_string(), self.no_storage_caching.into());
         }
 
+        if let Some(fork_url) = &self.fork_url {
+            dict.insert("eth_rpc_url".to_string(), fork_url.clone().into());
+        }
+
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }

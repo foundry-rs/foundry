@@ -881,7 +881,7 @@ fn get_param_type(
 ///
 /// Notes:
 /// * ABI Encoder V2 is not supported yet
-/// * Kudos to https://github.com/maxme/abi2solidity for the algorithm
+/// * Kudos to [maxme/abi2solidity](https://github.com/maxme/abi2solidity) for the algorithm
 pub fn abi_to_solidity(contract_abi: &Abi, mut contract_name: &str) -> Result<String> {
     let functions_iterator = contract_abi.functions();
     let events_iterator = contract_abi.events();
