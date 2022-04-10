@@ -38,7 +38,10 @@ use std::{
 use clap::{IntoApp, Parser};
 use clap_complete::generate;
 
-use crate::{cmd::Cmd, utils::read_secret};
+use crate::{
+    cmd::Cmd,
+    utils::{consume_config_rpc_url, read_secret},
+};
 use eyre::WrapErr;
 
 #[tokio::main]
@@ -827,13 +830,4 @@ where
     }
 
     Ok(())
-}
-
-pub fn consume_config_rpc_url(rpc_url: Option<String>) -> String {
-    match rpc_url {
-        Some(rpc_url) => rpc_url,
-        None => Config::load()
-            .eth_rpc_url
-            .expect("No eth_rpc_url set in foundry.toml or given as cli argument"),
-    }
 }

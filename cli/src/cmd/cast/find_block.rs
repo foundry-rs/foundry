@@ -1,6 +1,6 @@
 //! cast find-block subcommand
 
-use crate::{cmd::Cmd, consume_config_rpc_url};
+use crate::{cmd::Cmd, utils::consume_config_rpc_url};
 use cast::Cast;
 use clap::Parser;
 use ethers::prelude::*;
