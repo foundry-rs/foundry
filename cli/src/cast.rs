@@ -374,23 +374,7 @@ async fn main() -> eyre::Result<()> {
                 println!("{}", serde_json::json!(receipt));
             }
         }
-        Subcommands::Estimate { eth, to, sig, args, value } => {
-            let provider = Provider::try_from(eth.rpc_url()?)?;
-            let from = eth.sender().await;
-
-            let mut builder = TxBuilder::new(&provider, from, to, eth.chain, false).await?;
-            builder
-                .etherscan_api_key(eth.etherscan_key)
-                .value(value)
-                .set_args(sig.as_str(), args)
-                .await?;
-
-            let builder_output = builder.peek();
-
-            let gas = Cast::new(&provider).estimate(builder_output).await?;
-            println!("{}", gas);
-        }
-        Subcommands::ConfigEstimate(estimate_args) => {
+        Subcommands::Estimate(estimate_args) => {
             let config: Config = (&estimate_args).into();
             println!("{:?}", config);
             let provider = Provider::try_from(
