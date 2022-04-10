@@ -526,7 +526,7 @@ where
 
         // An "SSH_KEY" authentication indicates that we need some sort of SSH
         // authentication. This can currently either come from the ssh-agent
-        // process or from a raw in-memory SSH key. Cargo only supports using
+        // process or from a raw in-memory SSH key. We only support using
         // ssh-agent currently.
         //
         // If we get called with this then the only way that should be possible
@@ -544,11 +544,7 @@ where
             return git2::Cred::ssh_key_from_agent(username)
         }
 
-        // Sometimes libgit2 will ask for a username/password in plaintext. This
-        // is where Cargo would have an interactive prompt if we supported it,
-        // but we currently don't! Right now the only way we support fetching a
-        // plaintext password is through the `credential.helper` support, so
-        // fetch that here.
+        // Sometimes libgit2 will ask for a username/password in plaintext.
         //
         // If ssh-agent authentication fails, libgit2 will keep calling this
         // callback asking for other authentication methods to try. Check
@@ -690,14 +686,7 @@ where
             ErrorClass::Ssh |
             ErrorClass::Callback |
             ErrorClass::Http => {
-                let mut msg = "network failure seems to have happened\n".to_string();
-                msg.push_str(
-                    "if a proxy or similar is necessary `net.git-fetch-with-cli` may help here\n",
-                );
-                msg.push_str(
-                    "https://doc.rust-lang.org/cargo/reference/config.html#netgit-fetch-with-cli",
-                );
-                err = err.wrap_err(msg);
+                err = err.wrap_err("network failure seems to have happened");
             }
             _ => {}
         }
@@ -771,9 +760,7 @@ pub fn fetch(
             }
             // The `fetch` operation here may fail spuriously due to a corrupt
             // repository. It could also fail, however, for a whole slew of other
-            // reasons (aka network related reasons). We want Cargo to automatically
-            // recover from corrupt repositories, but we don't want Cargo to stomp
-            // over other legitimate errors.
+            // reasons (aka network related reasons).
             //
             // Consequently, we save off the error of the `fetch` operation and if it
             // looks like a "corrupt repo" error then we blow away the repo and try
@@ -822,13 +809,9 @@ fn fetch_with_cli(
         cmd.arg("--tags");
     }
     cmd.arg("--force") // handle force pushes
-        .arg("--update-head-ok") // see discussion in #2078
+        .arg("--update-head-ok")
         .arg(url)
         .args(refspecs)
-        // If cargo is run by git (for example, the `exec` command in `git
-        // rebase`), the GIT_DIR is set by git and will point to the wrong
-        // location (this takes precedence over the cwd). Make sure this is
-        // unset so git will look at cwd for the repo.
         .env_remove("GIT_DIR")
         // The reset of these may not be necessary, but I'm including them
         // just to be extra paranoid and avoid any issues.
