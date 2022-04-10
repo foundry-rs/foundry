@@ -74,13 +74,12 @@ impl Cmd for CreateArgs {
     fn run(self) -> Result<Self::Output> {
         // Find Project & Compile
         let project = self.opts.project()?;
-        let compiled;
-        if self.json {
-            // Supress compilation stdout messages if outputting json
-            compiled = compile::suppress_compile(&project)?;
+        let compiled = if self.json {
+            // Supress compile stdout messages when printing json output
+            compile::suppress_compile(&project)?
         } else {
-            compiled = compile::compile(&project, self.opts.names, self.opts.sizes)?;
-        }
+            compile::compile(&project, self.opts.names, self.opts.sizes)?
+        };
 
         // Get ABI and BIN
         let (abi, bin, _) =
@@ -195,7 +194,7 @@ impl CreateArgs {
         let (deployed_contract, receipt) = deployer.send_with_receipt().await?;
         if self.json {
             let output = json!({"deployer": deployer_address, "deployedTo": deployed_contract.address(), "transactionHash": receipt.transaction_hash});
-            println!("{}", output.to_string());
+            println!("{}", output);
         } else {
             println!("Deployer: {:?}", deployer_address);
             println!("Deployed to: {:?}", deployed_contract.address());
