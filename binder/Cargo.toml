@@ -12,3 +12,8 @@ keywords = ["ethereum", "web3", "solidity"]
 
 
 [dependencies]
+foundry-config = { path = "../config" }
+ethers-solc = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["async", "svm-solc", "project-util"] }
+
+eyre = "0.6"
+git2 = "0.13"
