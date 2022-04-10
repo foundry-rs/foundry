@@ -68,7 +68,7 @@ macro_rules! impl_figment_convert {
             }
         }
 
-        impl<'a> From<&'a $name> for Config {
+        impl<'a> From<&'a $name> for $crate::Config {
             fn from(args: &'a $name) -> Self {
                 let figment: $crate::figment::Figment = args.into();
                 $crate::Config::from_provider(figment).sanitized()
@@ -86,7 +86,7 @@ macro_rules! impl_figment_convert {
             }
         }
 
-        impl<'a> From<&'a $name> for Config {
+        impl<'a> From<&'a $name> for $crate::Config {
             fn from(args: &'a $name) -> Self {
                 let figment: $crate::figment::Figment = args.into();
                 $crate::Config::from_provider(figment).sanitized()
@@ -105,10 +105,56 @@ macro_rules! impl_figment_convert_cast {
             }
         }
 
-        impl<'a> From<&'a $name> for Config {
+        impl<'a> From<&'a $name> for $crate::Config {
             fn from(args: &'a $name) -> Self {
                 let figment: $crate::figment::Figment = args.into();
                 $crate::Config::from_provider(figment).sanitized()
+            }
+        }
+    };
+}
+
+// macro that implements figment data provider for types that need it from EthereumOpts
+#[macro_export]
+macro_rules! impl_eth_data_provider {
+    ($name:ty) => {
+        impl $crate::figment::Provider for $name {
+            fn metadata(&self) -> $crate::figment::Metadata {
+                $crate::figment::Metadata::named("Call args provider")
+            }
+
+            fn data(
+                &self,
+            ) -> Result<
+                $crate::figment::value::Map<$crate::figment::Profile, $crate::figment::value::Dict>,
+                figment::Error,
+            > {
+                let value = $crate::figment::value::Value::serialize(self)?;
+                let mut dict = value.into_dict().unwrap();
+
+                let rpc_url = self.eth.rpc_url().map_err(|err| err.to_string())?;
+                if rpc_url != "http://localhost:8545" {
+                    dict.insert(
+                        "eth_rpc_url".to_string(),
+                        $crate::figment::value::Value::from(rpc_url.to_string()),
+                    );
+                }
+
+                if let Some(from) = self.eth.from {
+                    dict.insert(
+                        "sender".to_string(),
+                        $crate::figment::value::Value::from(format!("{:?}", from)),
+                    );
+                }
+
+                if let Some(etherscan_api_key) = &self.eth.etherscan_key {
+                    dict.insert(
+                        "etherscan_api_key".to_string(),
+                        $crate::figment::value::Value::from(etherscan_api_key.to_string()),
+                    );
+                }
+
+                Ok($crate::figment::value::Map::from([($crate::Config::selected_profile(), dict)]))
             }
         }
     };

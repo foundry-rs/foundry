@@ -1,22 +1,13 @@
 //! cast call subcommand
 use crate::opts::{cast::parse_name_or_address, EthereumOpts};
-use ethers::types::U256;
-
 use clap::Parser;
-use ethers::types::NameOrAddress;
+use ethers::types::{NameOrAddress, U256};
 use eyre::Result;
-use foundry_config::{
-    figment::{
-        self,
-        value::{Dict, Map, Value},
-        Metadata, Profile,
-    },
-    impl_figment_convert_cast, Config,
-};
-
+use foundry_config::{figment, impl_eth_data_provider, impl_figment_convert_cast};
 use serde::Serialize;
 
 impl_figment_convert_cast!(EstimateArgs);
+impl_eth_data_provider!(EstimateArgs);
 
 #[derive(Debug, Clone, Parser, Serialize)]
 pub struct EstimateArgs {
@@ -35,29 +26,4 @@ pub struct EstimateArgs {
     #[clap(flatten)]
     #[serde(flatten)]
     pub eth: EthereumOpts,
-}
-
-impl figment::Provider for EstimateArgs {
-    fn metadata(&self) -> Metadata {
-        Metadata::named("Call args provider")
-    }
-
-    fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
-        let value = Value::serialize(self)?;
-        let mut dict = value.into_dict().unwrap();
-
-        let rpc_url = self.eth.rpc_url().map_err(|err| err.to_string())?;
-        if rpc_url != "http://localhost:8545" {
-            dict.insert("eth_rpc_url".to_string(), Value::from(rpc_url.to_string()));
-        }
-
-        if let Some(etherscan_api_key) = &self.eth.etherscan_key {
-            dict.insert(
-                "etherscan_api_key".to_string(),
-                Value::from(etherscan_api_key.to_string()),
-            );
-        }
-
-        Ok(Map::from([(Config::selected_profile(), dict)]))
-    }
 }
