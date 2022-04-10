@@ -410,6 +410,8 @@ pub fn custom_run(mut args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<
                         target_contract: Some(utils::get_contract_name(&id).to_string()),
                         sig,
                         args: Vec::new(),
+                        constructor_args: Vec::new(),
+                        constructor_args_path: None,
                         debug: true,
                         opts: args.opts,
                         evm_opts: args.evm_opts,

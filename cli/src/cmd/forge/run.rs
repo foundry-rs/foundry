@@ -7,7 +7,7 @@ use crate::{
 use ansi_term::Colour;
 use clap::{Parser, ValueHint};
 use ethers::{
-    abi::{Abi, RawLog},
+    abi::{Abi, Constructor, RawLog, Token},
     prelude::ArtifactId,
     solc::{
         artifacts::{CompactContractBytecode, ContractBytecode, ContractBytecodeSome},
@@ -26,8 +26,8 @@ use forge::{
     CALLER,
 };
 use foundry_config::{figment::Figment, Config};
-use foundry_utils::{encode_args, IntoFunction, PostLinkInput, RuntimeOrHandle};
-use std::{collections::BTreeMap, path::PathBuf};
+use foundry_utils::{encode_args, parse_tokens, IntoFunction, PostLinkInput, RuntimeOrHandle};
+use std::{collections::BTreeMap, path::PathBuf, fs};
 use ui::{TUIExitReason, Tui, Ui};
 
 // Loads project's figment and merges the build cli arguments into it
@@ -44,6 +44,24 @@ pub struct RunArgs {
 
     /// Arguments to pass to the script function.
     pub args: Vec<String>,
+
+    /// constructor args calldata arguments
+    #[clap(
+        long,
+        multiple_values = true,
+        name = "constructor_args",
+        conflicts_with = "constructor_args_path"
+    )]
+    pub constructor_args: Vec<String>,
+
+    /// path to a file containing the constructor args
+    #[clap(
+        long,
+        value_hint = ValueHint::FilePath,
+        name = "constructor_args_path",
+        conflicts_with = "constructor_args",
+    )]
+    pub constructor_args_path: Option<PathBuf>,
 
     /// The name of the contract you want to run.
     #[clap(long, short)]
@@ -117,11 +135,39 @@ impl Cmd for RunArgs {
             builder = builder.with_tracing().with_debugger();
         }
 
+        // Add arguments to constructor
+        let params = match abi.constructor {
+            Some(ref v) => {
+                let constructor_args =
+                    if let Some(ref constructor_args_path) = self.constructor_args_path {
+                        if !std::path::Path::new(&constructor_args_path).exists() {
+                            eyre::bail!("constructor args path not found");
+                        }
+                        let file = fs::read_to_string(constructor_args_path)?;
+                        file.split(' ').map(|s| s.to_string()).collect::<Vec<String>>()
+                    } else {
+                        self.constructor_args.clone()
+                    };
+                self.parse_constructor_args(v, &constructor_args)?
+            }
+            None => vec![],
+        };
+
+        let bytecode_enc_params = match (abi.constructor(), params.is_empty()) {
+            (None, false) => {
+                eyre::bail!("Constructor error");
+            },
+            (None, true) => bytecode,
+            (Some(constructor), _) => {
+                constructor.encode_input(bytecode.to_vec(), &params)?.into()
+            }
+        };
+
         let mut result = {
             let mut runner =
                 Runner::new(builder.build(db), evm_opts.initial_balance, evm_opts.sender);
             let (address, mut result) =
-                runner.setup(&predeploy_libraries, bytecode, needs_setup)?;
+                runner.setup(&predeploy_libraries, bytecode_enc_params, needs_setup)?;
 
             let RunResult {
                 success, gas, logs, traces, debug: run_debug, labeled_addresses, ..
@@ -333,6 +379,21 @@ impl RunArgs {
             sources: sources.into_ids().collect(),
             predeploy_libraries: run_dependencies,
         })
+    }
+
+    fn parse_constructor_args(
+        &self,
+        constructor: &Constructor,
+        constructor_args: &[String],
+    ) -> eyre::Result<Vec<Token>> {
+        let params = constructor
+            .inputs
+            .iter()
+            .zip(constructor_args)
+            .map(|(input, arg)| (&input.kind, arg.as_str()))
+            .collect::<Vec<_>>();
+
+        parse_tokens(params, true)
     }
 }
 
