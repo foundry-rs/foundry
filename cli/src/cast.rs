@@ -199,7 +199,7 @@ async fn main() -> eyre::Result<()> {
             builder
                 .set_args(&config_call.sig, config_call.args)
                 .await?
-                .etherscan_api_key(config_call.eth.etherscan_key);
+                .etherscan_api_key(config_call.eth.etherscan_api_key);
             let builder_output = builder.build();
             println!("{}", Cast::new(provider).call(builder_output, config_call.block).await?);
         }
@@ -286,7 +286,7 @@ async fn main() -> eyre::Result<()> {
                             value,
                             nonce,
                             eth.chain,
-                            eth.etherscan_key,
+                            eth.etherscan_api_key,
                             cast_async,
                             legacy,
                             confirmations,
@@ -305,7 +305,7 @@ async fn main() -> eyre::Result<()> {
                             value,
                             nonce,
                             eth.chain,
-                            eth.etherscan_key,
+                            eth.etherscan_api_key,
                             cast_async,
                             legacy,
                             confirmations,
@@ -324,7 +324,7 @@ async fn main() -> eyre::Result<()> {
                             value,
                             nonce,
                             eth.chain,
-                            eth.etherscan_key,
+                            eth.etherscan_api_key,
                             cast_async,
                             legacy,
                             confirmations,
@@ -348,7 +348,7 @@ async fn main() -> eyre::Result<()> {
                     value,
                     nonce,
                     eth.chain,
-                    eth.etherscan_key,
+                    eth.etherscan_api_key,
                     cast_async,
                     legacy,
                     confirmations,
@@ -696,7 +696,7 @@ async fn main() -> eyre::Result<()> {
                     rpc_url: Some("http://localhost:8545".to_string()),
                     flashbots: false,
                     chain: Chain::Mainnet,
-                    etherscan_key: None,
+                    etherscan_api_key: None,
                 }
                 .signer(0.into())
                 .await?
@@ -717,7 +717,7 @@ async fn main() -> eyre::Result<()> {
                     rpc_url: Some("http://localhost:8545".to_string()),
                     flashbots: false,
                     chain: Chain::Mainnet,
-                    etherscan_key: None,
+                    etherscan_api_key: None,
                 }
                 .signer(0.into())
                 .await?

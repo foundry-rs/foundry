@@ -147,7 +147,7 @@ macro_rules! impl_eth_data_provider {
                     );
                 }
 
-                if let Some(etherscan_api_key) = &self.eth.etherscan_key {
+                if let Some(etherscan_api_key) = &self.eth.etherscan_api_key {
                     dict.insert(
                         "etherscan_api_key".to_string(),
                         $crate::figment::value::Value::from(etherscan_api_key.to_string()),
