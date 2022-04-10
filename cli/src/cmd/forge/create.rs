@@ -18,8 +18,7 @@ use std::fs;
 use crate::{compile, opts::forge::ContractInfo};
 use clap::{Parser, ValueHint};
 use std::{path::PathBuf, sync::Arc};
-
-use serde_json;
+use serde_json::{json, to_string};
 
 #[derive(Debug, Clone, Parser)]
 pub struct CreateArgs {
@@ -189,8 +188,8 @@ impl CreateArgs {
 
         let (deployed_contract, receipt) = deployer.send_with_receipt().await?;
         if self.json {
-            let output = serde_json::json!({"deployer": deployer_address, "deployedTo": deployed_contract.address(), "transactionHash": receipt.transaction_hash});
-            println!("{}", serde_json::to_string(&output).unwrap());
+            let output = json!({"deployer": deployer_address, "deployedTo": deployed_contract.address(), "transactionHash": receipt.transaction_hash});
+            println!("{}", to_string(&output).unwrap());
         } else {
             println!("Deployer: {:?}", deployer_address);
             println!("Deployed to: {:?}", deployed_contract.address());
