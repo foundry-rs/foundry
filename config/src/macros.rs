@@ -114,7 +114,7 @@ macro_rules! impl_figment_convert_cast {
     };
 }
 
-// macro that implements figment data provider for types that need it from EthereumOpts
+/// macro that implements `figment::Provider` trait for types that use EthereumOpts
 #[macro_export]
 macro_rules! impl_eth_data_provider {
     ($name:ty) => {
