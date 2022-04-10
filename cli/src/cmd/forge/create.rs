@@ -19,6 +19,8 @@ use crate::{compile, opts::forge::ContractInfo};
 use clap::{Parser, ValueHint};
 use std::{path::PathBuf, sync::Arc};
 
+use serde_json;
+
 #[derive(Debug, Clone, Parser)]
 pub struct CreateArgs {
     #[clap(
@@ -62,6 +64,9 @@ pub struct CreateArgs {
 
     #[clap(long = "value", help = "value to send with the contract creation tx", env = "ETH_VALUE", parse(try_from_str = parse_u256))]
     value: Option<U256>,
+
+    #[clap(long="json", help = "print the deployment information as json")]
+    json: bool
 }
 
 impl Cmd for CreateArgs {
@@ -183,10 +188,14 @@ impl CreateArgs {
         }
 
         let (deployed_contract, receipt) = deployer.send_with_receipt().await?;
-
-        println!("Deployer: {:?}", deployer_address);
-        println!("Deployed to: {:?}", deployed_contract.address());
-        println!("Transaction hash: {:?}", receipt.transaction_hash);
+        if self.json {
+            let output = serde_json::json!({"deployer": deployer_address, "deployedTo": deployed_contract.address(), "transactionHash": receipt.transaction_hash});
+            println!("{}", serde_json::to_string(&output).unwrap());
+        } else {
+            println!("Deployer: {:?}", deployer_address);
+            println!("Deployed to: {:?}", deployed_contract.address());
+            println!("Transaction hash: {:?}", receipt.transaction_hash);
+        }
 
         Ok(())
     }
