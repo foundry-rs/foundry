@@ -1,4 +1,4 @@
-//! cast call subcommand
+//! cast estimate subcommand
 use crate::opts::{cast::parse_name_or_address, EthereumOpts};
 use clap::Parser;
 use ethers::types::{NameOrAddress, U256};

@@ -8,7 +8,9 @@ use ethers::{
 
 use super::{ClapChain, EthereumOpts, Wallet};
 use crate::{
-    cmd::cast::{call::CallArgs, estimate::EstimateArgs, find_block::FindBlockArgs},
+    cmd::cast::{
+        access_list::AccessArgs, call::CallArgs, estimate::EstimateArgs, find_block::FindBlockArgs,
+    },
     utils::parse_u256,
 };
 
@@ -105,18 +107,7 @@ pub enum Subcommands {
     },
     #[clap(name = "access-list")]
     #[clap(about = "Create an access list for a transaction")]
-    AccessList {
-        #[clap(help = "the address you want to query", parse(try_from_str = parse_name_or_address))]
-        address: NameOrAddress,
-        sig: String,
-        args: Vec<String>,
-        #[clap(long, short, help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
-        block: Option<BlockId>,
-        #[clap(flatten)]
-        eth: EthereumOpts,
-        #[clap(long = "json", short = 'j')]
-        to_json: bool,
-    },
+    AccessList(AccessArgs),
     #[clap(name = "block")]
     #[clap(
         about = "Prints information about <block>. If <field> is given, print only the value of that field"
@@ -350,7 +341,7 @@ pub enum Subcommands {
         #[clap(global = true, help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
         block: Option<BlockId>,
         #[clap(short, long, env = "ETH_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
     },
     #[clap(name = "balance")]
     #[clap(about = "Print the balance of <account> in wei")]
@@ -360,7 +351,7 @@ pub enum Subcommands {
         #[clap(help = "the account you want to query", parse(try_from_str = parse_name_or_address))]
         who: NameOrAddress,
         #[clap(short, long, env = "ETH_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
     },
     #[clap(name = "basefee")]
     #[clap(about = "Print the basefee of a block")]
@@ -368,7 +359,7 @@ pub enum Subcommands {
         #[clap(global = true, help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
         block: Option<BlockId>,
         #[clap(short, long, env = "ETH_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
     },
     #[clap(name = "code")]
     #[clap(about = "Prints the bytecode at <address>")]
@@ -378,7 +369,7 @@ pub enum Subcommands {
         #[clap(help = "the address you want to query", parse(try_from_str = parse_name_or_address))]
         who: NameOrAddress,
         #[clap(short, long, env = "ETH_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
     },
     #[clap(name = "gas-price")]
     #[clap(about = "Prints current gas price of target chain")]
@@ -416,7 +407,7 @@ pub enum Subcommands {
         #[clap(help = "the storage slot number (hex or number)", parse(try_from_str = parse_slot))]
         slot: H256,
         #[clap(short, long, env = "ETH_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
         #[clap(
             long,
             short,
@@ -432,7 +423,7 @@ pub enum Subcommands {
         #[clap(help = "the storage slot numbers (hex or number)", parse(try_from_str = parse_slot))]
         slots: Vec<H256>,
         #[clap(short, long, env = "ETH_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
         #[clap(
             long,
             short,
@@ -449,7 +440,7 @@ pub enum Subcommands {
         #[clap(help = "the address you want to query", parse(try_from_str = parse_name_or_address))]
         who: NameOrAddress,
         #[clap(short, long, env = "ETH_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
     },
     #[clap(name = "etherscan-source")]
     #[clap(about = "Prints the source code of a contract from Etherscan")]
@@ -461,7 +452,7 @@ pub enum Subcommands {
         #[clap(short, help = "output directory to expand source tree")]
         directory: Option<PathBuf>,
         #[clap(long, env = "ETHERSCAN_API_KEY")]
-        etherscan_api_key: String,
+        etherscan_api_key: Option<String>,
     },
     #[clap(name = "wallet", about = "Set of wallet management utilities")]
     Wallet {

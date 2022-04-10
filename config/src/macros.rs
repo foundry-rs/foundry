@@ -114,7 +114,7 @@ macro_rules! impl_figment_convert_cast {
     };
 }
 
-/// macro that implements `figment::Provider` trait for types that use EthereumOpts
+/// macro that implements [`figment::Provider`] trait for types that use [`EthereumOpts`]
 #[macro_export]
 macro_rules! impl_eth_data_provider {
     ($name:ty) => {
@@ -134,23 +134,17 @@ macro_rules! impl_eth_data_provider {
 
                 let rpc_url = self.eth.rpc_url().map_err(|err| err.to_string())?;
                 if rpc_url != "http://localhost:8545" {
-                    dict.insert(
-                        "eth_rpc_url".to_string(),
-                        $crate::figment::value::Value::from(rpc_url.to_string()),
-                    );
+                    dict.insert("eth_rpc_url".to_string(), rpc_url.to_string().into());
                 }
 
                 if let Some(from) = self.eth.from {
-                    dict.insert(
-                        "sender".to_string(),
-                        $crate::figment::value::Value::from(format!("{:?}", from)),
-                    );
+                    dict.insert("sender".to_string(), format!("{:?}", from).into());
                 }
 
                 if let Some(etherscan_api_key) = &self.eth.etherscan_api_key {
                     dict.insert(
                         "etherscan_api_key".to_string(),
-                        $crate::figment::value::Value::from(etherscan_api_key.to_string()),
+                        etherscan_api_key.to_string().into(),
                     );
                 }
 
