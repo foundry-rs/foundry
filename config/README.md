@@ -87,6 +87,7 @@ sender = '0x00a329c0648769a73afac7f9381e08fb43dbea72'
 tx_origin = '0x00a329c0648769a73afac7f9381e08fb43dbea72'
 initial_balance = '0xffffffffffffffffffffffff'
 block_number = 0
+# NOTE due to a toml-rs limitation, this value needs to be a string if the desired gas limit exceeds `i64::MAX` (9223372036854775807)
 gas_limit = 9223372036854775807
 gas_price = 0
 block_base_fee_per_gas = 0
@@ -100,8 +101,9 @@ block_difficulty = 0
 rpc_storage_caching = { chains = "all", endpoints = "all" }
 # this overrides `rpc_storage_caching` entirely
 no_storage_caching = false
-# don't include the metadata hash, to allow for deterministic code: https://docs.soliditylang.org/en/latest/metadata.html, solc's default is "ipfs"
-bytecode_hash = "none"
+# use ipfs method to generate the metadata hash, solc's default.
+# To not include the metadata hash, to allow for deterministic code: https://docs.soliditylang.org/en/latest/metadata.html, use "none"
+bytecode_hash = "ipfs"
 # If this option is enabled, Solc is instructed to generate output (bytecode) only for the required contracts
 # this can reduce compile time for `forge test` a bit but is considered experimental at this point.
 sparse_mode = false

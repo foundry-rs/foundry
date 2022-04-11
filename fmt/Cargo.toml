@@ -2,7 +2,13 @@
 name = "forge-fmt"
 version = "0.2.0"
 edition = "2021"
-description = "Foundry's solidity formatting and linting support"
+description = """
+Foundry's solidity formatting and linting support
+"""
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/gakonst/foundry"
+keywords = ["ethereum", "web3", "solidity", "linter"]
 
 [dependencies]
 indent_write = "2.2.0"
