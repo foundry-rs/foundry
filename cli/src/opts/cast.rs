@@ -31,6 +31,9 @@ pub enum Subcommands {
     #[clap(name = "--to-hex")]
     #[clap(about = "Convert a decimal number into hex")]
     ToHex { decimal: Option<String> },
+    #[clap(name = "--concat-hex")]
+    #[clap(about = "Concatencate hex strings")]
+    ConcatHex { data: Vec<String> },
     #[clap(name = "--from-bin")]
     #[clap(about = "Convert binary data into hex data")]
     FromBin,
