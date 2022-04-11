@@ -1,16 +1,14 @@
-use std::{path::PathBuf, str::FromStr};
-
-use clap::{Parser, Subcommand};
-use ethers::{
-    abi::token::{LenientTokenizer, Tokenizer},
-    types::{Address, BlockId, BlockNumber, NameOrAddress, H256, U256},
-};
-
 use super::{ClapChain, EthereumOpts, Wallet};
 use crate::{
     cmd::cast::{call::CallArgs, find_block::FindBlockArgs},
     utils::parse_u256,
 };
+use clap::{Parser, Subcommand, ValueHint};
+use ethers::{
+    abi::token::{LenientTokenizer, Tokenizer},
+    types::{Address, BlockId, BlockNumber, NameOrAddress, H256, U256},
+};
+use std::{path::PathBuf, str::FromStr};
 
 #[derive(Debug, Subcommand)]
 #[clap(about = "Perform Ethereum RPC calls from the comfort of your command line.")]
@@ -121,14 +119,19 @@ pub enum Subcommands {
         to_json: bool,
     },
     #[clap(name = "block")]
-    #[clap(
-        about = "Prints information about <block>. If <field> is given, print only the value of that field"
-    )]
+    #[clap(about = "Get information about a block.")]
     Block {
-        #[clap(help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
+        #[clap(
+            long,
+            short = 'B',
+            help = "The block height you want to query at.",
+            long_help = "The block height you want to query at. Can also be the tags earliest, latest, or pending.",
+            parse(try_from_str = parse_block_id)
+        )]
         block: BlockId,
         #[clap(long, env = "CAST_FULL_BLOCK")]
         full: bool,
+        #[clap(long, short, help = "If specified, only get the given field of the block.")]
         field: Option<String>,
         #[clap(long = "json", short = 'j')]
         to_json: bool,
@@ -136,13 +139,13 @@ pub enum Subcommands {
         rpc_url: String,
     },
     #[clap(name = "block-number")]
-    #[clap(about = "Prints latest block number")]
+    #[clap(about = "Get the latest block number.")]
     BlockNumber {
         #[clap(long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
     #[clap(name = "call")]
-    #[clap(about = "Perform a local call to <to> without publishing a transaction.")]
+    #[clap(about = "Perform a call on an account without publishing a transaction.")]
     Call(CallArgs),
     #[clap(about = "Pack a signature and an argument list into hexadecimal calldata.")]
     Calldata {
@@ -157,19 +160,19 @@ pub enum Subcommands {
         args: Vec<String>,
     },
     #[clap(name = "chain")]
-    #[clap(about = "Prints symbolic name of current blockchain by checking genesis hash")]
+    #[clap(about = "Get the symbolic name of the current chain.")]
     Chain {
         #[clap(long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
     #[clap(name = "chain-id")]
-    #[clap(about = "Returns ethereum chain id")]
+    #[clap(about = "Get the Ethereum chain ID.")]
     ChainId {
         #[clap(long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
     #[clap(name = "client")]
-    #[clap(about = "Returns the current client version")]
+    #[clap(about = "Get the current client version.")]
     Client {
         #[clap(long, env = "ETH_RPC_URL")]
         rpc_url: String,
@@ -185,10 +188,10 @@ pub enum Subcommands {
         nonce: Option<U256>,
     },
     #[clap(name = "namehash")]
-    #[clap(about = "Returns ENS namehash of provided name")]
+    #[clap(about = "Calculate the ENS namehash of a name.")]
     Namehash { name: String },
     #[clap(name = "tx")]
-    #[clap(about = "Show information about the transaction <tx-hash>")]
+    #[clap(about = "Get information about a transaction.")]
     Tx {
         hash: String,
         field: Option<String>,
@@ -198,14 +201,15 @@ pub enum Subcommands {
         rpc_url: String,
     },
     #[clap(name = "receipt")]
-    #[clap(about = "Print information about the transaction receipt for <tx-hash>")]
+    #[clap(about = "Get the transaction receipt for a transaction.")]
     Receipt {
+        #[clap(value_name = "TX_HASH")]
         hash: String,
         field: Option<String>,
         #[clap(
             short,
             long,
-            help = "the number of confirmations until the receipt is fetched",
+            help = "The number of confirmations until the receipt is fetched",
             default_value = "1"
         )]
         confirmations: usize,
@@ -217,19 +221,34 @@ pub enum Subcommands {
         rpc_url: String,
     },
     #[clap(name = "send")]
-    #[clap(about = "Publish a transaction signed by <from> to call <to> with <data>")]
+    #[clap(about = "Sign and publish a transaction.")]
     SendTx {
-        #[clap(help = "the address you want to transact with", parse(try_from_str = parse_name_or_address))]
+        #[clap(
+            help = "The destination of the transaction.",
+            parse(try_from_str = parse_name_or_address)
+        )]
         to: NameOrAddress,
-        #[clap(help = "the function signature or name you want to call")]
+        #[clap(help = "The signature of the function to call.")]
         sig: Option<String>,
-        #[clap(help = "the list of arguments you want to call the function with")]
+        #[clap(help = "The arguments of the function to call.")]
         args: Vec<String>,
-        #[clap(long, help = "gas quantity for the transaction", parse(try_from_str = parse_u256))]
+        #[clap(long, help = "Gas limit for the transaction.", parse(try_from_str = parse_u256))]
         gas: Option<U256>,
-        #[clap(long = "gas-price", help = "gas price for the transaction", env = "ETH_GAS_PRICE", parse(try_from_str = parse_ether_value))]
+        #[clap(
+            long = "gas-price",
+            help = "Gas price for the transaction.",
+            env = "ETH_GAS_PRICE",
+            parse(try_from_str = parse_ether_value)
+        )]
         gas_price: Option<U256>,
-        #[clap(long, help = "ether value (in wei or string with unit type e.g. 1ether, 10gwei, 0.01ether) for the transaction", parse(try_from_str = parse_ether_value))]
+        #[clap(
+            long,
+            help = "Ether to send in the transaction.",
+            long_help = "Ether to send in the transaction, either specified in wei, or as a string with a unit type.
+
+            Examples: 1ether, 10gwei, 0.01ether",
+            parse(try_from_str = parse_ether_value)
+        )]
         value: Option<U256>,
         #[clap(long, help = "nonce for the transaction", parse(try_from_str = parse_u256))]
         nonce: Option<U256>,
@@ -239,25 +258,32 @@ pub enum Subcommands {
         eth: EthereumOpts,
         #[clap(
             long,
-            help = "use legacy transactions instead of EIP1559 ones. this is auto-enabled for common networks without EIP1559"
+            help = "Send a legacy transaction instead of an EIP1559 transaction.",
+            long_help = "Send a legacy transaction instead of an EIP1559 transaction.
+
+            This is automatically enabled for common networks without EIP1559."
         )]
         legacy: bool,
         #[clap(
             short,
             long,
-            help = "the number of confirmations until the receipt is fetched",
+            help = "The number of confirmations until the receipt is fetched.",
             default_value = "1"
         )]
         confirmations: usize,
         #[clap(long = "json", short = 'j')]
         to_json: bool,
-        #[clap(long = "resend", help = "reuse account latest nonce", conflicts_with = "nonce")]
+        #[clap(
+            long = "resend",
+            help = "Reuse the latest nonce for the sender account.",
+            conflicts_with = "nonce"
+        )]
         resend: bool,
     },
     #[clap(name = "publish")]
-    #[clap(about = "Publish a raw transaction to the network")]
+    #[clap(about = "Publish a raw transaction to the network.")]
     PublishTx {
-        #[clap(help = "the raw transaction you want to publish")]
+        #[clap(help = "The raw transaction", value_name = "RAW_TX")]
         raw_tx: String,
         #[clap(long, env = "CAST_ASYNC")]
         cast_async: bool,
@@ -265,15 +291,22 @@ pub enum Subcommands {
         eth: EthereumOpts,
     },
     #[clap(name = "estimate")]
-    #[clap(about = "Estimate the gas cost of a transaction from <from> to <to> with <data>")]
+    #[clap(about = "Estimate the gas cost of a transaction.")]
     Estimate {
-        #[clap(help = "the address you want to transact with", parse(try_from_str = parse_name_or_address))]
+        #[clap(help = "The destination of the transaction.", parse(try_from_str = parse_name_or_address))]
         to: NameOrAddress,
-        #[clap(help = "the function signature or name you want to call")]
+        #[clap(help = "The signature of the function to call.")]
         sig: String,
-        #[clap(help = "the list of arguments you want to call the function with")]
+        #[clap(help = "The arguments of the function to call.")]
         args: Vec<String>,
-        #[clap(long, help = "value for tx estimate (in wei)")]
+        #[clap(
+            long,
+            help = "Ether to send in the transaction.",
+            long_help = "Ether to send in the transaction, either specified in wei, or as a string with a unit type.
+
+            Examples: 1ether, 10gwei, 0.01ether",
+            parse(try_from_str = parse_ether_value)
+        )]
         value: Option<U256>,
         #[clap(flatten)]
         eth: EthereumOpts,
@@ -303,13 +336,11 @@ pub enum Subcommands {
         input: bool,
     },
     #[clap(name = "abi-encode")]
-    #[clap(
-        about = "ABI encodes the given arguments with the function signature, excluding the selector"
-    )]
+    #[clap(about = "ABI encode the given function argument, excluding the selector.")]
     AbiEncode {
-        #[clap(help = "the function signature")]
+        #[clap(help = "The function signature.")]
         sig: String,
-        #[clap(help = "the list of function arguments")]
+        #[clap(help = "The arguments of the function.")]
         #[clap(allow_hyphen_values = true)]
         args: Vec<String>,
     },
@@ -328,25 +359,31 @@ pub enum Subcommands {
         slot_number: String,
     },
     #[clap(name = "4byte")]
-    #[clap(about = "Fetches function signatures given the selector from 4byte.directory")]
+    #[clap(about = "Get the function signatures for the given the selector from 4byte.directory.")]
     FourByte {
-        #[clap(help = "the function selector")]
+        #[clap(help = "The function selector.")]
         selector: String,
     },
     #[clap(name = "4byte-decode")]
-    #[clap(about = "Decodes transaction calldata by fetching the signature using 4byte.directory")]
+    #[clap(about = "Decode ABI-encoded calldata using 4byte.directory.")]
     FourByteDecode {
-        #[clap(help = "the ABI-encoded calldata")]
+        #[clap(help = "The ABI-encoded calldata.")]
         calldata: String,
-        #[clap(long, help = "the 4byte selector id to use, can also be earliest/latest")]
+        #[clap(
+            long,
+            help = "The index of the resolved signature to use.",
+            long_help = "The index of the resolved signature to use.
+
+            4byte.directory can have multiple possible signatures for a given selector.
+
+            The index can also be earliest or latest."
+        )]
         id: Option<String>,
     },
     #[clap(name = "4byte-event")]
-    #[clap(
-        about = "Takes a 32 byte topic and prints the response from querying 4byte.directory for that topic"
-    )]
+    #[clap(about = "Get the event signature for a given topic 0 from 4byte.directory.")]
     FourByteEvent {
-        #[clap(help = "the 32 byte topic")]
+        #[clap(help = "Topic 0", value_name = "TOPIC_0")]
         topic: String,
     },
     #[clap(name = "pretty-calldata")]
@@ -359,43 +396,67 @@ pub enum Subcommands {
     },
 
     #[clap(name = "age")]
-    #[clap(about = "Prints the timestamp of a block")]
+    #[clap(about = "Get the timestamp of a block.")]
     Age {
-        #[clap(global = true, help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
+        #[clap(
+            long,
+            short = 'B',
+            help = "The block height you want to query at.",
+            long_help = "The block height you want to query at. Can also be the tags earliest, latest, or pending.",
+            parse(try_from_str = parse_block_id)
+        )]
         block: Option<BlockId>,
         #[clap(short, long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
     #[clap(name = "balance")]
-    #[clap(about = "Print the balance of <account> in wei")]
+    #[clap(about = "Get the balance of an account in wei.")]
     Balance {
-        #[clap(long, short, help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
+        #[clap(
+            long,
+            short = 'B',
+            help = "The block height you want to query at.",
+            long_help = "The block height you want to query at. Can also be the tags earliest, latest, or pending.",
+            parse(try_from_str = parse_block_id)
+        )]
         block: Option<BlockId>,
-        #[clap(help = "the account you want to query", parse(try_from_str = parse_name_or_address))]
-        who: NameOrAddress,
+        #[clap(help = "The account you want to query", parse(try_from_str = parse_name_or_address))]
+        account: NameOrAddress,
         #[clap(short, long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
     #[clap(name = "basefee")]
-    #[clap(about = "Print the basefee of a block")]
+    #[clap(about = "Get the basefee of a block.")]
     BaseFee {
-        #[clap(global = true, help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
+        #[clap(
+            long,
+            short = 'B',
+            help = "The block height you want to query at.",
+            long_help = "The block height you want to query at. Can also be the tags earliest, latest, or pending.",
+            parse(try_from_str = parse_block_id)
+        )]
         block: Option<BlockId>,
         #[clap(short, long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
     #[clap(name = "code")]
-    #[clap(about = "Prints the bytecode at <address>")]
+    #[clap(about = "Get the bytecode of a contract.")]
     Code {
-        #[clap(long, short, help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
+        #[clap(
+            long,
+            short = 'B',
+            help = "The block height you want to query at.",
+            long_help = "The block height you want to query at. Can also be the tags earliest, latest, or pending.",
+            parse(try_from_str = parse_block_id)
+        )]
         block: Option<BlockId>,
-        #[clap(help = "the address you want to query", parse(try_from_str = parse_name_or_address))]
+        #[clap(help = "The contract address.", parse(try_from_str = parse_name_or_address))]
         who: NameOrAddress,
         #[clap(short, long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
     #[clap(name = "gas-price")]
-    #[clap(about = "Prints current gas price of target chain")]
+    #[clap(about = "Get the current gas price.")]
     GasPrice {
         #[clap(short, long, env = "ETH_RPC_URL")]
         rpc_url: String,
@@ -404,61 +465,73 @@ pub enum Subcommands {
     #[clap(about = "Keccak-256 hashes arbitrary data")]
     Keccak { data: String },
     #[clap(name = "resolve-name")]
-    #[clap(about = "Returns the address the provided ENS name resolves to")]
+    #[clap(about = "Perform an ENS lookup.")]
     ResolveName {
-        #[clap(help = "the account you want to resolve")]
+        #[clap(help = "The name to lookup.")]
         who: Option<String>,
         #[clap(short, long, env = "ETH_RPC_URL")]
         rpc_url: String,
-        #[clap(long, short, help = "do a forward resolution to ensure the ENS name is correct")]
+        #[clap(long, short, help = "Perform a reverse lookup to verify that the name is correct.")]
         verify: bool,
     },
     #[clap(name = "lookup-address")]
-    #[clap(about = "Returns the name the provided address resolves to")]
+    #[clap(about = "Perform an ENS reverse lookup.")]
     LookupAddress {
-        #[clap(help = "the account you want to resolve")]
+        #[clap(help = "The account to perform the lookup for.")]
         who: Option<Address>,
         #[clap(short, long, env = "ETH_RPC_URL")]
         rpc_url: String,
-        #[clap(long, short, help = "do a forward resolution to ensure the address is correct")]
+        #[clap(
+            long,
+            short,
+            help = "Perform a normal lookup to verify that the address is correct."
+        )]
         verify: bool,
     },
-    #[clap(name = "storage", about = "Show the raw value of a contract's storage slot")]
+    #[clap(name = "storage", about = "Get the raw value of a contract's storage slot.")]
     Storage {
-        #[clap(help = "the contract address", parse(try_from_str = parse_name_or_address))]
+        #[clap(help = "The contract address.", parse(try_from_str = parse_name_or_address))]
         address: NameOrAddress,
-        #[clap(help = "the storage slot number (hex or number)", parse(try_from_str = parse_slot))]
+        #[clap(help = "The storage slot number (hex or decimal)", parse(try_from_str = parse_slot))]
         slot: H256,
         #[clap(short, long, env = "ETH_RPC_URL")]
         rpc_url: String,
         #[clap(
             long,
-            short,
-            help = "the block you want to query, can also be earliest/latest/pending",
+            short = 'B',
+            help = "The block height you want to query at.",
+            long_help = "The block height you want to query at. Can also be the tags earliest, latest, or pending.",
             parse(try_from_str = parse_block_id)
         )]
         block: Option<BlockId>,
     },
-    #[clap(name = "proof", about = "Generate a storage proof for a given slot")]
+    #[clap(name = "proof", about = "Generate a storage proof for a given storage slot.")]
     Proof {
-        #[clap(help = "the contract address", parse(try_from_str = parse_name_or_address))]
+        #[clap(help = "The contract address.", parse(try_from_str = parse_name_or_address))]
         address: NameOrAddress,
-        #[clap(help = "the storage slot numbers (hex or number)", parse(try_from_str = parse_slot))]
+        #[clap(help = "The storage slot numbers (hex or decimal).", parse(try_from_str = parse_slot))]
         slots: Vec<H256>,
         #[clap(short, long, env = "ETH_RPC_URL")]
         rpc_url: String,
         #[clap(
             long,
-            short,
-            help = "the block you want to query, can also be earliest/latest/pending",
+            short = 'B',
+            help = "The block height you want to query at.",
+            long_help = "The block height you want to query at. Can also be the tags earliest, latest, or pending.",
             parse(try_from_str = parse_block_id)
         )]
         block: Option<BlockId>,
     },
     #[clap(name = "nonce")]
-    #[clap(about = "Prints the number of transactions sent from <address>")]
+    #[clap(about = "Get the nonce for an account.")]
     Nonce {
-        #[clap(long, short = 'B', help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
+        #[clap(
+            long,
+            short = 'B',
+            help = "The block height you want to query at.",
+            long_help = "The block height you want to query at. Can also be the tags earliest, latest, or pending.",
+            parse(try_from_str = parse_block_id)
+        )]
         block: Option<BlockId>,
         #[clap(help = "the address you want to query", parse(try_from_str = parse_name_or_address))]
         who: NameOrAddress,
@@ -466,13 +539,13 @@ pub enum Subcommands {
         rpc_url: String,
     },
     #[clap(name = "etherscan-source")]
-    #[clap(about = "Prints the source code of a contract from Etherscan")]
+    #[clap(about = "Get the source code of a contract from Etherscan.")]
     EtherscanSource {
         #[clap(flatten)]
         chain: ClapChain,
-        #[clap(help = "the contract address")]
+        #[clap(help = "The contract's address.")]
         address: String,
-        #[clap(short, help = "output directory to expand source tree")]
+        #[clap(short, help = "The output directory to expand source tree into.", value_hint = ValueHint::DirPath)]
         directory: Option<PathBuf>,
         #[clap(long, env = "ETHERSCAN_API_KEY")]
         etherscan_api_key: String,
@@ -503,10 +576,7 @@ pub enum Subcommands {
         #[clap(help = "The human-readable function signature, e.g. 'transfer(address,uint256)'")]
         sig: String,
     },
-    #[clap(
-        name = "find-block",
-        about = "Prints the block number closest to the provided timestamp"
-    )]
+    #[clap(name = "find-block", about = "Get the block number closest to the provided timestamp.")]
     FindBlock(FindBlockArgs),
     #[clap(about = "Generate shell completions script")]
     Completions {
