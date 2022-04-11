@@ -58,6 +58,19 @@ impl ClientFork {
         Ok(code)
     }
 
+    pub async fn transaction_by_block_hash_and_index(
+        &self,
+        hash: H256,
+        index: usize,
+    ) -> Result<Option<Transaction>, ProviderError> {
+        if let Some(block) = self.block_by_hash(hash).await? {
+            if let Some(tx_hash) = block.transactions.get(index) {
+                return self.transaction_by_hash(*tx_hash).await
+            }
+        }
+        Ok(None)
+    }
+
     pub async fn transaction_by_hash(
         &self,
         hash: H256,

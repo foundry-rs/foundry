@@ -112,7 +112,7 @@ impl EthApi {
                 self.estimate_gas(call, block).to_rpc_result()
             }
             EthRequest::EthGetTransactionByBlockHashAndIndex(hash, index) => {
-                self.transaction_by_block_hash_and_index(hash, index).to_rpc_result()
+                self.transaction_by_block_hash_and_index(hash, index).await.to_rpc_result()
             }
             EthRequest::EthGetTransactionByBlockNumberAndIndex(num, index) => {
                 self.transaction_by_block_number_and_index(num, index).to_rpc_result()
@@ -479,12 +479,12 @@ impl EthApi {
     /// Returns transaction at given block hash and index.
     ///
     /// Handler for ETH RPC call: `eth_getTransactionByBlockHashAndIndex`
-    pub fn transaction_by_block_hash_and_index(
+    pub async fn transaction_by_block_hash_and_index(
         &self,
-        _: H256,
-        _: Index,
+        hash: H256,
+        index: Index,
     ) -> Result<Option<Transaction>> {
-        Err(BlockchainError::RpcUnimplemented)
+        self.backend.transaction_by_block_hash_and_index(hash, index).await
     }
 
     /// Returns transaction by given block number and index.

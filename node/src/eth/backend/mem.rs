@@ -26,12 +26,15 @@ use foundry_evm::{
     revm::{db::CacheDB, CreateScheme, Env, Return, TransactOut, TransactTo, TxEnv},
     utils::u256_to_h256_le,
 };
-use foundry_node_core::eth::{
-    block::{Block, BlockInfo, Header, PartialHeader},
-    call::CallRequest,
-    receipt::{EIP658Receipt, TypedReceipt},
-    transaction::{PendingTransaction, TransactionInfo, TypedTransaction},
-    utils::to_access_list,
+use foundry_node_core::{
+    eth::{
+        block::{Block, BlockInfo, Header, PartialHeader},
+        call::CallRequest,
+        receipt::{EIP658Receipt, TypedReceipt},
+        transaction::{PendingTransaction, TransactionInfo, TypedTransaction},
+        utils::to_access_list,
+    },
+    types::Index,
 };
 use parking_lot::RwLock;
 use std::{collections::HashMap, sync::Arc};
@@ -640,6 +643,34 @@ impl Backend {
             transaction_type: None,
             effective_gas_price: Some(effective_gas_price),
         })
+    }
+
+    pub async fn transaction_by_block_hash_and_index(
+        &self,
+        hash: H256,
+        index: Index,
+    ) -> Result<Option<Transaction>, BlockchainError> {
+        if let tx @ Some(_) = self.mined_transaction_by_block_hash_and_index(hash, index) {
+            return Ok(tx)
+        }
+
+        if let Some(ref fork) = self.fork {
+            return Ok(fork.transaction_by_block_hash_and_index(hash, index.into()).await?)
+        }
+
+        Ok(None)
+    }
+
+    pub fn mined_transaction_by_block_hash_and_index(
+        &self,
+        block_hash: H256,
+        index: Index,
+    ) -> Option<Transaction> {
+        let block = self.blockchain.storage.read().blocks.get(&block_hash).cloned()?;
+        let index: usize = index.into();
+        let tx = block.transactions.get(index)?.clone();
+        let info = self.blockchain.storage.read().transactions.get(&tx.hash())?.info.clone();
+        Some(transaction_build(tx, Some(block), Some(info), true, Some(self.base_fee())))
     }
 
     pub async fn transaction_by_hash(
