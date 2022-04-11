@@ -16,6 +16,7 @@ use ethers::{
 use foundry_config::Chain;
 use semver::Version;
 use std::collections::BTreeMap;
+use tracing::warn;
 
 /// Verification arguments
 #[derive(Debug, Clone, Parser)]
@@ -32,7 +33,7 @@ pub struct VerifyArgs {
     #[clap(long, help = "the compiler version used during build")]
     compiler_version: String,
 
-    #[clap(long, help = "the number of optimization runs used")]
+    #[clap(alias = "optimizations", long, help = "the number of optimization runs used")]
     num_of_optimizations: Option<u32>,
 
     #[clap(
@@ -86,18 +87,25 @@ impl VerifyArgs {
                 return Ok(())
             }
 
-            eyre::bail!(
+            if resp.result == "Contract source code already verified" {
+                println!("Contract source code already verified");
+                return Ok(())
+            }
+
+            warn!("Failed verify submission: {:?}", resp);
+
+            eprintln!(
                 "Encountered an error verifying this contract:\nResponse: `{}`\nDetails: `{}`",
-                resp.message,
-                resp.result
+                resp.message, resp.result
             );
+            std::process::exit(1)
         }
 
         println!(
             r#"Submitted contract for verification:
-                Response: `{}`
-                GUID: `{}`
-                url: {}#code"#,
+    Response: `{}`
+    GUID: `{}`
+    url: {}#code"#,
             resp.message,
             resp.result,
             etherscan.address_url(self.address)
@@ -293,11 +301,19 @@ impl VerifyCheckArgs {
                 return Ok(())
             }
 
-            eyre::bail!(
+            if resp.result == "Already Verified" {
+                println!("Contract source code already verified");
+                return Ok(())
+            }
+
+            warn!("Failed verification: {:?}", resp);
+
+            eprintln!(
                 "Contract verification failed:\nResponse: `{}`\nDetails: `{}`",
-                resp.message,
-                resp.result
+                resp.message, resp.result
             );
+
+            std::process::exit(1);
         }
 
         println!("Contract successfully verified.");
