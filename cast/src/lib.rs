@@ -895,6 +895,29 @@ impl SimpleCast {
         format!("{:#x}", u)
     }
 
+    /// Concatencates hex strings
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(Cast::concat_hex(vec!["0x00".to_string(), "0x01".to_string()]), "0x0001");
+    ///     assert_eq!(Cast::concat_hex(vec!["1".to_string(), "2".to_string()]), "0x12");
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn concat_hex(values: Vec<String>) -> String {
+        format!(
+            "0x{}",
+            values
+                .into_iter()
+                .map(|s| s.strip_prefix("0x").unwrap_or(&s).to_string())
+                .collect::<Vec::<String>>()
+                .join("")
+        )
+    }
+
     /// Converts a number into uint256 hex string with 0x prefix
     ///
     /// ```
@@ -1265,5 +1288,11 @@ mod tests {
             "0x6fae94120000000000000000000000000000000000000000000000000000000000000000",
             Cast::calldata("bar(bool)", &["false"]).unwrap().as_str()
         );
+    }
+
+    #[test]
+    fn concat_hex() {
+        assert_eq!(Cast::concat_hex(vec!["0x00".to_string(), "0x01".to_string()]), "0x0001");
+        assert_eq!(Cast::concat_hex(vec!["1".to_string(), "2".to_string()]), "0x12");
     }
 }

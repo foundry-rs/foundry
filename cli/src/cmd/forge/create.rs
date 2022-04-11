@@ -17,6 +17,7 @@ use std::fs;
 
 use crate::{compile, opts::forge::ContractInfo};
 use clap::{Parser, ValueHint};
+use serde_json::json;
 use std::{path::PathBuf, sync::Arc};
 
 #[derive(Debug, Clone, Parser)]
@@ -62,6 +63,9 @@ pub struct CreateArgs {
 
     #[clap(long = "value", help = "value to send with the contract creation tx", env = "ETH_VALUE", parse(try_from_str = parse_u256))]
     value: Option<U256>,
+
+    #[clap(long = "json", help = "print the deployment information as json")]
+    json: bool,
 }
 
 impl Cmd for CreateArgs {
@@ -70,7 +74,12 @@ impl Cmd for CreateArgs {
     fn run(self) -> Result<Self::Output> {
         // Find Project & Compile
         let project = self.opts.project()?;
-        let compiled = compile::compile(&project, self.opts.names, self.opts.sizes)?;
+        let compiled = if self.json {
+            // Supress compile stdout messages when printing json output
+            compile::suppress_compile(&project)?
+        } else {
+            compile::compile(&project, self.opts.names, self.opts.sizes)?
+        };
 
         // Get ABI and BIN
         let (abi, bin, _) =
@@ -183,10 +192,14 @@ impl CreateArgs {
         }
 
         let (deployed_contract, receipt) = deployer.send_with_receipt().await?;
-
-        println!("Deployer: {:?}", deployer_address);
-        println!("Deployed to: {:?}", deployed_contract.address());
-        println!("Transaction hash: {:?}", receipt.transaction_hash);
+        if self.json {
+            let output = json!({"deployer": deployer_address, "deployedTo": deployed_contract.address(), "transactionHash": receipt.transaction_hash});
+            println!("{}", output);
+        } else {
+            println!("Deployer: {:?}", deployer_address);
+            println!("Deployed to: {:?}", deployed_contract.address());
+            println!("Transaction hash: {:?}", receipt.transaction_hash);
+        }
 
         Ok(())
     }

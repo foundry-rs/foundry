@@ -64,6 +64,9 @@ async fn main() -> eyre::Result<()> {
             let val = unwrap_or_stdin(decimal)?;
             println!("{}", SimpleCast::hex(U256::from_dec_str(&val)?));
         }
+        Subcommands::ConcatHex { data } => {
+            println!("{}", SimpleCast::concat_hex(data))
+        }
         Subcommands::FromBin {} => {
             let hex: String = io::stdin()
                 .bytes()

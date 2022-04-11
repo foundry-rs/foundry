@@ -3,7 +3,7 @@ use ethers::{
     types::{Address, Chain, U256},
 };
 use revm::{BlockEnv, CfgEnv, SpecId, TxEnv};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use super::fork::environment;
 
@@ -108,6 +108,7 @@ impl EvmOpts {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Env {
     /// the block gas limit
+    #[serde(deserialize_with = "string_or_number")]
     pub gas_limit: u64,
 
     /// the chainid opcode value
@@ -135,5 +136,39 @@ pub struct Env {
     pub block_difficulty: u64,
 
     /// the block.gaslimit value during EVM execution
+    #[serde(deserialize_with = "string_or_number_opt")]
     pub block_gas_limit: Option<u64>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Gas {
+    Number(u64),
+    Text(String),
+}
+
+fn string_or_number<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::Error;
+    match Gas::deserialize(deserializer)? {
+        Gas::Number(num) => Ok(num),
+        Gas::Text(s) => s.parse().map_err(D::Error::custom),
+    }
+}
+
+fn string_or_number_opt<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::Error;
+
+    match Option::<Gas>::deserialize(deserializer)? {
+        Some(gas) => match gas {
+            Gas::Number(num) => Ok(Some(num)),
+            Gas::Text(s) => s.parse().map(Some).map_err(D::Error::custom),
+        },
+        _ => Ok(None),
+    }
 }
