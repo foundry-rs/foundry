@@ -1,5 +1,7 @@
 //! Verify contract source on etherscan
 
+use std::path::Path;
+
 use crate::{
     cmd::forge::{build::BuildArgs, flatten::CoreFlattenArgs},
     opts::forge::ContractInfo,
@@ -8,7 +10,10 @@ use clap::Parser;
 use ethers::{
     abi::Address,
     etherscan::{contract::VerifyContract, Client},
+    prelude::Project,
+    solc::artifacts::BytecodeHash,
 };
+use eyre::Context;
 
 /// Verification arguments
 #[derive(Debug, Clone, Parser)]
@@ -59,6 +64,47 @@ pub struct VerifyCheckArgs {
     etherscan_key: String,
 }
 
+fn flattened_source(
+    args: &VerifyArgs,
+    project: &Project,
+    target: &Path,
+) -> eyre::Result<(String, String)> {
+    let bch = project
+        .solc_config
+        .settings
+        .metadata
+        .as_ref()
+        .and_then(|m| m.bytecode_hash)
+        .unwrap_or_default();
+
+    eyre::ensure!(
+        bch == BytecodeHash::Ipfs,
+        "When using flattened source, bytecodeHash must be set to ipfs. BytecodeHash is currently: {}. Hint: Set the bytecodeHash key in your foundry.toml :)",
+        bch,
+    );
+
+    let source = project.flatten(target).wrap_err("Failed to flatten contract")?;
+    let name = args.contract.name.clone();
+    Ok((source, name))
+}
+
+fn standard_json_source(
+    args: &VerifyArgs,
+    project: &Project,
+    target: &Path,
+) -> eyre::Result<(String, String)> {
+    let input =
+        project.standard_json_input(target).wrap_err("Failed to get standard json input")?;
+
+    let source = serde_json::to_string(&input).wrap_err("Failed to parse standard json input")?;
+    let name = format!(
+        "{}:{}",
+        &project.root().join(args.contract.path.as_ref().unwrap()).to_string_lossy(),
+        args.contract.name.clone()
+    );
+    Ok((source, name))
+}
+
 /// Run the verify command to submit the contract's source code for verification on etherscan
 pub async fn run_verify(args: &VerifyArgs) -> eyre::Result<()> {
     if args.contract.path.is_none() {
@@ -99,49 +145,31 @@ pub async fn run_verify(args: &VerifyArgs) -> eyre::Result<()> {
     };
 
     let project = build_args.project()?;
+    let target = &project.root().join(args.contract.path.as_ref().unwrap());
 
     let (source, contract_name) = if args.flatten {
-        // NOTE: user need to set bytecodehash='ipfs' for this otherwise verification won't work
-        // see: https://github.com/gakonst/foundry/issues/1236
-        (
-            project
-                .flatten(&project.root().join(args.contract.path.as_ref().unwrap()))
-                .map_err(|err| eyre::eyre!("Failed to flatten contract: {}", err))?,
-            args.contract.name.clone(),
-        )
+        flattened_source(args, &project, target)?
     } else {
-        let input = project
-            .standard_json_input(&project.root().join(args.contract.path.as_ref().unwrap()))
-            .map_err(|err| eyre::eyre!("Failed to get standard json input: {}", err))?;
-
-        (
-            serde_json::to_string(&input)
-                .map_err(|err| eyre::eyre!("Failed to parse standard json input: {}", err))?,
-            format!(
-                "{}:{}",
-                &project.root().join(args.contract.path.as_ref().unwrap()).to_string_lossy(),
-                args.contract.name.clone()
-            ),
-        )
+        standard_json_source(args, &project, target)?
     };
 
     let etherscan = Client::new(args.chain_id.try_into()?, &args.etherscan_key)
-        .map_err(|err| eyre::eyre!("Failed to create etherscan client: {}", err))?;
+        .wrap_err("Failed to create etherscan client")?;
 
     let mut verify_args =
         VerifyContract::new(args.address, contract_name, source, args.compiler_version.clone())
             .constructor_arguments(args.constructor_args.clone());
 
-    if let Some(optimizations) = args.num_of_optimizations {
-        verify_args = verify_args.optimization(true).runs(optimizations);
+    verify_args = if let Some(optimizations) = args.num_of_optimizations {
+        verify_args.optimization(true).runs(optimizations)
     } else {
-        verify_args = verify_args.optimization(false);
-    }
+        verify_args.optimization(false)
+    };
 
     let resp = etherscan
         .submit_contract_verification(&verify_args)
         .await
-        .map_err(|err| eyre::eyre!("Failed to submit contract verification: {}", err))?;
+        .wrap_err("Failed to submit contract verification")?;
 
     if resp.status == "0" {
         if resp.message == "Contract source code already verified" {
@@ -170,12 +198,12 @@ pub async fn run_verify(args: &VerifyArgs) -> eyre::Result<()> {
 
 pub async fn run_verify_check(args: &VerifyCheckArgs) -> eyre::Result<()> {
     let etherscan = Client::new(args.chain_id.try_into()?, &args.etherscan_key)
-        .map_err(|err| eyre::eyre!("Failed to create etherscan client: {}", err))?;
+        .wrap_err("Failed to create etherscan client")?;
 
     let resp = etherscan
         .check_contract_verification_status(args.guid.clone())
         .await
-        .map_err(|err| eyre::eyre!("Failed to request verification status: {}", err))?;
+        .wrap_err("Failed to request verification status")?;
 
     if resp.status == "0" {
         if resp.result == "Pending in queue" {
