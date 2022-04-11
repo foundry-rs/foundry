@@ -11,11 +11,15 @@ use ethers::{
         contract::{CodeFormat, VerifyContract},
         Client,
     },
-    solc::{artifacts::Source, AggregatedCompilerOutput, CompilerInput, Solc},
+    solc::{
+        artifacts::{BytecodeHash, Source},
+        AggregatedCompilerOutput, CompilerInput, Project, Solc,
+    },
 };
+use eyre::Context;
 use foundry_config::Chain;
 use semver::Version;
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, path::Path};
 use tracing::warn;
 
 /// Verification arguments
@@ -74,12 +78,12 @@ impl VerifyArgs {
         let verify_args = self.create_verify_request()?;
 
         let etherscan = Client::new(self.chain_id.try_into()?, &self.etherscan_key)
-            .map_err(|err| eyre::eyre!("Failed to create etherscan client: {}", err))?;
+            .wrap_err("Failed to create etherscan client")?;
 
         let resp = etherscan
             .submit_contract_verification(&verify_args)
             .await
-            .map_err(|err| eyre::eyre!("Failed to submit contract verification: {}", err))?;
+            .wrap_err("Failed to submit contract verification")?;
 
         if resp.status == "0" {
             if resp.message == "Contract source code already verified" {
@@ -166,40 +170,9 @@ impl VerifyArgs {
         }
 
         let (source, contract_name, code_format) = if self.flatten {
-            // NOTE: user need to set bytecodehash='ipfs' for this otherwise verification won't work
-            // see: https://github.com/gakonst/foundry/issues/1236
-
-            let source = project
-                .flatten(&contract_path)
-                .map_err(|err| eyre::eyre!("Failed to flatten contract: {}", err))?;
-
-            if !self.force {
-                // solc dry run of flattened code
-                self.check_flattened(source.clone()).map_err(|err| {
-                    eyre::eyre!(
-                        "Failed to compile the flattened code locally: `{}`\
-To skip this solc dry, have a look at the  `--force` flag of this command.",
-                        err
-                    )
-                })?;
-            }
-
-            (source, self.contract.name.clone(), CodeFormat::SingleFile)
+            flattened_source(self, &project, &contract_path)?
         } else {
-            let input = project
-                .standard_json_input(&contract_path)
-                .map_err(|err| eyre::eyre!("Failed to get standard json input: {}", err))?;
-
-            let source = serde_json::to_string(&input)
-                .map_err(|err| eyre::eyre!("Failed to parse standard json input: {}", err))?;
-
-            let contract_name = format!(
-                "{}:{}",
-                &project.root().join(self.contract.path.as_ref().unwrap()).to_string_lossy(),
-                self.contract.name.clone()
-            );
-
-            (source, contract_name, CodeFormat::StandardJsonInput)
+            standard_json_source(self, &project, &contract_path)?
         };
 
         let mut verify_args =
@@ -300,12 +273,12 @@ impl VerifyCheckArgs {
     /// Executes the command to check verification status on Etherscan
     pub async fn run(&self) -> eyre::Result<()> {
         let etherscan = Client::new(self.chain_id.try_into()?, &self.etherscan_key)
-            .map_err(|err| eyre::eyre!("Failed to create etherscan client: {}", err))?;
+            .wrap_err("Failed to create etherscan client")?;
 
         let resp = etherscan
             .check_contract_verification_status(self.guid.clone())
             .await
-            .map_err(|err| eyre::eyre!("Failed to request verification status: {}", err))?;
+            .wrap_err("Failed to request verification status")?;
 
         if resp.status == "0" {
             if resp.result == "Pending in queue" {
@@ -331,4 +304,57 @@ impl VerifyCheckArgs {
         println!("Contract successfully verified.");
         Ok(())
     }
+}
+
+fn flattened_source(
+    args: &VerifyArgs,
+    project: &Project,
+    target: &Path,
+) -> eyre::Result<(String, String, CodeFormat)> {
+    let bch = project
+        .solc_config
+        .settings
+        .metadata
+        .as_ref()
+        .and_then(|m| m.bytecode_hash)
+        .unwrap_or_default();
+
+    eyre::ensure!(
+        bch == BytecodeHash::Ipfs,
+        "When using flattened source, bytecodeHash must be set to ipfs. BytecodeHash is currently: {}. Hint: Set the bytecodeHash key in your foundry.toml :)",
+        bch,
+    );
+
+    let source = project.flatten(target).wrap_err("Failed to flatten contract")?;
+
+    if !args.force {
+        // solc dry run of flattened code
+        args.check_flattened(source.clone()).map_err(|err| {
+            eyre::eyre!(
+                "Failed to compile the flattened code locally: `{}`\
+To skip this solc dry, have a look at the  `--force` flag of this command.",
+                err
+            )
+        })?;
+    }
+
+    let name = args.contract.name.clone();
+    Ok((source, name, CodeFormat::SingleFile))
+}
+
+fn standard_json_source(
+    args: &VerifyArgs,
+    project: &Project,
+    target: &Path,
+) -> eyre::Result<(String, String, CodeFormat)> {
+    let input =
+        project.standard_json_input(target).wrap_err("Failed to get standard json input")?;
+
+    let source = serde_json::to_string(&input).wrap_err("Failed to parse standard json input")?;
+    let name = format!(
+        "{}:{}",
+        &project.root().join(args.contract.path.as_ref().unwrap()).to_string_lossy(),
+        args.contract.name.clone()
+    );
+    Ok((source, name, CodeFormat::StandardJsonInput))
 }
