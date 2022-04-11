@@ -313,27 +313,26 @@ pub enum Subcommands {
         eth: EthereumOpts,
     },
     #[clap(name = "--calldata-decode")]
-    #[clap(about = "Decode ABI-encoded hex input data. Use `--abi-decode` to decode output data")]
+    #[clap(about = "Decode ABI-encoded input data.")]
     CalldataDecode {
-        #[clap(
-            help = "the function signature you want to decode, in the format `<name>(<in-types>)(<out-types>)`"
-        )]
+        #[clap(help = "The function signature in the format `<name>(<in-types>)(<out-types>)`.")]
         sig: String,
-        #[clap(help = "the encoded calldata, in hex format")]
+        #[clap(help = "The ABI-encoded calldata.")]
         calldata: String,
     },
     #[clap(name = "--abi-decode")]
     #[clap(
-        about = "Decode ABI-encoded hex output data. Pass --input to decode as input, or use `--calldata-decode`"
+        about = "Decode ABI-encoded input or output data",
+        long_about = "Decode ABI-encoded input or output data.
+
+        Defaults to decoding output data. To decode input data pass --input or use cast --calldata-decode."
     )]
     AbiDecode {
-        #[clap(
-            help = "the function signature you want to decode, in the format `<name>(<in-types>)(<out-types>)`"
-        )]
+        #[clap(help = "The function signature in the format `<name>(<in-types>)(<out-types>)`.")]
         sig: String,
-        #[clap(help = "the encoded calldata, in hex format")]
+        #[clap(help = "The ABI-encoded calldata.")]
         calldata: String,
-        #[clap(long, short, help = "the encoded output, in hex format")]
+        #[clap(long, short, help = "The ABI-encoded output data.")]
         input: bool,
     },
     #[clap(name = "abi-encode")]
@@ -388,14 +387,18 @@ pub enum Subcommands {
         topic: String,
     },
     #[clap(name = "pretty-calldata")]
-    #[clap(about = "Pretty prints calldata, if available gets signature from 4byte.directory")]
+    #[clap(
+        about = "Pretty print calldata.",
+        long_about = "Pretty print calldata.
+
+        Tries to decode the calldata using 4byte.directory unless --offline is passed."
+    )]
     PrettyCalldata {
-        #[clap(help = "Hex encoded calldata")]
+        #[clap(help = "The calldata.")]
         calldata: String,
         #[clap(long, short, help = "Skip the 4byte directory lookup.")]
         offline: bool,
     },
-
     #[clap(name = "age")]
     #[clap(about = "Get the timestamp of a block.")]
     Age {
