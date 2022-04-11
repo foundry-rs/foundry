@@ -22,6 +22,7 @@ pub struct ClientFork {
     pub storage: Arc<RwLock<ForkedStorage>>,
     // TODO make provider agnostic
     pub provider: Arc<Provider<Http>>,
+    pub chain_id: u64,
 }
 
 // === impl ClientFork ===

@@ -11,17 +11,17 @@ use std::str::FromStr;
 #[derive(Clone, Debug, Parser)]
 pub struct NodeArgs {
     #[clap(flatten, next_help_heading = "EVM OPTIONS")]
-    evm_opts: EvmArgs,
+    pub evm_opts: EvmArgs,
 
     #[clap(
         long,
         help = "either a comma-separated hex-encoded list of private keys, or a mnemonic phrase",
         default_value = "10,test test test test test test test test test test test junk"
     )]
-    accounts: SignerAccounts,
+    pub accounts: SignerAccounts,
 
     #[clap(long, help = "the balance of every genesis account")]
-    balance: Option<U256>,
+    pub balance: Option<U256>,
 }
 
 impl NodeArgs {
@@ -34,6 +34,8 @@ impl NodeArgs {
             .gas_price(self.evm_opts.env.gas_price.unwrap_or(gas_price.as_u64()))
             .genesis_accounts(self.accounts.0)
             .genesis_balance(self.balance.unwrap_or(genesis_balance))
+            .eth_rpc_url(self.evm_opts.fork_url)
+            .fork_block_number(self.evm_opts.fork_block_number)
     }
 
     /// Starts the node

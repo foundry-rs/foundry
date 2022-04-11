@@ -207,6 +207,11 @@ impl Backend {
         Self { db, blockchain, env, gas_price, fork }
     }
 
+    /// Returns the configured fork, if any
+    pub fn get_fork(&self) -> Option<&ClientFork> {
+        self.fork.as_ref()
+    }
+
     /// Whether we're forked off some remote client
     pub fn is_fork(&self) -> bool {
         self.fork.is_some()

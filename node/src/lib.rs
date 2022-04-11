@@ -16,6 +16,7 @@ use ethers::{
     types::{Address, U256},
 };
 
+use crate::fork::ClientFork;
 use ethers::providers::Ws;
 use parking_lot::Mutex;
 use std::{
@@ -56,19 +57,9 @@ pub mod fork;
 /// ```
 pub async fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
     let backend = Arc::new(config.setup().await);
+    let fork = backend.get_fork().cloned();
 
-    let NodeConfig {
-        chain_id: _,
-        gas_limit: _,
-        genesis_accounts: _,
-        genesis_balance: _,
-        accounts,
-        automine,
-        port,
-        max_transactions,
-        gas_price: _,
-        ..
-    } = config.clone();
+    let NodeConfig { accounts, automine, port, max_transactions, .. } = config.clone();
 
     let pool = Arc::new(Pool::default());
 
@@ -113,7 +104,7 @@ pub async fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
 
     let handle = NodeHandle { config, inner, address: socket };
 
-    handle.print();
+    handle.print(fork.as_ref());
 
     (api, handle)
 }
@@ -132,8 +123,8 @@ impl NodeHandle {
     }
 
     /// Prints the launch info
-    pub(crate) fn print(&self) {
-        self.config.print();
+    pub(crate) fn print(&self, fork: Option<&ClientFork>) {
+        self.config.print(fork);
         if !self.config.silent {
             println!("Listening on {}", self.socket_address())
         }

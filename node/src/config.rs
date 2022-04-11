@@ -145,20 +145,20 @@ impl NodeConfig {
 
     /// Sets the `eth_rpc_url` to use when forking
     #[must_use]
-    pub fn eth_rpc_url<U: Into<String>>(mut self, eth_rpc_url: U) -> Self {
-        self.eth_rpc_url = Some(eth_rpc_url.into());
+    pub fn eth_rpc_url<U: Into<String>>(mut self, eth_rpc_url: Option<U>) -> Self {
+        self.eth_rpc_url = eth_rpc_url.map(Into::into);
         self
     }
 
     /// Sets the `fork_block_number` to use to fork off from
     #[must_use]
-    pub fn fork_block_number<U: Into<u64>>(mut self, fork_block_number: U) -> Self {
-        self.fork_block_number = Some(fork_block_number.into());
+    pub fn fork_block_number<U: Into<u64>>(mut self, fork_block_number: Option<U>) -> Self {
+        self.fork_block_number = fork_block_number.map(Into::into);
         self
     }
 
     /// Prints the config info
-    pub fn print(&self) {
+    pub fn print(&self, fork: Option<&ClientFork>) {
         if self.silent {
             return
         }
@@ -205,10 +205,25 @@ Gas Price
 Gas Limit
 ==================
 {}
-
 "#,
             format!("{}", self.gas_limit).green()
         );
+
+        if let Some(fork) = fork {
+            print!(
+                r#"
+Fork
+==================
+Endpoint:       {}
+Block number:   {}
+Block hash:     {:?}
+Chain ID:       {}
+"#,
+                fork.eth_rpc_url, fork.block_number, fork.block_hash, fork.chain_id
+            );
+        }
+
+        println!();
     }
 
     /// Configures everything related to env, backend and database and returns the
@@ -241,6 +256,8 @@ Gas Limit
             let block_hash =
                 provider.get_block(fork_block_number).await.unwrap().unwrap().hash.unwrap();
 
+            let chain_id = provider.get_chainid().await.unwrap().as_u64();
+
             let meta = BlockchainDbMeta::new(env.clone(), eth_rpc_url.clone());
 
             // TODO support cache path
@@ -264,6 +281,7 @@ Gas Limit
                 block_hash,
                 provider,
                 storage: Default::default(),
+                chain_id,
             };
 
             (db, Some(fork))
