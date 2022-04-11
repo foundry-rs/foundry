@@ -189,28 +189,32 @@ The wallet options can either be:
 "#
 )]
 pub struct Wallet {
-    #[clap(long, short, help = "Interactive prompt to insert your private key")]
+    #[clap(long, short, help = "Open an interactive prompt to enter your private key.")]
     pub interactive: bool,
 
     #[clap(long = "private-key", help = "Your private key string")]
     pub private_key: Option<String>,
 
-    #[clap(env = "ETH_KEYSTORE", long = "keystore", help = "Path to your keystore folder / file")]
+    #[clap(
+        env = "ETH_KEYSTORE",
+        long = "keystore",
+        help = "The path to a keystore folder or file."
+    )]
     pub keystore_path: Option<String>,
 
     #[clap(long = "password", help = "Your keystore password", requires = "keystore-path")]
     pub keystore_password: Option<String>,
 
-    #[clap(long = "mnemonic-path", help = "Path to your mnemonic file")]
+    #[clap(long = "mnemonic-path", help = "Path to a mnemonic file.")]
     pub mnemonic_path: Option<String>,
 
-    #[clap(short, long = "ledger", help = "Use your Ledger hardware wallet")]
+    #[clap(short, long = "ledger", help = "Use your Ledger hardware wallet.")]
     pub ledger: bool,
 
-    #[clap(short, long = "trezor", help = "Use your Trezor hardware wallet")]
+    #[clap(short, long = "trezor", help = "Use your Trezor hardware wallet.")]
     pub trezor: bool,
 
-    #[clap(long = "hd-path", help = "Derivation path for your hardware wallet (trezor or ledger)")]
+    #[clap(long = "hd-path", help = "Derivation path for your hardware wallet.")]
     pub hd_path: Option<String>,
 
     #[clap(

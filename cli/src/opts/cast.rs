@@ -169,10 +169,7 @@ pub enum Subcommands {
     Calldata {
         #[clap(
             help = "The function signature.",
-            long_help = "
-            The function signature in the form <name>(<types>...), or if the value given contains at least one slash character, then it is treated the path to a file.
-
-            The file is treated as if the contents were passed as hexadecimal data."
+            long_help = "The function signature in the form <name>(<types...>)"
         )]
         sig: String,
         #[clap(allow_hyphen_values = true)]
@@ -306,6 +303,7 @@ pub enum Subcommands {
         raw_tx: String,
         #[clap(long, env = "CAST_ASYNC")]
         cast_async: bool,
+        // FIXME: We only need the RPC URL and `--flashbots` options from this.
         #[clap(flatten)]
         eth: EthereumOpts,
     },
@@ -328,6 +326,7 @@ pub enum Subcommands {
         )]
         value: Option<U256>,
         #[clap(flatten)]
+        // TODO: We only need RPC URL and Etherscan API key here.
         eth: EthereumOpts,
     },
     #[clap(name = "--calldata-decode")]
@@ -350,7 +349,7 @@ pub enum Subcommands {
         sig: String,
         #[clap(help = "The ABI-encoded calldata.")]
         calldata: String,
-        #[clap(long, short, help = "The ABI-encoded output data.")]
+        #[clap(long, short, help = "Decode input data.")]
         input: bool,
     },
     #[clap(name = "abi-encode")]
@@ -375,7 +374,7 @@ pub enum Subcommands {
         slot_number: String,
     },
     #[clap(name = "4byte")]
-    #[clap(about = "Get the function signatures for the given the selector from 4byte.directory.")]
+    #[clap(about = "Get the function signatures for the given selector from 4byte.directory.")]
     FourByte {
         #[clap(help = "The function selector.")]
         selector: String,
@@ -553,7 +552,7 @@ pub enum Subcommands {
             parse(try_from_str = parse_block_id)
         )]
         block: Option<BlockId>,
-        #[clap(help = "the address you want to query", parse(try_from_str = parse_name_or_address))]
+        #[clap(help = "The address you want to get the nonce for.", parse(try_from_str = parse_name_or_address))]
         who: NameOrAddress,
         #[clap(short, long, env = "ETH_RPC_URL")]
         rpc_url: String,
