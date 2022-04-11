@@ -24,64 +24,70 @@ pub enum Subcommands {
     MaxUint,
     #[clap(aliases = &["--from-ascii"])]
     #[clap(name = "--from-utf8")]
-    #[clap(about = "Convert text data into hexdata")]
+    #[clap(about = "Convert UTF8 text to hex.")]
     FromUtf8 { text: Option<String> },
     #[clap(name = "--to-hex")]
-    #[clap(about = "Convert a decimal number into hex")]
+    #[clap(about = "Convert an integer to hex.")]
     ToHex { decimal: Option<String> },
     #[clap(name = "--concat-hex")]
     #[clap(about = "Concatencate hex strings")]
     ConcatHex { data: Vec<String> },
     #[clap(name = "--from-bin")]
-    #[clap(about = "Convert binary data into hex data")]
+    #[clap(about = "Convert binary data into hex data.")]
     FromBin,
     #[clap(name = "--to-hexdata")]
-    #[clap(about = r#"[<hex>|</path>|<@tag>]
-    Output lowercase, 0x-prefixed hex, converting from the
-    input, which can be:
+    #[clap(
+        about = "
+    Normalize the input to lowercase, 0x-prefixed hex. See --help for more info.",
+        long_about = "Normalize the input to lowercase, 0x-prefixed hex.
+
+    The input can be:
       - mixed case hex with or without 0x prefix
       - 0x prefixed hex, concatenated with a ':'
-      - absolute path to file
-      - @tag, where $TAG is defined in environment variables
-    "#)]
+      - an absolute path to file
+      - @tag, where the tag is defined in an environment variable
+    "
+    )]
     ToHexdata { input: Option<String> },
     #[clap(aliases = &["--to-checksum"])] // Compatibility with dapptools' cast
     #[clap(name = "--to-checksum-address")]
     #[clap(about = "Convert an address to a checksummed format (EIP-55)")]
     ToCheckSumAddress { address: Option<Address> },
     #[clap(name = "--to-ascii")]
-    #[clap(about = "Convert hex data to text data")]
+    #[clap(about = "Convert hex data to an ASCII string.")]
     ToAscii { hexdata: Option<String> },
     #[clap(name = "--from-fix")]
-    #[clap(about = "Convert fixed point into specified number of decimals")]
+    #[clap(about = "Convert a fixed point number into an integer.")]
     FromFix {
         decimals: Option<u128>,
         #[clap(allow_hyphen_values = true)] // negative values not yet supported internally
         value: Option<String>,
     },
     #[clap(name = "--to-bytes32")]
-    #[clap(about = "Right-pads a hex bytes string to 32 bytes")]
+    #[clap(about = "Right-pads hex data to 32 bytes.")]
     ToBytes32 { bytes: Option<String> },
     #[clap(name = "--to-dec")]
-    #[clap(about = "Convert hex value into decimal number")]
+    #[clap(about = "Convert hex value into a decimal number.")]
     ToDec { hexvalue: Option<String> },
     #[clap(name = "--to-fix")]
-    #[clap(about = "Convert integers into fixed point with specified decimals")]
+    #[clap(about = "Convert an integer into a fixed point number.")]
     ToFix {
         decimals: Option<u128>,
         #[clap(allow_hyphen_values = true)] // negative values not yet supported internally
         value: Option<String>,
     },
     #[clap(name = "--to-uint256")]
-    #[clap(about = "Convert a number into uint256 hex string with 0x prefix")]
+    #[clap(about = "Convert a number to a hex-encoded uint256.")]
     ToUint256 { value: Option<String> },
     #[clap(name = "--to-int256")]
-    #[clap(about = "Convert a number into int256 hex string with 0x prefix")]
+    #[clap(about = "Convert a number to a hex-encoded int256.")]
     ToInt256 { value: Option<String> },
     #[clap(name = "--to-unit")]
     #[clap(
-        about = r#"Convert an ETH amount into a specified unit: ether, gwei or wei (default: wei).
-    Usage:
+        about = "Convert an ETH amount into another unit (ether, gwei or wei).",
+        long_about = r#"Convert an ETH amount into another unit (ether, gwei or wei).
+
+    Examples:
       - 1ether wei     | converts 1 ether to wei
       - "1 ether" wei  | converts 1 ether to wei
       - 1ether         | converts 1 ether to wei
@@ -89,9 +95,13 @@ pub enum Subcommands {
       - 1gwei ether    | converts 1 gwei to ether
     "#
     )]
-    ToUnit { value: Option<String>, unit: Option<String> },
+    ToUnit {
+        value: Option<String>,
+        #[clap(help = "The unit to convert to (ether, gwei, wei).", default_value = "wei")]
+        unit: String,
+    },
     #[clap(name = "--to-wei")]
-    #[clap(about = "Convert an ETH amount into wei. Consider using --to-unit.")]
+    #[clap(about = "Convert an ETH amount to wei. Consider using --to-unit.")]
     ToWei {
         #[clap(allow_hyphen_values = true)] // negative values not yet supported internally
         value: Option<String>,
