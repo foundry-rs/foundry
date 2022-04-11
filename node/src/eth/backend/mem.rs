@@ -421,7 +421,7 @@ impl Backend {
         &self,
         number: BlockNumber,
     ) -> Result<Option<EthersBlock<TxHash>>, BlockchainError> {
-        if let tx @ Some(_) = self.mined_block_by_number(number.clone()) {
+        if let tx @ Some(_) = self.mined_block_by_number(number) {
             return Ok(tx)
         }
 
