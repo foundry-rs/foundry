@@ -153,12 +153,24 @@ impl VerifyArgs {
 
         let project = build_args.project()?;
 
+        // check that the provided contract is part of the source dir
+        let contract_path =
+            project.root().join(self.contract.path.as_ref().expect("Is present; qed"));
+
+        if !contract_path.exists() {
+            eyre::bail!("Contract {:?} does not exist.", contract_path);
+        }
+
+        if !contract_path.starts_with(project.sources_path()) {
+            eyre::bail!("Contract {:?} is outside of project source directory", contract_path);
+        }
+
         let (source, contract_name, code_format) = if self.flatten {
             // NOTE: user need to set bytecodehash='ipfs' for this otherwise verification won't work
             // see: https://github.com/gakonst/foundry/issues/1236
 
             let source = project
-                .flatten(&project.root().join(self.contract.path.as_ref().unwrap()))
+                .flatten(&contract_path)
                 .map_err(|err| eyre::eyre!("Failed to flatten contract: {}", err))?;
 
             if !self.force {
@@ -175,7 +187,7 @@ To skip this solc dry, have a look at the  `--force` flag of this command.",
             (source, self.contract.name.clone(), CodeFormat::SingleFile)
         } else {
             let input = project
-                .standard_json_input(&project.root().join(self.contract.path.as_ref().unwrap()))
+                .standard_json_input(&contract_path)
                 .map_err(|err| eyre::eyre!("Failed to get standard json input: {}", err))?;
 
             let source = serde_json::to_string(&input)
