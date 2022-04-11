@@ -10,6 +10,7 @@ use foundry_evm::executor::{
     builder::Backend, opts::EvmOpts, DatabaseRef, Executor, ExecutorBuilder, Fork, SpecId,
 };
 use foundry_utils::{PostLinkInput, RuntimeOrHandle};
+use foundry_config::Config;
 use proptest::test_runner::TestRunner;
 use rayon::prelude::*;
 use std::{collections::BTreeMap, marker::Sync, path::Path, sync::mpsc::Sender};
@@ -551,18 +552,36 @@ mod tests {
     #[test]
     fn test_fork() {
         let mut runner = runner();
+        
+        // set up all the forking stuff 
         let chain_id = 1;
-        let block = 12345678;
+        let block = 14444444;
+        let cache_path = Config::foundry_block_cache_file(chain_id,block);
+        let rpc = "https://rpc.flashbots.net";
+
         runner.fork = Some(Fork {
-            cache_path: None, // foundry_config::Config::foundry_block_cache_file(chain_id, block),
-            url: "https://rpc.flashbots.net".to_string(),
+            cache_path,
+            url: rpc.to_string(),
             pin_block: Some(block),
             chain_id
         });
+
+        runner.evm_opts.fork_block_number = Some(block);
+        runner.evm_opts.fork_url = Some(rpc.to_string());
+        runner.evm_opts.env.chain_id = Some(chain_id);
+
+        println!("{:#?}", runner.evm_opts);
+
         let suite_result = runner.test(&Filter::new(".*", ".*", ".*fork"), None, true).unwrap();
         for (_, SuiteResult { test_results, .. }) in suite_result {
             for (test_name, result) in test_results {
-                // 
+                println!("{}", test_name); 
+                assert!(
+                    result.success,
+                    "Test {} did not pass as expected.\nReason: {:?}\n",
+                    test_name,
+                    result.reason
+                );
             }
         }
     }
