@@ -1,6 +1,6 @@
 //! Verify contract source on etherscan
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::{
     cmd::forge::{build::BuildArgs, flatten::CoreFlattenArgs},
@@ -67,7 +67,7 @@ pub struct VerifyCheckArgs {
 fn flattened_source(
     args: &VerifyArgs,
     project: &Project,
-    target: &PathBuf,
+    target: &Path,
 ) -> eyre::Result<(String, String)> {
     let bch = project
         .solc_config
@@ -83,7 +83,7 @@ fn flattened_source(
         bch,
     );
 
-    let source = project.flatten(&target).wrap_err("Failed to flatten contract")?;
+    let source = project.flatten(target).wrap_err("Failed to flatten contract")?;
     let name = args.contract.name.clone();
     Ok((source, name))
 }
@@ -91,7 +91,7 @@ fn flattened_source(
 fn standard_json_source(
     args: &VerifyArgs,
     project: &Project,
-    target: &PathBuf,
+    target: &Path,
 ) -> eyre::Result<(String, String)> {
     let input =
         project.standard_json_input(target).wrap_err("Failed to get standard json input")?;
