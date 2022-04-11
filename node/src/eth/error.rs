@@ -1,7 +1,7 @@
 //! Aggregated error type for this module
 
 use crate::eth::pool::transactions::PoolTransaction;
-use ethers::{signers::WalletError, types::SignatureError};
+use ethers::{providers::ProviderError, signers::WalletError, types::SignatureError};
 use foundry_node_core::{error::RpcError, response::ResponseResult};
 use serde::Serialize;
 use tracing::error;
@@ -34,6 +34,8 @@ pub enum BlockchainError {
     InvalidTransaction(#[from] InvalidTransactionError),
     #[error(transparent)]
     FeeHistory(#[from] FeeHistoryError),
+    #[error(transparent)]
+    ForkProvider(#[from] ProviderError),
 }
 
 /// Errors that can occur in the transaction pool
@@ -115,6 +117,10 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 BlockchainError::InvalidFeeInput => RpcError::invalid_params(
                     "Invalid input: `max_priority_fee_per_gas` greater than `max_fee_per_gas`",
                 ),
+                BlockchainError::ForkProvider(err) => {
+                    error!("fork provider error: {:?}", err);
+                    RpcError::internal_error_with(format!("Fork Error: {:?}", err))
+                }
             }
             .into(),
         }

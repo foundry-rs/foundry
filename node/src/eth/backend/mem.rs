@@ -10,16 +10,21 @@ use ethers::{
 };
 
 use crate::{
-    eth::{backend::duration_since_unix_epoch, error::InvalidTransactionError, fees::FeeDetails},
+    eth::{
+        backend::duration_since_unix_epoch,
+        error::{BlockchainError, InvalidTransactionError},
+        fees::FeeDetails,
+    },
     fork::ClientFork,
 };
 use ethers::{
-    types::{Address, Block as EthersBlock, Log, Transaction, TransactionReceipt},
+    types::{Address, Block as EthersBlock, Bytes, Log, Transaction, TransactionReceipt},
     utils::{keccak256, rlp},
 };
 use foundry_evm::{
     revm,
     revm::{db::CacheDB, CreateScheme, Env, Return, TransactOut, TransactTo, TxEnv},
+    utils::u256_to_h256_le,
 };
 use foundry_node_core::eth::{
     block::{Block, BlockInfo, Header, PartialHeader},
@@ -389,12 +394,42 @@ impl Backend {
         receipts
     }
 
-    pub fn block_by_hash(&self, hash: H256) -> Option<EthersBlock<TxHash>> {
+    pub async fn block_by_hash(
+        &self,
+        hash: H256,
+    ) -> Result<Option<EthersBlock<TxHash>>, BlockchainError> {
+        if let tx @ Some(_) = self.mined_block_by_hash(hash) {
+            return Ok(tx)
+        }
+
+        if let Some(ref fork) = self.fork {
+            return Ok(fork.block_by_hash(hash).await?)
+        }
+
+        Ok(None)
+    }
+
+    pub fn mined_block_by_hash(&self, hash: H256) -> Option<EthersBlock<TxHash>> {
         let block = self.blockchain.storage.read().blocks.get(&hash)?.clone();
         self.convert_block(block)
     }
 
-    pub fn block_by_number(&self, number: BlockNumber) -> Option<EthersBlock<TxHash>> {
+    pub async fn block_by_number(
+        &self,
+        number: BlockNumber,
+    ) -> Result<Option<EthersBlock<TxHash>>, BlockchainError> {
+        if let tx @ Some(_) = self.mined_block_by_number(number.clone()) {
+            return Ok(tx)
+        }
+
+        if let Some(ref fork) = self.fork {
+            return Ok(fork.block_by_number(self.convert_block_number(Some(number))).await?)
+        }
+
+        Ok(None)
+    }
+
+    pub fn mined_block_by_number(&self, number: BlockNumber) -> Option<EthersBlock<TxHash>> {
         let block = {
             let storage = self.blockchain.storage.read();
             let hash = match number {
@@ -467,8 +502,71 @@ impl Backend {
         Some(block)
     }
 
+    pub fn convert_block_number(&self, block: Option<BlockNumber>) -> u64 {
+        match block.unwrap_or(BlockNumber::Latest) {
+            BlockNumber::Latest | BlockNumber::Pending => self.best_number().as_u64(),
+            BlockNumber::Earliest => 0,
+            BlockNumber::Number(num) => num.as_u64(),
+        }
+    }
+
+    pub async fn storage_at(
+        &self,
+        address: Address,
+        index: U256,
+        number: Option<BlockNumber>,
+    ) -> Result<H256, BlockchainError> {
+        let number = self.convert_block_number(number);
+
+        if let Some(ref fork) = self.fork {
+            if fork.predates_fork(number) {
+                return Ok(fork.storage_at(address, index, Some(number.into())).await?)
+            }
+        }
+
+        let val = self.db.read().storage(address, index);
+        Ok(u256_to_h256_le(val))
+    }
+
+    /// Returns the code of the address
+    ///
+    /// If the code is not present and fork mode is enabled then this will try to fetch it from the
+    /// forked client
+    pub async fn get_code(
+        &self,
+        address: Address,
+        block: Option<BlockNumber>,
+    ) -> Result<Bytes, BlockchainError> {
+        let number = self.convert_block_number(block);
+
+        let code = self.db.read().basic(address).code.clone();
+
+        if let Some(ref fork) = self.fork {
+            if fork.predates_fork(number) || code.is_none() {
+                return Ok(fork.get_code(address, number).await?)
+            }
+        }
+
+        Ok(code.unwrap_or_default().into())
+    }
+
+    pub async fn transaction_receipt(
+        &self,
+        hash: H256,
+    ) -> Result<Option<TransactionReceipt>, BlockchainError> {
+        if let tx @ Some(_) = self.mined_transaction_receipt(hash) {
+            return Ok(tx)
+        }
+
+        if let Some(ref fork) = self.fork {
+            return Ok(fork.transaction_receipt(hash).await?)
+        }
+
+        Ok(None)
+    }
+
     /// Returns the transaction receipt for the given hash
-    pub fn transaction_receipt(&self, hash: H256) -> Option<TransactionReceipt> {
+    pub fn mined_transaction_receipt(&self, hash: H256) -> Option<TransactionReceipt> {
         let MinedTransaction { info, receipt, block_hash, .. } =
             self.blockchain.storage.read().transactions.get(&hash)?.clone();
 
@@ -544,7 +642,22 @@ impl Backend {
         })
     }
 
-    pub fn transaction_by_hash(&self, hash: H256) -> Option<Transaction> {
+    pub async fn transaction_by_hash(
+        &self,
+        hash: H256,
+    ) -> Result<Option<Transaction>, BlockchainError> {
+        if let tx @ Some(_) = self.mined_transaction_by_hash(hash) {
+            return Ok(tx)
+        }
+
+        if let Some(ref fork) = self.fork {
+            return Ok(fork.transaction_by_hash(hash).await?)
+        }
+
+        Ok(None)
+    }
+
+    pub fn mined_transaction_by_hash(&self, hash: H256) -> Option<Transaction> {
         let MinedTransaction { info, block_hash, .. } =
             self.blockchain.storage.read().transactions.get(&hash)?.clone();
 

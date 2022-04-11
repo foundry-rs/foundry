@@ -258,8 +258,13 @@ Gas Limit
 
             let db = Arc::new(RwLock::new(ForkedDatabase::new(backend, db)));
 
-            let fork =
-                ClientFork { eth_rpc_url, block_number: fork_block_number, block_hash, provider, storage: Default::default() };
+            let fork = ClientFork {
+                eth_rpc_url,
+                block_number: fork_block_number,
+                block_hash,
+                provider,
+                storage: Default::default(),
+            };
 
             (db, Some(fork))
         } else {

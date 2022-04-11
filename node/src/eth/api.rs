@@ -70,7 +70,7 @@ impl EthApi {
         match request {
             EthRequest::EthGetBalance(addr, block) => self.balance(addr, block).to_rpc_result(),
             EthRequest::EthGetTransactionByHash(hash) => {
-                self.transaction_by_hash(hash).to_rpc_result()
+                self.transaction_by_hash(hash).await.to_rpc_result()
             }
             EthRequest::EthSendTransaction(request) => {
                 self.send_transaction(*request).to_rpc_result()
@@ -80,13 +80,13 @@ impl EthApi {
             EthRequest::EthAccounts => self.accounts().to_rpc_result(),
             EthRequest::EthBlockNumber => self.block_number().to_rpc_result(),
             EthRequest::EthGetStorageAt(addr, slot, block) => {
-                self.storage_at(addr, slot, block).to_rpc_result()
+                self.storage_at(addr, slot, block).await.to_rpc_result()
             }
             EthRequest::EthGetBlockByHash(hash, full) => {
-                self.block_by_hash(hash, full).to_rpc_result()
+                self.block_by_hash(hash, full).await.to_rpc_result()
             }
             EthRequest::EthGetBlockByNumber(num, full) => {
-                self.block_by_number(num, full).to_rpc_result()
+                self.block_by_number(num, full).await.to_rpc_result()
             }
             EthRequest::EthGetTransactionCount(addr, block) => {
                 self.transaction_count(addr, block).to_rpc_result()
@@ -103,7 +103,9 @@ impl EthApi {
             EthRequest::EthGetUnclesCountByNumber(num) => {
                 self.block_uncles_count_by_number(num).to_rpc_result()
             }
-            EthRequest::EthGetCodeAt(addr, block) => self.code_at(addr, block).to_rpc_result(),
+            EthRequest::EthGetCodeAt(addr, block) => {
+                self.get_code(addr, block).await.to_rpc_result()
+            }
             EthRequest::EthSendRawTransaction(tx) => self.send_raw_transaction(tx).to_rpc_result(),
             EthRequest::EthCall(call, block) => self.call(call, block).to_rpc_result(),
             EthRequest::EthEstimateGas(call, block) => {
@@ -116,7 +118,7 @@ impl EthApi {
                 self.transaction_by_block_number_and_index(num, index).to_rpc_result()
             }
             EthRequest::EthGetTransactionReceipt(tx) => {
-                self.transaction_receipt(tx).to_rpc_result()
+                self.transaction_receipt(tx).await.to_rpc_result()
             }
             EthRequest::EthGetUncleByBlockHashAndIndex(hash, index) => {
                 self.uncle_by_block_hash_and_index(hash, index).to_rpc_result()
@@ -236,27 +238,31 @@ impl EthApi {
     /// Returns content of the storage at given address.
     ///
     /// Handler for ETH RPC call: `eth_getStorageAt`
-    pub fn storage_at(
+    pub async fn storage_at(
         &self,
-        _address: Address,
-        _index: U256,
-        _number: Option<BlockNumber>,
+        address: Address,
+        index: U256,
+        number: Option<BlockNumber>,
     ) -> Result<H256> {
-        Err(BlockchainError::RpcUnimplemented)
+        self.backend.storage_at(address, index, number).await
     }
 
     /// Returns block with given hash.
     ///
     /// Handler for ETH RPC call: `eth_getBlockByHash`
-    pub fn block_by_hash(&self, hash: H256, _full: bool) -> Result<Option<Block<TxHash>>> {
-        Ok(self.backend.block_by_hash(hash))
+    pub async fn block_by_hash(&self, hash: H256, _full: bool) -> Result<Option<Block<TxHash>>> {
+        self.backend.block_by_hash(hash).await
     }
 
     /// Returns block with given number.
     ///
     /// Handler for ETH RPC call: `eth_getBlockByNumber`
-    pub fn block_by_number(&self, number: BlockNumber, _: bool) -> Result<Option<Block<TxHash>>> {
-        Ok(self.backend.block_by_number(number))
+    pub async fn block_by_number(
+        &self,
+        number: BlockNumber,
+        _: bool,
+    ) -> Result<Option<Block<TxHash>>> {
+        self.backend.block_by_number(number).await
     }
 
     /// Returns the number of transactions sent from given address at given time (block number).
@@ -308,8 +314,8 @@ impl EthApi {
     /// Returns the code at given address at given time (block number).
     ///
     /// Handler for ETH RPC call: `eth_getCode`
-    pub fn code_at(&self, _address: Address, _: Option<BlockNumber>) -> Result<Bytes> {
-        Err(BlockchainError::RpcUnimplemented)
+    pub async fn get_code(&self, address: Address, block: Option<BlockNumber>) -> Result<Bytes> {
+        self.backend.get_code(address, block).await
     }
 
     /// Sends a transaction
@@ -465,9 +471,9 @@ impl EthApi {
     /// Get transaction by its hash.
     ///
     /// Handler for ETH RPC call: `eth_getTransactionByHash`
-    pub fn transaction_by_hash(&self, hash: H256) -> Result<Option<Transaction>> {
+    pub async fn transaction_by_hash(&self, hash: H256) -> Result<Option<Transaction>> {
         // TODO also check pending tx
-        Ok(self.backend.transaction_by_hash(hash))
+        self.backend.transaction_by_hash(hash).await
     }
 
     /// Returns transaction at given block hash and index.
@@ -495,8 +501,8 @@ impl EthApi {
     /// Returns transaction receipt by transaction hash.
     ///
     /// Handler for ETH RPC call: `eth_getTransactionReceipt`
-    pub fn transaction_receipt(&self, hash: H256) -> Result<Option<TransactionReceipt>> {
-        Ok(self.backend.transaction_receipt(hash))
+    pub async fn transaction_receipt(&self, hash: H256) -> Result<Option<TransactionReceipt>> {
+        self.backend.transaction_receipt(hash).await
     }
 
     /// Returns an uncles at given block and index.
