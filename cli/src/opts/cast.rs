@@ -147,16 +147,17 @@ pub enum Subcommands {
     #[clap(name = "call")]
     #[clap(about = "Perform a call on an account without publishing a transaction.")]
     Call(CallArgs),
-    #[clap(about = "Pack a signature and an argument list into hexadecimal calldata.")]
+    #[clap(about = "ABI-encode a function with arguments.")]
     Calldata {
         #[clap(
-            help = r#"When called with <sig> of the form <name>(<types>...), then perform ABI encoding to produce the hexadecimal calldata.
-        If the value given—containing at least one slash character—then treat it as a file name to read, and proceed as if the contents were passed as hexadecimal data.
-        Given data, ensure it is hexadecimal calldata starting with 0x and normalize it to lowercase.
-        "#
+            help = "The function signature.",
+            long_help = "
+            The function signature in the form <name>(<types>...), or if the value given contains at least one slash character, then it is treated the path to a file.
+
+            The file is treated as if the contents were passed as hexadecimal data."
         )]
         sig: String,
-        #[clap(allow_hyphen_values = true)] // negative values not yet supported internally
+        #[clap(allow_hyphen_values = true)]
         args: Vec<String>,
     },
     #[clap(name = "chain")]
