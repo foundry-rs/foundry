@@ -263,7 +263,7 @@ mod tests {
         type Inner = MyProvider;
 
         fn inner(&self) -> &Self::Inner {
-            &self
+            self
         }
 
         async fn resolve_name(&self, ens_name: &str) -> Result<Address, Self::Error> {
