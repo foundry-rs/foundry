@@ -247,7 +247,10 @@ async fn main() -> eyre::Result<()> {
             to_json,
             resend,
         } => {
-            let provider = Provider::try_from(eth.rpc_url()?)?;
+            let config: Config = (&eth).into();
+            let provider = Provider::try_from(
+                config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
+            )?;
             let chain_id = Cast::new(&provider).chain_id().await?;
             let sig = sig.unwrap_or_default();
 
@@ -274,7 +277,7 @@ async fn main() -> eyre::Result<()> {
                             value,
                             nonce,
                             eth.chain,
-                            eth.etherscan_api_key,
+                            config.etherscan_api_key,
                             cast_async,
                             legacy,
                             confirmations,
@@ -293,7 +296,7 @@ async fn main() -> eyre::Result<()> {
                             value,
                             nonce,
                             eth.chain,
-                            eth.etherscan_api_key,
+                            config.etherscan_api_key,
                             cast_async,
                             legacy,
                             confirmations,
@@ -312,7 +315,7 @@ async fn main() -> eyre::Result<()> {
                             value,
                             nonce,
                             eth.chain,
-                            eth.etherscan_api_key,
+                            config.etherscan_api_key,
                             cast_async,
                             legacy,
                             confirmations,
@@ -320,15 +323,17 @@ async fn main() -> eyre::Result<()> {
                         )
                         .await?;
                     }
-                }
-            } else if let Some(from) = eth.from {
+                } // Checking if signer isn't the default value 00a329c0648769A73afAc7F9381E08FB43dBEA72.
+            } else if config.sender
+                != Address::from_str("00a329c0648769A73afAc7F9381E08FB43dBEA72").unwrap()
+            {
                 if resend {
-                    nonce = Some(provider.get_transaction_count(from, None).await?);
+                    nonce = Some(provider.get_transaction_count(config.sender, None).await?);
                 }
 
                 cast_send(
                     provider,
-                    from,
+                    config.sender,
                     to,
                     (sig, args),
                     gas,
@@ -336,7 +341,7 @@ async fn main() -> eyre::Result<()> {
                     value,
                     nonce,
                     eth.chain,
-                    eth.etherscan_api_key,
+                    config.etherscan_api_key,
                     cast_async,
                     legacy,
                     confirmations,
@@ -344,12 +349,14 @@ async fn main() -> eyre::Result<()> {
                 )
                 .await?;
             } else {
-                eyre::bail!("No wallet or sender address provided.")
+                eyre::bail!("No wallet or sender address provided. Consider passing it via the --from flag or setting the ETH_FROM env variable or setting in the foundry.toml file");
             }
         }
-        // TODO: Publish does not need EthereumOpts, just rpc-url.
         Subcommands::PublishTx { eth, raw_tx, cast_async } => {
-            let provider = Provider::try_from(eth.rpc_url()?)?;
+            let config: Config = (&eth).into();
+            let provider = Provider::try_from(
+                config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
+            )?;
             let cast = Cast::new(&provider);
             let pending_tx = cast.publish(raw_tx).await?;
             let tx_hash = *pending_tx;
