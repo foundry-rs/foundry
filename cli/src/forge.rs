@@ -39,10 +39,10 @@ fn main() -> eyre::Result<()> {
             cmd.run()?;
         }
         Subcommands::VerifyContract(args) => {
-            utils::block_on(cmd::forge::verify::run_verify(&args))?;
+            utils::block_on(args.run())?;
         }
         Subcommands::VerifyCheck(args) => {
-            utils::block_on(cmd::forge::verify::run_verify_check(&args))?;
+            utils::block_on(args.run())?;
         }
         Subcommands::Create(cmd) => {
             cmd.run()?;
