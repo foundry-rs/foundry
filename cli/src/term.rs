@@ -305,7 +305,7 @@ mod tests {
             "ds-test/=lib/ds-test/src/".parse().unwrap(),
             "openzeppelin-contracts/=lib/openzeppelin-contracts/contracts/".parse().unwrap(),
         ];
-        r.on_unresolved_import(&Path::new("hardhat/console.sol"), &remappings);
+        r.on_unresolved_import(Path::new("hardhat/console.sol"), &remappings);
         // formats:
         // [⠒] Unable to resolve import: "hardhat/console.sol" with remappings:
         //     library/=library/src/
