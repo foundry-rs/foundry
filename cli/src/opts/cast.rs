@@ -7,12 +7,7 @@ use ethers::{
 };
 
 use super::{ClapChain, EthereumOpts, Wallet};
-use crate::{
-    cmd::cast::{
-        access_list::AccessArgs, call::CallArgs, estimate::EstimateArgs, find_block::FindBlockArgs,
-    },
-    utils::parse_u256,
-};
+use crate::{cmd::cast::find_block::FindBlockArgs, utils::parse_u256};
 
 #[derive(Debug, Subcommand)]
 #[clap(about = "Perform Ethereum RPC calls from the comfort of your command line.")]
@@ -107,7 +102,18 @@ pub enum Subcommands {
     },
     #[clap(name = "access-list")]
     #[clap(about = "Create an access list for a transaction")]
-    AccessList(AccessArgs),
+    AccessList {
+        #[clap(help = "the address you want to query", parse(try_from_str = parse_name_or_address))]
+        address: NameOrAddress,
+        sig: String,
+        args: Vec<String>,
+        #[clap(long, short, help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
+        block: Option<BlockId>,
+        #[clap(flatten)]
+        eth: EthereumOpts,
+        #[clap(long = "json", short = 'j')]
+        to_json: bool,
+    },
     #[clap(name = "block")]
     #[clap(
         about = "Prints information about <block>. If <field> is given, print only the value of that field"
@@ -131,7 +137,16 @@ pub enum Subcommands {
     },
     #[clap(name = "call")]
     #[clap(about = "Perform a local call to <to> without publishing a transaction.")]
-    Call(CallArgs),
+    Call {
+        #[clap(help = "the address you want to query", parse(try_from_str = parse_name_or_address))]
+        address: NameOrAddress,
+        sig: String,
+        args: Vec<String>,
+        #[clap(long, short, help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
+        block: Option<BlockId>,
+        #[clap(flatten)]
+        eth: EthereumOpts,
+    },
     #[clap(about = "Pack a signature and an argument list into hexadecimal calldata.")]
     Calldata {
         #[clap(
@@ -254,7 +269,18 @@ pub enum Subcommands {
     },
     #[clap(name = "estimate")]
     #[clap(about = "Estimate the gas cost of a transaction from <from> to <to> with <data>")]
-    Estimate(EstimateArgs),
+    Estimate {
+        #[clap(help = "the address you want to transact with", parse(try_from_str = parse_name_or_address))]
+        to: NameOrAddress,
+        #[clap(help = "the function signature or name you want to call")]
+        sig: String,
+        #[clap(help = "the list of arguments you want to call the function with")]
+        args: Vec<String>,
+        #[clap(long, help = "value for tx estimate (in wei)")]
+        value: Option<U256>,
+        #[clap(flatten)]
+        eth: EthereumOpts,
+    },
     #[clap(name = "--calldata-decode")]
     #[clap(about = "Decode ABI-encoded hex input data. Use `--abi-decode` to decode output data")]
     CalldataDecode {

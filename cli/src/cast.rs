@@ -155,21 +155,17 @@ async fn main() -> eyre::Result<()> {
                 )?
             );
         }
-        Subcommands::AccessList(args) => {
-            let config: Config = (&args).into();
+        Subcommands::AccessList { address, sig, args, block, eth, to_json } => {
+            let config: Config = (&eth).into();
             let provider = Provider::try_from(
                 config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
             )?;
             let mut builder =
-                TxBuilder::new(&provider, config.sender, args.address, args.eth.chain, false)
-                    .await?;
-            builder.set_args(&args.sig, args.args).await?;
+                TxBuilder::new(&provider, config.sender, address, eth.chain, false).await?;
+            builder.set_args(&sig, args).await?;
             let builder_output = builder.peek();
 
-            println!(
-                "{}",
-                Cast::new(&provider).access_list(builder_output, args.block, args.to_json).await?
-            );
+            println!("{}", Cast::new(&provider).access_list(builder_output, block, to_json).await?);
         }
         Subcommands::Block { rpc_url, block, full, field, to_json } => {
             let rpc_url = consume_config_rpc_url(rpc_url);
@@ -182,22 +178,17 @@ async fn main() -> eyre::Result<()> {
             println!("{}", Cast::new(provider).block_number().await?);
         }
 
-        Subcommands::Call(args) => {
-            let config: Config = (&args).into();
-
+        Subcommands::Call { address, sig, args, block, eth } => {
+            let config: Config = (&eth).into();
             let provider = Provider::try_from(
                 config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
             )?;
 
             let mut builder =
-                TxBuilder::new(&provider, config.sender, args.address, args.eth.chain, false)
-                    .await?;
-            builder
-                .set_args(&args.sig, args.args)
-                .await?
-                .etherscan_api_key(args.eth.etherscan_api_key);
+                TxBuilder::new(&provider, config.sender, address, eth.chain, false).await?;
+            builder.set_args(&sig, args).await?.etherscan_api_key(eth.etherscan_api_key);
             let builder_output = builder.build();
-            println!("{}", Cast::new(provider).call(builder_output, args.block).await?);
+            println!("{}", Cast::new(provider).call(builder_output, block).await?);
         }
 
         Subcommands::Calldata { sig, args } => {
@@ -371,20 +362,19 @@ async fn main() -> eyre::Result<()> {
                 println!("{}", serde_json::json!(receipt));
             }
         }
-        Subcommands::Estimate(args) => {
-            let config: Config = (&args).into();
+        Subcommands::Estimate { to, sig, args, value, eth } => {
+            let config: Config = (&eth).into();
             let provider = Provider::try_from(
                 config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
             )?;
 
-            let from = args.eth.sender().await;
+            let from = eth.sender().await;
 
-            let mut builder =
-                TxBuilder::new(&provider, from, args.to, args.eth.chain, false).await?;
+            let mut builder = TxBuilder::new(&provider, from, to, eth.chain, false).await?;
             builder
                 .etherscan_api_key(config.etherscan_api_key)
-                .value(args.value)
-                .set_args(args.sig.as_str(), args.args)
+                .value(value)
+                .set_args(sig.as_str(), args)
                 .await?;
 
             let builder_output = builder.peek();
