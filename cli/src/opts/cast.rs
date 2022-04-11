@@ -421,7 +421,7 @@ pub enum Subcommands {
         )]
         block: Option<BlockId>,
         #[clap(help = "The account you want to query", parse(try_from_str = parse_name_or_address))]
-        account: NameOrAddress,
+        who: NameOrAddress,
         #[clap(short, long, env = "ETH_RPC_URL")]
         rpc_url: String,
     },
