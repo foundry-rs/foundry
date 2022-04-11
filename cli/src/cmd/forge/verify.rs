@@ -37,7 +37,7 @@ pub struct VerifyArgs {
     #[clap(long, help = "the compiler version used during build")]
     compiler_version: String,
 
-    #[clap(alias = "optimizations", long, help = "the number of optimization runs used")]
+    #[clap(alias = "optimizer-runs", long, help = "the number of optimization runs used")]
     num_of_optimizations: Option<u32>,
 
     #[clap(
@@ -347,8 +347,10 @@ fn standard_json_source(
     project: &Project,
     target: &Path,
 ) -> eyre::Result<(String, String, CodeFormat)> {
-    let input =
-        project.standard_json_input(target).wrap_err("Failed to get standard json input")?;
+    let input = project
+        .standard_json_input(target)
+        .wrap_err("Failed to get standard json input")?
+        .normalize_evm_version(&args.sanitized_solc_version()?);
 
     let source = serde_json::to_string(&input).wrap_err("Failed to parse standard json input")?;
     let name = format!(
