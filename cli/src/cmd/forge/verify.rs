@@ -1,6 +1,6 @@
 //! Verify contract source on etherscan
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::{
     cmd::forge::{build::BuildArgs, flatten::CoreFlattenArgs},
