@@ -14,13 +14,13 @@ use std::{path::PathBuf, str::FromStr};
 #[clap(about = "Perform Ethereum RPC calls from the comfort of your command line.")]
 pub enum Subcommands {
     #[clap(name = "--max-int")]
-    #[clap(about = "Maximum i256 value")]
+    #[clap(about = "Get the maximum i256 value.")]
     MaxInt,
     #[clap(name = "--min-int")]
-    #[clap(about = "Minimum i256 value")]
+    #[clap(about = "Get the minimum i256 value.")]
     MinInt,
     #[clap(name = "--max-uint")]
-    #[clap(about = "Maximum u256 value")]
+    #[clap(about = "Get the maximum u256 value.")]
     MaxUint,
     #[clap(aliases = &["--from-ascii"])]
     #[clap(name = "--from-utf8")]
@@ -30,7 +30,7 @@ pub enum Subcommands {
     #[clap(about = "Convert an integer to hex.")]
     ToHex { decimal: Option<String> },
     #[clap(name = "--concat-hex")]
-    #[clap(about = "Concatencate hex strings")]
+    #[clap(about = "Concatencate hex strings.")]
     ConcatHex { data: Vec<String> },
     #[clap(name = "--from-bin")]
     #[clap(about = "Convert binary data into hex data.")]
@@ -51,7 +51,7 @@ pub enum Subcommands {
     ToHexdata { input: Option<String> },
     #[clap(aliases = &["--to-checksum"])] // Compatibility with dapptools' cast
     #[clap(name = "--to-checksum-address")]
-    #[clap(about = "Convert an address to a checksummed format (EIP-55)")]
+    #[clap(about = "Convert an address to a checksummed format (EIP-55).")]
     ToCheckSumAddress { address: Option<Address> },
     #[clap(name = "--to-ascii")]
     #[clap(about = "Convert hex data to an ASCII string.")]
@@ -115,13 +115,21 @@ pub enum Subcommands {
         unit: Option<String>,
     },
     #[clap(name = "access-list")]
-    #[clap(about = "Create an access list for a transaction")]
+    #[clap(about = "Create an access list for a transaction.")]
     AccessList {
-        #[clap(help = "the address you want to query", parse(try_from_str = parse_name_or_address))]
+        #[clap(help = "The destination of the transaction.", parse(try_from_str = parse_name_or_address))]
         address: NameOrAddress,
+        #[clap(help = "The signature of the function to call.")]
         sig: String,
+        #[clap(help = "The arguments of the function to call.")]
         args: Vec<String>,
-        #[clap(long, short, help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
+        #[clap(
+            long,
+            short = 'B',
+            help = "The block height you want to query at.",
+            long_help = "The block height you want to query at. Can also be the tags earliest, latest, or pending.",
+            parse(try_from_str = parse_block_id)
+        )]
         block: Option<BlockId>,
         #[clap(flatten)]
         eth: EthereumOpts,
@@ -189,13 +197,13 @@ pub enum Subcommands {
         rpc_url: String,
     },
     #[clap(name = "compute-address")]
-    #[clap(about = "Returns the computed address from a given address and nonce pair")]
+    #[clap(about = "Compute the contract address from a given nonce and deployer address.")]
     ComputeAddress {
         #[clap(long, env = "ETH_RPC_URL")]
         rpc_url: String,
-        #[clap(help = "the address to create from")]
+        #[clap(help = "The deployer address.")]
         address: String,
-        #[clap(long, help = "address nonce", parse(try_from_str = parse_u256))]
+        #[clap(long, help = "The nonce of the deployer address.", parse(try_from_str = parse_u256))]
         nonce: Option<U256>,
     },
     #[clap(name = "namehash")]
@@ -355,17 +363,15 @@ pub enum Subcommands {
         args: Vec<String>,
     },
     #[clap(name = "index")]
-    #[clap(
-        about = "Get storage slot of value from mapping type, mapping slot number and input value"
-    )]
+    #[clap(about = "Compute the storage slot for an entry in a mapping.")]
     Index {
-        #[clap(help = "mapping key type")]
+        #[clap(help = "The mapping key type.")]
         from_type: String,
-        #[clap(help = "mapping value type")]
+        #[clap(help = "The mapping value type.")]
         to_type: String,
-        #[clap(help = "the value")]
+        #[clap(help = "The mapping key.")]
         from_value: String,
-        #[clap(help = "storage slot of the mapping")]
+        #[clap(help = "The storage slot of the mapping.")]
         slot_number: String,
     },
     #[clap(name = "4byte")]
@@ -476,7 +482,7 @@ pub enum Subcommands {
         rpc_url: String,
     },
     #[clap(name = "keccak")]
-    #[clap(about = "Keccak-256 hashes arbitrary data")]
+    #[clap(about = "Hash arbitrary data using keccak-256.")]
     Keccak { data: String },
     #[clap(name = "resolve-name")]
     #[clap(about = "Perform an ENS lookup.")]
@@ -571,23 +577,33 @@ pub enum Subcommands {
     },
     #[clap(
         name = "interface",
-        about = "Generate contract's interface from ABI. Currently it doesn't support ABI encoder V2"
+        about = "Generate a Solidity interface from a given ABI.",
+        long_about = "Generate a Solidity interface from a given ABI. Currently does not support ABI encoder v2."
     )]
     Interface {
-        #[clap(help = "The contract address or path to ABI file")]
+        #[clap(
+            help = "The contract address, or the path to an ABI file.",
+            long_help = "The contract address, or the path to an ABI file.
+
+            If an address is specified, then the ABI is fetched from Etherscan."
+        )]
         path_or_address: String,
-        #[clap(long, short, default_value = "^0.8.10", help = "pragma version")]
+        #[clap(long, short, default_value = "^0.8.10", help = "Solidity pragma version.")]
         pragma: String,
-        #[clap(short, help = "Path to output file. Defaults to stdout")]
+        #[clap(
+            short,
+            help = "The path to the output file.",
+            long_help = "The path to the output file. If not specified, the interface will be output to stdout."
+        )]
         output_location: Option<PathBuf>,
         #[clap(short, env = "ETHERSCAN_API_KEY", help = "etherscan API key")]
         etherscan_api_key: Option<String>,
         #[clap(flatten)]
         chain: ClapChain,
     },
-    #[clap(name = "sig", about = "Print a function's 4-byte selector")]
+    #[clap(name = "sig", about = "Get the selector for a function.")]
     Sig {
-        #[clap(help = "The human-readable function signature, e.g. 'transfer(address,uint256)'")]
+        #[clap(help = "The function signature, e.g. transfer(address,uint256).")]
         sig: String,
     },
     #[clap(name = "find-block", about = "Get the block number closest to the provided timestamp.")]
