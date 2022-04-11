@@ -570,7 +570,7 @@ pub enum Subcommands {
         #[clap(long, env = "ETHERSCAN_API_KEY")]
         etherscan_api_key: String,
     },
-    #[clap(name = "wallet", about = "Set of wallet management utilities")]
+    #[clap(name = "wallet", about = "Wallet management utilities.")]
     Wallet {
         #[clap(subcommand)]
         command: WalletSubcommands,
@@ -617,57 +617,57 @@ pub enum Subcommands {
 
 #[derive(Debug, Parser)]
 pub enum WalletSubcommands {
-    #[clap(name = "new", about = "Create and output a new random keypair")]
+    #[clap(name = "new", about = "Create a new random keypair.")]
     New {
-        #[clap(help = "If provided, then keypair will be written to encrypted json keystore")]
+        #[clap(help = "If provided, then keypair will be written to an encrypted JSON keystore.")]
         path: Option<String>,
         #[clap(
             long,
             short,
-            help = "Triggers a hidden password prompt for the json keystore",
+            help = "Triggers a hidden password prompt for the JSON keystore.",
             conflicts_with = "unsafe-password",
             requires = "path"
         )]
         password: bool,
         #[clap(
             long,
-            help = "Password for json keystore in cleartext. This is UNSAFE to use and we recommend using the --password parameter",
+            help = "Password for the JSON keystore in cleartext. This is UNSAFE to use and we recommend using the --password.",
             requires = "path",
             env = "CAST_PASSWORD"
         )]
         unsafe_password: Option<String>,
     },
-    #[clap(name = "vanity", about = "Generate a vanity address")]
+    #[clap(name = "vanity", about = "Generate a vanity address.")]
     Vanity {
-        #[clap(long, help = "Prefix for vanity address", required_unless_present = "ends-with")]
+        #[clap(long, help = "Prefix for vanity address.", required_unless_present = "ends-with")]
         starts_with: Option<String>,
-        #[clap(long, help = "Suffix for vanity address")]
+        #[clap(long, help = "Suffix for vanity address.")]
         ends_with: Option<String>,
         #[clap(
             long,
-            help = "Generate a vanity contract address created by the generated account with specified nonce"
+            help = "Generate a vanity contract address created by the generated account with specified nonce."
         )]
         nonce: Option<u64>, /* 2^64-1 is max possible nonce per https://eips.ethereum.org/EIPS/eip-2681 */
     },
-    #[clap(name = "address", about = "Convert a private key to an address")]
+    #[clap(name = "address", about = "Convert a private key to an address.")]
     Address {
         #[clap(flatten)]
         wallet: Wallet,
     },
-    #[clap(name = "sign", about = "Sign the message with provided private key")]
+    #[clap(name = "sign", about = "Sign a message.")]
     Sign {
         #[clap(help = "message to sign")]
         message: String,
         #[clap(flatten)]
         wallet: Wallet,
     },
-    #[clap(name = "verify", about = "Verify the signature on the message")]
+    #[clap(name = "verify", about = "Verify the signature of a message.")]
     Verify {
-        #[clap(help = "original message")]
+        #[clap(help = "The original message.")]
         message: String,
-        #[clap(help = "signature to verify")]
+        #[clap(help = "The signature to verify.")]
         signature: String,
-        #[clap(long, short, help = "pubkey of message signer")]
+        #[clap(long, short, help = "The public key of the message signer.")]
         address: String,
     },
 }
