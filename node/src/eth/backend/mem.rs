@@ -11,7 +11,7 @@ use ethers::{
 
 use crate::{
     eth::{backend::duration_since_unix_epoch, error::InvalidTransactionError, fees::FeeDetails},
-    fork::ForkInfo,
+    fork::ClientFork,
 };
 use ethers::{
     types::{Address, Block as EthersBlock, Log, Transaction, TransactionReceipt},
@@ -154,7 +154,7 @@ pub struct Backend {
     /// Default gas price for all transactions
     gas_price: U256,
     /// this is set if this is currently forked off another client
-    fork: Option<ForkInfo>,
+    fork: Option<ClientFork>,
 }
 
 impl Backend {
@@ -176,7 +176,7 @@ impl Backend {
         balance: U256,
         accounts: impl IntoIterator<Item = Address>,
         gas_price: U256,
-        fork: Option<ForkInfo>,
+        fork: Option<ClientFork>,
     ) -> Self {
         // insert genesis accounts
         {

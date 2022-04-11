@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use crate::{
     eth::backend::db::{Db, ForkedDatabase},
-    fork::ForkInfo,
+    fork::ClientFork,
     mem,
     revm::db::CacheDB,
 };
@@ -223,7 +223,7 @@ Gas Limit
             tx: TxEnv { chain_id: Some(self.chain_id), ..Default::default() },
         };
 
-        let (db, fork): (Arc<RwLock<dyn Db>>, Option<ForkInfo>) = if let Some(eth_rpc_url) =
+        let (db, fork): (Arc<RwLock<dyn Db>>, Option<ClientFork>) = if let Some(eth_rpc_url) =
             self.eth_rpc_url.clone()
         {
             // TODO make provider agnostic
@@ -259,7 +259,7 @@ Gas Limit
             let db = Arc::new(RwLock::new(ForkedDatabase::new(backend, db)));
 
             let fork =
-                ForkInfo { eth_rpc_url, block_number: fork_block_number, block_hash, provider };
+                ClientFork { eth_rpc_url, block_number: fork_block_number, block_hash, provider, storage: Default::default() };
 
             (db, Some(fork))
         } else {
