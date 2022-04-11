@@ -549,6 +549,25 @@ mod tests {
     }
 
     #[test]
+    fn test_fork() {
+        let mut runner = runner();
+        let chain_id = 1;
+        let block = 12345678;
+        runner.fork = Some(Fork {
+            cache_path: None, // foundry_config::Config::foundry_block_cache_file(chain_id, block),
+            url: "https://rpc.flashbots.net".to_string(),
+            pin_block: Some(block),
+            chain_id
+        });
+        let suite_result = runner.test(&Filter::new(".*", ".*", ".*fork"), None, true).unwrap();
+        for (_, SuiteResult { test_results, .. }) in suite_result {
+            for (test_name, result) in test_results {
+                // 
+            }
+        }
+    }
+
+    #[test]
     fn test_doesnt_run_abstract_contract() {
         let mut runner = runner();
         let results =

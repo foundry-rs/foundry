@@ -58,7 +58,7 @@ contract ATest is DSTest {
     cmd.stdout().contains("[PASS]")
 });
 
-// tests that `bytecode_hash` will be sanitized
+// tests that using the --match-path option only runs files matching the path
 forgetest!(can_test_with_match_path, |prj: TestProject, mut cmd: TestCommand| {
     prj.insert_ds_test();
 
@@ -78,6 +78,22 @@ contract ATest is DSTest {
         )
         .unwrap();
 
+    prj.inner()
+        .add_source(
+            "FailTest.t.sol",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+import "./test.sol";
+contract FailTest is DSTest {
+    function testNothing() external {
+        assertTrue(false);
+    }
+}
+   "#,
+        )
+        .unwrap();
+
     cmd.args(["test", "--match-path", "*src/ATest.t.sol"]);
-    cmd.stdout().contains("[PASS]")
+    cmd.stdout().contains("[PASS]") && !cmd.stdout().contains("[FAIL]")
 });
