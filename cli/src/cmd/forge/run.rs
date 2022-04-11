@@ -27,7 +27,7 @@ use forge::{
 };
 use foundry_config::{figment::Figment, Config};
 use foundry_utils::{encode_args, parse_tokens, IntoFunction, PostLinkInput, RuntimeOrHandle};
-use std::{collections::BTreeMap, path::PathBuf, fs};
+use std::{collections::BTreeMap, fs, path::PathBuf};
 use ui::{TUIExitReason, Tui, Ui};
 
 // Loads project's figment and merges the build cli arguments into it
@@ -156,11 +156,9 @@ impl Cmd for RunArgs {
         let bytecode_enc_params = match (abi.constructor(), params.is_empty()) {
             (None, false) => {
                 eyre::bail!("Constructor error");
-            },
-            (None, true) => bytecode,
-            (Some(constructor), _) => {
-                constructor.encode_input(bytecode.to_vec(), &params)?.into()
             }
+            (None, true) => bytecode,
+            (Some(constructor), _) => constructor.encode_input(bytecode.to_vec(), &params)?.into(),
         };
 
         let mut result = {
