@@ -64,11 +64,10 @@ pub enum Subcommands {
         lib: Option<PathBuf>,
     },
 
-    #[clap(
-        alias = "i",
-        about = "Install one or multiple dependencies.",
-        long_about = "Install one or more dependencies as git submodules. If no arguments are provided, then existing dependencies will be installed."
-    )]
+    /// Install one or multiple dependencies.
+    ///
+    /// If no arguments are provided, then existing dependencies will be installed.
+    #[clap(alias = "i")]
     Install(InstallArgs),
 
     #[clap(alias = "rm", about = "Remove one or multiple dependencies.")]
