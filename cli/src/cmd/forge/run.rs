@@ -404,8 +404,8 @@ impl<DB: DatabaseRef> Runner<DB> {
                     debug,
                     gas,
                     ..
-                })
-                | Err(EvmError::Execution {
+                }) |
+                Err(EvmError::Execution {
                     reverted,
                     traces: setup_traces,
                     labels,

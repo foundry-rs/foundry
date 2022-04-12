@@ -290,7 +290,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                     },
                 )]
                 .into(),
-            ));
+            ))
         }
 
         // Collect valid test functions
