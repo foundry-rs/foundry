@@ -12,7 +12,7 @@ pub fn h256_to_u256_be(storage: H256) -> U256 {
     U256::from_big_endian(storage.as_bytes())
 }
 
-/// Small helper function to convert [U256] into [U256].
+/// Small helper function to convert [H256] into [U256].
 pub fn h256_to_u256_le(storage: H256) -> U256 {
     U256::from_little_endian(storage.as_bytes())
 }
