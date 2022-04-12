@@ -26,6 +26,8 @@ use parking_lot::RwLock;
 
 pub const NODE_PORT: u16 = 8545;
 
+pub const CHAIN_ID: u64 = 1337;
+
 /// Configurations of the EVM node
 #[derive(Debug, Clone)]
 pub struct NodeConfig {

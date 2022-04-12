@@ -1,8 +1,9 @@
 use clap::Parser;
-use ethers::core::types::U256;
+use ethers::utils::WEI_IN_ETHER;
 
 use crate::opts::evm::EvmArgs;
-use anvil::{AccountGenerator, NodeConfig};
+use anvil::{AccountGenerator, NodeConfig, CHAIN_ID};
+use forge::executor::opts::EvmOpts;
 
 #[derive(Clone, Debug, Parser)]
 pub struct NodeArgs {
@@ -20,8 +21,12 @@ pub struct NodeArgs {
     )]
     pub accounts: u64,
 
-    #[clap(long, help = "the balance of every genesis account, defaults to 100ETH")]
-    pub balance: Option<U256>,
+    #[clap(
+        long,
+        help = "the balance of every genesis account in Ether, defaults to 100ETH",
+        default_value = "100"
+    )]
+    pub balance: u64,
 
     #[clap(long, short, help = "bip39 mnemonic phrase used for generating accounts")]
     pub mnemonic: Option<String>,
@@ -35,18 +40,22 @@ pub struct NodeArgs {
 
 impl NodeArgs {
     pub fn into_node_config(self) -> NodeConfig {
-        let NodeConfig { chain_id, gas_limit, gas_price, genesis_balance, .. } =
-            NodeConfig::default();
+        let figment = foundry_config::Config::figment_with_root(
+            foundry_config::find_project_root_path().unwrap(),
+        )
+        .merge(&self.evm_opts);
+        let evm_opts = figment.extract::<EvmOpts>().expect("EvmOpts are subset");
+        let genesis_balance = WEI_IN_ETHER.saturating_mul(self.balance.into());
 
         NodeConfig::default()
-            .chain_id(self.evm_opts.env.chain_id.unwrap_or(chain_id))
-            .gas_limit(self.evm_opts.env.gas_limit.unwrap_or(gas_limit.as_u64()))
-            .gas_price(self.evm_opts.env.gas_price.unwrap_or(gas_price.as_u64()))
+            .chain_id(evm_opts.env.chain_id.unwrap_or(CHAIN_ID))
+            .gas_limit(evm_opts.env.gas_limit)
+            .gas_price(evm_opts.env.gas_price)
             .account_generator(self.account_generator())
-            .genesis_balance(self.balance.unwrap_or(genesis_balance))
+            .genesis_balance(genesis_balance)
             .port(self.port)
-            .eth_rpc_url(self.evm_opts.fork_url)
-            .fork_block_number(self.evm_opts.fork_block_number)
+            .eth_rpc_url(evm_opts.fork_url)
+            .fork_block_number(evm_opts.fork_block_number)
     }
 
     fn account_generator(&self) -> AccountGenerator {

@@ -1,5 +1,5 @@
 mod config;
-pub use config::{AccountGenerator, NodeConfig};
+pub use config::{AccountGenerator, NodeConfig, CHAIN_ID};
 
 use crate::{
     eth::{backend::mem, miner::MiningMode, pool::Pool, EthApi},
