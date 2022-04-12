@@ -76,7 +76,7 @@ fn add_unique(prj: &TestProject) {
 pragma solidity >=0.4.0;
 
 contract Unique {{
-    uint public _timpestamp = {};
+    uint public _timestamp = {};
 }}
 "#,
                 timestamp
