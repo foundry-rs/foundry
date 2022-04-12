@@ -7,7 +7,7 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 # foundry internal
 foundry-evm = { path = "../evm" }
-foundry-node-core = { path = "node-core" }
+anvil-core = { path = "anvil-core" }
 foundry-utils = { path = "../utils" }
 
 # evm support

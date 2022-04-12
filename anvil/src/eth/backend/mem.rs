@@ -17,16 +17,7 @@ use crate::{
     },
     fork::ClientFork,
 };
-use ethers::{
-    types::{Address, Block as EthersBlock, Bytes, Log, Transaction, TransactionReceipt},
-    utils::{keccak256, rlp},
-};
-use foundry_evm::{
-    revm,
-    revm::{db::CacheDB, CreateScheme, Env, Return, TransactOut, TransactTo, TxEnv},
-    utils::u256_to_h256_le,
-};
-use foundry_node_core::{
+use anvil_core::{
     eth::{
         block::{Block, BlockInfo, Header, PartialHeader},
         call::CallRequest,
@@ -35,6 +26,15 @@ use foundry_node_core::{
         utils::to_access_list,
     },
     types::Index,
+};
+use ethers::{
+    types::{Address, Block as EthersBlock, Bytes, Log, Transaction, TransactionReceipt},
+    utils::{keccak256, rlp},
+};
+use foundry_evm::{
+    revm,
+    revm::{db::CacheDB, CreateScheme, Env, Return, TransactOut, TransactTo, TxEnv},
+    utils::u256_to_h256_le,
 };
 use parking_lot::RwLock;
 use std::{collections::HashMap, sync::Arc};

@@ -5,7 +5,7 @@ use ethers::{
 };
 
 use crate::opts::evm::EvmArgs;
-use foundry_node::NodeConfig;
+use anvil::NodeConfig;
 use std::str::FromStr;
 
 #[derive(Clone, Debug, Parser)]
@@ -40,7 +40,7 @@ impl NodeArgs {
 
     /// Starts the node
     pub async fn run(self) -> eyre::Result<()> {
-        let (_api, handle) = foundry_node::spawn(self.into_node_config()).await;
+        let (_api, handle) = anvil::spawn(self.into_node_config()).await;
 
         Ok(handle.await??)
     }

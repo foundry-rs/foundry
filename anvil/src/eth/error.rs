@@ -1,8 +1,8 @@
 //! Aggregated error type for this module
 
 use crate::eth::pool::transactions::PoolTransaction;
+use anvil_core::{error::RpcError, response::ResponseResult};
 use ethers::{providers::ProviderError, signers::WalletError, types::SignatureError};
-use foundry_node_core::{error::RpcError, response::ResponseResult};
 use serde::Serialize;
 use tracing::error;
 

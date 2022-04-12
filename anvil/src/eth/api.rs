@@ -11,15 +11,7 @@ use crate::{
     },
     revm::TransactOut,
 };
-use ethers::{
-    abi::ethereum_types::H64,
-    types::{
-        Address, Block, BlockNumber, Bytes, Log, Transaction, TransactionReceipt, TxHash, H256,
-        U256, U64,
-    },
-    utils::rlp,
-};
-use foundry_node_core::{
+use anvil_core::{
     eth::{
         call::CallRequest,
         filter::Filter,
@@ -31,6 +23,14 @@ use foundry_node_core::{
     },
     response::ResponseResult,
     types::{Index, Work},
+};
+use ethers::{
+    abi::ethereum_types::H64,
+    types::{
+        Address, Block, BlockNumber, Bytes, Log, Transaction, TransactionReceipt, TxHash, H256,
+        U256, U64,
+    },
+    utils::rlp,
 };
 use std::sync::Arc;
 

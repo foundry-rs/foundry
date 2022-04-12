@@ -1,6 +1,6 @@
 use crate::eth::{error::PoolError, util::hex_fmt_many};
+use anvil_core::eth::transaction::PendingTransaction;
 use ethers::types::{Address, TxHash};
-use foundry_node_core::eth::transaction::PendingTransaction;
 use parking_lot::RwLock;
 use std::{
     cmp::Ordering,

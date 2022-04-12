@@ -69,6 +69,46 @@ dependencies = [
 ]
 
 [[package]]
+name = "anvil"
+version = "0.1.0"
+dependencies = [
+ "anvil-core",
+ "async-trait",
+ "axum",
+ "bytes",
+ "chrono 0.4.19",
+ "colored",
+ "ethers",
+ "foundry-evm",
+ "foundry-utils",
+ "futures",
+ "hyper",
+ "parking_lot 0.12.0",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tower",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "anvil-core"
+version = "0.1.0"
+dependencies = [
+ "ethers-core",
+ "foundry-evm",
+ "hash-db",
+ "hash256-std-hasher",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "triehash",
+]
+
+[[package]]
 name = "anyhow"
 version = "1.0.56"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1708,6 +1748,7 @@ name = "foundry-cli"
 version = "0.2.0"
 dependencies = [
  "ansi_term",
+ "anvil",
  "atty",
  "cast",
  "clap",
@@ -1721,7 +1762,6 @@ dependencies = [
  "forge-fmt",
  "foundry-cli-test-utils",
  "foundry-config",
- "foundry-node",
  "foundry-utils",
  "futures",
  "glob",
@@ -1806,46 +1846,6 @@ dependencies = [
  "tracing-error",
  "tracing-subscriber",
  "url",
-]
-
-[[package]]
-name = "foundry-node"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "axum",
- "bytes",
- "chrono 0.4.19",
- "colored",
- "ethers",
- "foundry-evm",
- "foundry-node-core",
- "foundry-utils",
- "futures",
- "hyper",
- "parking_lot 0.12.0",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "tower",
- "tower-http",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "foundry-node-core"
-version = "0.1.0"
-dependencies = [
- "ethers-core",
- "foundry-evm",
- "hash-db",
- "hash256-std-hasher",
- "rand 0.8.5",
- "serde",
- "serde_json",
- "triehash",
 ]
 
 [[package]]

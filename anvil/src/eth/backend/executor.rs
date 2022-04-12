@@ -2,6 +2,12 @@ use crate::eth::{
     backend::{db::Db, duration_since_unix_epoch},
     pool::transactions::PoolTransaction,
 };
+use anvil_core::eth::{
+    block::{Block, BlockInfo, Header, PartialHeader},
+    receipt::{EIP1559Receipt, EIP2930Receipt, EIP658Receipt, Log, TypedReceipt},
+    transaction::{PendingTransaction, TransactionInfo, TypedTransaction},
+    trie,
+};
 use ethers::{
     abi::ethereum_types::BloomInput,
     types::{Bloom, H256, U256},
@@ -10,12 +16,6 @@ use ethers::{
 use foundry_evm::{
     revm,
     revm::{BlockEnv, CfgEnv, Env, Return, TransactOut},
-};
-use foundry_node_core::eth::{
-    block::{Block, BlockInfo, Header, PartialHeader},
-    receipt::{EIP1559Receipt, EIP2930Receipt, EIP658Receipt, Log, TypedReceipt},
-    transaction::{PendingTransaction, TransactionInfo, TypedTransaction},
-    trie,
 };
 use std::sync::Arc;
 

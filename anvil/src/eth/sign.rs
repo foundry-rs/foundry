@@ -1,12 +1,12 @@
 use crate::eth::error::BlockchainError;
+use anvil_core::eth::transaction::{
+    EIP1559Transaction, EIP1559TransactionRequest, EIP2930Transaction, EIP2930TransactionRequest,
+    LegacyTransaction, LegacyTransactionRequest, TypedTransaction, TypedTransactionRequest,
+};
 use ethers::{
     core::k256::ecdsa::SigningKey,
     prelude::{Address, Wallet},
     types::{transaction::eip2718::TypedTransaction as EthersTypedTransactionRequest, H256},
-};
-use foundry_node_core::eth::transaction::{
-    EIP1559Transaction, EIP1559TransactionRequest, EIP2930Transaction, EIP2930TransactionRequest,
-    LegacyTransaction, LegacyTransactionRequest, TypedTransaction, TypedTransactionRequest,
 };
 use std::collections::HashMap;
 

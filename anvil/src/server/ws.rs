@@ -8,7 +8,7 @@ use axum::{
     Extension,
 };
 
-use foundry_node_core::{error::RpcError, request::Request, response::Response};
+use anvil_core::{error::RpcError, request::Request, response::Response};
 
 use tracing::{trace, warn};
 
