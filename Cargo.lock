@@ -104,7 +104,6 @@ dependencies = [
  "hash-db",
  "hash256-std-hasher",
  "rand 0.8.5",
- "rlp-derive",
  "serde",
  "serde_json",
  "triehash",
