@@ -107,7 +107,7 @@ pub enum Subcommands {
     #[clap(about = "Remove the build artifacts and cache directories.")]
     Clean {
         #[clap(
-            help = "The project's root path, default being the current working directory",
+            help = "The project's root path. Defaults to the current working directory.",
             long,
             value_hint = ValueHint::DirPath
         )]
