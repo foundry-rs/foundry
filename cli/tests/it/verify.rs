@@ -44,6 +44,9 @@ impl VerifyExternalities {
             "--chain".to_string(),
             self.chain.to_string(),
             "--rpc-url",
+            self.rpc.clone(),
+            "--private-key".to_string(),
+            self.pk.clone(),
         ]
     }
 }
