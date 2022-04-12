@@ -232,32 +232,33 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         self.executor.set_balance(self.sender, self.initial_balance);
 
         // Optionally call the `setUp` function
-        Ok(match setup {
-            Some(func) => {
-                tracing::trace!("setting up");
-                let (setup_failed, setup_logs, setup_traces, labeled_addresses, reason) =
-                    match self.executor.setup(address, &func.name) {
-                        Ok(CallResult { traces, labels, logs, .. }) => {
-                            (false, logs, traces, labels, None)
-                        }
-                        Err(EvmError::Execution { traces, labels, logs, reason, .. }) => {
-                            (true, logs, traces, labels, Some(format!("Setup failed: {}", reason)))
-                        }
-                        Err(e) => (
-                            true,
-                            Vec::new(),
-                            None,
-                            BTreeMap::new(),
-                            Some(format!("Setup failed: {}", &e.to_string())),
-                        ),
-                    };
-                traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)).into_iter());
-                logs.extend_from_slice(&setup_logs);
+        let res = if let Some(func) = setup {
+            tracing::trace!("setting up");
+            let (setup_failed, setup_logs, setup_traces, labeled_addresses, reason) = match self
+                .executor
+                .setup(address, &func.name)
+            {
+                Ok(CallResult { traces, labels, logs, .. }) => (false, logs, traces, labels, None),
+                Err(EvmError::Execution { traces, labels, logs, reason, .. }) => {
+                    (true, logs, traces, labels, Some(format!("Setup failed: {}", reason)))
+                }
+                Err(e) => (
+                    true,
+                    Vec::new(),
+                    None,
+                    BTreeMap::new(),
+                    Some(format!("Setup failed: {}", &e.to_string())),
+                ),
+            };
+            traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)).into_iter());
+            logs.extend_from_slice(&setup_logs);
 
-                TestSetup { address, logs, traces, labeled_addresses, setup_failed, reason }
-            }
-            None => TestSetup { address, logs, traces, ..Default::default() },
-        })
+            TestSetup { address, logs, traces, labeled_addresses, setup_failed, reason }
+        } else {
+            TestSetup { address, logs, traces, ..Default::default() }
+        };
+
+        Ok(res)
     }
 
     /// Runs all tests for a contract whose names match the provided regular expression
@@ -269,8 +270,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
     ) -> Result<SuiteResult> {
         tracing::info!("starting tests");
         let start = Instant::now();
-        let setup_fn =
-            self.contract.functions().find(|func| func.name.to_lowercase() == "setup");
+        let setup_fn = self.contract.functions().find(|func| func.name.to_lowercase() == "setup");
 
         let setup = self.setup(setup_fn)?;
         if setup.setup_failed {

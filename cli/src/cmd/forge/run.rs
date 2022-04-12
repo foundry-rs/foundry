@@ -394,8 +394,8 @@ impl<DB: DatabaseRef> Runner<DB> {
         self.executor.set_balance(address, self.initial_balance);
 
         // Optionally call the `setUp` function
-        Ok(match setup_fn {
-            Some(func) => match self.executor.setup(address, &func.name) {
+        let res = if let Some(func) = setup_fn {
+            match self.executor.setup(address, &func.name) {
                 Ok(CallResult {
                     reverted,
                     traces: setup_traces,
@@ -431,8 +431,9 @@ impl<DB: DatabaseRef> Runner<DB> {
                     )
                 }
                 Err(e) => return Err(e.into()),
-            },
-            None => (
+            }
+        } else {
+            (
                 address,
                 RunResult {
                     logs,
@@ -442,8 +443,10 @@ impl<DB: DatabaseRef> Runner<DB> {
                     gas: 0,
                     labeled_addresses: Default::default(),
                 },
-            ),
-        })
+            )
+        };
+
+        Ok(res)
     }
 
     pub fn run(&mut self, address: Address, calldata: Bytes) -> eyre::Result<RunResult> {
