@@ -295,6 +295,27 @@ mod tests {
         base_runner().build(&(*PROJECT).paths.root, (*COMPILED).clone(), opts).unwrap()
     }
 
+    // Builds a runner that runs against forked state
+    fn forked_runner() -> MultiContractRunner {
+        let mut opts = EVM_OPTS.clone();
+        let chain_id = 1;
+        let block = 14444444;
+        let cache_path = Config::foundry_block_cache_file(chain_id,block);
+        let rpc = "https://rpc.flashbots.net";
+
+        let fork = Some(Fork {
+            cache_path,
+            url: rpc.to_string(),
+            pin_block: Some(block),
+            chain_id
+        });
+
+        opts.fork_block_number = Some(block);
+        opts.fork_url = Some(rpc.to_string());
+        opts.env.chain_id = Some(chain_id);
+        base_runner().with_fork(fork).build(&(*PROJECT).paths.root, (*COMPILED).clone(), opts).unwrap()
+    }
+
     /// A helper to assert the outcome of multiple tests with helpful assert messages
     fn assert_multiple(
         actuals: &BTreeMap<String, SuiteResult>,
@@ -551,31 +572,11 @@ mod tests {
 
     #[test]
     fn test_fork() {
-        let mut runner = runner();
-        
-        // set up all the forking stuff 
-        let chain_id = 1;
-        let block = 14444444;
-        let cache_path = Config::foundry_block_cache_file(chain_id,block);
-        let rpc = "https://rpc.flashbots.net";
-
-        runner.fork = Some(Fork {
-            cache_path,
-            url: rpc.to_string(),
-            pin_block: Some(block),
-            chain_id
-        });
-
-        runner.evm_opts.fork_block_number = Some(block);
-        runner.evm_opts.fork_url = Some(rpc.to_string());
-        runner.evm_opts.env.chain_id = Some(chain_id);
-
-        println!("{:#?}", runner.evm_opts);
-
+        let mut runner = forked_runner();
         let suite_result = runner.test(&Filter::new(".*", ".*", ".*fork"), None, true).unwrap();
+        
         for (_, SuiteResult { test_results, .. }) in suite_result {
             for (test_name, result) in test_results {
-                println!("{}", test_name); 
                 assert!(
                     result.success,
                     "Test {} did not pass as expected.\nReason: {:?}\n",
