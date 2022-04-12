@@ -40,7 +40,7 @@ impl Db for ForkedDatabase {
 ///
 /// The `backend` is used to retrieve (missing) data, which is then fetched from the remote
 /// endpoint. The inner in-memory database holds this storage and will be used for write operations.
-/// This database uses the `backed` for read and the `db` for write operations. But note the
+/// This database uses the `backend` for read and the `db` for write operations. But note the
 /// `backend` will also write (missing) data to the `db` in the background
 #[derive(Debug)]
 pub struct ForkedDatabase {
