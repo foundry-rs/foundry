@@ -273,7 +273,7 @@ mod tests {
     use super::*;
     use crate::{
         decode::decode_console_logs,
-        test_helpers::{filter::Filter, COMPILED, EVM_OPTS, PROJECT, LIBS_PROJECT},
+        test_helpers::{filter::Filter, COMPILED, EVM_OPTS, LIBS_PROJECT, PROJECT},
     };
     use foundry_config::Config;
     use foundry_evm::trace::TraceKind;
@@ -302,7 +302,6 @@ mod tests {
         let chain_id = 1;
         let block = 14444444;
         let cache_path = Config::foundry_block_cache_file(chain_id, block);
-        
 
         let fork =
             Some(Fork { cache_path, url: rpc.to_string(), pin_block: Some(block), chain_id });
@@ -588,7 +587,7 @@ mod tests {
                 assert!(
                     result.success,
                     "Test {} did not pass as expected.\nReason: {:?}\nLogs:\n{}",
-                    test_name, 
+                    test_name,
                     result.reason,
                     logs.join("\n")
                 );
