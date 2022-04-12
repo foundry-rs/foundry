@@ -33,28 +33,32 @@ pub struct Opts {
 }
 
 #[derive(Debug, Subcommand)]
-#[clap(about = "Build, test, fuzz, formally verify, debug & deploy solidity contracts.")]
+#[clap(about = "Build, test, fuzz, debug and deploy Solidity contracts.")]
 #[allow(clippy::large_enum_variant)]
 pub enum Subcommands {
-    #[clap(about = "Test your smart contracts")]
+    #[clap(about = "Run the project's tests.")]
     #[clap(alias = "t")]
     Test(test::TestArgs),
 
-    #[clap(about = "Generate rust bindings for your smart contracts")]
+    #[clap(about = "Generate Rust bindings for smart contracts.")]
     Bind(BindArgs),
 
-    #[clap(about = "Build your smart contracts")]
+    #[clap(about = "Build the project's smart contracts.")]
     #[clap(alias = "b")]
     Build(BuildArgs),
 
-    #[clap(about = "Run a single smart contract as a script")]
+    #[clap(about = "Run a single smart contract as a script.")]
     #[clap(alias = "r")]
     Run(RunArgs),
 
-    #[clap(alias = "u", about = "Fetches all upstream lib changes")]
+    #[clap(
+        alias = "u",
+        about = "Update one or multiple dependencies.",
+        long_about = "Update one or multiple dependencies. If no arguments are provided, then all dependencies are updated."
+    )]
     Update {
         #[clap(
-            help = "The submodule name of the library you want to update (will update all if none is provided)",
+            help = "The path to the dependency you want to update.",
             value_hint = ValueHint::DirPath
         )]
         lib: Option<PathBuf>,
@@ -62,33 +66,36 @@ pub enum Subcommands {
 
     #[clap(
         alias = "i",
-        about = "Installs one or more dependencies as git submodules (will install existing dependencies if no arguments are provided)"
+        about = "Install one or multiple dependencies.",
+        long_about = "Install one or more dependencies as git submodules. If no arguments are provided, then existing dependencies will be installed."
     )]
     Install(InstallArgs),
 
-    #[clap(alias = "rm", about = "Removes one or more dependencies from git submodules")]
+    #[clap(alias = "rm", about = "Remove one or multiple dependencies.")]
     Remove {
-        #[clap(help = "The submodule name of the library you want to remove")]
+        #[clap(help = "The path to the dependency you want to remove.")]
         dependencies: Vec<Dependency>,
     },
 
-    #[clap(about = "Prints the automatically inferred remappings for this repository")]
+    #[clap(about = "Get the automatically inferred remappings for this project.")]
     Remappings(RemappingArgs),
 
     #[clap(
-        about = "Verify your smart contracts source code on Etherscan. Requires `ETHERSCAN_API_KEY` to be set."
+        about = "Verify smart contracts on Etherscan.",
+        long_about = "Verify smart contracts on Etherscan. Requires `ETHERSCAN_API_KEY` to be set."
     )]
     VerifyContract(VerifyArgs),
 
     #[clap(
-        about = "Check verification status on Etherscan. Requires `ETHERSCAN_API_KEY` to be set."
+        about = "Check verification status on Etherscan.",
+        long_about = "Check verification status on Etherscan. Requires `ETHERSCAN_API_KEY` to be set."
     )]
     VerifyCheck(VerifyCheckArgs),
 
-    #[clap(alias = "c", about = "Deploy a compiled contract")]
+    #[clap(alias = "c", about = "Deploy a smart contract.")]
     Create(CreateArgs),
 
-    #[clap(alias = "i", about = "Initializes a new forge sample project")]
+    #[clap(alias = "i", about = "Create a new Forge project.")]
     Init(InitArgs),
 
     #[clap(about = "Generate shell completions script")]
@@ -97,7 +104,7 @@ pub enum Subcommands {
         shell: clap_complete::Shell,
     },
 
-    #[clap(about = "Removes the build artifacts and cache directories")]
+    #[clap(about = "Remove the build artifacts and cache directories.")]
     Clean {
         #[clap(
             help = "The project's root path, default being the current working directory",
@@ -107,19 +114,19 @@ pub enum Subcommands {
         root: Option<PathBuf>,
     },
 
-    #[clap(about = "Creates a snapshot of each test's gas usage")]
+    #[clap(about = "Create a snapshot of each test's gas usage.")]
     Snapshot(snapshot::SnapshotArgs),
 
-    #[clap(about = "Shows the currently set config values")]
+    #[clap(about = "Display the current config.")]
     Config(config::ConfigArgs),
 
-    #[clap(about = "Concats a file with all of its imports")]
+    #[clap(about = "Flatten a source file and all of its imports into one file.")]
     Flatten(flatten::FlattenArgs),
     // #[clap(about = "formats Solidity source files")]
     // Fmt(FmtArgs),
-    #[clap(about = "Outputs a contract in a specified format (ir, assembly, ...)")]
+    #[clap(about = "Get specialized information about a smart contract")]
     Inspect(inspect::InspectArgs),
-    #[clap(about = "Display a tree visualization of the project's dependency graph")]
+    #[clap(about = "Display a tree visualization of the project's dependency graph.")]
     Tree(tree::TreeArgs),
 }
 
