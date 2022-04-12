@@ -43,6 +43,7 @@ pub struct VerifyArgs {
     #[clap(
         long,
         alias = "chain",
+        env = "CHAIN",
         help = "the chain id of the network you are verifying for",
         default_value = "mainnet"
     )]
@@ -262,6 +263,7 @@ pub struct VerifyCheckArgs {
     #[clap(
         long,
         alias = "chain",
+        env = "CHAIN",
         help = "the chain id of the network you are verifying for",
         default_value = "mainnet"
     )]
