@@ -273,7 +273,7 @@ mod tests {
     use super::*;
     use crate::{
         decode::decode_console_logs,
-        test_helpers::{filter::Filter, COMPILED, EVM_OPTS, PROJECT},
+        test_helpers::{filter::Filter, COMPILED, EVM_OPTS, PROJECT, LIBS_PROJECT},
     };
     use foundry_config::Config;
     use foundry_evm::trace::TraceKind;
@@ -296,12 +296,13 @@ mod tests {
     }
 
     // Builds a runner that runs against forked state
-    fn forked_runner() -> MultiContractRunner {
+    fn forked_runner(rpc: &str) -> MultiContractRunner {
         let mut opts = EVM_OPTS.clone();
+        // TODO: it would be good to test against chains other than mainnet too
         let chain_id = 1;
         let block = 14444444;
         let cache_path = Config::foundry_block_cache_file(chain_id, block);
-        let rpc = "https://rpc.flashbots.net";
+        
 
         let fork =
             Some(Fork { cache_path, url: rpc.to_string(), pin_block: Some(block), chain_id });
@@ -312,7 +313,7 @@ mod tests {
 
         base_runner()
             .with_fork(fork)
-            .build(&(*PROJECT).paths.root, (*COMPILED).clone(), opts)
+            .build(&(*LIBS_PROJECT).paths.root, (*COMPILED).clone(), opts)
             .unwrap()
     }
 
@@ -572,15 +573,24 @@ mod tests {
 
     #[test]
     fn test_fork() {
-        let mut runner = forked_runner();
+        let rpc_url = std::env::var("ETH_RPC_URL");
+        if rpc_url.is_err() {
+            eprintln!("Skipping test, ETH_RPC_URL is not set.");
+            return
+        }
+        let mut runner = forked_runner(&(rpc_url.unwrap()));
         let suite_result = runner.test(&Filter::new(".*", ".*", ".*fork"), None, true).unwrap();
 
         for (_, SuiteResult { test_results, .. }) in suite_result {
             for (test_name, result) in test_results {
+                let logs = decode_console_logs(&result.logs);
+
                 assert!(
                     result.success,
-                    "Test {} did not pass as expected.\nReason: {:?}\n",
-                    test_name, result.reason
+                    "Test {} did not pass as expected.\nReason: {:?}\nLogs:\n{}",
+                    test_name, 
+                    result.reason,
+                    logs.join("\n")
                 );
             }
         }

@@ -22,7 +22,8 @@ pub use foundry_evm::*;
 pub mod test_helpers {
     use crate::TestFilter;
     use ethers::{
-        prelude::{Lazy, ProjectCompileOutput},
+        prelude::{Lazy, ProjectCompileOutput, SolcConfig},
+        prelude::artifacts::Settings,
         solc::{Project, ProjectPathsConfig},
         types::{Address, U256},
     };
@@ -45,6 +46,20 @@ pub mod test_helpers {
             .build()
             .unwrap();
         Project::builder().paths(paths).ephemeral().no_artifacts().build().unwrap()
+    });
+
+    pub static LIBS_PROJECT: Lazy<Project> = Lazy::new(|| {
+        let paths = ProjectPathsConfig::builder()
+            .root("../testdata")
+            .sources("../testdata")
+            .build()
+            .unwrap();
+        
+        let mut settings = Settings::default();
+        let libs =  ["src/DssSpell.sol:DssExecLib:0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4".to_string()];
+        settings.libraries = foundry_config::parse_libraries(&libs).unwrap();
+        let solc_config = SolcConfig::builder().settings(settings).build();
+        Project::builder().paths(paths).ephemeral().no_artifacts().solc_config(solc_config).build().unwrap()
     });
 
     pub static COMPILED: Lazy<ProjectCompileOutput> = Lazy::new(|| (*PROJECT).compile().unwrap());

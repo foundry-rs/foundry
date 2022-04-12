@@ -3,14 +3,17 @@ pragma solidity >= 0.8.0;
 
 import "ds-test/test.sol";
 
-interface Cheat {
+interface Cheats {
     function store(address account, bytes32 slot, bytes32 value) external;
 }
 
-interface erc20 {
-    function balanceOf(address) external returns (uint);
-    function totalSupply() external returns (uint);
-    function transfer(uint,address) external;
+interface ERC20 {
+    function totalSupply() external view returns (uint);
+}
+
+interface IWETH {
+    function deposit() external payable;
+    function balanceOf(address) external view returns (uint);
 }
 
 contract TestContract {
@@ -22,35 +25,41 @@ contract TestContract {
 
 
 contract ForkTest is DSTest {
-    address constant uni_token_addr = 0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984;
-    address constant weth_token_addr = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
-    // address constant dss_spell_addr = 0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4;
+    address constant UNI_TOKEN_ADDR = 0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984;
+    address constant WETH_TOKEN_ADDR = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
+    //address constant DSS_EXEC_ADDR = 0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4;
 
     function testReadState() public { 
-        erc20 uni = erc20(uni_token_addr);
-        assertEq(uni.totalSupply() , 1000000000000000000000000000 );
+        ERC20 UNI = ERC20(UNI_TOKEN_ADDR);
+        assertEq(UNI.totalSupply(), 1000000000000000000000000000, "Failed to read UNI token total supply.");
     }
 
     function testDeployContract() public {
         TestContract t = new TestContract();
+        //assertEq(t.deployer(), msg.sender, "idk");
     }
 
     function testCheatcode() public {
-        Cheat cheatvm = Cheat(HEVM_ADDRESS);
-        erc20 weth = erc20(weth_token_addr);
-        cheatvm.store(weth_token_addr, 0xad3228b676f7d3cd4284a5443f17f1962b36e491b30a40b2405849e597ba5fb5, 1);
-        assertEq(weth.balanceOf(0x0000000000000000000000000000000000000000), 1);
+        Cheats cheatvm = Cheats(HEVM_ADDRESS);
+        IWETH WETH = IWETH(WETH_TOKEN_ADDR);
+        bytes32 value = bytes32(uint(1));
+        // "0xad3228b676f7d3cd4284a5443f17f1962b36e491b30a40b2405849e597ba5fb5" is the slot storing the zero address balance
+        // `cast index address uint 0x0000000000000000000000000000000000000000 1`
+        bytes32 zero_address_balance_slot = 0xa6eef7e35abe7026729641147f7915573c7e97b47efa546f5f6e3230263bcb49;
+        cheatvm.store(WETH_TOKEN_ADDR, zero_address_balance_slot, value);
+        assertEq(WETH.balanceOf(0x0000000000000000000000000000000000000000), 1, "Cheatcode did not change value at the storage slot.");
     }
 
-    function testLibrary() public {
+    function testPredeployedLibrary() public {
         // TODO
         assertTrue(true);
     }
 
-    function testCallMutate() public {
-        erc20 weth = erc20(weth_token_addr);
-        uint bal = weth.balanceOf(msg.sender);
-        weth.transfer(1000,weth_token_addr);
-        assertEq(weth.balanceOf(msg.sender), bal - 1000);
+    function testDepositWeth() public {
+        IWETH WETH = IWETH(WETH_TOKEN_ADDR);
+        emit log_uint(WETH_TOKEN_ADDR.balance);
+        WETH.deposit{value: 1000}();
+        uint balance = WETH.balanceOf(msg.sender);
+        assertEq(balance, 1000, "WETH balance is not equal to deposited amount.");
     }
 }
