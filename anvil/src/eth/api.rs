@@ -45,7 +45,7 @@ pub struct EthApi {
     /// In-Memory only for now
     backend: Arc<backend::mem::Backend>,
     /// Whether this node is mining
-    is_authority: bool,
+    is_mining: bool,
     /// available signers
     signers: Arc<Vec<Box<dyn Signer>>>,
     /// data required for `eth_feeHistory`
@@ -62,7 +62,7 @@ impl EthApi {
         signers: Arc<Vec<Box<dyn Signer>>>,
         fee_history_cache: FeeHistoryCache,
     ) -> Self {
-        Self { pool, backend, is_authority: true, signers, fee_history_cache }
+        Self { pool, backend, is_mining: true, signers, fee_history_cache }
     }
 
     /// Executes the [EthRequest] and returns an RPC [RpcResponse]
@@ -183,7 +183,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_mining`
     pub fn is_mining(&self) -> Result<bool> {
-        Ok(self.is_authority)
+        Ok(self.is_mining)
     }
 
     /// Returns the chain ID used for transaction signing at the

@@ -7,9 +7,10 @@ use ethers_core::{
     },
 };
 use foundry_evm::revm;
+use rlp_derive::{RlpDecodable, RlpEncodable};
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, RlpEncodable, RlpDecodable)]
 pub struct Log {
     pub address: Address,
     pub topics: Vec<H256>,
@@ -30,54 +31,12 @@ impl From<Log> for revm::Log {
     }
 }
 
-impl rlp::Encodable for Log {
-    fn rlp_append(&self, stream: &mut rlp::RlpStream) {
-        stream.begin_list(3);
-        stream.append(&self.address);
-        stream.append_list(&self.topics);
-        stream.append(&self.data.as_ref());
-    }
-}
-
-impl rlp::Decodable for Log {
-    fn decode(rlp: &rlp::Rlp) -> Result<Self, rlp::DecoderError> {
-        let result = Log {
-            address: rlp.val_at(0)?,
-            topics: rlp.list_at(1)?,
-            data: rlp.val_at::<Vec<u8>>(2)?.into(),
-        };
-        Ok(result)
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, RlpEncodable, RlpDecodable)]
 pub struct EIP658Receipt {
     pub status_code: u8,
     pub gas_used: U256,
     pub logs_bloom: Bloom,
     pub logs: Vec<Log>,
-}
-
-impl rlp::Encodable for EIP658Receipt {
-    fn rlp_append(&self, stream: &mut rlp::RlpStream) {
-        stream.begin_list(4);
-        stream.append(&self.status_code);
-        stream.append(&self.gas_used);
-        stream.append(&self.logs_bloom);
-        stream.append_list(&self.logs);
-    }
-}
-
-impl rlp::Decodable for EIP658Receipt {
-    fn decode(rlp: &rlp::Rlp) -> Result<Self, rlp::DecoderError> {
-        let result = EIP658Receipt {
-            status_code: rlp.val_at(0)?,
-            gas_used: rlp.val_at(1)?,
-            logs_bloom: rlp.val_at(2)?,
-            logs: rlp.list_at(3)?,
-        };
-        Ok(result)
-    }
 }
 
 // same underlying data structure
