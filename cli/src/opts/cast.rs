@@ -366,11 +366,11 @@ pub enum Subcommands {
     #[clap(about = "Compute the storage slot for an entry in a mapping.")]
     Index {
         #[clap(help = "The mapping key type.")]
-        from_type: String,
+        key_type: String,
         #[clap(help = "The mapping value type.")]
-        to_type: String,
+        value_type: String,
         #[clap(help = "The mapping key.")]
-        from_value: String,
+        key: String,
         #[clap(help = "The storage slot of the mapping.")]
         slot_number: String,
     },

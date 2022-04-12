@@ -391,8 +391,8 @@ async fn main() -> eyre::Result<()> {
         Subcommands::AbiEncode { sig, args } => {
             println!("{}", SimpleCast::abi_encode(&sig, &args)?);
         }
-        Subcommands::Index { from_type, to_type, from_value, slot_number } => {
-            let encoded = SimpleCast::index(&from_type, &to_type, &from_value, &slot_number)?;
+        Subcommands::Index { key_type, value_type, key, slot_number } => {
+            let encoded = SimpleCast::index(&key_type, &value_type, &key, &slot_number)?;
             println!("{}", encoded);
         }
         Subcommands::FourByte { selector } => {
