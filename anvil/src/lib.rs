@@ -1,10 +1,10 @@
 mod config;
+pub use config::{AccountGenerator, NodeConfig};
 
 use crate::{
     eth::{backend::mem, miner::MiningMode, pool::Pool, EthApi},
     service::NodeService,
 };
-pub use config::NodeConfig;
 use foundry_evm::revm;
 
 use crate::eth::sign::{DevSigner, Signer as EthSigner};

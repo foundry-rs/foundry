@@ -9,9 +9,12 @@ use crate::{
 };
 use ethers::{
     core::k256::ecdsa::SigningKey,
-    prelude::{Address, Wallet, U256},
+    prelude::{rand::thread_rng, Address, Wallet, U256},
     providers::{Middleware, Provider},
-    signers::{coins_bip39::English, MnemonicBuilder, Signer},
+    signers::{
+        coins_bip39::{English, Mnemonic},
+        MnemonicBuilder, Signer,
+    },
     utils::{format_ether, hex, WEI_IN_ETHER},
 };
 use foundry_evm::{
@@ -50,6 +53,8 @@ pub struct NodeConfig {
     pub eth_rpc_url: Option<String>,
     /// pins the block number for the state fork
     pub fork_block_number: Option<u64>,
+    /// The generator used to generate the dev accounts
+    pub account_generator: Option<AccountGenerator>,
 }
 
 impl Default for NodeConfig {
@@ -71,6 +76,7 @@ impl Default for NodeConfig {
             silent: false,
             eth_rpc_url: None,
             fork_block_number: None,
+            account_generator: None,
         }
     }
 }
@@ -108,6 +114,14 @@ impl NodeConfig {
     pub fn genesis_accounts(mut self, accounts: Vec<Wallet<SigningKey>>) -> Self {
         self.genesis_accounts = accounts;
         self
+    }
+
+    /// Sets the genesis accounts
+    #[must_use]
+    pub fn account_generator(mut self, generator: AccountGenerator) -> Self {
+        let accounts = generator.gen();
+        self.account_generator = Some(generator);
+        self.genesis_accounts(accounts)
     }
 
     /// Sets the balance of the genesis accounts in the genesis block
@@ -189,7 +203,18 @@ Private Keys
             println!("({}) 0x{}", idx, hex);
         }
 
-        // TODO also print the Mnemonic used to gen keys
+        if let Some(ref gen) = self.account_generator {
+            print!(
+                r#"
+Wallte
+==================
+Mnemonic:          {}
+Derivation path:   {}
+"#,
+                gen.phrase,
+                gen.get_derivation_path()
+            );
+        }
 
         print!(
             r#"
@@ -300,6 +325,65 @@ Chain ID:       {}
         );
 
         backend
+    }
+}
+
+/// Can create dev accounts
+#[derive(Debug, Clone)]
+pub struct AccountGenerator {
+    amount: usize,
+    phrase: String,
+    derivation_path: Option<String>,
+}
+
+impl AccountGenerator {
+    pub fn new(amount: usize) -> Self {
+        Self {
+            amount,
+            phrase: Mnemonic::<English>::new(&mut thread_rng())
+                .to_phrase()
+                .expect("Failed to create mnemonic phrase"),
+            derivation_path: None,
+        }
+    }
+
+    #[must_use]
+    pub fn phrase(mut self, phrase: impl Into<String>) -> Self {
+        self.phrase = phrase.into();
+        self
+    }
+
+    #[must_use]
+    pub fn derivation_path(mut self, derivation_path: impl Into<String>) -> Self {
+        let mut derivation_path = derivation_path.into();
+        if !derivation_path.ends_with('/') {
+            derivation_path.push('/');
+        }
+        self.derivation_path = Some(derivation_path);
+        self
+    }
+
+    fn get_derivation_path(&self) -> &str {
+        self.derivation_path.as_deref().unwrap_or("m/44'/60'/0'/0/")
+    }
+}
+
+impl AccountGenerator {
+    pub fn gen(&self) -> Vec<Wallet<SigningKey>> {
+        let builder = MnemonicBuilder::<English>::default().phrase(self.phrase.as_str());
+
+        // use the
+        let derivation_path = self.get_derivation_path();
+
+        let mut wallets = Vec::with_capacity(self.amount);
+
+        for idx in 0..self.amount {
+            let builder =
+                builder.clone().derivation_path(&format!("{}{}", derivation_path, idx)).unwrap();
+            let wallet = builder.build().unwrap();
+            wallets.push(wallet)
+        }
+        wallets
     }
 }
 
