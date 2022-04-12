@@ -1,7 +1,7 @@
 use crate::eth::EthApi;
-use anvil_core::{
+use anvil_core::eth::EthRequest;
+use anvil_rpc::{
     error::RpcError,
-    eth::EthRequest,
     request::{Request, RpcCall, RpcMethodCall},
     response::{Response, RpcResponse},
 };

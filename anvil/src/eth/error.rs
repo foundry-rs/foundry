@@ -1,7 +1,7 @@
 //! Aggregated error type for this module
 
 use crate::eth::pool::transactions::PoolTransaction;
-use anvil_core::{error::RpcError, response::ResponseResult};
+use anvil_rpc::{error::RpcError, response::ResponseResult};
 use ethers::{providers::ProviderError, signers::WalletError, types::SignatureError};
 use serde::Serialize;
 use tracing::error;

@@ -44,7 +44,7 @@ pub mod fork;
 /// # Example
 ///
 /// ```rust
-/// # use foundry_node::NodeConfig;
+/// # use anvil::NodeConfig;
 /// # async fn spawn() {
 /// let config = NodeConfig::default();
 /// let (api, handle) = foundry_node::spawn(config).await;

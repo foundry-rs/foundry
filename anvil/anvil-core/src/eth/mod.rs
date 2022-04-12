@@ -1,13 +1,12 @@
 use crate::{
-    error::RpcError,
     eth::{call::CallRequest, filter::Filter, transaction::EthTransactionRequest},
     types::Index,
 };
 use ethers_core::{
     abi::ethereum_types::H64,
-    types::{Address, BlockNumber, Bytes, Transaction, TxHash, H256, U256},
+    types::{Address, BlockNumber, Bytes, TxHash, H256, U256},
 };
-use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer};
 
 pub mod block;
 pub mod call;
@@ -132,46 +131,6 @@ where
     Ok(num)
 }
 
-/// Represents a payload followed by an optional `block` value
-/// serialized as sequence of length 1: `[value, block?]`
-#[derive(Clone, Debug, PartialEq)]
-pub struct WithBlockParameter<T> {
-    pub value: T,
-    pub block: Option<BlockNumber>,
-}
-
-impl<'de, T: DeserializeOwned> Deserialize<'de> for WithBlockParameter<T> {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum WithDefaultBlock<T> {
-            Value(T),
-            ValueBlock(T, BlockNumber),
-        }
-
-        let mut seq = Vec::<WithDefaultBlock<T>>::deserialize(deserializer)?;
-
-        if seq.len() != 1 {
-            return Err(serde::de::Error::custom(format!(
-                "expected params sequence with length 1 but got {}",
-                seq.len()
-            )))
-        }
-
-        let val = match seq.remove(0) {
-            WithDefaultBlock::Value(value) => WithBlockParameter { value, block: None },
-            WithDefaultBlock::ValueBlock(value, block) => {
-                WithBlockParameter { value, block: Some(block) }
-            }
-        };
-
-        Ok(val)
-    }
-}
-
 #[allow(unused)]
 mod sequence {
     use serde::{
@@ -205,15 +164,6 @@ mod sequence {
     }
 }
 
-#[derive(Serialize)]
-#[serde(untagged)]
-#[allow(dead_code)]
-pub enum EthResponse {
-    EthGetBalance(U256),
-    EthGetTransactionByHash(Box<Option<Transaction>>),
-    EthSendTransaction(Result<TxHash, RpcError>),
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -243,21 +193,5 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
 
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
-    }
-
-    #[test]
-    fn test_serde_res() {
-        let val = EthResponse::EthGetBalance(U256::from(123u64));
-        let _ser = serde_json::to_string(&val).unwrap();
-
-        let val = EthResponse::EthGetTransactionByHash(Box::new(Some(Transaction::default())));
-        let _ser = serde_json::to_string(&val).unwrap();
-        let val = EthResponse::EthGetTransactionByHash(Box::new(None));
-        let _ser = serde_json::to_string(&val).unwrap();
-
-        let val = EthResponse::EthSendTransaction(Ok(TxHash::default()));
-        let _ser = serde_json::to_string(&val).unwrap();
-        let val = EthResponse::EthSendTransaction(Err(RpcError::parse_error()));
-        let _ser = serde_json::to_string(&val).unwrap();
     }
 }

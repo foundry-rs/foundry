@@ -8,6 +8,7 @@ license = "MIT OR Apache-2.0"
 # foundry internal
 foundry-evm = { path = "../evm" }
 anvil-core = { path = "anvil-core" }
+anvil-rpc = { path = "anvil-rpc" }
 foundry-utils = { path = "../utils" }
 
 # evm support

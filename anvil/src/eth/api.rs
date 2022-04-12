@@ -21,9 +21,9 @@ use anvil_core::{
         },
         EthRequest,
     },
-    response::ResponseResult,
     types::{Index, Work},
 };
+use anvil_rpc::response::ResponseResult;
 use ethers::{
     abi::ethereum_types::H64,
     types::{

@@ -73,6 +73,7 @@ name = "anvil"
 version = "0.1.0"
 dependencies = [
  "anvil-core",
+ "anvil-rpc",
  "async-trait",
  "axum",
  "bytes",
@@ -106,6 +107,15 @@ dependencies = [
  "serde",
  "serde_json",
  "triehash",
+]
+
+[[package]]
+name = "anvil-rpc"
+version = "0.1.0"
+dependencies = [
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

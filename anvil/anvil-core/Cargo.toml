@@ -8,7 +8,7 @@ license = "MIT OR Apache-2.0"
 # foundry internal
 foundry-evm = { path = "../../evm" }
 
-ethers-core = { git = "https://github.com/gakonst/ethers-rs" }
+ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0" }
 

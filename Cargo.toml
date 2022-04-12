@@ -5,6 +5,7 @@ members = [
     "forge",
     "anvil",
     "anvil/anvil-core",
+    "anvil/anvil-rpc",
     "cli",
     "cli/test-utils",
     "config",

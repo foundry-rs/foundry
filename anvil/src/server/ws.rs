@@ -1,4 +1,5 @@
 use crate::{server::handler::handle_request, EthApi};
+use anvil_rpc::{error::RpcError, request::Request, response::Response};
 use axum::{
     extract::{
         ws::{Message, WebSocket},
@@ -7,9 +8,6 @@ use axum::{
     response::IntoResponse,
     Extension,
 };
-
-use anvil_core::{error::RpcError, request::Request, response::Response};
-
 use tracing::{trace, warn};
 
 /// Handles incoming Websocket upgrade
