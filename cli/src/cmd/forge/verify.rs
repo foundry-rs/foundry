@@ -42,12 +42,12 @@ pub struct VerifyArgs {
 
     #[clap(
         long,
-        alias = "chain",
+        alias = "chain-id",
         env = "CHAIN",
-        help = "the chain id of the network you are verifying for",
+        help = "the name or id of chain of the network you are verifying for",
         default_value = "mainnet"
     )]
-    chain_id: Chain,
+    chain: Chain,
 
     #[clap(help = "your etherscan api key", env = "ETHERSCAN_API_KEY")]
     etherscan_key: String,
@@ -79,7 +79,7 @@ impl VerifyArgs {
 
         let verify_args = self.create_verify_request()?;
 
-        let etherscan = Client::new(self.chain_id.try_into()?, &self.etherscan_key)
+        let etherscan = Client::new(self.chain.try_into()?, &self.etherscan_key)
             .wrap_err("Failed to create etherscan client")?;
 
         let resp = etherscan
@@ -262,12 +262,12 @@ pub struct VerifyCheckArgs {
 
     #[clap(
         long,
-        alias = "chain",
+        alias = "chain-id",
         env = "CHAIN",
-        help = "the chain id of the network you are verifying for",
+        help = "the name or id of chain of the network you are verifying for",
         default_value = "mainnet"
     )]
-    chain_id: Chain,
+    chain: Chain,
 
     #[clap(help = "your etherscan api key", env = "ETHERSCAN_API_KEY")]
     etherscan_key: String,
@@ -276,7 +276,7 @@ pub struct VerifyCheckArgs {
 impl VerifyCheckArgs {
     /// Executes the command to check verification status on Etherscan
     pub async fn run(&self) -> eyre::Result<()> {
-        let etherscan = Client::new(self.chain_id.try_into()?, &self.etherscan_key)
+        let etherscan = Client::new(self.chain.try_into()?, &self.etherscan_key)
             .wrap_err("Failed to create etherscan client")?;
 
         let resp = etherscan
