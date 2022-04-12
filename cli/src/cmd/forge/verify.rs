@@ -20,7 +20,7 @@ use eyre::Context;
 use foundry_config::Chain;
 use semver::Version;
 use std::{collections::BTreeMap, path::Path};
-use tracing::warn;
+use tracing::{trace, warn};
 
 /// Verification arguments
 #[derive(Debug, Clone, Parser)]
@@ -75,10 +75,12 @@ impl VerifyArgs {
             eyre::bail!("Contract info must be provided in the format <path>:<name>")
         }
 
-        let verify_args = self.create_verify_request()?;
-
         let etherscan = Client::new(self.chain_id.try_into()?, &self.etherscan_key)
             .wrap_err("Failed to create etherscan client")?;
+
+        let verify_args = self.create_verify_request()?;
+
+        trace!("submitting verification request {:?}", verify_args);
 
         let resp = etherscan
             .submit_contract_verification(&verify_args)
@@ -355,7 +357,7 @@ fn standard_json_source(
     let source = serde_json::to_string(&input).wrap_err("Failed to parse standard json input")?;
     let name = format!(
         "{}:{}",
-        &project.root().join(args.contract.path.as_ref().unwrap()).to_string_lossy(),
+        target.strip_prefix(project.root()).unwrap_or(target).display(),
         args.contract.name.clone()
     );
     Ok((source, name, CodeFormat::StandardJsonInput))
