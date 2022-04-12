@@ -1,6 +1,6 @@
 use crate::next_port;
+use anvil::{spawn, NodeConfig};
 use ethers::prelude::{abigen, Middleware, Signer, SignerMiddleware, TransactionRequest};
-use foundry_node::{spawn, NodeConfig};
 use std::sync::Arc;
 
 #[tokio::test(flavor = "multi_thread")]

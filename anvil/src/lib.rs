@@ -47,7 +47,7 @@ pub mod fork;
 /// # use anvil::NodeConfig;
 /// # async fn spawn() {
 /// let config = NodeConfig::default();
-/// let (api, handle) = foundry_node::spawn(config).await;
+/// let (api, handle) = anvil::spawn(config).await;
 ///
 /// // use api
 ///

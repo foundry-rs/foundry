@@ -44,8 +44,12 @@ impl NodeArgs {
             foundry_config::find_project_root_path().unwrap(),
         )
         .merge(&self.evm_opts);
-        let evm_opts = figment.extract::<EvmOpts>().expect("EvmOpts are subset");
+        let mut evm_opts = figment.extract::<EvmOpts>().expect("EvmOpts are subset");
         let genesis_balance = WEI_IN_ETHER.saturating_mul(self.balance.into());
+
+        if evm_opts.env.gas_price == 0 {
+            evm_opts.env.gas_price = NodeConfig::default().gas_price.as_u64();
+        }
 
         NodeConfig::default()
             .chain_id(evm_opts.env.chain_id.unwrap_or(CHAIN_ID))
@@ -66,7 +70,6 @@ impl NodeArgs {
         if let Some(ref derivation) = self.derivation_path {
             gen = gen.derivation_path(derivation);
         }
-
         gen
     }
 
