@@ -37,16 +37,16 @@ contract ForkTest is DSTest {
 
     function testDeployContract() public {
         TestContract t = new TestContract();
-        //assertEq(t.deployer(), msg.sender, "not equal");
+        // assertEq(t.deployer(), address(this), "not equal");
     }
 
     function testCheatcode() public {
         Cheats cheatvm = Cheats(HEVM_ADDRESS);
         IWETH WETH = IWETH(WETH_TOKEN_ADDR);
         bytes32 value = bytes32(uint(1));
-        // "0xad3228b676f7d3cd4284a5443f17f1962b36e491b30a40b2405849e597ba5fb5" is the slot storing the balance of zero address 
-        // `cast index address uint 0x0000000000000000000000000000000000000000 0`
-        bytes32 zero_address_balance_slot = 0xad3228b676f7d3cd4284a5443f17f1962b36e491b30a40b2405849e597ba5fb5;
+        // "0x3617319a054d772f909f7c479a2cebe5066e836a939412e32403c99029b92eff" is the slot storing the balance of zero address for the weth contract
+        // `cast index address uint 0x0000000000000000000000000000000000000000 3`
+        bytes32 zero_address_balance_slot = 0x3617319a054d772f909f7c479a2cebe5066e836a939412e32403c99029b92eff;
         cheatvm.store(WETH_TOKEN_ADDR, zero_address_balance_slot, value);
         assertEq(WETH.balanceOf(0x0000000000000000000000000000000000000000), 1, "Cheatcode did not change value at the storage slot.");
     }
@@ -59,7 +59,6 @@ contract ForkTest is DSTest {
     function testDepositWeth() public {
         IWETH WETH = IWETH(WETH_TOKEN_ADDR);
         WETH.deposit{value: 1000}();
-        uint balance = WETH.balanceOf(msg.sender);
-        assertEq(balance, 1000, "WETH balance is not equal to deposited amount.");
+        assertEq(WETH.balanceOf(address(this)), 1000, "WETH balance is not equal to deposited amount.");
     }
 }

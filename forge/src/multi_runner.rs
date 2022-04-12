@@ -275,7 +275,6 @@ mod tests {
         decode::decode_console_logs,
         test_helpers::{filter::Filter, COMPILED, EVM_OPTS, LIBS_PROJECT, PROJECT},
     };
-    use foundry_config::Config;
     use foundry_evm::trace::TraceKind;
 
     /// Builds a base runner
@@ -298,17 +297,12 @@ mod tests {
     // Builds a runner that runs against forked state
     fn forked_runner(rpc: &str) -> MultiContractRunner {
         let mut opts = EVM_OPTS.clone();
-        // TODO: it would be good to test against chains other than mainnet too
-        let chain_id = 1;
-        let block = 14444444;
-        let cache_path = Config::foundry_block_cache_file(chain_id, block);
 
-        let fork =
-            Some(Fork { cache_path, url: rpc.to_string(), pin_block: Some(block), chain_id });
-
-        opts.fork_block_number = Some(block);
+        opts.env.chain_id = None; // clear chain id so the correct one gets fetched from the RPC
         opts.fork_url = Some(rpc.to_string());
-        opts.env.chain_id = Some(chain_id);
+        let chain_id = opts.get_chain_id();
+
+        let fork = Some(Fork { cache_path: None, url: rpc.to_string(), pin_block: None, chain_id });
 
         base_runner()
             .with_fork(fork)
