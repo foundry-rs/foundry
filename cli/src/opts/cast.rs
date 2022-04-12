@@ -639,13 +639,17 @@ pub enum WalletSubcommands {
     },
     #[clap(name = "vanity", about = "Generate a vanity address.")]
     Vanity {
-        #[clap(long, help = "Prefix for vanity address.", required_unless_present = "ends-with")]
+        #[clap(
+            long,
+            help = "Prefix for the vanity address.",
+            required_unless_present = "ends-with"
+        )]
         starts_with: Option<String>,
-        #[clap(long, help = "Suffix for vanity address.")]
+        #[clap(long, help = "Suffix for the vanity address.")]
         ends_with: Option<String>,
         #[clap(
             long,
-            help = "Generate a vanity contract address created by the generated account with specified nonce."
+            help = "Generate a vanity contract address created by the generated keypair with the specified nonce."
         )]
         nonce: Option<u64>, /* 2^64-1 is max possible nonce per https://eips.ethereum.org/EIPS/eip-2681 */
     },
@@ -667,7 +671,7 @@ pub enum WalletSubcommands {
         message: String,
         #[clap(help = "The signature to verify.")]
         signature: String,
-        #[clap(long, short, help = "The public key of the message signer.")]
+        #[clap(long, short, help = "The address of the message signer.")]
         address: String,
     },
 }
