@@ -196,7 +196,7 @@ impl<'a, DB: DatabaseRef> ContractRunner<'a, DB> {
 impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
     /// Deploys the test contract inside the runner from the sending account, and optionally runs
     /// the `setUp` function on the test contract.
-    pub fn setup(&mut self, setup: bool) -> Result<TestSetup> {
+    pub fn setup(&mut self, setup: Option<&Function>) -> Result<TestSetup> {
         // We max out their balance so that they can deploy and make calls.
         self.executor.set_balance(self.sender, U256::MAX);
         self.executor.set_balance(*CALLER, U256::MAX);
@@ -232,30 +232,31 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         self.executor.set_balance(self.sender, self.initial_balance);
 
         // Optionally call the `setUp` function
-        Ok(if setup {
-            tracing::trace!("setting up");
-            let (setup_failed, setup_logs, setup_traces, labeled_addresses, reason) = match self
-                .executor
-                .setup(address)
-            {
-                Ok(CallResult { traces, labels, logs, .. }) => (false, logs, traces, labels, None),
-                Err(EvmError::Execution { traces, labels, logs, reason, .. }) => {
-                    (true, logs, traces, labels, Some(format!("Setup failed: {}", reason)))
-                }
-                Err(e) => (
-                    true,
-                    Vec::new(),
-                    None,
-                    BTreeMap::new(),
-                    Some(format!("Setup failed: {}", &e.to_string())),
-                ),
-            };
-            traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)).into_iter());
-            logs.extend_from_slice(&setup_logs);
+        Ok(match setup {
+            Some(func) => {
+                tracing::trace!("setting up");
+                let (setup_failed, setup_logs, setup_traces, labeled_addresses, reason) =
+                    match self.executor.setup(address, &func.name) {
+                        Ok(CallResult { traces, labels, logs, .. }) => {
+                            (false, logs, traces, labels, None)
+                        }
+                        Err(EvmError::Execution { traces, labels, logs, reason, .. }) => {
+                            (true, logs, traces, labels, Some(format!("Setup failed: {}", reason)))
+                        }
+                        Err(e) => (
+                            true,
+                            Vec::new(),
+                            None,
+                            BTreeMap::new(),
+                            Some(format!("Setup failed: {}", &e.to_string())),
+                        ),
+                    };
+                traces.extend(setup_traces.map(|traces| (TraceKind::Setup, traces)).into_iter());
+                logs.extend_from_slice(&setup_logs);
 
-            TestSetup { address, logs, traces, labeled_addresses, setup_failed, reason }
-        } else {
-            TestSetup { address, logs, traces, ..Default::default() }
+                TestSetup { address, logs, traces, labeled_addresses, setup_failed, reason }
+            }
+            None => TestSetup { address, logs, traces, ..Default::default() },
         })
     }
 
@@ -268,9 +269,10 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
     ) -> Result<SuiteResult> {
         tracing::info!("starting tests");
         let start = Instant::now();
-        let needs_setup = self.contract.functions().any(|func| func.name == "setUp");
+        let setup_fn =
+            self.contract.functions().find(|func| func.name.to_lowercase() == "setup");
 
-        let setup = self.setup(needs_setup)?;
+        let setup = self.setup(setup_fn)?;
         if setup.setup_failed {
             // The setup failed, so we return a single test result for `setUp`
             return Ok(SuiteResult::new(
@@ -288,7 +290,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                     },
                 )]
                 .into(),
-            ))
+            ));
         }
 
         // Collect valid test functions

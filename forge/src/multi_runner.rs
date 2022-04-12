@@ -367,6 +367,7 @@ mod tests {
                         None,
                     )],
                 ),
+                ("core/LowercaseSetup.t.sol:LowercaseSetup", vec![("testSetup()", true, None, None)]),
                 (
                     "core/Reverting.t.sol:RevertingTest",
                     vec![("testFailRevert()", true, None, None)],

@@ -7,7 +7,7 @@ use crate::{
 use ansi_term::Colour;
 use clap::{Parser, ValueHint};
 use ethers::{
-    abi::{Abi, RawLog},
+    abi::{Abi, Function, RawLog},
     prelude::ArtifactId,
     solc::{
         artifacts::{CompactContractBytecode, ContractBytecode, ContractBytecodeSome},
@@ -96,7 +96,7 @@ impl Cmd for RunArgs {
         let CompactContractBytecode { abi, bytecode, .. } = contract;
         let abi = abi.expect("no ABI for contract");
         let bytecode = bytecode.expect("no bytecode for contract").object.into_bytes().unwrap();
-        let needs_setup = abi.functions().any(|func| func.name == "setUp");
+        let setup_fn = abi.functions().find(|func| func.name.to_lowercase() == "setup");
 
         let runtime = RuntimeOrHandle::new();
         let env = runtime.block_on(evm_opts.evm_env());
@@ -120,8 +120,7 @@ impl Cmd for RunArgs {
         let mut result = {
             let mut runner =
                 Runner::new(builder.build(db), evm_opts.initial_balance, evm_opts.sender);
-            let (address, mut result) =
-                runner.setup(&predeploy_libraries, bytecode, needs_setup)?;
+            let (address, mut result) = runner.setup(&predeploy_libraries, bytecode, setup_fn)?;
 
             let RunResult {
                 success, gas, logs, traces, debug: run_debug, labeled_addresses, ..
@@ -360,7 +359,7 @@ impl<DB: DatabaseRef> Runner<DB> {
         &mut self,
         libraries: &[Bytes],
         code: Bytes,
-        setup: bool,
+        setup_fn: Option<&Function>,
     ) -> eyre::Result<(Address, RunResult)> {
         // We max out their balance so that they can deploy and make calls.
         self.executor.set_balance(self.sender, U256::MAX);
@@ -395,8 +394,8 @@ impl<DB: DatabaseRef> Runner<DB> {
         self.executor.set_balance(address, self.initial_balance);
 
         // Optionally call the `setUp` function
-        Ok(if setup {
-            match self.executor.setup(address) {
+        Ok(match setup_fn {
+            Some(func) => match self.executor.setup(address, &func.name) {
                 Ok(CallResult {
                     reverted,
                     traces: setup_traces,
@@ -405,8 +404,8 @@ impl<DB: DatabaseRef> Runner<DB> {
                     debug,
                     gas,
                     ..
-                }) |
-                Err(EvmError::Execution {
+                })
+                | Err(EvmError::Execution {
                     reverted,
                     traces: setup_traces,
                     labels,
@@ -432,9 +431,8 @@ impl<DB: DatabaseRef> Runner<DB> {
                     )
                 }
                 Err(e) => return Err(e.into()),
-            }
-        } else {
-            (
+            },
+            None => (
                 address,
                 RunResult {
                     logs,
@@ -444,7 +442,7 @@ impl<DB: DatabaseRef> Runner<DB> {
                     gas: 0,
                     labeled_addresses: Default::default(),
                 },
-            )
+            ),
         })
     }
 

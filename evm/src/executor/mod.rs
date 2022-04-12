@@ -216,8 +216,19 @@ where
     }
 
     /// Calls the `setUp()` function on a contract.
-    pub fn setup(&mut self, address: Address) -> std::result::Result<CallResult<()>, EvmError> {
-        self.call_committing::<(), _, _>(*CALLER, address, "setUp()", (), 0.into(), None)
+    pub fn setup(
+        &mut self,
+        address: Address,
+        func_name: &str,
+    ) -> std::result::Result<CallResult<()>, EvmError> {
+        self.call_committing::<(), _, _>(
+            *CALLER,
+            address,
+            format!("{}()", func_name),
+            (),
+            0.into(),
+            None,
+        )
     }
 
     /// Performs a call to an account on the current state of the VM.
