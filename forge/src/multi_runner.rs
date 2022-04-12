@@ -10,7 +10,6 @@ use foundry_evm::executor::{
     builder::Backend, opts::EvmOpts, DatabaseRef, Executor, ExecutorBuilder, Fork, SpecId,
 };
 use foundry_utils::{PostLinkInput, RuntimeOrHandle};
-use foundry_config::Config;
 use proptest::test_runner::TestRunner;
 use rayon::prelude::*;
 use std::{collections::BTreeMap, marker::Sync, path::Path, sync::mpsc::Sender};
@@ -276,6 +275,7 @@ mod tests {
         decode::decode_console_logs,
         test_helpers::{filter::Filter, COMPILED, EVM_OPTS, PROJECT},
     };
+    use foundry_config::Config;
     use foundry_evm::trace::TraceKind;
 
     /// Builds a base runner
@@ -300,20 +300,20 @@ mod tests {
         let mut opts = EVM_OPTS.clone();
         let chain_id = 1;
         let block = 14444444;
-        let cache_path = Config::foundry_block_cache_file(chain_id,block);
+        let cache_path = Config::foundry_block_cache_file(chain_id, block);
         let rpc = "https://rpc.flashbots.net";
 
-        let fork = Some(Fork {
-            cache_path,
-            url: rpc.to_string(),
-            pin_block: Some(block),
-            chain_id
-        });
+        let fork =
+            Some(Fork { cache_path, url: rpc.to_string(), pin_block: Some(block), chain_id });
 
         opts.fork_block_number = Some(block);
         opts.fork_url = Some(rpc.to_string());
         opts.env.chain_id = Some(chain_id);
-        base_runner().with_fork(fork).build(&(*PROJECT).paths.root, (*COMPILED).clone(), opts).unwrap()
+
+        base_runner()
+            .with_fork(fork)
+            .build(&(*PROJECT).paths.root, (*COMPILED).clone(), opts)
+            .unwrap()
     }
 
     /// A helper to assert the outcome of multiple tests with helpful assert messages
@@ -574,14 +574,13 @@ mod tests {
     fn test_fork() {
         let mut runner = forked_runner();
         let suite_result = runner.test(&Filter::new(".*", ".*", ".*fork"), None, true).unwrap();
-        
+
         for (_, SuiteResult { test_results, .. }) in suite_result {
             for (test_name, result) in test_results {
                 assert!(
                     result.success,
                     "Test {} did not pass as expected.\nReason: {:?}\n",
-                    test_name,
-                    result.reason
+                    test_name, result.reason
                 );
             }
         }

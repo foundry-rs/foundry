@@ -50,7 +50,7 @@ contract ForkTest is DSTest {
     function testCallMutate() public {
         erc20 weth = erc20(weth_token_addr);
         uint bal = weth.balanceOf(msg.sender);
-        weth.transfer(1000,weth_toke_addr);
+        weth.transfer(1000,weth_token_addr);
         assertEq(weth.balanceOf(msg.sender), bal - 1000);
     }
 }
