@@ -63,7 +63,7 @@ impl ExecutedTransaction {
     }
 }
 
-/// An executer for a series of transactions
+/// An executor for a series of transactions
 pub struct TransactionExecutor<'a, Db: ?Sized> {
     /// where to insert the transactions
     pub db: &'a mut Db,
