@@ -132,6 +132,7 @@ pub enum Subcommands {
         )]
         block: Option<BlockId>,
         #[clap(flatten)]
+        // TODO: We only need RPC URL + etherscan stuff from this struct
         eth: EthereumOpts,
         #[clap(long = "json", short = 'j')]
         to_json: bool,
@@ -595,7 +596,7 @@ pub enum Subcommands {
             long_help = "The path to the output file. If not specified, the interface will be output to stdout."
         )]
         output_location: Option<PathBuf>,
-        #[clap(short, env = "ETHERSCAN_API_KEY", help = "etherscan API key")]
+        #[clap(long, short, env = "ETHERSCAN_API_KEY", help = "etherscan API key")]
         etherscan_api_key: Option<String>,
         #[clap(flatten)]
         chain: ClapChain,
