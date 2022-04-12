@@ -42,7 +42,7 @@ pub struct NodeConfig {
     pub automine: Option<Duration>,
     /// port to use for the server
     pub port: u16,
-    /// maximumg number of transactions in a block
+    /// maximum number of transactions in a block
     pub max_transactions: usize,
     /// don't print anything on startup
     pub silent: bool,
