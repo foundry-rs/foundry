@@ -47,7 +47,7 @@ pub struct VerifyArgs {
         long,
         alias = "chain-id",
         env = "CHAIN",
-        help = "the name or id of chain of the network you are verifying for",
+        help = "The chain ID the contract is deployed to.",
         default_value = "mainnet"
     )]
     chain: Chain,
@@ -242,19 +242,19 @@ To skip this solc dry, pass `--force`.
 /// Check verification status arguments
 #[derive(Debug, Clone, Parser)]
 pub struct VerifyCheckArgs {
-    #[clap(help = "the verification guid")]
+    #[clap(help = "The verification GUID.")]
     guid: String,
 
     #[clap(
         long,
         alias = "chain-id",
         env = "CHAIN",
-        help = "the name or id of chain of the network you are verifying for",
+        help = "The chain ID the contract is deployed to.",
         default_value = "mainnet"
     )]
     chain: Chain,
 
-    #[clap(help = "your etherscan api key", env = "ETHERSCAN_API_KEY")]
+    #[clap(help = "Your Etherscan API key.", env = "ETHERSCAN_API_KEY")]
     etherscan_key: String,
 }
 
