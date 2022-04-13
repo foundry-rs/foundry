@@ -76,7 +76,7 @@ pub enum Subcommands {
         dependencies: Vec<Dependency>,
     },
 
-    #[clap(about = "Get the automatically inferred remappings for this project.")]
+    #[clap(about = "Get the automatically inferred remappings for the project.")]
     Remappings(RemappingArgs),
 
     #[clap(
