@@ -10,6 +10,7 @@ use crate::{
         sign::Signer,
     },
     revm::TransactOut,
+    Provider,
 };
 use anvil_core::{
     eth::{
@@ -26,6 +27,7 @@ use anvil_core::{
 use anvil_rpc::response::ResponseResult;
 use ethers::{
     abi::ethereum_types::H64,
+    providers::ProviderError,
     types::{
         Address, Block, BlockNumber, Bytes, Log, Transaction, TransactionReceipt, TxHash, H256,
         U256, U64,
@@ -33,6 +35,7 @@ use ethers::{
     utils::rlp,
 };
 use std::sync::Arc;
+use tracing::trace;
 
 /// The entry point for executing eth api RPC call - The Eth RPC interface.
 ///
@@ -662,15 +665,24 @@ impl EthApi {
     /// Sets the reported block number
     ///
     /// Handler for ETH RPC call: `forge_setBlock`
-    pub fn forge_set_block(&self, _block_number: U256) -> Result<U256> {
+    pub fn forge_set_block(&self, block_number: U256) -> Result<U256> {
         Err(BlockchainError::RpcUnimplemented)
     }
 
     /// Sets the backend rpc url
     ///
     /// Handler for ETH RPC call: `forge_setRpcUrl`
-    pub fn forge_set_rpc_url(&self, _url: String) -> Result<()> {
-        Err(BlockchainError::RpcUnimplemented)
+    pub fn forge_set_rpc_url(&self, url: String) -> Result<()> {
+        if let Some(fork) = self.backend.get_fork() {
+            let new_provider = Arc::new(Provider::try_from(&url).map_err(|_| {
+                ProviderError::CustomError(format!("Failed to parse invalid url {}", url))
+            })?);
+            let mut config = fork.config.write();
+            trace!(target: "backend", "Updated fork rpc from \"{}\" to \"{}\"", config.eth_rpc_url, url);
+            config.eth_rpc_url = url;
+            config.provider = new_provider;
+        }
+        Ok(())
     }
 
     /// Sets the mining mode

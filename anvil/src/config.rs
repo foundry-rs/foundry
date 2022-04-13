@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use crate::{
     eth::backend::db::{Db, ForkedDatabase},
-    fork::ClientFork,
+    fork::{ClientFork, ClientForkConfig},
     mem,
     revm::db::CacheDB,
 };
@@ -246,7 +246,10 @@ Block number:   {}
 Block hash:     {:?}
 Chain ID:       {}
 "#,
-                fork.eth_rpc_url, fork.block_number, fork.block_hash, fork.chain_id
+                fork.eth_rpc_url(),
+                fork.block_number(),
+                fork.block_hash(),
+                fork.chain_id()
             );
         }
 
@@ -303,12 +306,14 @@ Chain ID:       {}
             let db = Arc::new(RwLock::new(ForkedDatabase::new(backend, db)));
 
             let fork = ClientFork {
-                eth_rpc_url,
-                block_number: fork_block_number,
-                block_hash,
-                provider,
                 storage: Default::default(),
-                chain_id,
+                config: Arc::new(RwLock::new(ClientForkConfig {
+                    eth_rpc_url,
+                    block_number: fork_block_number,
+                    block_hash,
+                    provider,
+                    chain_id,
+                })),
             };
 
             (db, Some(fork))

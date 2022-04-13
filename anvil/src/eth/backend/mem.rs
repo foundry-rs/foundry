@@ -202,8 +202,8 @@ impl Backend {
 
         // if this is a fork then adjust the blockchain storage
         let blockchain = if let Some(ref fork) = fork {
-            trace!(target: "backend", "using forked blockchain at {}", fork.block_number);
-            Blockchain::forked(fork.block_number, fork.block_hash)
+            trace!(target: "backend", "using forked blockchain at {}", fork.block_number());
+            Blockchain::forked(fork.block_number(), fork.block_hash())
         } else {
             Default::default()
         };
@@ -502,7 +502,7 @@ impl Backend {
 
             if !fork.predates_fork(to) {
                 // adjust the ranges
-                to_on_fork = fork.block_number;
+                to_on_fork = fork.block_number();
             }
 
             if fork.predates_fork(from) {
@@ -512,7 +512,7 @@ impl Backend {
                 all_logs = fork.logs(&filter).await?;
 
                 // update the range
-                from = fork.block_number + 1;
+                from = fork.block_number() + 1;
             }
         }
 
