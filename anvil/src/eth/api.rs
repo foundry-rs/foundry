@@ -126,7 +126,7 @@ impl EthApi {
             EthRequest::EthGetUncleByBlockNumberAndIndex(num, index) => {
                 self.uncle_by_block_number_and_index(num, index).to_rpc_result()
             }
-            EthRequest::EthGetLogs(filter) => self.logs(filter).to_rpc_result(),
+            EthRequest::EthGetLogs(filter) => self.logs(filter).await.to_rpc_result(),
             EthRequest::EthGetWork => self.work().to_rpc_result(),
             EthRequest::EthSubmitWork(nonce, pow, digest) => {
                 self.submit_work(nonce, pow, digest).to_rpc_result()
@@ -527,7 +527,7 @@ impl EthApi {
     /// Returns logs matching given filter object.
     ///
     /// Handler for ETH RPC call: `eth_getLogs`
-    pub fn logs(&self, _: Filter) -> Result<Vec<Log>> {
+    pub async fn logs(&self, _: Filter) -> Result<Vec<Log>> {
         Err(BlockchainError::RpcUnimplemented)
     }
 
