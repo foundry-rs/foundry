@@ -53,11 +53,14 @@ pub mod test_helpers {
             .sources("../testdata")
             .build()
             .unwrap();
-
-        let mut settings = Settings::default();
-        let libs = // change this
+        let libs =
             ["fork/Fork.t.sol:DssExecLib:0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4".to_string()];
-        settings.libraries = foundry_config::parse_libraries(&libs).unwrap();
+
+        let settings = Settings {
+            libraries: foundry_config::parse_libraries(&libs).unwrap(),
+            ..Default::default()
+        };
+
         let solc_config = SolcConfig::builder().settings(settings).build();
         Project::builder()
             .paths(paths)
