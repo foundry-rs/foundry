@@ -53,7 +53,7 @@ where
     /// Makes a read-only call to the specified address
     ///
     /// ```no_run
-    /// 
+    ///
     /// use cast::{Cast, TxBuilder};
     /// use ethers_core::types::{Address, Chain};
     /// use ethers_providers::{Provider, Http};
@@ -114,7 +114,7 @@ where
     /// Generates an access list for the specified transaction
     ///
     /// ```no_run
-    /// 
+    ///
     /// use cast::{Cast, TxBuilder};
     /// use ethers_core::types::{Address, Chain};
     /// use ethers_providers::{Provider, Http};
@@ -340,8 +340,13 @@ where
             false,
         )
         .await?;
-        Ok(U256::from_str_radix(strip_0x(&block_field), 16)
-            .expect("Unable to convert hexadecimal to U256"))
+
+        let ret = if block_field.starts_with("0x") {
+            U256::from_str_radix(strip_0x(&block_field), 16).expect("Unable to convert hex to U256")
+        } else {
+            U256::from_str_radix(&block_field, 10).expect("Unable to convert decimal to U256")
+        };
+        Ok(ret)
     }
 
     pub async fn base_fee<T: Into<BlockId>>(&self, block: T) -> Result<U256> {
@@ -1215,7 +1220,7 @@ impl SimpleCast {
         let code = meta.source_code();
 
         if code.is_empty() {
-            return Err(eyre::eyre!("unverified contract"))
+            return Err(eyre::eyre!("unverified contract"));
         }
 
         Ok(code)
