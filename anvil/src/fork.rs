@@ -9,7 +9,7 @@ use std::{collections::HashMap, sync::Arc};
 use ethers::{
     prelude::BlockNumber,
     providers::{Middleware, ProviderError},
-    types::{Address, Block, Bytes, Transaction, TransactionReceipt, TxHash, U256},
+    types::{Address, Block, Bytes, Filter, Log, Transaction, TransactionReceipt, TxHash, U256},
 };
 use foundry_evm::utils::u256_to_h256_le;
 use parking_lot::RwLock;
@@ -41,6 +41,10 @@ impl ClientFork {
     ) -> Result<H256, ProviderError> {
         let index = u256_to_h256_le(index);
         self.provider.get_storage_at(address, index, number.map(Into::into)).await
+    }
+
+    pub async fn logs(&self, filter: &Filter) -> Result<Vec<Log>, ProviderError> {
+        self.provider.get_logs(filter).await
     }
 
     pub async fn get_code(

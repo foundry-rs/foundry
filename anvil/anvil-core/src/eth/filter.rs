@@ -1,7 +1,6 @@
-use crate::eth::receipt::Log;
 use ethers_core::{
     abi::ethereum_types::BloomInput,
-    types::{Address, BlockNumber, Bloom, ValueOrArray, H256},
+    types::{Address, BlockNumber, Bloom, Filter as EthersFilter, Log, ValueOrArray, H256},
 };
 use serde::{Deserialize, Serialize};
 
@@ -33,6 +32,86 @@ pub struct Filter {
     ///
     /// Topics are order-dependent. Each topic can also be an array with “or” options.
     pub topics: Option<Topics>,
+}
+
+// === impl Filter ===
+
+impl Filter {
+    /// Returns the numeric value of the `toBlock` field
+    pub fn get_to_block_number(&self) -> Option<u64> {
+        self.to_block.and_then(|block| match block {
+            BlockNumber::Number(num) => Some(num.as_u64()),
+            _ => None,
+        })
+    }
+
+    /// Returns the numeric value of the `fromBlock` field
+    pub fn get_from_block_number(&self) -> Option<u64> {
+        self.from_block.and_then(|block| match block {
+            BlockNumber::Number(num) => Some(num.as_u64()),
+            _ => None,
+        })
+    }
+}
+
+// this is horrible
+impl From<Filter> for EthersFilter {
+    fn from(f: Filter) -> Self {
+        let Filter { from_block, to_block, block_hash, address, topics } = f;
+
+        let mut filter = EthersFilter::new();
+        if let Some(address) = address {
+            filter = filter.address(address);
+        }
+        if let Some(block_hash) = block_hash {
+            filter = filter.at_block_hash(block_hash);
+        }
+        if let Some(from_block) = from_block {
+            filter = filter.from_block(from_block);
+        }
+        if let Some(to_block) = to_block {
+            filter = filter.to_block(to_block);
+        }
+        if let Some(topics) = topics {
+            match topics {
+                Topics::Value(Some(val)) => {
+                    let topic = match val {
+                        ValueOrArray::Value(Some(val)) => Some(ValueOrArray::Value(val)),
+                        ValueOrArray::Array(inner) => {
+                            Some(ValueOrArray::Array(inner.into_iter().filter_map(|t| t).collect()))
+                        }
+                        _ => None,
+                    };
+                    if let Some(topic) = topic {
+                        filter = filter.topic0(topic);
+                    }
+                }
+                Topics::Array(topics) => {
+                    for (idx, topic) in topics.into_iter().enumerate().take(4) {
+                        if let Some(topic) = topic {
+                            let topic = match topic {
+                                ValueOrArray::Value(Some(val)) => ValueOrArray::Value(val),
+                                ValueOrArray::Array(inner) => ValueOrArray::Array(
+                                    inner.into_iter().filter_map(|t| t).collect(),
+                                ),
+                                _ => continue,
+                            };
+                            filter = match idx {
+                                0 => filter.topic0(topic),
+                                1 => filter.topic1(topic),
+                                2 => filter.topic2(topic),
+                                3 => filter.topic3(topic),
+                                _ => unreachable!(),
+                            };
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        filter
+    }
 }
 
 /// Support for matching [Filter]s

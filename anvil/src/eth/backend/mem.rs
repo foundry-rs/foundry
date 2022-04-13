@@ -21,6 +21,7 @@ use anvil_core::{
     eth::{
         block::{Block, BlockInfo, Header, PartialHeader},
         call::CallRequest,
+        filter::{Filter, FilteredParams},
         receipt::{EIP658Receipt, TypedReceipt},
         transaction::{PendingTransaction, TransactionInfo, TypedTransaction},
         utils::to_access_list,
@@ -28,7 +29,10 @@ use anvil_core::{
     types::Index,
 };
 use ethers::{
-    types::{Address, Block as EthersBlock, Bytes, Log, Transaction, TransactionReceipt},
+    types::{
+        Address, Block as EthersBlock, Bytes, Filter as EthersFilter, Log, Transaction,
+        TransactionReceipt,
+    },
     utils::{keccak256, rlp},
 };
 use foundry_evm::{
@@ -402,6 +406,138 @@ impl Backend {
         receipts
     }
 
+    /// Returns the logs of the block that match the filter
+    async fn logs_for_block(
+        &self,
+        filter: Filter,
+        hash: H256,
+    ) -> Result<Vec<Log>, BlockchainError> {
+        if let Some(block) = self.blockchain.storage.read().blocks.get(&hash).cloned() {
+            return Ok(self.mined_logs_for_block(filter, block))
+        }
+
+        if let Some(ref fork) = self.fork {
+            let filter = filter.into();
+            return Ok(fork.logs(&filter).await?)
+        }
+
+        Ok(Vec::new())
+    }
+
+    /// Returns all `Log`s mined by the node that were emitted in the `block` and match the `Filter`
+    fn mined_logs_for_block(&self, filter: Filter, block: Block) -> Vec<Log> {
+        let params = FilteredParams::new(Some(filter.clone()));
+        let mut all_logs = Vec::new();
+        let block_hash = block.header.hash();
+        let mut block_log_index = 0u32;
+
+        let transactions: Vec<_> = {
+            let storage = self.blockchain.storage.read();
+            block
+                .transactions
+                .iter()
+                .filter_map(|tx| storage.transactions.get(&tx.hash()).map(|tx| tx.info.clone()))
+                .collect()
+        };
+
+        for transaction in transactions {
+            let logs = transaction.logs.clone();
+            let transaction_hash = transaction.transaction_hash;
+
+            for (log_idx, log) in logs.into_iter().enumerate() {
+                let mut log = Log {
+                    address: log.address,
+                    topics: log.topics,
+                    data: log.data,
+                    block_hash: None,
+                    block_number: None,
+                    transaction_hash: None,
+                    transaction_index: None,
+                    log_index: None,
+                    transaction_log_index: None,
+                    log_type: None,
+                    removed: Some(false),
+                };
+                let mut is_match: bool = true;
+                if filter.address.is_some() && filter.topics.is_some() {
+                    if !params.filter_address(&log) || !params.filter_topics(&log) {
+                        is_match = false;
+                    }
+                } else if filter.address.is_some() {
+                    if !params.filter_address(&log) {
+                        is_match = false;
+                    }
+                } else if filter.topics.is_some() && !params.filter_topics(&log) {
+                    is_match = false;
+                }
+
+                if is_match {
+                    log.block_hash = Some(block_hash);
+                    log.block_number = Some(block.header.number.as_u64().into());
+                    log.transaction_hash = Some(transaction_hash);
+                    log.transaction_index = Some(transaction.transaction_index.into());
+                    log.log_index = Some(U256::from(block_log_index));
+                    log.transaction_log_index = Some(U256::from(log_idx));
+                    all_logs.push(log);
+                }
+                block_log_index += 1;
+            }
+        }
+
+        all_logs
+    }
+
+    /// Returns the logs that match the filter in the given range of blocks
+    async fn logs_for_range(
+        &self,
+        filter: &Filter,
+        mut from: u64,
+        to: u64,
+    ) -> Result<Vec<Log>, BlockchainError> {
+        let mut all_logs = Vec::new();
+
+        // get the range that predates the fork if any
+        if let Some(ref fork) = self.fork {
+            let mut to_on_fork = to;
+
+            if !fork.predates_fork(to) {
+                // adjust the ranges
+                to_on_fork = fork.block_number;
+            }
+
+            if fork.predates_fork(from) {
+                // this data is only available on the forked client
+                let mut filter: EthersFilter = filter.clone().into();
+                filter = filter.from_block(from).to_block(to_on_fork);
+                all_logs = fork.logs(&filter).await?;
+
+                // update the range
+                from = fork.block_number + 1;
+            }
+        }
+
+        for number in from..=to {
+            if let Some(block) = self.get_block(number) {
+                all_logs.extend(self.mined_logs_for_block(filter.clone(), block));
+            }
+        }
+
+        Ok(all_logs)
+    }
+
+    /// Returns the logs according to the filter
+    pub async fn logs(&self, filter: Filter) -> Result<Vec<Log>, BlockchainError> {
+        if let Some(hash) = filter.block_hash {
+            self.logs_for_block(filter, hash).await
+        } else {
+            let best = self.best_number().as_u64();
+            let to_block = filter.get_to_block_number().unwrap_or(best).min(best);
+
+            let from_block = filter.get_from_block_number().unwrap_or(best).min(best);
+            self.logs_for_range(&filter, from_block, to_block).await
+        }
+    }
+
     pub async fn block_by_hash(
         &self,
         hash: H256,
@@ -437,19 +573,19 @@ impl Backend {
         Ok(None)
     }
 
-    pub fn mined_block_by_number(&self, number: BlockNumber) -> Option<EthersBlock<TxHash>> {
-        let block = {
-            let storage = self.blockchain.storage.read();
-            let hash = match number {
-                BlockNumber::Latest => storage.best_hash,
-                BlockNumber::Earliest => storage.genesis_hash,
-                BlockNumber::Pending => return None,
-                BlockNumber::Number(num) => *storage.hashes.get(&num)?,
-            };
-            storage.blocks.get(&hash)?.clone()
+    fn get_block(&self, number: impl Into<BlockNumber>) -> Option<Block> {
+        let storage = self.blockchain.storage.read();
+        let hash = match number.into() {
+            BlockNumber::Latest => storage.best_hash,
+            BlockNumber::Earliest => storage.genesis_hash,
+            BlockNumber::Pending => return None,
+            BlockNumber::Number(num) => *storage.hashes.get(&num)?,
         };
+        Some(storage.blocks.get(&hash)?.clone())
+    }
 
-        self.convert_block(block)
+    pub fn mined_block_by_number(&self, number: BlockNumber) -> Option<EthersBlock<TxHash>> {
+        self.convert_block(self.get_block(number)?)
     }
 
     /// Takes a block as it's stored internally and returns the eth api conform block format

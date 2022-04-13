@@ -527,8 +527,8 @@ impl EthApi {
     /// Returns logs matching given filter object.
     ///
     /// Handler for ETH RPC call: `eth_getLogs`
-    pub async fn logs(&self, _: Filter) -> Result<Vec<Log>> {
-        Err(BlockchainError::RpcUnimplemented)
+    pub async fn logs(&self, filter: Filter) -> Result<Vec<Log>> {
+        self.backend.logs(filter).await
     }
 
     /// Returns the hash of the current block, the seedHash, and the boundary condition to be met.
