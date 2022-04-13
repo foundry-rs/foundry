@@ -275,19 +275,21 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         tracing::info!("starting tests");
         let start = Instant::now();
         let mut warnings = Vec::new();
-        let needs_setup = self.contract.functions().any(|func| func.name == "setUp");
 
-        let setup_fns: Vec<_> = self
-            .contract
-            .functions()
-            .filter_map(|func| {
-                if func.name.to_lowercase() == "setup" {
-                    Some(func.signature())
-                } else {
-                    None
-                }
-            })
-            .collect();
+        let setup_fns: Vec<_> =
+            self.contract.functions().filter(|func| func.name.to_lowercase() == "setup").collect();
+
+        let needs_setup = setup_fns.len() == 1 && setup_fns[0].name == "setUp";
+
+        // There is a single miss-cased `setUp` function, so we add a warning
+        for setup_fn in setup_fns.iter() {
+            if setup_fn.name != "setUp" {
+                warnings.push(format!(
+                    "Found invalid setup function \"{}\" did you mean \"setUp()\"?",
+                    setup_fn.signature()
+                ));
+            }
+        }
 
         // There are multiple setUp function, so we return a single test result for `setUp`
         if setup_fns.len() > 1 {
@@ -308,14 +310,6 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                 .into(),
                 warnings,
             ))
-        }
-
-        // There is a single miss-cased `setUp` function, so we add a warning
-        if !needs_setup && setup_fns.len() == 1 {
-            warnings.push(format!(
-                "Found invalid setup function \"{}\" did you mean \"setUp()\"?",
-                setup_fns[0]
-            ));
         }
 
         let setup = self.setup(needs_setup)?;
