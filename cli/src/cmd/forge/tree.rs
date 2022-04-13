@@ -1,6 +1,6 @@
 //! tree command
 
-use crate::cmd::{forge::build::BuildArgs, Cmd};
+use crate::cmd::{forge::build::ProjectPathsArgs, Cmd};
 use clap::Parser;
 use ethers::solc::Graph;
 use foundry_config::Config;
@@ -11,9 +11,8 @@ use ethers::solc::resolver::{Charset, TreeOptions};
 /// Command to display the project's dependency tree
 #[derive(Debug, Clone, Parser)]
 pub struct TreeArgs {
-    // TODO extract path related args from BuildArgs
     #[clap(flatten)]
-    opts: BuildArgs,
+    opts: ProjectPathsArgs,
     #[clap(help = "Do not de-duplicate (repeats all shared dependencies)", long)]
     no_dedupe: bool,
     #[clap(help = "Character set to use in output: utf8, ascii", default_value = "utf8", long)]

@@ -1,9 +1,6 @@
 //! Verify contract source on etherscan
 
-use crate::{
-    cmd::forge::{build::BuildArgs, flatten::CoreFlattenArgs},
-    opts::forge::ContractInfo,
-};
+use crate::{cmd::forge::build::BuildArgs, opts::forge::ContractInfo};
 use clap::Parser;
 use ethers::{
     abi::Address,
@@ -21,6 +18,8 @@ use foundry_config::Chain;
 use semver::Version;
 use std::{collections::BTreeMap, path::Path};
 use tracing::{trace, warn};
+
+use super::build::ProjectPathsArgs;
 
 /// Verification arguments
 #[derive(Debug, Clone, Parser)]
@@ -59,7 +58,7 @@ pub struct VerifyArgs {
     flatten: bool,
 
     #[clap(flatten)]
-    opts: CoreFlattenArgs,
+    project_paths: ProjectPathsArgs,
 
     #[clap(
         short,
@@ -126,24 +125,8 @@ impl VerifyArgs {
     /// If `--flatten` is set to `true` then this will send with [`CodeFormat::SingleFile`]
     /// otherwise this will use the [`CodeFormat::StandardJsonInput`]
     fn create_verify_request(&self) -> eyre::Result<VerifyContract> {
-        let CoreFlattenArgs {
-            root,
-            contracts,
-            remappings,
-            remappings_env,
-            cache_path,
-            lib_paths,
-            hardhat,
-        } = self.opts.clone();
-
         let build_args = BuildArgs {
-            root,
-            contracts,
-            remappings,
-            remappings_env,
-            cache_path,
-            lib_paths,
-            out_path: None,
+            project_paths: self.project_paths.clone(),
             compiler: Default::default(),
             names: false,
             sizes: false,
@@ -152,7 +135,6 @@ impl VerifyArgs {
             use_solc: None,
             offline: false,
             force: false,
-            hardhat,
             libraries: vec![],
             watch: Default::default(),
             via_ir: false,

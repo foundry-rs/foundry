@@ -17,7 +17,7 @@ use foundry_config::{
         value::{Dict, Map, Value},
         Figment, Metadata, Profile, Provider,
     },
-    find_project_root_path, remappings_from_env_var, Config,
+    find_project_root_path, impl_figment_convert, remappings_from_env_var, Config,
 };
 use serde::Serialize;
 use watchexec::config::{InitConfig, RuntimeConfig};
@@ -35,11 +35,11 @@ impl<'a> From<&'a BuildArgs> for Figment {
             let config_path = canonicalized(config_path);
             Config::figment_with_root(config_path.parent().unwrap())
         } else {
-            Config::figment_with_root(args.project_root())
+            Config::figment_with_root(args.project_paths.project_root())
         };
 
         // remappings should stack
-        let mut remappings = args.get_remappings();
+        let mut remappings = args.project_paths.get_remappings();
         remappings
             .extend(figment.extract_inner::<Vec<Remapping>>("remappings").unwrap_or_default());
         remappings.sort_by(|a, b| a.name.cmp(&b.name));
@@ -55,7 +55,7 @@ impl<'a> From<&'a BuildArgs> for Config {
         // if `--config-path` is set we need to adjust the config's root path to the actual root
         // path for the project, otherwise it will the parent dir of the `--config-path`
         if args.config_path.is_some() {
-            config.__root = args.project_root().into();
+            config.__root = args.project_paths.project_root().into();
         }
         config
     }
@@ -83,56 +83,9 @@ impl<'a> From<&'a BuildArgs> for Config {
 // `figment::Provider` implementation
 #[derive(Debug, Clone, Parser, Serialize)]
 pub struct BuildArgs {
-    #[clap(
-        help = "the project's root path. By default, this is the root directory of the current Git repository or the current working directory if it is not part of a Git repository",
-        long,
-        value_hint = ValueHint::DirPath
-    )]
-    #[serde(skip)]
-    pub root: Option<PathBuf>,
-
-    #[clap(
-        env = "DAPP_SRC",
-        help = "the directory relative to the root under which the smart contracts are",
-        long,
-        short,
-        value_hint = ValueHint::DirPath
-    )]
-    #[serde(rename = "src", skip_serializing_if = "Option::is_none")]
-    pub contracts: Option<PathBuf>,
-
-    #[clap(help = "the remappings", long, short)]
-    #[serde(skip)]
-    pub remappings: Vec<ethers::solc::remappings::Remapping>,
-
-    #[clap(help = "the env var that holds remappings", long = "remappings-env")]
-    #[serde(skip)]
-    pub remappings_env: Option<String>,
-
-    #[clap(
-        help = "the path where cached compiled contracts are stored",
-        long = "cache-path",
-        value_hint = ValueHint::DirPath
-    )]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cache_path: Option<PathBuf>,
-
-    #[clap(
-        help = "the paths where your libraries are installed",
-        long,
-        value_hint = ValueHint::DirPath
-    )]
-    #[serde(rename = "libs", skip_serializing_if = "Vec::is_empty")]
-    pub lib_paths: Vec<PathBuf>,
-
-    #[clap(
-        help = "path to where the contract artifacts are stored",
-        long = "out",
-        short,
-        value_hint = ValueHint::DirPath
-    )]
-    #[serde(rename = "out", skip_serializing_if = "Option::is_none")]
-    pub out_path: Option<PathBuf>,
+    #[clap(flatten)]
+    #[serde(flatten)]
+    pub project_paths: ProjectPathsArgs,
 
     #[clap(flatten)]
     #[serde(flatten)]
@@ -180,15 +133,6 @@ pub struct BuildArgs {
     #[serde(skip)]
     pub force: bool,
 
-    #[clap(
-        help = "uses hardhat style project layout. This a convenience flag and is the same as `--contracts contracts --lib-paths node_modules`",
-        long,
-        conflicts_with = "contracts",
-        alias = "hh"
-    )]
-    #[serde(skip)]
-    pub hardhat: bool,
-
     #[clap(help = "add linked libraries", long, env = "DAPP_LIBRARIES")]
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub libraries: Vec<String>,
@@ -232,13 +176,6 @@ impl BuildArgs {
         Ok(config.project()?)
     }
 
-    /// Returns the root directory to use for configuring the [Project]
-    ///
-    /// This will be the `--root` argument if provided, otherwise see [find_project_root_path()]
-    fn project_root(&self) -> PathBuf {
-        self.root.clone().unwrap_or_else(|| find_project_root_path().unwrap())
-    }
-
     /// Returns whether `BuildArgs` was configured with `--watch`
     pub fn is_watch(&self) -> bool {
         self.watch.watch.is_some()
@@ -252,14 +189,9 @@ impl BuildArgs {
     }
 
     /// Returns the remappings to add to the config
+    #[deprecated(note = "Use ProjectPathsArgs::get_remappings() instead")]
     pub fn get_remappings(&self) -> Vec<Remapping> {
-        let mut remappings = self.remappings.clone();
-        if let Some(env_remappings) =
-            self.remappings_env.as_ref().and_then(|env| remappings_from_env_var(env))
-        {
-            remappings.extend(env_remappings.expect("Failed to parse env var remappings"));
-        }
-        remappings
+        self.project_paths.get_remappings()
     }
 }
 
@@ -273,17 +205,6 @@ impl Provider for BuildArgs {
         let value = Value::serialize(self)?;
         let error = InvalidType(value.to_actual(), "map".into());
         let mut dict = value.into_dict().ok_or(error)?;
-
-        let mut libs =
-            self.lib_paths.iter().map(|p| format!("{}", p.display())).collect::<Vec<_>>();
-        if self.hardhat {
-            dict.insert("src".to_string(), "contracts".to_string().into());
-            libs.push("node_modules".to_string());
-        }
-
-        if !libs.is_empty() {
-            dict.insert("libs".to_string(), libs.into());
-        }
 
         if self.no_auto_detect {
             dict.insert("auto_detect_solc".to_string(), false.into());
@@ -330,3 +251,117 @@ impl Provider for BuildArgs {
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }
+
+#[derive(Debug, Clone, Parser, Serialize)]
+pub struct ProjectPathsArgs {
+    #[clap(
+        help = "The project's root path.",
+        long_help = "The project's root path. By default, this is the root directory of the current Git repository, or the current working directory.",
+        long,
+        value_hint = ValueHint::DirPath
+    )]
+    #[serde(skip)]
+    pub root: Option<PathBuf>,
+
+    #[clap(
+        env = "DAPP_SRC",
+        help = "The contracts source directory.",
+        long,
+        short,
+        value_hint = ValueHint::DirPath
+    )]
+    #[serde(rename = "src", skip_serializing_if = "Option::is_none")]
+    pub contracts: Option<PathBuf>,
+
+    #[clap(help = "The project's remappings.", long, short)]
+    #[serde(skip)]
+    pub remappings: Vec<ethers::solc::remappings::Remapping>,
+
+    #[clap(help = "The project's remappings from the environment.", long = "remappings-env")]
+    #[serde(skip)]
+    pub remappings_env: Option<String>,
+
+    #[clap(
+        help = "The path to the compiler cache.",
+        long = "cache-path",
+        value_hint = ValueHint::DirPath
+    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_path: Option<PathBuf>,
+
+    #[clap(
+        help = "The path to the library folder.",
+        long,
+        value_hint = ValueHint::DirPath
+    )]
+    #[serde(rename = "libs", skip_serializing_if = "Vec::is_empty")]
+    pub lib_paths: Vec<PathBuf>,
+
+    #[clap(
+        help = "The path to the contract artifacts folder.",
+        long = "out",
+        short,
+        value_hint = ValueHint::DirPath
+    )]
+    #[serde(rename = "out", skip_serializing_if = "Option::is_none")]
+    pub out_path: Option<PathBuf>,
+
+    #[clap(
+        help = "Use the Hardhat-style project layout.",
+        long_help = "This a convenience flag and is the same as passing `--contracts contracts --lib-paths node_modules`.",
+        long,
+        conflicts_with = "contracts",
+        alias = "hh"
+    )]
+    #[serde(skip)]
+    pub hardhat: bool,
+}
+
+impl ProjectPathsArgs {
+    /// Returns the root directory to use for configuring the [Project]
+    ///
+    /// This will be the `--root` argument if provided, otherwise see [find_project_root_path()]
+    fn project_root(&self) -> PathBuf {
+        self.root.clone().unwrap_or_else(|| find_project_root_path().unwrap())
+    }
+
+    /// Returns the remappings to add to the config
+    pub fn get_remappings(&self) -> Vec<Remapping> {
+        let mut remappings = self.remappings.clone();
+        if let Some(env_remappings) =
+            self.remappings_env.as_ref().and_then(|env| remappings_from_env_var(env))
+        {
+            remappings.extend(env_remappings.expect("Failed to parse env var remappings"));
+        }
+        remappings
+    }
+}
+
+// Make this args a `figment::Provider` so that it can be merged into the `Config`
+impl Provider for ProjectPathsArgs {
+    fn metadata(&self) -> Metadata {
+        Metadata::named("Project Paths Args Provider")
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
+        let value = Value::serialize(self)?;
+        let error = InvalidType(value.to_actual(), "map".into());
+        let mut dict = value.into_dict().ok_or(error)?;
+
+        let mut libs =
+            self.lib_paths.iter().map(|p| format!("{}", p.display())).collect::<Vec<_>>();
+
+        if self.hardhat {
+            dict.insert("src".to_string(), "contracts".to_string().into());
+            libs.push("node_modules".to_string());
+        }
+
+        if !libs.is_empty() {
+            dict.insert("libs".to_string(), libs.into());
+        }
+
+        Ok(Map::from([(Config::selected_profile(), dict)]))
+    }
+}
+
+impl_figment_convert!(ProjectPathsArgs);
