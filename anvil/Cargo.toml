@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 
+[[bin]]
+name = "anvil"
+path = "src/anvil.rs"
+required-features = ["cli"]
+
 [dependencies]
 # foundry internal
 foundry-evm = { path = "../evm" }
@@ -37,6 +42,25 @@ thiserror = "1.0.30"
 async-trait = "0.1.53"
 colored = "2.0.0"
 
+# used to generate constants
+vergen = { version = "6.0.0", default-features = false, features = [
+    "build",
+    "rustc",
+    "git",
+] }
+
+# cli
+clap = { version = "3.0.10", features = [
+    "derive",
+    "env",
+    "wrap_help",
+], optional = true }
+foundry-config = { path = "../config", optional = true }
+
 [dev-dependencies]
 ethers = { git = "https://github.com/gakonst/ethers-rs", features = ["abigen", "legacy"] }
 tokio = { version = "1.10", features = ["full"] }
+
+[features]
+cmd = ["clap", "foundry-config"]
+cli = ["tokio/full", "cmd"]

@@ -78,8 +78,10 @@ dependencies = [
  "axum",
  "bytes",
  "chrono 0.4.19",
+ "clap",
  "colored",
  "ethers",
+ "foundry-config",
  "foundry-evm",
  "foundry-utils",
  "futures",
@@ -93,6 +95,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "vergen",
 ]
 
 [[package]]

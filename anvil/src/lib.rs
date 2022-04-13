@@ -36,6 +36,9 @@ pub mod server;
 pub mod eth;
 pub mod fork;
 
+#[cfg(feature = "cmd")]
+pub mod cmd;
+
 /// Creates the node and runs the server
 ///
 /// Returns the [EthApi] that can be used to interact with the node and the [JoinHandle] of the
@@ -193,7 +196,8 @@ impl Future for NodeHandle {
 }
 
 #[allow(unused)]
-pub(crate) fn init_tracing() {
+#[doc(hidden)]
+pub fn init_tracing() {
     tracing_subscriber::FmtSubscriber::builder()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
