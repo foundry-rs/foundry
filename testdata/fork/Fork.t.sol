@@ -14,7 +14,8 @@ interface IWETH {
     function balanceOf(address) external view returns (uint);
 }
 
-contract TestContract {
+// A minimal contract. We test if it is deployed correctly
+contract DummyContract {
     address public deployer;
     constructor() public {
         deployer = msg.sender;
@@ -32,8 +33,14 @@ contract ForkTest is DSTest {
     }
 
     function testDeployContract() public {
-        TestContract t = new TestContract();
-        // assertEq(t.deployer(), address(this), "not equal");
+        DummyContract dummy = new DummyContract();
+        uint size;
+        address DummyAddress = address(dummy);
+        assembly {
+            size := extcodesize(DummyAddress)
+        }
+        assertGt(size, 0, "Deploying dummy contract failed. Deployed size of zero");
+        assertEq(dummy.deployer(), address(this), "Calling the Dummy contract failed to return expected value");
     }
 
     function testCheatcode() public {
@@ -48,7 +55,7 @@ contract ForkTest is DSTest {
     }
 
     function testPredeployedLibrary() public {
-        assertEq(DssExecLib.dai(), DAI_TOKEN_ADDR);
+        assertEq(DssExecLib.dai(), DAI_TOKEN_ADDR, "Failed to read state from predeployed library");
     }
 
     function testDepositWeth() public {
