@@ -106,7 +106,7 @@ impl Cmd for RunArgs {
         });
 
         if let Some(func_name) = invalid_setup_fn {
-            println!(
+            eprintln!(
                 "{} Found invalid setup function \"{}\" did you mean \"setUp()\"?",
                 Colour::Yellow.bold().paint("Warning:"),
                 func_name
