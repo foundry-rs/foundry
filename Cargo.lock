@@ -1647,6 +1647,7 @@ dependencies = [
  "comfy-table",
  "ethers",
  "eyre",
+ "foundry-config",
  "foundry-evm",
  "foundry-utils",
  "glob",

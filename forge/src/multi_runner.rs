@@ -273,7 +273,9 @@ mod tests {
     use super::*;
     use crate::{
         decode::decode_console_logs,
-        test_helpers::{filter::Filter, COMPILED, EVM_OPTS, PROJECT},
+        test_helpers::{
+            filter::Filter, COMPILED, COMPILED_WITH_LIBS, EVM_OPTS, LIBS_PROJECT, PROJECT,
+        },
     };
     use foundry_evm::trace::TraceKind;
 
@@ -292,6 +294,21 @@ mod tests {
         let mut opts = EVM_OPTS.clone();
         opts.verbosity = 5;
         base_runner().build(&(*PROJECT).paths.root, (*COMPILED).clone(), opts).unwrap()
+    }
+
+    // Builds a runner that runs against forked state
+    fn forked_runner(rpc: &str) -> MultiContractRunner {
+        let mut opts = EVM_OPTS.clone();
+
+        opts.env.chain_id = None; // clear chain id so the correct one gets fetched from the RPC
+        opts.fork_url = Some(rpc.to_string());
+        let chain_id = opts.get_chain_id();
+
+        let fork = Some(Fork { cache_path: None, url: rpc.to_string(), pin_block: None, chain_id });
+        base_runner()
+            .with_fork(fork)
+            .build(&(*LIBS_PROJECT).paths.root, (*COMPILED_WITH_LIBS).clone(), opts)
+            .unwrap()
     }
 
     /// A helper to assert the outcome of multiple tests with helpful assert messages
@@ -593,6 +610,31 @@ mod tests {
                     1,
                     "Test {} did not not have exactly 1 execution trace.",
                     test_name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_fork() {
+        let rpc_url = std::env::var("ETH_RPC_URL");
+        if rpc_url.is_err() {
+            eprintln!("Skipping test, ETH_RPC_URL is not set.");
+            return
+        }
+        let mut runner = forked_runner(&(rpc_url.unwrap()));
+        let suite_result = runner.test(&Filter::new(".*", ".*", ".*fork"), None, true).unwrap();
+
+        for (_, SuiteResult { test_results, .. }) in suite_result {
+            for (test_name, result) in test_results {
+                let logs = decode_console_logs(&result.logs);
+
+                assert!(
+                    result.success,
+                    "Test {} did not pass as expected.\nReason: {:?}\nLogs:\n{}",
+                    test_name,
+                    result.reason,
+                    logs.join("\n")
                 );
             }
         }
