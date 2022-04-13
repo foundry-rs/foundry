@@ -97,6 +97,21 @@ impl Cmd for RunArgs {
         let abi = abi.expect("no ABI for contract");
         let bytecode = bytecode.expect("no bytecode for contract").object.into_bytes().unwrap();
         let needs_setup = abi.functions().any(|func| func.name == "setUp");
+        let invalid_setup_fn = abi.functions().find_map(|func| {
+            if func.name.to_lowercase() == "setup" && func.name != "setUp" {
+                Some(func.signature())
+            } else {
+                None
+            }
+        });
+
+        if let Some(func_name) = invalid_setup_fn {
+            println!(
+                "{} Found invalid setup function \"{}\" did you mean \"setUp()\"?",
+                Colour::Yellow.bold().paint("Warning:"),
+                func_name
+            );
+        }
 
         let runtime = RuntimeOrHandle::new();
         let env = runtime.block_on(evm_opts.evm_env());
