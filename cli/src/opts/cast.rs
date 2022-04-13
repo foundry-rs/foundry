@@ -11,7 +11,10 @@ use ethers::{
 use std::{path::PathBuf, str::FromStr};
 
 #[derive(Debug, Subcommand)]
-#[clap(about = "Perform Ethereum RPC calls from the comfort of your command line.")]
+#[clap(
+    about = "Perform Ethereum RPC calls from the comfort of your command line.",
+    after_help = "Find more information in the book: http://book.getfoundry.sh/reference/cast/cast.html"
+)]
 pub enum Subcommands {
     #[clap(name = "--max-int")]
     #[clap(about = "Get the maximum i256 value.")]
