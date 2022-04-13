@@ -96,25 +96,17 @@ impl Cmd for RunArgs {
         let CompactContractBytecode { abi, bytecode, .. } = contract;
         let abi = abi.expect("no ABI for contract");
         let bytecode = bytecode.expect("no bytecode for contract").object.into_bytes().unwrap();
-        let setup_fns: Vec<_> = abi
-            .functions()
-            .filter_map(|func| {
-                if func.name.to_lowercase() == "setup" {
-                    Some(func.signature())
-                } else {
-                    None
-                }
-            })
-            .collect();
+        let setup_fns: Vec<_> =
+            abi.functions().filter(|func| func.name.to_lowercase() == "setup").collect();
 
-        let needs_setup = setup_fns.len() == 1 && setup_fns[0] == "setUp";
+        let needs_setup = setup_fns.len() == 1 && setup_fns[0].name == "setUp";
 
         for setup_fn in setup_fns.iter() {
-            if setup_fn != "setUp" {
+            if setup_fn.name != "setUp" {
                 println!(
                     "{} Found invalid setup function \"{}\" did you mean \"setUp()\"?",
                     Colour::Yellow.bold().paint("Warning:"),
-                    setup_fn
+                    setup_fn.signature()
                 );
             }
         }
