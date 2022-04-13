@@ -273,7 +273,9 @@ mod tests {
     use super::*;
     use crate::{
         decode::decode_console_logs,
-        test_helpers::{filter::Filter, COMPILED, COMPILED_WITH_LIBS, EVM_OPTS, LIBS_PROJECT, PROJECT},
+        test_helpers::{
+            filter::Filter, COMPILED, COMPILED_WITH_LIBS, EVM_OPTS, LIBS_PROJECT, PROJECT,
+        },
     };
     use foundry_evm::trace::TraceKind;
 

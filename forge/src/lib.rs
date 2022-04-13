@@ -70,7 +70,8 @@ pub mod test_helpers {
 
     pub static COMPILED: Lazy<ProjectCompileOutput> = Lazy::new(|| (*PROJECT).compile().unwrap());
 
-    pub static COMPILED_WITH_LIBS: Lazy<ProjectCompileOutput> = Lazy::new(|| (*LIBS_PROJECT).compile().unwrap());
+    pub static COMPILED_WITH_LIBS: Lazy<ProjectCompileOutput> =
+        Lazy::new(|| (*LIBS_PROJECT).compile().unwrap());
 
     pub static EVM_OPTS: Lazy<EvmOpts> = Lazy::new(|| EvmOpts {
         env: Env {

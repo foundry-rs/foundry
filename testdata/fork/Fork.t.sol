@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Unlicense
 pragma solidity ^0.6.12;
 
-import "../lib/ds-test/src/test.sol";
-import "../lib/dss-exec-lib/src/DssExecLib.sol";
+import "ds-test/test.sol";
+import "./DssExecLib.sol";
 
 interface Cheats {
     function store(address account, bytes32 slot, bytes32 value) external;
