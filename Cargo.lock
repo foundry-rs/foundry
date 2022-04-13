@@ -74,10 +74,8 @@ version = "0.1.0"
 dependencies = [
  "anvil-core",
  "anvil-rpc",
- "async-trait",
  "axum",
  "bytes",
- "chrono 0.4.19",
  "clap",
  "colored",
  "ethers",

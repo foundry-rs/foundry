@@ -9,6 +9,14 @@ name = "anvil"
 path = "src/anvil.rs"
 required-features = ["cli"]
 
+[build-dependencies]
+# used to generate constants
+vergen = { version = "6.0.0", default-features = false, features = [
+    "build",
+    "rustc",
+    "git",
+] }
+
 [dependencies]
 # foundry internal
 foundry-evm = { path = "../evm" }
@@ -35,19 +43,11 @@ tokio = { version = "1.10", features = ["time"] }
 parking_lot = "0.12"
 futures = "0.3"
 
-chrono = "0.4.0"
+# misc
 serde_json = "1.0.67"
 serde = { version = "1.0", features = ["derive"] }
 thiserror = "1.0.30"
-async-trait = "0.1.53"
 colored = "2.0.0"
-
-# used to generate constants
-vergen = { version = "6.0.0", default-features = false, features = [
-    "build",
-    "rustc",
-    "git",
-] }
 
 # cli
 clap = { version = "3.0.10", features = [
