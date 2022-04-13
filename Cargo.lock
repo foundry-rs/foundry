@@ -1647,6 +1647,7 @@ dependencies = [
  "comfy-table",
  "ethers",
  "eyre",
+ "foundry-config",
  "foundry-evm",
  "foundry-utils",
  "glob",
@@ -1750,6 +1751,7 @@ name = "foundry-cli-test-utils"
 version = "0.1.0"
 dependencies = [
  "ethers-solc",
+ "eyre",
  "foundry-config",
  "once_cell",
  "parking_lot 0.12.0",

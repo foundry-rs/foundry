@@ -19,6 +19,7 @@ use std::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
+    time::Duration,
 };
 
 static CURRENT_DIR_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
@@ -198,8 +199,7 @@ impl TestProject {
 
     /// Creates a new command that is set to use the forge executable for this project
     pub fn forge_command(&self) -> TestCommand {
-        let mut cmd = self.forge_bin();
-        cmd.current_dir(&self.inner.root());
+        let cmd = self.forge_bin();
         let _lock = CURRENT_DIR_LOCK.lock();
         TestCommand {
             project: self.clone(),
@@ -225,7 +225,9 @@ impl TestProject {
     /// Returns the path to the forge executable.
     pub fn forge_bin(&self) -> process::Command {
         let forge = self.root.join(format!("../forge{}", env::consts::EXE_SUFFIX));
-        process::Command::new(forge)
+        let mut cmd = process::Command::new(forge);
+        cmd.current_dir(self.inner.root());
+        cmd
     }
 
     /// Returns the path to the cast executable.
@@ -292,6 +294,7 @@ pub struct TestCommand {
     project: TestProject,
     /// The actual command we use to control the process.
     cmd: Command,
+    // initial: Command,
     current_dir_lock: Option<parking_lot::lock_api::MutexGuard<'static, parking_lot::RawMutex, ()>>,
 }
 
@@ -398,6 +401,11 @@ impl TestCommand {
     /// Returns the `stdout` of the output as `String`.
     pub fn stdout_lossy(&mut self) -> String {
         String::from_utf8_lossy(&self.output().stdout).to_string()
+    }
+
+    /// Returns the output but does not expect that the command was successful
+    pub fn unchecked_output(&mut self) -> process::Output {
+        self.cmd.output().unwrap()
     }
 
     /// Gets the output of a command. If the command failed, then this panics.
@@ -531,4 +539,51 @@ pub fn dir_list<P: AsRef<Path>>(dir: P) -> Vec<String> {
         .into_iter()
         .map(|result| result.unwrap().path().to_string_lossy().into_owned())
         .collect()
+}
+
+/// A type that keeps track of attempts
+#[derive(Debug, Clone)]
+pub struct Retry {
+    /// how many attempts there are left
+    remaining: u32,
+    /// Optional timeout to apply inbetween attempts
+    delay: Option<Duration>,
+}
+
+impl Retry {
+    pub fn new(remaining: u32, delay: Option<Duration>) -> Self {
+        Self { remaining, delay }
+    }
+
+    fn r#try<T>(&mut self, f: impl FnOnce() -> eyre::Result<T>) -> eyre::Result<Option<T>> {
+        match f() {
+            Err(ref e) if self.remaining > 0 => {
+                println!(
+                    "erroneous attempt  ({} tries remaining): {}",
+                    self.remaining,
+                    e.root_cause()
+                );
+                self.remaining -= 1;
+                if let Some(delay) = self.delay {
+                    std::thread::sleep(delay);
+                }
+                Ok(None)
+            }
+            other => other.map(Some),
+        }
+    }
+
+    pub fn run<T, F>(mut self, mut callback: F) -> eyre::Result<T>
+    where
+        F: FnMut() -> eyre::Result<T>,
+    {
+        // if let Some(delay) = self.delay {
+        //     std::thread::sleep(delay);
+        // }
+        loop {
+            if let Some(ret) = self.r#try(&mut callback)? {
+                return Ok(ret)
+            }
+        }
+    }
 }

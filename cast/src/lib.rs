@@ -10,17 +10,17 @@ use ethers_core::{
     types::{Chain, *},
     utils::{self, get_contract_address, keccak256, parse_units},
 };
-
 use ethers_etherscan::Client;
 use ethers_providers::{Middleware, PendingTransaction};
 use eyre::{Context, Result};
+use foundry_utils::{encode_args, to_table};
+use print_utils::{get_pretty_block_attr, get_pretty_tx_attr, UIfmt};
 use rustc_hex::{FromHexIter, ToHex};
 use std::{path::PathBuf, str::FromStr};
 pub use tx::TxBuilder;
 use tx::{TxBuilderOutput, TxBuilderPeekOutput};
 
-use foundry_utils::{encode_args, to_table};
-
+mod print_utils;
 mod tx;
 
 // TODO: CastContract with common contract initializers? Same for CastProviders?
@@ -298,14 +298,12 @@ where
                 .await?
                 .ok_or_else(|| eyre::eyre!("block {:?} not found", block))?;
             if let Some(ref field) = field {
-                // TODO: Use custom serializer to serialize
-                // u256s as decimals
-                serde_json::to_value(&block)?
-                    .get(field)
-                    .cloned()
-                    .ok_or_else(|| eyre::eyre!("field {} not found", field))?
+                get_pretty_block_attr(block, field.to_string())
+                    .unwrap_or_else(|| format!("{} is not a valid block field", field))
+            } else if to_json {
+                serde_json::to_value(&block).unwrap().to_string()
             } else {
-                serde_json::to_value(&block)?
+                block.pretty()
             }
         } else {
             let block = self
@@ -313,17 +311,20 @@ where
                 .get_block(block)
                 .await?
                 .ok_or_else(|| eyre::eyre!("block {:?} not found", block))?;
+
             if let Some(ref field) = field {
-                serde_json::to_value(block)?
-                    .get(field)
-                    .cloned()
-                    .ok_or_else(|| eyre::eyre!("field {} not found", field))?
+                if field == "transactions" {
+                    "use --full to view transactions".to_string()
+                } else {
+                    get_pretty_block_attr(block, field.to_string())
+                        .unwrap_or_else(|| format!("{} is not a valid block field", field))
+                }
+            } else if to_json {
+                serde_json::to_value(&block).unwrap().to_string()
             } else {
-                serde_json::to_value(&block)?
+                block.pretty()
             }
         };
-
-        let block = if to_json { serde_json::to_string(&block)? } else { to_table(block) };
 
         Ok(block)
     }
@@ -538,8 +539,14 @@ where
             serde_json::to_value(&transaction_result)?
         };
 
-        let transaction =
-            if to_json { serde_json::to_string(&transaction)? } else { to_table(transaction) };
+        let transaction = if let Some(ref field) = field {
+            get_pretty_tx_attr(transaction_result, field.to_string())
+                .unwrap_or_else(|| format!("{} is not a valid tx field", field))
+        } else if to_json {
+            serde_json::to_string(&transaction)?
+        } else {
+            transaction_result.pretty()
+        };
         Ok(transaction)
     }
 
