@@ -11,12 +11,12 @@ use ethers::solc::resolver::{Charset, TreeOptions};
 /// Command to display the project's dependency tree
 #[derive(Debug, Clone, Parser)]
 pub struct TreeArgs {
-    #[clap(flatten)]
-    opts: ProjectPathsArgs,
     #[clap(help = "Do not de-duplicate (repeats all shared dependencies)", long)]
     no_dedupe: bool,
     #[clap(help = "Character set to use in output: utf8, ascii", default_value = "utf8", long)]
     charset: Charset,
+    #[clap(flatten, next_help_heading = "PROJECT OPTIONS")]
+    opts: ProjectPathsArgs,
 }
 
 impl Cmd for TreeArgs {

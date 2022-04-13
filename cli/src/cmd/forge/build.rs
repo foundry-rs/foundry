@@ -83,14 +83,6 @@ impl<'a> From<&'a BuildArgs> for Config {
 // `figment::Provider` implementation
 #[derive(Debug, Clone, Parser, Serialize)]
 pub struct BuildArgs {
-    #[clap(flatten)]
-    #[serde(flatten)]
-    pub project_paths: ProjectPathsArgs,
-
-    #[clap(flatten)]
-    #[serde(flatten)]
-    pub compiler: CompilerArgs,
-
     #[clap(help = "print compiled contract names", long = "names")]
     #[serde(skip)]
     pub names: bool,
@@ -137,10 +129,6 @@ pub struct BuildArgs {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub libraries: Vec<String>,
 
-    #[clap(flatten)]
-    #[serde(skip)]
-    pub watch: WatchArgs,
-
     #[clap(
         help = "if set to true, changes compilation pipeline to go through the Yul intermediate representation.",
         long
@@ -155,6 +143,27 @@ pub struct BuildArgs {
     )]
     #[serde(skip)]
     pub config_path: Option<PathBuf>,
+
+    #[clap(flatten, next_help_heading = "COMPILER OPTIONS")]
+    #[serde(flatten)]
+    pub compiler: CompilerArgs,
+
+    #[clap(flatten, next_help_heading = "PROJECT OPTIONS")]
+    #[serde(flatten)]
+    pub project_paths: ProjectPathsArgs,
+
+    #[clap(
+        help = "The path to the contract artifacts folder.",
+        long = "out",
+        short,
+        value_hint = ValueHint::DirPath
+    )]
+    #[serde(rename = "out", skip_serializing_if = "Option::is_none")]
+    pub out_path: Option<PathBuf>,
+
+    #[clap(flatten, next_help_heading = "WATCH OPTIONS")]
+    #[serde(skip)]
+    pub watch: WatchArgs,
 }
 
 impl Cmd for BuildArgs {
@@ -296,15 +305,6 @@ pub struct ProjectPathsArgs {
     )]
     #[serde(rename = "libs", skip_serializing_if = "Vec::is_empty")]
     pub lib_paths: Vec<PathBuf>,
-
-    #[clap(
-        help = "The path to the contract artifacts folder.",
-        long = "out",
-        short,
-        value_hint = ValueHint::DirPath
-    )]
-    #[serde(rename = "out", skip_serializing_if = "Option::is_none")]
-    pub out_path: Option<PathBuf>,
 
     #[clap(
         help = "Use the Hardhat-style project layout.",

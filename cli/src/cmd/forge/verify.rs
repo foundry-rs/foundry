@@ -24,19 +24,23 @@ use super::build::ProjectPathsArgs;
 /// Verification arguments
 #[derive(Debug, Clone, Parser)]
 pub struct VerifyArgs {
-    #[clap(help = "the target contract address")]
+    #[clap(help = "The address of the contract to verify.")]
     address: Address,
 
-    #[clap(help = "the contract source info `<path>:<contractname>`")]
+    #[clap(help = "The contract identifier in the form `<path>:<contractname>`.")]
     contract: ContractInfo,
 
     #[clap(long, help = "the encoded constructor arguments")]
     constructor_args: Option<String>,
 
-    #[clap(long, help = "the compiler version used during build")]
+    #[clap(long, help = "The compiler version used to build the smart contract.")]
     compiler_version: String,
 
-    #[clap(alias = "optimizer-runs", long, help = "the number of optimization runs used")]
+    #[clap(
+        alias = "optimizer-runs",
+        long,
+        help = "The number of optimization runs used to build the smart contract."
+    )]
     num_of_optimizations: Option<u32>,
 
     #[clap(
@@ -48,25 +52,21 @@ pub struct VerifyArgs {
     )]
     chain: Chain,
 
-    #[clap(help = "your etherscan api key", env = "ETHERSCAN_API_KEY")]
+    #[clap(help = "Your Etherscan API key.", env = "ETHERSCAN_API_KEY")]
     etherscan_key: String,
 
-    #[clap(
-        help = "flatten the source code. Make sure to use bytecodehash='ipfs'",
-        long = "flatten"
-    )]
+    #[clap(help = "Flatten the source code before verifying.", long = "flatten")]
     flatten: bool,
-
-    #[clap(flatten)]
-    project_paths: ProjectPathsArgs,
 
     #[clap(
         short,
         long,
-        help = r#"usually the command will try to compile the flattened code locally first to ensure it's valid.
-This flag we skip that process and send the content directly to the endpoint."#
+        help = "Do not compile the flattened smart contract before verifying (if --flatten is passed)."
     )]
     force: bool,
+
+    #[clap(flatten, next_help_heading = "PROJECT OPTIONS")]
+    project_paths: ProjectPathsArgs,
 }
 
 impl VerifyArgs {
@@ -127,6 +127,7 @@ impl VerifyArgs {
     fn create_verify_request(&self) -> eyre::Result<VerifyContract> {
         let build_args = BuildArgs {
             project_paths: self.project_paths.clone(),
+            out_path: Default::default(),
             compiler: Default::default(),
             names: false,
             sizes: false,
@@ -227,7 +228,7 @@ impl VerifyArgs {
             eprintln!(
                 r#"Failed to compile the flattened code locally.
 This could be a bug, please inspect the outout of `forge flatten {}` and report an issue.
-To skip this solc dry, have a look at the  `--force` flag of this command.
+To skip this solc dry, pass `--force`.
 "#,
                 self.contract.path.as_ref().expect("Path is some;")
             );

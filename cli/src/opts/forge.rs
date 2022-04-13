@@ -81,13 +81,13 @@ pub enum Subcommands {
 
     #[clap(
         about = "Verify smart contracts on Etherscan.",
-        long_about = "Verify smart contracts on Etherscan. Requires `ETHERSCAN_API_KEY` to be set."
+        long_about = "Verify smart contracts on Etherscan."
     )]
     VerifyContract(VerifyArgs),
 
     #[clap(
         about = "Check verification status on Etherscan.",
-        long_about = "Check verification status on Etherscan. Requires `ETHERSCAN_API_KEY` to be set."
+        long_about = "Check verification status on Etherscan."
     )]
     VerifyCheck(VerifyCheckArgs),
 

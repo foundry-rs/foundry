@@ -20,7 +20,7 @@ pub struct FlattenArgs {
     )]
     pub output: Option<PathBuf>,
 
-    #[clap(flatten)]
+    #[clap(flatten, next_help_heading = "PROJECT OPTIONS")]
     project_paths: ProjectPathsArgs,
 }
 
@@ -32,6 +32,7 @@ impl Cmd for FlattenArgs {
         // flatten is a subset of `BuildArgs` so we can reuse that to get the config
         let build_args = BuildArgs {
             project_paths,
+            out_path: Default::default(),
             compiler: Default::default(),
             names: false,
             sizes: false,
