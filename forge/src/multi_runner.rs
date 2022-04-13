@@ -297,7 +297,10 @@ mod tests {
     /// A helper to assert the outcome of multiple tests with helpful assert messages
     fn assert_multiple(
         actuals: &BTreeMap<String, SuiteResult>,
-        expecteds: BTreeMap<&str, Vec<(&str, bool, Option<String>, Option<Vec<String>>)>>,
+        expecteds: BTreeMap<
+            &str,
+            Vec<(&str, bool, Option<String>, Option<Vec<String>>, Option<usize>)>,
+        >,
     ) {
         assert_eq!(
             actuals.len(),
@@ -311,9 +314,11 @@ mod tests {
                 "We did not run as many test functions as we expected for {}",
                 contract_name
             );
-            for (test_name, should_pass, reason, expected_logs) in tests {
+            for (test_name, should_pass, reason, expected_logs, expected_warning_count) in tests {
                 let logs =
                     decode_console_logs(&actuals[*contract_name].test_results[*test_name].logs);
+
+                let warnings_count = &actuals[*contract_name].warnings.len();
 
                 if *should_pass {
                     assert!(
@@ -346,6 +351,14 @@ mod tests {
                         expected_logs.join("\n")
                     );
                 }
+
+                if let Some(expected_warning_count) = expected_warning_count {
+                    assert_eq!(
+                        warnings_count, expected_warning_count,
+                        "Test {} did not pass as expected. Expected:\n{}Got:\n{}",
+                        test_name, warnings_count, expected_warning_count
+                    );
+                }
             }
         }
     }
@@ -365,36 +378,56 @@ mod tests {
                         false,
                         Some("Setup failed: setup failed predictably".to_string()),
                         None,
+                        None,
+                    )],
+                ),
+                (
+                    "core/MultipleSetup.t.sol:MultipleSetup",
+                    vec![(
+                        "setUp()",
+                        false,
+                        Some("Multiple setUp functions".to_string()),
+                        None,
+                        Some(1),
                     )],
                 ),
                 (
                     "core/Reverting.t.sol:RevertingTest",
-                    vec![("testFailRevert()", true, None, None)],
+                    vec![("testFailRevert()", true, None, None, None)],
                 ),
                 (
                     "core/SetupConsistency.t.sol:SetupConsistencyCheck",
-                    vec![("testAdd()", true, None, None), ("testMultiply()", true, None, None)],
+                    vec![
+                        ("testAdd()", true, None, None, None),
+                        ("testMultiply()", true, None, None, None),
+                    ],
                 ),
                 (
                     "core/DSStyle.t.sol:DSStyleTest",
-                    vec![("testFailingAssertions()", true, None, None)],
+                    vec![("testFailingAssertions()", true, None, None, None)],
                 ),
                 (
                     "core/DappToolsParity.t.sol:DappToolsParityTest",
                     vec![
-                        ("testAddresses()", true, None, None),
-                        ("testEnvironment()", true, None, None),
+                        ("testAddresses()", true, None, None, None),
+                        ("testEnvironment()", true, None, None, None),
                     ],
                 ),
                 (
                     "core/PaymentFailure.t.sol:PaymentFailureTest",
-                    vec![("testCantPay()", false, Some("Revert".to_string()), None)],
+                    vec![("testCantPay()", false, Some("Revert".to_string()), None, None)],
                 ),
                 (
                     "core/LibraryLinking.t.sol:LibraryLinkingTest",
-                    vec![("testDirect()", true, None, None), ("testNested()", true, None, None)],
+                    vec![
+                        ("testDirect()", true, None, None, None),
+                        ("testNested()", true, None, None, None),
+                    ],
                 ),
-                ("core/Abstract.t.sol:AbstractTest", vec![("testSomething()", true, None, None)]),
+                (
+                    "core/Abstract.t.sol:AbstractTest",
+                    vec![("testSomething()", true, None, None, None)],
+                ),
             ]),
         );
     }
@@ -410,19 +443,33 @@ mod tests {
                 (
                     "logs/DebugLogs.t.sol:DebugLogsTest",
                     vec![
-                        ("test1()", true, None, Some(vec!["0".into(), "1".into(), "2".into()])),
-                        ("test2()", true, None, Some(vec!["0".into(), "1".into(), "3".into()])),
+                        (
+                            "test1()",
+                            true,
+                            None,
+                            Some(vec!["0".into(), "1".into(), "2".into()]),
+                            None,
+                        ),
+                        (
+                            "test2()",
+                            true,
+                            None,
+                            Some(vec!["0".into(), "1".into(), "3".into()]),
+                            None,
+                        ),
                         (
                             "testFailWithRequire()",
                             true,
                             None,
                             Some(vec!["0".into(), "1".into(), "5".into()]),
+                            None,
                         ),
                         (
                             "testFailWithRevert()",
                             true,
                             None,
                             Some(vec!["0".into(), "1".into(), "4".into(), "100".into()]),
+                            None,
                         ),
                     ],
                 ),
@@ -440,6 +487,7 @@ mod tests {
                                 "2".into(),
                                 "3".into(),
                             ]),
+                            None,
                         ),
                         (
                             "testMisc()",
@@ -450,12 +498,14 @@ mod tests {
                                 "testMisc, 0x0000000000000000000000000000000000000001".into(),
                                 "testMisc, 42".into(),
                             ]),
+                            None,
                         ),
                         (
                             "testStrings()",
                             true,
                             None,
                             Some(vec!["constructor".into(), "testStrings".into()]),
+                            None,
                         ),
                     ],
                 ),
