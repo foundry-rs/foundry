@@ -55,8 +55,8 @@ pub mod test_helpers {
             .unwrap();
 
         let mut settings = Settings::default();
-        let libs =
-            ["src/DssSpell.sol:DssExecLib:0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4".to_string()];
+        let libs = // change this
+            ["fork/Fork.t.sol:DssExecLib:0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4".to_string()];
         settings.libraries = foundry_config::parse_libraries(&libs).unwrap();
         let solc_config = SolcConfig::builder().settings(settings).build();
         Project::builder()
@@ -69,6 +69,8 @@ pub mod test_helpers {
     });
 
     pub static COMPILED: Lazy<ProjectCompileOutput> = Lazy::new(|| (*PROJECT).compile().unwrap());
+
+    pub static COMPILED_WITH_LIBS: Lazy<ProjectCompileOutput> = Lazy::new(|| (*LIBS_PROJECT).compile().unwrap());
 
     pub static EVM_OPTS: Lazy<EvmOpts> = Lazy::new(|| EvmOpts {
         env: Env {

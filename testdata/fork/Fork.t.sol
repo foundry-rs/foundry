@@ -1,16 +1,13 @@
 // SPDX-License-Identifier: Unlicense
-pragma solidity >= 0.8.0;
+pragma solidity ^0.6.12;
 
-import "ds-test/test.sol";
-// import "dss-exec/DssExec.sol"
+import "../lib/ds-test/src/test.sol";
+import "../lib/dss-exec-lib/src/DssExecLib.sol";
 
 interface Cheats {
     function store(address account, bytes32 slot, bytes32 value) external;
 }
 
-interface ERC20 {
-    function totalSupply() external view returns (uint);
-}
 
 interface IWETH {
     function deposit() external payable;
@@ -19,20 +16,19 @@ interface IWETH {
 
 contract TestContract {
     address public deployer;
-    constructor() {
+    constructor() public {
         deployer = msg.sender;
     }
 }
 
 
 contract ForkTest is DSTest {
-    address constant UNI_TOKEN_ADDR = 0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984;
+    address constant DAI_TOKEN_ADDR = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
     address constant WETH_TOKEN_ADDR = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
-    //address constant DSS_EXEC_ADDR = 0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4;
 
     function testReadState() public { 
-        ERC20 UNI = ERC20(UNI_TOKEN_ADDR);
-        assertEq(UNI.totalSupply(), 1000000000000000000000000000, "Failed to read UNI token total supply.");
+        ERC20 DAI = ERC20(DAI_TOKEN_ADDR);
+        assertEq(uint(DAI.decimals()), uint(18), "Failed to read DAI token decimals.");
     }
 
     function testDeployContract() public {
@@ -52,8 +48,7 @@ contract ForkTest is DSTest {
     }
 
     function testPredeployedLibrary() public {
-        // TODO
-        assertTrue(true);
+        assertEq(DssExecLib.dai(), DAI_TOKEN_ADDR);
     }
 
     function testDepositWeth() public {

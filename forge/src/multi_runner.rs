@@ -273,7 +273,7 @@ mod tests {
     use super::*;
     use crate::{
         decode::decode_console_logs,
-        test_helpers::{filter::Filter, COMPILED, EVM_OPTS, LIBS_PROJECT, PROJECT},
+        test_helpers::{filter::Filter, COMPILED, COMPILED_WITH_LIBS, EVM_OPTS, LIBS_PROJECT, PROJECT},
     };
     use foundry_evm::trace::TraceKind;
 
@@ -303,10 +303,9 @@ mod tests {
         let chain_id = opts.get_chain_id();
 
         let fork = Some(Fork { cache_path: None, url: rpc.to_string(), pin_block: None, chain_id });
-
         base_runner()
             .with_fork(fork)
-            .build(&(*LIBS_PROJECT).paths.root, (*COMPILED).clone(), opts)
+            .build(&(*LIBS_PROJECT).paths.root, (*COMPILED_WITH_LIBS).clone(), opts)
             .unwrap()
     }
 
