@@ -9,42 +9,45 @@ use foundry_config::Config;
 #[derive(Debug, Clone, Parser)]
 pub struct CoreFlattenArgs {
     #[clap(
-    help = "the project's root path. By default, this is the root directory of the current Git repository or the current working directory if it is not part of a Git repository",
-    long,
-    value_hint = ValueHint::DirPath
+        help = "The project's root path.",
+        long_help = "The project's root path. By default, this is the root directory of the current Git repository, or the current working directory.",
+        long,
+        value_hint = ValueHint::DirPath
     )]
     pub root: Option<PathBuf>,
 
     #[clap(
-    env = "DAPP_SRC",
-    help = "the directory relative to the root under which the smart contracts are",
-    long,
-    short,
-    value_hint = ValueHint::DirPath
+        env = "DAPP_SRC",
+        help = "The contract's source directory, relative to the project root.",
+        long,
+        short,
+        value_hint = ValueHint::DirPath
     )]
     pub contracts: Option<PathBuf>,
 
-    #[clap(help = "the remappings", long, short)]
+    #[clap(help = "The project's remappings.", long, short)]
     pub remappings: Vec<Remapping>,
+
     #[clap(long = "remappings-env", env = "DAPP_REMAPPINGS")]
     pub remappings_env: Option<String>,
 
     #[clap(
-        help = "the path where cached compiled contracts are stored",
+        help = "The path to the compiler cache.",
         long = "cache-path",
         value_hint = ValueHint::DirPath
     )]
     pub cache_path: Option<PathBuf>,
 
     #[clap(
-    help = "the paths where your libraries are installed",
-    long,
-    value_hint = ValueHint::DirPath
+        help = "The path to the library folder.",
+        long,
+        value_hint = ValueHint::DirPath
     )]
     pub lib_paths: Vec<PathBuf>,
 
     #[clap(
-        help = "uses hardhat style project layout. This a convenience flag and is the same as `--contracts contracts --lib-paths node_modules`",
+        help = "Use the Hardhat-style project layout.",
+        long_help = "Use the Hardhat-style project layout.",
         long,
         conflicts_with = "contracts",
         alias = "hh"
@@ -54,10 +57,16 @@ pub struct CoreFlattenArgs {
 
 #[derive(Debug, Clone, Parser)]
 pub struct FlattenArgs {
-    #[clap(help = "the path to the contract to flatten", value_hint = ValueHint::FilePath)]
+    #[clap(help = "The path to the contract to flatten.", value_hint = ValueHint::FilePath)]
     pub target_path: PathBuf,
 
-    #[clap(long, short, help = "output path for the flattened contract", value_hint = ValueHint::FilePath)]
+    #[clap(
+        long,
+        short,
+        help = "The path to output the flattened contract.",
+        long_help = "The path to output the flattened contract. If not specified, the flattened contract will be output to stdout.",
+        value_hint = ValueHint::FilePath
+    )]
     pub output: Option<PathBuf>,
 
     #[clap(flatten)]
@@ -99,7 +108,7 @@ impl Cmd for FlattenArgs {
         let target_path = dunce::canonicalize(target_path)?;
         let flattened = paths
             .flatten(&target_path)
-            .map_err(|err| eyre::Error::msg(format!("failed to flatten the file: {}", err)))?;
+            .map_err(|err| eyre::Error::msg(format!("Failed to flatten the file: {}", err)))?;
 
         match output {
             Some(output) => {
