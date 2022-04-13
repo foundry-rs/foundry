@@ -277,12 +277,17 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
         let mut warnings = Vec::new();
         let needs_setup = self.contract.functions().any(|func| func.name == "setUp");
 
-        let setup_fns: Vec<_> = self.contract.functions().filter_map(|func| {
-            if func.name.to_lowercase() == "setup" {
-                Some(func.signature())
-            } else {
-                None
-            }}).collect();
+        let setup_fns: Vec<_> = self
+            .contract
+            .functions()
+            .filter_map(|func| {
+                if func.name.to_lowercase() == "setup" {
+                    Some(func.signature())
+                } else {
+                    None
+                }
+            })
+            .collect();
 
         // There are multiple setUp function, so we return a single test result for `setUp`
         if setup_fns.len() > 1 {
@@ -297,7 +302,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                         logs: vec![],
                         kind: TestKind::Standard(0),
                         traces: vec![],
-                        labeled_addresses: BTreeMap::new()
+                        labeled_addresses: BTreeMap::new(),
                     },
                 )]
                 .into(),

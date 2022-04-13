@@ -369,12 +369,7 @@ mod tests {
                 ),
                 (
                     "core/MultipleSetup.t.sol:MultipleSetup",
-                    vec![(
-                        "setUp()",
-                        false,
-                        Some("Multiple setUp functions".to_string()),
-                        None,
-                    )],
+                    vec![("setUp()", false, Some("Multiple setUp functions".to_string()), None)],
                 ),
                 (
                     "core/Reverting.t.sol:RevertingTest",
