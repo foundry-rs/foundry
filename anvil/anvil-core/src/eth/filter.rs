@@ -91,9 +91,9 @@ impl From<Filter> for EthersFilter {
                         if let Some(topic) = topic {
                             let topic = match topic {
                                 ValueOrArray::Value(Some(val)) => ValueOrArray::Value(val),
-                                ValueOrArray::Array(inner) => ValueOrArray::Array(
-                                    inner.into_iter().flatten().collect(),
-                                ),
+                                ValueOrArray::Array(inner) => {
+                                    ValueOrArray::Array(inner.into_iter().flatten().collect())
+                                }
                                 _ => continue,
                             };
                             filter = match idx {

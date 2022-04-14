@@ -758,7 +758,11 @@ impl EthApi {
     /// Mines a series of blocks.
     ///
     /// Handler for ETH RPC call: `forge_mine`
-    pub async fn forge_mine(&self, _num_blocks: Option<U256>, _interval: Option<U256>) -> Result<()> {
+    pub async fn forge_mine(
+        &self,
+        _num_blocks: Option<U256>,
+        _interval: Option<U256>,
+    ) -> Result<()> {
         Err(BlockchainError::RpcUnimplemented)
     }
 
