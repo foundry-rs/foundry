@@ -29,13 +29,12 @@ use ethers::{
     abi::ethereum_types::H64,
     providers::ProviderError,
     types::{
-        Address, Block, BlockNumber, Bytes, Log, Transaction, TransactionReceipt, TxHash, H256,
-        U256, U64,
+        Address, Block, BlockNumber, Bytes, Log, Trace, Transaction, TransactionReceipt, TxHash,
+        H256, U256, U64,
     },
     utils::rlp,
 };
 use std::sync::Arc;
-use ethers::types::Trace;
 use tracing::trace;
 
 /// The entry point for executing eth api RPC call - The Eth RPC interface.
@@ -659,15 +658,12 @@ impl EthApi {
         Err(BlockchainError::RpcUnimplemented)
     }
 
-
     /// Returns traces for the transaction hash
     ///
     /// Handler for RPC call: `debug_traceTransaction`
     pub fn debug_trace_transaction(&self, tx_hash: H256) -> Result<Vec<Trace>> {
         Err(BlockchainError::RpcUnimplemented)
     }
-
-
 }
 
 // == impl EthApi forge endpoints ==

@@ -5,6 +5,7 @@ use crate::{
     eth::error::BlockchainError, opts::evm::EvmArgs, AccountGenerator, NodeConfig, CHAIN_ID,
 };
 use forge::executor::opts::EvmOpts;
+use foundry_common::evm::EvmArgs;
 
 #[derive(Clone, Debug, Parser)]
 pub struct NodeArgs {

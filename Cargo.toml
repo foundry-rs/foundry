@@ -1,5 +1,8 @@
 [workspace]
 members = [
+    "anvil",
+    "anvil/anvil-core",
+    "anvil/anvil-rpc",
     "cast",
     "binder",
     "cli",

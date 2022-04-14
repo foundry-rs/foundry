@@ -12,7 +12,6 @@ use crate::cmd::forge::{
     init::InitArgs,
     inspect,
     install::InstallArgs,
-    node,
     remappings::RemappingArgs,
     run::RunArgs,
     snapshot, test, tree,
