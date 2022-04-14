@@ -1,9 +1,31 @@
-use ethers_core::types::{H256, U256};
+use ethers_core::types::{BlockNumber, H256, U256};
 use serde::{
     de::{Error, Visitor},
     Deserialize, Deserializer, Serialize, Serializer,
 };
 use std::fmt;
+
+/// Represents the params to set forking
+#[derive(Clone, Debug, PartialEq, Deserialize, Default)]
+#[serde( rename_all = "camelCase")]
+pub struct Forking {
+    json_rpc_url: Option<String>,
+    block_number: Option<BlockNumber>,
+}
+
+/// Additional `evm_mine` options
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(untagged)]
+pub enum EvmMineOptions {
+    /// The timestamp the block should be mined with
+    Timestamp(U256),
+    Options {
+        timestamp: U256,
+        // If `blocks` is given, it will mine exactly blocks number of blocks, regardless of any
+        // other blocks mined or reverted during it's operation
+        blocks: Option<U256>,
+    },
+}
 
 /// Represents the result of `eth_getWork`
 /// This may or may not include the block number

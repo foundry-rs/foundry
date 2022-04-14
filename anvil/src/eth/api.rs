@@ -35,6 +35,7 @@ use ethers::{
     utils::rlp,
 };
 use std::sync::Arc;
+use ethers::types::Trace;
 use tracing::trace;
 
 /// The entry point for executing eth api RPC call - The Eth RPC interface.
@@ -657,6 +658,16 @@ impl EthApi {
     pub fn max_priority_fee_per_gas(&self) -> Result<U256> {
         Err(BlockchainError::RpcUnimplemented)
     }
+
+
+    /// Returns traces for the transaction hash
+    ///
+    /// Handler for RPC call: `debug_traceTransaction`
+    pub fn debug_trace_transaction(&self, tx_hash: H256) -> Result<Vec<Trace>> {
+        Err(BlockchainError::RpcUnimplemented)
+    }
+
+
 }
 
 // == impl EthApi forge endpoints ==

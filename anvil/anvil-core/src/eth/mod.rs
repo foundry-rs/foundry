@@ -1,6 +1,6 @@
 use crate::{
     eth::{call::CallRequest, filter::Filter, transaction::EthTransactionRequest},
-    types::Index,
+    types::{EvmMineOptions, Forking, Index},
 };
 use ethers_core::{
     abi::ethereum_types::H64,
@@ -110,6 +110,133 @@ pub enum EthRequest {
         BlockNumber,
         #[serde(default)] Vec<f64>,
     ),
+
+    /// non-standard endpoint for traces
+    #[serde(rename = "debug_traceTransaction", with = "sequence")]
+    DebugTraceTransaction(H256),
+
+    /// Custom RPC endpoints
+    Custom(ForgeRequest),
+}
+
+/// Represents a non-standard forge JSON-RPC API, compatible with other dev nodes, hardhat, ganache
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(tag = "method", content = "params")]
+pub enum ForgeRequest {
+    /// send transactions impersonating specific account and contract addresses.
+    #[serde(
+        rename = "forge_impersonateAccount",
+        alias = "hardhat_impersonateAccount",
+        with = "sequence"
+    )]
+    ImpersonateAccount(Address),
+    /// Stops impersonating an account if previously set with `forge_impersonateAccount`
+    #[serde(rename = "forge_stopImpersonatingAccount", alias = "hardhat_stopImpersonatingAccount")]
+    StopImpersonatingAccount,
+    /// Returns true if automatic mining is enabled, and false.
+    #[serde(rename = "forge_getAutomine", alias = "hardhat_getAutomine")]
+    GetAutoMine,
+    /// Mines a series of blocks
+    #[serde(rename = "forge_mine", alias = "hardhat_mine")]
+    Mine(
+        /// Number of blocks to mine, if not set `1` block is mined
+        #[serde(default, deserialize_with = "deserialize_number_opt")]
+        Option<U256>,
+        /// The time interval between each block in seconds, defaults to `1` seconds
+        /// The interval is applied only to blocks mined in the given method invocation, not to
+        /// blocks mined afterwards. Set this to `0` to instantly mine _all_ blocks
+        #[serde(default, deserialize_with = "deserialize_number_opt")]
+        Option<U256>,
+    ),
+
+    /// Enables or disables, based on the single boolean argument, the automatic mining of new
+    /// blocks with each new transaction submitted to the network.
+    #[serde(rename = "evm_setAutomine", with = "sequence")]
+    SetAutomine(bool),
+
+    /// Sets the mining behavior to interval with the given interval (seconds)
+    #[serde(rename = "evm_setIntervalMining", with = "sequence")]
+    SetIntervalMining(u64),
+
+    /// Removes transactions from the pool
+    #[serde(
+        rename = "forge_dropTransaction",
+        alias = "hardhat_dropTransaction",
+        with = "sequence"
+    )]
+    DropTransaction(H256),
+
+    /// Reset the fork to a fresh forked state, and optionally update the fork config
+    #[serde(rename = "forge_reset", alias = "hardhat_reset", with = "sequence")]
+    Reset(#[serde(default)] Forking),
+
+    /// Modifies the balance of an account.
+    #[serde(rename = "forge_setBalance", alias = "hardhat_setBalance", with = "sequence")]
+    SetBalance(Address, #[serde(deserialize_with = "deserialize_number")] U256),
+
+    /// Sets the code of a contract
+    #[serde(rename = "forge_setCode", alias = "hardhat_setCode", with = "sequence")]
+    SetCode(Address, Bytes),
+
+    /// Sets the nonce of an address
+    #[serde(rename = "forge_setNonce", alias = "hardhat_setNonce", with = "sequence")]
+    SetNonce(Address, #[serde(deserialize_with = "deserialize_number")] U256),
+
+    /// Writes a single slot of the account's storage
+    #[serde(rename = "forge_setStorageAt", alias = "hardhat_setStorageAt", with = "sequence")]
+    SetStorageAt(
+        Address,
+        /// slot
+        U256,
+        /// value
+        U256,
+    ),
+
+    /// Sets the coinbase address
+    #[serde(rename = "forge_setCoinbase", alias = "hardhat_setCoinbase", with = "sequence")]
+    SetCoinbase(Address),
+
+    /// Enable or disable logging
+    #[serde(
+        rename = "forge_setLoggingEnabled",
+        alias = "hardhat_setLoggingEnabled",
+        with = "sequence"
+    )]
+    SetLogging(bool),
+
+    /// Set the minimum gas price for the node
+    #[serde(rename = "forge_setMinGasPrice", alias = "hardhat_setMinGasPrice", with = "sequence")]
+    SetMinGasPrice(#[serde(deserialize_with = "deserialize_number")] U256),
+
+    /// Sets the base fee of the next block
+    #[serde(
+        rename = "forge_setNextBlockBaseFeePerGas",
+        alias = "hardhat_setNextBlockBaseFeePerGas",
+        with = "sequence"
+    )]
+    SetNextBlockBaseFeePerGas(#[serde(deserialize_with = "deserialize_number")] U256),
+
+    // Ganache compatible calls
+    /// Snapshot the state of the blockchain at the current block.
+    #[serde(rename = "evm_snapshot")]
+    EvmSnapshot(#[serde(deserialize_with = "deserialize_number")] U256),
+
+    /// Revert the state of the blockchain to a previous snapshot.
+    /// Takes a single parameter, which is the snapshot id to revert to.
+    #[serde(rename = "evm_revert", with = "sequence")]
+    EvmRevert(EvmMineOptions),
+
+    /// Jump forward in time by the given amount of time, in seconds.
+    #[serde(rename = "evm_increaseTime", with = "sequence")]
+    EvmIncreaseTime(#[serde(deserialize_with = "deserialize_number")] U256),
+
+    /// Similar to `evm_increaseTime` but takes the exact timestamp that you want in the next block
+    #[serde(rename = "evm_setNextBlockTimestamp", with = "sequence")]
+    EvmSetNextBlockTimeStamp(u64),
+
+    /// Mine a single block
+    #[serde(rename = "evm_mine")]
+    EvmMine(EvmMineOptions),
 }
 
 fn deserialize_number<'de, D>(deserializer: D) -> Result<U256, D::Error>
@@ -126,6 +253,26 @@ where
     let num = match Numeric::deserialize(deserializer)? {
         Numeric::U256(n) => n,
         Numeric::Num(n) => U256::from(n),
+    };
+
+    Ok(num)
+}
+
+fn deserialize_number_opt<'de, D>(deserializer: D) -> Result<Option<U256>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Numeric {
+        U256(U256),
+        Num(u64),
+    }
+
+    let num = match Option::<Numeric>::deserialize(deserializer)? {
+        Some(Numeric::U256(n)) => Some(n),
+        Some(Numeric::Num(n)) => Some(U256::from(n)),
+        _ => None
     };
 
     Ok(num)
