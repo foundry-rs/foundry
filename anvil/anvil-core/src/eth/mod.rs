@@ -86,10 +86,10 @@ pub enum EthRequest {
     #[serde(rename = "eth_getTransactionReceipt", with = "sequence")]
     EthGetTransactionReceipt(H256),
 
-    #[serde(rename = "eth_getUncleByBlockHashAndIndex", with = "sequence")]
+    #[serde(rename = "eth_getUncleByBlockHashAndIndex")]
     EthGetUncleByBlockHashAndIndex(H256, Index),
 
-    #[serde(rename = "eth_getUncleByBlockNumberAndIndex", with = "sequence")]
+    #[serde(rename = "eth_getUncleByBlockNumberAndIndex")]
     EthGetUncleByBlockNumberAndIndex(BlockNumber, Index),
 
     #[serde(rename = "eth_getLogs")]
@@ -98,10 +98,10 @@ pub enum EthRequest {
     #[serde(rename = "eth_getWork")]
     EthGetWork,
 
-    #[serde(rename = "eth_submitWork", with = "sequence")]
+    #[serde(rename = "eth_submitWork")]
     EthSubmitWork(H64, H256, H256),
 
-    #[serde(rename = "eth_submitHashrate", with = "sequence")]
+    #[serde(rename = "eth_submitHashrate")]
     EthSubmitHashRate(U256, H256),
 
     #[serde(rename = "eth_feeHistory")]
