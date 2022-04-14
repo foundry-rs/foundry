@@ -1,8 +1,6 @@
 use crate::{
-    cmd::{forge::build::BuildArgs, Cmd},
-    compile,
-    opts::evm::EvmArgs,
-    utils,
+    cmd::{forge::build::CoreBuildArgs, Cmd},
+    compile, utils,
 };
 use ansi_term::Colour;
 use clap::{Parser, ValueHint};
@@ -25,6 +23,7 @@ use forge::{
     trace::{identifier::LocalTraceIdentifier, CallTraceArena, CallTraceDecoder, TraceKind},
     CALLER,
 };
+use foundry_common::evm::EvmArgs;
 use foundry_config::{figment::Figment, Config};
 use foundry_utils::{encode_args, IntoFunction, PostLinkInput, RuntimeOrHandle};
 use std::{collections::BTreeMap, path::PathBuf};
@@ -46,11 +45,11 @@ pub struct RunArgs {
     pub args: Vec<String>,
 
     /// The name of the contract you want to run.
-    #[clap(long, short)]
+    #[clap(long, short, value_name = "CONTRACT_NAME")]
     pub target_contract: Option<String>,
 
     /// The signature of the function you want to call in the contract, or raw calldata.
-    #[clap(long, short, default_value = "run()")]
+    #[clap(long, short, default_value = "run()", value_name = "SIGNATURE")]
     pub sig: String,
 
     /// Open the script in the debugger.
@@ -58,7 +57,7 @@ pub struct RunArgs {
     pub debug: bool,
 
     #[clap(flatten, next_help_heading = "BUILD OPTIONS")]
-    pub opts: BuildArgs,
+    pub opts: CoreBuildArgs,
 
     #[clap(flatten, next_help_heading = "EVM OPTIONS")]
     pub evm_opts: EvmArgs,

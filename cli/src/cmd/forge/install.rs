@@ -14,14 +14,22 @@ use std::{
 /// Command to install dependencies
 #[derive(Debug, Clone, Parser)]
 pub struct InstallArgs {
-    #[clap(
-        help = "Installs one or more dependencies as git submodules (will install existing dependencies if no arguments are provided)"
-    )]
+    /// The dependencies to install.
+    ///
+    /// A dependency can be a raw URL, or the path to a GitHub repository.
+    ///
+    /// Additionally, a ref can be provided by adding @ to the dependency path.
+    ///
+    /// A ref can be:  
+    /// - A branch: master
+    /// - A tag: v1.2.3
+    /// - A commit: 8e8128
     dependencies: Vec<Dependency>,
     #[clap(flatten)]
     opts: DependencyInstallOpts,
     #[clap(
-        help = "the project's root path. By default, this is the root directory of the current Git repository or the current working directory if it is not part of a Git repository",
+        help = "The project's root path.",
+        long_help = "The project's root path. By default, this is the root directory of the current Git repository, or the current working directory.",
         long,
         value_hint = ValueHint::DirPath
     )]
@@ -40,11 +48,11 @@ impl Cmd for InstallArgs {
 
 #[derive(Debug, Clone, Copy, Default, Parser)]
 pub struct DependencyInstallOpts {
-    #[clap(help = "install without creating a submodule repository", long)]
+    #[clap(help = "Install without adding the dependency as a submodule.", long)]
     pub no_git: bool,
-    #[clap(help = "do not create a commit", long)]
+    #[clap(help = "Do not create a commit.", long)]
     pub no_commit: bool,
-    #[clap(help = "do not print messages", short, long)]
+    #[clap(help = "Do not print any messages.", short, long)]
     pub quiet: bool,
 }
 

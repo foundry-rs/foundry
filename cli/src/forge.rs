@@ -18,7 +18,7 @@ fn main() -> eyre::Result<()> {
     let opts = Opts::parse();
     match opts.sub {
         Subcommands::Test(cmd) => {
-            if cmd.build_args().is_watch() {
+            if cmd.is_watch() {
                 utils::block_on(watch::watch_test(cmd))?;
             } else {
                 let outcome = cmd.run()?;
