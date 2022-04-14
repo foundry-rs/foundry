@@ -209,8 +209,7 @@ impl CallTraceDecoder {
                         node.decode_function(funcs, &self.labels, &self.errors);
                     }
                 } else {
-                    node.trace.data =
-                        RawOrDecodedCall::Decoded("fallback".to_string(), Vec::new());
+                    node.trace.data = RawOrDecodedCall::Decoded("fallback".to_string(), Vec::new());
 
                     if let RawOrDecodedReturnData::Raw(bytes) = &node.trace.output {
                         if !node.trace.success {
