@@ -1,13 +1,10 @@
 use super::{ClapChain, EthereumOpts, Wallet};
 use crate::{
     cmd::cast::{call::CallArgs, find_block::FindBlockArgs},
-    utils::parse_u256,
+    utils::{parse_ether_value, parse_u256},
 };
 use clap::{Parser, Subcommand, ValueHint};
-use ethers::{
-    abi::token::{LenientTokenizer, Tokenizer},
-    types::{Address, BlockId, BlockNumber, NameOrAddress, H256, U256},
-};
+use ethers::types::{Address, BlockId, BlockNumber, NameOrAddress, H256, U256};
 use std::{path::PathBuf, str::FromStr};
 
 #[derive(Debug, Subcommand)]
@@ -134,7 +131,7 @@ Examples:
         #[clap(flatten)]
         // TODO: We only need RPC URL + etherscan stuff from this struct
         eth: EthereumOpts,
-        #[clap(long = "json", short = 'j')]
+        #[clap(long = "json", short = 'j', help_heading = "DISPLAY OPTIONS")]
         to_json: bool,
     },
     #[clap(name = "block")]
@@ -152,7 +149,7 @@ Examples:
         full: bool,
         #[clap(long, short, help = "If specified, only get the given field of the block.")]
         field: Option<String>,
-        #[clap(long = "json", short = 'j')]
+        #[clap(long = "json", short = 'j', help_heading = "DISPLAY OPTIONS")]
         to_json: bool,
         #[clap(long, env = "ETH_RPC_URL")]
         rpc_url: String,
@@ -212,7 +209,7 @@ Examples:
     Tx {
         hash: String,
         field: Option<String>,
-        #[clap(long = "json", short = 'j')]
+        #[clap(long = "json", short = 'j', help_heading = "DISPLAY OPTIONS")]
         to_json: bool,
         #[clap(long, env = "ETH_RPC_URL")]
         rpc_url: String,
@@ -232,7 +229,7 @@ Examples:
         confirmations: usize,
         #[clap(long, env = "CAST_ASYNC")]
         cast_async: bool,
-        #[clap(long = "json", short = 'j')]
+        #[clap(long = "json", short = 'j', help_heading = "DISPLAY OPTIONS")]
         to_json: bool,
         #[clap(long, env = "ETH_RPC_URL")]
         rpc_url: String,
@@ -253,7 +250,7 @@ Examples:
         gas: Option<U256>,
         #[clap(
             long = "gas-price",
-            help = "Gas price for the transaction.",
+            help = "Gas price for legacy transactions, or max fee per gas for EIP1559 transactions.",
             env = "ETH_GAS_PRICE",
             parse(try_from_str = parse_ether_value)
         )]
@@ -288,7 +285,7 @@ This is automatically enabled for common networks without EIP1559."#
             default_value = "1"
         )]
         confirmations: usize,
-        #[clap(long = "json", short = 'j')]
+        #[clap(long = "json", short = 'j', help_heading = "DISPLAY OPTIONS")]
         to_json: bool,
         #[clap(
             long = "resend",
@@ -700,14 +697,6 @@ fn parse_slot(s: &str) -> eyre::Result<H256> {
         H256::from_str(&padded)?
     } else {
         H256::from_low_u64_be(u64::from_str(s)?)
-    })
-}
-
-fn parse_ether_value(value: &str) -> eyre::Result<U256> {
-    Ok(if value.starts_with("0x") {
-        U256::from_str(value)?
-    } else {
-        U256::from(LenientTokenizer::tokenize_uint(value)?)
     })
 }
 

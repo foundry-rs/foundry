@@ -3,7 +3,7 @@ use crate::{
     cmd::{forge::build::CoreBuildArgs, Cmd},
     compile,
     opts::{forge::ContractInfo, EthereumOpts, WalletType},
-    utils::parse_u256,
+    utils::parse_ether_value,
 };
 use clap::{Parser, ValueHint};
 use ethers::{
@@ -24,7 +24,7 @@ pub struct CreateArgs {
     #[clap(
         long,
         multiple_values = true,
-        help = "Constructor arguments.",
+        help = "The constructor arguments.",
         name = "constructor_args",
         conflicts_with = "constructor_args_path"
     )]
@@ -54,7 +54,7 @@ This is automatically enabled for common networks without EIP1559."#
         help_heading = "TRANSACTION OPTIONS",
         help = "Gas price for legacy transactions, or max fee per gas for EIP1559 transactions.",
         env = "ETH_GAS_PRICE",
-        parse(try_from_str = parse_u256)
+        parse(try_from_str = parse_ether_value)
     )]
     gas_price: Option<U256>,
 
@@ -71,15 +71,17 @@ This is automatically enabled for common networks without EIP1559."#
         long = "priority-fee", 
         help_heading = "TRANSACTION OPTIONS",
         help = "Gas priority fee for EIP1559 transactions.",
-        env = "ETH_GAS_PRIORITY_FEE", parse(try_from_str = parse_u256)
+        env = "ETH_GAS_PRIORITY_FEE", parse(try_from_str = parse_ether_value)
     )]
     priority_fee: Option<U256>,
-
     #[clap(
         long,
         help_heading = "TRANSACTION OPTIONS",
-        help = "Ether to send in the transaction in wei.",
-        parse(try_from_str = parse_u256)
+        help = "Ether to send in the transaction.",
+        long_help = r#"Ether to send in the transaction, either specified in wei, or as a string with a unit type.
+
+Examples: 1ether, 10gwei, 0.01ether"#,
+        parse(try_from_str = parse_ether_value)
     )]
     value: Option<U256>,
 
@@ -89,7 +91,11 @@ This is automatically enabled for common networks without EIP1559."#
     #[clap(flatten, next_help_heading = "ETHEREUM OPTIONS")]
     eth: EthereumOpts,
 
-    #[clap(long = "json", help = "Print the deployment information as JSON.")]
+    #[clap(
+        long = "json",
+        help_heading = "DISPLAY OPTIONS",
+        help = "Print the deployment information as JSON."
+    )]
     json: bool,
 }
 

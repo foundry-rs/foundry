@@ -167,7 +167,7 @@ pub struct TestArgs {
     allow_failure: bool,
 
     /// Output test results in JSON format.
-    #[clap(long, short)]
+    #[clap(long, short, help_heading = "DISPLAY OPTIONS")]
     json: bool,
 
     #[clap(flatten, next_help_heading = "EVM OPTIONS")]
