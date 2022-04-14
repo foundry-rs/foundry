@@ -1,7 +1,7 @@
 //! Test command
 use crate::{
     cmd::{
-        forge::{build::BuildArgs, run::RunArgs},
+        forge::{build::CoreBuildArgs, run::RunArgs, watch::WatchArgs},
         Cmd,
     },
     compile::ProjectCompiler,
@@ -31,6 +31,7 @@ use std::{
     thread,
     time::Duration,
 };
+use watchexec::config::{InitConfig, RuntimeConfig};
 
 #[derive(Debug, Clone, Parser)]
 pub struct Filter {
@@ -161,24 +162,27 @@ pub struct TestArgs {
     #[clap(long, env = "FORGE_GAS_REPORT")]
     gas_report: bool,
 
-    /// Force the process to exit with code 0, even if the tests fail.
+    /// Exit with code 0 even if a test fails.
     #[clap(long, env = "FORGE_ALLOW_FAILURE")]
     allow_failure: bool,
 
     /// Output test results in JSON format.
-    #[clap(long, short)]
+    #[clap(long, short, help_heading = "DISPLAY OPTIONS")]
     json: bool,
 
     #[clap(flatten, next_help_heading = "EVM OPTIONS")]
     evm_opts: EvmArgs,
 
     #[clap(flatten, next_help_heading = "BUILD OPTIONS")]
-    opts: BuildArgs,
+    opts: CoreBuildArgs,
+
+    #[clap(flatten, next_help_heading = "WATCH OPTIONS")]
+    pub watch: WatchArgs,
 }
 
 impl TestArgs {
-    /// Returns the flattened [`BuildArgs`]
-    pub fn build_args(&self) -> &BuildArgs {
+    /// Returns the flattened [`CoreBuildArgs`]
+    pub fn build_args(&self) -> &CoreBuildArgs {
         &self.opts
     }
 
@@ -194,6 +198,17 @@ impl TestArgs {
         let evm_opts = figment.extract()?;
         let config = Config::from_provider(figment).sanitized();
         Ok((config, evm_opts))
+    }
+
+    /// Returns whether `BuildArgs` was configured with `--watch`
+    pub fn is_watch(&self) -> bool {
+        self.watch.watch.is_some()
+    }
+
+    /// Returns the [`watchexec::InitConfig`] and [`watchexec::RuntimeConfig`] necessary to
+    /// bootstrap a new [`watchexe::Watchexec`] loop.
+    pub(crate) fn watchexec_config(&self) -> eyre::Result<(InitConfig, RuntimeConfig)> {
+        self.watch.watchexec_config(|| Config::from(self).src)
     }
 }
 

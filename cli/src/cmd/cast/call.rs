@@ -49,7 +49,7 @@ impl figment::Provider for CallArgs {
             dict.insert("eth_rpc_url".to_string(), Value::from(rpc_url.to_string()));
         }
 
-        if let Some(from) = self.eth.from {
+        if let Some(from) = self.eth.wallet.from {
             dict.insert("sender".to_string(), Value::from(format!("{:?}", from)));
         }
 
