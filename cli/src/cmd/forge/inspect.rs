@@ -1,8 +1,6 @@
-use std::{fmt, str::FromStr};
-
 use crate::{
     cmd::{
-        forge::build::{self, BuildArgs},
+        forge::build::{self, CoreBuildArgs},
         Cmd,
     },
     compile,
@@ -13,6 +11,7 @@ use ethers::prelude::artifacts::output_selection::{
     ContractOutputSelection, EvmOutputSelection, EwasmOutputSelection,
 };
 use serde_json::{to_value, Value};
+use std::{fmt, str::FromStr};
 
 /// Contract level output selection
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -98,7 +97,7 @@ pub struct InspectArgs {
 
     /// All build arguments are supported
     #[clap(flatten)]
-    build: build::BuildArgs,
+    build: build::CoreBuildArgs,
 }
 
 impl Cmd for InspectArgs {
@@ -146,7 +145,7 @@ impl Cmd for InspectArgs {
         };
 
         // Build modified Args
-        let modified_build_args = BuildArgs {
+        let modified_build_args = CoreBuildArgs {
             compiler: CompilerArgs {
                 extra_output: Some(cos),
                 optimize: optimized,

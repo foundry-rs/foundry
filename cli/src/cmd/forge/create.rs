@@ -1,24 +1,20 @@
 //! Create command
-
 use crate::{
-    cmd::{forge::build::BuildArgs, Cmd},
-    opts::{EthereumOpts, WalletType},
+    cmd::{forge::build::CoreBuildArgs, Cmd},
+    compile,
+    opts::{forge::ContractInfo, EthereumOpts, WalletType},
     utils::parse_u256,
 };
+use clap::{Parser, ValueHint};
 use ethers::{
     abi::{Abi, Constructor, Token},
     prelude::{artifacts::BytecodeObject, ContractFactory, Http, Middleware, Provider},
     types::{transaction::eip2718::TypedTransaction, Chain, U256},
 };
-
 use eyre::{Context, Result};
 use foundry_utils::parse_tokens;
-use std::fs;
-
-use crate::{compile, opts::forge::ContractInfo};
-use clap::{Parser, ValueHint};
 use serde_json::json;
-use std::{path::PathBuf, sync::Arc};
+use std::{fs, path::PathBuf, sync::Arc};
 
 #[derive(Debug, Clone, Parser)]
 pub struct CreateArgs {
@@ -41,7 +37,7 @@ pub struct CreateArgs {
     constructor_args_path: Option<PathBuf>,
 
     #[clap(flatten)]
-    opts: BuildArgs,
+    opts: CoreBuildArgs,
 
     #[clap(flatten)]
     eth: EthereumOpts,
@@ -81,7 +77,7 @@ impl Cmd for CreateArgs {
             // Supress compile stdout messages when printing json output
             compile::suppress_compile(&project)?
         } else {
-            compile::compile(&project, self.opts.names, self.opts.sizes)?
+            compile::compile(&project, false, false)?
         };
 
         // Get ABI and BIN

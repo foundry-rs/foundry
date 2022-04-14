@@ -1,6 +1,7 @@
 //! Verify contract source on etherscan
 
-use crate::{cmd::forge::build::BuildArgs, opts::forge::ContractInfo};
+use super::build::{CoreBuildArgs, ProjectPathsArgs};
+use crate::opts::forge::ContractInfo;
 use clap::Parser;
 use ethers::{
     abi::Address,
@@ -18,8 +19,6 @@ use foundry_config::Chain;
 use semver::Version;
 use std::{collections::BTreeMap, path::Path};
 use tracing::{trace, warn};
-
-use super::build::ProjectPathsArgs;
 
 /// Verification arguments
 #[derive(Debug, Clone, Parser)]
@@ -125,19 +124,16 @@ impl VerifyArgs {
     /// If `--flatten` is set to `true` then this will send with [`CodeFormat::SingleFile`]
     /// otherwise this will use the [`CodeFormat::StandardJsonInput`]
     fn create_verify_request(&self) -> eyre::Result<VerifyContract> {
-        let build_args = BuildArgs {
+        let build_args = CoreBuildArgs {
             project_paths: self.project_paths.clone(),
             out_path: Default::default(),
             compiler: Default::default(),
-            names: false,
-            sizes: false,
             ignored_error_codes: vec![],
             no_auto_detect: false,
             use_solc: None,
             offline: false,
             force: false,
             libraries: vec![],
-            watch: Default::default(),
             via_ir: false,
             config_path: None,
         };

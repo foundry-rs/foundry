@@ -138,30 +138,31 @@ pub enum Subcommands {
 // See also [`BuildArgs`]
 #[derive(Default, Debug, Clone, Parser, Serialize)]
 pub struct CompilerArgs {
-    #[clap(help = "Choose the evm version", long)]
+    #[clap(help = "The target EVM version.", long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub evm_version: Option<EvmVersion>,
 
-    #[clap(help = "Activate the solidity optimizer", long)]
-    // skipped because, optimize is opt-in
+    #[clap(help = "Activate the Solidity optimizer.", long)]
     #[serde(skip)]
     pub optimize: bool,
 
-    #[clap(help = "Optimizer parameter runs", long)]
+    #[clap(help = "The number of optimizer runs.", long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub optimize_runs: Option<usize>,
 
-    #[clap(
-        help = "Extra output types to include in the contract's json artifact [evm.assembly, ewasm, ir, irOptimized, metadata] eg: `--extra-output evm.assembly`",
-        long
-    )]
+    /// Extra output to include in the contract's artifact.
+    ///
+    /// Example keys: evm.assembly, ewasm, ir, irOptimized, metadata
+    ///
+    /// For a full description, see https://docs.soliditylang.org/en/v0.8.13/using-the-compiler.html#input-description
+    #[clap(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extra_output: Option<Vec<ContractOutputSelection>>,
 
-    #[clap(
-        help = "Extra output types to write to a separate file [metadata, ir, irOptimized, ewasm] eg: `--extra-output-files metadata`",
-        long
-    )]
+    /// Extra output to write to separate files.
+    ///
+    /// Valid values: metadata, ir, irOptimized, ewasm, assembly
+    #[clap(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extra_output_files: Option<Vec<ContractOutputSelection>>,
 }

@@ -1,5 +1,5 @@
 use crate::{
-    cmd::{forge::build::BuildArgs, Cmd},
+    cmd::{forge::build::CoreBuildArgs, Cmd},
     compile,
     opts::evm::EvmArgs,
     utils,
@@ -58,7 +58,7 @@ pub struct RunArgs {
     pub debug: bool,
 
     #[clap(flatten, next_help_heading = "BUILD OPTIONS")]
-    pub opts: BuildArgs,
+    pub opts: CoreBuildArgs,
 
     #[clap(flatten, next_help_heading = "EVM OPTIONS")]
     pub evm_opts: EvmArgs,

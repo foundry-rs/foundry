@@ -1,8 +1,7 @@
 //! Snapshot command
-
 use crate::cmd::{
     forge::{
-        build::BuildArgs,
+        build::CoreBuildArgs,
         test,
         test::{custom_run, Test, TestOutcome},
     },
@@ -35,7 +34,7 @@ pub static RE_BASIC_SNAPSHOT_ENTRY: Lazy<Regex> = Lazy::new(|| {
 pub struct SnapshotArgs {
     /// All test arguments are supported
     #[clap(flatten)]
-    test: test::TestArgs,
+    pub(crate) test: test::TestArgs,
 
     /// Additional configs for test results
     #[clap(flatten)]
@@ -78,17 +77,17 @@ pub struct SnapshotArgs {
 impl SnapshotArgs {
     /// Returns whether `SnapshotArgs` was configured with `--watch`
     pub fn is_watch(&self) -> bool {
-        self.test.build_args().is_watch()
+        self.test.is_watch()
     }
 
     /// Returns the [`watchexec::InitConfig`] and [`watchexec::RuntimeConfig`] necessary to
     /// bootstrap a new [`watchexe::Watchexec`] loop.
     pub(crate) fn watchexec_config(&self) -> eyre::Result<(InitConfig, RuntimeConfig)> {
-        self.test.build_args().watchexec_config()
+        self.test.watchexec_config()
     }
 
-    /// Returns the nested [`BuildArgs`]
-    pub fn build_args(&self) -> &BuildArgs {
+    /// Returns the nested [`CoreBuildArgs`]
+    pub fn build_args(&self) -> &CoreBuildArgs {
         self.test.build_args()
     }
 }

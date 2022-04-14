@@ -23,8 +23,8 @@ use serde::Serialize;
 use watchexec::config::{InitConfig, RuntimeConfig};
 
 // Loads project's figment and merges the build cli arguments into it
-impl<'a> From<&'a BuildArgs> for Figment {
-    fn from(args: &'a BuildArgs) -> Self {
+impl<'a> From<&'a CoreBuildArgs> for Figment {
+    fn from(args: &'a CoreBuildArgs) -> Self {
         let figment = if let Some(ref config_path) = args.config_path {
             if !config_path.exists() {
                 panic!("error: config-path `{}` does not exist", config_path.display())
@@ -48,8 +48,8 @@ impl<'a> From<&'a BuildArgs> for Figment {
     }
 }
 
-impl<'a> From<&'a BuildArgs> for Config {
-    fn from(args: &'a BuildArgs) -> Self {
+impl<'a> From<&'a CoreBuildArgs> for Config {
+    fn from(args: &'a CoreBuildArgs) -> Self {
         let figment: Figment = args.into();
         let mut config = Config::from_provider(figment).sanitized();
         // if `--config-path` is set we need to adjust the config's root path to the actual root
@@ -58,6 +58,145 @@ impl<'a> From<&'a BuildArgs> for Config {
             config.__root = args.project_paths.project_root().into();
         }
         config
+    }
+}
+
+#[derive(Debug, Clone, Parser, Serialize)]
+pub struct CoreBuildArgs {
+    #[clap(help = "Clear the cache and artifacts folder and recompile.", long)]
+    #[serde(skip)]
+    pub force: bool,
+
+    #[clap(help = "Set pre-linked libraries.", long, env = "DAPP_LIBRARIES")]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub libraries: Vec<String>,
+
+    #[clap(flatten, next_help_heading = "COMPILER OPTIONS")]
+    #[serde(flatten)]
+    pub compiler: CompilerArgs,
+
+    #[clap(help_heading = "COMPILER OPTIONS", help = "Ignore solc warnings by error code.", long)]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub ignored_error_codes: Vec<u64>,
+
+    #[clap(help_heading = "COMPILER OPTIONS", help = "Do not auto-detect solc.", long)]
+    #[serde(skip)]
+    pub no_auto_detect: bool,
+
+    #[clap(
+        help_heading = "COMPILER OPTIONS",
+        help = "specify the solc version or path to a local solc to run with.\
+        This accepts values of the form `x.y.z`, `solc:x.y.z` or `path/to/existing/solc`",
+        value_name = "use",
+        long = "use"
+    )]
+    #[serde(skip)]
+    pub use_solc: Option<String>,
+
+    #[clap(
+        help_heading = "COMPILER OPTIONS",
+        help = "Do not access the network.",
+        long_help = "Do not access the network. Missing solc versions will not be installed.",
+        long
+    )]
+    #[serde(skip)]
+    pub offline: bool,
+
+    #[clap(
+        help_heading = "COMPILER OPTIONS",
+        help = "Use the Yul intermediate representation compilation pipeline.",
+        long
+    )]
+    #[serde(skip)]
+    pub via_ir: bool,
+
+    #[clap(flatten, next_help_heading = "PROJECT OPTIONS")]
+    #[serde(flatten)]
+    pub project_paths: ProjectPathsArgs,
+
+    #[clap(
+        help_heading = "PROJECT OPTIONS",
+        help = "The path to the contract artifacts folder.",
+        long = "out",
+        short,
+        value_hint = ValueHint::DirPath
+    )]
+    #[serde(rename = "out", skip_serializing_if = "Option::is_none")]
+    pub out_path: Option<PathBuf>,
+
+    #[clap(
+        help_heading = "PROJECT OPTIONS",
+        help = "Path to the config file.",
+        long = "config-path",
+        value_hint = ValueHint::FilePath
+    )]
+    #[serde(skip)]
+    pub config_path: Option<PathBuf>,
+}
+
+impl CoreBuildArgs {
+    /// Returns the `Project` for the current workspace
+    ///
+    /// This loads the `foundry_config::Config` for the current workspace (see
+    /// [`utils::find_project_root_path`] and merges the cli `BuildArgs` into it before returning
+    /// [`foundry_config::Config::project()`]
+    pub fn project(&self) -> eyre::Result<Project> {
+        let config: Config = self.into();
+        Ok(config.project()?)
+    }
+
+    /// Returns the remappings to add to the config
+    #[deprecated(note = "Use ProjectPathsArgs::get_remappings() instead")]
+    pub fn get_remappings(&self) -> Vec<Remapping> {
+        self.project_paths.get_remappings()
+    }
+}
+
+impl Provider for CoreBuildArgs {
+    fn metadata(&self) -> Metadata {
+        Metadata::named("Core Build Args Provider")
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
+        let value = Value::serialize(self)?;
+        let error = InvalidType(value.to_actual(), "map".into());
+        let mut dict = value.into_dict().ok_or(error)?;
+
+        if self.no_auto_detect {
+            dict.insert("auto_detect_solc".to_string(), false.into());
+        }
+
+        if let Some(ref solc) = self.use_solc {
+            dict.insert("solc".to_string(), solc.trim_start_matches("solc:").into());
+        }
+
+        if self.offline {
+            dict.insert("offline".to_string(), true.into());
+        }
+
+        if self.via_ir {
+            dict.insert("via_ir".to_string(), true.into());
+        }
+
+        if self.force {
+            dict.insert("force".to_string(), self.force.into());
+        }
+
+        if self.compiler.optimize {
+            dict.insert("optimizer".to_string(), self.compiler.optimize.into());
+        }
+
+        if let Some(ref extra) = self.compiler.extra_output {
+            let selection: Vec<_> = extra.iter().map(|s| s.to_string()).collect();
+            dict.insert("extra_output".to_string(), selection.into());
+        }
+
+        if let Some(ref extra) = self.compiler.extra_output_files {
+            let selection: Vec<_> = extra.iter().map(|s| s.to_string()).collect();
+            dict.insert("extra_output_files".to_string(), selection.into());
+        }
+
+        Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }
 
@@ -83,83 +222,17 @@ impl<'a> From<&'a BuildArgs> for Config {
 // `figment::Provider` implementation
 #[derive(Debug, Clone, Parser, Serialize)]
 pub struct BuildArgs {
-    #[clap(help = "print compiled contract names", long = "names")]
+    #[clap(flatten)]
+    #[serde(flatten)]
+    pub args: CoreBuildArgs,
+
+    #[clap(help = "Print compiled contract names.", long = "names")]
     #[serde(skip)]
     pub names: bool,
 
-    #[clap(help = "print compiled contract sizes", long = "sizes")]
+    #[clap(help = "Print compiled contract sizes.", long = "sizes")]
     #[serde(skip)]
     pub sizes: bool,
-
-    #[clap(help = "ignore warnings with specific error codes", long)]
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub ignored_error_codes: Vec<u64>,
-
-    #[clap(
-        help = "if set to true, skips auto-detecting solc and uses what is in the user's $PATH ",
-        long
-    )]
-    #[serde(skip)]
-    pub no_auto_detect: bool,
-
-    #[clap(
-        help = "specify the solc version or path to a local solc to run with.\
-        This accepts values of the form `x.y.z`, `solc:x.y.z` or `path/to/existing/solc`",
-        value_name = "use",
-        long = "use"
-    )]
-    #[serde(skip)]
-    pub use_solc: Option<String>,
-
-    #[clap(
-        help = "if set to true, runs without accessing the network (missing solc versions will not be installed)",
-        long
-    )]
-    #[serde(skip)]
-    pub offline: bool,
-
-    #[clap(
-        help = "force recompilation of the project, deletes the cache and artifacts folders",
-        long
-    )]
-    #[serde(skip)]
-    pub force: bool,
-
-    #[clap(help = "add linked libraries", long, env = "DAPP_LIBRARIES")]
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub libraries: Vec<String>,
-
-    #[clap(
-        help = "if set to true, changes compilation pipeline to go through the Yul intermediate representation.",
-        long
-    )]
-    #[serde(skip)]
-    pub via_ir: bool,
-
-    #[clap(
-        help = "path to the foundry.toml",
-        long = "config-path",
-        value_hint = ValueHint::FilePath
-    )]
-    #[serde(skip)]
-    pub config_path: Option<PathBuf>,
-
-    #[clap(flatten, next_help_heading = "COMPILER OPTIONS")]
-    #[serde(flatten)]
-    pub compiler: CompilerArgs,
-
-    #[clap(flatten, next_help_heading = "PROJECT OPTIONS")]
-    #[serde(flatten)]
-    pub project_paths: ProjectPathsArgs,
-
-    #[clap(
-        help = "The path to the contract artifacts folder.",
-        long = "out",
-        short,
-        value_hint = ValueHint::DirPath
-    )]
-    #[serde(rename = "out", skip_serializing_if = "Option::is_none")]
-    pub out_path: Option<PathBuf>,
 
     #[clap(flatten, next_help_heading = "WATCH OPTIONS")]
     #[serde(skip)]
@@ -181,8 +254,7 @@ impl BuildArgs {
     /// [`utils::find_project_root_path`] and merges the cli `BuildArgs` into it before returning
     /// [`foundry_config::Config::project()`]
     pub fn project(&self) -> eyre::Result<Project> {
-        let config: Config = self.into();
-        Ok(config.project()?)
+        self.args.project()
     }
 
     /// Returns whether `BuildArgs` was configured with `--watch`
@@ -195,12 +267,6 @@ impl BuildArgs {
     pub(crate) fn watchexec_config(&self) -> eyre::Result<(InitConfig, RuntimeConfig)> {
         // use the path arguments or if none where provided the `src` dir
         self.watch.watchexec_config(|| Config::from(self).src)
-    }
-
-    /// Returns the remappings to add to the config
-    #[deprecated(note = "Use ProjectPathsArgs::get_remappings() instead")]
-    pub fn get_remappings(&self) -> Vec<Remapping> {
-        self.project_paths.get_remappings()
     }
 }
 
@@ -215,22 +281,6 @@ impl Provider for BuildArgs {
         let error = InvalidType(value.to_actual(), "map".into());
         let mut dict = value.into_dict().ok_or(error)?;
 
-        if self.no_auto_detect {
-            dict.insert("auto_detect_solc".to_string(), false.into());
-        }
-
-        if let Some(ref solc) = self.use_solc {
-            dict.insert("solc".to_string(), solc.trim_start_matches("solc:").into());
-        }
-
-        if self.offline {
-            dict.insert("offline".to_string(), true.into());
-        }
-
-        if self.via_ir {
-            dict.insert("via_ir".to_string(), true.into());
-        }
-
         if self.names {
             dict.insert("names".to_string(), true.into());
         }
@@ -239,27 +289,11 @@ impl Provider for BuildArgs {
             dict.insert("sizes".to_string(), true.into());
         }
 
-        if self.force {
-            dict.insert("force".to_string(), self.force.into());
-        }
-
-        if self.compiler.optimize {
-            dict.insert("optimizer".to_string(), self.compiler.optimize.into());
-        }
-
-        if let Some(ref extra) = self.compiler.extra_output {
-            let selection: Vec<_> = extra.iter().map(|s| s.to_string()).collect();
-            dict.insert("extra_output".to_string(), selection.into());
-        }
-
-        if let Some(ref extra) = self.compiler.extra_output_files {
-            let selection: Vec<_> = extra.iter().map(|s| s.to_string()).collect();
-            dict.insert("extra_output_files".to_string(), selection.into());
-        }
-
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }
+
+impl_figment_convert!(BuildArgs, args);
 
 #[derive(Debug, Clone, Parser, Serialize)]
 pub struct ProjectPathsArgs {

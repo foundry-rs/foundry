@@ -1,10 +1,8 @@
-use std::path::PathBuf;
-
-use crate::cmd::{forge::build::BuildArgs, Cmd};
+use super::build::{CoreBuildArgs, ProjectPathsArgs};
+use crate::cmd::Cmd;
 use clap::{Parser, ValueHint};
 use foundry_config::Config;
-
-use super::build::ProjectPathsArgs;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Parser)]
 pub struct FlattenArgs {
@@ -30,19 +28,16 @@ impl Cmd for FlattenArgs {
         let FlattenArgs { target_path, output, project_paths } = self;
 
         // flatten is a subset of `BuildArgs` so we can reuse that to get the config
-        let build_args = BuildArgs {
+        let build_args = CoreBuildArgs {
             project_paths,
             out_path: Default::default(),
             compiler: Default::default(),
-            names: false,
-            sizes: false,
             ignored_error_codes: vec![],
             no_auto_detect: false,
             use_solc: None,
             offline: false,
             force: false,
             libraries: vec![],
-            watch: Default::default(),
             via_ir: false,
             config_path: None,
         };
