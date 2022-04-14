@@ -1019,7 +1019,7 @@ mod tests {
 
         let paths = ProjectPathsConfig::builder()
             .root("../testdata")
-            .sources("../testdata")
+            .sources("../testdata/core")
             .build()
             .unwrap();
 

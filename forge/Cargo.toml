@@ -6,6 +6,7 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 foundry-utils = { path = "./../utils" }
+foundry-config = { path = "./../config" }
 foundry-evm = { path = "./../evm" }
 
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["solc-full"] }

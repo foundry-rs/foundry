@@ -481,6 +481,9 @@ fn test(
         for (contract_name, suite_result) in rx {
             let mut tests = suite_result.test_results.clone();
             println!();
+            for warning in suite_result.warnings.iter() {
+                eprintln!("{} {}", Colour::Yellow.bold().paint("Warning:"), warning);
+            }
             if !tests.is_empty() {
                 let term = if tests.len() > 1 { "tests" } else { "test" };
                 println!("Running {} {} for {}", tests.len(), term, contract_name);
