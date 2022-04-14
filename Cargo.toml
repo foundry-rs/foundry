@@ -1,15 +1,16 @@
 [workspace]
 members = [
-    "utils",
     "cast",
-    "forge",
+    "binder",
     "cli",
     "cli/test-utils",
+    "common",
     "config",
-    "fmt",
-    "ui",
     "evm",
-    "binder",
+    "fmt",
+    "forge",
+    "ui",
+    "utils",
 ]
 
 [profile.dev]

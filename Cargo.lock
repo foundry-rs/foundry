@@ -1761,6 +1761,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "foundry-common"
+version = "0.1.0"
+
+[[package]]
 name = "foundry-config"
 version = "0.2.0"
 dependencies = [
