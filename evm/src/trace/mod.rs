@@ -5,6 +5,7 @@ pub mod identifier;
 
 mod decoder;
 mod node;
+mod utils;
 
 pub use decoder::CallTraceDecoder;
 
@@ -14,12 +15,12 @@ use ethers::{
     abi::{Address, RawLog},
     types::U256,
 };
+use node::CallTraceNode;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
     fmt::{self, Write},
 };
-use node::CallTraceNode;
 
 /// An arena of [CallTraceNode]s
 #[derive(Debug, Clone, Serialize, Deserialize)]
