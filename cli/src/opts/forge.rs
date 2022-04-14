@@ -131,9 +131,6 @@ pub enum Subcommands {
     Inspect(inspect::InspectArgs),
     #[clap(about = "Display a tree visualization of the project's dependency graph.")]
     Tree(tree::TreeArgs),
-
-    #[clap(about = "run a JSON-RPC node")]
-    Node(node::NodeArgs),
 }
 
 // A set of solc compiler settings that can be set via command line arguments, which are intended
