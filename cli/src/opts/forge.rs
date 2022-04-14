@@ -289,6 +289,11 @@ mod tests {
                 "https://github.com/gakonst/lootloose",
                 None,
             ),
+            (
+                "git@github.com:gakonst/lootloose@v1",
+                "https://github.com/gakonst/lootloose",
+                Some("v1"),
+            ),
             ("git@github.com:gakonst/lootloose", "https://github.com/gakonst/lootloose", None),
             ("https://gitlab.com/gakonst/lootloose", "https://gitlab.com/gakonst/lootloose", None),
             ("https://github.xyz/gakonst/lootloose", "https://github.xyz/gakonst/lootloose", None),
