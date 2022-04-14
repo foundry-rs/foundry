@@ -1,6 +1,6 @@
 //! The `anvil` cli
 use anvil::cmd::NodeArgs;
-use clap::{IntoApp, Parser};
+use clap::Parser;
 
 /// `anvil 0.1.0 (f01b232bc 2022-04-13T23:28:39.493201+00:00)`
 pub(crate) const VERSION_MESSAGE: &str = concat!(
@@ -20,7 +20,7 @@ pub struct App {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Err>> {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     anvil::init_tracing();
 
     let app = App::parse();

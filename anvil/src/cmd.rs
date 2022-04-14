@@ -1,9 +1,7 @@
 use clap::Parser;
 use ethers::utils::WEI_IN_ETHER;
 
-use crate::{
-    eth::error::BlockchainError, opts::evm::EvmArgs, AccountGenerator, NodeConfig, CHAIN_ID,
-};
+use crate::{AccountGenerator, NodeConfig, CHAIN_ID};
 use forge::executor::opts::EvmOpts;
 use foundry_common::evm::EvmArgs;
 
@@ -76,7 +74,7 @@ impl NodeArgs {
     }
 
     /// Starts the node
-    pub async fn run(self) -> Result<(), BlockchainError> {
+    pub async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
         let (_api, handle) = crate::spawn(self.into_node_config()).await;
 
         Ok(handle.await??)
