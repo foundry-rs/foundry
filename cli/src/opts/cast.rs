@@ -40,16 +40,14 @@ pub enum Subcommands {
     FromBin,
     #[clap(name = "--to-hexdata")]
     #[clap(
-        about = "
-    Normalize the input to lowercase, 0x-prefixed hex. See --help for more info.",
-        long_about = "Normalize the input to lowercase, 0x-prefixed hex.
+        about = "Normalize the input to lowercase, 0x-prefixed hex. See --help for more info.",
+        long_about = r#"Normalize the input to lowercase, 0x-prefixed hex.
 
-    The input can be:
-      - mixed case hex with or without 0x prefix
-      - 0x prefixed hex, concatenated with a ':'
-      - an absolute path to file
-      - @tag, where the tag is defined in an environment variable
-    "
+The input can be:
+- mixed case hex with or without 0x prefix
+- 0x prefixed hex, concatenated with a ':'
+- an absolute path to file
+- @tag, where the tag is defined in an environment variable"#
     )]
     ToHexdata { input: Option<String> },
     #[clap(aliases = &["--to-checksum"])] // Compatibility with dapptools' cast
@@ -88,15 +86,14 @@ pub enum Subcommands {
     #[clap(name = "--to-unit")]
     #[clap(
         about = "Convert an ETH amount into another unit (ether, gwei or wei).",
-        long_about = r#"Convert an ETH amount into another unit (ether, gwei or wei).
+        long_about = r#"Convert an ETH amount into another unit (ether, gwei or wei).\
 
-    Examples:
-      - 1ether wei     | converts 1 ether to wei
-      - "1 ether" wei  | converts 1 ether to wei
-      - 1ether         | converts 1 ether to wei
-      - 1 gwei         | converts 1 wei to gwei
-      - 1gwei ether    | converts 1 gwei to ether
-    "#
+Examples:
+- 1ether wei
+- "1 ether" wei
+- 1ether
+- 1 gwei
+- 1gwei ether"#
     )]
     ToUnit {
         value: Option<String>,
@@ -264,9 +261,9 @@ pub enum Subcommands {
         #[clap(
             long,
             help = "Ether to send in the transaction.",
-            long_help = "Ether to send in the transaction, either specified in wei, or as a string with a unit type.
+            long_help = r#"Ether to send in the transaction, either specified in wei, or as a string with a unit type.
 
-            Examples: 1ether, 10gwei, 0.01ether",
+Examples: 1ether, 10gwei, 0.01ether"#,
             parse(try_from_str = parse_ether_value)
         )]
         value: Option<U256>,
@@ -279,9 +276,9 @@ pub enum Subcommands {
         #[clap(
             long,
             help = "Send a legacy transaction instead of an EIP1559 transaction.",
-            long_help = "Send a legacy transaction instead of an EIP1559 transaction.
+            long_help = r#"Send a legacy transaction instead of an EIP1559 transaction.
 
-            This is automatically enabled for common networks without EIP1559."
+This is automatically enabled for common networks without EIP1559."#
         )]
         legacy: bool,
         #[clap(
@@ -323,9 +320,9 @@ pub enum Subcommands {
         #[clap(
             long,
             help = "Ether to send in the transaction.",
-            long_help = "Ether to send in the transaction, either specified in wei, or as a string with a unit type.
+            long_help = r#"Ether to send in the transaction, either specified in wei, or as a string with a unit type.
 
-            Examples: 1ether, 10gwei, 0.01ether",
+Examples: 1ether, 10gwei, 0.01ether"#,
             parse(try_from_str = parse_ether_value)
         )]
         value: Option<U256>,
@@ -344,9 +341,9 @@ pub enum Subcommands {
     #[clap(name = "--abi-decode")]
     #[clap(
         about = "Decode ABI-encoded input or output data",
-        long_about = "Decode ABI-encoded input or output data.
+        long_about = r#"Decode ABI-encoded input or output data.
 
-        Defaults to decoding output data. To decode input data pass --input or use cast --calldata-decode."
+Defaults to decoding output data. To decode input data pass --input or use cast --calldata-decode."#
     )]
     AbiDecode {
         #[clap(help = "The function signature in the format `<name>(<in-types>)(<out-types>)`.")]
@@ -391,11 +388,11 @@ pub enum Subcommands {
         #[clap(
             long,
             help = "The index of the resolved signature to use.",
-            long_help = "The index of the resolved signature to use.
+            long_help = r#"The index of the resolved signature to use.
 
-            4byte.directory can have multiple possible signatures for a given selector.
+4byte.directory can have multiple possible signatures for a given selector.
 
-            The index can also be earliest or latest."
+The index can also be earliest or latest."#
         )]
         id: Option<String>,
     },
@@ -408,9 +405,9 @@ pub enum Subcommands {
     #[clap(name = "pretty-calldata")]
     #[clap(
         about = "Pretty print calldata.",
-        long_about = "Pretty print calldata.
+        long_about = r#"Pretty print calldata.
 
-        Tries to decode the calldata using 4byte.directory unless --offline is passed."
+Tries to decode the calldata using 4byte.directory unless --offline is passed."#
     )]
     PrettyCalldata {
         #[clap(help = "The calldata.")]
@@ -586,9 +583,9 @@ pub enum Subcommands {
     Interface {
         #[clap(
             help = "The contract address, or the path to an ABI file.",
-            long_help = "The contract address, or the path to an ABI file.
+            long_help = r#"The contract address, or the path to an ABI file.
 
-            If an address is specified, then the ABI is fetched from Etherscan."
+If an address is specified, then the ABI is fetched from Etherscan."#
         )]
         path_or_address: String,
         #[clap(long, short, default_value = "^0.8.10", help = "Solidity pragma version.")]

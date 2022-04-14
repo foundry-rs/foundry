@@ -159,7 +159,7 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(eth.rpc_url()?)?;
             let mut builder = TxBuilder::new(
                 &provider,
-                eth.from.unwrap_or(Address::zero()),
+                eth.wallet.from.unwrap_or(Address::zero()),
                 address,
                 eth.chain,
                 false,
@@ -322,7 +322,7 @@ async fn main() -> eyre::Result<()> {
                         .await?;
                     }
                 }
-            } else if let Some(from) = eth.from {
+            } else if let Some(from) = eth.wallet.from {
                 if resend {
                     nonce = Some(provider.get_transaction_count(from, None).await?);
                 }
@@ -669,7 +669,6 @@ async fn main() -> eyre::Result<()> {
                 // TODO: Figure out better way to get wallet only.
                 let wallet = EthereumOpts {
                     wallet,
-                    from: None,
                     rpc_url: Some("http://localhost:8545".to_string()),
                     flashbots: false,
                     chain: Chain::Mainnet,
@@ -690,7 +689,6 @@ async fn main() -> eyre::Result<()> {
                 // TODO: Figure out better way to get wallet only.
                 let wallet = EthereumOpts {
                     wallet,
-                    from: None,
                     rpc_url: Some("http://localhost:8545".to_string()),
                     flashbots: false,
                     chain: Chain::Mainnet,

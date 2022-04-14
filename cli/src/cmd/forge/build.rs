@@ -63,11 +63,20 @@ impl<'a> From<&'a CoreBuildArgs> for Config {
 
 #[derive(Debug, Clone, Parser, Serialize)]
 pub struct CoreBuildArgs {
-    #[clap(help = "Clear the cache and artifacts folder and recompile.", long)]
+    #[clap(
+        help_heading = "CACHE OPTIONS",
+        help = "Clear the cache and artifacts folder and recompile.",
+        long
+    )]
     #[serde(skip)]
     pub force: bool,
 
-    #[clap(help = "Set pre-linked libraries.", long, env = "DAPP_LIBRARIES")]
+    #[clap(
+        help_heading = "LINKER OPTIONS",
+        help = "Set pre-linked libraries.",
+        long,
+        env = "DAPP_LIBRARIES"
+    )]
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub libraries: Vec<String>,
 
