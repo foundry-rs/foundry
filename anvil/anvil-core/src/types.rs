@@ -7,7 +7,7 @@ use std::fmt;
 
 /// Represents the params to set forking
 #[derive(Clone, Debug, PartialEq, Deserialize, Default)]
-#[serde( rename_all = "camelCase")]
+#[serde(rename_all = "camelCase")]
 pub struct Forking {
     json_rpc_url: Option<String>,
     block_number: Option<BlockNumber>,
@@ -18,12 +18,12 @@ pub struct Forking {
 #[serde(untagged)]
 pub enum EvmMineOptions {
     /// The timestamp the block should be mined with
-    Timestamp(U256),
+    Timestamp(u64),
     Options {
-        timestamp: U256,
+        timestamp: u64,
         // If `blocks` is given, it will mine exactly blocks number of blocks, regardless of any
         // other blocks mined or reverted during it's operation
-        blocks: Option<U256>,
+        blocks: Option<u64>,
     },
 }
 
