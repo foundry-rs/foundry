@@ -222,7 +222,7 @@ you can use our [main telegram](https://t.me/foundry_rs) to chat with us about t
   [foundry](https://github.com/gakonst/foundry) repositories and chatrooms.
 
 [foundry-book]: https://book.getfoundry.sh
-[foundry-gha]: https://github.com/onbjerg/foundry-toolchain
+[foundry-gha]: https://github.com/foundry-rs/foundry-toolchain
 [ethers-solc]: https://github.com/gakonst/ethers-rs/tree/master/ethers-solc/
 [loans]: https://github.com/maple-finance/loans
 [solmate]: https://github.com/Rari-Capital/solmate/

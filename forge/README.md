@@ -11,7 +11,7 @@ For more context on how the package works under the hood, look in the
 
 **Need help with Forge? Read the [📖 Foundry Book (Forge Guide)][foundry-book-forge-guide] (WIP)!**
 
-[foundry-book-forge-guide]: https://onbjerg.github.io/foundry-book/forge/
+[foundry-book-forge-guide]: https://book.getfoundry.sh/forge/
 
 ## Why?
 
