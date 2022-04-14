@@ -49,15 +49,14 @@ pub struct EvmArgs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_block_number: Option<u64>,
 
-    /// Disables storage caching entirely. This overrides any settings made in
-    /// [foundry_config::caching::StorageCachingConfig]
+    /// Explicitly disables the use of RPC caching.
+    ///
+    /// All storage slots are read entirely from the endpoint.
+    ///
+    /// This flag overrides the project's configuration file.
     ///
     /// See --fork-url.
-    #[clap(
-        long,
-        requires = "fork-url",
-        help = "Explicitly disables the use of storage. All storage slots are read entirely from the endpoint."
-    )]
+    #[clap(long, requires = "fork-url")]
     #[serde(skip)]
     pub no_storage_caching: bool,
 
@@ -72,7 +71,7 @@ pub struct EvmArgs {
     pub sender: Option<Address>,
 
     /// Enable the FFI cheatcode.
-    #[clap(help = "enables the FFI cheatcode", long)]
+    #[clap(help = "Enables the FFI cheatcode.", long)]
     #[serde(skip)]
     pub ffi: bool,
 
@@ -81,11 +80,11 @@ pub struct EvmArgs {
     /// Pass multiple times to increase the verbosity (e.g. -v, -vv, -vvv).
     ///
     /// Verbosity levels:
-    ///   2: Print logs for all tests
-    ///   3: Print execution traces for failing tests
-    ///   4: Print execution traces for all tests, and setup traces for failing tests
-    ///   5: Print execution and setup traces for all tests
-    #[clap(long, short, parse(from_occurrences))]
+    /// - 2: Print logs for all tests
+    /// - 3: Print execution traces for failing tests
+    /// - 4: Print execution traces for all tests, and setup traces for failing tests
+    /// - 5: Print execution and setup traces for all tests
+    #[clap(long, short, parse(from_occurrences), verbatim_doc_comment)]
     #[serde(skip)]
     pub verbosity: u8,
 

@@ -9,17 +9,17 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, Parser)]
 pub struct RemappingArgs {
     #[clap(
-        help = "the project's root path, default being the current working directory",
+        help = "The project's root path. Defaults to the current working directory.",
         long,
         value_hint = ValueHint::DirPath
     )]
     root: Option<PathBuf>,
     #[clap(
-        help = "the paths where your libraries are installed",
+        help = "The path to the library folder.",
         long,
         value_hint = ValueHint::DirPath
     )]
-    lib_paths: Vec<PathBuf>,
+    lib_path: Vec<PathBuf>,
 }
 
 impl Cmd for RemappingArgs {
@@ -29,13 +29,13 @@ impl Cmd for RemappingArgs {
         let root = self.root.unwrap_or_else(|| std::env::current_dir().unwrap());
         let root = dunce::canonicalize(root)?;
 
-        let lib_paths = if self.lib_paths.is_empty() {
+        let lib_path = if self.lib_path.is_empty() {
             ProjectPathsConfig::find_libs(&root)
         } else {
-            self.lib_paths
+            self.lib_path
         };
         let remappings: Vec<_> =
-            lib_paths.iter().flat_map(|lib| relative_remappings(lib, &root)).collect();
+            lib_path.iter().flat_map(|lib| relative_remappings(lib, &root)).collect();
         remappings.iter().for_each(|x| println!("{}", x));
         Ok(())
     }

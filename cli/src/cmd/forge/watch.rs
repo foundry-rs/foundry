@@ -22,9 +22,9 @@ use watchexec::{
 
 #[derive(Debug, Clone, Parser, Default)]
 pub struct WatchArgs {
-    /// File updates debounce delay
+    /// File update debounce delay
     ///
-    /// During this time, incoming change events are accumulated and
+    /// During the delay, incoming change events are accumulated and
     /// only once the delay has passed, is an action taken. Note that
     /// this does not mean a command will be started: if --no-restart is
     /// given and a command is already running, the outcome of the
@@ -32,28 +32,24 @@ pub struct WatchArgs {
     ///
     /// Defaults to 50ms. Parses as decimal seconds by default, but
     /// using an integer with the `ms` suffix may be more convenient.
+    ///
     /// When using --poll mode, you'll want a larger duration, or risk
     /// overloading disk I/O.
-    #[clap(
-        short = 'd',
-        long = "delay",
-        forbid_empty_values = true,
-        help = "File updates debounce delay. Only take action (detect changes) after this time period has passed."
-    )]
+    #[clap(short = 'd', long = "delay", forbid_empty_values = true)]
     pub delay: Option<String>,
 
-    #[clap(long = "no-restart", help = "Don’t restart command while it’s still running.")]
+    #[clap(long = "no-restart", help = "Do not restart the command while it's still running.")]
     pub no_restart: bool,
 
-    #[clap(
-        long = "run-all",
-        help = "By default, only the tests of the last modified test file are executed. This explicitly runs all tests when a change is made."
-    )]
+    /// Explicitly re-run all tests when a change is made.
+    ///
+    /// By default, only the tests of the last modified test file are executed.
+    #[clap(long = "run-all")]
     pub run_all: bool,
 
     /// Watch specific file(s) or folder(s)
     ///
-    /// By default, the project's source dir is watched
+    /// By default, the project's source directory is watched.
     #[clap(
         short = 'w',
         long = "watch",
@@ -112,15 +108,13 @@ pub async fn watch_build(args: BuildArgs) -> eyre::Result<()> {
 /// snapshot`
 pub async fn watch_snapshot(args: SnapshotArgs) -> eyre::Result<()> {
     let (init, mut runtime) = args.watchexec_config()?;
-    let cmd = cmd_args(
-        args.build_args().watch.watch.as_ref().map(|paths| paths.len()).unwrap_or_default(),
-    );
+    let cmd = cmd_args(args.test.watch.watch.as_ref().map(|paths| paths.len()).unwrap_or_default());
 
     trace!("watch snapshot cmd={:?}", cmd);
     runtime.command(cmd.clone());
     let wx = Watchexec::new(init, runtime.clone())?;
 
-    on_action(args.build_args().watch.clone(), runtime, Arc::clone(&wx), cmd, (), |_| {});
+    on_action(args.test.watch.clone(), runtime, Arc::clone(&wx), cmd, (), |_| {});
 
     // start executing the command immediately
     wx.send_event(Event::default()).await?;
@@ -132,10 +126,8 @@ pub async fn watch_snapshot(args: SnapshotArgs) -> eyre::Result<()> {
 /// Executes a [`Watchexec`] that listens for changes in the project's src dir and reruns `forge
 /// test`
 pub async fn watch_test(args: TestArgs) -> eyre::Result<()> {
-    let (init, mut runtime) = args.build_args().watchexec_config()?;
-    let cmd = cmd_args(
-        args.build_args().watch.watch.as_ref().map(|paths| paths.len()).unwrap_or_default(),
-    );
+    let (init, mut runtime) = args.watchexec_config()?;
+    let cmd = cmd_args(args.watch.watch.as_ref().map(|paths| paths.len()).unwrap_or_default());
     trace!("watch test cmd={:?}", cmd);
     runtime.command(cmd.clone());
     let wx = Watchexec::new(init, runtime.clone())?;
@@ -145,7 +137,7 @@ pub async fn watch_test(args: TestArgs) -> eyre::Result<()> {
         args.filter().test_pattern.is_some() ||
         args.filter().path_pattern.is_some() ||
         args.filter().contract_pattern.is_some() ||
-        args.build_args().watch.run_all;
+        args.watch.run_all;
 
     let config: Config = args.build_args().into();
     let state = WatchTestState {
@@ -153,7 +145,7 @@ pub async fn watch_test(args: TestArgs) -> eyre::Result<()> {
         no_reconfigure,
         last_test_files: Default::default(),
     };
-    on_action(args.build_args().watch.clone(), runtime, Arc::clone(&wx), cmd, state, on_test);
+    on_action(args.watch.clone(), runtime, Arc::clone(&wx), cmd, state, on_test);
 
     // start executing the command immediately
     wx.send_event(Event::default()).await?;

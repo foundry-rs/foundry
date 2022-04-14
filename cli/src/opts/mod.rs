@@ -29,6 +29,7 @@ use serde::Serialize;
 const FLASHBOTS_URL: &str = "https://rpc.flashbots.net";
 
 // Helper for exposing enum values for `Chain`
+// TODO: Is this a duplicate of config/src/chain.rs?
 #[derive(Debug, Clone, Parser)]
 pub struct ClapChain {
     #[clap(
@@ -60,15 +61,8 @@ pub struct ClapChain {
 
 #[derive(Parser, Debug, Clone, Serialize)]
 pub struct EthereumOpts {
-    #[clap(env = "ETH_RPC_URL", long = "rpc-url", help = "The tracing / archival node's URL")]
+    #[clap(env = "ETH_RPC_URL", long = "rpc-url", help = "The RPC endpoint.")]
     pub rpc_url: Option<String>,
-
-    #[clap(env = "ETH_FROM", short, long = "from", help = "The sender account")]
-    pub from: Option<Address>,
-
-    #[clap(flatten)]
-    #[serde(skip)]
-    pub wallet: Wallet,
 
     #[clap(long, help = "Use the flashbots RPC URL (https://rpc.flashbots.net)")]
     pub flashbots: bool,
@@ -79,6 +73,10 @@ pub struct EthereumOpts {
     #[clap(long, env = "CHAIN", default_value = "mainnet")]
     #[serde(skip)]
     pub chain: Chain,
+
+    #[clap(flatten, next_help_heading = "WALLET OPTIONS")]
+    #[serde(skip)]
+    pub wallet: Wallet,
 }
 
 impl EthereumOpts {
@@ -92,7 +90,7 @@ impl EthereumOpts {
                 WalletType::Trezor(signer) => signer.address(),
             }
         } else {
-            self.from.unwrap_or_else(Address::zero)
+            self.wallet.from.unwrap_or_else(Address::zero)
         }
     }
 
@@ -189,36 +187,83 @@ The wallet options can either be:
 "#
 )]
 pub struct Wallet {
-    #[clap(long, short, help = "Interactive prompt to insert your private key")]
+    #[clap(
+        long,
+        short,
+        help_heading = "WALLET OPTIONS - RAW",
+        help = "Open an interactive prompt to enter your private key."
+    )]
     pub interactive: bool,
 
-    #[clap(long = "private-key", help = "Your private key string")]
+    #[clap(
+        long = "private-key",
+        help_heading = "WALLET OPTIONS - RAW",
+        help = "Use the provided private key."
+    )]
     pub private_key: Option<String>,
 
-    #[clap(env = "ETH_KEYSTORE", long = "keystore", help = "Path to your keystore folder / file")]
-    pub keystore_path: Option<String>,
-
-    #[clap(long = "password", help = "Your keystore password", requires = "keystore-path")]
-    pub keystore_password: Option<String>,
-
-    #[clap(long = "mnemonic-path", help = "Path to your mnemonic file")]
+    #[clap(
+        long = "mnemonic-path",
+        help_heading = "WALLET OPTIONS - RAW",
+        help = "Use the mnemonic file at the specified path."
+    )]
     pub mnemonic_path: Option<String>,
-
-    #[clap(short, long = "ledger", help = "Use your Ledger hardware wallet")]
-    pub ledger: bool,
-
-    #[clap(short, long = "trezor", help = "Use your Trezor hardware wallet")]
-    pub trezor: bool,
-
-    #[clap(long = "hd-path", help = "Derivation path for your hardware wallet (trezor or ledger)")]
-    pub hd_path: Option<String>,
 
     #[clap(
         long = "mnemonic-index",
-        help = "your index in the standard hd path",
+        help_heading = "WALLET OPTIONS - RAW",
+        help = "Use the private key from the given mnemonic index. Used with --mnemonic-path.",
         default_value = "0"
     )]
     pub mnemonic_index: u32,
+
+    #[clap(
+        env = "ETH_KEYSTORE",
+        long = "keystore",
+        help_heading = "WALLET OPTIONS - KEYSTORE",
+        help = "Use the keystore in the given folder or file."
+    )]
+    pub keystore_path: Option<String>,
+
+    #[clap(
+        long = "password",
+        help_heading = "WALLET OPTIONS - KEYSTORE",
+        help = "The keystore password. Used with --keystore.",
+        requires = "keystore-path"
+    )]
+    pub keystore_password: Option<String>,
+
+    #[clap(
+        short,
+        long = "ledger",
+        help_heading = "WALLET OPTIONS - HARDWARE WALLET",
+        help = "Use a Ledger hardware wallet."
+    )]
+    pub ledger: bool,
+
+    #[clap(
+        short,
+        long = "trezor",
+        help_heading = "WALLET OPTIONS - HARDWARE WALLET",
+        help = "Use a Trezor hardware wallet."
+    )]
+    pub trezor: bool,
+
+    #[clap(
+        long = "hd-path",
+        help_heading = "WALLET OPTIONS - HARDWARE WALLET",
+        help = "The derivation path to use with hardware wallets."
+    )]
+    pub hd_path: Option<String>,
+
+    #[clap(
+        env = "ETH_FROM",
+        short,
+        long = "from",
+        help_heading = "WALLET OPTIONS - REMOTE",
+        help = "The sender account."
+    )]
+    pub from: Option<Address>,
 }
 
 impl Wallet {
@@ -279,6 +324,7 @@ mod tests {
     #[test]
     fn illformed_private_key_generates_user_friendly_error() {
         let wallet = Wallet {
+            from: None,
             interactive: false,
             private_key: Some("123".to_string()),
             keystore_path: None,

@@ -33,62 +33,71 @@ pub struct Opts {
 }
 
 #[derive(Debug, Subcommand)]
-#[clap(about = "Build, test, fuzz, formally verify, debug & deploy solidity contracts.")]
+#[clap(
+    about = "Build, test, fuzz, debug and deploy Solidity contracts.",
+    after_help = "Find more information in the book: http://book.getfoundry.sh/reference/forge/forge.html"
+)]
 #[allow(clippy::large_enum_variant)]
 pub enum Subcommands {
-    #[clap(about = "Test your smart contracts")]
+    #[clap(about = "Run the project's tests.")]
     #[clap(alias = "t")]
     Test(test::TestArgs),
 
-    #[clap(about = "Generate rust bindings for your smart contracts")]
+    #[clap(about = "Generate Rust bindings for smart contracts.")]
     Bind(BindArgs),
 
-    #[clap(about = "Build your smart contracts")]
+    #[clap(about = "Build the project's smart contracts.")]
     #[clap(alias = "b")]
     Build(BuildArgs),
 
-    #[clap(about = "Run a single smart contract as a script")]
+    #[clap(about = "Run a single smart contract as a script.")]
     #[clap(alias = "r")]
     Run(RunArgs),
 
-    #[clap(alias = "u", about = "Fetches all upstream lib changes")]
+    #[clap(
+        alias = "u",
+        about = "Update one or multiple dependencies.",
+        long_about = "Update one or multiple dependencies. If no arguments are provided, then all dependencies are updated."
+    )]
     Update {
         #[clap(
-            help = "The submodule name of the library you want to update (will update all if none is provided)",
+            help = "The path to the dependency you want to update.",
             value_hint = ValueHint::DirPath
         )]
         lib: Option<PathBuf>,
     },
 
-    #[clap(
-        alias = "i",
-        about = "Installs one or more dependencies as git submodules (will install existing dependencies if no arguments are provided)"
-    )]
+    /// Install one or multiple dependencies.
+    ///
+    /// If no arguments are provided, then existing dependencies will be installed.
+    #[clap(alias = "i")]
     Install(InstallArgs),
 
-    #[clap(alias = "rm", about = "Removes one or more dependencies from git submodules")]
+    #[clap(alias = "rm", about = "Remove one or multiple dependencies.")]
     Remove {
-        #[clap(help = "The submodule name of the library you want to remove")]
+        #[clap(help = "The path to the dependency you want to remove.")]
         dependencies: Vec<Dependency>,
     },
 
-    #[clap(about = "Prints the automatically inferred remappings for this repository")]
+    #[clap(about = "Get the automatically inferred remappings for the project.")]
     Remappings(RemappingArgs),
 
     #[clap(
-        about = "Verify your smart contracts source code on Etherscan. Requires `ETHERSCAN_API_KEY` to be set."
+        about = "Verify smart contracts on Etherscan.",
+        long_about = "Verify smart contracts on Etherscan."
     )]
     VerifyContract(VerifyArgs),
 
     #[clap(
-        about = "Check verification status on Etherscan. Requires `ETHERSCAN_API_KEY` to be set."
+        about = "Check verification status on Etherscan.",
+        long_about = "Check verification status on Etherscan."
     )]
     VerifyCheck(VerifyCheckArgs),
 
-    #[clap(alias = "c", about = "Deploy a compiled contract")]
+    #[clap(alias = "c", about = "Deploy a smart contract.")]
     Create(CreateArgs),
 
-    #[clap(alias = "i", about = "Initializes a new forge sample project")]
+    #[clap(alias = "i", about = "Create a new Forge project.")]
     Init(InitArgs),
 
     #[clap(about = "Generate shell completions script")]
@@ -97,29 +106,29 @@ pub enum Subcommands {
         shell: clap_complete::Shell,
     },
 
-    #[clap(about = "Removes the build artifacts and cache directories")]
+    #[clap(about = "Remove the build artifacts and cache directories.")]
     Clean {
         #[clap(
-            help = "The project's root path, default being the current working directory",
+            help = "The project's root path. Defaults to the current working directory.",
             long,
             value_hint = ValueHint::DirPath
         )]
         root: Option<PathBuf>,
     },
 
-    #[clap(about = "Creates a snapshot of each test's gas usage")]
+    #[clap(about = "Create a snapshot of each test's gas usage.")]
     Snapshot(snapshot::SnapshotArgs),
 
-    #[clap(about = "Shows the currently set config values")]
+    #[clap(about = "Display the current config.")]
     Config(config::ConfigArgs),
 
-    #[clap(about = "Concats a file with all of its imports")]
+    #[clap(about = "Flatten a source file and all of its imports into one file.")]
     Flatten(flatten::FlattenArgs),
     // #[clap(about = "formats Solidity source files")]
     // Fmt(FmtArgs),
-    #[clap(about = "Outputs a contract in a specified format (ir, assembly, ...)")]
+    #[clap(about = "Get specialized information about a smart contract")]
     Inspect(inspect::InspectArgs),
-    #[clap(about = "Display a tree visualization of the project's dependency graph")]
+    #[clap(about = "Display a tree visualization of the project's dependency graph.")]
     Tree(tree::TreeArgs),
 }
 
@@ -129,30 +138,31 @@ pub enum Subcommands {
 // See also [`BuildArgs`]
 #[derive(Default, Debug, Clone, Parser, Serialize)]
 pub struct CompilerArgs {
-    #[clap(help = "Choose the evm version", long)]
+    #[clap(help = "The target EVM version.", long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub evm_version: Option<EvmVersion>,
 
-    #[clap(help = "Activate the solidity optimizer", long)]
-    // skipped because, optimize is opt-in
+    #[clap(help = "Activate the Solidity optimizer.", long)]
     #[serde(skip)]
     pub optimize: bool,
 
-    #[clap(help = "Optimizer parameter runs", long)]
+    #[clap(help = "The number of optimizer runs.", long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub optimize_runs: Option<usize>,
 
-    #[clap(
-        help = "Extra output types to include in the contract's json artifact [evm.assembly, ewasm, ir, irOptimized, metadata] eg: `--extra-output evm.assembly`",
-        long
-    )]
+    /// Extra output to include in the contract's artifact.
+    ///
+    /// Example keys: evm.assembly, ewasm, ir, irOptimized, metadata
+    ///
+    /// For a full description, see https://docs.soliditylang.org/en/v0.8.13/using-the-compiler.html#input-description
+    #[clap(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extra_output: Option<Vec<ContractOutputSelection>>,
 
-    #[clap(
-        help = "Extra output types to write to a separate file [metadata, ir, irOptimized, ewasm] eg: `--extra-output-files metadata`",
-        long
-    )]
+    /// Extra output to write to separate files.
+    ///
+    /// Valid values: metadata, ir, irOptimized, ewasm, evm.assembly
+    #[clap(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extra_output_files: Option<Vec<ContractOutputSelection>>,
 }
