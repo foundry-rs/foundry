@@ -162,7 +162,7 @@ pub struct TestArgs {
     #[clap(long, env = "FORGE_GAS_REPORT")]
     gas_report: bool,
 
-    /// Force the process to exit with code 0, even if the tests fail.
+    /// Exit with code 0 even if a test fails.
     #[clap(long, env = "FORGE_ALLOW_FAILURE")]
     allow_failure: bool,
 
