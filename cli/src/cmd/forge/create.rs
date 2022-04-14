@@ -58,6 +58,9 @@ pub struct CreateArgs {
     #[clap(long = "gas-price", help = "gas price for legacy txs or maxFeePerGas for EIP1559 txs", env = "ETH_GAS_PRICE", parse(try_from_str = parse_u256))]
     gas_price: Option<U256>,
 
+    #[clap(long = "gas-limit", help = "maximum amount of gas that can be consumed for txs", env = "ETH_GAS_LIMIT", parse(try_from_str = parse_u256))]
+    gas_limit: Option<U256>,
+
     #[clap(long = "priority-fee", help = "gas priority fee for EIP1559 txs", env = "ETH_GAS_PRIORITY_FEE", parse(try_from_str = parse_u256))]
     priority_fee: Option<U256>,
 
@@ -171,6 +174,11 @@ impl CreateArgs {
         // set gas price if specified
         if let Some(gas_price) = self.gas_price {
             deployer.tx.set_gas_price(gas_price);
+        }
+
+        // set gas limit if specified
+        if let Some(gas_limit) = self.gas_limit {
+            deployer.tx.set_gas(gas_limit);
         }
 
         // set priority fee if specified
