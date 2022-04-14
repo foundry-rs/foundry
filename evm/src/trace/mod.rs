@@ -4,6 +4,8 @@
 pub mod identifier;
 
 mod decoder;
+mod node;
+
 pub use decoder::CallTraceDecoder;
 
 use crate::{abi::CHEATCODE_ADDRESS, CallKind};
@@ -17,6 +19,7 @@ use std::{
     collections::HashSet,
     fmt::{self, Write},
 };
+use node::CallTraceNode;
 
 /// An arena of [CallTraceNode]s
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -196,24 +199,6 @@ impl fmt::Display for RawOrDecodedLog {
 pub enum LogCallOrder {
     Log(usize),
     Call(usize),
-}
-
-#[derive(Default, Debug, Clone, Serialize, Deserialize)]
-/// A node in the arena
-pub struct CallTraceNode {
-    /// Parent node index in the arena
-    pub parent: Option<usize>,
-    /// Children node indexes in the arena
-    pub children: Vec<usize>,
-    /// This node's index in the arena
-    pub idx: usize,
-    /// The call trace
-    pub trace: CallTrace,
-    /// Logs
-    #[serde(skip)]
-    pub logs: Vec<RawOrDecodedLog>,
-    /// Ordering of child calls and logs
-    pub ordering: Vec<LogCallOrder>,
 }
 
 // TODO: Maybe unify with output

@@ -189,13 +189,13 @@ impl CallTraceDecoder {
     pub fn decode(&self, traces: &mut CallTraceArena) {
         for node in traces.arena.iter_mut() {
             // Set contract name
-            if let Some(contract) = self.contracts.get(&node.trace.address) {
-                node.trace.contract = Some(contract.clone());
+            if let Some(contract) = self.contracts.get(&node.trace.address).cloned() {
+                node.trace.contract = Some(contract);
             }
 
             // Set label
-            if let Some(label) = self.labels.get(&node.trace.address) {
-                node.trace.label = Some(label.clone());
+            if let Some(label) = self.labels.get(&node.trace.address).cloned() {
+                node.trace.label = Some(label);
             }
 
             // Decode call
