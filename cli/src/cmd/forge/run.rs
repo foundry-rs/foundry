@@ -1,8 +1,6 @@
 use crate::{
     cmd::{forge::build::CoreBuildArgs, Cmd},
-    compile,
-    opts::evm::EvmArgs,
-    utils,
+    compile, utils,
 };
 use ansi_term::Colour;
 use clap::{Parser, ValueHint};
@@ -25,6 +23,7 @@ use forge::{
     trace::{identifier::LocalTraceIdentifier, CallTraceArena, CallTraceDecoder, TraceKind},
     CALLER,
 };
+use foundry_common::evm::EvmArgs;
 use foundry_config::{figment::Figment, Config};
 use foundry_utils::{encode_args, IntoFunction, PostLinkInput, RuntimeOrHandle};
 use std::{collections::BTreeMap, path::PathBuf};

@@ -1,6 +1,6 @@
 //! cli arguments for configuring the evm settings
 use clap::Parser;
-use ethers::types::{Address, U256};
+use ethers_core::types::{Address, U256};
 use foundry_config::{
     figment::{
         self,
@@ -12,27 +12,27 @@ use foundry_config::{
 };
 use serde::Serialize;
 
-// `EvmArgs` and `EnvArgs` take the highest precedence in the Config/Figment hierarchy.
-// All vars are opt-in, their default values are expected to be set by the
-// [`foundry_config::Config`], and are always present ([`foundry_config::Config::default`])
-//
-// Both have corresponding types in the `evm_adapters` crate which have mandatory fields.
-// The expected workflow is
-//   1. load the [`foundry_config::Config`]
-//   2. merge with `EvmArgs` into a `figment::Figment`
-//   3. extract `evm_adapters::Opts` from the merged `Figment`
-//
-// # Example
-//
-// ```ignore
-// use foundry_config::Config;
-// use forge::executor::opts::EvmOpts;
-// # fn t(args: EvmArgs) {
-// let figment = Config::figment_with_root(".").merge(args);
-// let opts = figment.extract::<EvmOpts>().unwrap()
-// # }
-// ```
-// See also [`BuildArgs`]
+/// `EvmArgs` and `EnvArgs` take the highest precedence in the Config/Figment hierarchy.
+/// All vars are opt-in, their default values are expected to be set by the
+/// [`foundry_config::Config`], and are always present ([`foundry_config::Config::default`])
+///
+/// Both have corresponding types in the `evm_adapters` crate which have mandatory fields.
+/// The expected workflow is
+///   1. load the [`foundry_config::Config`]
+///   2. merge with `EvmArgs` into a `figment::Figment`
+///   3. extract `evm_adapters::Opts` from the merged `Figment`
+///
+/// # Example
+///
+/// ```ignore
+/// use foundry_config::Config;
+/// use forge::executor::opts::EvmOpts;
+/// use foundry_common::evm::EvmArgs;
+/// # fn t(args: EvmArgs) {
+/// let figment = Config::figment_with_root(".").merge(args);
+/// let opts = figment.extract::<EvmOpts>().unwrap();
+/// # }
+/// ```
 #[derive(Debug, Clone, Parser, Serialize)]
 pub struct EvmArgs {
     /// Fetch state over a remote endpoint instead of starting from an empty state.
@@ -88,6 +88,7 @@ pub struct EvmArgs {
     #[serde(skip)]
     pub verbosity: u8,
 
+    /// All ethereum environment related arguments
     #[clap(flatten)]
     #[serde(flatten)]
     pub env: EnvArgs,

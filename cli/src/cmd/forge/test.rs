@@ -5,7 +5,6 @@ use crate::{
         Cmd,
     },
     compile::ProjectCompiler,
-    opts::evm::EvmArgs,
     utils,
     utils::FoundryPathExt,
 };
@@ -22,6 +21,7 @@ use forge::{
     },
     MultiContractRunner, MultiContractRunnerBuilder, SuiteResult, TestFilter, TestKind,
 };
+use foundry_common::evm::EvmArgs;
 use foundry_config::{figment::Figment, Config};
 use regex::Regex;
 use std::{

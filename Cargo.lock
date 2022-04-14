@@ -1717,6 +1717,7 @@ dependencies = [
  "forge",
  "forge-fmt",
  "foundry-cli-test-utils",
+ "foundry-common",
  "foundry-config",
  "foundry-utils",
  "futures",
@@ -1758,6 +1759,16 @@ dependencies = [
  "serde_json",
  "tempfile",
  "walkdir",
+]
+
+[[package]]
+name = "foundry-common"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "ethers-core",
+ "foundry-config",
+ "serde",
 ]
 
 [[package]]
