@@ -83,13 +83,10 @@ pub struct CoreBuildArgs {
     #[serde(skip)]
     pub no_auto_detect: bool,
 
-    #[clap(
-        help_heading = "COMPILER OPTIONS",
-        help = "specify the solc version or path to a local solc to run with.\
-        This accepts values of the form `x.y.z`, `solc:x.y.z` or `path/to/existing/solc`",
-        value_name = "use",
-        long = "use"
-    )]
+    /// Specify the solc version, or a path to a local solc, to build with.
+    ///
+    /// Valid values are in the format `x.y.z`, `solc:x.y.z` or `path/to/solc`.
+    #[clap(help_heading = "COMPILER OPTIONS", value_name = "use", long = "use")]
     #[serde(skip)]
     pub use_solc: Option<String>,
 

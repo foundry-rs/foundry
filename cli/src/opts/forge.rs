@@ -161,7 +161,7 @@ pub struct CompilerArgs {
 
     /// Extra output to write to separate files.
     ///
-    /// Valid values: metadata, ir, irOptimized, ewasm, assembly
+    /// Valid values: metadata, ir, irOptimized, ewasm, evm.assembly
     #[clap(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extra_output_files: Option<Vec<ContractOutputSelection>>,
