@@ -64,6 +64,7 @@ jobs:
 
   release-docker:
     name: Release Docker
+    if: false
     uses: ./.github/workflows/docker-publish.yml
 
   release:
