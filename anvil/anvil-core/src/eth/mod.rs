@@ -163,6 +163,10 @@ pub enum EthRequest {
     #[serde(rename = "forge_reset", alias = "hardhat_reset", with = "sequence")]
     Reset(#[serde(default)] Forking),
 
+    /// Sets the backend rpc url
+    #[serde(rename = "forge_setRpcUrl", with = "sequence")]
+    SetRpcUrl(String),
+
     /// Modifies the balance of an account.
     #[serde(rename = "forge_setBalance", alias = "hardhat_setBalance")]
     SetBalance(Address, #[serde(deserialize_with = "deserialize_number")] U256),
@@ -230,6 +234,15 @@ pub enum EthRequest {
     /// Mine a single block
     #[serde(rename = "evm_mine", with = "sequence")]
     EvmMine(EvmMineOptions),
+
+    /// Execute a transaction regardless of signature status
+    #[serde(rename = "eth_sendUnsignedTransaction", with = "sequence")]
+    EthSendUnsignedTransaction(Box<EthTransactionRequest>),
+
+    /// Turn on call traces for transactions that are returned to the user when they execute a
+    /// transaction (instead of just txhash/receipt)
+    #[serde(rename = "forge_enableTraces", with = "sequence")]
+    EnableTrances,
 }
 
 /// Represents a non-standard forge JSON-RPC API, compatible with other dev nodes, hardhat, ganache

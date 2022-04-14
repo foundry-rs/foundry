@@ -78,7 +78,7 @@ impl From<Filter> for EthersFilter {
                     let topic = match val {
                         ValueOrArray::Value(Some(val)) => Some(ValueOrArray::Value(val)),
                         ValueOrArray::Array(inner) => {
-                            Some(ValueOrArray::Array(inner.into_iter().filter_map(|t| t).collect()))
+                            Some(ValueOrArray::Array(inner.into_iter().flatten().collect()))
                         }
                         _ => None,
                     };
@@ -92,7 +92,7 @@ impl From<Filter> for EthersFilter {
                             let topic = match topic {
                                 ValueOrArray::Value(Some(val)) => ValueOrArray::Value(val),
                                 ValueOrArray::Array(inner) => ValueOrArray::Array(
-                                    inner.into_iter().filter_map(|t| t).collect(),
+                                    inner.into_iter().flatten().collect(),
                                 ),
                                 _ => continue,
                             };
@@ -515,7 +515,7 @@ mod tests {
                 Some(ValueOrArray::Array(vec![Some(topic2), Some(topic3)])),
             ])),
         };
-        let topics = if let Some(_) = &filter.topics {
+        let topics = if filter.topics.is_some() {
             let filtered_params = FilteredParams::new(Some(filter.clone()));
             Some(filtered_params.flat_topics)
         } else {
@@ -550,7 +550,7 @@ mod tests {
                 Some(ValueOrArray::Array(vec![Some(topic2), Some(topic3)])),
             ])),
         };
-        let topics = if let Some(_) = &filter.topics {
+        let topics = if filter.topics.is_some() {
             let filtered_params = FilteredParams::new(Some(filter));
             Some(filtered_params.flat_topics)
         } else {
@@ -575,7 +575,7 @@ mod tests {
                 Some(ValueOrArray::Array(vec![Some(H256::random()), Some(H256::random())])),
             ])),
         };
-        let topics_input = if let Some(_) = &filter.topics {
+        let topics_input = if filter.topics.is_some() {
             let filtered_params = FilteredParams::new(Some(filter));
             Some(filtered_params.flat_topics)
         } else {

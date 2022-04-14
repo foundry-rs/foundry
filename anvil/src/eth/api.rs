@@ -22,7 +22,7 @@ use anvil_core::{
         },
         EthRequest,
     },
-    types::{Index, Work},
+    types::{EvmMineOptions, Forking, Index, Work},
 };
 use anvil_rpc::response::ResponseResult;
 use ethers::{
@@ -140,6 +140,63 @@ impl EthApi {
             EthRequest::EthFeeHistory(count, newest, reward_percentiles) => {
                 self.fee_history(count, newest, reward_percentiles).to_rpc_result()
             }
+
+            // non eth-standard rpc calls
+            EthRequest::DebugTraceTransaction(tx) => {
+                self.debug_trace_transaction(tx).await.to_rpc_result()
+            }
+            EthRequest::ImpersonateAccount(addr) => {
+                self.forge_impersonate_account(addr).await.to_rpc_result()
+            }
+            EthRequest::StopImpersonatingAccount => {
+                self.forge_stop_impersonating_account().await.to_rpc_result()
+            }
+            EthRequest::GetAutoMine => self.forge_get_auto_mine().await.to_rpc_result(),
+            EthRequest::Mine(blocks, interval) => {
+                self.forge_mine(blocks, interval).await.to_rpc_result()
+            }
+            EthRequest::SetAutomine(enabled) => {
+                self.forge_set_auto_mine(enabled).await.to_rpc_result()
+            }
+            EthRequest::SetIntervalMining(interval) => {
+                self.forge_set_interval_mining(interval).await.to_rpc_result()
+            }
+            EthRequest::DropTransaction(tx) => {
+                self.forge_drop_transaction(tx).await.to_rpc_result()
+            }
+            EthRequest::Reset(res) => self.forge_reset(res).await.to_rpc_result(),
+            EthRequest::SetBalance(addr, val) => {
+                self.forge_set_balance(addr, val).await.to_rpc_result()
+            }
+            EthRequest::SetCode(addr, code) => {
+                self.forge_set_code(addr, code).await.to_rpc_result()
+            }
+            EthRequest::SetNonce(addr, nonce) => {
+                self.forge_set_nonce(addr, nonce).await.to_rpc_result()
+            }
+            EthRequest::SetStorageAt(addr, slot, val) => {
+                self.forge_set_storage_at(addr, slot, val).await.to_rpc_result()
+            }
+            EthRequest::SetCoinbase(addr) => self.forge_set_coinbase(addr).await.to_rpc_result(),
+            EthRequest::SetLogging(log) => self.forge_set_logging(log).await.to_rpc_result(),
+            EthRequest::SetMinGasPrice(gas) => {
+                self.forge_set_min_gas_price(gas).await.to_rpc_result()
+            }
+            EthRequest::SetNextBlockBaseFeePerGas(gas) => {
+                self.forge_set_next_block_base_fee_per_gas(gas).await.to_rpc_result()
+            }
+            EthRequest::EvmSnapshot => self.evm_snapshot().await.to_rpc_result(),
+            EthRequest::EvmRevert(id) => self.evm_revert(id).await.to_rpc_result(),
+            EthRequest::EvmIncreaseTime(time) => self.evm_increase_time(time).await.to_rpc_result(),
+            EthRequest::EvmSetNextBlockTimeStamp(time) => {
+                self.evm_set_next_block_timestamp(time).await.to_rpc_result()
+            }
+            EthRequest::EvmMine(mine) => self.evm_mine(mine).await.to_rpc_result(),
+            EthRequest::SetRpcUrl(url) => self.forge_set_rpc_url(url).to_rpc_result(),
+            EthRequest::EthSendUnsignedTransaction(tx) => {
+                self.eth_send_unsigned_transaction(*tx).await.to_rpc_result()
+            }
+            EthRequest::EnableTrances => self.forge_enable_traces().await.to_rpc_result(),
         }
     }
 
@@ -661,7 +718,7 @@ impl EthApi {
     /// Returns traces for the transaction hash
     ///
     /// Handler for RPC call: `debug_traceTransaction`
-    pub fn debug_trace_transaction(&self, tx_hash: H256) -> Result<Vec<Trace>> {
+    pub async fn debug_trace_transaction(&self, _tx_hash: H256) -> Result<Vec<Trace>> {
         Err(BlockchainError::RpcUnimplemented)
     }
 }
@@ -669,10 +726,164 @@ impl EthApi {
 // == impl EthApi forge endpoints ==
 
 impl EthApi {
+    /// Send transactions impersonating specific account and contract addresses.
+    ///
+    /// Handler for ETH RPC call: `forge_impersonateAccount`
+    pub async fn forge_impersonate_account(&self, _address: Address) -> Result<()> {
+        Err(BlockchainError::RpcUnimplemented)
+    }
+
+    /// Stops impersonating an account if previously set with `forge_impersonateAccount`.
+    ///
+    /// Handler for ETH RPC call: `forge_stopImpersonatingAccount`
+    pub async fn forge_stop_impersonating_account(&self) -> Result<()> {
+        Err(BlockchainError::RpcUnimplemented)
+    }
+
+    /// Returns true if automatic mining is enabled, and false.
+    ///
+    /// Handler for ETH RPC call: `forge_getAutomine`
+    pub async fn forge_get_auto_mine(&self) -> Result<bool> {
+        Err(BlockchainError::RpcUnimplemented)
+    }
+
+    /// Enables or disables, based on the single boolean argument, the automatic mining of new
+    /// blocks with each new transaction submitted to the network.
+    ///
+    /// Handler for ETH RPC call: `evm_setAutomine`
+    pub async fn forge_set_auto_mine(&self, _mine: bool) -> Result<()> {
+        Err(BlockchainError::RpcUnimplemented)
+    }
+
+    /// Mines a series of blocks.
+    ///
+    /// Handler for ETH RPC call: `forge_mine`
+    pub async fn forge_mine(&self, _num_blocks: Option<U256>, _interval: Option<U256>) -> Result<()> {
+        Err(BlockchainError::RpcUnimplemented)
+    }
+
+    /// Sets the mining behavior to interval with the given interval (seconds)
+    ///
+    /// Handler for ETH RPC call: `evm_setIntervalMining`
+    pub async fn forge_set_interval_mining(&self, _secs: u64) -> Result<()> {
+        Err(BlockchainError::RpcUnimplemented)
+    }
+
+    /// Removes transactions from the pool
+    ///
+    /// Handler for RPC call: `forge_dropTransaction`
+    pub async fn forge_drop_transaction(&self, _tx_hash: H256) -> Result<Option<H256>> {
+        Err(BlockchainError::RpcUnimplemented)
+    }
+
+    /// Reset the fork to a fresh forked state, and optionally update the fork config
+    ///
+    /// Handler for RPC call: `forge_reset`
+    pub async fn forge_reset(&self, _forking: Forking) -> Result<()> {
+        Err(BlockchainError::RpcUnimplemented)
+    }
+
+    ///Modifies the balance of an account.
+    ///
+    /// Handler for RPC call: `forge_setBalance`
+    pub async fn forge_set_balance(&self, _address: Address, _balance: U256) -> Result<()> {
+        Err(BlockchainError::RpcUnimplemented)
+    }
+
+    /// Sets the code of a contract.
+    ///
+    /// Handler for RPC call: `forge_setCode`
+    pub async fn forge_set_code(&self, _address: Address, _code: Bytes) -> Result<()> {
+        Err(BlockchainError::RpcUnimplemented)
+    }
+
+    /// Sets the nonce of an address.
+    ///
+    /// Handler for RPC call: `forge_setNonce`
+    pub async fn forge_set_nonce(&self, _address: Address, _nonce: U256) -> Result<()> {
+        Err(BlockchainError::RpcUnimplemented)
+    }
+
+    /// Writes a single slot of the account's storage.
+    ///
+    /// Handler for RPC call: `forge_setStorageAt`
+    pub async fn forge_set_storage_at(
+        &self,
+        _address: Address,
+        _slot: U256,
+        _val: U256,
+    ) -> Result<()> {
+        Err(BlockchainError::RpcUnimplemented)
+    }
+
+    /// Enable or disable logging.
+    ///
+    /// Handler for RPC call: `forge_setLoggingEnabled`
+    pub async fn forge_set_logging(&self, _enable: bool) -> Result<()> {
+        Err(BlockchainError::RpcUnimplemented)
+    }
+
+    /// Set the minimum gas price for the node.
+    ///
+    /// Handler for RPC call: `forge_setMinGasPrice`
+    pub async fn forge_set_min_gas_price(&self, _gas: U256) -> Result<()> {
+        Err(BlockchainError::RpcUnimplemented)
+    }
+
+    /// Sets the base fee of the next block.
+    ///
+    /// Handler for RPC call: `forge_setNextBlockBaseFeePerGas`
+    pub async fn forge_set_next_block_base_fee_per_gas(&self, _gas: U256) -> Result<()> {
+        Err(BlockchainError::RpcUnimplemented)
+    }
+
+    /// Sets the coinbase address.
+    ///
+    /// Handler for RPC call: `forge_setCoinbase`
+    pub async fn forge_set_coinbase(&self, _address: Address) -> Result<()> {
+        Err(BlockchainError::RpcUnimplemented)
+    }
+
+    /// Snapshot the state of the blockchain at the current block.
+    ///
+    /// Handler for RPC call: `evm_snapshot`
+    pub async fn evm_snapshot(&self) -> Result<U256> {
+        Err(BlockchainError::RpcUnimplemented)
+    }
+
+    /// Revert the state of the blockchain to a previous snapshot.
+    /// Takes a single parameter, which is the snapshot id to revert to.
+    ///
+    /// Handler for RPC call: `evm_revert`
+    pub async fn evm_revert(&self, _id: U256) -> Result<()> {
+        Err(BlockchainError::RpcUnimplemented)
+    }
+
+    /// Jump forward in time by the given amount of time, in seconds.
+    ///
+    /// Handler for RPC call: `evm_increaseTime`
+    pub async fn evm_increase_time(&self, _seconds: U256) -> Result<()> {
+        Err(BlockchainError::RpcUnimplemented)
+    }
+
+    /// Similar to `evm_increaseTime` but takes the exact timestamp that you want in the next block
+    ///
+    /// Handler for RPC call: `evm_setNextBlockTimestamp`
+    pub async fn evm_set_next_block_timestamp(&self, _seconds: u64) -> Result<()> {
+        Err(BlockchainError::RpcUnimplemented)
+    }
+
+    /// Mine a single block
+    ///
+    /// Handler for RPC call: `evm_mine`
+    pub async fn evm_mine(&self, _opts: EvmMineOptions) -> Result<()> {
+        Err(BlockchainError::RpcUnimplemented)
+    }
+
     /// Sets the reported block number
     ///
     /// Handler for ETH RPC call: `forge_setBlock`
-    pub fn forge_set_block(&self, block_number: U256) -> Result<U256> {
+    pub fn forge_set_block(&self, _block_number: U256) -> Result<U256> {
         Err(BlockchainError::RpcUnimplemented)
     }
 
@@ -692,32 +903,21 @@ impl EthApi {
         Ok(())
     }
 
-    /// Sets the mining mode
-    ///
-    /// Handler for ETH RPC call: `forge_mining`
-    pub fn forge_mining(&self) -> Result<()> {
-        Err(BlockchainError::RpcUnimplemented)
-    }
-
-    /// Sets block timestamp
-    ///
-    /// Handler for ETH RPC call: `forge_setTimestamp`
-    pub fn forge_set_timestamp(&self) -> Result<()> {
-        Err(BlockchainError::RpcUnimplemented)
-    }
-
     /// Turn on call traces for transactions that are returned to the user when they execute a
     /// transaction (instead of just txhash/receipt)
     ///
     /// Handler for ETH RPC call: `forge_enableTraces`
-    pub fn forge_enable_traces(&self) -> Result<()> {
+    pub async fn forge_enable_traces(&self) -> Result<()> {
         Err(BlockchainError::RpcUnimplemented)
     }
 
-    /// execute a transaction regardless of signature status
+    /// Execute a transaction regardless of signature status
     ///
     /// Handler for ETH RPC call: `eth_sendUnsignedTransaction`
-    pub fn eth_send_unsigned_transaction(&self) -> Result<()> {
+    pub async fn eth_send_unsigned_transaction(
+        &self,
+        _req: EthTransactionRequest,
+    ) -> Result<TxHash> {
         Err(BlockchainError::RpcUnimplemented)
     }
 }
