@@ -3,7 +3,7 @@ use crate::{
     cmd::{forge::build::CoreBuildArgs, Cmd},
     compile,
     opts::{forge::ContractInfo, EthereumOpts, WalletType},
-    utils::parse_ether_value,
+    utils::{parse_ether_value, parse_u256},
 };
 use clap::{Parser, ValueHint};
 use ethers::{
