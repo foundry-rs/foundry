@@ -1785,7 +1785,6 @@ dependencies = [
  "regex",
  "semver",
  "serde",
- "serde_json",
  "toml",
 ]
 

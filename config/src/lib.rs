@@ -1,5 +1,5 @@
 //! foundry configuration.
-extern crate core;
+#![deny(missing_docs, unsafe_code, unused_crate_dependencies)]
 
 use std::{
     borrow::Cow,
@@ -1016,6 +1016,7 @@ impl<'de> Deserialize<'de> for GasLimit {
 pub enum SolidityErrorCode {
     /// Warning that SPDX license identifier not provided in source file
     SpdxLicenseNotProvided,
+    /// All other error codes
     Other(u64),
 }
 
@@ -1338,6 +1339,7 @@ impl<'a> Provider for RemappingsProvider<'a> {
 /// ```
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct BasicConfig {
+    /// the profile tag: `[default]`
     #[serde(skip)]
     pub profile: Profile,
     /// path of the source contracts dir, like `src` or `contracts`

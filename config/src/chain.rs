@@ -6,8 +6,10 @@ use std::{fmt, str::FromStr};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(untagged)]
 pub enum Chain {
+    /// Contains a known chain
     #[serde(serialize_with = "super::from_str_lowercase::serialize")]
     Named(ethers_core::types::Chain),
+    /// Contains the id of a chain
     Id(u64),
 }
 
