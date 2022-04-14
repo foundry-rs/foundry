@@ -26,7 +26,8 @@ static GH_REPO_REGEX: Lazy<Regex> =
     Lazy::new(|| Regex::new("[A-Za-z\\d-]+/[A-Za-z\\d_.-]+").unwrap());
 
 static GH_REPO_PREFIX_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"((git@)|(git\+https://)|(https://))?(github|gitlab).com(/|:)?").unwrap()
+    Regex::new(r"((git@)|(git\+https://)|(https://))?([A-Za-z0-9-]+)\.([A-Za-z0-9-]+)(/|:)")
+        .unwrap()
 });
 
 #[derive(Debug, Parser)]
@@ -248,8 +249,9 @@ impl FromStr for Dependency {
     fn from_str(dependency: &str) -> Result<Self, Self::Err> {
         let url_with_version = if let Some(captures) = GH_REPO_PREFIX_REGEX.captures(dependency) {
             let brand = captures.get(5).unwrap().as_str();
+            let tld = captures.get(6).unwrap().as_str();
             let project = GH_REPO_PREFIX_REGEX.replace(dependency, "");
-            format!("https://{}.com/{}", brand, project)
+            format!("https://{}.{}/{}", brand, tld, project)
         } else {
             if !GH_REPO_REGEX.is_match(dependency) {
                 eyre::bail!("invalid github repository name `{}`", dependency);
@@ -289,6 +291,7 @@ mod tests {
             ),
             ("git@github.com:gakonst/lootloose", "https://github.com/gakonst/lootloose", None),
             ("https://gitlab.com/gakonst/lootloose", "https://gitlab.com/gakonst/lootloose", None),
+            ("https://github.xyz/gakonst/lootloose", "https://github.xyz/gakonst/lootloose", None),
             ("gakonst/lootloose@0.1.0", "https://github.com/gakonst/lootloose", Some("0.1.0")),
             ("gakonst/lootloose@develop", "https://github.com/gakonst/lootloose", Some("develop")),
             (
