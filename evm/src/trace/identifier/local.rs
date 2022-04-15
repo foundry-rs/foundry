@@ -4,6 +4,7 @@ use ethers::{
     prelude::ArtifactId,
 };
 use std::{borrow::Cow, collections::BTreeMap};
+use foundry_utils::diff_score;
 
 /// A trace identifier that tries to identify addresses using local contracts.
 pub struct LocalTraceIdentifier {
@@ -46,24 +47,4 @@ impl TraceIdentifier for LocalTraceIdentifier {
             })
             .collect()
     }
-}
-
-/// Very simple fuzzy matching of contract bytecode.
-///
-/// Will fail for small contracts that are essentially all immutable variables.
-fn diff_score(a: &[u8], b: &[u8]) -> f64 {
-    let cutoff_len = usize::min(a.len(), b.len());
-    if cutoff_len == 0 {
-        return 1.0
-    }
-
-    let a = &a[..cutoff_len];
-    let b = &b[..cutoff_len];
-    let mut diff_chars = 0;
-    for i in 0..cutoff_len {
-        if a[i] != b[i] {
-            diff_chars += 1;
-        }
-    }
-    diff_chars as f64 / cutoff_len as f64
 }
