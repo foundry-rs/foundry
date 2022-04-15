@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct TimeManager {}
 
 // === impl TimeManager ===
@@ -10,7 +10,7 @@ pub struct TimeManager {}
 impl TimeManager {
     /// Returns the current timestamp
     pub fn current_timestamp(&self) -> u64 {
-        todo!()
+        duration_since_unix_epoch().as_secs()
     }
 }
 

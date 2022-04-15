@@ -4,14 +4,11 @@ use crate::eth::{
     backend::{db::Db, executor::TransactionExecutor},
     pool::transactions::PoolTransaction,
 };
-use ethers::{
-    prelude::{BlockNumber, TxHash, H256, U256, U64},
-    types::BlockId,
-};
+use ethers::prelude::{BlockNumber, TxHash, H256, U256, U64};
 
 use crate::{
     eth::{
-        backend::duration_since_unix_epoch,
+        backend::time::TimeManager,
         error::{BlockchainError, InvalidTransactionError},
         fees::FeeDetails,
     },
@@ -19,7 +16,7 @@ use crate::{
 };
 use anvil_core::{
     eth::{
-        block::{Block, BlockInfo, Header, PartialHeader},
+        block::{Block, BlockInfo, Header},
         call::CallRequest,
         filter::{Filter, FilteredParams},
         receipt::{EIP658Receipt, TypedReceipt},
@@ -41,11 +38,11 @@ use foundry_evm::{
     utils::u256_to_h256_le,
 };
 use parking_lot::RwLock;
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 use storage::Blockchain;
 use tracing::trace;
 
-mod storage;
+pub mod storage;
 
 #[derive(Debug, Clone)]
 pub struct MinedTransaction {
@@ -69,12 +66,21 @@ pub struct Backend {
     gas_price: U256,
     /// this is set if this is currently forked off another client
     fork: Option<ClientFork>,
+    /// provides time related info, like timestamp
+    time: TimeManager,
 }
 
 impl Backend {
     /// Create a new instance of in-mem backend.
     pub fn new(db: Arc<RwLock<dyn Db>>, env: Arc<RwLock<Env>>, gas_price: U256) -> Self {
-        Self { db, blockchain: Blockchain::default(), env, gas_price, fork: None }
+        Self {
+            db,
+            blockchain: Blockchain::default(),
+            env,
+            gas_price,
+            fork: None,
+            time: Default::default(),
+        }
     }
 
     /// Creates a new empty blockchain backend
@@ -110,7 +116,7 @@ impl Backend {
             Default::default()
         };
 
-        Self { db, blockchain, env, gas_price, fork }
+        Self { db, blockchain, env, gas_price, fork, time: Default::default() }
     }
 
     /// Returns the configured fork, if any
@@ -229,7 +235,9 @@ impl Backend {
             parent_hash: storage.best_hash,
         };
 
-        let BlockInfo { block, transactions, receipts } = executor.create_block();
+        // create the new block with the current timestamp
+        let BlockInfo { block, transactions, receipts } =
+            executor.create_block(self.time.current_timestamp());
 
         let block_hash = block.header.hash();
         let block_number: U64 = env.block.number.as_u64().into();

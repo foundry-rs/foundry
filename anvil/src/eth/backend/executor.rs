@@ -1,7 +1,4 @@
-use crate::eth::{
-    backend::{db::Db, duration_since_unix_epoch},
-    pool::transactions::PoolTransaction,
-};
+use crate::eth::{backend::db::Db, pool::transactions::PoolTransaction};
 use anvil_core::eth::{
     block::{Block, BlockInfo, Header, PartialHeader},
     receipt::{EIP1559Receipt, EIP2930Receipt, EIP658Receipt, Log, TypedReceipt},
@@ -75,8 +72,8 @@ pub struct TransactionExecutor<'a, Db: ?Sized> {
 }
 
 impl<'a, DB: Db + ?Sized> TransactionExecutor<'a, DB> {
-    /// Executes all transactions and puts them in a new block
-    pub fn create_block(self) -> BlockInfo {
+    /// Executes all transactions and puts them in a new block with the provided `timestamp`
+    pub fn create_block(self, timestamp: u64) -> BlockInfo {
         let mut transactions = Vec::new();
         let mut transaction_infos = Vec::new();
         let mut receipts = Vec::new();
@@ -128,7 +125,7 @@ impl<'a, DB: Db + ?Sized> TransactionExecutor<'a, DB> {
             number: block_number,
             gas_limit,
             gas_used: cumulative_gas_used,
-            timestamp: duration_since_unix_epoch().as_secs(),
+            timestamp,
             extra_data: Default::default(),
             mix_hash: Default::default(),
             nonce: Default::default(),
