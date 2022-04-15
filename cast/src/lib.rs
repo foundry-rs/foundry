@@ -340,8 +340,13 @@ where
             false,
         )
         .await?;
-        Ok(U256::from_str_radix(strip_0x(&block_field), 16)
-            .expect("Unable to convert hexadecimal to U256"))
+
+        let ret = if block_field.starts_with("0x") {
+            U256::from_str_radix(strip_0x(&block_field), 16).expect("Unable to convert hex to U256")
+        } else {
+            U256::from_str_radix(&block_field, 10).expect("Unable to convert decimal to U256")
+        };
+        Ok(ret)
     }
 
     pub async fn base_fee<T: Into<BlockId>>(&self, block: T) -> Result<U256> {
