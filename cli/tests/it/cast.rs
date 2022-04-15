@@ -11,7 +11,7 @@ casttest!(finds_block, |_: TestProject, mut cmd: TestCommand| {
     // Skip fork tests if the RPC url is not set.
     if std::env::var("ETH_RPC_URL").is_err() {
         eprintln!("Skipping test finds_block. ETH_RPC_URL is not set.");
-        return;
+        return
     };
 
     // Construct args
