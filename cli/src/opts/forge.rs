@@ -25,6 +25,11 @@ use regex::Regex;
 static GH_REPO_REGEX: Lazy<Regex> =
     Lazy::new(|| Regex::new("[A-Za-z\\d-]+/[A-Za-z\\d_.-]+").unwrap());
 
+static GH_REPO_PREFIX_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"((git@)|(git\+https://)|(https://))?([A-Za-z0-9-]+)\.([A-Za-z0-9-]+)(/|:)")
+        .unwrap()
+});
+
 #[derive(Debug, Parser)]
 #[clap(name = "forge", version = crate::utils::VERSION_MESSAGE)]
 pub struct Opts {
@@ -242,12 +247,11 @@ const VERSION_SEPARATOR: char = '@';
 impl FromStr for Dependency {
     type Err = eyre::Error;
     fn from_str(dependency: &str) -> Result<Self, Self::Err> {
-        // TODO: Is there a better way to normalize these paths to having a
-        // `https://github.com/` prefix?
-        let path = if dependency.starts_with("https://") {
-            dependency.to_string()
-        } else if dependency.starts_with(GITHUB) {
-            format!("https://{}", dependency)
+        let url_with_version = if let Some(captures) = GH_REPO_PREFIX_REGEX.captures(dependency) {
+            let brand = captures.get(5).unwrap().as_str();
+            let tld = captures.get(6).unwrap().as_str();
+            let project = GH_REPO_PREFIX_REGEX.replace(dependency, "");
+            format!("https://{}.{}/{}", brand, tld, project)
         } else {
             if !GH_REPO_REGEX.is_match(dependency) {
                 eyre::bail!("invalid github repository name `{}`", dependency);
@@ -256,7 +260,7 @@ impl FromStr for Dependency {
         };
 
         // everything after the "@" should be considered the version
-        let mut split = path.split(VERSION_SEPARATOR);
+        let mut split = url_with_version.split(VERSION_SEPARATOR);
         let url =
             split.next().ok_or_else(|| eyre::eyre!("no dependency path was provided"))?.to_string();
         let name = url
@@ -280,7 +284,19 @@ mod tests {
             ("gakonst/lootloose", "https://github.com/gakonst/lootloose", None),
             ("github.com/gakonst/lootloose", "https://github.com/gakonst/lootloose", None),
             ("https://github.com/gakonst/lootloose", "https://github.com/gakonst/lootloose", None),
+            (
+                "git+https://github.com/gakonst/lootloose",
+                "https://github.com/gakonst/lootloose",
+                None,
+            ),
+            (
+                "git@github.com:gakonst/lootloose@v1",
+                "https://github.com/gakonst/lootloose",
+                Some("v1"),
+            ),
+            ("git@github.com:gakonst/lootloose", "https://github.com/gakonst/lootloose", None),
             ("https://gitlab.com/gakonst/lootloose", "https://gitlab.com/gakonst/lootloose", None),
+            ("https://github.xyz/gakonst/lootloose", "https://github.xyz/gakonst/lootloose", None),
             ("gakonst/lootloose@0.1.0", "https://github.com/gakonst/lootloose", Some("0.1.0")),
             ("gakonst/lootloose@develop", "https://github.com/gakonst/lootloose", Some("develop")),
             (
