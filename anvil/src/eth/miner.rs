@@ -55,6 +55,8 @@ pub enum MiningMode {
     FixedBlockTime(FixedBlockTimeMiner),
 }
 
+// === impl MiningMode ===
+
 impl MiningMode {
     pub fn instant(max_transactions: usize, listener: Receiver<TxHash>) -> Self {
         MiningMode::Instant(ReadyTransactionMiner {
@@ -87,10 +89,14 @@ impl MiningMode {
 /// The default blocktime is set to 6 seconds
 #[derive(Debug)]
 pub struct FixedBlockTimeMiner {
+    /// The interval this fixed block time miner operates with
     interval: Interval,
 }
 
+// === impl FixedBlockTimeMiner ===
+
 impl FixedBlockTimeMiner {
+    /// Creates a new instance with an interval of `duration`
     pub fn new(duration: Duration) -> Self {
         Self { interval: tokio::time::interval(duration) }
     }
@@ -120,6 +126,8 @@ pub struct ReadyTransactionMiner {
     /// receives hashes of transactions that are ready
     rx: Fuse<Receiver<TxHash>>,
 }
+
+// === impl ReadyTransactionMiner ===
 
 impl ReadyTransactionMiner {
     fn poll(&mut self, pool: &Arc<Pool>, cx: &mut Context<'_>) -> Poll<Vec<Arc<PoolTransaction>>> {
