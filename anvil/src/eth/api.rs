@@ -836,15 +836,17 @@ impl EthApi {
     /// Set the minimum gas price for the node.
     ///
     /// Handler for RPC call: `anvil_setMinGasPrice`
-    pub async fn anvil_set_min_gas_price(&self, _gas: U256) -> Result<()> {
-        Err(BlockchainError::RpcUnimplemented)
+    pub async fn anvil_set_min_gas_price(&self, gas: U256) -> Result<()> {
+        self.backend.set_gas_price(gas);
+        Ok(())
     }
 
     /// Sets the base fee of the next block.
     ///
     /// Handler for RPC call: `anvil_setNextBlockBaseFeePerGas`
-    pub async fn anvil_set_next_block_base_fee_per_gas(&self, _gas: U256) -> Result<()> {
-        Err(BlockchainError::RpcUnimplemented)
+    pub async fn anvil_set_next_block_base_fee_per_gas(&self, basefee: U256) -> Result<()> {
+        self.backend.set_base_fee(basefee);
+        Ok(())
     }
 
     /// Sets the coinbase address.
@@ -896,8 +898,9 @@ impl EthApi {
     /// Sets the reported block number
     ///
     /// Handler for ETH RPC call: `anvil_setBlock`
-    pub fn anvil_set_block(&self, _block_number: U256) -> Result<U256> {
-        Err(BlockchainError::RpcUnimplemented)
+    pub fn anvil_set_block(&self, block_number: U256) -> Result<()> {
+        self.backend.set_block_number(block_number);
+        Ok(())
     }
 
     /// Sets the backend rpc url

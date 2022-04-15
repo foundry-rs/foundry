@@ -63,7 +63,7 @@ pub struct Backend {
     /// env data of the chain
     env: Arc<RwLock<Env>>,
     /// Default gas price for all transactions
-    gas_price: U256,
+    gas_price: Arc<RwLock<U256>>,
     /// this is set if this is currently forked off another client
     fork: Option<ClientFork>,
     /// provides time related info, like timestamp
@@ -79,7 +79,7 @@ impl Backend {
             db,
             blockchain: Blockchain::default(),
             env,
-            gas_price,
+            gas_price: Arc::new(RwLock::new(gas_price)),
             fork: None,
             time: Default::default(),
             cheats: Default::default(),
@@ -123,7 +123,7 @@ impl Backend {
             db,
             blockchain,
             env,
-            gas_price,
+            gas_price: Arc::new(RwLock::new(gas_price)),
             fork,
             time: Default::default(),
             cheats: Default::default(),
@@ -162,7 +162,14 @@ impl Backend {
 
     /// Returns the current best number of the chain
     pub fn best_number(&self) -> U64 {
-        self.blockchain.storage.read().best_number
+        let num: u64 = self.env.read().block.number.try_into().unwrap_or(u64::MAX);
+        num.into()
+    }
+
+    /// Sets the block number
+    pub fn set_block_number(&self, number: U256) {
+        let mut env = self.env.write();
+        env.block.number = number;
     }
 
     /// Returns the client coinbase address.
@@ -211,16 +218,30 @@ impl Backend {
     }
 
     pub fn gas_limit(&self) -> U256 {
-        // TODO make this a separate value?
         self.env().read().block.gas_limit
     }
 
+    /// Returns the current basefee
     pub fn base_fee(&self) -> U256 {
         self.env().read().block.basefee
     }
 
+    /// Sets the current basefee
+    pub fn set_base_fee(&self, basefee: U256) {
+        // TODO this should probably managed separately
+        let mut env = self.env().write();
+        env.block.basefee = basefee;
+    }
+
+    /// Returns the current gas price
     pub fn gas_price(&self) -> U256 {
-        self.gas_price
+        *self.gas_price.read()
+    }
+
+    /// Returns the current gas price
+    pub fn set_gas_price(&self, price: U256) {
+        let mut gas = self.gas_price.write();
+        *gas = price;
     }
 
     /// Return the base fee at the given height
