@@ -776,7 +776,12 @@ impl PendingTransaction {
     /// Creates a new pending transaction and tries to verify transaction and recover sender.
     pub fn new(transaction: TypedTransaction) -> Result<Self, SignatureError> {
         let sender = transaction.recover()?;
-        Ok(Self { hash: transaction.hash(), transaction, sender })
+        Ok(Self::with_sender(transaction, sender))
+    }
+
+    /// Creates a new transaction with the given sender
+    pub fn with_sender(transaction: TypedTransaction, sender: Address) -> Self {
+        Self { hash: transaction.hash(), transaction, sender }
     }
 
     pub fn nonce(&self) -> &U256 {

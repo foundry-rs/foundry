@@ -8,6 +8,7 @@ use crate::{
             transactions::{to_marker, PoolTransaction},
             Pool,
         },
+        sign,
         sign::Signer,
     },
     revm::TransactOut,
@@ -30,8 +31,8 @@ use ethers::{
     abi::ethereum_types::H64,
     providers::ProviderError,
     types::{
-        Address, Block, BlockNumber, Bytes, Log, Trace, Transaction, TransactionReceipt, TxHash,
-        H256, U256, U64,
+        Address, Block, BlockNumber, Bytes, Log, Signature, Trace, Transaction, TransactionReceipt,
+        TxHash, H256, U256, U64,
     },
     utils::rlp,
 };
@@ -398,43 +399,7 @@ impl EthApi {
         let on_chain_nonce = self.transaction_count(from, None)?;
         let nonce = request.nonce.unwrap_or(on_chain_nonce);
 
-        let chain_id = self.chain_id()?.ok_or(BlockchainError::ChainIdNotAvailable)?.as_u64();
-
-        let max_fee_per_gas = request.max_fee_per_gas;
-        let gas_price = request.gas_price;
-
-        let gas_limit = request.gas.map(Ok).unwrap_or_else(|| self.current_gas_limit())?;
-
-        let request = match request.into_typed_request() {
-            Some(TypedTransactionRequest::Legacy(mut m)) => {
-                m.nonce = nonce;
-                m.chain_id = Some(chain_id);
-                m.gas_limit = gas_limit;
-                if gas_price.is_none() {
-                    m.gas_price = self.gas_price().unwrap_or_default();
-                }
-                TypedTransactionRequest::Legacy(m)
-            }
-            Some(TypedTransactionRequest::EIP2930(mut m)) => {
-                m.nonce = nonce;
-                m.chain_id = chain_id;
-                m.gas_limit = gas_limit;
-                if gas_price.is_none() {
-                    m.gas_price = self.gas_price().unwrap_or_default();
-                }
-                TypedTransactionRequest::EIP2930(m)
-            }
-            Some(TypedTransactionRequest::EIP1559(mut m)) => {
-                m.nonce = nonce;
-                m.chain_id = chain_id;
-                m.gas_limit = gas_limit;
-                if max_fee_per_gas.is_none() {
-                    m.max_fee_per_gas = self.gas_price().unwrap_or_default();
-                }
-                TypedTransactionRequest::EIP1559(m)
-            }
-            _ => return Err(BlockchainError::FailedToDecodeTransaction),
-        };
+        let request = self.build_typed_tx_request(request, nonce)?;
 
         let transaction = self.sign_request(&from, request)?;
         let pending_transaction = PendingTransaction::new(transaction)?;
@@ -994,9 +959,39 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_sendUnsignedTransaction`
     pub async fn eth_send_unsigned_transaction(
         &self,
-        _req: EthTransactionRequest,
+        request: EthTransactionRequest,
     ) -> Result<TxHash> {
-        Err(BlockchainError::RpcUnimplemented)
+        let from = request.from.ok_or(BlockchainError::NoSignerAvailable)?;
+
+        let on_chain_nonce = self.transaction_count(from, None)?;
+        let nonce = request.nonce.unwrap_or(on_chain_nonce);
+
+        let request = self.build_typed_tx_request(request, nonce)?;
+
+        // TODO make this some constant
+        let bypass_signature = Signature { r: U256::zero(), s: U256::zero(), v: 0 };
+
+        let transaction = sign::build_typed_transaction(request, bypass_signature)?;
+        let pending_transaction = PendingTransaction::with_sender(transaction, from);
+
+        // pre-validate
+        self.backend.validate_transaction(&pending_transaction)?;
+
+        let prev_nonce = nonce.saturating_sub(U256::one());
+        let requires = if on_chain_nonce < prev_nonce {
+            vec![to_marker(prev_nonce.as_u64(), from)]
+        } else {
+            vec![]
+        };
+
+        let pool_transaction = PoolTransaction {
+            requires,
+            provides: vec![to_marker(nonce.as_u64(), from)],
+            pending_transaction,
+        };
+
+        let tx = self.pool.add_transaction(pool_transaction)?;
+        Ok(*tx.hash())
     }
 }
 
@@ -1014,5 +1009,50 @@ impl EthApi {
             transactions.into_iter().flat_map(|tx| tx.provides.clone()),
         );
         trace!(target: "node", "pruned transaction markers {:?}", res);
+    }
+
+    fn build_typed_tx_request(
+        &self,
+        request: EthTransactionRequest,
+        nonce: U256,
+    ) -> Result<TypedTransactionRequest> {
+        let chain_id = self.chain_id()?.ok_or(BlockchainError::ChainIdNotAvailable)?.as_u64();
+
+        let max_fee_per_gas = request.max_fee_per_gas;
+        let gas_price = request.gas_price;
+
+        let gas_limit = request.gas.map(Ok).unwrap_or_else(|| self.current_gas_limit())?;
+
+        let request = match request.into_typed_request() {
+            Some(TypedTransactionRequest::Legacy(mut m)) => {
+                m.nonce = nonce;
+                m.chain_id = Some(chain_id);
+                m.gas_limit = gas_limit;
+                if gas_price.is_none() {
+                    m.gas_price = self.gas_price().unwrap_or_default();
+                }
+                TypedTransactionRequest::Legacy(m)
+            }
+            Some(TypedTransactionRequest::EIP2930(mut m)) => {
+                m.nonce = nonce;
+                m.chain_id = chain_id;
+                m.gas_limit = gas_limit;
+                if gas_price.is_none() {
+                    m.gas_price = self.gas_price().unwrap_or_default();
+                }
+                TypedTransactionRequest::EIP2930(m)
+            }
+            Some(TypedTransactionRequest::EIP1559(mut m)) => {
+                m.nonce = nonce;
+                m.chain_id = chain_id;
+                m.gas_limit = gas_limit;
+                if max_fee_per_gas.is_none() {
+                    m.max_fee_per_gas = self.gas_price().unwrap_or_default();
+                }
+                TypedTransactionRequest::EIP1559(m)
+            }
+            _ => return Err(BlockchainError::FailedToDecodeTransaction),
+        };
+        Ok(request)
     }
 }
