@@ -15,9 +15,9 @@ keywords = ["ethereum", "web3", "solidity"]
 foundry-config = { path = "../config" }
 ethers-solc = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["async", "svm-solc", "project-util"] }
 ethers-contract = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["abigen"] }
-curl = { version = "0.4", features = ["http2"] }
+curl = { version = "0.4", default-features = false, features = ["http2"] }
 eyre = "0.6"
-git2 = "0.13"
+git2 = { version = "0.13", default-features = false }
 url = "2.2"
 tracing = "0.1.33"
 tempfile = "3.3.0"
