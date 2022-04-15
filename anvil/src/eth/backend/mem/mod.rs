@@ -8,7 +8,7 @@ use ethers::prelude::{BlockNumber, TxHash, H256, U256, U64};
 
 use crate::{
     eth::{
-        backend::time::TimeManager,
+        backend::{cheats::CheatsManager, time::TimeManager},
         error::{BlockchainError, InvalidTransactionError},
         fees::FeeDetails,
     },
@@ -68,6 +68,8 @@ pub struct Backend {
     fork: Option<ClientFork>,
     /// provides time related info, like timestamp
     time: TimeManager,
+    /// Contains state of custom overrides
+    cheats: CheatsManager,
 }
 
 impl Backend {
@@ -80,6 +82,7 @@ impl Backend {
             gas_price,
             fork: None,
             time: Default::default(),
+            cheats: Default::default(),
         }
     }
 
@@ -116,7 +119,15 @@ impl Backend {
             Default::default()
         };
 
-        Self { db, blockchain, env, gas_price, fork, time: Default::default() }
+        Self {
+            db,
+            blockchain,
+            env,
+            gas_price,
+            fork,
+            time: Default::default(),
+            cheats: Default::default(),
+        }
     }
 
     /// Returns the configured fork, if any
@@ -127,6 +138,16 @@ impl Backend {
     /// Whether we're forked off some remote client
     pub fn is_fork(&self) -> bool {
         self.fork.is_some()
+    }
+
+    /// Returns the `TimeManager` responsible for timestamps
+    pub fn time(&self) -> &TimeManager {
+        &self.time
+    }
+
+    /// Returns the `CheatsManager` responsible for executing cheatcodes
+    pub fn cheats(&self) -> &CheatsManager {
+        &self.cheats
     }
 
     /// The env data of the blockchain
