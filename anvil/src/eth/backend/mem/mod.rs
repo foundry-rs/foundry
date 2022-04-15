@@ -671,10 +671,9 @@ impl Backend {
         Ok(code.unwrap_or_default().into())
     }
 
-    /// Returns the code of the address
+    /// Returns the balance of the address
     ///
-    /// If the code is not present and fork mode is enabled then this will try to fetch it from the
-    /// forked client
+    /// If the requested number predates the fork then this will fetch it from the endpoint
     pub async fn get_balance(
         &self,
         address: Address,
@@ -689,6 +688,25 @@ impl Backend {
         }
 
         Ok(self.current_balance(address))
+    }
+
+    /// Returns the nonce of the address
+    ///
+    /// If the requested number predates the fork then this will fetch it from the endpoint
+    pub async fn get_nonce(
+        &self,
+        address: Address,
+        block: Option<BlockNumber>,
+    ) -> Result<U256, BlockchainError> {
+        let number = self.convert_block_number(block);
+
+        if let Some(ref fork) = self.fork {
+            if fork.predates_fork(number) {
+                return Ok(fork.get_nonce(address, number).await?)
+            }
+        }
+
+        Ok(self.current_nonce(address))
     }
 
     pub async fn transaction_receipt(

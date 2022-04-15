@@ -86,7 +86,7 @@ impl EthApi {
                 self.transaction_by_hash(hash).await.to_rpc_result()
             }
             EthRequest::EthSendTransaction(request) => {
-                self.send_transaction(*request).to_rpc_result()
+                self.send_transaction(*request).await.to_rpc_result()
             }
             EthRequest::EthChainId => self.chain_id().to_rpc_result(),
             EthRequest::EthGasPrice => self.gas_price().to_rpc_result(),
@@ -102,7 +102,7 @@ impl EthApi {
                 self.block_by_number(num, full).await.to_rpc_result()
             }
             EthRequest::EthGetTransactionCount(addr, block) => {
-                self.transaction_count(addr, block).to_rpc_result()
+                self.transaction_count(addr, block).await.to_rpc_result()
             }
             EthRequest::EthGetTransactionCountByHash(hash) => {
                 self.block_transaction_count_by_hash(hash).to_rpc_result()
@@ -329,19 +329,12 @@ impl EthApi {
     /// Returns the number of transactions sent from given address at given time (block number).
     ///
     /// Handler for ETH RPC call: `eth_getTransactionCount`
-    pub fn transaction_count(&self, address: Address, number: Option<BlockNumber>) -> Result<U256> {
-        let number = number.unwrap_or(BlockNumber::Latest);
-        match number {
-            BlockNumber::Latest | BlockNumber::Pending => Ok(self.backend.current_nonce(address)),
-            BlockNumber::Number(num) => {
-                if num != self.backend.best_number() {
-                    Err(BlockchainError::RpcUnimplemented)
-                } else {
-                    Ok(self.backend.current_nonce(address))
-                }
-            }
-            _ => Err(BlockchainError::RpcUnimplemented),
-        }
+    pub async fn transaction_count(
+        &self,
+        address: Address,
+        number: Option<BlockNumber>,
+    ) -> Result<U256> {
+        Ok(self.backend.get_nonce(address, number).await?)
     }
 
     /// Returns the number of transactions in a block with given hash.
@@ -382,12 +375,12 @@ impl EthApi {
     /// Sends a transaction
     ///
     /// Handler for ETH RPC call: `eth_sendTransaction`
-    pub fn send_transaction(&self, request: EthTransactionRequest) -> Result<TxHash> {
+    pub async fn send_transaction(&self, request: EthTransactionRequest) -> Result<TxHash> {
         let from = request.from.map(Ok).unwrap_or_else(|| {
             self.accounts()?.get(0).cloned().ok_or(BlockchainError::NoSignerAvailable)
         })?;
 
-        let on_chain_nonce = self.transaction_count(from, None)?;
+        let on_chain_nonce = self.transaction_count(from, None).await?;
         let nonce = request.nonce.unwrap_or(on_chain_nonce);
 
         let request = self.build_typed_tx_request(request, nonce)?;
@@ -954,7 +947,7 @@ impl EthApi {
     ) -> Result<TxHash> {
         let from = request.from.ok_or(BlockchainError::NoSignerAvailable)?;
 
-        let on_chain_nonce = self.transaction_count(from, None)?;
+        let on_chain_nonce = self.transaction_count(from, None).await?;
         let nonce = request.nonce.unwrap_or(on_chain_nonce);
 
         let request = self.build_typed_tx_request(request, nonce)?;

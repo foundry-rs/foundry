@@ -109,6 +109,14 @@ impl ClientFork {
         self.provider().get_balance(address, Some(blocknumber.into())).await
     }
 
+    pub async fn get_nonce(
+        &self,
+        address: Address,
+        blocknumber: u64,
+    ) -> Result<U256, ProviderError> {
+        self.provider().get_transaction_count(address, Some(blocknumber.into())).await
+    }
+
     pub async fn transaction_by_block_hash_and_index(
         &self,
         hash: H256,
