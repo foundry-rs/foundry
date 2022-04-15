@@ -873,15 +873,17 @@ impl EthApi {
     /// Jump forward in time by the given amount of time, in seconds.
     ///
     /// Handler for RPC call: `evm_increaseTime`
-    pub async fn evm_increase_time(&self, _seconds: U256) -> Result<()> {
-        Err(BlockchainError::RpcUnimplemented)
+    pub async fn evm_increase_time(&self, seconds: U256) -> Result<()> {
+        self.backend.time().increase_time(seconds.try_into().unwrap_or(u64::MAX));
+        Ok(())
     }
 
     /// Similar to `evm_increaseTime` but takes the exact timestamp that you want in the next block
     ///
     /// Handler for RPC call: `evm_setNextBlockTimestamp`
-    pub async fn evm_set_next_block_timestamp(&self, _seconds: u64) -> Result<()> {
-        Err(BlockchainError::RpcUnimplemented)
+    pub async fn evm_set_next_block_timestamp(&self, seconds: u64) -> Result<()> {
+        self.backend.time().set_next_block_timestamp(seconds);
+        Ok(())
     }
 
     /// Mine a single block

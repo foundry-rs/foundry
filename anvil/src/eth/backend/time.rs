@@ -1,16 +1,59 @@
 //! Manages the block time
 
-use std::time::Duration;
+use parking_lot::RwLock;
+use std::{sync::Arc, time::Duration};
 
+/// Manages block time
 #[derive(Debug, Clone, Default)]
-pub struct TimeManager {}
+pub struct TimeManager {
+    /// tracks the overall applied timestamp offset
+    offset: Arc<RwLock<i128>>,
+    /// Contains the next timestamp to use
+    /// if this is set then the next time `[TimeManager::current_timestamp()]` is called this value
+    /// will be taken and returned. After which the `offset` will be updated accordingly
+    next_exact_timestamp: Arc<RwLock<Option<u64>>>,
+}
 
 // === impl TimeManager ===
 
 impl TimeManager {
+    fn offset(&self) -> i128 {
+        *self.offset.read()
+    }
+
+    /// Adds the given `offset` to the already tracked offset
+    fn add_offset(&self, offset: i128) {
+        let mut current = self.offset.write();
+        let next = current.saturating_add(offset);
+        *current = next;
+    }
+
+    /// Jumps forward in time by the given seconds
+    ///
+    /// This will apply a permanent offset to the natural UNIX Epoch timestamp
+    pub fn increase_time(&self, seconds: u64) {
+        self.add_offset(seconds as i128)
+    }
+
+    /// Sets the exact timestamp to use in the next block
+    pub fn set_next_block_timestamp(&self, timestamp: u64) {
+        self.next_exact_timestamp.write().replace(timestamp);
+    }
+
     /// Returns the current timestamp
     pub fn current_timestamp(&self) -> u64 {
-        duration_since_unix_epoch().as_secs()
+        let current = duration_since_unix_epoch().as_secs() as i128;
+
+        if let Some(next) = self.next_exact_timestamp.write().take() {
+            // return the custom block timestamp and adjust the offset accordingly
+            // the offset will be negative if the `next` timestamp is in the past
+            let offset = (next as i128) - current;
+            let mut current_offset = self.offset.write();
+            *current_offset = offset;
+            return next
+        }
+
+        current.saturating_add(self.offset()) as u64
     }
 }
 

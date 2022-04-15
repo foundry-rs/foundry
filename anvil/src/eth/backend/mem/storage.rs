@@ -1,5 +1,5 @@
 //! In-memory blockchain storage
-use crate::{eth::backend::duration_since_unix_epoch, mem::MinedTransaction};
+use crate::{eth::backend::time::duration_since_unix_epoch, mem::MinedTransaction};
 use anvil_core::eth::block::{Block, PartialHeader};
 use ethers::prelude::{BlockId, BlockNumber, H256, H256 as TxHash, U64};
 use parking_lot::RwLock;
