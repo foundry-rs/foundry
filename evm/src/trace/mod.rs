@@ -7,7 +7,7 @@ mod decoder;
 mod node;
 mod utils;
 
-pub use decoder::CallTraceDecoder;
+pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
 
 use crate::{abi::CHEATCODE_ADDRESS, CallKind};
 use ansi_term::Colour;
