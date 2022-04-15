@@ -10,7 +10,10 @@ use ethers::{
     abi::{Abi, RawLog},
     prelude::ArtifactId,
     solc::artifacts::{CompactContractBytecode, ContractBytecode, ContractBytecodeSome},
-    types::{transaction::eip2718::TypedTransaction, Address, Bytes, TransactionRequest, U256, NameOrAddress},
+    types::{
+        transaction::eip2718::TypedTransaction, Address, Bytes, NameOrAddress, TransactionRequest,
+        U256,
+    },
 };
 use forge::{
     debug::DebugArena,
@@ -108,8 +111,8 @@ impl Cmd for ScriptArgs {
         if let Some(ref txs) = result.transactions {
             // If we did any linking with assumed predeploys, we cant support multiple deployers.
             //
-            // If we didn't do any linking with predeploys, then none of the contracts will change their code 
-            // based on the sender, so we can skip relinking + reexecuting.
+            // If we didn't do any linking with predeploys, then none of the contracts will change
+            // their code based on the sender, so we can skip relinking + reexecuting.
             if !predeploy_libraries.is_empty() {
                 for tx in txs.iter() {
                     match tx {
@@ -182,8 +185,8 @@ impl Cmd for ScriptArgs {
                 .collect();
             result.transactions = Some(lib_deploy);
 
-            let result2 = self.execute(contract, &evm_opts, Some(new_sender), &predeploy_libraries, &config)?;
-
+            let result2 =
+                self.execute(contract, &evm_opts, Some(new_sender), &predeploy_libraries, &config)?;
 
             result.success &= result2.success;
 
@@ -297,7 +300,12 @@ pub struct BuildOutput {
 
 impl ScriptArgs {
     /// Compiles the file with auto-detection and compiler params.
-    pub fn build(&self, config: &Config, evm_opts: &EvmOpts, nonce: U256) -> eyre::Result<BuildOutput> {
+    pub fn build(
+        &self,
+        config: &Config,
+        evm_opts: &EvmOpts,
+        nonce: U256,
+    ) -> eyre::Result<BuildOutput> {
         let target_contract = dunce::canonicalize(&self.path)?;
         let project = config.ephemeral_no_artifacts_project()?;
         let output = compile::compile_files(&project, vec![target_contract])?;
@@ -308,7 +316,8 @@ impl ScriptArgs {
         self.link(contracts, evm_opts.sender, nonce)
     }
 
-    fn execute(&self,
+    fn execute(
+        &self,
         contract: CompactContractBytecode,
         evm_opts: &EvmOpts,
         sender: Option<Address>,
@@ -334,10 +343,12 @@ impl ScriptArgs {
             builder = builder.with_tracing();
         }
 
-        let mut runner =
-            Runner::new(builder.build(db), evm_opts.initial_balance, sender.unwrap_or(evm_opts.sender));
-        let (address, mut result) =
-            runner.setup(predeploy_libraries, bytecode, needs_setup)?;
+        let mut runner = Runner::new(
+            builder.build(db),
+            evm_opts.initial_balance,
+            sender.unwrap_or(evm_opts.sender),
+        );
+        let (address, mut result) = runner.setup(predeploy_libraries, bytecode, needs_setup)?;
 
         let ScriptResult {
             success,
@@ -377,11 +388,12 @@ impl ScriptArgs {
         Ok(result)
     }
 
-    fn execute_transactions(&self,
+    fn execute_transactions(
+        &self,
         transactions: VecDeque<TypedTransaction>,
         evm_opts: &EvmOpts,
         config: &Config,
-        decoder: &mut CallTraceDecoder
+        decoder: &mut CallTraceDecoder,
     ) {
         let env = evm_opts.evm_env();
         // the db backend that serves all the data
@@ -397,26 +409,30 @@ impl ScriptArgs {
             builder = builder.with_tracing();
         }
 
-        let mut runner =
-            Runner::new(builder.build(db), evm_opts.initial_balance, evm_opts.sender);
+        let mut runner = Runner::new(builder.build(db), evm_opts.initial_balance, evm_opts.sender);
 
-        
-        transactions.into_iter().map(|tx| {
-            match tx {
-                TypedTransaction::Legacy(tx) => {
-                    (tx.from, tx.to, tx.data, tx.value)
+        transactions
+            .into_iter()
+            .map(|tx| match tx {
+                TypedTransaction::Legacy(tx) => (tx.from, tx.to, tx.data, tx.value),
+                _ => unreachable!(),
+            })
+            .map(|(from, to, data, value)| {
+                runner
+                    .sim(
+                        from.expect("Transaction doesn't have a `from` address at execution time"),
+                        to,
+                        data,
+                        value,
+                    )
+                    .expect("Internal EVM error")
+            })
+            .for_each(|mut result| {
+                for (_kind, trace) in &mut result.traces {
+                    decoder.decode(trace);
+                    println!("{}", trace);
                 }
-                _ => unreachable!()
-            }
-        })
-        .map(|(from, to, data, value)| {
-            runner.sim(from.expect("Transaction doesn't have a `from` address at execution time"), to, data, value).expect("Internal EVM error")
-        }).for_each(|mut result| {
-            for (_kind, trace) in &mut result.traces {
-                decoder.decode(trace);
-                println!("{}", trace);
-            }
-        });
+            });
     }
 
     pub fn link(
@@ -638,33 +654,54 @@ impl<DB: DatabaseRef> Runner<DB> {
         })
     }
 
-    pub fn sim(&mut self, from: Address, to: Option<NameOrAddress>, calldata: Option<Bytes>, value: Option<U256>) -> eyre::Result<ScriptResult> {
+    pub fn sim(
+        &mut self,
+        from: Address,
+        to: Option<NameOrAddress>,
+        calldata: Option<Bytes>,
+        value: Option<U256>,
+    ) -> eyre::Result<ScriptResult> {
         if let Some(NameOrAddress::Address(to)) = to {
             let RawCallResult {
-                reverted, gas, stipend, logs, traces, labels, debug, transactions, ..
-            } = self.executor.call_raw(from, to, calldata.unwrap_or_default().0, value.unwrap_or(U256::zero()))?;
+                reverted,
+                gas,
+                stipend,
+                logs,
+                traces,
+                labels,
+                debug,
+                transactions,
+                ..
+            } = self.executor.call_raw(
+                from,
+                to,
+                calldata.unwrap_or_default().0,
+                value.unwrap_or(U256::zero()),
+            )?;
             Ok(ScriptResult {
                 success: !reverted,
                 gas: gas.overflowing_sub(stipend).0,
                 logs,
-                traces: traces.map(|traces| vec![(TraceKind::Execution, traces)]).unwrap_or_default(),
+                traces: traces
+                    .map(|traces| vec![(TraceKind::Execution, traces)])
+                    .unwrap_or_default(),
                 debug: vec![debug].into_iter().collect(),
                 labeled_addresses: labels,
                 transactions,
             })
         } else if to.is_none() {
-            let DeployResult {
-                address: _,
-                gas,
-                logs,
-                traces,
-                debug,
-            } = self.executor.deploy(from, calldata.expect("No data for create transaction").0, value.unwrap_or(U256::zero()))?;
+            let DeployResult { address: _, gas, logs, traces, debug } = self.executor.deploy(
+                from,
+                calldata.expect("No data for create transaction").0,
+                value.unwrap_or(U256::zero()),
+            )?;
             Ok(ScriptResult {
                 success: true,
                 gas,
                 logs,
-                traces: traces.map(|traces| vec![(TraceKind::Execution, traces)]).unwrap_or_default(),
+                traces: traces
+                    .map(|traces| vec![(TraceKind::Execution, traces)])
+                    .unwrap_or_default(),
                 debug: vec![debug].into_iter().collect(),
                 labeled_addresses: Default::default(),
                 transactions: Default::default(),
