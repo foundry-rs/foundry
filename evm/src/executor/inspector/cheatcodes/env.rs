@@ -217,13 +217,16 @@ pub fn apply<DB: Database>(
             let account = data.subroutine.state().get(&inner.0).unwrap();
             Ok(abi::encode(&[Token::Uint(account.info.nonce.into())]).into())
         }
-        HEVMCalls::Broadcast(inner) => {
+        HEVMCalls::Broadcast0(_) => {
+            broadcast(state, data.env.tx.caller, caller, data.subroutine.depth(), true)
+        }
+        HEVMCalls::Broadcast1(inner) => {
             broadcast(state, inner.0, caller, data.subroutine.depth(), true)
         }
         HEVMCalls::StartBroadcast(inner) => {
             broadcast(state, inner.0, caller, data.subroutine.depth(), false)
         }
-        HEVMCalls::StopBroadcast(_inner) => {
+        HEVMCalls::StopBroadcast(_) => {
             state.broadcast = None;
             Ok(Bytes::new())
         }

@@ -43,9 +43,10 @@ ethers::contract::abigen!(
             assume(bool)
             setNonce(address,uint64)
             getNonce(address)
+            broadcast()
             broadcast(address)
             startBroadcast(address)
-            stopBroadcast(address)
+            stopBroadcast()
     ]"#,
 );
 pub use hevm_mod::{HEVMCalls, HEVM_ABI};

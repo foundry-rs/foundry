@@ -3,8 +3,8 @@ use ethers::{
     abi::{Abi, Address},
     prelude::ArtifactId,
 };
-use std::{borrow::Cow, collections::BTreeMap};
 use foundry_utils::diff_score;
+use std::{borrow::Cow, collections::BTreeMap};
 
 /// A trace identifier that tries to identify addresses using local contracts.
 pub struct LocalTraceIdentifier {

@@ -1,5 +1,4 @@
 #![doc = include_str!("../README.md")]
-use ethers_providers::{Middleware, ProviderError, Provider};
 use ethers_addressbook::contract;
 use ethers_core::{
     abi::{
@@ -10,6 +9,7 @@ use ethers_core::{
     types::*,
 };
 use ethers_etherscan::Client;
+use ethers_providers::{Middleware, Provider, ProviderError};
 use ethers_solc::{
     artifacts::{BytecodeObject, CompactBytecode, CompactContractBytecode},
     ArtifactId,
@@ -140,7 +140,7 @@ pub fn link<T, U>(
     // we dont use mainnet state for evm_opts.sender so this will always be 1
     // I am leaving this here so that in the future if this needs to change,
     // its easy to find.
-    let nonce = U256::one();
+    let nonce = U256::zero();
     link_with_nonce(
         contracts,
         known_contracts,
@@ -289,8 +289,13 @@ pub fn recurse_link<'a>(
             }
 
             // calculate the address for linking this dependency
+            //
+            // NOTE: We add 1 to the nonce, because if we reached this codepath, this contract has a
+            // dependency. At the very least, that one contract will be deployed *prior*
+            // to this one, but wont appear in our deployment vector. It probably should
+            // here, but it doesn't.
             let addr =
-                ethers_core::utils::get_contract_address(sender, init_nonce + deployment.len());
+                ethers_core::utils::get_contract_address(sender, init_nonce + 1 + deployment.len());
 
             // link the dependency to the target
             target_bytecode.0.link(file.clone(), key.clone(), addr);

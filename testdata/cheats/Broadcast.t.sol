@@ -13,6 +13,10 @@ contract Test is DSTest {
         emit log_string("here");
         return b;
     }
+
+    function echoSender() public returns (address) {
+        return msg.sender;
+    } 
 }
 
 library F {
@@ -36,18 +40,38 @@ contract BroadcastTest is DSTest {
         test.t(b);     
     }
 
-    function deployOther() public {
-        cheats.broadcast(address(0x1338));
+    function deployDefault() public {
+        cheats.broadcast();
         Test test = new Test();
 
-        cheats.broadcast(address(0x1339));
-        test.t(0);     
+        // this wont generate tx to sign
+        uint256 b = test.t(4);
+
+        // this will
+        cheats.broadcast(address(0x1338));
+        test.t(b);     
+    }
+
+    function deployOther() public {
+        cheats.startBroadcast(address(0xb1eF51983621Adb0AF040Da515d6c04fe7546753));
+        Test test = new Test();
+        require(test.echoSender() == address(0xb1eF51983621Adb0AF040Da515d6c04fe7546753));
+        cheats.stopBroadcast();
+        require(test.echoSender() == address(this));
+
+        cheats.broadcast(address(0xb1eF51983621Adb0AF040Da515d6c04fe7546753));
+        require(test.echoSender() == address(0xb1eF51983621Adb0AF040Da515d6c04fe7546753));
     }
 
     function deployPanics() public {
+
         cheats.broadcast(address(0x1337));
         Test test = new Test();
 
+        // This panics because this would cause an additional relinking that isnt conceptually correct
+        // from a solidity standpoint. Basically, this contract `BroadcastTest`, injects the code of
+        // `Test` *into* its code. So it isn't reasonable to break solidity to our will of having *two*
+        // versions of `Test` based on the sender/linker.
         cheats.broadcast(address(0x1338));
         Test test2 = new Test();
 
@@ -57,48 +81,28 @@ contract BroadcastTest is DSTest {
 }
 
 
-// contract NoLink {
-//     function t(uint256 a) public returns (uint256) {
-//         uint256 b = 0;
-//         for (uint256 i; i < a; i++) {
-//             b += i;
-//         }
-//         emit log_string("here");
-//         return b;
-//     }
-// }
+contract NoLink is DSTest {
+    function t(uint256 a) public returns (uint256) {
+        uint256 b = 0;
+        for (uint256 i; i < a; i++) {
+            b += i;
+        }
+        emit log_string("here");
+        return b;
+    }
+}
 
-// contract BroadcastTestNoLinking is DSTest {
-//     Cheats constant cheats = Cheats(HEVM_ADDRESS);
+contract BroadcastTestNoLinking is DSTest {
+    Cheats constant cheats = Cheats(HEVM_ADDRESS);
 
-//     function deploy() public {
-//         cheats.broadcast(address(0x1337));
-//         Test test = new Test();
+    function deployDoesntPanic() public {
+        cheats.broadcast(address(0x1337));
+        NoLink test = new NoLink();
 
-//         // this wont generate tx to sign
-//         uint256 b = test.t(4);
+        cheats.broadcast(address(0x1338));
+        NoLink test2 = new NoLink();
 
-//         // this will
-//         cheats.broadcast(address(0x1338));
-//         test.t(b);     
-//     }
-
-//     function deployOther() public {
-//         cheats.broadcast(address(0x1338));
-//         Test test = new Test();
-
-//         cheats.broadcast(address(0x1339));
-//         test.t(0);     
-//     }
-
-//     function deployPanics() public {
-//         cheats.broadcast(address(0x1337));
-//         Test test = new Test();
-
-//         cheats.broadcast(address(0x1338));
-//         Test test2 = new Test();
-
-//         cheats.broadcast(address(0x1338));
-//         test.t(0);     
-//     }
-// }
+        cheats.broadcast(address(0x1338));
+        test.t(0);     
+    }
+}
