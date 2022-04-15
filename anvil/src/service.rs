@@ -1,6 +1,6 @@
 //! background service
 
-use crate::eth::{backend, miner::MiningMode, pool::Pool};
+use crate::eth::{backend, miner::Miner, pool::Pool};
 use std::{
     future::Future,
     pin::Pin,
@@ -21,11 +21,11 @@ pub struct NodeService {
     /// holds the blockchain's state
     backend: Arc<backend::mem::Backend>,
     /// the miner responsible to select transactions from the `pool´
-    miner: MiningMode,
+    miner: Miner,
 }
 
 impl NodeService {
-    pub fn new(pool: Arc<Pool>, backend: Arc<backend::mem::Backend>, miner: MiningMode) -> Self {
+    pub fn new(pool: Arc<Pool>, backend: Arc<backend::mem::Backend>, miner: Miner) -> Self {
         Self { pool, backend, miner }
     }
 }

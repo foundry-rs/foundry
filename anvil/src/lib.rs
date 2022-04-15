@@ -16,7 +16,7 @@ use ethers::{
     types::{Address, U256},
 };
 
-use crate::fork::ClientFork;
+use crate::{eth::miner::Miner, fork::ClientFork};
 use ethers::providers::Ws;
 use parking_lot::Mutex;
 use std::{
@@ -73,6 +73,7 @@ pub async fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
         let listener = pool.add_ready_listener();
         MiningMode::instant(max_transactions, listener)
     };
+    let miner = Miner::new(mode);
 
     let dev_signer: Box<dyn EthSigner> = Box::new(DevSigner::new(accounts));
     let fee_history_cache = Arc::new(Mutex::new(Default::default()));
@@ -85,7 +86,7 @@ pub async fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
         fee_history_cache,
     );
 
-    let node_service = NodeService::new(pool, backend, mode);
+    let node_service = NodeService::new(pool, backend, miner);
 
     let socket = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port);
 

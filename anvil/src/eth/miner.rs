@@ -6,6 +6,7 @@ use futures::{
     channel::mpsc::Receiver,
     stream::{Fuse, Stream, StreamExt},
 };
+use parking_lot::RwLock;
 use std::{
     collections::HashSet,
     pin::Pin,
@@ -15,6 +16,34 @@ use std::{
 };
 use tokio::time::Interval;
 
+#[derive(Debug, Clone)]
+pub struct Miner {
+    /// The mode this miner currently operates in
+    mode: Arc<RwLock<MiningMode>>,
+}
+
+// === impl Miner ===
+
+impl Miner {
+    /// Returns a new miner with that operates in the given `mode`
+    pub fn new(mode: MiningMode) -> Self {
+        Self { mode: Arc::new(RwLock::new(mode)) }
+    }
+
+    /// polls the [Pool] and returns those transactions that should be put in a block according to
+    /// the current mode.
+    ///
+    /// May return an empty list, if no transactions are ready.
+    pub fn poll(
+        &mut self,
+        pool: &Arc<Pool>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Vec<Arc<PoolTransaction>>> {
+        self.mode.write().poll(pool, cx)
+    }
+}
+
+/// Mode of operations for the `Miner`
 #[derive(Debug)]
 pub enum MiningMode {
     /// A miner that listens for new transactions that are ready.
