@@ -792,22 +792,25 @@ impl EthApi {
     ///Modifies the balance of an account.
     ///
     /// Handler for RPC call: `forge_setBalance`
-    pub async fn forge_set_balance(&self, _address: Address, _balance: U256) -> Result<()> {
-        Err(BlockchainError::RpcUnimplemented)
+    pub async fn forge_set_balance(&self, address: Address, balance: U256) -> Result<()> {
+        self.backend.set_balance(address, balance);
+        Ok(())
     }
 
     /// Sets the code of a contract.
     ///
     /// Handler for RPC call: `forge_setCode`
-    pub async fn forge_set_code(&self, _address: Address, _code: Bytes) -> Result<()> {
-        Err(BlockchainError::RpcUnimplemented)
+    pub async fn forge_set_code(&self, address: Address, code: Bytes) -> Result<()> {
+        self.backend.set_code(address, code);
+        Ok(())
     }
 
     /// Sets the nonce of an address.
     ///
     /// Handler for RPC call: `forge_setNonce`
-    pub async fn forge_set_nonce(&self, _address: Address, _nonce: U256) -> Result<()> {
-        Err(BlockchainError::RpcUnimplemented)
+    pub async fn forge_set_nonce(&self, address: Address, nonce: U256) -> Result<()> {
+        self.backend.set_nonce(address, nonce);
+        Ok(())
     }
 
     /// Writes a single slot of the account's storage.
@@ -815,11 +818,12 @@ impl EthApi {
     /// Handler for RPC call: `forge_setStorageAt`
     pub async fn forge_set_storage_at(
         &self,
-        _address: Address,
-        _slot: U256,
-        _val: U256,
+        address: Address,
+        slot: U256,
+        val: U256,
     ) -> Result<()> {
-        Err(BlockchainError::RpcUnimplemented)
+        self.backend.set_storage_at(address, slot, val);
+        Ok(())
     }
 
     /// Enable or disable logging.
@@ -846,8 +850,9 @@ impl EthApi {
     /// Sets the coinbase address.
     ///
     /// Handler for RPC call: `forge_setCoinbase`
-    pub async fn forge_set_coinbase(&self, _address: Address) -> Result<()> {
-        Err(BlockchainError::RpcUnimplemented)
+    pub async fn forge_set_coinbase(&self, address: Address) -> Result<()> {
+        self.backend.set_coinbase(address);
+        Ok(())
     }
 
     /// Snapshot the state of the blockchain at the current block.

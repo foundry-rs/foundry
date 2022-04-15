@@ -185,6 +185,31 @@ impl Backend {
         self.db.read().basic(address).nonce.into()
     }
 
+    /// Sets the coinbase address
+    pub fn set_coinbase(&self, address: Address) {
+        self.env.write().block.coinbase = address;
+    }
+
+    /// Sets the nonce of the given address
+    pub fn set_nonce(&self, address: Address, nonce: U256) {
+        self.db.write().set_nonce(address, nonce.try_into().unwrap_or(u64::MAX));
+    }
+
+    /// Sets the balance of the given address
+    pub fn set_balance(&self, address: Address, balance: U256) {
+        self.db.write().set_balance(address, balance);
+    }
+
+    /// Sets the code of the given address
+    pub fn set_code(&self, address: Address, code: Bytes) {
+        self.db.write().set_code(address, code);
+    }
+
+    /// Sets the value for the given slot of the given address
+    pub fn set_storage_at(&self, address: Address, slot: U256, val: U256) {
+        self.db.write().set_storage_at(address, slot, val);
+    }
+
     pub fn gas_limit(&self) -> U256 {
         // TODO make this a separate value?
         self.env().read().block.gas_limit
