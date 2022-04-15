@@ -671,6 +671,26 @@ impl Backend {
         Ok(code.unwrap_or_default().into())
     }
 
+    /// Returns the code of the address
+    ///
+    /// If the code is not present and fork mode is enabled then this will try to fetch it from the
+    /// forked client
+    pub async fn get_balance(
+        &self,
+        address: Address,
+        block: Option<BlockNumber>,
+    ) -> Result<U256, BlockchainError> {
+        let number = self.convert_block_number(block);
+
+        if let Some(ref fork) = self.fork {
+            if fork.predates_fork(number) {
+                return Ok(fork.get_balance(address, number).await?)
+            }
+        }
+
+        Ok(self.current_balance(address))
+    }
+
     pub async fn transaction_receipt(
         &self,
         hash: H256,

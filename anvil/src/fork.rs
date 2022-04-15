@@ -93,6 +93,22 @@ impl ClientFork {
         Ok(code)
     }
 
+    pub async fn get_balance(
+        &self,
+        address: Address,
+        blocknumber: u64,
+    ) -> Result<U256, ProviderError> {
+        // if let Some(code) = self.storage_read()..get(&(address, blocknumber)).cloned() {
+        //     return Ok(code)
+        // }
+        //
+        // let code = self.provider().get_code(address, Some(blocknumber.into())).await?;
+        // let mut storage = self.storage_write();
+        // storage.code_at.insert((address, blocknumber), code.clone());
+
+        self.provider().get_balance(address, Some(blocknumber.into())).await
+    }
+
     pub async fn transaction_by_block_hash_and_index(
         &self,
         hash: H256,

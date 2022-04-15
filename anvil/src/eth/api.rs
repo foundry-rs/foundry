@@ -79,7 +79,9 @@ impl EthApi {
     /// Executes the [EthRequest] and returns an RPC [RpcResponse]
     pub async fn execute(&self, request: EthRequest) -> ResponseResult {
         match request {
-            EthRequest::EthGetBalance(addr, block) => self.balance(addr, block).to_rpc_result(),
+            EthRequest::EthGetBalance(addr, block) => {
+                self.balance(addr, block).await.to_rpc_result()
+            }
             EthRequest::EthGetTransactionByHash(hash) => {
                 self.transaction_by_hash(hash).await.to_rpc_result()
             }
@@ -290,19 +292,8 @@ impl EthApi {
     /// Returns balance of the given account.
     ///
     /// Handler for ETH RPC call: `eth_getBalance`
-    pub fn balance(&self, address: Address, number: Option<BlockNumber>) -> Result<U256> {
-        let number = number.unwrap_or(BlockNumber::Latest);
-        match number {
-            BlockNumber::Latest | BlockNumber::Pending => Ok(self.backend.current_balance(address)),
-            BlockNumber::Number(num) => {
-                if num != self.backend.best_number() {
-                    Err(BlockchainError::RpcUnimplemented)
-                } else {
-                    Ok(self.backend.current_balance(address))
-                }
-            }
-            _ => Err(BlockchainError::RpcUnimplemented),
-        }
+    pub async fn balance(&self, address: Address, number: Option<BlockNumber>) -> Result<U256> {
+        Ok(self.backend.get_balance(address, number).await?)
     }
 
     /// Returns content of the storage at given address.
