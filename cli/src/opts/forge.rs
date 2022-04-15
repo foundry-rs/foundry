@@ -239,14 +239,24 @@ pub struct Dependency {
     pub url: String,
     /// Optional tag corresponding to a Git SHA, tag, or branch.
     pub tag: Option<String>,
+    /// Optional alias of the dependency
+    pub alias: Option<String>,
 }
 
 const GITHUB: &str = "github.com";
 const VERSION_SEPARATOR: char = '@';
+const ALIAS_SEPARATOR: char = '=';
 
 impl FromStr for Dependency {
     type Err = eyre::Error;
     fn from_str(dependency: &str) -> Result<Self, Self::Err> {
+        // everything before "=" should be considered the alias
+        let (alias, dependency) = if let Some(split) = dependency.split_once(ALIAS_SEPARATOR) {
+            (Some(String::from(split.0)), split.1)
+        } else {
+            (None, dependency)
+        };
+
         let url_with_version = if let Some(captures) = GH_REPO_PREFIX_REGEX.captures(dependency) {
             let brand = captures.get(5).unwrap().as_str();
             let tld = captures.get(6).unwrap().as_str();
@@ -270,7 +280,7 @@ impl FromStr for Dependency {
             .to_string();
         let tag = split.next().map(ToString::to_string);
 
-        Ok(Dependency { name, url, tag })
+        Ok(Dependency { name, url, tag, alias })
     }
 }
 
@@ -281,36 +291,95 @@ mod tests {
     #[test]
     fn parses_dependencies() {
         [
-            ("gakonst/lootloose", "https://github.com/gakonst/lootloose", None),
-            ("github.com/gakonst/lootloose", "https://github.com/gakonst/lootloose", None),
-            ("https://github.com/gakonst/lootloose", "https://github.com/gakonst/lootloose", None),
+            ("gakonst/lootloose", "https://github.com/gakonst/lootloose", None, None),
+            ("github.com/gakonst/lootloose", "https://github.com/gakonst/lootloose", None, None),
+            (
+                "https://github.com/gakonst/lootloose",
+                "https://github.com/gakonst/lootloose",
+                None,
+                None,
+            ),
             (
                 "git+https://github.com/gakonst/lootloose",
                 "https://github.com/gakonst/lootloose",
+                None,
                 None,
             ),
             (
                 "git@github.com:gakonst/lootloose@v1",
                 "https://github.com/gakonst/lootloose",
                 Some("v1"),
+                None,
             ),
-            ("git@github.com:gakonst/lootloose", "https://github.com/gakonst/lootloose", None),
-            ("https://gitlab.com/gakonst/lootloose", "https://gitlab.com/gakonst/lootloose", None),
-            ("https://github.xyz/gakonst/lootloose", "https://github.xyz/gakonst/lootloose", None),
-            ("gakonst/lootloose@0.1.0", "https://github.com/gakonst/lootloose", Some("0.1.0")),
-            ("gakonst/lootloose@develop", "https://github.com/gakonst/lootloose", Some("develop")),
+            (
+                "git@github.com:gakonst/lootloose",
+                "https://github.com/gakonst/lootloose",
+                None,
+                None,
+            ),
+            (
+                "https://gitlab.com/gakonst/lootloose",
+                "https://gitlab.com/gakonst/lootloose",
+                None,
+                None,
+            ),
+            (
+                "https://github.xyz/gakonst/lootloose",
+                "https://github.xyz/gakonst/lootloose",
+                None,
+                None,
+            ),
+            (
+                "gakonst/lootloose@0.1.0",
+                "https://github.com/gakonst/lootloose",
+                Some("0.1.0"),
+                None,
+            ),
+            (
+                "gakonst/lootloose@develop",
+                "https://github.com/gakonst/lootloose",
+                Some("develop"),
+                None,
+            ),
             (
                 "gakonst/lootloose@98369d0edc900c71d0ec33a01dfba1d92111deed",
                 "https://github.com/gakonst/lootloose",
                 Some("98369d0edc900c71d0ec33a01dfba1d92111deed"),
+                None,
+            ),
+            ("loot=gakonst/lootloose", "https://github.com/gakonst/lootloose", None, Some("loot")),
+            (
+                "loot=github.com/gakonst/lootloose",
+                "https://github.com/gakonst/lootloose",
+                None,
+                Some("loot"),
+            ),
+            (
+                "loot=https://github.com/gakonst/lootloose",
+                "https://github.com/gakonst/lootloose",
+                None,
+                Some("loot"),
+            ),
+            (
+                "loot=git+https://github.com/gakonst/lootloose",
+                "https://github.com/gakonst/lootloose",
+                None,
+                Some("loot"),
+            ),
+            (
+                "loot=git@github.com:gakonst/lootloose@v1",
+                "https://github.com/gakonst/lootloose",
+                Some("v1"),
+                Some("loot"),
             ),
         ]
         .iter()
-        .for_each(|(input, expected_path, expected_tag)| {
+        .for_each(|(input, expected_path, expected_tag, expected_alias)| {
             let dep = Dependency::from_str(input).unwrap();
             assert_eq!(dep.url, expected_path.to_string());
             assert_eq!(dep.tag, expected_tag.map(ToString::to_string));
             assert_eq!(dep.name, "lootloose");
+            assert_eq!(dep.alias, expected_alias.map(ToString::to_string));
         });
     }
 
