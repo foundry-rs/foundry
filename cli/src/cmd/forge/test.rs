@@ -17,7 +17,7 @@ use forge::{
     gas_report::GasReport,
     trace::{
         identifier::{EtherscanIdentifier, LocalTraceIdentifier},
-        CallTraceDecoder, TraceKind,
+        CallTraceDecoderBuilder, TraceKind,
     },
     MultiContractRunner, MultiContractRunnerBuilder, SuiteResult, TestFilter, TestKind,
 };
@@ -521,8 +521,10 @@ fn test(
 
                 if !result.traces.is_empty() {
                     // Identify addresses in each trace
-                    let mut decoder =
-                        CallTraceDecoder::new_with_labels(result.labeled_addresses.clone());
+                    let mut decoder = CallTraceDecoderBuilder::new()
+                        .with_labels(result.labeled_addresses.clone())
+                        .with_events(local_identifier.events())
+                        .build();
 
                     // Decode the traces
                     let mut decoded_traces = Vec::new();
