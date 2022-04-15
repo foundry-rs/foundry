@@ -12,6 +12,42 @@ use ethers::{
 };
 use std::collections::{BTreeMap, HashMap};
 
+/// Build a new [CallTraceDecoder].
+#[derive(Default)]
+pub struct CallTraceDecoderBuilder {
+    decoder: CallTraceDecoder,
+}
+
+impl CallTraceDecoderBuilder {
+    pub fn new() -> Self {
+        Self { decoder: CallTraceDecoder::new() }
+    }
+
+    /// Add known labels to the decoder.
+    pub fn with_labels(mut self, labels: BTreeMap<Address, String>) -> Self {
+        for (address, label) in labels.into_iter() {
+            self.decoder.labels.insert(address, label);
+        }
+        self
+    }
+
+    /// Add known events to the decoder.
+    pub fn with_events(mut self, events: Vec<Event>) -> Self {
+        events
+            .into_iter()
+            .map(|event| ((event.signature(), indexed_inputs(&event)), event))
+            .for_each(|(sig, event)| {
+                self.decoder.events.entry(sig).or_default().push(event);
+            });
+        self
+    }
+
+    /// Build the decoder.
+    pub fn build(self) -> CallTraceDecoder {
+        self.decoder
+    }
+}
+
 /// The call trace decoder.
 ///
 /// The decoder collects address labels and ABIs from any number of [TraceIdentifier]s, which it
@@ -128,15 +164,6 @@ impl CallTraceDecoder {
                 .collect::<BTreeMap<(H256, usize), Vec<Event>>>(),
             errors: Abi::default(),
         }
-    }
-
-    /// Creates a new call trace decoder with predetermined address labels.
-    pub fn new_with_labels(labels: BTreeMap<Address, String>) -> Self {
-        let mut info = Self::new();
-        for (address, label) in labels.into_iter() {
-            info.labels.insert(address, label);
-        }
-        info
     }
 
     /// Identify unknown addresses in the specified call trace using the specified identifier.

@@ -1,6 +1,6 @@
 use super::{AddressIdentity, TraceIdentifier};
 use ethers::{
-    abi::{Abi, Address},
+    abi::{Abi, Address, Event},
     prelude::ArtifactId,
 };
 use foundry_utils::diff_score;
@@ -21,6 +21,11 @@ impl LocalTraceIdentifier {
                 })
                 .collect(),
         }
+    }
+
+    /// Get all the events of the local contracts.
+    pub fn events(&self) -> Vec<Event> {
+        self.local_contracts.iter().flat_map(|(_, (_, abi))| abi.events().cloned()).collect()
     }
 }
 

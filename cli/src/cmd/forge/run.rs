@@ -20,7 +20,7 @@ use forge::{
         builder::Backend, opts::EvmOpts, CallResult, DatabaseRef, DeployResult, EvmError, Executor,
         ExecutorBuilder, RawCallResult,
     },
-    trace::{identifier::LocalTraceIdentifier, CallTraceArena, CallTraceDecoder, TraceKind},
+    trace::{identifier::LocalTraceIdentifier, CallTraceArena, CallTraceDecoderBuilder, TraceKind},
     CALLER,
 };
 use foundry_common::evm::EvmArgs;
@@ -162,7 +162,10 @@ impl Cmd for RunArgs {
         // bytecode. Might be better to wait for an interactive debugger where we can do this on
         // the fly while retaining access to the database?
         let local_identifier = LocalTraceIdentifier::new(&known_contracts);
-        let mut decoder = CallTraceDecoder::new_with_labels(result.labeled_addresses.clone());
+        let mut decoder = CallTraceDecoderBuilder::new()
+            .with_labels(result.labeled_addresses.clone())
+            .with_events(local_identifier.events())
+            .build();
         for (_, trace) in &mut result.traces {
             decoder.identify(trace, &local_identifier);
         }

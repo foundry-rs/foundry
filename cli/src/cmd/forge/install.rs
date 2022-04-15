@@ -13,6 +13,10 @@ use std::{
 
 /// Command to install dependencies
 #[derive(Debug, Clone, Parser)]
+#[clap(override_usage = "forge install [OPTIONS] [DEPENDENCIES]...
+    forge install [OPTIONS] <github username>/<github project>@<tag>...
+    forge install [OPTIONS] <alias>=<github username>/<github project>@<tag>...
+    forge install [OPTIONS] <https:// git url>...")]
 pub struct InstallArgs {
     /// The dependencies to install.
     ///
@@ -20,10 +24,13 @@ pub struct InstallArgs {
     ///
     /// Additionally, a ref can be provided by adding @ to the dependency path.
     ///
-    /// A ref can be:  
+    /// A ref can be:
     /// - A branch: master
     /// - A tag: v1.2.3
     /// - A commit: 8e8128
+    ///
+    /// Target installation directory can be addded via `<alias>=` suffix.
+    /// The dependency will installed to `lib/<alias>`.
     dependencies: Vec<Dependency>,
     #[clap(flatten)]
     opts: DependencyInstallOpts,
@@ -80,8 +87,9 @@ pub(crate) fn install(
     std::fs::create_dir_all(&libs)?;
 
     for dep in dependencies {
+        let target_dir = if let Some(alias) = &dep.alias { alias } else { &dep.name };
         let DependencyInstallOpts { no_git, no_commit, quiet } = opts;
-        p_println!(!quiet => "Installing {} in {:?}, (url: {}, tag: {:?})", dep.name, &libs.join(&dep.name), dep.url, dep.tag);
+        p_println!(!quiet => "Installing {} in {:?}, (url: {}, tag: {:?})", dep.name, &libs.join(&target_dir), dep.url, dep.tag);
         if no_git {
             install_as_folder(&dep, &libs)?;
         } else {
@@ -95,8 +103,9 @@ pub(crate) fn install(
 
 /// installs the dependency as an ordinary folder instead of a submodule
 fn install_as_folder(dep: &Dependency, libs: &Path) -> eyre::Result<()> {
+    let target_dir = if let Some(alias) = &dep.alias { alias } else { &dep.name };
     let output = Command::new("git")
-        .args(&["clone", &dep.url, &dep.name])
+        .args(&["clone", &dep.url, target_dir])
         .current_dir(&libs)
         .stdout(Stdio::piped())
         .output()?;
@@ -117,7 +126,7 @@ fn install_as_folder(dep: &Dependency, libs: &Path) -> eyre::Result<()> {
     if let Some(ref tag) = dep.tag {
         Command::new("git")
             .args(&["checkout", tag])
-            .current_dir(&libs.join(&dep.name))
+            .current_dir(&libs.join(&target_dir))
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()?
@@ -125,7 +134,7 @@ fn install_as_folder(dep: &Dependency, libs: &Path) -> eyre::Result<()> {
     }
 
     // rm git artifacts
-    std::fs::remove_dir_all(libs.join(&dep.name).join(".git"))?;
+    std::fs::remove_dir_all(libs.join(&target_dir).join(".git"))?;
 
     Ok(())
 }
@@ -133,8 +142,9 @@ fn install_as_folder(dep: &Dependency, libs: &Path) -> eyre::Result<()> {
 /// installs the dependency as new submodule
 fn install_as_submodule(dep: &Dependency, libs: &Path, no_commit: bool) -> eyre::Result<()> {
     // install the dep
+    let target_dir = if let Some(alias) = &dep.alias { alias } else { &dep.name };
     let output = Command::new("git")
-        .args(&["submodule", "add", &dep.url, &dep.name])
+        .args(&["submodule", "add", &dep.url, target_dir])
         .current_dir(&libs)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -147,7 +157,7 @@ fn install_as_submodule(dep: &Dependency, libs: &Path, no_commit: bool) -> eyre:
     } else if stderr.contains("already exists in the index") {
         eyre::bail!(
             "\"lib/{}\" already exists in the index, you can update it using forge update.",
-            &dep.name
+            &target_dir
         )
     } else if stderr.contains("not a git repository") {
         eyre::bail!("\"{}\" is not a git repository", &dep.url)
@@ -161,7 +171,7 @@ fn install_as_submodule(dep: &Dependency, libs: &Path, no_commit: bool) -> eyre:
 
     // call update on it
     Command::new("git")
-        .args(&["submodule", "update", "--init", "--recursive", &dep.name])
+        .args(&["submodule", "update", "--init", "--recursive", target_dir])
         .current_dir(&libs)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -172,7 +182,7 @@ fn install_as_submodule(dep: &Dependency, libs: &Path, no_commit: bool) -> eyre:
     let message = if let Some(ref tag) = dep.tag {
         Command::new("git")
             .args(&["checkout", "--recurse-submodules", tag])
-            .current_dir(&libs.join(&dep.name))
+            .current_dir(&libs.join(&target_dir))
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()?
@@ -181,9 +191,9 @@ fn install_as_submodule(dep: &Dependency, libs: &Path, no_commit: bool) -> eyre:
         if !no_commit {
             Command::new("git").args(&["add", &libs.display().to_string()]).spawn()?.wait()?;
         }
-        format!("forge install: {}\n\n{}", dep.name, tag)
+        format!("forge install: {}\n\n{}", target_dir, tag)
     } else {
-        format!("forge install: {}", dep.name)
+        format!("forge install: {}", target_dir)
     };
 
     if !no_commit {
