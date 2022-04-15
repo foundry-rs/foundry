@@ -232,8 +232,8 @@ pub enum EthRequest {
     EvmSetNextBlockTimeStamp(u64),
 
     /// Mine a single block
-    #[serde(rename = "evm_mine", with = "sequence")]
-    EvmMine(EvmMineOptions),
+    #[serde(rename = "evm_mine")]
+    EvmMine(#[serde(default)] Option<Params<EvmMineOptions>>),
 
     /// Execute a transaction regardless of signature status
     #[serde(rename = "eth_sendUnsignedTransaction", with = "sequence")]
@@ -244,8 +244,6 @@ pub enum EthRequest {
     #[serde(rename = "anvil_enableTraces", with = "sequence")]
     EnableTrances,
 }
-
-/// Represents a non-standard forge JSON-RPC API, compatible with other dev nodes, hardhat, ganache
 
 fn deserialize_number<'de, D>(deserializer: D) -> Result<U256, D::Error>
 where
@@ -284,6 +282,11 @@ where
     };
 
     Ok(num)
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Params<T> {
+    pub params: T,
 }
 
 #[allow(unused)]
@@ -484,6 +487,10 @@ mod tests {
             "timestamp": 100,
             "blocks": 100
         }]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"method": "evm_mine"}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }

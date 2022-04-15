@@ -17,14 +17,14 @@ pub struct Forking {
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(untagged)]
 pub enum EvmMineOptions {
-    /// The timestamp the block should be mined with
-    Timestamp(u64),
     Options {
-        timestamp: u64,
+        timestamp: Option<u64>,
         // If `blocks` is given, it will mine exactly blocks number of blocks, regardless of any
         // other blocks mined or reverted during it's operation
         blocks: Option<u64>,
     },
+    /// The timestamp the block should be mined with
+    Timestamp(Option<u64>),
 }
 
 /// Represents the result of `eth_getWork`

@@ -195,9 +195,11 @@ impl EthApi {
             EthRequest::EvmRevert(id) => self.evm_revert(id).await.to_rpc_result(),
             EthRequest::EvmIncreaseTime(time) => self.evm_increase_time(time).await.to_rpc_result(),
             EthRequest::EvmSetNextBlockTimeStamp(time) => {
-                self.evm_set_next_block_timestamp(time).await.to_rpc_result()
+                self.evm_set_next_block_timestamp(time).to_rpc_result()
             }
-            EthRequest::EvmMine(mine) => self.evm_mine(mine).await.to_rpc_result(),
+            EthRequest::EvmMine(mine) => {
+                self.evm_mine(mine.map(|p| p.params)).await.to_rpc_result()
+            }
             EthRequest::SetRpcUrl(url) => self.anvil_set_rpc_url(url).to_rpc_result(),
             EthRequest::EthSendUnsignedTransaction(tx) => {
                 self.eth_send_unsigned_transaction(*tx).await.to_rpc_result()
@@ -748,7 +750,7 @@ impl EthApi {
         Ok(())
     }
 
-    /// Returns true if automatic mining is enabled, and false.
+    /// Returns true if auto mining is enabled, and false.
     ///
     /// Handler for ETH RPC call: `anvil_getAutomine`
     pub async fn anvil_get_auto_mine(&self) -> Result<bool> {
@@ -889,16 +891,53 @@ impl EthApi {
     /// Similar to `evm_increaseTime` but takes the exact timestamp that you want in the next block
     ///
     /// Handler for RPC call: `evm_setNextBlockTimestamp`
-    pub async fn evm_set_next_block_timestamp(&self, seconds: u64) -> Result<()> {
+    pub fn evm_set_next_block_timestamp(&self, seconds: u64) -> Result<()> {
         self.backend.time().set_next_block_timestamp(seconds);
         Ok(())
     }
 
-    /// Mine a single block
+    /// Mine blocks, instantly.
     ///
     /// Handler for RPC call: `evm_mine`
-    pub async fn evm_mine(&self, _opts: EvmMineOptions) -> Result<()> {
-        Err(BlockchainError::RpcUnimplemented)
+    ///
+    /// This will mine the blocks regardless of the configured mining mode.
+    /// **Note**: ganache returns `0x0` here as placeholder for additional meta-data in the future.
+    pub async fn evm_mine(&self, opts: Option<EvmMineOptions>) -> Result<String> {
+        let mut blocks_to_mine = 1u64;
+
+        if let Some(opts) = opts {
+            let timestamp = match opts {
+                EvmMineOptions::Timestamp(timestamp) => timestamp,
+                EvmMineOptions::Options { timestamp, blocks } => {
+                    if let Some(blocks) = blocks {
+                        blocks_to_mine = blocks;
+                    }
+                    timestamp
+                }
+            };
+            if let Some(timestamp) = timestamp {
+                // timestamp was explicitly provided to be the next timestamp
+                self.evm_set_next_block_timestamp(timestamp)?;
+            }
+        }
+
+        // lock the miner
+        let _miner = self.miner.mode_write();
+
+        // mine all the blocks
+        for _ in 0..blocks_to_mine {
+            let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
+            let block_number = self.backend.mine_block(transactions.clone());
+            trace!(target: "node", "mined block {}", block_number);
+            // prune all the markers the mined transactions provide
+            let res = self.pool.prune_markers(
+                block_number,
+                transactions.into_iter().flat_map(|tx| tx.provides.clone()),
+            );
+            trace!(target: "node", "pruned transaction markers {:?}", res);
+        }
+
+        Ok("0x0".to_string())
     }
 
     /// Sets the reported block number

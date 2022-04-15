@@ -5,12 +5,16 @@ use ethers::prelude::TxHash;
 use futures::{
     channel::mpsc::Receiver,
     stream::{Fuse, Stream, StreamExt},
+    task::AtomicWaker,
 };
-use parking_lot::RwLock;
+use parking_lot::{lock_api::RwLockWriteGuard, RawRwLock, RwLock};
 use std::{
     collections::HashSet,
     pin::Pin,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering::Relaxed},
+        Arc,
+    },
     task::{Context, Poll},
     time::Duration,
 };
@@ -30,6 +34,17 @@ impl Miner {
         Self { mode: Arc::new(RwLock::new(mode)) }
     }
 
+    /// Returns the write lock of the mining mode
+    pub fn mode_write(&self) -> RwLockWriteGuard<'_, RawRwLock, MiningMode> {
+        self.mode.write()
+    }
+
+    /// Returns `true` if auto mining is enabled
+    pub fn is_auto_mine(&self) -> bool {
+        let mode = self.mode.read();
+        !matches!(*mode, MiningMode::None(_))
+    }
+
     /// polls the [Pool] and returns those transactions that should be put in a block according to
     /// the current mode.
     ///
@@ -46,6 +61,8 @@ impl Miner {
 /// Mode of operations for the `Miner`
 #[derive(Debug)]
 pub enum MiningMode {
+    /// A miner that does nothing
+    None(NoMine),
     /// A miner that listens for new transactions that are ready.
     ///
     /// Either one transaction will be mined per block, or any number of transactions will be
@@ -77,9 +94,43 @@ impl MiningMode {
         cx: &mut Context<'_>,
     ) -> Poll<Vec<Arc<PoolTransaction>>> {
         match self {
+            MiningMode::None(miner) => miner.poll(pool, cx),
             MiningMode::Instant(miner) => miner.poll(pool, cx),
             MiningMode::FixedBlockTime(miner) => miner.poll(pool, cx),
         }
+    }
+}
+
+/// A Mining mode that does nothing
+#[derive(Debug)]
+pub struct NoMine {
+    waker: AtomicWaker,
+    set: AtomicBool,
+}
+
+// === impl NoMine ===
+
+impl NoMine {
+    fn new() -> Self {
+        Self { waker: AtomicWaker::new(), set: AtomicBool::new(false) }
+    }
+
+    /// Call the waker again
+    fn wake(&self) {
+        self.set.store(true, Relaxed);
+        self.waker.wake();
+    }
+
+    fn poll(&mut self, _: &Arc<Pool>, cx: &mut Context<'_>) -> Poll<Vec<Arc<PoolTransaction>>> {
+        // avoid waker reregistration.
+        if self.set.load(Relaxed) {
+            return Poll::Pending
+        }
+
+        self.waker.register(cx.waker());
+        self.set.load(Relaxed);
+
+        Poll::Pending
     }
 }
 
