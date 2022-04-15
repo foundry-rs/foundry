@@ -87,7 +87,7 @@ pub(crate) fn install(
     std::fs::create_dir_all(&libs)?;
 
     for dep in dependencies {
-        let target_dir = if let Some(alias) = &dep.alias { &alias } else { &dep.name };
+        let target_dir = if let Some(alias) = &dep.alias { alias } else { &dep.name };
         let DependencyInstallOpts { no_git, no_commit, quiet } = opts;
         p_println!(!quiet => "Installing {} in {:?}, (url: {}, tag: {:?})", dep.name, &libs.join(&target_dir), dep.url, dep.tag);
         if no_git {
@@ -103,9 +103,9 @@ pub(crate) fn install(
 
 /// installs the dependency as an ordinary folder instead of a submodule
 fn install_as_folder(dep: &Dependency, libs: &Path) -> eyre::Result<()> {
-    let target_dir = if let Some(alias) = &dep.alias { &alias } else { &dep.name };
+    let target_dir = if let Some(alias) = &dep.alias { alias } else { &dep.name };
     let output = Command::new("git")
-        .args(&["clone", &dep.url, &target_dir])
+        .args(&["clone", &dep.url, target_dir])
         .current_dir(&libs)
         .stdout(Stdio::piped())
         .output()?;
@@ -142,9 +142,9 @@ fn install_as_folder(dep: &Dependency, libs: &Path) -> eyre::Result<()> {
 /// installs the dependency as new submodule
 fn install_as_submodule(dep: &Dependency, libs: &Path, no_commit: bool) -> eyre::Result<()> {
     // install the dep
-    let target_dir = if let Some(alias) = &dep.alias { &alias } else { &dep.name };
+    let target_dir = if let Some(alias) = &dep.alias { alias } else { &dep.name };
     let output = Command::new("git")
-        .args(&["submodule", "add", &dep.url, &target_dir])
+        .args(&["submodule", "add", &dep.url, target_dir])
         .current_dir(&libs)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -171,7 +171,7 @@ fn install_as_submodule(dep: &Dependency, libs: &Path, no_commit: bool) -> eyre:
 
     // call update on it
     Command::new("git")
-        .args(&["submodule", "update", "--init", "--recursive", &target_dir])
+        .args(&["submodule", "update", "--init", "--recursive", target_dir])
         .current_dir(&libs)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
