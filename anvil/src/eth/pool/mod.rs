@@ -66,10 +66,30 @@ impl Pool {
         self.inner.write().remove_invalid(tx_hashes)
     }
 
+    /// Removes a single transaction from the pool
+    ///
+    /// This is similar to `[Pool::remove_invalid()]` but for a single transaction.
+    ///
+    /// **Note**: this will also drop any transaction that depend on the `tx`
+    pub fn drop_transaction(&self, tx: TxHash) -> Option<Arc<PoolTransaction>> {
+        trace!(target: "txpool", "Dropping transaction: {:?}", tx);
+        let removed = {
+            let mut pool = self.inner.write();
+            pool.ready_transactions.remove_with_markers(vec![tx], None)
+        };
+        trace!(target: "txpool", "Dropped transactions: {:?}", removed);
+
+        let mut dropped = None;
+        if !removed.is_empty() {
+            dropped = removed.into_iter().filter(|t| *t.pending_transaction.hash() == tx).next();
+        }
+        dropped
+    }
+
     /// notifies all listeners about the transaction
     fn notify_listener(&self, hash: TxHash) {
         let mut listener = self.transaction_listener.lock();
-        // this is basically a retain but with mut
+        // this is basically a retain but with mut reference
         for n in (0..listener.len()).rev() {
             let mut listener_tx = listener.swap_remove(n);
             let retain = match listener_tx.try_send(hash) {

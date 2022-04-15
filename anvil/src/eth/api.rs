@@ -729,15 +729,17 @@ impl EthApi {
     /// Send transactions impersonating specific account and contract addresses.
     ///
     /// Handler for ETH RPC call: `forge_impersonateAccount`
-    pub async fn forge_impersonate_account(&self, _address: Address) -> Result<()> {
-        Err(BlockchainError::RpcUnimplemented)
+    pub async fn forge_impersonate_account(&self, address: Address) -> Result<()> {
+        self.backend.cheats().impersonate(address);
+        Ok(())
     }
 
     /// Stops impersonating an account if previously set with `forge_impersonateAccount`.
     ///
     /// Handler for ETH RPC call: `forge_stopImpersonatingAccount`
     pub async fn forge_stop_impersonating_account(&self) -> Result<()> {
-        Err(BlockchainError::RpcUnimplemented)
+        self.backend.cheats().stop_impersonating();
+        Ok(())
     }
 
     /// Returns true if automatic mining is enabled, and false.
@@ -776,8 +778,8 @@ impl EthApi {
     /// Removes transactions from the pool
     ///
     /// Handler for RPC call: `forge_dropTransaction`
-    pub async fn forge_drop_transaction(&self, _tx_hash: H256) -> Result<Option<H256>> {
-        Err(BlockchainError::RpcUnimplemented)
+    pub async fn forge_drop_transaction(&self, tx_hash: H256) -> Result<Option<H256>> {
+        Ok(self.pool.drop_transaction(tx_hash).map(|tx| *tx.hash()))
     }
 
     /// Reset the fork to a fresh forked state, and optionally update the fork config
