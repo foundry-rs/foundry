@@ -412,6 +412,11 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_enum(&mut self, enumeration: &mut EnumDefinition) -> VResult {
+        if !enumeration.doc.is_empty() {
+            enumeration.doc.visit(self)?;
+            writeln!(self)?;
+        }
+
         write!(self, "enum {} ", &enumeration.name.name)?;
 
         if enumeration.values.is_empty() {
@@ -438,6 +443,11 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_struct(&mut self, structure: &mut StructDefinition) -> VResult {
+        if !structure.doc.is_empty() {
+            structure.doc.visit(self)?;
+            writeln!(self)?;
+        }
+
         write!(self, "struct {} ", &structure.name.name)?;
 
         if structure.fields.is_empty() {
