@@ -1,4 +1,5 @@
 #![doc = include_str!("../README.md")]
+use ethers_providers::{Middleware, ProviderError, Provider};
 use ethers_addressbook::contract;
 use ethers_core::{
     abi::{
@@ -50,6 +51,16 @@ impl RuntimeOrHandle {
             RuntimeOrHandle::Handle(handle) => tokio::task::block_in_place(|| handle.block_on(f)),
         }
     }
+}
+
+pub fn next_nonce(
+    caller: Address,
+    provider_url: &str,
+    block: Option<BlockId>,
+) -> Result<U256, ProviderError> {
+    let provider = Provider::try_from(provider_url).expect("Bad fork_url provider");
+    let rt = RuntimeOrHandle::new();
+    rt.block_on(provider.get_transaction_count(caller, block))
 }
 
 pub enum SelectorOrSig {

@@ -55,3 +55,50 @@ contract BroadcastTest is DSTest {
         test.t(0);     
     }
 }
+
+
+// contract NoLink {
+//     function t(uint256 a) public returns (uint256) {
+//         uint256 b = 0;
+//         for (uint256 i; i < a; i++) {
+//             b += i;
+//         }
+//         emit log_string("here");
+//         return b;
+//     }
+// }
+
+// contract BroadcastTestNoLinking is DSTest {
+//     Cheats constant cheats = Cheats(HEVM_ADDRESS);
+
+//     function deploy() public {
+//         cheats.broadcast(address(0x1337));
+//         Test test = new Test();
+
+//         // this wont generate tx to sign
+//         uint256 b = test.t(4);
+
+//         // this will
+//         cheats.broadcast(address(0x1338));
+//         test.t(b);     
+//     }
+
+//     function deployOther() public {
+//         cheats.broadcast(address(0x1338));
+//         Test test = new Test();
+
+//         cheats.broadcast(address(0x1339));
+//         test.t(0);     
+//     }
+
+//     function deployPanics() public {
+//         cheats.broadcast(address(0x1337));
+//         Test test = new Test();
+
+//         cheats.broadcast(address(0x1338));
+//         Test test2 = new Test();
+
+//         cheats.broadcast(address(0x1338));
+//         test.t(0);     
+//     }
+// }

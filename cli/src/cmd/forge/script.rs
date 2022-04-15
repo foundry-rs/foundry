@@ -10,7 +10,7 @@ use ethers::{
     abi::{Abi, RawLog},
     prelude::ArtifactId,
     solc::artifacts::{CompactContractBytecode, ContractBytecode, ContractBytecodeSome},
-    types::{transaction::eip2718::TypedTransaction, Address, Bytes, TransactionRequest, U256},
+    types::{transaction::eip2718::TypedTransaction, Address, Bytes, TransactionRequest, U256, NameOrAddress},
 };
 use forge::{
     debug::DebugArena,
@@ -86,7 +86,7 @@ impl Cmd for ScriptArgs {
             mut highlevel_known_contracts,
             mut predeploy_libraries,
             known_contracts: default_known_contracts,
-        } = self.build(&config, &evm_opts)?;
+        } = self.build(&config, &evm_opts, U256::one())?;
 
         let mut known_contracts = highlevel_known_contracts
             .iter()
@@ -101,91 +101,45 @@ impl Cmd for ScriptArgs {
             })
             .collect::<BTreeMap<ArtifactId, (Abi, Vec<u8>)>>();
 
-        let CompactContractBytecode { abi, bytecode, .. } = contract;
-        let abi = abi.expect("no ABI for contract");
-        let bytecode = bytecode.expect("no bytecode for contract").object.into_bytes().unwrap();
-        let needs_setup = abi.functions().any(|func| func.name == "setUp");
-
-        let env = evm_opts.evm_env();
-        // the db backend that serves all the data
-        let db = Backend::new(utils::get_fork(&evm_opts, &config.rpc_storage_caching), &env);
-
-        let mut builder = ExecutorBuilder::new()
-            .with_cheatcodes(evm_opts.ffi)
-            .with_config(env)
-            .with_spec(crate::utils::evm_spec(&config.evm_version))
-            .with_gas_limit(evm_opts.gas_limit());
-
-        if verbosity >= 3 {
-            builder = builder.with_tracing();
-        }
-
-        let mut result = {
-            let mut runner =
-                Runner::new(builder.build(db), evm_opts.initial_balance, evm_opts.sender);
-            let (address, mut result) =
-                runner.setup(&predeploy_libraries, bytecode, needs_setup)?;
-
-            let ScriptResult {
-                success,
-                gas,
-                logs,
-                traces,
-                debug: run_debug,
-                labeled_addresses,
-                transactions,
-                ..
-            } = runner.script(
-                address,
-                if let Some(calldata) = self.sig.strip_prefix("0x") {
-                    hex::decode(calldata)?.into()
-                } else {
-                    encode_args(&IntoFunction::into(self.sig.clone()), &self.args)?.into()
-                },
-            )?;
-
-            result.success &= success;
-
-            result.gas = gas;
-            result.logs.extend(logs);
-            result.traces.extend(traces);
-            result.debug = run_debug;
-            result.labeled_addresses.extend(labeled_addresses);
-            match (&mut result.transactions, transactions) {
-                (Some(txs), Some(new_txs)) => {
-                    txs.extend(new_txs);
-                }
-                (None, Some(new_txs)) => {
-                    result.transactions = Some(new_txs);
-                }
-                _ => {}
-            }
-
-            result
-        };
+        // execute once with default sender
+        let mut result = self.execute(contract, &evm_opts, None, &predeploy_libraries, &config)?;
 
         let mut new_sender = None;
         if let Some(ref txs) = result.transactions {
-            for tx in txs.iter() {
-                match tx {
-                    TypedTransaction::Legacy(tx) => {
-                        if tx.to.is_none() {
-                            let sender = tx.from.expect("no sender");
-                            if let Some(ns) = new_sender {
-                                if sender != ns {
-                                    panic!("Currently, only 1 contract deployer is possible per public function. This limitation may be lifted in the future but for safety/simplicity this is currently disallowed. Split deployment into more functions & run separately.")
+            // If we did any linking with assumed predeploys, we cant support multiple deployers.
+            //
+            // If we didn't do any linking with predeploys, then none of the contracts will change their code 
+            // based on the sender, so we can skip relinking + reexecuting.
+            if !predeploy_libraries.is_empty() {
+                for tx in txs.iter() {
+                    match tx {
+                        TypedTransaction::Legacy(tx) => {
+                            if tx.to.is_none() {
+                                let sender = tx.from.expect("no sender");
+                                if let Some(ns) = new_sender {
+                                    if sender != ns {
+                                        panic!("Currently, only 1 contract deployer is possible per public function. This limitation may be lifted in the future but for safety/simplicity this is currently disallowed. Split deployment into more functions & run separately.")
+                                    }
+                                } else if sender != evm_opts.sender {
+                                    new_sender = Some(sender);
                                 }
-                            } else if sender != evm_opts.sender {
-                                new_sender = Some(sender);
                             }
                         }
+                        _ => unreachable!(),
                     }
-                    _ => unreachable!(),
                 }
             }
         }
 
-        result = if let Some(new_sender) = new_sender {
+        // reexecute with the correct deployer after relinking contracts
+        if let Some(new_sender) = new_sender {
+            // if we had a new sender that requires relinking, we need to
+            // get the nonce mainnet for accurate addresses for predeploy libs
+            let nonce = if let Some(ref fork_url) = evm_opts.fork_url {
+                foundry_utils::next_nonce(new_sender, fork_url, None)?
+            } else {
+                U256::one()
+            };
             // relink with new sender
             let BuildOutput {
                 target: _,
@@ -193,7 +147,8 @@ impl Cmd for ScriptArgs {
                 highlevel_known_contracts: hkc,
                 predeploy_libraries: pl,
                 known_contracts: _default_known_contracts,
-            } = self.link(default_known_contracts, new_sender)?;
+            } = self.link(default_known_contracts, new_sender, nonce)?;
+
             contract = c2;
             highlevel_known_contracts = hkc;
             predeploy_libraries = pl;
@@ -215,83 +170,38 @@ impl Cmd for ScriptArgs {
                 })
                 .collect::<BTreeMap<ArtifactId, (Abi, Vec<u8>)>>();
 
-            let CompactContractBytecode { abi, bytecode, .. } = contract;
-            let abi = abi.expect("no ABI for contract");
-            let bytecode = bytecode.expect("no bytecode for contract").object.into_bytes().unwrap();
-            let needs_setup = abi.functions().any(|func| func.name == "setUp");
-
-            let env = evm_opts.evm_env();
-            // the db backend that serves all the data
-            let db = Backend::new(utils::get_fork(&evm_opts, &config.rpc_storage_caching), &env);
-
-            let mut builder = ExecutorBuilder::new()
-                .with_cheatcodes(evm_opts.ffi)
-                .with_config(env)
-                .with_spec(crate::utils::evm_spec(&config.evm_version))
-                .with_gas_limit(evm_opts.gas_limit());
-
-            if verbosity >= 3 {
-                builder = builder.with_tracing();
-            }
-
-            {
-                let mut runner =
-                    Runner::new(builder.build(db), evm_opts.initial_balance, new_sender);
-                let (address, mut result) =
-                    runner.setup(&predeploy_libraries, bytecode, needs_setup)?;
-
-                let lib_deploy = predeploy_libraries
-                    .iter()
-                    .map(|bytes| {
-                        TypedTransaction::Legacy(TransactionRequest {
-                            from: Some(new_sender),
-                            data: Some(bytes.clone()),
-                            ..Default::default()
-                        })
+            let lib_deploy = predeploy_libraries
+                .iter()
+                .map(|bytes| {
+                    TypedTransaction::Legacy(TransactionRequest {
+                        from: Some(new_sender),
+                        data: Some(bytes.clone()),
+                        ..Default::default()
                     })
-                    .collect();
-                result.transactions = Some(lib_deploy);
+                })
+                .collect();
+            result.transactions = Some(lib_deploy);
 
-                let ScriptResult {
-                    success,
-                    gas,
-                    logs,
-                    traces,
-                    debug: run_debug,
-                    labeled_addresses,
-                    transactions,
-                    ..
-                } = runner.script(
-                    address,
-                    if let Some(calldata) = self.sig.strip_prefix("0x") {
-                        hex::decode(calldata)?.into()
-                    } else {
-                        encode_args(&IntoFunction::into(self.sig.clone()), &self.args)?.into()
-                    },
-                )?;
+            let result2 = self.execute(contract, &evm_opts, Some(new_sender), &predeploy_libraries, &config)?;
 
-                result.success &= success;
 
-                result.gas = gas;
-                result.logs.extend(logs);
-                result.traces.extend(traces);
-                result.debug = run_debug;
-                result.labeled_addresses.extend(labeled_addresses);
-                match (&mut result.transactions, transactions) {
-                    (Some(txs), Some(new_txs)) => {
-                        txs.extend(new_txs);
-                    }
-                    (None, Some(new_txs)) => {
-                        result.transactions = Some(new_txs);
-                    }
-                    _ => {}
+            result.success &= result2.success;
+
+            result.gas = result2.gas;
+            result.logs = result2.logs;
+            result.traces.extend(result2.traces);
+            result.debug = result2.debug;
+            result.labeled_addresses.extend(result2.labeled_addresses);
+            match (&mut result.transactions, result2.transactions) {
+                (Some(txs), Some(new_txs)) => {
+                    txs.extend(new_txs);
                 }
-
-                result
+                (None, Some(new_txs)) => {
+                    result.transactions = Some(new_txs);
+                }
+                _ => {}
             }
-        } else {
-            result
-        };
+        }
 
         // Identify addresses in each trace
         let local_identifier = LocalTraceIdentifier::new(&known_contracts);
@@ -306,7 +216,7 @@ impl Cmd for ScriptArgs {
             }
 
             if !result.success && verbosity == 3 || verbosity > 3 {
-                println!("Traces:");
+                println!("Full Script Traces:");
                 for (kind, trace) in &mut result.traces {
                     let should_include = match kind {
                         TraceKind::Setup => (verbosity >= 5) || (verbosity == 4 && !result.success),
@@ -339,23 +249,31 @@ impl Cmd for ScriptArgs {
         }
 
         let tx_json = serde_json::to_string_pretty(&result.transactions).expect("Bad serializing");
-        println!("\nTransactions:\n{}", tx_json);
+        println!("\nGenerated Transactions:\n\n{}", tx_json);
 
-        let mut out = config.out;
+        let mut out = config.out.clone();
         let target_fname = target.source.file_name().expect("No file name");
         out.push(target_fname);
         out.push("scripted_transactions");
         std::fs::create_dir_all(out.clone())?;
-        out.push(self.sig + ".json");
+        out.push(self.sig.clone() + ".json");
         let mut file = std::fs::File::create(out.clone())?;
         file.write_all(tx_json.as_bytes())?;
 
         println!(
-            "Transactions written to: {}",
+            "\nTransactions written to: {}\n",
             out.to_str().expect(
                 "Couldn't convert path to string. Transactions were written to file though."
             )
         );
+
+        println!("==========================");
+        println!("Simulated On-chain Traces:\n");
+        if let Some(txs) = result.transactions {
+            self.execute_transactions(txs, &evm_opts, &config, &mut decoder);
+        } else {
+            panic!("No onchain transactions generated in script");
+        }
         Ok(())
     }
 }
@@ -379,7 +297,7 @@ pub struct BuildOutput {
 
 impl ScriptArgs {
     /// Compiles the file with auto-detection and compiler params.
-    pub fn build(&self, config: &Config, evm_opts: &EvmOpts) -> eyre::Result<BuildOutput> {
+    pub fn build(&self, config: &Config, evm_opts: &EvmOpts, nonce: U256) -> eyre::Result<BuildOutput> {
         let target_contract = dunce::canonicalize(&self.path)?;
         let project = config.ephemeral_no_artifacts_project()?;
         let output = compile::compile_files(&project, vec![target_contract])?;
@@ -387,13 +305,125 @@ impl ScriptArgs {
         let (contracts, _sources) = output.into_artifacts_with_sources();
         let contracts: BTreeMap<ArtifactId, CompactContractBytecode> =
             contracts.into_iter().map(|(id, artifact)| (id, artifact.into())).collect();
-        self.link(contracts, evm_opts.sender)
+        self.link(contracts, evm_opts.sender, nonce)
+    }
+
+    fn execute(&self,
+        contract: CompactContractBytecode,
+        evm_opts: &EvmOpts,
+        sender: Option<Address>,
+        predeploy_libraries: &[ethers::types::Bytes],
+        config: &Config,
+    ) -> eyre::Result<ScriptResult> {
+        let CompactContractBytecode { abi, bytecode, .. } = contract;
+        let abi = abi.expect("no ABI for contract");
+        let bytecode = bytecode.expect("no bytecode for contract").object.into_bytes().unwrap();
+        let needs_setup = abi.functions().any(|func| func.name == "setUp");
+
+        let env = evm_opts.evm_env();
+        // the db backend that serves all the data
+        let db = Backend::new(utils::get_fork(evm_opts, &config.rpc_storage_caching), &env);
+
+        let mut builder = ExecutorBuilder::new()
+            .with_cheatcodes(evm_opts.ffi)
+            .with_config(env)
+            .with_spec(crate::utils::evm_spec(&config.evm_version))
+            .with_gas_limit(evm_opts.gas_limit());
+
+        if evm_opts.verbosity >= 3 {
+            builder = builder.with_tracing();
+        }
+
+        let mut runner =
+            Runner::new(builder.build(db), evm_opts.initial_balance, sender.unwrap_or(evm_opts.sender));
+        let (address, mut result) =
+            runner.setup(predeploy_libraries, bytecode, needs_setup)?;
+
+        let ScriptResult {
+            success,
+            gas,
+            logs,
+            traces,
+            debug: run_debug,
+            labeled_addresses,
+            transactions,
+            ..
+        } = runner.script(
+            address,
+            if let Some(calldata) = self.sig.strip_prefix("0x") {
+                hex::decode(calldata)?.into()
+            } else {
+                encode_args(&IntoFunction::into(self.sig.clone()), &self.args)?.into()
+            },
+        )?;
+
+        result.success &= success;
+
+        result.gas = gas;
+        result.logs.extend(logs);
+        result.traces.extend(traces);
+        result.debug = run_debug;
+        result.labeled_addresses.extend(labeled_addresses);
+        match (&mut result.transactions, transactions) {
+            (Some(txs), Some(new_txs)) => {
+                txs.extend(new_txs);
+            }
+            (None, Some(new_txs)) => {
+                result.transactions = Some(new_txs);
+            }
+            _ => {}
+        }
+
+        Ok(result)
+    }
+
+    fn execute_transactions(&self,
+        transactions: VecDeque<TypedTransaction>,
+        evm_opts: &EvmOpts,
+        config: &Config,
+        decoder: &mut CallTraceDecoder
+    ) {
+        let env = evm_opts.evm_env();
+        // the db backend that serves all the data
+        let db = Backend::new(utils::get_fork(evm_opts, &config.rpc_storage_caching), &env);
+
+        let mut builder = ExecutorBuilder::new()
+            .with_cheatcodes(evm_opts.ffi)
+            .with_config(env)
+            .with_spec(crate::utils::evm_spec(&config.evm_version))
+            .with_gas_limit(evm_opts.gas_limit());
+
+        if evm_opts.verbosity >= 3 {
+            builder = builder.with_tracing();
+        }
+
+        let mut runner =
+            Runner::new(builder.build(db), evm_opts.initial_balance, evm_opts.sender);
+
+        
+        transactions.into_iter().map(|tx| {
+            match tx {
+                TypedTransaction::Legacy(tx) => {
+                    (tx.from, tx.to, tx.data, tx.value)
+                }
+                _ => unreachable!()
+            }
+        })
+        .map(|(from, to, data, value)| {
+            runner.sim(from.expect("Transaction doesn't have a `from` address at execution time"), to, data, value).expect("Internal EVM error")
+        }).for_each(|mut result| {
+            for (_kind, trace) in &mut result.traces {
+                decoder.decode(trace);
+                println!("{}", trace);
+            }
+        });
     }
 
     pub fn link(
         &self,
         contracts: BTreeMap<ArtifactId, CompactContractBytecode>,
         sender: Address,
+        nonce: U256,
     ) -> eyre::Result<BuildOutput> {
         let mut run_dependencies = vec![];
         let mut contract =
@@ -421,10 +451,11 @@ impl ScriptArgs {
             matched: false,
             target_id: None,
         };
-        foundry_utils::link(
+        foundry_utils::link_with_nonce(
             contracts.clone(),
             &mut highlevel_known_contracts,
             sender,
+            nonce,
             &mut extra_info,
             |file, key| (format!("{}.json:{}", key, key), file, key),
             |post_link_input| {
@@ -605,5 +636,41 @@ impl<DB: DatabaseRef> Runner<DB> {
             labeled_addresses: labels,
             transactions,
         })
+    }
+
+    pub fn sim(&mut self, from: Address, to: Option<NameOrAddress>, calldata: Option<Bytes>, value: Option<U256>) -> eyre::Result<ScriptResult> {
+        if let Some(NameOrAddress::Address(to)) = to {
+            let RawCallResult {
+                reverted, gas, stipend, logs, traces, labels, debug, transactions, ..
+            } = self.executor.call_raw(from, to, calldata.unwrap_or_default().0, value.unwrap_or(U256::zero()))?;
+            Ok(ScriptResult {
+                success: !reverted,
+                gas: gas.overflowing_sub(stipend).0,
+                logs,
+                traces: traces.map(|traces| vec![(TraceKind::Execution, traces)]).unwrap_or_default(),
+                debug: vec![debug].into_iter().collect(),
+                labeled_addresses: labels,
+                transactions,
+            })
+        } else if to.is_none() {
+            let DeployResult {
+                address: _,
+                gas,
+                logs,
+                traces,
+                debug,
+            } = self.executor.deploy(from, calldata.expect("No data for create transaction").0, value.unwrap_or(U256::zero()))?;
+            Ok(ScriptResult {
+                success: true,
+                gas,
+                logs,
+                traces: traces.map(|traces| vec![(TraceKind::Execution, traces)]).unwrap_or_default(),
+                debug: vec![debug].into_iter().collect(),
+                labeled_addresses: Default::default(),
+                transactions: Default::default(),
+            })
+        } else {
+            panic!("ens not supported");
+        }
     }
 }
