@@ -328,8 +328,8 @@ async fn main() -> eyre::Result<()> {
                     }
                 } // Checking if signer isn't the default value
                   // 00a329c0648769A73afAc7F9381E08FB43dBEA72.
-            } else if config.sender
-                != Address::from_str("00a329c0648769A73afAc7F9381E08FB43dBEA72").unwrap()
+            } else if config.sender !=
+                Address::from_str("00a329c0648769A73afAc7F9381E08FB43dBEA72").unwrap()
             {
                 if resend {
                     nonce = Some(provider.get_transaction_count(config.sender, None).await?);

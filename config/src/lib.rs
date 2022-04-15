@@ -459,12 +459,12 @@ impl Config {
                         return Err(SolcError::msg(format!(
                             "`solc` {} does not exist",
                             solc.display()
-                        )));
+                        )))
                     }
                     Some(Solc::new(solc))
                 }
             };
-            return Ok(solc);
+            return Ok(solc)
         }
 
         Ok(None)
@@ -476,7 +476,7 @@ impl Config {
     /// `auto_detect_solc`
     pub fn is_auto_detect(&self) -> bool {
         if self.solc.is_some() {
-            return false;
+            return false
         }
         self.auto_detect_solc
     }
@@ -772,14 +772,14 @@ impl Config {
                 return match path.is_file() {
                     true => Some(path.to_path_buf()),
                     false => None,
-                };
+                }
             }
             let cwd = std::env::current_dir().ok()?;
             let mut cwd = cwd.as_path();
             loop {
                 let file_path = cwd.join(path);
                 if file_path.is_file() {
-                    return Some(file_path);
+                    return Some(file_path)
                 }
                 cwd = cwd.parent()?;
             }
@@ -1209,7 +1209,7 @@ impl Provider for DappEnvCompatProvider {
                     "Invalid $DAPP_BUILD_OPTIMIZE value `{}`,  expected 0 or 1",
                     val
                 )
-                .into());
+                .into())
             }
             dict.insert("optimizer".to_string(), (val == 1).into());
         }
@@ -1304,7 +1304,7 @@ impl<'a> Provider for RemappingsProvider<'a> {
                 if let figment::error::Kind::MissingField(_) = err.kind {
                     self.get_remappings(vec![])
                 } else {
-                    return Err(err.clone());
+                    return Err(err.clone())
                 }
             }
         }?;
