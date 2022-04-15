@@ -166,7 +166,7 @@ impl figment::Provider for EthereumOpts {
             dict.insert("eth_rpc_url".to_string(), rpc_url.to_string().into());
         }
 
-        if let Some(from) = self.from {
+        if let Some(from) = self.wallet.from {
             dict.insert("sender".to_string(), format!("{:?}", from).into());
         }
 
