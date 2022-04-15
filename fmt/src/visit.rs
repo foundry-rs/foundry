@@ -83,13 +83,21 @@ pub trait Visitor {
         Ok(())
     }
 
-    fn visit_var_def(&mut self, var: &mut VariableDefinition) -> VResult {
+    fn visit_var_definition(&mut self, var: &mut VariableDefinition) -> VResult {
         if !var.doc.is_empty() {
             self.visit_doc_comments(&mut var.doc)?;
             self.visit_newline()?;
         }
         self.visit_source(var.loc)?;
         self.visit_stray_semicolon()?;
+
+        Ok(())
+    }
+
+    /// Doesn't write semicolon at the end because variable declaration can be in both
+    /// struct definition and function body
+    fn visit_var_declaration(&mut self, var: &mut VariableDeclaration) -> VResult {
+        self.visit_source(var.loc)?;
 
         Ok(())
     }
@@ -228,7 +236,7 @@ impl Visitable for SourceUnitPart {
             SourceUnitPart::EventDefinition(event) => v.visit_event(event),
             SourceUnitPart::ErrorDefinition(error) => v.visit_error(error),
             SourceUnitPart::FunctionDefinition(function) => v.visit_function(function),
-            SourceUnitPart::VariableDefinition(variable) => v.visit_var_def(variable),
+            SourceUnitPart::VariableDefinition(variable) => v.visit_var_definition(variable),
             SourceUnitPart::StraySemicolon(_) => v.visit_stray_semicolon(),
         }
     }
@@ -251,7 +259,7 @@ impl Visitable for ContractPart {
             ContractPart::EventDefinition(event) => v.visit_event(event),
             ContractPart::ErrorDefinition(error) => v.visit_error(error),
             ContractPart::EnumDefinition(enumeration) => v.visit_enum(enumeration),
-            ContractPart::VariableDefinition(variable) => v.visit_var_def(variable),
+            ContractPart::VariableDefinition(variable) => v.visit_var_definition(variable),
             ContractPart::FunctionDefinition(function) => v.visit_function(function),
             ContractPart::StraySemicolon(_) => v.visit_stray_semicolon(),
             ContractPart::Using(using) => v.visit_using(using),
@@ -262,6 +270,14 @@ impl Visitable for ContractPart {
 impl Visitable for Statement {
     fn visit(&mut self, v: &mut impl Visitor) -> VResult {
         v.visit_statement(self)?;
+
+        Ok(())
+    }
+}
+
+impl Visitable for VariableDeclaration {
+    fn visit(&mut self, v: &mut impl Visitor) -> VResult {
+        v.visit_var_declaration(self)?;
 
         Ok(())
     }
