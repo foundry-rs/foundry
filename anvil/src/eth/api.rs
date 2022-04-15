@@ -10,7 +10,7 @@ use crate::{
         sign::Signer,
     },
     revm::TransactOut,
-    Provider,
+    Miner, Provider,
 };
 use anvil_core::{
     eth::{
@@ -53,6 +53,11 @@ pub struct EthApi {
     signers: Arc<Vec<Box<dyn Signer>>>,
     /// data required for `eth_feeHistory`
     fee_history_cache: FeeHistoryCache,
+    /// access to the actual miner
+    ///
+    /// This access is required in order to adjust miner settings based on requests received from
+    /// custom RPC endpoints
+    miner: Miner,
 }
 
 // === impl Eth RPC API ===
@@ -64,8 +69,9 @@ impl EthApi {
         backend: Arc<backend::mem::Backend>,
         signers: Arc<Vec<Box<dyn Signer>>>,
         fee_history_cache: FeeHistoryCache,
+        miner: Miner,
     ) -> Self {
-        Self { pool, backend, is_mining: true, signers, fee_history_cache }
+        Self { pool, backend, is_mining: true, signers, fee_history_cache, miner }
     }
 
     /// Executes the [EthRequest] and returns an RPC [RpcResponse]

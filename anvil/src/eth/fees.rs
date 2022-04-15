@@ -25,6 +25,7 @@ pub struct FeeHistory {
 
 pub type FeeHistoryCache = Arc<Mutex<BTreeMap<u64, FeeHistoryCacheItem>>>;
 
+/// A single item in the whole fee history cache
 pub struct FeeHistoryCacheItem {
     pub base_fee: u64,
     pub gas_used_ratio: f64,
