@@ -24,7 +24,10 @@ use forge::{
         builder::Backend, opts::EvmOpts, CallResult, DatabaseRef, DeployResult, EvmError, Executor,
         ExecutorBuilder, RawCallResult,
     },
-    trace::{identifier::LocalTraceIdentifier, CallTraceArena, CallTraceDecoder, TraceKind},
+    trace::{
+        identifier::LocalTraceIdentifier, CallTraceArena, CallTraceDecoder,
+        CallTraceDecoderBuilder, TraceKind,
+    },
     CALLER,
 };
 use foundry_common::evm::EvmArgs;
@@ -250,7 +253,8 @@ impl Cmd for ScriptArgs {
 
         // Identify addresses in each trace
         let local_identifier = LocalTraceIdentifier::new(&known_contracts);
-        let mut decoder = CallTraceDecoder::new_with_labels(result.labeled_addresses.clone());
+        let mut decoder =
+            CallTraceDecoderBuilder::new().with_labels(result.labeled_addresses.clone()).build();
         for (_, trace) in &mut result.traces {
             decoder.identify(trace, &local_identifier);
         }
@@ -279,7 +283,7 @@ impl Cmd for ScriptArgs {
         }
 
         if result.success {
-            println!("{}", Colour::Green.paint("Dry running script was successfully."));
+            println!("{}", Colour::Green.paint("Dry running script was successful."));
         } else {
             println!("{}", Colour::Red.paint("Dry running script failed."));
         }
@@ -347,16 +351,26 @@ impl Cmd for ScriptArgs {
                     )
                     .expect("Bad fork_url provider");
                     let rt = RuntimeOrHandle::new();
-                    txs.into_iter().for_each(|tx| {
-                        let from =
-                            into_legacy(tx.clone()).from.expect("No from for onchain transaction!");
-                        if let Some(wallet) =
-                            local_wallets.iter().find(|wallet| (**wallet).address() == from)
-                        {
-                            let signer = SignerMiddleware::new(provider.clone(), wallet.clone());
-
-                            // TODO: check if chain supports 1559
-                            match rt.block_on(signer.send_transaction(into_1559(tx), None)) {
+                    // Iterate through transactions, matching the `from` field with the associated
+                    // wallet. Then send the transaction. Panics if we find a unknown `from`
+                    txs.into_iter()
+                        .map(|tx| {
+                            let from = into_legacy(tx.clone())
+                                .from
+                                .expect("No from for onchain transaction!");
+                            if let Some(wallet) =
+                                local_wallets.iter().find(|wallet| (**wallet).address() == from)
+                            {
+                                let signer =
+                                    SignerMiddleware::new(provider.clone(), wallet.clone());
+                                (tx, signer)
+                            } else {
+                                panic!("No associated wallet for `from` address: {:?}. Unlocked wallets: {:?}", from, local_wallets.iter().map(|wallet| wallet.address()).collect::<Vec<Address>>())
+                            }
+                        })
+                        .for_each(|(tx, signer)| {
+                            // TODO: check if chain supports 1559. Then use `into_eip1559`
+                            match rt.block_on(signer.send_transaction(tx, None)) {
                                 // TODO: Watch for transaction inclusion & success before continuing
                                 // on. Currently, we only try once
                                 // and assume its not pending any more (bad)
@@ -371,8 +385,7 @@ impl Cmd for ScriptArgs {
                                     panic!("Aborting! A transaction failed: {:#?}", e)
                                 }
                             };
-                        }
-                    });
+                        });
                 } else {
                     println!("\n\n==========================");
                     println!("\nSIMULATION COMPLETE. To send these transaction onchain, add `--execute` & wallet configuration(s) to the previously ran command. See forge script --help for more.");
@@ -412,20 +425,21 @@ fn into_legacy(tx: TypedTransaction) -> TransactionRequest {
     }
 }
 
-fn into_1559(tx: TypedTransaction) -> Eip1559TransactionRequest {
-    match tx {
-        TypedTransaction::Legacy(tx) => Eip1559TransactionRequest {
-            from: tx.from,
-            to: tx.to,
-            value: tx.value,
-            data: tx.data,
-            nonce: tx.nonce,
-            ..Default::default()
-        },
-        TypedTransaction::Eip1559(tx) => tx,
-        _ => panic!("Wrong transaction type for expected output"),
-    }
-}
+// Keeping this here for use when anvil supports eip1559
+// fn into_1559(tx: TypedTransaction) -> Eip1559TransactionRequest {
+//     match tx {
+//         TypedTransaction::Legacy(tx) => Eip1559TransactionRequest {
+//             from: tx.from,
+//             to: tx.to,
+//             value: tx.value,
+//             data: tx.data,
+//             nonce: tx.nonce,
+//             ..Default::default()
+//         },
+//         TypedTransaction::Eip1559(tx) => tx,
+//         _ => panic!("Wrong transaction type for expected output"),
+//     }
+// }
 
 impl ScriptArgs {
     /// Compiles the file with auto-detection and compiler params.
