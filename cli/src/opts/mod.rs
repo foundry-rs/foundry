@@ -257,7 +257,7 @@ pub struct Wallet {
 
     #[clap(
         env = "ETH_FROM",
-        short = 'a',
+        short,
         long = "from",
         help_heading = "WALLET OPTIONS - REMOTE",
         help = "The sender account."
