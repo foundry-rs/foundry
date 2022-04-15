@@ -1,13 +1,16 @@
+use ethers::{
+    abi::token::{LenientTokenizer, Tokenizer},
+    solc::EvmVersion,
+    types::U256,
+};
+use forge::executor::{opts::EvmOpts, Fork, SpecId};
+use foundry_config::{caching::StorageCachingConfig, Config};
 use std::{
     future::Future,
     path::{Path, PathBuf},
     str::FromStr,
     time::Duration,
 };
-
-use ethers::{solc::EvmVersion, types::U256};
-use forge::executor::{opts::EvmOpts, Fork, SpecId};
-use foundry_config::{caching::StorageCachingConfig, Config};
 use tracing_error::ErrorLayer;
 use tracing_subscriber::prelude::*;
 
@@ -124,6 +127,20 @@ pub fn get_file_name(id: &str) -> &str {
 /// parse a hex str or decimal str as U256
 pub fn parse_u256(s: &str) -> eyre::Result<U256> {
     Ok(if s.starts_with("0x") { U256::from_str(s)? } else { U256::from_dec_str(s)? })
+}
+
+/// Parses an ether value from a string.
+///
+/// The amount can be tagged with a unit, e.g. "1ether".
+///
+/// If the string represents an untagged amount (e.g. "100") then
+/// it is interpreted as wei.
+pub fn parse_ether_value(value: &str) -> eyre::Result<U256> {
+    Ok(if value.starts_with("0x") {
+        U256::from_str(value)?
+    } else {
+        U256::from(LenientTokenizer::tokenize_uint(value)?)
+    })
 }
 
 /// Parses a `Duration` from a &str

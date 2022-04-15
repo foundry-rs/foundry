@@ -22,7 +22,7 @@ pub use foundry_evm::*;
 pub mod test_helpers {
     use crate::TestFilter;
     use ethers::{
-        prelude::{Lazy, ProjectCompileOutput},
+        prelude::{artifacts::Settings, Lazy, ProjectCompileOutput, SolcConfig},
         solc::{Project, ProjectPathsConfig},
         types::{Address, U256},
     };
@@ -35,6 +35,7 @@ pub mod test_helpers {
         fuzz::FuzzedExecutor,
         CALLER,
     };
+    use foundry_utils::RuntimeOrHandle;
     use std::str::FromStr;
 
     pub static PROJECT: Lazy<Project> = Lazy::new(|| {
@@ -46,7 +47,34 @@ pub mod test_helpers {
         Project::builder().paths(paths).ephemeral().no_artifacts().build().unwrap()
     });
 
+    pub static LIBS_PROJECT: Lazy<Project> = Lazy::new(|| {
+        let paths = ProjectPathsConfig::builder()
+            .root("../testdata")
+            .sources("../testdata")
+            .build()
+            .unwrap();
+        let libs =
+            ["fork/Fork.t.sol:DssExecLib:0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4".to_string()];
+
+        let settings = Settings {
+            libraries: foundry_config::parse_libraries(&libs).unwrap(),
+            ..Default::default()
+        };
+
+        let solc_config = SolcConfig::builder().settings(settings).build();
+        Project::builder()
+            .paths(paths)
+            .ephemeral()
+            .no_artifacts()
+            .solc_config(solc_config)
+            .build()
+            .unwrap()
+    });
+
     pub static COMPILED: Lazy<ProjectCompileOutput> = Lazy::new(|| (*PROJECT).compile().unwrap());
+
+    pub static COMPILED_WITH_LIBS: Lazy<ProjectCompileOutput> =
+        Lazy::new(|| (*LIBS_PROJECT).compile().unwrap());
 
     pub static EVM_OPTS: Lazy<EvmOpts> = Lazy::new(|| EvmOpts {
         env: Env {
@@ -62,10 +90,8 @@ pub mod test_helpers {
     });
 
     pub fn test_executor() -> Executor<Backend> {
-        ExecutorBuilder::new()
-            .with_cheatcodes(false)
-            .with_config((*EVM_OPTS).evm_env())
-            .build(Backend::simple())
+        let env = RuntimeOrHandle::new().block_on((*EVM_OPTS).evm_env());
+        ExecutorBuilder::new().with_cheatcodes(false).with_config(env).build(Backend::simple())
     }
 
     pub fn fuzz_executor<DB: DatabaseRef>(executor: &Executor<DB>) -> FuzzedExecutor<DB> {

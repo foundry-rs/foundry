@@ -14,7 +14,7 @@
 //! `foundry_config::Config`:
 //!
 //! ```rust
-//! use crate::{cmd::build::BuildArgs, opts::evm::EvmArgs};
+//! use crate::{cmd::build::BuildArgs, foundry_common::evm::EvmArgs};
 //! use clap::Parser;
 //! use foundry_config::{figment::Figment, *};
 //!

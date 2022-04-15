@@ -21,33 +21,33 @@ use std::{
 #[derive(Debug, Clone, Parser)]
 pub struct InitArgs {
     #[clap(
-    help = "the project's root path, default being the current working directory",
-    value_hint = ValueHint::DirPath
+        help = "The root directory of the new project. Defaults to the current working directory.",
+        value_hint = ValueHint::DirPath
     )]
     root: Option<PathBuf>,
-    #[clap(help = "optional solidity template to start from", long, short)]
+    #[clap(help = "The template to start from.", long, short)]
     template: Option<String>,
-    #[clap(
-        help = "initialize without creating a git repository",
-        conflicts_with = "template",
-        long
-    )]
+    #[clap(help = "Do not create a git repository.", conflicts_with = "template", long)]
     no_git: bool,
-    #[clap(help = "do not create initial commit", conflicts_with = "template", long)]
+    #[clap(help = "Do not create an initial commit.", conflicts_with = "template", long)]
     no_commit: bool,
-    #[clap(help = "do not print messages", short, long)]
+    #[clap(help = "Do not print any messages.", short, long)]
     quiet: bool,
     #[clap(
-        help = "run without installing libs from the network",
+        help = "Do not install dependencies from the network.",
         conflicts_with = "template",
         long,
         alias = "no-deps"
     )]
     offline: bool,
-    #[clap(help = "force init if project dir is not empty", conflicts_with = "template", long)]
+    #[clap(
+        help = "Create the project even if the specified root directory is not empty.",
+        conflicts_with = "template",
+        long
+    )]
     force: bool,
     #[clap(
-        help = "initialize .vscode/settings.json file with solidity settings and generate a remappings.txt file.",
+        help = "Create a .vscode/settings.json file with Solidity settings, and generate a remappings.txt file.",
         conflicts_with = "template",
         long
     )]

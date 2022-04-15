@@ -14,7 +14,7 @@ use forge::{
 };
 use std::{
     cmp::{max, min},
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, HashMap, VecDeque},
     io,
     sync::mpsc,
     thread,
@@ -54,8 +54,8 @@ pub struct Tui {
     key_buffer: String,
     /// current step in the debug steps
     current_step: usize,
-    identified_contracts: BTreeMap<Address, String>,
-    known_contracts: BTreeMap<String, ContractBytecodeSome>,
+    identified_contracts: HashMap<Address, String>,
+    known_contracts: HashMap<String, ContractBytecodeSome>,
     source_code: BTreeMap<u32, String>,
 }
 
@@ -65,8 +65,8 @@ impl Tui {
     pub fn new(
         debug_arena: Vec<(Address, Vec<DebugStep>, CallKind)>,
         current_step: usize,
-        identified_contracts: BTreeMap<Address, String>,
-        known_contracts: BTreeMap<String, ContractBytecodeSome>,
+        identified_contracts: HashMap<Address, String>,
+        known_contracts: HashMap<String, ContractBytecodeSome>,
         source_code: BTreeMap<u32, String>,
     ) -> Result<Self> {
         enable_raw_mode()?;
@@ -104,8 +104,8 @@ impl Tui {
     fn draw_layout<B: Backend>(
         f: &mut Frame<B>,
         address: Address,
-        identified_contracts: &BTreeMap<Address, String>,
-        known_contracts: &BTreeMap<String, ContractBytecodeSome>,
+        identified_contracts: &HashMap<Address, String>,
+        known_contracts: &HashMap<String, ContractBytecodeSome>,
         source_code: &BTreeMap<u32, String>,
         debug_steps: &[DebugStep],
         opcode_list: &[String],
@@ -153,8 +153,8 @@ impl Tui {
     fn vertical_layout<B: Backend>(
         f: &mut Frame<B>,
         address: Address,
-        identified_contracts: &BTreeMap<Address, String>,
-        known_contracts: &BTreeMap<String, ContractBytecodeSome>,
+        identified_contracts: &HashMap<Address, String>,
+        known_contracts: &HashMap<String, ContractBytecodeSome>,
         source_code: &BTreeMap<u32, String>,
         debug_steps: &[DebugStep],
         opcode_list: &[String],
@@ -224,8 +224,8 @@ impl Tui {
     fn square_layout<B: Backend>(
         f: &mut Frame<B>,
         address: Address,
-        identified_contracts: &BTreeMap<Address, String>,
-        known_contracts: &BTreeMap<String, ContractBytecodeSome>,
+        identified_contracts: &HashMap<Address, String>,
+        known_contracts: &HashMap<String, ContractBytecodeSome>,
         source_code: &BTreeMap<u32, String>,
         debug_steps: &[DebugStep],
         opcode_list: &[String],
@@ -326,8 +326,8 @@ impl Tui {
     fn draw_src<B: Backend>(
         f: &mut Frame<B>,
         address: Address,
-        identified_contracts: &BTreeMap<Address, String>,
-        known_contracts: &BTreeMap<String, ContractBytecodeSome>,
+        identified_contracts: &HashMap<Address, String>,
+        known_contracts: &HashMap<String, ContractBytecodeSome>,
         source_code: &BTreeMap<u32, String>,
         ic: usize,
         call_kind: CallKind,

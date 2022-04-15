@@ -1,22 +1,11 @@
 //! foundry configuration.
-extern crate core;
+#![deny(missing_docs, unsafe_code, unused_crate_dependencies)]
 
 use std::{
     borrow::Cow,
-    fmt,
     path::{Path, PathBuf},
     str::FromStr,
 };
-
-use figment::{
-    providers::{Env, Format, Serialized, Toml},
-    value::{Dict, Map},
-    Error, Figment, Metadata, Profile, Provider,
-};
-// reexport so cli types can implement `figment::Provider` to easily merge compiler arguments
-pub use figment;
-use semver::Version;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::caching::StorageCachingConfig;
 use ethers_core::types::{Address, U256};
@@ -29,8 +18,14 @@ use ethers_solc::{
     ConfigurableArtifacts, EvmVersion, Project, ProjectPathsConfig, Solc, SolcConfig,
 };
 use eyre::{ContextCompat, WrapErr};
-use figment::{providers::Data, value::Value};
+use figment::{
+    providers::{Data, Env, Format, Serialized, Toml},
+    value::{Dict, Map, Value},
+    Error, Figment, Metadata, Profile, Provider,
+};
 use inflector::Inflector;
+use semver::Version;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 // Macros useful for creating a figment.
 mod macros;
@@ -40,6 +35,11 @@ pub mod utils;
 pub use crate::utils::*;
 
 pub mod caching;
+mod chain;
+pub use chain::Chain;
+
+// reexport so cli types can implement `figment::Provider` to easily merge compiler arguments
+pub use figment;
 
 /// Foundry configuration
 ///
@@ -134,6 +134,8 @@ pub struct Config {
     pub verbosity: u8,
     /// url of the rpc server that should be used for any rpc calls
     pub eth_rpc_url: Option<String>,
+    /// etherscan API key
+    pub etherscan_api_key: Option<String>,
     /// list of solidity error codes to always silence in the compiler output
     pub ignored_error_codes: Vec<SolidityErrorCode>,
     /// The number of test cases that must execute for each property test
@@ -153,7 +155,7 @@ pub struct Config {
     /// the chainid opcode value
     pub chain_id: Option<Chain>,
     /// Block gas limit
-    pub gas_limit: u64,
+    pub gas_limit: GasLimit,
     /// `tx.gasprice` value during EVM execution"
     pub gas_price: u64,
     /// the base fee in a block
@@ -165,7 +167,7 @@ pub struct Config {
     /// the `block.difficulty` value during EVM execution
     pub block_difficulty: u64,
     /// the `block.gaslimit` value during EVM execution
-    pub block_gas_limit: Option<u64>,
+    pub block_gas_limit: Option<GasLimit>,
     /// Additional output selection for all contracts
     /// such as "ir", "devodc", "storageLayout", etc.
     /// See [Solc Compiler Api](https://docs.soliditylang.org/en/latest/using-the-compiler.html#compiler-api)
@@ -729,6 +731,11 @@ impl Config {
         Self::foundry_dir().map(|p| p.join("cache"))
     }
 
+    /// Returns the path to foundry's etherscan cache dir `~/.foundry/cache/<chain>/etherscan`
+    pub fn foundry_etherscan_cache_dir(chain_id: impl Into<Chain>) -> Option<PathBuf> {
+        Some(Self::foundry_cache_dir()?.join(chain_id.into().to_string()).join("etherscan"))
+    }
+
     /// Returns the path to the cache file of the `block` on the `chain`
     /// `~/.foundry/cache/<chain>/<block>/storage.json`
     pub fn foundry_block_cache_file(chain_id: impl Into<Chain>, block: u64) -> Option<PathBuf> {
@@ -801,6 +808,7 @@ impl From<Config> for Figment {
             .merge(Env::prefixed("DAPP_").ignore(&["REMAPPINGS", "LIBRARIES"]).global())
             .merge(Env::prefixed("DAPP_TEST_").global())
             .merge(DappEnvCompatProvider)
+            .merge(Env::raw().only(&["ETHERSCAN_API_KEY"]))
             .merge(
                 Env::prefixed("FOUNDRY_").ignore(&["PROFILE", "REMAPPINGS", "LIBRARIES"]).global(),
             )
@@ -910,7 +918,7 @@ impl Default for Config {
             block_number: 0,
             fork_block_number: None,
             chain_id: None,
-            gas_limit: u64::MAX / 2,
+            gas_limit: i64::MAX.into(),
             gas_price: 0,
             block_base_fee_per_gas: 0,
             block_coinbase: Address::zero(),
@@ -918,6 +926,7 @@ impl Default for Config {
             block_difficulty: 0,
             block_gas_limit: None,
             eth_rpc_url: None,
+            etherscan_api_key: None,
             verbosity: 0,
             remappings: vec![],
             libraries: vec![],
@@ -926,9 +935,79 @@ impl Default for Config {
             via_ir: false,
             rpc_storage_caching: Default::default(),
             no_storage_caching: false,
-            bytecode_hash: BytecodeHash::None,
+            bytecode_hash: BytecodeHash::Ipfs,
             sparse_mode: false,
         }
+    }
+}
+
+/// Wrapper for the config's `gas_limit` value necessary because toml-rs can't handle larger number because integers are stored signed: <https://github.com/alexcrichton/toml-rs/issues/256>
+///
+/// Due to this limitation this type will be serialized/deserialized as String if it's larger than
+/// `i64`
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GasLimit(pub u64);
+
+impl From<u64> for GasLimit {
+    fn from(gas: u64) -> Self {
+        Self(gas)
+    }
+}
+impl From<i64> for GasLimit {
+    fn from(gas: i64) -> Self {
+        Self(gas as u64)
+    }
+}
+impl From<i32> for GasLimit {
+    fn from(gas: i32) -> Self {
+        Self(gas as u64)
+    }
+}
+impl From<u32> for GasLimit {
+    fn from(gas: u32) -> Self {
+        Self(gas as u64)
+    }
+}
+
+impl From<GasLimit> for u64 {
+    fn from(gas: GasLimit) -> Self {
+        gas.0
+    }
+}
+
+impl Serialize for GasLimit {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        if self.0 > i64::MAX as u64 {
+            serializer.serialize_str(&self.0.to_string())
+        } else {
+            serializer.serialize_u64(self.0)
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for GasLimit {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        use serde::de::Error;
+
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Gas {
+            Number(u64),
+            Text(String),
+        }
+
+        let gas = match Gas::deserialize(deserializer)? {
+            Gas::Number(num) => GasLimit(num),
+            Gas::Text(s) => GasLimit(s.parse().map_err(D::Error::custom)?),
+        };
+
+        Ok(gas)
     }
 }
 
@@ -937,6 +1016,7 @@ impl Default for Config {
 pub enum SolidityErrorCode {
     /// Warning that SPDX license identifier not provided in source file
     SpdxLicenseNotProvided,
+    /// All other error codes
     Other(u64),
 }
 
@@ -1259,6 +1339,7 @@ impl<'a> Provider for RemappingsProvider<'a> {
 /// ```
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct BasicConfig {
+    /// the profile tag: `[default]`
     #[serde(skip)]
     pub profile: Profile,
     /// path of the source contracts dir, like `src` or `contracts`
@@ -1287,85 +1368,7 @@ impl BasicConfig {
     }
 }
 
-/// Either a named or chain id or the actual id value
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(untagged)]
-pub enum Chain {
-    #[serde(serialize_with = "from_str_lowercase::serialize")]
-    Named(ethers_core::types::Chain),
-    Id(u64),
-}
-
-impl Chain {
-    /// The id of the chain
-    pub fn id(&self) -> u64 {
-        match self {
-            Chain::Named(chain) => *chain as u64,
-            Chain::Id(id) => *id,
-        }
-    }
-}
-
-impl fmt::Display for Chain {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Chain::Named(chain) => chain.fmt(f),
-            Chain::Id(id) => {
-                if let Ok(chain) = ethers_core::types::Chain::try_from(*id) {
-                    chain.fmt(f)
-                } else {
-                    id.fmt(f)
-                }
-            }
-        }
-    }
-}
-
-impl From<ethers_core::types::Chain> for Chain {
-    fn from(id: ethers_core::types::Chain) -> Self {
-        Chain::Named(id)
-    }
-}
-
-impl From<u64> for Chain {
-    fn from(id: u64) -> Self {
-        Chain::Id(id)
-    }
-}
-
-impl From<Chain> for u64 {
-    fn from(c: Chain) -> Self {
-        match c {
-            Chain::Named(c) => c as u64,
-            Chain::Id(id) => id,
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for Chain {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum ChainId {
-            Named(String),
-            Id(u64),
-        }
-
-        match ChainId::deserialize(deserializer)? {
-            ChainId::Named(s) => {
-                s.to_lowercase().parse().map(Chain::Named).map_err(serde::de::Error::custom)
-            }
-            ChainId::Id(id) => Ok(ethers_core::types::Chain::try_from(id)
-                .map(Chain::Named)
-                .unwrap_or_else(|_| Chain::Id(id))),
-        }
-    }
-}
-
-mod from_str_lowercase {
+pub(crate) mod from_str_lowercase {
     use std::str::FromStr;
 
     use serde::{Deserialize, Deserializer, Serializer};
@@ -1594,6 +1597,28 @@ mod tests {
                     Remapping::from_str("some-source/=some-source").unwrap(),
                 ],
             );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_large_gas_limit() {
+        figment::Jail::expect_with(|jail| {
+            let gas = u64::MAX;
+            jail.create_file(
+                "foundry.toml",
+                &format!(
+                    r#"
+                [default]
+                gas_limit = "{}"
+            "#,
+                    gas
+                ),
+            )?;
+
+            let config = Config::load();
+            assert_eq!(config, Config { gas_limit: gas.into(), ..Config::default() });
 
             Ok(())
         });

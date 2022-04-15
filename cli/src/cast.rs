@@ -5,6 +5,7 @@ mod term;
 mod utils;
 
 use cast::{Cast, SimpleCast, TxBuilder};
+use foundry_config::Config;
 mod opts;
 use cast::InterfacePath;
 use ethers::{
@@ -62,6 +63,9 @@ async fn main() -> eyre::Result<()> {
         Subcommands::ToHex { decimal } => {
             let val = unwrap_or_stdin(decimal)?;
             println!("{}", SimpleCast::hex(U256::from_dec_str(&val)?));
+        }
+        Subcommands::ConcatHex { data } => {
+            println!("{}", SimpleCast::concat_hex(data))
         }
         Subcommands::FromBin {} => {
             let hex: String = io::stdin()
@@ -129,7 +133,7 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::ToUnit { value, unit } => {
             let val = unwrap_or_stdin(value)?;
-            println!("{}", SimpleCast::to_unit(val, unit.unwrap_or_else(|| String::from("wei")))?);
+            println!("{}", SimpleCast::to_unit(val, unit)?);
         }
         Subcommands::ToWei { value, unit } => {
             let val = unwrap_or_stdin(value)?;
@@ -155,7 +159,7 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(eth.rpc_url()?)?;
             let mut builder = TxBuilder::new(
                 &provider,
-                eth.from.unwrap_or(Address::zero()),
+                eth.wallet.from.unwrap_or(Address::zero()),
                 address,
                 eth.chain,
                 false,
@@ -174,20 +178,29 @@ async fn main() -> eyre::Result<()> {
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).block_number().await?);
         }
-        Subcommands::Call { eth, address, sig, args, block } => {
-            let provider = Provider::try_from(eth.rpc_url()?)?;
+
+        Subcommands::Call(config_call) => {
+            let config: Config = (&config_call).into();
+            let provider = Provider::try_from(
+                config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
+            )?;
+
             let mut builder = TxBuilder::new(
                 &provider,
-                eth.from.unwrap_or(Address::zero()),
-                address,
-                eth.chain,
+                config.sender,
+                config_call.address,
+                config_call.eth.chain,
                 false,
             )
             .await?;
-            builder.set_args(&sig, args).await?.etherscan_api_key(eth.etherscan_api_key);
+            builder
+                .set_args(&config_call.sig, config_call.args)
+                .await?
+                .etherscan_api_key(config_call.eth.etherscan_api_key);
             let builder_output = builder.build();
-            println!("{}", Cast::new(provider).call(builder_output, block).await?);
+            println!("{}", Cast::new(provider).call(builder_output, config_call.block).await?);
         }
+
         Subcommands::Calldata { sig, args } => {
             println!("{}", SimpleCast::calldata(sig, &args)?);
         }
@@ -309,7 +322,7 @@ async fn main() -> eyre::Result<()> {
                         .await?;
                     }
                 }
-            } else if let Some(from) = eth.from {
+            } else if let Some(from) = eth.wallet.from {
                 if resend {
                     nonce = Some(provider.get_transaction_count(from, None).await?);
                 }
@@ -378,8 +391,8 @@ async fn main() -> eyre::Result<()> {
         Subcommands::AbiEncode { sig, args } => {
             println!("{}", SimpleCast::abi_encode(&sig, &args)?);
         }
-        Subcommands::Index { from_type, to_type, from_value, slot_number } => {
-            let encoded = SimpleCast::index(&from_type, &to_type, &from_value, &slot_number)?;
+        Subcommands::Index { key_type, value_type, key, slot_number } => {
+            let encoded = SimpleCast::index(&key_type, &value_type, &key, &slot_number)?;
             println!("{}", encoded);
         }
         Subcommands::FourByte { selector } => {
@@ -656,7 +669,6 @@ async fn main() -> eyre::Result<()> {
                 // TODO: Figure out better way to get wallet only.
                 let wallet = EthereumOpts {
                     wallet,
-                    from: None,
                     rpc_url: Some("http://localhost:8545".to_string()),
                     flashbots: false,
                     chain: Chain::Mainnet,
@@ -677,7 +689,6 @@ async fn main() -> eyre::Result<()> {
                 // TODO: Figure out better way to get wallet only.
                 let wallet = EthereumOpts {
                     wallet,
-                    from: None,
                     rpc_url: Some("http://localhost:8545".to_string()),
                     flashbots: false,
                     chain: Chain::Mainnet,

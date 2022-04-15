@@ -62,9 +62,9 @@ main() {
     exit 0
   fi
 
-  FOUNDRYUP_REPO=${FOUNDRYUP_REPO-gakonst/foundry}
+  FOUNDRYUP_REPO=${FOUNDRYUP_REPO-foundry-rs/foundry}
 
-  if [[ "$FOUNDRYUP_REPO" == "gakonst/foundry" && -z "$FOUNDRYUP_BRANCH" && -z "$FOUNDRYUP_COMMIT" ]]; then
+  if [[ "$FOUNDRYUP_REPO" == "foundry-rs/foundry" && -z "$FOUNDRYUP_BRANCH" && -z "$FOUNDRYUP_COMMIT" ]]; then
     FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION-nightly}
     FOUNDRYUP_TAG=$FOUNDRYUP_VERSION
 

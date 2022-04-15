@@ -177,7 +177,7 @@ Releases are automatically done by the release workflow when a tag is pushed, ho
 
 [rust-coc]: https://github.com/rust-lang/rust/blob/master/CODE_OF_CONDUCT.md
 [dev-tg]: https://t.me/foundry_rs
-[foundry-book]: https://github.com/onbjerg/foundry-book
+[foundry-book]: https://github.com/foundry-rs/foundry-book
 [support-tg]: https://t.me/foundry_support
 [mcve]: https://stackoverflow.com/help/mcve
 [hiding-a-comment]: https://help.github.com/articles/managing-disruptive-comments/#hiding-a-comment

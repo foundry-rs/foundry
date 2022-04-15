@@ -1,30 +1,30 @@
 //! Create command
-
 use crate::{
-    cmd::{forge::build::BuildArgs, Cmd},
-    opts::{EthereumOpts, WalletType},
-    utils::parse_u256,
+    cmd::{forge::build::CoreBuildArgs, Cmd},
+    compile,
+    opts::{forge::ContractInfo, EthereumOpts, WalletType},
+    utils::{parse_ether_value, parse_u256},
 };
+use clap::{Parser, ValueHint};
 use ethers::{
     abi::{Abi, Constructor, Token},
     prelude::{artifacts::BytecodeObject, ContractFactory, Http, Middleware, Provider},
     types::{transaction::eip2718::TypedTransaction, Chain, U256},
 };
-
-use eyre::Result;
+use eyre::{Context, Result};
 use foundry_utils::parse_tokens;
-use std::fs;
-
-use crate::{compile, opts::forge::ContractInfo};
-use clap::{Parser, ValueHint};
-use std::{path::PathBuf, sync::Arc};
+use serde_json::json;
+use std::{fs, path::PathBuf, sync::Arc};
 
 #[derive(Debug, Clone, Parser)]
 pub struct CreateArgs {
+    #[clap(help = "The contract identifier in the form `<path>:<contractname>`.")]
+    contract: ContractInfo,
+
     #[clap(
         long,
         multiple_values = true,
-        help = "constructor args calldata arguments",
+        help = "The constructor arguments.",
         name = "constructor_args",
         conflicts_with = "constructor_args_path"
     )]
@@ -32,36 +32,71 @@ pub struct CreateArgs {
 
     #[clap(
         long,
-        help = "path to a file containing the constructor args",
+        help = "The path to a file containing the constructor arguments.",
         value_hint = ValueHint::FilePath,
         name = "constructor_args_path",
         conflicts_with = "constructor_args",
     )]
     constructor_args_path: Option<PathBuf>,
 
-    #[clap(flatten)]
-    opts: BuildArgs,
-
-    #[clap(flatten)]
-    eth: EthereumOpts,
-
-    #[clap(help = "contract source info `<path>:<contractname>` or `<contractname>`")]
-    contract: ContractInfo,
-
     #[clap(
         long,
-        help = "use legacy transactions instead of EIP1559 ones. this is auto-enabled for common networks without EIP1559"
+        help_heading = "TRANSACTION OPTIONS",
+        help = "Send a legacy transaction instead of an EIP1559 transaction.",
+        long_help = r#"Send a legacy transaction instead of an EIP1559 transaction.
+
+This is automatically enabled for common networks without EIP1559."#
     )]
     legacy: bool,
 
-    #[clap(long = "gas-price", help = "gas price for legacy txs or maxFeePerGas for EIP1559 txs", env = "ETH_GAS_PRICE", parse(try_from_str = parse_u256))]
+    #[clap(
+        long = "gas-price",
+        help_heading = "TRANSACTION OPTIONS",
+        help = "Gas price for legacy transactions, or max fee per gas for EIP1559 transactions.",
+        env = "ETH_GAS_PRICE",
+        parse(try_from_str = parse_ether_value)
+    )]
     gas_price: Option<U256>,
 
-    #[clap(long = "priority-fee", help = "gas priority fee for EIP1559 txs", env = "ETH_GAS_PRIORITY_FEE", parse(try_from_str = parse_u256))]
-    priority_fee: Option<U256>,
+    #[clap(
+        long = "gas-limit",
+        help_heading = "TRANSACTION OPTIONS",
+        help = "Gas limit for the transaction.",
+        env = "ETH_GAS_LIMIT",
+        parse(try_from_str = parse_u256)
+    )]
+    gas_limit: Option<U256>,
 
-    #[clap(long = "value", help = "value to send with the contract creation tx", env = "ETH_VALUE", parse(try_from_str = parse_u256))]
+    #[clap(
+        long = "priority-fee", 
+        help_heading = "TRANSACTION OPTIONS",
+        help = "Gas priority fee for EIP1559 transactions.",
+        env = "ETH_GAS_PRIORITY_FEE", parse(try_from_str = parse_ether_value)
+    )]
+    priority_fee: Option<U256>,
+    #[clap(
+        long,
+        help_heading = "TRANSACTION OPTIONS",
+        help = "Ether to send in the transaction.",
+        long_help = r#"Ether to send in the transaction, either specified in wei, or as a string with a unit type.
+
+Examples: 1ether, 10gwei, 0.01ether"#,
+        parse(try_from_str = parse_ether_value)
+    )]
     value: Option<U256>,
+
+    #[clap(flatten, next_help_heading = "BUILD OPTIONS")]
+    opts: CoreBuildArgs,
+
+    #[clap(flatten, next_help_heading = "ETHEREUM OPTIONS")]
+    eth: EthereumOpts,
+
+    #[clap(
+        long = "json",
+        help_heading = "DISPLAY OPTIONS",
+        help = "Print the deployment information as JSON."
+    )]
+    json: bool,
 }
 
 impl Cmd for CreateArgs {
@@ -70,7 +105,12 @@ impl Cmd for CreateArgs {
     fn run(self) -> Result<Self::Output> {
         // Find Project & Compile
         let project = self.opts.project()?;
-        let compiled = compile::compile(&project, self.opts.names, self.opts.sizes)?;
+        let compiled = if self.json {
+            // Supress compile stdout messages when printing json output
+            compile::suppress_compile(&project)?
+        } else {
+            compile::compile(&project, false, false)?
+        };
 
         // Get ABI and BIN
         let (abi, bin, _) =
@@ -140,7 +180,15 @@ impl CreateArgs {
         let provider = Arc::new(provider);
         let factory = ContractFactory::new(abi, bin, provider.clone());
 
-        let deployer = factory.deploy_tokens(args)?;
+        let is_args_empty = args.is_empty();
+        let deployer =
+            factory.deploy_tokens(args).context("Failed to deploy contract").map_err(|e| {
+                if is_args_empty {
+                    e.wrap_err("No arguments provided for contract constructor. Consider --constructor-args or --constructor-args-path")
+                } else {
+                    e
+                }
+            })?;
         let is_legacy =
             self.legacy || Chain::try_from(chain).map(|x| Chain::is_legacy(&x)).unwrap_or_default();
         let mut deployer = if is_legacy { deployer.legacy() } else { deployer };
@@ -154,6 +202,11 @@ impl CreateArgs {
         // set gas price if specified
         if let Some(gas_price) = self.gas_price {
             deployer.tx.set_gas_price(gas_price);
+        }
+
+        // set gas limit if specified
+        if let Some(gas_limit) = self.gas_limit {
+            deployer.tx.set_gas(gas_limit);
         }
 
         // set priority fee if specified
@@ -175,10 +228,18 @@ impl CreateArgs {
         }
 
         let (deployed_contract, receipt) = deployer.send_with_receipt().await?;
-
-        println!("Deployer: {:?}", deployer_address);
-        println!("Deployed to: {:?}", deployed_contract.address());
-        println!("Transaction hash: {:?}", receipt.transaction_hash);
+        if self.json {
+            let output = json!({
+                "deployer": deployer_address,
+                "deployedTo": deployed_contract.address(),
+                "transactionHash": receipt.transaction_hash
+            });
+            println!("{output}");
+        } else {
+            println!("Deployer: {deployer_address:?}");
+            println!("Deployed to: {:?}", deployed_contract.address());
+            println!("Transaction hash: {:?}", receipt.transaction_hash);
+        }
 
         Ok(())
     }

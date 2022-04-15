@@ -1,6 +1,6 @@
 //! Support types for configuring storage caching
 
-use crate::Chain;
+use crate::chain::Chain;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{fmt, str::FromStr};
 

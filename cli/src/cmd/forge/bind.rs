@@ -40,7 +40,7 @@ pub struct BindArgs {
 
     #[clap(
         long = "crate-name",
-        help = "The name of the rust crate to generate. This should be a valid crates.io crate name. However, it is not currently validated by this command.",
+        help = "The name of the Rust crate to generate. This should be a valid crates.io crate name. However, it is not currently validated by this command.",
         default_value = DEFAULT_CRATE_NAME,
     )]
     #[serde(skip)]
@@ -48,7 +48,7 @@ pub struct BindArgs {
 
     #[clap(
         long = "crate-version",
-        help = "The version of the rust crate to generate. This should be a standard semver version string. However, it is not currently validated by this command.",
+        help = "The version of the Rust crate to generate. This should be a standard semver version string. However, it is not currently validated by this command.",
         default_value = DEFAULT_CRATE_VERSION,
     )]
     #[serde(skip)]
@@ -59,7 +59,7 @@ pub struct BindArgs {
 
     #[clap(
         long = "overwrite",
-        help = "Overwrite existing generated bindings. If set to false, the command will check that the bindings are correct, and then exit. If set to true, it will instead delete and overwrite the bindings."
+        help = "Overwrite existing generated bindings. By default, the command will check that the bindings are correct, and then exit. If --overwrite is passed, it will instead delete and overwrite the bindings."
     )]
     #[serde(skip)]
     overwrite: bool,

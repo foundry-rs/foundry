@@ -1,8 +1,7 @@
 //! Snapshot command
-
 use crate::cmd::{
     forge::{
-        build::BuildArgs,
+        build::CoreBuildArgs,
         test,
         test::{custom_run, Test, TestOutcome},
     },
@@ -34,15 +33,17 @@ pub static RE_BASIC_SNAPSHOT_ENTRY: Lazy<Regex> = Lazy::new(|| {
 #[derive(Debug, Clone, Parser)]
 pub struct SnapshotArgs {
     /// All test arguments are supported
-    #[clap(flatten)]
-    test: test::TestArgs,
+    #[clap(flatten, next_help_heading = "TEST OPTIONS")]
+    pub(crate) test: test::TestArgs,
 
     /// Additional configs for test results
     #[clap(flatten)]
     config: SnapshotConfig,
 
+    /// Output a diff against a pre-existing snapshot.
+    ///
+    /// By default the comparison is done with .gas-snapshot.
     #[clap(
-        help = "Compare against a snapshot and display changes from the snapshot. Takes an optional snapshot file, [default: .gas-snapshot]",
         conflicts_with = "snap",
         long,
         value_hint = ValueHint::FilePath,
@@ -50,8 +51,12 @@ pub struct SnapshotArgs {
     )]
     diff: Option<Option<PathBuf>>,
 
+    /// Compare against a pre-existing snapshot, exiting with code 1 if they do not match.
+    ///
+    /// Outputs a diff if the snapshots do not match.
+    ///
+    /// By default the comparison is done with .gas-snapshot.
     #[clap(
-        help = "Run snapshot in 'check' mode and compares against an existing snapshot file, [default: .gas-snapshot]. Exits with 0 if snapshots match. Exits with 1 and prints a diff otherwise",
         conflicts_with = "diff",
         long,
         value_hint = ValueHint::FilePath,
@@ -59,7 +64,8 @@ pub struct SnapshotArgs {
     )]
     check: Option<Option<PathBuf>>,
 
-    #[clap(help = "How to format the output.", long)]
+    // Hidden because there is only one option
+    #[clap(help = "How to format the output.", long, hide(true))]
     format: Option<Format>,
 
     #[clap(
@@ -78,17 +84,17 @@ pub struct SnapshotArgs {
 impl SnapshotArgs {
     /// Returns whether `SnapshotArgs` was configured with `--watch`
     pub fn is_watch(&self) -> bool {
-        self.test.build_args().is_watch()
+        self.test.is_watch()
     }
 
     /// Returns the [`watchexec::InitConfig`] and [`watchexec::RuntimeConfig`] necessary to
     /// bootstrap a new [`watchexe::Watchexec`] loop.
     pub(crate) fn watchexec_config(&self) -> eyre::Result<(InitConfig, RuntimeConfig)> {
-        self.test.build_args().watchexec_config()
+        self.test.watchexec_config()
     }
 
-    /// Returns the nested [`BuildArgs`]
-    pub fn build_args(&self) -> &BuildArgs {
+    /// Returns the nested [`CoreBuildArgs`]
+    pub fn build_args(&self) -> &CoreBuildArgs {
         self.test.build_args()
     }
 }
@@ -140,9 +146,9 @@ impl FromStr for Format {
 /// Additional filters that can be applied on the test results
 #[derive(Debug, Clone, Parser, Default)]
 struct SnapshotConfig {
-    #[clap(help = "sort results by ascending gas used.", long)]
+    #[clap(help = "Sort results by gas used (ascending).", long)]
     asc: bool,
-    #[clap(help = "sort results by descending gas used.", conflicts_with = "asc", long)]
+    #[clap(help = "Sort results by gas used (descending).", conflicts_with = "asc", long)]
     desc: bool,
     #[clap(help = "Only include tests that used more gas that the given amount.", long)]
     min: Option<u64>,

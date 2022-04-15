@@ -7,9 +7,8 @@ use foundry_config::Config;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use std::{
-    collections::HashMap,
     env,
-    ffi::{OsStr, OsString},
+    ffi::OsStr,
     fmt::Display,
     fs,
     fs::File,
@@ -20,6 +19,7 @@ use std::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
+    time::Duration,
 };
 
 static CURRENT_DIR_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
@@ -199,13 +199,11 @@ impl TestProject {
 
     /// Creates a new command that is set to use the forge executable for this project
     pub fn forge_command(&self) -> TestCommand {
-        let mut cmd = self.forge_bin();
-        cmd.current_dir(&self.inner.root());
+        let cmd = self.forge_bin();
         let _lock = CURRENT_DIR_LOCK.lock();
         TestCommand {
             project: self.clone(),
             cmd,
-            saved_env_vars: HashMap::new(),
             current_dir_lock: None,
             saved_cwd: pretty_err("<current dir>", std::env::current_dir()),
         }
@@ -219,7 +217,6 @@ impl TestProject {
         TestCommand {
             project: self.clone(),
             cmd,
-            saved_env_vars: HashMap::new(),
             current_dir_lock: None,
             saved_cwd: pretty_err("<current dir>", std::env::current_dir()),
         }
@@ -228,7 +225,9 @@ impl TestProject {
     /// Returns the path to the forge executable.
     pub fn forge_bin(&self) -> process::Command {
         let forge = self.root.join(format!("../forge{}", env::consts::EXE_SUFFIX));
-        process::Command::new(forge)
+        let mut cmd = process::Command::new(forge);
+        cmd.current_dir(self.inner.root());
+        cmd
     }
 
     /// Returns the path to the cast executable.
@@ -260,12 +259,6 @@ impl TestProject {
 
 impl Drop for TestCommand {
     fn drop(&mut self) {
-        for (key, value) in self.saved_env_vars.iter() {
-            match value {
-                Some(val) => std::env::set_var(key, val),
-                None => std::env::remove_var(key),
-            }
-        }
         let _lock = self.current_dir_lock.take().unwrap_or_else(|| CURRENT_DIR_LOCK.lock());
         let _ = std::env::set_current_dir(&self.saved_cwd);
     }
@@ -301,7 +294,7 @@ pub struct TestCommand {
     project: TestProject,
     /// The actual command we use to control the process.
     cmd: Command,
-    saved_env_vars: HashMap<OsString, Option<OsString>>,
+    // initial: Command,
     current_dir_lock: Option<parking_lot::lock_api::MutexGuard<'static, parking_lot::RawMutex, ()>>,
 }
 
@@ -357,22 +350,14 @@ impl TestCommand {
         self.arg("--root").arg(root)
     }
 
-    /// Set the environment variable `k` to value `v`. The variable will be
-    /// removed when the command is dropped.
-    pub fn set_env(&mut self, k: impl AsRef<str>, v: impl Display) {
-        let key = k.as_ref();
-        if !self.saved_env_vars.contains_key(OsStr::new(key)) {
-            self.saved_env_vars.insert(key.into(), std::env::var_os(key));
-        }
-
-        std::env::set_var(key, v.to_string());
+    /// Set the environment variable `k` to value `v` for the command.
+    pub fn set_env(&mut self, k: impl AsRef<OsStr>, v: impl Display) {
+        self.cmd.env(k, v.to_string());
     }
 
-    /// Unsets the environment variable `k`
-    pub fn unset_env(&mut self, k: impl AsRef<str>) {
-        let key = k.as_ref();
-        let _ = self.saved_env_vars.remove(OsStr::new(key));
-        std::env::remove_var(key);
+    /// Unsets the environment variable `k` for the command.
+    pub fn unset_env(&mut self, k: impl AsRef<OsStr>) {
+        self.cmd.env_remove(k);
     }
 
     /// Set the working directory for this command.
@@ -387,7 +372,7 @@ impl TestCommand {
 
     /// Returns the `Config` as spit out by `forge config`
     pub fn config(&mut self) -> Config {
-        self.forge_fuse().args(["config", "--json"]);
+        self.cmd.args(["config", "--json"]);
         let output = self.output();
         let c = String::from_utf8_lossy(&output.stdout);
         let config = serde_json::from_str(c.as_ref()).unwrap();
@@ -416,6 +401,11 @@ impl TestCommand {
     /// Returns the `stdout` of the output as `String`.
     pub fn stdout_lossy(&mut self) -> String {
         String::from_utf8_lossy(&self.output().stdout).to_string()
+    }
+
+    /// Returns the output but does not expect that the command was successful
+    pub fn unchecked_output(&mut self) -> process::Output {
+        self.cmd.output().unwrap()
     }
 
     /// Gets the output of a command. If the command failed, then this panics.
@@ -549,4 +539,51 @@ pub fn dir_list<P: AsRef<Path>>(dir: P) -> Vec<String> {
         .into_iter()
         .map(|result| result.unwrap().path().to_string_lossy().into_owned())
         .collect()
+}
+
+/// A type that keeps track of attempts
+#[derive(Debug, Clone)]
+pub struct Retry {
+    /// how many attempts there are left
+    remaining: u32,
+    /// Optional timeout to apply inbetween attempts
+    delay: Option<Duration>,
+}
+
+impl Retry {
+    pub fn new(remaining: u32, delay: Option<Duration>) -> Self {
+        Self { remaining, delay }
+    }
+
+    fn r#try<T>(&mut self, f: impl FnOnce() -> eyre::Result<T>) -> eyre::Result<Option<T>> {
+        match f() {
+            Err(ref e) if self.remaining > 0 => {
+                println!(
+                    "erroneous attempt  ({} tries remaining): {}",
+                    self.remaining,
+                    e.root_cause()
+                );
+                self.remaining -= 1;
+                if let Some(delay) = self.delay {
+                    std::thread::sleep(delay);
+                }
+                Ok(None)
+            }
+            other => other.map(Some),
+        }
+    }
+
+    pub fn run<T, F>(mut self, mut callback: F) -> eyre::Result<T>
+    where
+        F: FnMut() -> eyre::Result<T>,
+    {
+        // if let Some(delay) = self.delay {
+        //     std::thread::sleep(delay);
+        // }
+        loop {
+            if let Some(ret) = self.r#try(&mut callback)? {
+                return Ok(ret)
+            }
+        }
+    }
 }

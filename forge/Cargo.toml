@@ -6,6 +6,7 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 foundry-utils = { path = "./../utils" }
+foundry-config = { path = "./../config" }
 foundry-evm = { path = "./../evm" }
 
 ethers = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["solc-full"] }
@@ -19,7 +20,7 @@ glob = "0.3.0"
 # TODO: Trim down
 tokio = { version = "1.10.1" }
 tracing = "0.1.26"
-tracing-subscriber = "0.3"
+tracing-subscriber = "=0.3.9"
 proptest = "1.0.0"
 rayon = "1.5"
 rlp = "0.5.1"

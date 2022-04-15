@@ -1,6 +1,6 @@
 //! cli arguments for configuring the evm settings
 use clap::Parser;
-use ethers::types::{Address, U256};
+use ethers_core::types::{Address, U256};
 use foundry_config::{
     figment::{
         self,
@@ -12,27 +12,27 @@ use foundry_config::{
 };
 use serde::Serialize;
 
-// `EvmArgs` and `EnvArgs` take the highest precedence in the Config/Figment hierarchy.
-// All vars are opt-in, their default values are expected to be set by the
-// [`foundry_config::Config`], and are always present ([`foundry_config::Config::default`])
-//
-// Both have corresponding types in the `evm_adapters` crate which have mandatory fields.
-// The expected workflow is
-//   1. load the [`foundry_config::Config`]
-//   2. merge with `EvmArgs` into a `figment::Figment`
-//   3. extract `evm_adapters::Opts` from the merged `Figment`
-//
-// # Example
-//
-// ```ignore
-// use foundry_config::Config;
-// use forge::executor::opts::EvmOpts;
-// # fn t(args: EvmArgs) {
-// let figment = Config::figment_with_root(".").merge(args);
-// let opts = figment.extract::<EvmOpts>().unwrap()
-// # }
-// ```
-// See also [`BuildArgs`]
+/// `EvmArgs` and `EnvArgs` take the highest precedence in the Config/Figment hierarchy.
+/// All vars are opt-in, their default values are expected to be set by the
+/// [`foundry_config::Config`], and are always present ([`foundry_config::Config::default`])
+///
+/// Both have corresponding types in the `evm_adapters` crate which have mandatory fields.
+/// The expected workflow is
+///   1. load the [`foundry_config::Config`]
+///   2. merge with `EvmArgs` into a `figment::Figment`
+///   3. extract `evm_adapters::Opts` from the merged `Figment`
+///
+/// # Example
+///
+/// ```ignore
+/// use foundry_config::Config;
+/// use forge::executor::opts::EvmOpts;
+/// use foundry_common::evm::EvmArgs;
+/// # fn t(args: EvmArgs) {
+/// let figment = Config::figment_with_root(".").merge(args);
+/// let opts = figment.extract::<EvmOpts>().unwrap();
+/// # }
+/// ```
 #[derive(Debug, Clone, Parser, Serialize)]
 pub struct EvmArgs {
     /// Fetch state over a remote endpoint instead of starting from an empty state.
@@ -49,15 +49,14 @@ pub struct EvmArgs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_block_number: Option<u64>,
 
-    /// Disables storage caching entirely. This overrides any settings made in
-    /// [foundry_config::caching::StorageCachingConfig]
+    /// Explicitly disables the use of RPC caching.
+    ///
+    /// All storage slots are read entirely from the endpoint.
+    ///
+    /// This flag overrides the project's configuration file.
     ///
     /// See --fork-url.
-    #[clap(
-        long,
-        requires = "fork-url",
-        help = "Explicitly disables the use of storage. All storage slots are read entirely from the endpoint."
-    )]
+    #[clap(long, requires = "fork-url")]
     #[serde(skip)]
     pub no_storage_caching: bool,
 
@@ -72,7 +71,7 @@ pub struct EvmArgs {
     pub sender: Option<Address>,
 
     /// Enable the FFI cheatcode.
-    #[clap(help = "enables the FFI cheatcode", long)]
+    #[clap(help = "Enables the FFI cheatcode.", long)]
     #[serde(skip)]
     pub ffi: bool,
 
@@ -81,14 +80,15 @@ pub struct EvmArgs {
     /// Pass multiple times to increase the verbosity (e.g. -v, -vv, -vvv).
     ///
     /// Verbosity levels:
-    ///   2: Print logs for all tests
-    ///   3: Print execution traces for failing tests
-    ///   4: Print execution traces for all tests, and setup traces for failing tests
-    ///   5: Print execution and setup traces for all tests
-    #[clap(long, short, parse(from_occurrences))]
+    /// - 2: Print logs for all tests
+    /// - 3: Print execution traces for failing tests
+    /// - 4: Print execution traces for all tests, and setup traces for failing tests
+    /// - 5: Print execution and setup traces for all tests
+    #[clap(long, short, parse(from_occurrences), verbatim_doc_comment)]
     #[serde(skip)]
     pub verbosity: u8,
 
+    /// All ethereum environment related arguments
     #[clap(flatten)]
     #[serde(flatten)]
     pub env: EnvArgs,
@@ -116,6 +116,10 @@ impl Provider for EvmArgs {
 
         if self.no_storage_caching {
             dict.insert("no_storage_caching".to_string(), self.no_storage_caching.into());
+        }
+
+        if let Some(fork_url) = &self.fork_url {
+            dict.insert("eth_rpc_url".to_string(), fork_url.clone().into());
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))

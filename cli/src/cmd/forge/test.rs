@@ -1,11 +1,10 @@
 //! Test command
 use crate::{
     cmd::{
-        forge::{build::BuildArgs, run::RunArgs},
+        forge::{build::CoreBuildArgs, run::RunArgs, watch::WatchArgs},
         Cmd,
     },
     compile::ProjectCompiler,
-    opts::evm::EvmArgs,
     utils,
     utils::FoundryPathExt,
 };
@@ -16,55 +15,60 @@ use forge::{
     decode::decode_console_logs,
     executor::opts::EvmOpts,
     gas_report::GasReport,
-    trace::{identifier::LocalTraceIdentifier, CallTraceDecoder, TraceKind},
+    trace::{
+        identifier::{EtherscanIdentifier, LocalTraceIdentifier},
+        CallTraceDecoder, TraceKind,
+    },
     MultiContractRunner, MultiContractRunnerBuilder, SuiteResult, TestFilter, TestKind,
 };
+use foundry_common::evm::EvmArgs;
 use foundry_config::{figment::Figment, Config};
 use regex::Regex;
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
-    str::FromStr,
     sync::mpsc::channel,
     thread,
     time::Duration,
 };
+use watchexec::config::{InitConfig, RuntimeConfig};
 
 #[derive(Debug, Clone, Parser)]
 pub struct Filter {
-    /// Only run test functions matching the specified pattern.
+    /// Only run test functions matching the specified regex pattern.
     ///
     /// Deprecated: See --match-test
     #[clap(long = "match", short = 'm')]
     pub pattern: Option<regex::Regex>,
 
-    /// Only run test functions matching the specified pattern.
+    /// Only run test functions matching the specified regex pattern.
     #[clap(long = "match-test", alias = "mt", conflicts_with = "pattern")]
     pub test_pattern: Option<regex::Regex>,
 
-    /// Only run test functions that do not match the specified pattern.
+    /// Only run test functions that do not match the specified regex pattern.
     #[clap(long = "no-match-test", alias = "nmt", conflicts_with = "pattern")]
     pub test_pattern_inverse: Option<regex::Regex>,
 
-    /// Only run tests in contracts matching the specified pattern.
+    /// Only run tests in contracts matching the specified regex pattern.
     #[clap(long = "match-contract", alias = "mc", conflicts_with = "pattern")]
     pub contract_pattern: Option<regex::Regex>,
 
-    /// Only run tests in contracts that do not match the specified pattern.
+    /// Only run tests in contracts that do not match the specified regex pattern.
     #[clap(long = "no-match-contract", alias = "nmc", conflicts_with = "pattern")]
-    contract_pattern_inverse: Option<regex::Regex>,
+    pub contract_pattern_inverse: Option<regex::Regex>,
 
-    /// Only run tests in source files matching the specified pattern.
+    /// Only run tests in source files matching the specified glob pattern.
     #[clap(long = "match-path", alias = "mp", conflicts_with = "pattern")]
-    pub path_pattern: Option<regex::Regex>,
+    pub path_pattern: Option<globset::Glob>,
 
-    /// Only run tests in source files that do not match the specified pattern.
+    /// Only run tests in source files that do not match the specified glob pattern.
     #[clap(
-    name = "no-match-path",
-    long = "no-match-path", alias = "nmp", conflicts_with = "pattern",
-    parse(try_from_str = parse_line_matching_regex)
+        name = "no-match-path",
+        long = "no-match-path",
+        alias = "nmp",
+        conflicts_with = "pattern"
     )]
-    pub path_pattern_inverse: Option<regex::Regex>,
+    pub path_pattern_inverse: Option<globset::Glob>,
 }
 
 impl FileFilter for Filter {
@@ -74,11 +78,11 @@ impl FileFilter for Filter {
     /// [FoundryPathExr::is_sol_test()]
     fn is_match(&self, file: &Path) -> bool {
         if let Some(file) = file.as_os_str().to_str() {
-            if let Some(ref re_path) = self.path_pattern {
-                return re_path.is_match(file)
+            if let Some(ref glob) = self.path_pattern {
+                return glob.compile_matcher().is_match(file)
             }
-            if let Some(ref re_path) = self.test_pattern_inverse {
-                return !re_path.is_match(file)
+            if let Some(ref glob) = self.path_pattern_inverse {
+                return !glob.compile_matcher().is_match(file)
             }
         }
         file.is_sol_test()
@@ -117,13 +121,11 @@ impl TestFilter for Filter {
     fn matches_path(&self, path: impl AsRef<str>) -> bool {
         let mut ok = true;
         let path = path.as_ref();
-        if let Some(re) = &self.path_pattern {
-            let re = Regex::from_str(&format!("^{}", re.as_str())).unwrap();
-            ok &= re.is_match(path);
+        if let Some(ref glob) = self.path_pattern {
+            ok &= glob.compile_matcher().is_match(path);
         }
-        if let Some(re) = &self.path_pattern_inverse {
-            let re = Regex::from_str(&format!("^{}", re.as_str())).unwrap();
-            ok &= !re.is_match(path);
+        if let Some(ref glob) = self.path_pattern_inverse {
+            ok &= !glob.compile_matcher().is_match(path);
         }
         ok
     }
@@ -160,24 +162,27 @@ pub struct TestArgs {
     #[clap(long, env = "FORGE_GAS_REPORT")]
     gas_report: bool,
 
-    /// Force the process to exit with code 0, even if the tests fail.
+    /// Exit with code 0 even if a test fails.
     #[clap(long, env = "FORGE_ALLOW_FAILURE")]
     allow_failure: bool,
 
     /// Output test results in JSON format.
-    #[clap(long, short)]
+    #[clap(long, short, help_heading = "DISPLAY OPTIONS")]
     json: bool,
 
     #[clap(flatten, next_help_heading = "EVM OPTIONS")]
     evm_opts: EvmArgs,
 
     #[clap(flatten, next_help_heading = "BUILD OPTIONS")]
-    opts: BuildArgs,
+    opts: CoreBuildArgs,
+
+    #[clap(flatten, next_help_heading = "WATCH OPTIONS")]
+    pub watch: WatchArgs,
 }
 
 impl TestArgs {
-    /// Returns the flattened [`BuildArgs`]
-    pub fn build_args(&self) -> &BuildArgs {
+    /// Returns the flattened [`CoreBuildArgs`]
+    pub fn build_args(&self) -> &CoreBuildArgs {
         &self.opts
     }
 
@@ -193,6 +198,17 @@ impl TestArgs {
         let evm_opts = figment.extract()?;
         let config = Config::from_provider(figment).sanitized();
         Ok((config, evm_opts))
+    }
+
+    /// Returns whether `BuildArgs` was configured with `--watch`
+    pub fn is_watch(&self) -> bool {
+        self.watch.watch.is_some()
+    }
+
+    /// Returns the [`watchexec::InitConfig`] and [`watchexec::RuntimeConfig`] necessary to
+    /// bootstrap a new [`watchexe::Watchexec`] loop.
+    pub(crate) fn watchexec_config(&self) -> eyre::Result<(InitConfig, RuntimeConfig)> {
+        self.watch.watchexec_config(|| Config::from(self).src)
     }
 }
 
@@ -426,43 +442,63 @@ pub fn custom_run(mut args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<
     } else {
         let TestArgs { filter, .. } = args;
         test(
+            config,
             runner,
             verbosity,
             filter,
             args.json,
             args.allow_failure,
             include_fuzz_tests,
-            (args.gas_report, config.gas_reports),
+            args.gas_report,
         )
     }
 }
 
 /// Runs all the tests
+#[allow(clippy::too_many_arguments)]
 fn test(
+    config: Config,
     mut runner: MultiContractRunner,
     verbosity: u8,
     filter: Filter,
     json: bool,
     allow_failure: bool,
     include_fuzz_tests: bool,
-    (gas_reporting, gas_reports): (bool, Vec<String>),
+    gas_reporting: bool,
 ) -> eyre::Result<TestOutcome> {
     if json {
         let results = runner.test(&filter, None, include_fuzz_tests)?;
         println!("{}", serde_json::to_string(&results)?);
         Ok(TestOutcome::new(results, allow_failure))
     } else {
+        // Set up identifiers
         let local_identifier = LocalTraceIdentifier::new(&runner.known_contracts);
+        let remote_chain_id = runner.evm_opts.get_remote_chain_id();
+        // Do not re-query etherscan for contracts that you've already queried today.
+        // TODO: Make this configurable.
+        let cache_ttl = Duration::from_secs(24 * 60 * 60);
+        let etherscan_identifier = EtherscanIdentifier::new(
+            remote_chain_id,
+            config.etherscan_api_key,
+            remote_chain_id.and_then(Config::foundry_etherscan_cache_dir),
+            cache_ttl,
+        );
+
+        // Set up test reporter channel
         let (tx, rx) = channel::<(String, SuiteResult)>();
 
+        // Run tests
         let handle =
             thread::spawn(move || runner.test(&filter, Some(tx), include_fuzz_tests).unwrap());
 
         let mut results: BTreeMap<String, SuiteResult> = BTreeMap::new();
-        let mut gas_report = GasReport::new(gas_reports);
+        let mut gas_report = GasReport::new(config.gas_reports);
         for (contract_name, suite_result) in rx {
             let mut tests = suite_result.test_results.clone();
             println!();
+            for warning in suite_result.warnings.iter() {
+                eprintln!("{} {}", Colour::Yellow.bold().paint("Warning:"), warning);
+            }
             if !tests.is_empty() {
                 let term = if tests.len() > 1 { "tests" } else { "test" };
                 println!("Running {} {} for {}", tests.len(), term, contract_name);
@@ -492,6 +528,7 @@ fn test(
                     let mut decoded_traces = Vec::new();
                     for (kind, trace) in &mut result.traces {
                         decoder.identify(trace, &local_identifier);
+                        decoder.identify(trace, &etherscan_identifier);
 
                         let should_include = match kind {
                             // At verbosity level 3, we only display traces for failed tests
@@ -545,11 +582,4 @@ fn test(
 
         Ok(TestOutcome::new(results, allow_failure))
     }
-}
-
-/// prefixes the `re` [Regex] argument with a caret (`^`).
-/// If a caret is at the beginning of the entire regular expression, it matches the beginning of a
-/// line.
-fn parse_line_matching_regex(re: &str) -> Result<Regex, regex::Error> {
-    format!("^{}", re).parse()
 }

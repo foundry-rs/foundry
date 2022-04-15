@@ -2,9 +2,11 @@
 ///
 /// Identifiers figure out what ABIs and labels belong to all the addresses of the trace.
 pub mod identifier;
-pub use identifier::TraceIdentifier;
 
 mod decoder;
+mod node;
+mod utils;
+
 pub use decoder::CallTraceDecoder;
 
 use crate::{abi::CHEATCODE_ADDRESS, CallKind};
@@ -13,8 +15,12 @@ use ethers::{
     abi::{Address, RawLog},
     types::U256,
 };
+use node::CallTraceNode;
 use serde::{Deserialize, Serialize};
-use std::fmt::{self, Write};
+use std::{
+    collections::HashSet,
+    fmt::{self, Write},
+};
 
 /// An arena of [CallTraceNode]s
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,20 +66,19 @@ impl CallTraceArena {
         }
     }
 
-    pub fn addresses_iter(&self) -> impl Iterator<Item = (&Address, Option<&Vec<u8>>)> {
-        self.arena.iter().map(|node| {
-            let code = if node.trace.created() {
-                if let RawOrDecodedReturnData::Raw(bytes) = &node.trace.output {
-                    Some(bytes)
-                } else {
-                    None
+    pub fn addresses(&self) -> HashSet<(&Address, Option<&Vec<u8>>)> {
+        self.arena
+            .iter()
+            .map(|node| {
+                if node.trace.created() {
+                    if let RawOrDecodedReturnData::Raw(bytes) = &node.trace.output {
+                        return (&node.trace.address, Some(bytes))
+                    }
                 }
-            } else {
-                None
-            };
 
-            (&node.trace.address, code)
-        })
+                (&node.trace.address, None)
+            })
+            .collect()
     }
 }
 
@@ -195,24 +200,6 @@ impl fmt::Display for RawOrDecodedLog {
 pub enum LogCallOrder {
     Log(usize),
     Call(usize),
-}
-
-#[derive(Default, Debug, Clone, Serialize, Deserialize)]
-/// A node in the arena
-pub struct CallTraceNode {
-    /// Parent node index in the arena
-    pub parent: Option<usize>,
-    /// Children node indexes in the arena
-    pub children: Vec<usize>,
-    /// This node's index in the arena
-    pub idx: usize,
-    /// The call trace
-    pub trace: CallTrace,
-    /// Logs
-    #[serde(skip)]
-    pub logs: Vec<RawOrDecodedLog>,
-    /// Ordering of child calls and logs
-    pub ordering: Vec<LogCallOrder>,
 }
 
 // TODO: Maybe unify with output

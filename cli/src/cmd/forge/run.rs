@@ -1,8 +1,6 @@
 use crate::{
-    cmd::{forge::build::BuildArgs, Cmd},
-    compile,
-    opts::evm::EvmArgs,
-    utils,
+    cmd::{forge::build::CoreBuildArgs, Cmd},
+    compile, utils,
 };
 use ansi_term::Colour;
 use clap::{Parser, ValueHint};
@@ -25,8 +23,9 @@ use forge::{
     trace::{identifier::LocalTraceIdentifier, CallTraceArena, CallTraceDecoder, TraceKind},
     CALLER,
 };
+use foundry_common::evm::EvmArgs;
 use foundry_config::{figment::Figment, Config};
-use foundry_utils::{encode_args, IntoFunction, PostLinkInput};
+use foundry_utils::{encode_args, IntoFunction, PostLinkInput, RuntimeOrHandle};
 use std::{collections::BTreeMap, path::PathBuf};
 use ui::{TUIExitReason, Tui, Ui};
 
@@ -46,11 +45,11 @@ pub struct RunArgs {
     pub args: Vec<String>,
 
     /// The name of the contract you want to run.
-    #[clap(long, short)]
+    #[clap(long, short, value_name = "CONTRACT_NAME")]
     pub target_contract: Option<String>,
 
     /// The signature of the function you want to call in the contract, or raw calldata.
-    #[clap(long, short, default_value = "run()")]
+    #[clap(long, short, default_value = "run()", value_name = "SIGNATURE")]
     pub sig: String,
 
     /// Open the script in the debugger.
@@ -58,7 +57,7 @@ pub struct RunArgs {
     pub debug: bool,
 
     #[clap(flatten, next_help_heading = "BUILD OPTIONS")]
-    pub opts: BuildArgs,
+    pub opts: CoreBuildArgs,
 
     #[clap(flatten, next_help_heading = "EVM OPTIONS")]
     pub evm_opts: EvmArgs,
@@ -96,11 +95,26 @@ impl Cmd for RunArgs {
         let CompactContractBytecode { abi, bytecode, .. } = contract;
         let abi = abi.expect("no ABI for contract");
         let bytecode = bytecode.expect("no bytecode for contract").object.into_bytes().unwrap();
-        let needs_setup = abi.functions().any(|func| func.name == "setUp");
+        let setup_fns: Vec<_> =
+            abi.functions().filter(|func| func.name.to_lowercase() == "setup").collect();
 
-        let env = evm_opts.evm_env();
+        let needs_setup = setup_fns.len() == 1 && setup_fns[0].name == "setUp";
+
+        for setup_fn in setup_fns.iter() {
+            if setup_fn.name != "setUp" {
+                println!(
+                    "{} Found invalid setup function \"{}\" did you mean \"setUp()\"?",
+                    Colour::Yellow.bold().paint("Warning:"),
+                    setup_fn.signature()
+                );
+            }
+        }
+
+        let runtime = RuntimeOrHandle::new();
+        let env = runtime.block_on(evm_opts.evm_env());
         // the db backend that serves all the data
-        let db = Backend::new(utils::get_fork(&evm_opts, &config.rpc_storage_caching), &env);
+        let db = runtime
+            .block_on(Backend::new(utils::get_fork(&evm_opts, &config.rpc_storage_caching), &env));
 
         let mut builder = ExecutorBuilder::new()
             .with_cheatcodes(evm_opts.ffi)
@@ -144,6 +158,9 @@ impl Cmd for RunArgs {
         };
 
         // Identify addresses in each trace
+        // TODO: Could we use the Etherscan identifier here? Main issue: Pulling source code and
+        // bytecode. Might be better to wait for an interactive debugger where we can do this on
+        // the fly while retaining access to the database?
         let local_identifier = LocalTraceIdentifier::new(&known_contracts);
         let mut decoder = CallTraceDecoder::new_with_labels(result.labeled_addresses.clone());
         for (_, trace) in &mut result.traces {
