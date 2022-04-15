@@ -598,19 +598,13 @@ mod tests {
         test_formatter(
             FormatterConfig::default(),
             "struct   Foo  {   
-              }",
+              } struct   Bar  {    uint256 foo ;string bar ;  }",
             "
 struct Foo {}
-",
-        );
 
-        test_formatter(
-            FormatterConfig::default(),
-            "struct   Foo  {    uint256 bar ;string baz ;  }",
-            "
-struct Foo {
-    uint256 bar;
-    string baz;
+struct Bar {
+    uint256 foo;
+    string bar;
 }
 ",
         );
