@@ -42,7 +42,21 @@ impl Miner {
     /// Returns `true` if auto mining is enabled
     pub fn is_auto_mine(&self) -> bool {
         let mode = self.mode.read();
-        !matches!(*mode, MiningMode::None(_))
+        matches!(*mode, MiningMode::Auto(_))
+    }
+
+    pub fn is_interval(&self) -> bool {
+        let mode = self.mode.read();
+        matches!(*mode, MiningMode::FixedBlockTime(_))
+    }
+
+    /// Sets the mining mode to operate in
+    pub fn set_mining_mode(&self, mode: MiningMode) {
+        let mode = std::mem::replace(&mut *self.mode_write(), mode);
+        if let MiningMode::None(nomine) = mode {
+            // ensure the service that drives the miner gets woken up
+            nomine.wake();
+        }
     }
 
     /// polls the [Pool] and returns those transactions that should be put in a block according to
@@ -67,7 +81,7 @@ pub enum MiningMode {
     ///
     /// Either one transaction will be mined per block, or any number of transactions will be
     /// allowed
-    Instant(ReadyTransactionMiner),
+    Auto(ReadyTransactionMiner),
     /// A miner that constructs a new block every `interval` tick
     FixedBlockTime(FixedBlockTimeMiner),
 }
@@ -76,7 +90,7 @@ pub enum MiningMode {
 
 impl MiningMode {
     pub fn instant(max_transactions: usize, listener: Receiver<TxHash>) -> Self {
-        MiningMode::Instant(ReadyTransactionMiner {
+        MiningMode::Auto(ReadyTransactionMiner {
             max_transactions,
             ready: Default::default(),
             rx: listener.fuse(),
@@ -95,7 +109,7 @@ impl MiningMode {
     ) -> Poll<Vec<Arc<PoolTransaction>>> {
         match self {
             MiningMode::None(miner) => miner.poll(pool, cx),
-            MiningMode::Instant(miner) => miner.poll(pool, cx),
+            MiningMode::Auto(miner) => miner.poll(pool, cx),
             MiningMode::FixedBlockTime(miner) => miner.poll(pool, cx),
         }
     }
@@ -111,10 +125,6 @@ pub struct NoMine {
 // === impl NoMine ===
 
 impl NoMine {
-    fn new() -> Self {
-        Self { waker: AtomicWaker::new(), set: AtomicBool::new(false) }
-    }
-
     /// Call the waker again
     fn wake(&self) {
         self.set.store(true, Relaxed);
@@ -131,6 +141,12 @@ impl NoMine {
         self.set.load(Relaxed);
 
         Poll::Pending
+    }
+}
+
+impl Default for NoMine {
+    fn default() -> Self {
+        Self { waker: AtomicWaker::new(), set: AtomicBool::new(false) }
     }
 }
 

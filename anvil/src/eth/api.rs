@@ -3,6 +3,7 @@ use crate::{
         backend,
         error::{BlockchainError, FeeHistoryError, Result, ToRpcResponseResult},
         fees::{FeeDetails, FeeHistory, FeeHistoryCache},
+        miner::{FixedBlockTimeMiner, NoMine},
         pool::{
             transactions::{to_marker, PoolTransaction},
             Pool,
@@ -10,7 +11,7 @@ use crate::{
         sign::Signer,
     },
     revm::TransactOut,
-    Miner, Provider,
+    Miner, MiningMode, Provider,
 };
 use anvil_core::{
     eth::{
@@ -34,7 +35,7 @@ use ethers::{
     },
     utils::rlp,
 };
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use tracing::trace;
 
 /// The entry point for executing eth api RPC call - The Eth RPC interface.
@@ -731,7 +732,7 @@ impl EthApi {
     }
 }
 
-// == impl EthApi forge endpoints ==
+// == impl EthApi anvil endpoints ==
 
 impl EthApi {
     /// Send transactions impersonating specific account and contract addresses.
@@ -754,33 +755,57 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `anvil_getAutomine`
     pub async fn anvil_get_auto_mine(&self) -> Result<bool> {
-        Err(BlockchainError::RpcUnimplemented)
+        Ok(self.miner.is_auto_mine())
     }
 
     /// Enables or disables, based on the single boolean argument, the automatic mining of new
     /// blocks with each new transaction submitted to the network.
     ///
     /// Handler for ETH RPC call: `evm_setAutomine`
-    pub async fn anvil_set_auto_mine(&self, _mine: bool) -> Result<()> {
-        Err(BlockchainError::RpcUnimplemented)
+    pub async fn anvil_set_auto_mine(&self, enable_automine: bool) -> Result<()> {
+        if self.miner.is_auto_mine() {
+            if enable_automine {
+                return Ok(())
+            }
+            self.miner.set_mining_mode(MiningMode::None(NoMine::default()));
+        } else if enable_automine {
+            let listener = self.pool.add_ready_listener();
+            let mode = MiningMode::instant(1_000, listener);
+            self.miner.set_mining_mode(mode);
+        }
+        Ok(())
     }
 
     /// Mines a series of blocks.
     ///
     /// Handler for ETH RPC call: `anvil_mine`
-    pub async fn anvil_mine(
-        &self,
-        _num_blocks: Option<U256>,
-        _interval: Option<U256>,
-    ) -> Result<()> {
-        Err(BlockchainError::RpcUnimplemented)
+    pub async fn anvil_mine(&self, num_blocks: Option<U256>, interval: Option<U256>) -> Result<()> {
+        let interval = interval.map(|i| i.as_u64());
+        let blocks = num_blocks.unwrap_or_else(U256::one);
+        if blocks == U256::zero() {
+            return Ok(())
+        }
+
+        // mine all the blocks
+        for _ in 0..blocks.as_u64() {
+            self.mine_one();
+
+            if let Some(interval) = interval {
+                tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
+            }
+        }
+
+        Ok(())
     }
 
     /// Sets the mining behavior to interval with the given interval (seconds)
     ///
     /// Handler for ETH RPC call: `evm_setIntervalMining`
-    pub async fn anvil_set_interval_mining(&self, _secs: u64) -> Result<()> {
-        Err(BlockchainError::RpcUnimplemented)
+    pub async fn anvil_set_interval_mining(&self, secs: u64) -> Result<()> {
+        self.miner.set_mining_mode(MiningMode::FixedBlockTime(FixedBlockTimeMiner::new(
+            Duration::from_secs(secs),
+        )));
+        Ok(())
     }
 
     /// Removes transactions from the pool
@@ -926,15 +951,7 @@ impl EthApi {
 
         // mine all the blocks
         for _ in 0..blocks_to_mine {
-            let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
-            let block_number = self.backend.mine_block(transactions.clone());
-            trace!(target: "node", "mined block {}", block_number);
-            // prune all the markers the mined transactions provide
-            let res = self.pool.prune_markers(
-                block_number,
-                transactions.into_iter().flat_map(|tx| tx.provides.clone()),
-            );
-            trace!(target: "node", "pruned transaction markers {:?}", res);
+            self.mine_one();
         }
 
         Ok("0x0".to_string())
@@ -980,5 +997,22 @@ impl EthApi {
         _req: EthTransactionRequest,
     ) -> Result<TxHash> {
         Err(BlockchainError::RpcUnimplemented)
+    }
+}
+
+// === impl EthApi utility functions ===
+
+impl EthApi {
+    /// Mines exactly one block
+    fn mine_one(&self) {
+        let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
+        let block_number = self.backend.mine_block(transactions.clone());
+        trace!(target: "node", "mined block {}", block_number);
+        // prune all the markers the mined transactions provide
+        let res = self.pool.prune_markers(
+            block_number,
+            transactions.into_iter().flat_map(|tx| tx.provides.clone()),
+        );
+        trace!(target: "node", "pruned transaction markers {:?}", res);
     }
 }
