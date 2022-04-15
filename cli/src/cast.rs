@@ -67,6 +67,9 @@ async fn main() -> eyre::Result<()> {
             let val = unwrap_or_stdin(decimal)?;
             println!("{}", SimpleCast::hex(U256::from_dec_str(&val)?));
         }
+        Subcommands::ConcatHex { data } => {
+            println!("{}", SimpleCast::concat_hex(data))
+        }
         Subcommands::FromBin {} => {
             let hex: String = io::stdin()
                 .bytes()
@@ -133,7 +136,7 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::ToUnit { value, unit } => {
             let val = unwrap_or_stdin(value)?;
-            println!("{}", SimpleCast::to_unit(val, unit.unwrap_or_else(|| String::from("wei")))?);
+            println!("{}", SimpleCast::to_unit(val, unit)?);
         }
         Subcommands::ToWei { value, unit } => {
             let val = unwrap_or_stdin(value)?;
@@ -155,7 +158,7 @@ async fn main() -> eyre::Result<()> {
                 )?
             );
         }
-        Subcommands::AccessList { address, sig, args, block, eth, to_json } => {
+        Subcommands::AccessList { eth, address, sig, args, block, to_json } => {
             let config: Config = (&eth).into();
             let provider = Provider::try_from(
                 config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
@@ -325,8 +328,8 @@ async fn main() -> eyre::Result<()> {
                     }
                 } // Checking if signer isn't the default value
                   // 00a329c0648769A73afAc7F9381E08FB43dBEA72.
-            } else if config.sender !=
-                Address::from_str("00a329c0648769A73afAc7F9381E08FB43dBEA72").unwrap()
+            } else if config.sender
+                != Address::from_str("00a329c0648769A73afAc7F9381E08FB43dBEA72").unwrap()
             {
                 if resend {
                     nonce = Some(provider.get_transaction_count(config.sender, None).await?);
@@ -403,8 +406,8 @@ async fn main() -> eyre::Result<()> {
         Subcommands::AbiEncode { sig, args } => {
             println!("{}", SimpleCast::abi_encode(&sig, &args)?);
         }
-        Subcommands::Index { from_type, to_type, from_value, slot_number } => {
-            let encoded = SimpleCast::index(&from_type, &to_type, &from_value, &slot_number)?;
+        Subcommands::Index { key_type, value_type, key, slot_number } => {
+            let encoded = SimpleCast::index(&key_type, &value_type, &key, &slot_number)?;
             println!("{}", encoded);
         }
         Subcommands::FourByte { selector } => {
@@ -710,7 +713,6 @@ async fn main() -> eyre::Result<()> {
                 // TODO: Figure out better way to get wallet only.
                 let wallet = EthereumOpts {
                     wallet,
-                    from: None,
                     rpc_url: Some("http://localhost:8545".to_string()),
                     flashbots: false,
                     chain: Chain::Mainnet,
@@ -731,7 +733,6 @@ async fn main() -> eyre::Result<()> {
                 // TODO: Figure out better way to get wallet only.
                 let wallet = EthereumOpts {
                     wallet,
-                    from: None,
                     rpc_url: Some("http://localhost:8545".to_string()),
                     flashbots: false,
                     chain: Chain::Mainnet,

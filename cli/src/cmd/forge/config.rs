@@ -1,10 +1,8 @@
 //! config command
 
-use crate::{
-    cmd::{forge::build::BuildArgs, utils::Cmd},
-    opts::evm::EvmArgs,
-};
+use crate::cmd::{forge::build::BuildArgs, utils::Cmd};
 use clap::Parser;
+use foundry_common::evm::EvmArgs;
 use foundry_config::{figment::Figment, Config};
 
 foundry_config::impl_figment_convert!(ConfigArgs, opts, evm_opts);

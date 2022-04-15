@@ -24,5 +24,8 @@ casttest!(finds_block, |_: TestProject, mut cmd: TestCommand| {
     println!("{}", output);
 
     // Expect successful block query
-    assert!(output.contains("6574364"), "{}", output);
+    // Query: 1647843609, Mar 21 2022 06:20:09 UTC
+    // Output block: https://etherscan.io/block/14428082
+    // Output block time: Mar 21 2022 06:20:09 UTC
+    assert!(output.contains("14428082"), "{}", output);
 });

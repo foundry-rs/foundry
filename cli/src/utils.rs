@@ -1,13 +1,16 @@
+use ethers::{
+    abi::token::{LenientTokenizer, Tokenizer},
+    solc::EvmVersion,
+    types::U256,
+};
+use forge::executor::{opts::EvmOpts, Fork, SpecId};
+use foundry_config::{caching::StorageCachingConfig, Config};
 use std::{
     future::Future,
     path::{Path, PathBuf},
     str::FromStr,
     time::Duration,
 };
-
-use ethers::{solc::EvmVersion, types::U256};
-use forge::executor::{opts::EvmOpts, Fork, SpecId};
-use foundry_config::{caching::StorageCachingConfig, Config};
 use tracing_error::ErrorLayer;
 use tracing_subscriber::prelude::*;
 
@@ -135,6 +138,20 @@ pub fn consume_config_rpc_url(rpc_url: Option<String>) -> String {
     }
 }
 
+/// Parses an ether value from a string.
+///
+/// The amount can be tagged with a unit, e.g. "1ether".
+///
+/// If the string represents an untagged amount (e.g. "100") then
+/// it is interpreted as wei.
+pub fn parse_ether_value(value: &str) -> eyre::Result<U256> {
+    Ok(if value.starts_with("0x") {
+        U256::from_str(value)?
+    } else {
+        U256::from(LenientTokenizer::tokenize_uint(value)?)
+    })
+}
+
 /// Parses a `Duration` from a &str
 pub fn parse_delay(delay: &str) -> eyre::Result<Duration> {
     let delay = if delay.ends_with("ms") {
@@ -185,14 +202,14 @@ pub fn get_fork(evm_opts: &EvmOpts, config: &StorageCachingConfig) -> Option<For
     ) -> Option<PathBuf> {
         if evm_opts.no_storage_caching {
             // storage caching explicitly opted out of
-            return None
+            return None;
         }
         let url = evm_opts.fork_url.as_ref()?;
         // cache only if block explicitly pinned
         let block = evm_opts.fork_block_number?;
 
         if config.enable_for_endpoint(url) && config.enable_for_chain_id(chain_id) {
-            return Config::foundry_block_cache_file(chain_id, block)
+            return Config::foundry_block_cache_file(chain_id, block);
         }
 
         None
@@ -207,7 +224,7 @@ pub fn get_fork(evm_opts: &EvmOpts, config: &StorageCachingConfig) -> Option<For
             cache_path: cache_storage,
             chain_id,
         };
-        return Some(fork)
+        return Some(fork);
     }
 
     None

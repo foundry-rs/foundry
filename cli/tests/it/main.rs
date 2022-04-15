@@ -6,6 +6,8 @@ mod cmd;
 mod config;
 #[cfg(not(feature = "external-integration-tests"))]
 mod test;
+#[cfg(not(feature = "external-integration-tests"))]
+mod verify;
 
 #[cfg(feature = "external-integration-tests")]
 mod integration;

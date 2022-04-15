@@ -26,11 +26,17 @@ pub struct SuiteResult {
     pub duration: Duration,
     /// Individual test results. `test method name -> TestResult`
     pub test_results: BTreeMap<String, TestResult>,
+    // Warnings
+    pub warnings: Vec<String>,
 }
 
 impl SuiteResult {
-    pub fn new(duration: Duration, test_results: BTreeMap<String, TestResult>) -> Self {
-        Self { duration, test_results }
+    pub fn new(
+        duration: Duration,
+        test_results: BTreeMap<String, TestResult>,
+        warnings: Vec<String>,
+    ) -> Self {
+        Self { duration, test_results, warnings }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -268,7 +274,43 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
     ) -> Result<SuiteResult> {
         tracing::info!("starting tests");
         let start = Instant::now();
-        let needs_setup = self.contract.functions().any(|func| func.name == "setUp");
+        let mut warnings = Vec::new();
+
+        let setup_fns: Vec<_> =
+            self.contract.functions().filter(|func| func.name.to_lowercase() == "setup").collect();
+
+        let needs_setup = setup_fns.len() == 1 && setup_fns[0].name == "setUp";
+
+        // There is a single miss-cased `setUp` function, so we add a warning
+        for setup_fn in setup_fns.iter() {
+            if setup_fn.name != "setUp" {
+                warnings.push(format!(
+                    "Found invalid setup function \"{}\" did you mean \"setUp()\"?",
+                    setup_fn.signature()
+                ));
+            }
+        }
+
+        // There are multiple setUp function, so we return a single test result for `setUp`
+        if setup_fns.len() > 1 {
+            return Ok(SuiteResult::new(
+                start.elapsed(),
+                [(
+                    "setUp()".to_string(),
+                    TestResult {
+                        success: false,
+                        reason: Some("Multiple setUp functions".to_string()),
+                        counterexample: None,
+                        logs: vec![],
+                        kind: TestKind::Standard(0),
+                        traces: vec![],
+                        labeled_addresses: BTreeMap::new(),
+                    },
+                )]
+                .into(),
+                warnings,
+            ))
+        }
 
         let setup = self.setup(needs_setup)?;
         if setup.setup_failed {
@@ -288,6 +330,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                     },
                 )]
                 .into(),
+                warnings,
             ))
         }
 
@@ -329,7 +372,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                 test_results.len()
             );
         }
-        Ok(SuiteResult::new(duration, test_results))
+        Ok(SuiteResult::new(duration, test_results, warnings))
     }
 
     #[tracing::instrument(name = "test", skip_all, fields(name = %func.signature(), %should_fail))]

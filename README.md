@@ -1,10 +1,8 @@
 # <h1 align="center">Foundry</h1>
 
-![Github Actions][gha-badge] [![Telegram Chat][tg-badge]][tg-url] [![Telegram Support][tg-support-badge]][tg-support-url] [![Crates.io][crates-badge]][crates-url]
+![Github Actions][gha-badge] [![Telegram Chat][tg-badge]][tg-url] [![Telegram Support][tg-support-badge]][tg-support-url]
 
 [gha-badge]: https://img.shields.io/github/workflow/status/gakonst/foundry/test?style=flat-square
-[crates-badge]: https://img.shields.io/crates/v/foundry.svg?style=flat-square
-[crates-url]: https://crates.io/crates/foundry-rs
 [tg-badge]:
   https://img.shields.io/endpoint?color=neon&logo=telegram&label=chat&style=flat-square&url=https%3A%2F%2Ftg.sumanjay.workers.dev%2Ffoundry_rs
 [tg-url]: https://t.me/foundry_rs
@@ -224,7 +222,7 @@ you can use our [main telegram](https://t.me/foundry_rs) to chat with us about t
   [foundry](https://github.com/gakonst/foundry) repositories and chatrooms.
 
 [foundry-book]: https://book.getfoundry.sh
-[foundry-gha]: https://github.com/onbjerg/foundry-toolchain
+[foundry-gha]: https://github.com/foundry-rs/foundry-toolchain
 [ethers-solc]: https://github.com/gakonst/ethers-rs/tree/master/ethers-solc/
 [loans]: https://github.com/maple-finance/loans
 [solmate]: https://github.com/Rari-Capital/solmate/

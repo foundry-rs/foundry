@@ -1,8 +1,6 @@
-use std::{fmt, str::FromStr};
-
 use crate::{
     cmd::{
-        forge::build::{self, BuildArgs},
+        forge::build::{self, CoreBuildArgs},
         Cmd,
     },
     compile,
@@ -13,6 +11,7 @@ use ethers::prelude::artifacts::output_selection::{
     ContractOutputSelection, EvmOutputSelection, EwasmOutputSelection,
 };
 use serde_json::{to_value, Value};
+use std::{fmt, str::FromStr};
 
 /// Contract level output selection
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -83,33 +82,33 @@ impl FromStr for ContractArtifactFields {
             "metadata" | "meta" => Ok(ContractArtifactFields::Metadata),
             "userdoc" | "userDoc" | "user-doc" => Ok(ContractArtifactFields::UserDoc),
             "ewasm" | "e-wasm" => Ok(ContractArtifactFields::Ewasm),
-            _ => Err(format!("Unknown mode: {}", s)),
+            _ => Err(format!("Unknown field: {}", s)),
         }
     }
 }
 
 #[derive(Debug, Clone, Parser)]
 pub struct InspectArgs {
-    #[clap(help = "the contract to inspect")]
+    #[clap(help = "The name of the contract to inspect.")]
     pub contract: String,
 
-    #[clap(help = "the contract artifact field to inspect")]
-    pub mode: ContractArtifactFields,
+    #[clap(help = "The contract artifact field to inspect.")]
+    pub field: ContractArtifactFields,
 
     /// All build arguments are supported
     #[clap(flatten)]
-    build: build::BuildArgs,
+    build: build::CoreBuildArgs,
 }
 
 impl Cmd for InspectArgs {
     type Output = ();
     fn run(self) -> eyre::Result<Self::Output> {
-        let InspectArgs { contract, mode, build } = self;
+        let InspectArgs { contract, field, build } = self;
 
-        // Map mode to ContractOutputSelection
+        // Map field to ContractOutputSelection
         let mut cos = build.compiler.extra_output.unwrap_or_default();
-        if !cos.iter().any(|&i| i.to_string() == mode.to_string()) {
-            match mode {
+        if !cos.iter().any(|&i| i.to_string() == field.to_string()) {
+            match field {
                 ContractArtifactFields::Abi => cos.push(ContractOutputSelection::Abi),
                 ContractArtifactFields::Bytecode => { /* Auto Generated */ }
                 ContractArtifactFields::DeployedBytecode => { /* Auto Generated */ }
@@ -139,14 +138,14 @@ impl Cmd for InspectArgs {
         }
 
         // Run Optimized?
-        let optimized = if let ContractArtifactFields::AssemblyOptimized = mode {
+        let optimized = if let ContractArtifactFields::AssemblyOptimized = field {
             true
         } else {
             build.compiler.optimize
         };
 
         // Build modified Args
-        let modified_build_args = BuildArgs {
+        let modified_build_args = CoreBuildArgs {
             compiler: CompilerArgs {
                 extra_output: Some(cos),
                 optimize: optimized,
@@ -168,7 +167,7 @@ impl Cmd for InspectArgs {
         })?;
 
         // Match on ContractArtifactFields and Pretty Print
-        match mode {
+        match field {
             ContractArtifactFields::Abi => {
                 println!("{}", serde_json::to_string_pretty(&to_value(&artifact.abi)?)?);
             }
