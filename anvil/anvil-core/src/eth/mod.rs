@@ -118,19 +118,19 @@ pub enum EthRequest {
     // Custom endpoints, they're not extracted to a separate type out of serde convenience
     /// send transactions impersonating specific account and contract addresses.
     #[serde(
-        rename = "forge_impersonateAccount",
+        rename = "anvil_impersonateAccount",
         alias = "hardhat_impersonateAccount",
         with = "sequence"
     )]
     ImpersonateAccount(Address),
-    /// Stops impersonating an account if previously set with `forge_impersonateAccount`
-    #[serde(rename = "forge_stopImpersonatingAccount", alias = "hardhat_stopImpersonatingAccount")]
+    /// Stops impersonating an account if previously set with `anvil_impersonateAccount`
+    #[serde(rename = "anvil_stopImpersonatingAccount", alias = "hardhat_stopImpersonatingAccount")]
     StopImpersonatingAccount,
     /// Returns true if automatic mining is enabled, and false.
-    #[serde(rename = "forge_getAutomine", alias = "hardhat_getAutomine")]
+    #[serde(rename = "anvil_getAutomine", alias = "hardhat_getAutomine")]
     GetAutoMine,
     /// Mines a series of blocks
-    #[serde(rename = "forge_mine", alias = "hardhat_mine")]
+    #[serde(rename = "anvil_mine", alias = "hardhat_mine")]
     Mine(
         /// Number of blocks to mine, if not set `1` block is mined
         #[serde(default, deserialize_with = "deserialize_number_opt")]
@@ -153,34 +153,34 @@ pub enum EthRequest {
 
     /// Removes transactions from the pool
     #[serde(
-        rename = "forge_dropTransaction",
+        rename = "anvil_dropTransaction",
         alias = "hardhat_dropTransaction",
         with = "sequence"
     )]
     DropTransaction(H256),
 
     /// Reset the fork to a fresh forked state, and optionally update the fork config
-    #[serde(rename = "forge_reset", alias = "hardhat_reset", with = "sequence")]
+    #[serde(rename = "anvil_reset", alias = "hardhat_reset", with = "sequence")]
     Reset(#[serde(default)] Forking),
 
     /// Sets the backend rpc url
-    #[serde(rename = "forge_setRpcUrl", with = "sequence")]
+    #[serde(rename = "anvil_setRpcUrl", with = "sequence")]
     SetRpcUrl(String),
 
     /// Modifies the balance of an account.
-    #[serde(rename = "forge_setBalance", alias = "hardhat_setBalance")]
+    #[serde(rename = "anvil_setBalance", alias = "hardhat_setBalance")]
     SetBalance(Address, #[serde(deserialize_with = "deserialize_number")] U256),
 
     /// Sets the code of a contract
-    #[serde(rename = "forge_setCode", alias = "hardhat_setCode")]
+    #[serde(rename = "anvil_setCode", alias = "hardhat_setCode")]
     SetCode(Address, Bytes),
 
     /// Sets the nonce of an address
-    #[serde(rename = "forge_setNonce", alias = "hardhat_setNonce")]
+    #[serde(rename = "anvil_setNonce", alias = "hardhat_setNonce")]
     SetNonce(Address, #[serde(deserialize_with = "deserialize_number")] U256),
 
     /// Writes a single slot of the account's storage
-    #[serde(rename = "forge_setStorageAt", alias = "hardhat_setStorageAt")]
+    #[serde(rename = "anvil_setStorageAt", alias = "hardhat_setStorageAt")]
     SetStorageAt(
         Address,
         /// slot
@@ -190,24 +190,24 @@ pub enum EthRequest {
     ),
 
     /// Sets the coinbase address
-    #[serde(rename = "forge_setCoinbase", alias = "hardhat_setCoinbase", with = "sequence")]
+    #[serde(rename = "anvil_setCoinbase", alias = "hardhat_setCoinbase", with = "sequence")]
     SetCoinbase(Address),
 
     /// Enable or disable logging
     #[serde(
-        rename = "forge_setLoggingEnabled",
+        rename = "anvil_setLoggingEnabled",
         alias = "hardhat_setLoggingEnabled",
         with = "sequence"
     )]
     SetLogging(bool),
 
     /// Set the minimum gas price for the node
-    #[serde(rename = "forge_setMinGasPrice", alias = "hardhat_setMinGasPrice", with = "sequence")]
+    #[serde(rename = "anvil_setMinGasPrice", alias = "hardhat_setMinGasPrice", with = "sequence")]
     SetMinGasPrice(#[serde(deserialize_with = "deserialize_number")] U256),
 
     /// Sets the base fee of the next block
     #[serde(
-        rename = "forge_setNextBlockBaseFeePerGas",
+        rename = "anvil_setNextBlockBaseFeePerGas",
         alias = "hardhat_setNextBlockBaseFeePerGas",
         with = "sequence"
     )]
@@ -241,7 +241,7 @@ pub enum EthRequest {
 
     /// Turn on call traces for transactions that are returned to the user when they execute a
     /// transaction (instead of just txhash/receipt)
-    #[serde(rename = "forge_enableTraces", with = "sequence")]
+    #[serde(rename = "anvil_enableTraces", with = "sequence")]
     EnableTrances,
 }
 
@@ -325,35 +325,35 @@ mod tests {
 
     #[test]
     fn test_custom_impersonate_account() {
-        let s = r#"{"method": "forge_impersonateAccount", "params": ["0xd84de507f3fada7df80908082d3239466db55a71"]}"#;
+        let s = r#"{"method": "anvil_impersonateAccount", "params": ["0xd84de507f3fada7df80908082d3239466db55a71"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
 
     #[test]
     fn test_custom_stop_impersonate_account() {
-        let s = r#"{"method": "forge_stopImpersonatingAccount"}"#;
+        let s = r#"{"method": "anvil_stopImpersonatingAccount"}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
 
     #[test]
     fn test_custom_get_automine() {
-        let s = r#"{"method": "forge_getAutomine"}"#;
+        let s = r#"{"method": "anvil_getAutomine"}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
 
     #[test]
     fn test_custom_mine() {
-        let s = r#"{"method": "forge_mine", "params": []}"#;
+        let s = r#"{"method": "anvil_mine", "params": []}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
         let s =
-            r#"{"method": "forge_mine", "params": ["0xd84de507f3fada7df80908082d3239466db55a71"]}"#;
+            r#"{"method": "anvil_mine", "params": ["0xd84de507f3fada7df80908082d3239466db55a71"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
-        let s = r#"{"method": "forge_mine", "params": ["0xd84de507f3fada7df80908082d3239466db55a71", "0xd84de507f3fada7df80908082d3239466db55a71"]}"#;
+        let s = r#"{"method": "anvil_mine", "params": ["0xd84de507f3fada7df80908082d3239466db55a71", "0xd84de507f3fada7df80908082d3239466db55a71"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
@@ -374,14 +374,14 @@ mod tests {
 
     #[test]
     fn test_custom_drop_tx() {
-        let s = r#"{"method": "forge_dropTransaction", "params": ["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff"]}"#;
+        let s = r#"{"method": "anvil_dropTransaction", "params": ["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
 
     #[test]
     fn test_custom_reset() {
-        let s = r#"{"method": "forge_reset", "params": [ {
+        let s = r#"{"method": "anvil_reset", "params": [ {
             "forking" : {
                 "jsonRpcUrl": "https://eth-mainnet.alchemyapi.io/v2/<key>",
                 "blockNumber": 11095000
@@ -393,56 +393,56 @@ mod tests {
 
     #[test]
     fn test_custom_set_balance() {
-        let s = r#"{"method": "forge_setBalance", "params": ["0xd84de507f3fada7df80908082d3239466db55a71", "0x0"]}"#;
+        let s = r#"{"method": "anvil_setBalance", "params": ["0xd84de507f3fada7df80908082d3239466db55a71", "0x0"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
 
     #[test]
     fn test_custom_set_code() {
-        let s = r#"{"method": "forge_setCode", "params": ["0xd84de507f3fada7df80908082d3239466db55a71", "0x0123456789abcdef"]}"#;
+        let s = r#"{"method": "anvil_setCode", "params": ["0xd84de507f3fada7df80908082d3239466db55a71", "0x0123456789abcdef"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
 
     #[test]
     fn test_custom_set_nonce() {
-        let s = r#"{"method": "forge_setNonce", "params": ["0xd84de507f3fada7df80908082d3239466db55a71", "0x0"]}"#;
+        let s = r#"{"method": "anvil_setNonce", "params": ["0xd84de507f3fada7df80908082d3239466db55a71", "0x0"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
 
     #[test]
     fn test_serde_custom_set_storage_at() {
-        let s = r#"{"method": "forge_setStorageAt", "params": ["0x295a70b2de5e3953354a6a8344e616ed314d7251", "0x0", "0x00"]}"#;
+        let s = r#"{"method": "anvil_setStorageAt", "params": ["0x295a70b2de5e3953354a6a8344e616ed314d7251", "0x0", "0x00"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
 
     #[test]
     fn test_serde_custom_coinbase() {
-        let s = r#"{"method": "forge_setCoinbase", "params": ["0x295a70b2de5e3953354a6a8344e616ed314d7251"]}"#;
+        let s = r#"{"method": "anvil_setCoinbase", "params": ["0x295a70b2de5e3953354a6a8344e616ed314d7251"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
 
     #[test]
     fn test_serde_custom_logging() {
-        let s = r#"{"method": "forge_setLoggingEnabled", "params": [false]}"#;
+        let s = r#"{"method": "anvil_setLoggingEnabled", "params": [false]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
 
     #[test]
     fn test_serde_custom_min_gas_price() {
-        let s = r#"{"method": "forge_setMinGasPrice", "params": ["0x0"]}"#;
+        let s = r#"{"method": "anvil_setMinGasPrice", "params": ["0x0"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
 
     #[test]
     fn test_serde_custom_next_block_base_fee() {
-        let s = r#"{"method": "forge_setNextBlockBaseFeePerGas", "params": ["0x0"]}"#;
+        let s = r#"{"method": "anvil_setNextBlockBaseFeePerGas", "params": ["0x0"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
