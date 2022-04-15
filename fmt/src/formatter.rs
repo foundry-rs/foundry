@@ -5,7 +5,7 @@ use std::fmt::Write;
 use indent_write::fmt::IndentWriter;
 use solang_parser::pt::{
     ContractDefinition, DocComment, EnumDefinition, Identifier, Loc, SourceUnit, SourceUnitPart,
-    StringLiteral,
+    StringLiteral, StructDefinition,
 };
 
 use crate::{
@@ -412,7 +412,13 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_enum(&mut self, enumeration: &mut EnumDefinition) -> VResult {
+        if !enumeration.doc.is_empty() {
+            enumeration.doc.visit(self)?;
+            writeln!(self)?;
+        }
+
         write!(self, "enum {} ", &enumeration.name.name)?;
+
         if enumeration.values.is_empty() {
             self.write_empty_brackets()?;
         } else {
@@ -425,6 +431,34 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 if i != enumeration.values.len() - 1 {
                     write!(self, ",")?;
                 }
+
+                writeln!(self)?;
+            }
+            self.dedent(1);
+
+            write!(self, "}}")?;
+        }
+
+        Ok(())
+    }
+
+    fn visit_struct(&mut self, structure: &mut StructDefinition) -> VResult {
+        if !structure.doc.is_empty() {
+            structure.doc.visit(self)?;
+            writeln!(self)?;
+        }
+
+        write!(self, "struct {} ", &structure.name.name)?;
+
+        if structure.fields.is_empty() {
+            self.write_empty_brackets()?;
+        } else {
+            writeln!(self, "{{")?;
+
+            self.indent(1);
+            for field in structure.fields.iter_mut() {
+                field.visit(self)?;
+                self.visit_stray_semicolon()?;
 
                 writeln!(self)?;
             }
@@ -557,5 +591,22 @@ mod tests {
     #[test]
     fn import_directive() {
         test_directory("ImportDirective");
+    }
+
+    #[test]
+    fn struct_definition() {
+        test_formatter(
+            FormatterConfig::default(),
+            "struct   Foo  {   
+              } struct   Bar  {    uint256 foo ;string bar ;  }",
+            "
+struct Foo {}
+
+struct Bar {
+    uint256 foo;
+    string bar;
+}
+",
+        );
     }
 }
