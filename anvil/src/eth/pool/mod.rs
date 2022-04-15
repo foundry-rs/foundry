@@ -81,7 +81,7 @@ impl Pool {
 
         let mut dropped = None;
         if !removed.is_empty() {
-            dropped = removed.into_iter().filter(|t| *t.pending_transaction.hash() == tx).next();
+            dropped = removed.into_iter().find(|t| *t.pending_transaction.hash() == tx);
         }
         dropped
     }
