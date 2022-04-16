@@ -1,7 +1,7 @@
 use clap::Parser;
 use ethers::utils::WEI_IN_ETHER;
 
-use crate::{AccountGenerator, NodeConfig, CHAIN_ID};
+use crate::{eth::fees::INITIAL_BASE_FEE, AccountGenerator, NodeConfig, CHAIN_ID};
 use forge::executor::opts::EvmOpts;
 use foundry_common::evm::EvmArgs;
 
@@ -59,6 +59,7 @@ impl NodeArgs {
             .genesis_balance(genesis_balance)
             .port(self.port)
             .eth_rpc_url(evm_opts.fork_url)
+            .base_fee(self.evm_opts.env.block_base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE))
             .fork_block_number(evm_opts.fork_block_number)
     }
 
