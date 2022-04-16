@@ -7,7 +7,12 @@ use crate::eth::{
 use ethers::prelude::{BlockNumber, TxHash, H256, U256, U64};
 
 use crate::eth::{
-    backend::{cheats::CheatsManager, fork::ClientFork, time::TimeManager},
+    backend::{
+        cheats::CheatsManager,
+        fork::ClientFork,
+        notifications::{NewBlockNotification, NewBlockNotifications},
+        time::TimeManager,
+    },
     error::{BlockchainError, InvalidTransactionError},
     fees::FeeDetails,
 };
@@ -34,7 +39,8 @@ use foundry_evm::{
     revm::{db::CacheDB, Account, CreateScheme, Env, Return, TransactOut, TransactTo, TxEnv},
     utils::u256_to_h256_le,
 };
-use parking_lot::RwLock;
+use futures::channel::mpsc::{unbounded, UnboundedSender};
+use parking_lot::{Mutex, RwLock};
 use std::sync::Arc;
 use storage::Blockchain;
 use tracing::trace;
@@ -69,6 +75,8 @@ pub struct Backend {
     time: TimeManager,
     /// Contains state of custom overrides
     cheats: CheatsManager,
+    /// listeners for new blocks that get notified when a new block was imported
+    new_block_listeners: Arc<Mutex<Vec<UnboundedSender<NewBlockNotification>>>>,
 }
 
 impl Backend {
@@ -82,6 +90,7 @@ impl Backend {
             fork: None,
             time: Default::default(),
             cheats: Default::default(),
+            new_block_listeners: Default::default(),
         }
     }
 
@@ -126,6 +135,7 @@ impl Backend {
             fork,
             time: Default::default(),
             cheats: Default::default(),
+            new_block_listeners: Default::default(),
         }
     }
 
@@ -306,6 +316,8 @@ impl Backend {
         let BlockInfo { block, transactions, receipts } =
             executor.create_block(self.time.current_timestamp());
 
+        let header = block.header.clone();
+
         let block_hash = block.header.hash();
         let block_number: U64 = env.block.number.as_u64().into();
 
@@ -323,6 +335,9 @@ impl Backend {
             let mined_tx = MinedTransaction { info, receipt, block_hash };
             storage.transactions.insert(mined_tx.info.transaction_hash, mined_tx);
         }
+
+        // notify all listeners
+        self.notify_on_new_block(header, block_hash);
 
         block_number
     }
@@ -848,6 +863,27 @@ impl Backend {
         let tx = block.transactions.get(info.transaction_index as usize)?.clone();
 
         Some(transaction_build(tx, Some(block), Some(info), true, Some(self.base_fee())))
+    }
+
+    /// Returns a new block event stream
+    pub fn new_block_notifications(&self) -> NewBlockNotifications {
+        let (tx, rx) = unbounded();
+        self.new_block_listeners.lock().push(tx);
+        trace!(target: "backed", "added new block listener");
+        rx
+    }
+
+    /// Notifies all `new_block_listeners` about the new block
+    fn notify_on_new_block(&self, header: Header, hash: H256) {
+        // cleanup closed notification streams first, if the channel is closed we can remove the
+        // sender half for the set
+        self.new_block_listeners.lock().retain(|tx| !tx.is_closed());
+
+        let notification = NewBlockNotification { hash, header: Arc::new(header) };
+
+        self.new_block_listeners
+            .lock()
+            .retain(|tx| tx.unbounded_send(notification.clone()).is_ok());
     }
 }
 
