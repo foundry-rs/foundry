@@ -168,6 +168,8 @@ pub struct Config {
     pub block_difficulty: u64,
     /// the `block.gaslimit` value during EVM execution
     pub block_gas_limit: Option<GasLimit>,
+    /// The memory limit of the EVM (32 MB by default)
+    pub memory_limit: u64,
     /// Additional output selection for all contracts
     /// such as "ir", "devodc", "storageLayout", etc.
     /// See [Solc Compiler Api](https://docs.soliditylang.org/en/latest/using-the-compiler.html#compiler-api)
@@ -925,6 +927,7 @@ impl Default for Config {
             block_timestamp: 0,
             block_difficulty: 0,
             block_gas_limit: None,
+            memory_limit: 2u64.pow(25),
             eth_rpc_url: None,
             etherscan_api_key: None,
             verbosity: 0,
