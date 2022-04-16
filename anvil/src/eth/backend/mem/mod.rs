@@ -6,13 +6,10 @@ use crate::eth::{
 };
 use ethers::prelude::{BlockNumber, TxHash, H256, U256, U64};
 
-use crate::{
-    eth::{
-        backend::{cheats::CheatsManager, time::TimeManager},
-        error::{BlockchainError, InvalidTransactionError},
-        fees::FeeDetails,
-    },
-    fork::ClientFork,
+use crate::eth::{
+    backend::{cheats::CheatsManager, fork::ClientFork, time::TimeManager},
+    error::{BlockchainError, InvalidTransactionError},
+    fees::FeeDetails,
 };
 use anvil_core::{
     eth::{

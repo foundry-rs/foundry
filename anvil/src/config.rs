@@ -2,8 +2,10 @@ use colored::Colorize;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use crate::{
-    eth::backend::db::{Db, ForkedDatabase},
-    fork::{ClientFork, ClientForkConfig},
+    eth::backend::{
+        db::{Db, ForkedDatabase},
+        fork::{ClientFork, ClientForkConfig},
+    },
     mem,
     revm::db::CacheDB,
 };

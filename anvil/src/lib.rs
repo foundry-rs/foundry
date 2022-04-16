@@ -16,7 +16,8 @@ use ethers::{
     types::{Address, U256},
 };
 
-use crate::{eth::miner::Miner, fork::ClientFork};
+use crate::eth::miner::Miner;
+use eth::backend::fork::ClientFork;
 use ethers::providers::Ws;
 use parking_lot::Mutex;
 use std::{
@@ -34,7 +35,6 @@ mod service;
 pub mod server;
 
 pub mod eth;
-pub mod fork;
 
 #[cfg(feature = "cmd")]
 pub mod cmd;
