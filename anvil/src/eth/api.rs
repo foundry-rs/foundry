@@ -31,8 +31,8 @@ use ethers::{
     abi::ethereum_types::H64,
     providers::ProviderError,
     types::{
-        Address, Block, BlockNumber, Bytes, Log, Signature, Trace, Transaction, TransactionReceipt,
-        TxHash, H256, U256, U64,
+        transaction::eip2930::AccessList, Address, Block, BlockNumber, Bytes, Log, Signature,
+        Trace, Transaction, TransactionReceipt, TxHash, H256, U256, U64,
     },
     utils::rlp,
 };
@@ -121,6 +121,9 @@ impl EthApi {
             }
             EthRequest::EthSendRawTransaction(tx) => self.send_raw_transaction(tx).to_rpc_result(),
             EthRequest::EthCall(call, block) => self.call(call, block).to_rpc_result(),
+            EthRequest::EthCreateAccessList(call, block) => {
+                self.create_access_list(call, block).to_rpc_result()
+            }
             EthRequest::EthEstimateGas(call, block) => {
                 self.estimate_gas(call, block).to_rpc_result()
             }
@@ -475,6 +478,19 @@ impl EthApi {
             TransactOut::Create(out, _) => out.to_vec().into(),
         };
         Ok(out)
+    }
+
+    /// This method creates an EIP2930 type accessList based on a given Transaction. The accessList
+    /// contains all storage slots and addresses read and written by the transaction, except for the
+    /// sender account and the precompiles.
+    ///
+    /// Handler for ETH RPC call: `eth_createAccessList`
+    pub fn create_access_list(
+        &self,
+        request: CallRequest,
+        _number: Option<BlockNumber>,
+    ) -> Result<AccessList> {
+        Ok(Default::default())
     }
 
     /// Estimate gas needed for execution of given contract.

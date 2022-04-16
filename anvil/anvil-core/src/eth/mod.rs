@@ -71,6 +71,9 @@ pub enum EthRequest {
     #[serde(rename = "eth_call")]
     EthCall(CallRequest, #[serde(default)] Option<BlockNumber>),
 
+    #[serde(rename = "eth_createAccessList")]
+    EthCreateAccessList(CallRequest, #[serde(default)] Option<BlockNumber>),
+
     #[serde(rename = "eth_estimateGas")]
     EthEstimateGas(CallRequest, #[serde(default)] Option<BlockNumber>),
 
