@@ -2,7 +2,6 @@
 
 use crate::eth::{
     backend::{db::Db, executor::TransactionExecutor},
-    fees,
     pool::transactions::PoolTransaction,
 };
 use ethers::prelude::{BlockNumber, TxHash, H256, U256, U64};
@@ -575,14 +574,20 @@ impl Backend {
     }
 
     pub fn get_block(&self, number: impl Into<BlockNumber>) -> Option<Block> {
-        let storage = self.blockchain.storage.read();
-        let hash = match number.into() {
-            BlockNumber::Latest => storage.best_hash,
-            BlockNumber::Earliest => storage.genesis_hash,
-            BlockNumber::Pending => return None,
-            BlockNumber::Number(num) => *storage.hashes.get(&num)?,
+        let hash = {
+            let storage = self.blockchain.storage.read();
+            match number.into() {
+                BlockNumber::Latest => storage.best_hash,
+                BlockNumber::Earliest => storage.genesis_hash,
+                BlockNumber::Pending => return None,
+                BlockNumber::Number(num) => *storage.hashes.get(&num)?,
+            }
         };
-        Some(storage.blocks.get(&hash)?.clone())
+        self.get_block_by_hash(hash)
+    }
+
+    pub fn get_block_by_hash(&self, hash: H256) -> Option<Block> {
+        self.blockchain.storage.read().blocks.get(&hash).cloned()
     }
 
     pub fn mined_block_by_number(&self, number: BlockNumber) -> Option<EthersBlock<TxHash>> {

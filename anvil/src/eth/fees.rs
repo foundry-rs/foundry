@@ -2,8 +2,9 @@ use crate::eth::{
     backend::{info::StorageInfo, notifications::NewBlockNotifications},
     error::BlockchainError,
 };
+use anvil_core::eth::transaction::TypedTransaction;
 use ethers::types::{H256, U256};
-use futures::{Stream, StreamExt};
+use futures::StreamExt;
 use parking_lot::{Mutex, RwLock};
 use serde::Serialize;
 use std::{
@@ -13,6 +14,7 @@ use std::{
     sync::Arc,
     task::{Context, Poll},
 };
+use tracing::trace;
 
 /// Maximum number of entries in the fee history cache
 pub const MAX_FEE_HISTORY_CACHE_SIZE: u64 = 2048u64;
@@ -35,7 +37,7 @@ pub struct FeeManager {
     elasticity: Arc<RwLock<f64>>,
 }
 
-// === impl FeeConfig ===
+// === impl FeeManager ===
 
 impl FeeManager {
     pub fn new(base_fee: U256, gas_price: U256) -> Self {
@@ -122,6 +124,7 @@ impl FeeHistoryService {
                 .collect()
         };
 
+        let mut block_number: Option<u64> = None;
         let base_fee = self.fees.base_fee();
         let mut item = FeeHistoryCacheItem {
             base_fee: base_fee.as_u64(),
@@ -129,10 +132,82 @@ impl FeeHistoryService {
             rewards: Vec::new(),
         };
 
-        todo!()
+        let current_block = self.storage_info.block(hash);
+        let current_receipts = self.storage_info.receipts(hash);
+
+        if let (Some(block), Some(receipts)) = (current_block, current_receipts) {
+            block_number = Some(block.header.number.as_u64());
+
+            let gas_used = block.header.gas_used.as_u64() as f64;
+            let gas_limit = block.header.gas_limit.as_u64() as f64;
+
+            let gas_target = gas_limit / elasticity;
+            item.gas_used_ratio = gas_used / (gas_target * elasticity);
+
+            // extract useful tx info (gas_used, effective_reward)
+            let mut transactions: Vec<(u64, u64)> = receipts
+                .iter()
+                .enumerate()
+                .map(|(i, receipt)| {
+                    let gas_used = receipt.gas_used().as_u64();
+                    let effective_reward = match block.transactions.get(i) {
+                        Some(&TypedTransaction::Legacy(ref t)) => {
+                            t.gas_price.saturating_sub(base_fee).as_u64()
+                        }
+                        Some(&TypedTransaction::EIP2930(ref t)) => {
+                            t.gas_price.saturating_sub(base_fee).as_u64()
+                        }
+                        Some(&TypedTransaction::EIP1559(ref t)) => t
+                            .max_priority_fee_per_gas
+                            .min(t.max_fee_per_gas.saturating_sub(base_fee))
+                            .as_u64(),
+                        None => 0,
+                    };
+
+                    (gas_used, effective_reward)
+                })
+                .collect();
+
+            // sort by effective reward asc
+            transactions.sort_by(|(_, a), (_, b)| a.cmp(b));
+
+            // calculate percentile rewards
+            item.rewards = reward_percentiles
+                .into_iter()
+                .filter_map(|p| {
+                    let target_gas = (p * gas_used / 100f64) as u64;
+                    let mut sum_gas = 0;
+                    for (gas_used, effective_reward) in transactions.iter().cloned() {
+                        sum_gas += gas_used;
+                        if target_gas <= sum_gas {
+                            return Some(effective_reward)
+                        }
+                    }
+                    None
+                })
+                .collect();
+        } else {
+            item.rewards = reward_percentiles.iter().map(|_| 0).collect();
+        }
+        (item, block_number)
     }
 
-    fn insert_cache_entry(&mut self, item: FeeHistoryCacheItem, block_number: Option<u64>) {}
+    fn insert_cache_entry(&self, item: FeeHistoryCacheItem, block_number: Option<u64>) {
+        if let Some(block_number) = block_number {
+            trace!(target: "fees", "insert new history item={:?} for {}", item, block_number);
+            let mut cache = self.cache.lock();
+            cache.insert(block_number, item);
+
+            // adhere to cache limit
+            let pop_next = block_number.saturating_sub(self.fee_history_limit);
+
+            let num_remove = (cache.len() as u64).saturating_sub(self.fee_history_limit);
+            for num in 0..num_remove {
+                let key = pop_next - num;
+                cache.remove(&key);
+            }
+        }
+    }
 }
 
 // An endless future that listens for new blocks and updates the cache
@@ -142,8 +217,8 @@ impl Future for FeeHistoryService {
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let pin = self.get_mut();
 
-        while let Poll::Ready(Some(notifiaction)) = pin.new_blocks.poll_next_unpin(cx) {
-            let hash = notifiaction.hash;
+        while let Poll::Ready(Some(notification)) = pin.new_blocks.poll_next_unpin(cx) {
+            let hash = notification.hash;
             let elasticity = default_elasticity();
 
             // add the imported block.
@@ -177,6 +252,7 @@ pub struct FeeHistory {
 pub type FeeHistoryCache = Arc<Mutex<BTreeMap<u64, FeeHistoryCacheItem>>>;
 
 /// A single item in the whole fee history cache
+#[derive(Debug, Clone)]
 pub struct FeeHistoryCacheItem {
     pub base_fee: u64,
     pub gas_used_ratio: f64,

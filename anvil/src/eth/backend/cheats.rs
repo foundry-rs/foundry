@@ -39,12 +39,12 @@ impl CheatsManager {
 
     /// Returns the account that's currently being impersonated
     pub fn impersonated_account(&self) -> Option<Address> {
-        self.state.read().impersonated_account.clone()
+        self.state.read().impersonated_account
     }
 
     /// Returns the signature to use to bypass transaction signing
     pub fn bypass_signature(&self) -> Signature {
-        self.state.read().bypass_signature.clone()
+        self.state.read().bypass_signature
     }
 }
 
