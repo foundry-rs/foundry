@@ -31,7 +31,7 @@ impl SizeReport {
     /// Returns the size of the largest contract, excluding test contracts.
     pub fn max_size(&self) -> usize {
         let mut max_size = 0;
-        for (_, contract) in &self.contracts {
+        for contract in self.contracts.values() {
             if !contract.is_test_contract && contract.size > max_size {
                 max_size = contract.size;
             }
@@ -46,7 +46,7 @@ impl SizeReport {
 }
 
 impl Display for SizeReport {
-    fn fmt(&self, _f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         let mut table = Table::new();
         table.load_preset(UTF8_FULL).apply_modifier(UTF8_ROUND_CORNERS);
         table.set_header(vec![
@@ -75,7 +75,7 @@ impl Display for SizeReport {
             ]);
         }
 
-        println!("{}", table);
+        writeln!(f, "{}", table)?;
         Ok(())
     }
 }
@@ -184,17 +184,12 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
                             .map(|bytes| bytes.0.len())
                             .unwrap_or_default();
 
-                        let test_functions: Vec<_> = contract
-                            .abi
-                            .as_ref()
-                            .unwrap()
-                            .abi
-                            .functions()
-                            .into_iter()
-                            .filter(|func| func.name.starts_with("test") || func.name.eq("IS_TEST"))
-                            .collect();
+                        let test_functions =
+                            contract.abi.as_ref().unwrap().abi.functions().into_iter().filter(
+                                |func| func.name.starts_with("test") || func.name.eq("IS_TEST"),
+                            );
 
-                        let is_test_contract = test_functions.len() > 0;
+                        let is_test_contract = test_functions.into_iter().count() > 0;
                         size_report.contracts.insert(name, ContractInfo { size, is_test_contract });
                     }
                 }
