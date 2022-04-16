@@ -236,6 +236,14 @@ Derivation path:   {}
 
         print!(
             r#"
+Base Fee
+==================
+{}
+"#,
+            format!("{}", self.base_fee).green()
+        );
+        print!(
+            r#"
 Gas Price
 ==================
 {}
