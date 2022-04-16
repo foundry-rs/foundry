@@ -54,6 +54,11 @@ impl Signer for DevSigner {
     }
 }
 
+/// converts the `request` into a [`TypedTransactionRequest`] with the given signature
+///
+/// # Errors
+///
+/// This will fail if the `signature` contains an erroneous recovery id.
 pub fn build_typed_transaction(
     request: TypedTransactionRequest,
     signature: Signature,

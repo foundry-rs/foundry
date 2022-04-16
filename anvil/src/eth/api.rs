@@ -5,7 +5,7 @@ use crate::{
         fees::{FeeDetails, FeeHistory, FeeHistoryCache},
         miner::{FixedBlockTimeMiner, NoMine},
         pool::{
-            transactions::{to_marker, PoolTransaction},
+            transactions::{to_marker, PoolTransaction, TxMarker},
             Pool,
         },
         sign,
@@ -31,8 +31,8 @@ use ethers::{
     abi::ethereum_types::H64,
     providers::ProviderError,
     types::{
-        transaction::eip2930::AccessList, Address, Block, BlockNumber, Bytes, Log, Signature,
-        Trace, Transaction, TransactionReceipt, TxHash, H256, U256, U64,
+        transaction::eip2930::AccessList, Address, Block, BlockNumber, Bytes, Log, Trace,
+        Transaction, TransactionReceipt, TxHash, H256, U256, U64,
     },
     utils::rlp,
 };
@@ -383,8 +383,7 @@ impl EthApi {
             self.accounts()?.get(0).cloned().ok_or(BlockchainError::NoSignerAvailable)
         })?;
 
-        let on_chain_nonce = self.transaction_count(from, None).await?;
-        let nonce = request.nonce.unwrap_or(on_chain_nonce);
+        let (nonce, on_chain_nonce) = self.request_nonce(&request, from).await?;
 
         let request = self.build_typed_tx_request(request, nonce)?;
 
@@ -394,21 +393,10 @@ impl EthApi {
         // pre-validate
         self.backend.validate_transaction(&pending_transaction)?;
 
-        let prev_nonce = nonce.saturating_sub(U256::one());
-        let requires = if on_chain_nonce < prev_nonce {
-            vec![to_marker(prev_nonce.as_u64(), from)]
-        } else {
-            vec![]
-        };
+        let requires = required_marker(nonce, on_chain_nonce, from);
+        let provides = vec![to_marker(nonce.as_u64(), from)];
 
-        let pool_transaction = PoolTransaction {
-            requires,
-            provides: vec![to_marker(nonce.as_u64(), from)],
-            pending_transaction,
-        };
-
-        let tx = self.pool.add_transaction(pool_transaction)?;
-        Ok(*tx.hash())
+        self.add_pending_transaction(pending_transaction, requires, provides)
     }
 
     /// Sends signed transaction, returning its hash.
@@ -961,37 +949,26 @@ impl EthApi {
         &self,
         request: EthTransactionRequest,
     ) -> Result<TxHash> {
-        let from = request.from.ok_or(BlockchainError::NoSignerAvailable)?;
+        // either use the impersonated account of the request's `from` field
+        let from =
+            self.get_impersonated().or(request.from).ok_or(BlockchainError::NoSignerAvailable)?;
 
-        let on_chain_nonce = self.transaction_count(from, None).await?;
-        let nonce = request.nonce.unwrap_or(on_chain_nonce);
+        let (nonce, on_chain_nonce) = self.request_nonce(&request, from).await?;
 
         let request = self.build_typed_tx_request(request, nonce)?;
 
-        // TODO make this some constant
-        let bypass_signature = Signature { r: U256::zero(), s: U256::zero(), v: 0 };
-
+        let bypass_signature = self.backend.cheats().bypass_signature();
         let transaction = sign::build_typed_transaction(request, bypass_signature)?;
+
         let pending_transaction = PendingTransaction::with_sender(transaction, from);
 
         // pre-validate
         self.backend.validate_transaction(&pending_transaction)?;
 
-        let prev_nonce = nonce.saturating_sub(U256::one());
-        let requires = if on_chain_nonce < prev_nonce {
-            vec![to_marker(prev_nonce.as_u64(), from)]
-        } else {
-            vec![]
-        };
+        let requires = required_marker(nonce, on_chain_nonce, from);
+        let provides = vec![to_marker(nonce.as_u64(), from)];
 
-        let pool_transaction = PoolTransaction {
-            requires,
-            provides: vec![to_marker(nonce.as_u64(), from)],
-            pending_transaction,
-        };
-
-        let tx = self.pool.add_transaction(pool_transaction)?;
-        Ok(*tx.hash())
+        self.add_pending_transaction(pending_transaction, requires, provides)
     }
 }
 
@@ -1054,5 +1031,49 @@ impl EthApi {
             _ => return Err(BlockchainError::FailedToDecodeTransaction),
         };
         Ok(request)
+    }
+
+    /// Returns the sender to associate with this request
+    ///
+    /// If we're currently impersonating an account, see [`EthApi::anvil_impersonate_account()`],
+    /// then this will return the address of the impersonated account.
+    fn get_impersonated(&self) -> Option<Address> {
+        let acc = self.backend.cheats().impersonated_account()?;
+        trace!("using impersonated account {:?}", acc);
+        Some(acc)
+    }
+
+    /// Returns the nonce for this request
+    async fn request_nonce(
+        &self,
+        request: &EthTransactionRequest,
+        from: Address,
+    ) -> Result<(U256, U256)> {
+        let on_chain_nonce = self.transaction_count(from, None).await?;
+        let nonce = request.nonce.unwrap_or(on_chain_nonce);
+
+        Ok((nonce, on_chain_nonce))
+    }
+
+    /// Adds the given transaction to the pool
+    fn add_pending_transaction(
+        &self,
+        pending_transaction: PendingTransaction,
+        requires: Vec<TxMarker>,
+        provides: Vec<TxMarker>,
+    ) -> Result<TxHash> {
+        let pool_transaction = PoolTransaction { requires, provides, pending_transaction };
+
+        let tx = self.pool.add_transaction(pool_transaction)?;
+        Ok(*tx.hash())
+    }
+}
+
+fn required_marker(provided_nonce: U256, on_chain_nonce: U256, from: Address) -> Vec<TxMarker> {
+    let prev_nonce = provided_nonce.saturating_sub(U256::one());
+    if on_chain_nonce < prev_nonce {
+        vec![to_marker(prev_nonce.as_u64(), from)]
+    } else {
+        vec![]
     }
 }
