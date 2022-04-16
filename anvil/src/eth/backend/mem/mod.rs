@@ -656,18 +656,9 @@ impl Backend {
     pub async fn get_code(
         &self,
         address: Address,
-        block: Option<BlockNumber>,
+        _block: Option<BlockNumber>,
     ) -> Result<Bytes, BlockchainError> {
-        let number = self.convert_block_number(block);
-
         let code = self.db.read().basic(address).code.clone();
-
-        if let Some(ref fork) = self.fork {
-            if fork.predates_fork(number) || code.is_none() {
-                return Ok(fork.get_code(address, number).await?)
-            }
-        }
-
         Ok(code.unwrap_or_default().into())
     }
 
@@ -677,16 +668,8 @@ impl Backend {
     pub async fn get_balance(
         &self,
         address: Address,
-        block: Option<BlockNumber>,
+        _block: Option<BlockNumber>,
     ) -> Result<U256, BlockchainError> {
-        let number = self.convert_block_number(block);
-
-        if let Some(ref fork) = self.fork {
-            if fork.predates_fork(number) {
-                return Ok(fork.get_balance(address, number).await?)
-            }
-        }
-
         Ok(self.current_balance(address))
     }
 
@@ -696,16 +679,8 @@ impl Backend {
     pub async fn get_nonce(
         &self,
         address: Address,
-        block: Option<BlockNumber>,
+        _block: Option<BlockNumber>,
     ) -> Result<U256, BlockchainError> {
-        let number = self.convert_block_number(block);
-
-        if let Some(ref fork) = self.fork {
-            if fork.predates_fork(number) {
-                return Ok(fork.get_nonce(address, number).await?)
-            }
-        }
-
         Ok(self.current_nonce(address))
     }
 
