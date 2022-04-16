@@ -97,6 +97,8 @@ impl Cmd for InitArgs {
 
             // make the dirs
             let src = root.join("src");
+            std::fs::create_dir_all(&src)?;
+
             let test = root.join("test");
             std::fs::create_dir_all(&test)?;
 
