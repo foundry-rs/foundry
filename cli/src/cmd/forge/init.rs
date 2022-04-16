@@ -97,7 +97,7 @@ impl Cmd for InitArgs {
 
             // make the dirs
             let src = root.join("src");
-            let test = src.join("test");
+            let test = root.join("test");
             std::fs::create_dir_all(&test)?;
 
             // write the contract file
