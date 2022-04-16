@@ -4,8 +4,9 @@ use std::fmt::Write;
 
 use indent_write::fmt::IndentWriter;
 use solang_parser::pt::{
-    ContractDefinition, DocComment, EnumDefinition, Expression, Identifier, Loc, SourceUnit,
-    SourceUnitPart, StringLiteral, StructDefinition, Type, TypeDefinition, VariableDeclaration,
+    CodeLocation, ContractDefinition, DocComment, EnumDefinition, Expression, FunctionDefinition,
+    Identifier, Loc, SourceUnit, SourceUnitPart, Statement, StringLiteral, StructDefinition, Type,
+    TypeDefinition, VariableDeclaration,
 };
 
 use crate::{
@@ -147,9 +148,9 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(buf.w)
     }
 
-    /// Returns number of blank lines between two parts of source code
-    fn blank_lines<T: LineOfCode>(&self, a: &mut T, b: &&mut T) -> usize {
-        return self.source[a.loc().end()..b.loc().start()].matches('\n').count()
+    /// Returns number of blank lines between two LOCs
+    fn blank_lines(&self, a: Loc, b: Loc) -> usize {
+        return self.source[a.end()..b.start()].matches('\n').count()
     }
 }
 
@@ -220,7 +221,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                         is_import(next_unit) &&
                         // If source has zero blank lines between imports, leave it as is. If one
                         //  or more, separate imports with one blank line.
-                        self.blank_lines(unit, next_unit) > 1)
+                        self.blank_lines(unit.loc(), next_unit.loc()) > 1)
                 {
                     writeln!(self)?;
                 }
@@ -323,7 +324,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 // If source has zero blank lines between declarations, leave it as is. If one
                 //  or more, separate declarations with one blank line.
                 if let Some(next_part) = contract_parts_iter.peek() {
-                    if self.blank_lines(part, next_part) > 1 {
+                    if self.blank_lines(part.loc(), next_part.loc()) > 1 {
                         writeln!(self)?;
                     }
                 }
@@ -442,6 +443,66 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    fn visit_statement(&mut self, stmt: &mut Statement) -> VResult {
+        match stmt {
+            Statement::Block { loc, unchecked, statements } => {
+                let multiline = self.source[loc.start()..loc.end()].matches('\n').count() > 0;
+
+                if *unchecked {
+                    write!(self, "unchecked ")?;
+                }
+                if multiline {
+                    writeln!(self, "{{")?;
+                    self.indent(1);
+                } else {
+                    self.write_opening_bracket()?;
+                }
+
+                // We need to skip statements which evaluate to empty string on visiting.
+                // It may happen on empty unchecked blocks,
+                let mut statements_iter = statements.iter_mut().peekable();
+                while let Some(stmt) = statements_iter.next() {
+                    stmt.visit(self)?;
+                    if multiline {
+                        writeln!(self)?;
+                    }
+
+                    // If source has zero blank lines between statements, leave it as is. If one
+                    //  or more, separate statements with one blank line.
+                    if let Some(next_stmt) = statements_iter.peek() {
+                        if self.blank_lines(stmt.loc(), next_stmt.loc()) > 1 {
+                            writeln!(self)?;
+                        }
+                    }
+                }
+
+                if multiline {
+                    self.dedent(1);
+                    write!(self, "}}")?;
+                } else {
+                    self.write_closing_bracket()?;
+                }
+            }
+            Statement::Break(_) => write!(self, "break;")?,
+            Statement::Continue(_) => write!(self, "continue;")?,
+            Statement::Emit(_, expr) => {
+                write!(self, "emit ")?;
+                expr.loc().visit(self)?;
+                write!(self, ";")?;
+            }
+            Statement::Expression(..) |
+            Statement::VariableDefinition(..) |
+            Statement::Revert(..) |
+            Statement::Return(..) => {
+                stmt.loc().visit(self)?;
+                write!(self, ";")?;
+            }
+            _ => stmt.loc().visit(self)?,
+        }
+
+        Ok(())
+    }
+
     fn visit_expr(&mut self, expr: &mut Expression) -> VResult {
         match expr {
             Expression::Type(loc, typ) => match typ {
@@ -482,6 +543,38 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    fn visit_function(&mut self, func: &mut FunctionDefinition) -> VResult {
+        if !func.doc.is_empty() {
+            func.doc.visit(self)?;
+            writeln!(self)?;
+        }
+
+        // Workaround for cases when function in the original source code had parameters and
+        // modifiers spanned across multiple lines, thus having its own indentation that we
+        // need to reset.
+        let signature = self.visit_to_string(&mut func.loc)?;
+        let level = self.level;
+        self.dedent(level);
+        write!(self, "{}{}", " ".repeat(self.config.tab_width * level), signature)?;
+        self.indent(level);
+
+        match &mut func.body {
+            Some(body) => {
+                // Same, until we reconstruct function parameters and modifiers on our own,
+                // we need to respect style of the original source code
+                if self.blank_lines(func.loc, body.loc()) > 0 {
+                    writeln!(self)?;
+                } else if !signature.ends_with(char::is_whitespace) {
+                    write!(self, " ")?;
+                }
+                body.visit(self)?
+            }
+            None => write!(self, ";")?,
+        };
+
+        Ok(())
+    }
+
     fn visit_struct(&mut self, structure: &mut StructDefinition) -> VResult {
         if !structure.doc.is_empty() {
             structure.doc.visit(self)?;
@@ -498,9 +591,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             self.indent(1);
             for field in structure.fields.iter_mut() {
                 field.visit(self)?;
-                self.visit_stray_semicolon()?;
-
-                writeln!(self)?;
+                writeln!(self, ";")?;
             }
             self.dedent(1);
 
@@ -666,5 +757,48 @@ struct Bar {
     #[test]
     fn type_definition() {
         test_directory("TypeDefinition");
+    }
+
+    #[test]
+    fn statement_block() {
+        test_formatter(
+            FormatterConfig::default(),
+            "
+contract Contract {
+    function test() { unchecked { a += 1; }
+    
+        unchecked {
+        a += 1;
+        }
+        
+        
+unchecked { a += 1;
+        }
+    unchecked {}
+
+    1 + 1;
+
+
+    }
+}",
+            "
+contract Contract {
+    function test() {
+        unchecked {a += 1;}
+
+        unchecked {
+            a += 1;
+        }
+
+        unchecked {
+            a += 1;
+        }
+        unchecked {}
+
+        1 + 1;
+    }
+}
+",
+        );
     }
 }
