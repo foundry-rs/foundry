@@ -55,13 +55,9 @@ impl Display for SizeReport {
             Cell::new("Margin").add_attribute(Attribute::Bold).fg(Color::Blue),
         ]);
 
-        for (name, contract) in &self.contracts {
-            if contract.is_test_contract || contract.size == 0 {
-                continue
-            }
-
-            let margin = isize::try_from(CONTRACT_SIZE_LIMIT).unwrap() -
-                isize::try_from(contract.size).unwrap();
+        let contracts = self.contracts.iter().filter(|(_, c)| !c.is_test_contract && c.size > 0);
+        for (name, contract) in contracts {
+            let margin = CONTRACT_SIZE_LIMIT as isize - contract.size as isize;
             let color = match contract.size {
                 0..=17999 => Color::Reset,
                 18000..=CONTRACT_SIZE_LIMIT => Color::Yellow,
