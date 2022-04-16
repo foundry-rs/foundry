@@ -286,6 +286,7 @@ impl Backend {
     /// TODO(mattsse): currently we're assuming all transactions are valid:
     ///  needs an additional validation step: gas limit, fee
     pub fn mine_block(&self, pool_transactions: Vec<Arc<PoolTransaction>>) -> U64 {
+        trace!(target: "backend", "creating new block with {} transactions", pool_transactions.len());
         // acquire all locks
         let mut env = self.env.write();
         let mut db = self.db.write();
@@ -333,6 +334,7 @@ impl Backend {
         request: CallRequest,
         fee_details: FeeDetails,
     ) -> (Return, TransactOut, u64) {
+        trace!(target: "backend", "calling [{:?}] fees={:?}", request, fee_details);
         let CallRequest { from, to, gas, value, data, nonce, access_list, .. } = request;
 
         let FeeDetails { gas_price, max_fee_per_gas, max_priority_fee_per_gas } = fee_details;
@@ -504,6 +506,7 @@ impl Backend {
 
     /// Returns the logs according to the filter
     pub async fn logs(&self, filter: Filter) -> Result<Vec<Log>, BlockchainError> {
+        trace!(target: "backend", "get logs [{:?}]", filter);
         if let Some(hash) = filter.block_hash {
             self.logs_for_block(filter, hash).await
         } else {
@@ -519,6 +522,7 @@ impl Backend {
         &self,
         hash: H256,
     ) -> Result<Option<EthersBlock<TxHash>>, BlockchainError> {
+        trace!(target: "backend", "get block by hash {:?}", hash);
         if let tx @ Some(_) = self.mined_block_by_hash(hash) {
             return Ok(tx)
         }
@@ -539,6 +543,7 @@ impl Backend {
         &self,
         number: BlockNumber,
     ) -> Result<Option<EthersBlock<TxHash>>, BlockchainError> {
+        trace!(target: "backend", "get block by number {:?}", number);
         if let tx @ Some(_) = self.mined_block_by_number(number) {
             return Ok(tx)
         }
@@ -635,16 +640,9 @@ impl Backend {
         &self,
         address: Address,
         index: U256,
-        number: Option<BlockNumber>,
+        _number: Option<BlockNumber>,
     ) -> Result<H256, BlockchainError> {
-        let number = self.convert_block_number(number);
-
-        if let Some(ref fork) = self.fork {
-            if fork.predates_fork(number) {
-                return Ok(fork.storage_at(address, index, Some(number.into())).await?)
-            }
-        }
-
+        trace!(target: "backend", "get storage for {:?} at {:?}", address, index);
         let val = self.db.read().storage(address, index);
         Ok(u256_to_h256_le(val))
     }
@@ -658,7 +656,8 @@ impl Backend {
         address: Address,
         _block: Option<BlockNumber>,
     ) -> Result<Bytes, BlockchainError> {
-        let code = self.db.read().basic(address).code.clone();
+        trace!(target: "backend", "get code for {:?}", address);
+        let code = self.db.read().basic(address).code;
         Ok(code.unwrap_or_default().into())
     }
 
@@ -670,6 +669,7 @@ impl Backend {
         address: Address,
         _block: Option<BlockNumber>,
     ) -> Result<U256, BlockchainError> {
+        trace!(target: "backend", "get balance for {:?}", address);
         Ok(self.current_balance(address))
     }
 
@@ -681,6 +681,7 @@ impl Backend {
         address: Address,
         _block: Option<BlockNumber>,
     ) -> Result<U256, BlockchainError> {
+        trace!(target: "backend", "get nonce for {:?}", address);
         Ok(self.current_nonce(address))
     }
 
@@ -808,6 +809,7 @@ impl Backend {
         &self,
         hash: H256,
     ) -> Result<Option<Transaction>, BlockchainError> {
+        trace!(target: "backend", "transaction_by_hash={:?}", hash);
         if let tx @ Some(_) = self.mined_transaction_by_hash(hash) {
             return Ok(tx)
         }

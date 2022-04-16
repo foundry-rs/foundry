@@ -296,7 +296,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_getBalance`
     pub async fn balance(&self, address: Address, number: Option<BlockNumber>) -> Result<U256> {
-        Ok(self.backend.get_balance(address, number).await?)
+        self.backend.get_balance(address, number).await
     }
 
     /// Returns content of the storage at given address.
@@ -337,7 +337,7 @@ impl EthApi {
         address: Address,
         number: Option<BlockNumber>,
     ) -> Result<U256> {
-        Ok(self.backend.get_nonce(address, number).await?)
+        self.backend.get_nonce(address, number).await
     }
 
     /// Returns the number of transactions in a block with given hash.
@@ -487,7 +487,7 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_createAccessList`
     pub fn create_access_list(
         &self,
-        request: CallRequest,
+        _request: CallRequest,
         _number: Option<BlockNumber>,
     ) -> Result<AccessList> {
         Ok(Default::default())

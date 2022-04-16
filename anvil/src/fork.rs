@@ -16,6 +16,7 @@ use parking_lot::{
     lock_api::{RwLockReadGuard, RwLockWriteGuard},
     RawRwLock, RwLock,
 };
+use tracing::trace;
 
 #[derive(Debug, Clone)]
 pub struct ClientFork {
@@ -134,6 +135,7 @@ impl ClientFork {
         &self,
         hash: H256,
     ) -> Result<Option<Transaction>, ProviderError> {
+        trace!(target: "backend::fork", "transaction_by_hash={:?}", hash);
         if let tx @ Some(_) = self.storage_read().transactions.get(&hash).cloned() {
             return Ok(tx)
         }

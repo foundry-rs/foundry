@@ -2,6 +2,7 @@
 
 use parking_lot::RwLock;
 use std::{sync::Arc, time::Duration};
+use tracing::trace;
 
 /// Manages block time
 #[derive(Debug, Clone, Default)]
@@ -25,6 +26,7 @@ impl TimeManager {
     fn add_offset(&self, offset: i128) {
         let mut current = self.offset.write();
         let next = current.saturating_add(offset);
+        trace!(target: "time", "adding timestamp offset={}, total={}", offset, next);
         *current = next;
     }
 
@@ -37,6 +39,7 @@ impl TimeManager {
 
     /// Sets the exact timestamp to use in the next block
     pub fn set_next_block_timestamp(&self, timestamp: u64) {
+        trace!(target: "time", "override next timestamp {}", timestamp);
         self.next_exact_timestamp.write().replace(timestamp);
     }
 
