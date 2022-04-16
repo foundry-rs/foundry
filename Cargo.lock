@@ -1707,6 +1707,7 @@ dependencies = [
  "clap",
  "clap_complete",
  "color-eyre",
+ "comfy-table",
  "console 0.15.0",
  "dunce",
  "ethers",

@@ -1,9 +1,9 @@
 //! Support for compiling [ethers::solc::Project]
 
 use crate::term;
+use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, *};
 use ethers::solc::{report::NoReporter, Artifact, FileFilter, Project, ProjectCompileOutput};
-use foundry_utils::to_table;
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{collections::BTreeMap, fmt::Display, path::PathBuf};
 
 /// Compiles the provided [`Project`], throws if there's any compiler error and logs whether
 /// compilation was successful or if there was a cache hit.
@@ -13,6 +13,67 @@ pub fn compile(
     print_sizes: bool,
 ) -> eyre::Result<ProjectCompileOutput> {
     ProjectCompiler::new(print_names, print_sizes).compile(project)
+}
+
+// https://eips.ethereum.org/EIPS/eip-170
+const CONTRACT_SIZE_LIMIT: usize = 24576;
+
+pub struct SizeReport {
+    pub contracts: BTreeMap<String, ContractInfo>,
+}
+
+pub struct ContractInfo {
+    pub size: usize,
+    pub is_test_contract: bool,
+}
+
+impl SizeReport {
+    /// Returns the size of the largest contract, excluding test contracts.
+    pub fn max_size(&self) -> usize {
+        let mut max_size = 0;
+        for contract in self.contracts.values() {
+            if !contract.is_test_contract && contract.size > max_size {
+                max_size = contract.size;
+            }
+        }
+        max_size
+    }
+
+    /// Returns true if all contracts are within the size limit, excluding test contracts.
+    pub fn exceeds_size_limit(&self) -> bool {
+        self.max_size() > CONTRACT_SIZE_LIMIT
+    }
+}
+
+impl Display for SizeReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        let mut table = Table::new();
+        table.load_preset(UTF8_FULL).apply_modifier(UTF8_ROUND_CORNERS);
+        table.set_header(vec![
+            Cell::new("Contract").add_attribute(Attribute::Bold).fg(Color::Blue),
+            Cell::new("Size").add_attribute(Attribute::Bold).fg(Color::Blue),
+            Cell::new("Margin").add_attribute(Attribute::Bold).fg(Color::Blue),
+        ]);
+
+        let contracts = self.contracts.iter().filter(|(_, c)| !c.is_test_contract && c.size > 0);
+        for (name, contract) in contracts {
+            let margin = CONTRACT_SIZE_LIMIT as isize - contract.size as isize;
+            let color = match contract.size {
+                0..=17999 => Color::Reset,
+                18000..=CONTRACT_SIZE_LIMIT => Color::Yellow,
+                _ => Color::Red,
+            };
+
+            table.add_row(vec![
+                Cell::new(name).fg(color),
+                Cell::new(contract.size).fg(color),
+                Cell::new(margin).fg(color),
+            ]);
+        }
+
+        writeln!(f, "{}", table)?;
+        Ok(())
+    }
 }
 
 /// Helper type to configure how to compile a project
@@ -111,20 +172,29 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
                     println!();
                 }
                 let compiled_contracts = output.compiled_contracts_by_compiler_version();
-                let mut sizes = BTreeMap::new();
+                let mut size_report = SizeReport { contracts: BTreeMap::new() };
                 for (_, contracts) in compiled_contracts.into_iter() {
                     for (name, contract) in contracts {
                         let size = contract
                             .get_bytecode_bytes()
                             .map(|bytes| bytes.0.len())
                             .unwrap_or_default();
-                        sizes.insert(name, size);
+
+                        let test_functions =
+                            contract.abi.as_ref().unwrap().abi.functions().into_iter().filter(
+                                |func| func.name.starts_with("test") || func.name.eq("IS_TEST"),
+                            );
+
+                        let is_test_contract = test_functions.into_iter().count() > 0;
+                        size_report.contracts.insert(name, ContractInfo { size, is_test_contract });
                     }
                 }
-                let json = serde_json::to_value(&sizes)?;
-                println!("name             size (bytes)");
-                println!("-----------------------------");
-                println!("{}", to_table(json));
+
+                println!("{}", size_report);
+
+                // exit with error if any contract exceeds the size limit, excluding test contracts.
+                let exit_status = if size_report.exceeds_size_limit() { 1 } else { 0 };
+                std::process::exit(exit_status);
             }
         }
 
