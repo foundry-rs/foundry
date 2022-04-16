@@ -808,7 +808,7 @@ impl From<Config> for Figment {
                 Toml::file(Env::var_or("FOUNDRY_CONFIG", Config::FILE_NAME)).nested(),
             )))
             .merge(Env::prefixed("DAPP_").ignore(&["REMAPPINGS", "LIBRARIES"]).global())
-            .merge(Env::prefixed("DAPP_TEST_").global())
+            .merge(Env::prefixed("DAPP_TEST_").ignore(&["CACHE"]).global())
             .merge(DappEnvCompatProvider)
             .merge(Env::raw().only(&["ETHERSCAN_API_KEY"]))
             .merge(
