@@ -38,7 +38,10 @@ use std::{
 use clap::{IntoApp, Parser};
 use clap_complete::generate;
 
-use crate::{cmd::Cmd, utils::read_secret};
+use crate::{
+    cmd::Cmd,
+    utils::{consume_config_rpc_url, read_secret},
+};
 use eyre::WrapErr;
 
 #[tokio::main]
@@ -156,73 +159,71 @@ async fn main() -> eyre::Result<()> {
             );
         }
         Subcommands::AccessList { eth, address, sig, args, block, to_json } => {
-            let provider = Provider::try_from(eth.rpc_url()?)?;
-            let mut builder = TxBuilder::new(
-                &provider,
-                eth.wallet.from.unwrap_or(Address::zero()),
-                address,
-                eth.chain,
-                false,
-            )
-            .await?;
+            let config = Config::from(&eth);
+            let provider = Provider::try_from(
+                config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
+            )?;
+            let mut builder =
+                TxBuilder::new(&provider, config.sender, address, eth.chain, false).await?;
             builder.set_args(&sig, args).await?;
             let builder_output = builder.peek();
 
             println!("{}", Cast::new(&provider).access_list(builder_output, block, to_json).await?);
         }
         Subcommands::Block { rpc_url, block, full, field, to_json } => {
+            let rpc_url = consume_config_rpc_url(rpc_url);
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).block(block, full, field, to_json).await?);
         }
         Subcommands::BlockNumber { rpc_url } => {
+            let rpc_url = consume_config_rpc_url(rpc_url);
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).block_number().await?);
         }
 
-        Subcommands::Call(config_call) => {
-            let config: Config = (&config_call).into();
+        Subcommands::Call { address, sig, args, block, eth } => {
+            let config = Config::from(&eth);
             let provider = Provider::try_from(
                 config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
             )?;
 
-            let mut builder = TxBuilder::new(
-                &provider,
-                config.sender,
-                config_call.address,
-                config_call.eth.chain,
-                false,
-            )
-            .await?;
-            builder
-                .set_args(&config_call.sig, config_call.args)
-                .await?
-                .etherscan_api_key(config_call.eth.etherscan_api_key);
+            let mut builder =
+                TxBuilder::new(&provider, config.sender, address, eth.chain, false).await?;
+            builder.set_args(&sig, args).await?.etherscan_api_key(eth.etherscan_api_key);
             let builder_output = builder.build();
-            println!("{}", Cast::new(provider).call(builder_output, config_call.block).await?);
+            println!("{}", Cast::new(provider).call(builder_output, block).await?);
         }
 
         Subcommands::Calldata { sig, args } => {
             println!("{}", SimpleCast::calldata(sig, &args)?);
         }
         Subcommands::Chain { rpc_url } => {
+            let rpc_url = consume_config_rpc_url(rpc_url);
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).chain().await?);
         }
         Subcommands::ChainId { rpc_url } => {
+            let rpc_url = consume_config_rpc_url(rpc_url);
+
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).chain_id().await?);
         }
         Subcommands::Client { rpc_url } => {
+            let rpc_url = consume_config_rpc_url(rpc_url);
+
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", provider.client_version().await?);
         }
         Subcommands::ComputeAddress { rpc_url, address, nonce } => {
+            let rpc_url = consume_config_rpc_url(rpc_url);
+
             let pubkey = Address::from_str(&address).expect("invalid pubkey provided");
             let provider = Provider::try_from(rpc_url)?;
             let addr = Cast::new(&provider).compute_address(pubkey, nonce).await?;
             println!("Computed Address: {:?}", addr);
         }
         Subcommands::Code { block, who, rpc_url } => {
+            let rpc_url = consume_config_rpc_url(rpc_url);
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).code(who, block).await?);
         }
@@ -230,6 +231,7 @@ async fn main() -> eyre::Result<()> {
             println!("{}", SimpleCast::namehash(&name)?);
         }
         Subcommands::Tx { rpc_url, hash, field, to_json } => {
+            let rpc_url = consume_config_rpc_url(rpc_url);
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(&provider).transaction(hash, field, to_json).await?)
         }
@@ -248,7 +250,10 @@ async fn main() -> eyre::Result<()> {
             to_json,
             resend,
         } => {
-            let provider = Provider::try_from(eth.rpc_url()?)?;
+            let config = Config::from(&eth);
+            let provider = Provider::try_from(
+                config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
+            )?;
             let chain_id = Cast::new(&provider).chain_id().await?;
             let sig = sig.unwrap_or_default();
 
@@ -275,7 +280,7 @@ async fn main() -> eyre::Result<()> {
                             value,
                             nonce,
                             eth.chain,
-                            eth.etherscan_api_key,
+                            config.etherscan_api_key,
                             cast_async,
                             legacy,
                             confirmations,
@@ -294,7 +299,7 @@ async fn main() -> eyre::Result<()> {
                             value,
                             nonce,
                             eth.chain,
-                            eth.etherscan_api_key,
+                            config.etherscan_api_key,
                             cast_async,
                             legacy,
                             confirmations,
@@ -313,7 +318,7 @@ async fn main() -> eyre::Result<()> {
                             value,
                             nonce,
                             eth.chain,
-                            eth.etherscan_api_key,
+                            config.etherscan_api_key,
                             cast_async,
                             legacy,
                             confirmations,
@@ -321,15 +326,18 @@ async fn main() -> eyre::Result<()> {
                         )
                         .await?;
                     }
-                }
-            } else if let Some(from) = eth.wallet.from {
+                } // Checking if signer isn't the default value
+                  // 00a329c0648769A73afAc7F9381E08FB43dBEA72.
+            } else if config.sender !=
+                Address::from_str("00a329c0648769A73afAc7F9381E08FB43dBEA72").unwrap()
+            {
                 if resend {
-                    nonce = Some(provider.get_transaction_count(from, None).await?);
+                    nonce = Some(provider.get_transaction_count(config.sender, None).await?);
                 }
 
                 cast_send(
                     provider,
-                    from,
+                    config.sender,
                     to,
                     (sig, args),
                     gas,
@@ -337,7 +345,7 @@ async fn main() -> eyre::Result<()> {
                     value,
                     nonce,
                     eth.chain,
-                    eth.etherscan_api_key,
+                    config.etherscan_api_key,
                     cast_async,
                     legacy,
                     confirmations,
@@ -345,11 +353,14 @@ async fn main() -> eyre::Result<()> {
                 )
                 .await?;
             } else {
-                eyre::bail!("No wallet or sender address provided.")
+                eyre::bail!("No wallet or sender address provided. Consider passing it via the --from flag or setting the ETH_FROM env variable or setting in the foundry.toml file");
             }
         }
         Subcommands::PublishTx { eth, raw_tx, cast_async } => {
-            let provider = Provider::try_from(eth.rpc_url()?)?;
+            let config = Config::from(&eth);
+            let provider = Provider::try_from(
+                config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
+            )?;
             let cast = Cast::new(&provider);
             let pending_tx = cast.publish(raw_tx).await?;
             let tx_hash = *pending_tx;
@@ -362,13 +373,17 @@ async fn main() -> eyre::Result<()> {
                 println!("{}", serde_json::json!(receipt));
             }
         }
-        Subcommands::Estimate { eth, to, sig, args, value } => {
-            let provider = Provider::try_from(eth.rpc_url()?)?;
+        Subcommands::Estimate { to, sig, args, value, eth } => {
+            let config = Config::from(&eth);
+            let provider = Provider::try_from(
+                config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
+            )?;
+
             let from = eth.sender().await;
 
             let mut builder = TxBuilder::new(&provider, from, to, eth.chain, false).await?;
             builder
-                .etherscan_api_key(eth.etherscan_api_key)
+                .etherscan_api_key(config.etherscan_api_key)
                 .value(value)
                 .set_args(sig.as_str(), args)
                 .await?;
@@ -435,6 +450,7 @@ async fn main() -> eyre::Result<()> {
             println!("{}", pretty_data);
         }
         Subcommands::Age { block, rpc_url } => {
+            let rpc_url = consume_config_rpc_url(rpc_url);
             let provider = Provider::try_from(rpc_url)?;
             println!(
                 "{}",
@@ -442,10 +458,13 @@ async fn main() -> eyre::Result<()> {
             );
         }
         Subcommands::Balance { block, who, rpc_url } => {
+            let rpc_url = consume_config_rpc_url(rpc_url);
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).balance(who, block).await?);
         }
         Subcommands::BaseFee { block, rpc_url } => {
+            let rpc_url = consume_config_rpc_url(rpc_url);
+
             let provider = Provider::try_from(rpc_url)?;
             println!(
                 "{}",
@@ -453,6 +472,7 @@ async fn main() -> eyre::Result<()> {
             );
         }
         Subcommands::GasPrice { rpc_url } => {
+            let rpc_url = consume_config_rpc_url(rpc_url);
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).gas_price().await?);
         }
@@ -472,7 +492,13 @@ async fn main() -> eyre::Result<()> {
             } else {
                 let api_key = match etherscan_api_key {
                     Some(inner) => inner,
-                    _ => eyre::bail!("No Etherscan API Key is set. Consider using the ETHERSCAN_API_KEY env var, or the -e CLI argument.")
+                    _ => {
+                        if let Some(etherscan_api_key) = Config::load().etherscan_api_key {
+                            etherscan_api_key
+                        } else {
+                            eyre::bail!("No Etherscan API Key is set. Consider using the ETHERSCAN_API_KEY env var, or setting the -e CLI argument or etherscan-api-key in foundry.toml")
+                        }
+                    }
                 };
                 SimpleCast::generate_interface(InterfacePath::Etherscan {
                     chain: chain.inner,
@@ -506,6 +532,7 @@ async fn main() -> eyre::Result<()> {
             }
         }
         Subcommands::ResolveName { who, rpc_url, verify } => {
+            let rpc_url = consume_config_rpc_url(rpc_url);
             let provider = Provider::try_from(rpc_url)?;
             let who = unwrap_or_stdin(who)?;
             let address = provider.resolve_name(&who).await?;
@@ -520,6 +547,7 @@ async fn main() -> eyre::Result<()> {
             println!("{:?}", address);
         }
         Subcommands::LookupAddress { who, rpc_url, verify } => {
+            let rpc_url = consume_config_rpc_url(rpc_url);
             let provider = Provider::try_from(rpc_url)?;
             let who = unwrap_or_stdin(who)?;
             let name = provider.lookup_address(who).await?;
@@ -534,16 +562,21 @@ async fn main() -> eyre::Result<()> {
             println!("{}", name);
         }
         Subcommands::Storage { address, slot, rpc_url, block } => {
+            let rpc_url = consume_config_rpc_url(rpc_url);
+
             let provider = Provider::try_from(rpc_url)?;
             let value = provider.get_storage_at(address, slot, block).await?;
             println!("{:?}", value);
         }
         Subcommands::Proof { address, slots, rpc_url, block } => {
+            let rpc_url = consume_config_rpc_url(rpc_url);
+
             let provider = Provider::try_from(rpc_url)?;
             let value = provider.get_proof(address, slots, block).await?;
             println!("{}", serde_json::to_string(&value)?);
         }
         Subcommands::Receipt { hash, field, to_json, rpc_url, cast_async, confirmations } => {
+            let rpc_url = consume_config_rpc_url(rpc_url);
             let provider = Provider::try_from(rpc_url)?;
             println!(
                 "{}",
@@ -553,16 +586,28 @@ async fn main() -> eyre::Result<()> {
             );
         }
         Subcommands::Nonce { block, who, rpc_url } => {
+            let rpc_url = consume_config_rpc_url(rpc_url);
+
             let provider = Provider::try_from(rpc_url)?;
             println!("{}", Cast::new(provider).nonce(who, block).await?);
         }
         Subcommands::EtherscanSource { chain, address, directory, etherscan_api_key } => {
+            let api_key = match etherscan_api_key {
+                Some(inner) => inner,
+                _ => {
+                    if let Some(etherscan_api_key) = Config::load().etherscan_api_key {
+                        etherscan_api_key
+                    } else {
+                        eyre::bail!("No Etherscan API Key is set. Consider using the ETHERSCAN_API_KEY env var, or setting the -e CLI argument or etherscan-api-key in foundry.toml")
+                    }
+                }
+            };
             match directory {
                 Some(dir) => {
                     SimpleCast::expand_etherscan_source_to_directory(
                         chain.inner,
                         address,
-                        etherscan_api_key,
+                        api_key,
                         dir,
                     )
                     .await?
@@ -570,8 +615,7 @@ async fn main() -> eyre::Result<()> {
                 None => {
                     println!(
                         "{}",
-                        SimpleCast::etherscan_source(chain.inner, address, etherscan_api_key)
-                            .await?
+                        SimpleCast::etherscan_source(chain.inner, address, api_key).await?
                     );
                 }
             }

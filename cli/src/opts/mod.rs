@@ -20,7 +20,7 @@ use foundry_config::{
         value::{Dict, Map, Value},
         Metadata, Profile,
     },
-    Config,
+    impl_figment_convert_cast, Config,
 };
 
 use serde::Serialize;
@@ -58,6 +58,7 @@ pub struct ClapChain {
     pub inner: Chain,
 }
 
+impl_figment_convert_cast!(EthereumOpts);
 #[derive(Parser, Debug, Clone, Serialize)]
 pub struct EthereumOpts {
     #[clap(env = "ETH_RPC_URL", long = "rpc-url", help = "The RPC endpoint.")]
@@ -67,6 +68,7 @@ pub struct EthereumOpts {
     pub flashbots: bool,
 
     #[clap(long, env = "ETHERSCAN_API_KEY")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub etherscan_api_key: Option<String>,
 
     #[clap(long, env = "CHAIN", default_value = "mainnet")]
@@ -156,10 +158,22 @@ impl figment::Provider for EthereumOpts {
     }
 
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
-        let mut dict = Dict::new();
-        let rpc = self.rpc_url().map_err(|err| err.to_string())?;
-        dict.insert("eth_rpc_url".to_string(), Value::from(rpc.to_string()));
-        dict.insert("chain".to_string(), Value::from(self.chain.to_string()));
+        let value = Value::serialize(self)?;
+        let mut dict = value.into_dict().unwrap();
+
+        let rpc_url = self.rpc_url().map_err(|err| err.to_string())?;
+        if rpc_url != "http://localhost:8545" {
+            dict.insert("eth_rpc_url".to_string(), rpc_url.to_string().into());
+        }
+
+        if let Some(from) = self.wallet.from {
+            dict.insert("sender".to_string(), format!("{:?}", from).into());
+        }
+
+        if let Some(etherscan_api_key) = &self.etherscan_api_key {
+            dict.insert("etherscan_api_key".to_string(), etherscan_api_key.to_string().into());
+        }
+
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
 }
