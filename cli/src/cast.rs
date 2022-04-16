@@ -159,7 +159,7 @@ async fn main() -> eyre::Result<()> {
             );
         }
         Subcommands::AccessList { eth, address, sig, args, block, to_json } => {
-            let config: Config = (&eth).into();
+            let config = Config::from(&eth);
             let provider = Provider::try_from(
                 config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
             )?;
@@ -182,7 +182,7 @@ async fn main() -> eyre::Result<()> {
         }
 
         Subcommands::Call { address, sig, args, block, eth } => {
-            let config: Config = (&eth).into();
+            let config = Config::from(&eth);
             let provider = Provider::try_from(
                 config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
             )?;
@@ -250,7 +250,7 @@ async fn main() -> eyre::Result<()> {
             to_json,
             resend,
         } => {
-            let config: Config = (&eth).into();
+            let config = Config::from(&eth);
             let provider = Provider::try_from(
                 config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
             )?;
@@ -357,7 +357,7 @@ async fn main() -> eyre::Result<()> {
             }
         }
         Subcommands::PublishTx { eth, raw_tx, cast_async } => {
-            let config: Config = (&eth).into();
+            let config = Config::from(&eth);
             let provider = Provider::try_from(
                 config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
             )?;
@@ -374,7 +374,7 @@ async fn main() -> eyre::Result<()> {
             }
         }
         Subcommands::Estimate { to, sig, args, value, eth } => {
-            let config: Config = (&eth).into();
+            let config = Config::from(&eth);
             let provider = Provider::try_from(
                 config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
             )?;
