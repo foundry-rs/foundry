@@ -31,7 +31,7 @@ use ethers::{
 };
 use foundry_evm::{
     revm,
-    revm::{db::CacheDB, CreateScheme, Env, Return, TransactOut, TransactTo, TxEnv},
+    revm::{db::CacheDB, Account, CreateScheme, Env, Return, TransactOut, TransactTo, TxEnv},
     utils::u256_to_h256_le,
 };
 use parking_lot::RwLock;
@@ -40,6 +40,8 @@ use storage::Blockchain;
 use tracing::trace;
 
 pub mod storage;
+
+pub type State = foundry_evm::HashMap<Address, Account>;
 
 #[derive(Debug, Clone)]
 pub struct MinedTransaction {
@@ -330,7 +332,7 @@ impl Backend {
         &self,
         request: CallRequest,
         fee_details: FeeDetails,
-    ) -> (Return, TransactOut, u64) {
+    ) -> (Return, TransactOut, u64, State) {
         trace!(target: "backend", "calling [{:?}] fees={:?}", request, fee_details);
         let CallRequest { from, to, gas, value, data, nonce, access_list, .. } = request;
 
@@ -362,10 +364,10 @@ impl Backend {
         evm.env = env;
         evm.database(&*db);
 
-        let (exit, out, gas, _, _) = evm.transact_ref();
+        let (exit, out, gas, state, _) = evm.transact_ref();
         trace!(target: "backend", "call return {:?} out: {:?} gas {}", exit, out, gas);
 
-        (exit, out, gas)
+        (exit, out, gas, state)
     }
 
     /// returns all receipts for the given transactions

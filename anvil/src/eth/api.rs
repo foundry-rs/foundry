@@ -31,11 +31,13 @@ use ethers::{
     abi::ethereum_types::H64,
     providers::ProviderError,
     types::{
-        transaction::eip2930::AccessList, Address, Block, BlockNumber, Bytes, Log, Trace,
-        Transaction, TransactionReceipt, TxHash, H256, U256, U64,
+        transaction::eip2930::{AccessList, AccessListItem},
+        Address, Block, BlockNumber, Bytes, Log, Trace, Transaction, TransactionReceipt, TxHash,
+        H256, U256, U64,
     },
     utils::rlp,
 };
+use foundry_evm::utils::u256_to_h256_le;
 use std::{sync::Arc, time::Duration};
 use tracing::trace;
 
@@ -475,10 +477,27 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_createAccessList`
     pub fn create_access_list(
         &self,
-        _request: CallRequest,
+        request: CallRequest,
         _number: Option<BlockNumber>,
     ) -> Result<AccessList> {
-        Ok(Default::default())
+        let from = request.from;
+        let mut state = self.backend.call(request, FeeDetails::zero()).3;
+
+        // cleanup state map
+        if let Some(from) = from {
+            let _ = state.remove(&from);
+        }
+        let _ = state.remove(&Address::zero());
+
+        let items = state
+            .into_iter()
+            .map(|(address, acc)| {
+                let storage_keys = acc.storage.into_keys().map(u256_to_h256_le).collect();
+                AccessListItem { address, storage_keys }
+            })
+            .collect();
+
+        Ok(AccessList(items))
     }
 
     /// Estimate gas needed for execution of given contract.
@@ -744,7 +763,7 @@ impl EthApi {
             self.mine_one();
 
             if let Some(interval) = interval {
-                tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
+                tokio::time::sleep(Duration::from_secs(interval)).await;
             }
         }
 
