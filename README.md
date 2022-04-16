@@ -2,7 +2,7 @@
 
 ![Github Actions][gha-badge] [![Telegram Chat][tg-badge]][tg-url] [![Telegram Support][tg-support-badge]][tg-support-url]
 
-[gha-badge]: https://img.shields.io/github/workflow/status/gakonst/foundry/test?style=flat-square
+[gha-badge]: https://img.shields.io/github/workflow/status/foundry-rs/foundry/test?style=flat-square
 [tg-badge]:
   https://img.shields.io/endpoint?color=neon&logo=telegram&label=chat&style=flat-square&url=https%3A%2F%2Ftg.sumanjay.workers.dev%2Ffoundry_rs
 [tg-url]: https://t.me/foundry_rs
@@ -36,7 +36,7 @@ curl -L https://foundry.paradigm.xyz | bash
 
 If you do not want to use the redirect, feel free to manually download the
 foundryup installation script from
-[here](https://raw.githubusercontent.com/gakonst/foundry/master/foundryup/foundryup).
+[here](https://raw.githubusercontent.com/foundry-rs/foundry/master/foundryup/foundryup).
 
 Then, run `foundryup` in a new terminal session or after reloading your `PATH`.
 
@@ -47,26 +47,26 @@ Other ways to use `foundryup`, and other documentation, can be found [here](./fo
 For people that want to install from source, you can do so like below:
 
 ```sh
-git clone https://github.com/gakonst/foundry
+git clone https://github.com/foundry-rs/foundry
 cd foundry
 cargo install --path ./cli --bins --locked --force
 ```
 
-Or via `cargo install --git https://github.com/gakonst/foundry --locked`
+Or via `cargo install --git https://github.com/foundry-rs/foundry --locked`
 
 ### Installing via Docker
 
-Foundry maintains a [Docker image repository](https://github.com/gakonst/foundry/pkgs/container/foundry).
+Foundry maintains a [Docker image repository](https://github.com/foundry-rs/foundry/pkgs/container/foundry).
 
 You can pull the latest release image like so:  
 ```sh
-docker pull ghcr.io/gakonst/foundry:latest
+docker pull ghcr.io/foundry-rs/foundry:latest
 ```
 For examples and guides on using this image, see the [Docker section](https://book.getfoundry.sh/tutorials/foundry-docker.html) in the book.
 
 ### Manual download
 
-You can manually download nightly releases [here](https://github.com/gakonst/foundry/releases).
+You can manually download nightly releases [here](https://github.com/foundry-rs/foundry/releases).
 
 ## Forge
 
@@ -194,8 +194,8 @@ First, see if the answer to your question can be found in [book][foundry-book], 
 If the answer is not there:
 
 - Join the [support Telegram][tg-support-url] to get help, or
-- Open a [discussion](https://github.com/gakonst/foundry/discussions/new) with your question, or
-- Open an issue with [the bug](https://github.com/gakonst/foundry/issues/new)
+- Open a [discussion](https://github.com/foundry-rs/foundry/discussions/new) with your question, or
+- Open an issue with [the bug](https://github.com/foundry-rs/foundry/issues/new)
 
 If you want to contribute, or follow along with contributor discussion,
 you can use our [main telegram](https://t.me/foundry_rs) to chat with us about the development of Foundry!
@@ -214,12 +214,12 @@ you can use our [main telegram](https://t.me/foundry_rs) to chat with us about t
   to auto-detect and manage multiple Solidity versions.
 - [Brock Elmore](https://twitter.com/brockjelmore): For extending the VM's
   cheatcodes and implementing
-  [structured call tracing](https://github.com/gakonst/foundry/pull/192), a
+  [structured call tracing](https://github.com/foundry-rs/foundry/pull/192), a
   critical feature for debugging smart contract calls.
 - All the other
-  [contributors](https://github.com/gakonst/foundry/graphs/contributors) to the
+  [contributors](https://github.com/foundry-rs/foundry/graphs/contributors) to the
   [ethers-rs](https://github.com/gakonst/ethers-rs) &
-  [foundry](https://github.com/gakonst/foundry) repositories and chatrooms.
+  [foundry](https://github.com/foundry-rs/foundry) repositories and chatrooms.
 
 [foundry-book]: https://book.getfoundry.sh
 [foundry-gha]: https://github.com/foundry-rs/foundry-toolchain
