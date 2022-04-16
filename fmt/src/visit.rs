@@ -75,7 +75,9 @@ pub trait Visitor {
         Ok(())
     }
 
-    fn visit_expr(&mut self, _expr: &mut Expression) -> VResult {
+    fn visit_expr(&mut self, expr: &mut Expression) -> VResult {
+        self.visit_source(expr.loc())?;
+
         Ok(())
     }
 
@@ -278,6 +280,14 @@ impl Visitable for Statement {
 impl Visitable for VariableDeclaration {
     fn visit(&mut self, v: &mut impl Visitor) -> VResult {
         v.visit_var_declaration(self)?;
+
+        Ok(())
+    }
+}
+
+impl Visitable for Expression {
+    fn visit(&mut self, v: &mut impl Visitor) -> VResult {
+        v.visit_expr(self)?;
 
         Ok(())
     }
