@@ -1,6 +1,7 @@
 //! background service
 
-use crate::eth::{backend, miner::Miner, pool::Pool};
+use crate::eth::{backend, fees::FeeHistoryService, miner::Miner, pool::Pool};
+use futures::FutureExt;
 use std::{
     future::Future,
     pin::Pin,
@@ -22,11 +23,18 @@ pub struct NodeService {
     backend: Arc<backend::mem::Backend>,
     /// the miner responsible to select transactions from the `pool´
     miner: Miner,
+    /// maintenance task for fee history related tasks
+    fee_history: FeeHistoryService,
 }
 
 impl NodeService {
-    pub fn new(pool: Arc<Pool>, backend: Arc<backend::mem::Backend>, miner: Miner) -> Self {
-        Self { pool, backend, miner }
+    pub fn new(
+        pool: Arc<Pool>,
+        backend: Arc<backend::mem::Backend>,
+        miner: Miner,
+        fee_history: FeeHistoryService,
+    ) -> Self {
+        Self { pool, backend, miner, fee_history }
     }
 }
 
@@ -48,6 +56,9 @@ impl Future for NodeService {
             );
             trace!(target: "node", "pruned transaction markers {:?}", res);
         }
+
+        // poll the fee history task
+        let _ = pin.fee_history.poll_unpin(cx);
 
         Poll::Pending
     }

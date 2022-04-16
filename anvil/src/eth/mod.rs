@@ -5,7 +5,7 @@ pub mod backend;
 
 pub mod error;
 
-mod fees;
+pub mod fees;
 pub mod miner;
 pub mod pool;
 pub mod sign;

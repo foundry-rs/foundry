@@ -1,8 +1,39 @@
-use crate::eth::error::BlockchainError;
+use crate::eth::{backend::notifications::NewBlockNotifications, error::BlockchainError};
 use ethers::types::U256;
 use parking_lot::Mutex;
 use serde::Serialize;
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    future::Future,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+};
+
+/// An async service that takes care of the `FeeHistory` cache
+pub struct FeeHistoryService {
+    /// incoming notifications about new blocks
+    new_blocks: NewBlockNotifications,
+    /// contains all fee history related entries
+    cache: FeeHistoryCache,
+}
+
+// === impl FeeHistoryService ===
+
+impl FeeHistoryService {
+    pub fn new(new_blocks: NewBlockNotifications, cache: FeeHistoryCache) -> Self {
+        Self { new_blocks, cache }
+    }
+}
+
+// An endless future that listens for new blocks and updates the cache
+impl Future for FeeHistoryService {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        Poll::Pending
+    }
+}
 
 /// Response of `eth_feeHistory`
 #[derive(Debug, Serialize)]
