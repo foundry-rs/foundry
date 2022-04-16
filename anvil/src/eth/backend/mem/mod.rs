@@ -360,10 +360,16 @@ impl Backend {
         let gas_limit = gas.unwrap_or_else(|| self.gas_limit());
         let mut env = self.env.read().clone();
 
+        if let Some(base) = max_fee_per_gas {
+            env.block.basefee = base;
+        }
+
+        let gas_price = gas_price.or(max_fee_per_gas).unwrap_or_else(|| self.gas_price());
+
         env.tx = TxEnv {
             caller: from.unwrap_or_default(),
             gas_limit: gas_limit.as_u64(),
-            gas_price: gas_price.or(max_fee_per_gas).unwrap_or_else(|| self.gas_price()),
+            gas_price,
             gas_priority_fee: max_priority_fee_per_gas,
             transact_to: match to {
                 Some(addr) => TransactTo::Call(addr),

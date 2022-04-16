@@ -456,6 +456,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_call`
     pub fn call(&self, request: CallRequest, _number: Option<BlockNumber>) -> Result<Bytes> {
+        trace!(target: "backend", "eth_call");
         let fees = FeeDetails::new(
             request.gas_price,
             request.max_fee_per_gas,
@@ -504,6 +505,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_estimateGas`
     pub fn estimate_gas(&self, request: CallRequest, _: Option<BlockNumber>) -> Result<U256> {
+        trace!(target: "backend", "eth_estimateGas");
         let gas = self.backend.call(request, FeeDetails::zero()).2;
 
         Ok(gas.into())
