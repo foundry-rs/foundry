@@ -10,7 +10,7 @@ use ethers::{
         Client,
     },
     solc::{
-        artifacts::{BytecodeHash, Source},
+        artifacts::{BytecodeHash, IndexedPathBuf, Source},
         AggregatedCompilerOutput, CompilerInput, Project, Solc,
     },
 };
@@ -211,7 +211,10 @@ impl VerifyArgs {
         };
         let input = CompilerInput {
             language: "Solidity".to_string(),
-            sources: BTreeMap::from([("constract.sol".into(), Source { content: content.into() })]),
+            sources: BTreeMap::from([(
+                IndexedPathBuf::new("constract.sol".into(), 0),
+                Source { content: content.into() },
+            )]),
             settings: Default::default(),
         };
 
