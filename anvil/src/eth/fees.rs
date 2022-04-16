@@ -1,4 +1,7 @@
-use crate::eth::{backend::notifications::NewBlockNotifications, error::BlockchainError};
+use crate::eth::{
+    backend::{info::StorageInfo, notifications::NewBlockNotifications},
+    error::BlockchainError,
+};
 use ethers::types::{H256, U256};
 use futures::{Stream, StreamExt};
 use parking_lot::{Mutex, RwLock};
@@ -78,6 +81,8 @@ pub struct FeeHistoryService {
     fee_history_limit: u64,
     // current fee info
     fees: FeeManager,
+    /// a type that can fetch ethereum-storage data
+    storage_info: StorageInfo,
 }
 
 // === impl FeeHistoryService ===
@@ -87,8 +92,15 @@ impl FeeHistoryService {
         new_blocks: NewBlockNotifications,
         cache: FeeHistoryCache,
         fees: FeeManager,
+        storage_info: StorageInfo,
     ) -> Self {
-        Self { new_blocks, cache, fee_history_limit: MAX_FEE_HISTORY_CACHE_SIZE, fees }
+        Self {
+            new_blocks,
+            cache,
+            fee_history_limit: MAX_FEE_HISTORY_CACHE_SIZE,
+            fees,
+            storage_info,
+        }
     }
 
     fn create_cache_entry(
@@ -108,6 +120,13 @@ impl FeeHistoryService {
                     val
                 })
                 .collect()
+        };
+
+        let base_fee = self.fees.base_fee();
+        let mut item = FeeHistoryCacheItem {
+            base_fee: base_fee.as_u64(),
+            gas_used_ratio: 0f64,
+            rewards: Vec::new(),
         };
 
         todo!()

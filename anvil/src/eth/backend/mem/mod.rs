@@ -574,7 +574,7 @@ impl Backend {
         Ok(None)
     }
 
-    fn get_block(&self, number: impl Into<BlockNumber>) -> Option<Block> {
+    pub fn get_block(&self, number: impl Into<BlockNumber>) -> Option<Block> {
         let storage = self.blockchain.storage.read();
         let hash = match number.into() {
             BlockNumber::Latest => storage.best_hash,
@@ -717,6 +717,18 @@ impl Backend {
         }
 
         Ok(None)
+    }
+
+    /// Returns all receipts of the block
+    pub fn mined_receipts(&self, hash: H256) -> Option<Vec<TypedReceipt>> {
+        let block = self.mined_block_by_hash(hash)?;
+        let mut receipts = Vec::new();
+        let storage = self.blockchain.storage.read();
+        for tx in block.transactions {
+            let receipt = storage.transactions.get(&tx)?.receipt.clone();
+            receipts.push(receipt);
+        }
+        Some(receipts)
     }
 
     /// Returns the transaction receipt for the given hash

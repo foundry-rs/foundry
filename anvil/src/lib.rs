@@ -17,6 +17,7 @@ use ethers::{
 };
 
 use crate::eth::{
+    backend::info::StorageInfo,
     fees::{FeeHistoryService, FeeManager},
     miner::Miner,
 };
@@ -85,6 +86,7 @@ pub async fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
         backend.new_block_notifications(),
         Arc::clone(&fee_history_cache),
         fees,
+        StorageInfo::new(Arc::clone(&backend)),
     );
 
     // create the cloneable api wrapper
