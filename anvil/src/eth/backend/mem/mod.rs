@@ -776,6 +776,25 @@ impl Backend {
         })
     }
 
+    pub async fn transaction_by_block_number_and_index(
+        &self,
+        number: BlockNumber,
+        index: Index,
+    ) -> Result<Option<Transaction>, BlockchainError> {
+        if let Some(hash) = self.mined_block_by_number(number).and_then(|b| b.hash) {
+            return Ok(self.mined_transaction_by_block_hash_and_index(hash, index))
+        }
+
+        let number = self.convert_block_number(Some(number));
+        if let Some(ref fork) = self.fork {
+            if fork.predates_fork(number) {
+                return Ok(fork.transaction_by_block_number_and_index(number, index.into()).await?)
+            }
+        }
+
+        Ok(None)
+    }
+
     pub async fn transaction_by_block_hash_and_index(
         &self,
         hash: H256,

@@ -133,7 +133,7 @@ impl EthApi {
                 self.transaction_by_block_hash_and_index(hash, index).await.to_rpc_result()
             }
             EthRequest::EthGetTransactionByBlockNumberAndIndex(num, index) => {
-                self.transaction_by_block_number_and_index(num, index).to_rpc_result()
+                self.transaction_by_block_number_and_index(num, index).await.to_rpc_result()
             }
             EthRequest::EthGetTransactionReceipt(tx) => {
                 self.transaction_receipt(tx).await.to_rpc_result()
@@ -531,12 +531,12 @@ impl EthApi {
     /// Returns transaction by given block number and index.
     ///
     /// Handler for ETH RPC call: `eth_getTransactionByBlockNumberAndIndex`
-    pub fn transaction_by_block_number_and_index(
+    pub async fn transaction_by_block_number_and_index(
         &self,
-        _: BlockNumber,
-        _: Index,
+        block: BlockNumber,
+        idx: Index,
     ) -> Result<Option<Transaction>> {
-        Err(BlockchainError::RpcUnimplemented)
+        self.backend.transaction_by_block_number_and_index(block, idx).await
     }
 
     /// Returns transaction receipt by transaction hash.

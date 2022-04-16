@@ -118,6 +118,19 @@ impl ClientFork {
         self.provider().get_transaction_count(address, Some(blocknumber.into())).await
     }
 
+    pub async fn transaction_by_block_number_and_index(
+        &self,
+        number: u64,
+        index: usize,
+    ) -> Result<Option<Transaction>, ProviderError> {
+        if let Some(block) = self.block_by_number(number).await? {
+            if let Some(tx_hash) = block.transactions.get(index) {
+                return self.transaction_by_hash(*tx_hash).await
+            }
+        }
+        Ok(None)
+    }
+
     pub async fn transaction_by_block_hash_and_index(
         &self,
         hash: H256,
