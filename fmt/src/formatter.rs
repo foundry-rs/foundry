@@ -4,8 +4,8 @@ use std::fmt::Write;
 
 use indent_write::fmt::IndentWriter;
 use solang_parser::pt::{
-    ContractDefinition, DocComment, EnumDefinition, Identifier, Loc, SourceUnit, SourceUnitPart,
-    StringLiteral, StructDefinition,
+    ContractDefinition, DocComment, EnumDefinition, Expression, Identifier, Loc, SourceUnit,
+    SourceUnitPart, StringLiteral, StructDefinition, Type, VariableDeclaration,
 };
 
 use crate::{
@@ -74,13 +74,13 @@ impl<'a, W: Write> Formatter<'a, W> {
     fn indent(&mut self, delta: usize) {
         let level = self.level();
 
-        *level = level.saturating_add(delta)
+        *level += delta;
     }
 
     fn dedent(&mut self, delta: usize) {
         let level = self.level();
 
-        *level = level.saturating_sub(delta)
+        *level -= delta;
     }
 
     /// Write opening bracket with respect to `config.bracket_spacing` setting:
@@ -442,6 +442,46 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    fn visit_expr(&mut self, expr: &mut Expression) -> VResult {
+        match expr {
+            Expression::Type(loc, typ) => match typ {
+                Type::Address => write!(self, "address")?,
+                Type::AddressPayable => write!(self, "address payable")?,
+                Type::Payable => write!(self, "payable")?,
+                Type::Bool => write!(self, "bool")?,
+                Type::String => write!(self, "string")?,
+                Type::Int(n) => write!(self, "int{}", n)?,
+                Type::Uint(n) => write!(self, "uint{}", n)?,
+                Type::Bytes(n) => write!(self, "bytes{}", n)?,
+                Type::Rational => write!(self, "rational")?,
+                Type::DynamicBytes => write!(self, "bytes")?,
+                Type::Mapping(_, from, to) => {
+                    write!(self, "mapping(")?;
+                    from.visit(self)?;
+                    write!(self, " => ")?;
+                    to.visit(self)?;
+                    write!(self, ")")?;
+                }
+                Type::Function { .. } => loc.visit(self)?,
+            },
+            _ => expr.visit(self)?,
+        };
+
+        Ok(())
+    }
+
+    fn visit_var_declaration(&mut self, var: &mut VariableDeclaration) -> VResult {
+        var.ty.visit(self)?;
+
+        if let Some(storage) = &var.storage {
+            write!(self, " {}", storage)?;
+        }
+
+        write!(self, " {}", var.name.name)?;
+
+        Ok(())
+    }
+
     fn visit_struct(&mut self, structure: &mut StructDefinition) -> VResult {
         if !structure.doc.is_empty() {
             structure.doc.visit(self)?;
@@ -598,7 +638,7 @@ mod tests {
         test_formatter(
             FormatterConfig::default(),
             "struct   Foo  {   
-              } struct   Bar  {    uint256 foo ;string bar ;  }",
+              } struct   Bar  {    uint foo ;string bar ;  }",
             "
 struct Foo {}
 
