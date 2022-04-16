@@ -2,12 +2,16 @@ use colored::Colorize;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use crate::{
-    eth::backend::{
-        db::{Db, ForkedDatabase},
-        fork::{ClientFork, ClientForkConfig},
+    eth::{
+        backend::{
+            db::{Db, ForkedDatabase},
+            fork::{ClientFork, ClientForkConfig},
+        },
+        fees::INITIAL_BASE_FEE,
     },
     mem,
     revm::db::CacheDB,
+    FeeManager,
 };
 use ethers::{
     core::k256::ecdsa::SigningKey,
@@ -39,6 +43,8 @@ pub struct NodeConfig {
     pub gas_limit: U256,
     /// Default gas price for all txs
     pub gas_price: U256,
+    /// Default base fee
+    pub base_fee: U256,
     /// Signer accounts that will be initialised with `genesis_balance` in the genesis block
     pub genesis_accounts: Vec<Wallet<SigningKey>>,
     /// Native token balance of every genesis account in the genesis block
@@ -81,6 +87,7 @@ impl Default for NodeConfig {
             eth_rpc_url: None,
             fork_block_number: None,
             account_generator: None,
+            base_fee: INITIAL_BASE_FEE.into(),
         }
     }
 }
@@ -110,6 +117,13 @@ impl NodeConfig {
     #[must_use]
     pub fn gas_price<U: Into<U256>>(mut self, gas_price: U) -> Self {
         self.gas_price = gas_price.into();
+        self
+    }
+
+    /// Sets the base fee
+    #[must_use]
+    pub fn base_fee<U: Into<U256>>(mut self, base_fee: U) -> Self {
+        self.base_fee = base_fee.into();
         self
     }
 
@@ -266,9 +280,14 @@ Chain ID:       {}
         // configure the revm environment
         let mut env = revm::Env {
             cfg: CfgEnv { ..Default::default() },
-            block: BlockEnv { gas_limit: self.gas_limit, ..Default::default() },
+            block: BlockEnv {
+                gas_limit: self.gas_limit,
+                basefee: self.base_fee,
+                ..Default::default()
+            },
             tx: TxEnv { chain_id: Some(self.chain_id), ..Default::default() },
         };
+        let fees = FeeManager::new(self.base_fee, self.gas_price);
 
         let (db, fork): (Arc<RwLock<dyn Db>>, Option<ClientFork>) = if let Some(eth_rpc_url) =
             self.eth_rpc_url.clone()
@@ -329,7 +348,7 @@ Chain ID:       {}
             Arc::new(RwLock::new(env)),
             self.genesis_balance,
             self.genesis_accounts.iter().map(|acc| acc.address()),
-            self.gas_price,
+            fees,
             fork,
         );
 

@@ -2,6 +2,7 @@
 
 use crate::eth::{
     backend::{db::Db, executor::TransactionExecutor},
+    fees,
     pool::transactions::PoolTransaction,
 };
 use ethers::prelude::{BlockNumber, TxHash, H256, U256, U64};
@@ -14,7 +15,7 @@ use crate::eth::{
         time::TimeManager,
     },
     error::{BlockchainError, InvalidTransactionError},
-    fees::FeeDetails,
+    fees::{FeeDetails, FeeManager},
 };
 use anvil_core::{
     eth::{
@@ -67,8 +68,6 @@ pub struct Backend {
     blockchain: Blockchain,
     /// env data of the chain
     env: Arc<RwLock<Env>>,
-    /// Default gas price for all transactions
-    gas_price: Arc<RwLock<U256>>,
     /// this is set if this is currently forked off another client
     fork: Option<ClientFork>,
     /// provides time related info, like timestamp
@@ -77,27 +76,30 @@ pub struct Backend {
     cheats: CheatsManager,
     /// listeners for new blocks that get notified when a new block was imported
     new_block_listeners: Arc<Mutex<Vec<UnboundedSender<NewBlockNotification>>>>,
+    /// contains fee data
+    fees: FeeManager,
 }
 
 impl Backend {
     /// Create a new instance of in-mem backend.
-    pub fn new(db: Arc<RwLock<dyn Db>>, env: Arc<RwLock<Env>>, gas_price: U256) -> Self {
+    pub fn new(db: Arc<RwLock<dyn Db>>, env: Arc<RwLock<Env>>, fees: FeeManager) -> Self {
         Self {
             db,
             blockchain: Blockchain::default(),
             env,
-            gas_price: Arc::new(RwLock::new(gas_price)),
             fork: None,
             time: Default::default(),
             cheats: Default::default(),
             new_block_listeners: Default::default(),
+            fees,
         }
     }
 
     /// Creates a new empty blockchain backend
     pub fn empty(env: Arc<RwLock<Env>>, gas_price: U256) -> Self {
         let db = CacheDB::default();
-        Self::new(Arc::new(RwLock::new(db)), env, gas_price)
+        let fees = FeeManager::new(gas_price, gas_price);
+        Self::new(Arc::new(RwLock::new(db)), env, fees)
     }
 
     /// Initialises the balance of the given accounts
@@ -106,7 +108,7 @@ impl Backend {
         env: Arc<RwLock<Env>>,
         balance: U256,
         accounts: impl IntoIterator<Item = Address>,
-        gas_price: U256,
+        fees: FeeManager,
         fork: Option<ClientFork>,
     ) -> Self {
         // insert genesis accounts
@@ -131,11 +133,11 @@ impl Backend {
             db,
             blockchain,
             env,
-            gas_price: Arc::new(RwLock::new(gas_price)),
             fork,
             time: Default::default(),
             cheats: Default::default(),
             new_block_listeners: Default::default(),
+            fees,
         }
     }
 
@@ -157,6 +159,11 @@ impl Backend {
     /// Returns the `CheatsManager` responsible for executing cheatcodes
     pub fn cheats(&self) -> &CheatsManager {
         &self.cheats
+    }
+
+    /// Returns the `FeeManager` that manages fee/pricings
+    pub fn fees(&self) -> &FeeManager {
+        &self.fees
     }
 
     /// The env data of the blockchain
@@ -232,31 +239,26 @@ impl Backend {
 
     /// Returns the current basefee
     pub fn base_fee(&self) -> U256 {
-        self.env().read().block.basefee
+        self.fees.base_fee()
     }
 
     /// Sets the current basefee
     pub fn set_base_fee(&self, basefee: U256) {
-        // TODO this should probably managed separately
-        let mut env = self.env().write();
-        env.block.basefee = basefee;
+        self.fees.set_base_fee(basefee)
     }
 
     /// Returns the current gas price
     pub fn gas_price(&self) -> U256 {
-        *self.gas_price.read()
+        self.fees.gas_price()
     }
 
-    /// Returns the current gas price
+    /// Sets the gas price
     pub fn set_gas_price(&self, price: U256) {
-        let mut gas = self.gas_price.write();
-        *gas = price;
+        self.fees.set_gas_price(price)
     }
 
-    /// Return the base fee at the given height
     pub fn elasticity(&self) -> f64 {
-        // default elasticity
-        0.125
+        self.fees.elasticity()
     }
 
     /// Validates the transaction's validity when it comes to nonce, payment
@@ -296,6 +298,8 @@ impl Backend {
     ///  needs an additional validation step: gas limit, fee
     pub fn mine_block(&self, pool_transactions: Vec<Arc<PoolTransaction>>) -> U64 {
         trace!(target: "backend", "creating new block with {} transactions", pool_transactions.len());
+
+        let current_base_fee = self.base_fee();
         // acquire all locks
         let mut env = self.env.write();
         let mut db = self.db.write();
@@ -303,6 +307,7 @@ impl Backend {
 
         // increase block number for this block
         env.block.number = env.block.number.saturating_add(U256::one());
+        env.block.basefee = current_base_fee;
 
         let executor = TransactionExecutor {
             db: &mut *db,

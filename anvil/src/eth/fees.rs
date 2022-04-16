@@ -1,6 +1,7 @@
 use crate::eth::{backend::notifications::NewBlockNotifications, error::BlockchainError};
-use ethers::types::U256;
-use parking_lot::Mutex;
+use ethers::types::{H256, U256};
+use futures::{Stream, StreamExt};
+use parking_lot::{Mutex, RwLock};
 use serde::Serialize;
 use std::{
     collections::BTreeMap,
@@ -10,20 +11,109 @@ use std::{
     task::{Context, Poll},
 };
 
+/// Maximum number of entries in the fee history cache
+pub const MAX_FEE_HISTORY_CACHE_SIZE: u64 = 2048u64;
+
+/// Initial base fee for EIP-1559 blocks.
+pub const INITIAL_BASE_FEE: u64 = 1_000_000_000;
+
+/// Bounds the amount the base fee can change between blocks.
+pub const BASE_FEE_CHANGE_DENOMINATOR: u64 = 8;
+
+pub fn default_elasticity() -> f64 {
+    1f64 / BASE_FEE_CHANGE_DENOMINATOR as f64
+}
+
+/// Stores the fee related information
+#[derive(Debug, Clone)]
+pub struct FeeManager {
+    base_fee: Arc<RwLock<U256>>,
+    gas_price: Arc<RwLock<U256>>,
+    elasticity: Arc<RwLock<f64>>,
+}
+
+// === impl FeeConfig ===
+
+impl FeeManager {
+    pub fn new(base_fee: U256, gas_price: U256) -> Self {
+        Self {
+            base_fee: Arc::new(RwLock::new(base_fee)),
+            gas_price: Arc::new(RwLock::new(gas_price)),
+            elasticity: Arc::new(RwLock::new(default_elasticity())),
+        }
+    }
+
+    pub fn elasticity(&self) -> f64 {
+        *self.elasticity.read()
+    }
+
+    pub fn gas_price(&self) -> U256 {
+        *self.gas_price.read()
+    }
+
+    pub fn base_fee(&self) -> U256 {
+        *self.base_fee.read()
+    }
+
+    /// Returns the current gas price
+    pub fn set_gas_price(&self, price: U256) {
+        let mut gas = self.gas_price.write();
+        *gas = price;
+    }
+
+    /// Returns the current base fee
+    pub fn set_base_fee(&self, fee: U256) {
+        let mut base = self.base_fee.write();
+        *base = fee;
+    }
+}
+
 /// An async service that takes care of the `FeeHistory` cache
 pub struct FeeHistoryService {
     /// incoming notifications about new blocks
     new_blocks: NewBlockNotifications,
     /// contains all fee history related entries
     cache: FeeHistoryCache,
+    /// number of items to consider
+    fee_history_limit: u64,
+    // current fee info
+    fees: FeeManager,
 }
 
 // === impl FeeHistoryService ===
 
 impl FeeHistoryService {
-    pub fn new(new_blocks: NewBlockNotifications, cache: FeeHistoryCache) -> Self {
-        Self { new_blocks, cache }
+    pub fn new(
+        new_blocks: NewBlockNotifications,
+        cache: FeeHistoryCache,
+        fees: FeeManager,
+    ) -> Self {
+        Self { new_blocks, cache, fee_history_limit: MAX_FEE_HISTORY_CACHE_SIZE, fees }
     }
+
+    fn create_cache_entry(
+        &self,
+        hash: H256,
+        elasticity: f64,
+    ) -> (FeeHistoryCacheItem, Option<u64>) {
+        // percentile list from 0.0 to 100.0 with a 0.5 resolution.
+        // this will create 200 percentile points
+        let reward_percentiles: Vec<f64> = {
+            let mut percentile: f64 = 0.0;
+            (0..=200)
+                .into_iter()
+                .map(|_| {
+                    let val = percentile;
+                    percentile += 0.5;
+                    val
+                })
+                .collect()
+        };
+
+        todo!()
+    }
+
+    fn insert_cache_entry(&mut self, item: FeeHistoryCacheItem, block_number: Option<u64>) {}
 }
 
 // An endless future that listens for new blocks and updates the cache
@@ -31,6 +121,17 @@ impl Future for FeeHistoryService {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let pin = self.get_mut();
+
+        while let Poll::Ready(Some(notifiaction)) = pin.new_blocks.poll_next_unpin(cx) {
+            let hash = notifiaction.hash;
+            let elasticity = default_elasticity();
+
+            // add the imported block.
+            let (result, block_number) = pin.create_cache_entry(hash, elasticity);
+            pin.insert_cache_entry(result, block_number)
+        }
+
         Poll::Pending
     }
 }

@@ -16,7 +16,10 @@ use ethers::{
     types::{Address, U256},
 };
 
-use crate::eth::{fees::FeeHistoryService, miner::Miner};
+use crate::eth::{
+    fees::{FeeHistoryService, FeeManager},
+    miner::Miner,
+};
 use eth::backend::fork::ClientFork;
 use ethers::providers::Ws;
 use parking_lot::Mutex;
@@ -76,9 +79,13 @@ pub async fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
     let miner = Miner::new(mode);
 
     let dev_signer: Box<dyn EthSigner> = Box::new(DevSigner::new(accounts));
+    let fees = backend.fees().clone();
     let fee_history_cache = Arc::new(Mutex::new(Default::default()));
-    let fee_history_service =
-        FeeHistoryService::new(backend.new_block_notifications(), Arc::clone(&fee_history_cache));
+    let fee_history_service = FeeHistoryService::new(
+        backend.new_block_notifications(),
+        Arc::clone(&fee_history_cache),
+        fees,
+    );
 
     // create the cloneable api wrapper
     let api = EthApi::new(
