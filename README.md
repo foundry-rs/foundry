@@ -100,7 +100,7 @@ See the benchmarks below. More benchmarks can be found in the [v0.2.0 announceme
 
 | Project                         | Forge | DappTools | Speedup |
 | ------------------------------- | ----- | --------- | ------- |
-| [maple-labs/loan]               | 800ms | 4m28s     | 335x    |
+| [maple-labs/loan][loan]         | 800ms | 4m28s     | 335x    |
 | [Rari-Capital/solmate][solmate] | 2.8s  | 6m34s     | 140x    |
 | [reflexer-labs/geb][geb]        | 0.4s  | 23s       | 57.5x   |
 | [Rari-Capital/vaults][vaults]   | 0.28s | 6.5s      | 23x     |
