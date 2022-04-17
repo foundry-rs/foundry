@@ -25,22 +25,24 @@ pub fn fuzz_param(param: &ParamType) -> impl Strategy<Value = Token> {
         // rejection sampling if it's determined the bias is too severe. Rejection sampling may
         // slow down tests as it resamples bad values, so may want to benchmark the performance
         // hit and weigh that against the current bias before implementing
-        ParamType::Int(n) => match n / 8 {
-            32 => any::<[u8; 32]>()
-                .prop_map(move |x| I256::from_raw(U256::from(&x)).into_token())
-                .boxed(),
-            y @ 1..=31 => any::<[u8; 32]>()
+        ParamType::Int(n) => {
+            // use uint strat but convert to int
+            let nc = *n;
+            super::UintStrategy::new(*n, vec![])
                 .prop_map(move |x| {
-                    // Generate a uintN in the correct range, then shift it to the range of intN
-                    // by subtracting 2^(N-1)
-                    let uint = U256::from(&x) % U256::from(2).pow(U256::from(y * 8));
-                    let max_int_plus1 = U256::from(2).pow(U256::from(y * 8 - 1));
-                    let num = I256::from_raw(uint.overflowing_sub(max_int_plus1).0);
-                    num.into_token()
+                    // TODO: Check the bounds here. We may miss 0 or a max/min value
+                    // if this is wrong I believe?
+                    if x > U256::from(2u32).pow((nc as u32 / 2).into()) {
+                        // negative
+                        let (twos_complement, _) = (!x).overflowing_add(U256::one());
+                        I256::from_raw(twos_complement).into_token()
+                    } else {
+                        // positive
+                        I256::from_raw(x).into_token()
+                    }
                 })
-                .boxed(),
-            _ => panic!("unsupported solidity type int{}", n),
-        },
+                .boxed()
+        }
         ParamType::Uint(n) => {
             super::UintStrategy::new(*n, vec![]).prop_map(|x| x.into_token()).boxed()
         }
