@@ -2,14 +2,21 @@ name: test
 
 on: workflow_dispatch
 
+# @NOTE If you have multiple CI Workflows you should
+# ensure that the CI processes are not running simultaneous analysis on contracts
+# Enable concurrency control below
+#concurrency:
+#  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request_target' && github.head_ref || github.ref }}
+#  cancel-in-progress: true
+
 env:
   FOUNDRY_PROFILE: ci
-  
+
 jobs:
   check:
     strategy:
-      fail-fast: false
-      
+      fail-fast: true
+
     name: Foundry project
     runs-on: ubuntu-latest
     steps:
@@ -21,11 +28,18 @@ jobs:
         uses: foundry-rs/foundry-toolchain@v1
         with:
           version: nightly
-          
+
       - name: Run Forge build
-        run: forge build
+        run: |
+          forge --version
+          echo "::group::Contract Sizes"
+          forge build --sizes
+          echo "::endgroup::"
         id: build
 
       - name: Run Forge tests
-        run: forge test -vvv
+        run: |
+          echo "::group::Contract Tests"
+          forge test -vvv
+          echo "::endgroup::"
         id: test
