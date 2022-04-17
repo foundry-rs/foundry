@@ -89,7 +89,7 @@ impl Cmd for ScriptArgs {
         let verbosity = evm_opts.verbosity;
         let config = Config::from_provider(figment).sanitized();
 
-        let nonce = if let Some(ref fork_url) = evm_opts.fork_url {
+        let mut nonce = if let Some(ref fork_url) = evm_opts.fork_url {
             foundry_utils::next_nonce(evm_opts.sender, fork_url, None)?
         } else {
             U256::zero()
@@ -227,11 +227,6 @@ impl Cmd for ScriptArgs {
                 _ => {}
             }
         } else {
-            let mut nonce = if let Some(ref fork_url) = evm_opts.fork_url {
-                foundry_utils::next_nonce(evm_opts.sender, fork_url, None)?
-            } else {
-                U256::zero()
-            };
             let mut lib_deploy: VecDeque<TypedTransaction> = predeploy_libraries
                 .iter()
                 .enumerate()
@@ -368,6 +363,8 @@ impl Cmd for ScriptArgs {
                         .into_iter()
                         .map(|wallet| wallet.with_chain_id(chain))
                         .collect();
+
+                    let mut executed_transaction_receipts = vec![];
                     // Iterate through transactions, matching the `from` field with the associated
                     // wallet. Then send the transaction. Panics if we find a unknown `from`
                     txs.into_iter()
@@ -405,7 +402,9 @@ impl Cmd for ScriptArgs {
 
                             match rt.block_on(send(signer, legacy_or_1559)) {
                                 Ok(Some(res)) => {
-                                    println!("{}", serde_json::to_string_pretty(&res).expect("Bad serialization"));
+                                    let tx_str = serde_json::to_string_pretty(&res).expect("Bad serialization");
+                                    println!("{}", tx_str);
+                                    executed_transaction_receipts.push(res);
                                 }
 
                                 Ok(None) => {
@@ -414,6 +413,21 @@ impl Cmd for ScriptArgs {
                                 Err(e) => panic!("Aborting! A transaction failed to send: {:#?}", e)
                             };
                         });
+
+                    let mut out = config.out.clone();
+                    let target_fname = target.source.file_name().expect("No file name");
+                    out.push(target_fname);
+                    out.push("scripted_transactions");
+                    std::fs::create_dir_all(out.clone())?;
+                    out.push(self.sig.clone() + &format!("_executed_{}.json", chain));
+                    let mut file = std::fs::File::create(out.clone())?;
+                    file.write_all(
+                        serde_json::to_string_pretty(&executed_transaction_receipts)
+                            .expect("Bad serialization of receipts")
+                            .as_bytes(),
+                    )?;
+                    println!("\n\n==========================");
+                    println!("\nONCHAIN EXECUTION COMPLETE & SUCCESSFUL. Transaction receipts written to {:?}", out);
                 } else {
                     println!("\n\n==========================");
                     println!("\nSIMULATION COMPLETE. To send these transaction onchain, add `--execute` & wallet configuration(s) to the previously ran command. See forge script --help for more.");

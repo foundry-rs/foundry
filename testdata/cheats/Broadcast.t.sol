@@ -14,13 +14,13 @@ contract Test is DSTest {
         return b;
     }
 
-    function echoSender() public returns (address) {
+    function echoSender() public view returns (address) {
         return msg.sender;
     } 
 }
 
 library F {
-    function t2() public view returns (uint256) {
+    function t2() public pure returns (uint256) {
         return 1;
     }
 }
@@ -73,7 +73,7 @@ contract BroadcastTest is DSTest {
         // `Test` *into* its code. So it isn't reasonable to break solidity to our will of having *two*
         // versions of `Test` based on the sender/linker.
         cheats.broadcast(address(0x1338));
-        Test test2 = new Test();
+        new Test();
 
         cheats.broadcast(address(0x1338));
         test.t(0);     
@@ -100,7 +100,7 @@ contract BroadcastTestNoLinking is DSTest {
         NoLink test = new NoLink();
 
         cheats.broadcast(address(0x1338));
-        NoLink test2 = new NoLink();
+        new NoLink();
 
         cheats.broadcast(address(0x1338));
         test.t(0);     
