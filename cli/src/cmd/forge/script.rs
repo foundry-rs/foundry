@@ -13,8 +13,8 @@ use ethers::{
     signers::Signer,
     solc::artifacts::{CompactContractBytecode, ContractBytecode, ContractBytecodeSome},
     types::{
-        transaction::eip2718::TypedTransaction, Address, Bytes, Eip1559TransactionRequest,
-        NameOrAddress, TransactionRequest, U256,
+        transaction::eip2718::TypedTransaction, Address, Bytes, Chain, Eip1559TransactionRequest,
+        NameOrAddress, TransactionReceipt, TransactionRequest, U256,
     },
 };
 use forge::{
@@ -89,13 +89,19 @@ impl Cmd for ScriptArgs {
         let verbosity = evm_opts.verbosity;
         let config = Config::from_provider(figment).sanitized();
 
+        let nonce = if let Some(ref fork_url) = evm_opts.fork_url {
+            foundry_utils::next_nonce(evm_opts.sender, fork_url, None)?
+        } else {
+            U256::zero()
+        };
+
         let BuildOutput {
             target,
             mut contract,
             mut highlevel_known_contracts,
             mut predeploy_libraries,
             known_contracts: default_known_contracts,
-        } = self.build(&config, &evm_opts, U256::zero())?;
+        } = self.build(&config, &evm_opts, nonce)?;
 
         let mut known_contracts = highlevel_known_contracts
             .iter()
@@ -320,7 +326,10 @@ impl Cmd for ScriptArgs {
         println!("==========================");
         println!("Simulated On-chain Traces:\n");
         if let Some(txs) = result.transactions {
-            if self.execute_transactions(txs.clone(), &evm_opts, &config, &mut decoder).is_ok() {
+            if let Ok(gas_filled_txs) =
+                self.execute_transactions(txs, &evm_opts, &config, &mut decoder)
+            {
+                let txs = gas_filled_txs;
                 if self.execute {
                     // The user wants to actually send the transactions
                     let mut local_wallets = vec![];
@@ -350,14 +359,20 @@ impl Cmd for ScriptArgs {
                         self.evm_opts.fork_url.expect("No fork_url provided for onchain sending"),
                     )
                     .expect("Bad fork_url provider");
+
                     let rt = RuntimeOrHandle::new();
+                    let chain = rt.block_on(provider.get_chainid())?.as_u64();
+                    let is_legacy = self.legacy ||
+                        Chain::try_from(chain).map(|x| Chain::is_legacy(&x)).unwrap_or_default();
+                    local_wallets = local_wallets
+                        .into_iter()
+                        .map(|wallet| wallet.with_chain_id(chain))
+                        .collect();
                     // Iterate through transactions, matching the `from` field with the associated
                     // wallet. Then send the transaction. Panics if we find a unknown `from`
                     txs.into_iter()
                         .map(|tx| {
-                            let from = into_legacy(tx.clone())
-                                .from
-                                .expect("No from for onchain transaction!");
+                            let from = into_legacy_ref(&tx).from.expect("No from for onchain transaction!");
                             if let Some(wallet) =
                                 local_wallets.iter().find(|wallet| (**wallet).address() == from)
                             {
@@ -369,21 +384,34 @@ impl Cmd for ScriptArgs {
                             }
                         })
                         .for_each(|(tx, signer)| {
-                            // TODO: check if chain supports 1559. Then use `into_eip1559`
-                            match rt.block_on(signer.send_transaction(tx, None)) {
-                                // TODO: Watch for transaction inclusion & success before continuing
-                                // on. Currently, we only try once
-                                // and assume its not pending any more (bad)
-                                Ok(pending) => {
-                                    let res = rt.block_on(
-                                        signer.get_transaction_receipt(pending.tx_hash()),
-                                    );
-                                    println!("result: {:#?}", res);
+                            let mut legacy_or_1559 = if is_legacy { tx } else { TypedTransaction::Eip1559(into_1559(tx))};
+                            set_chain_id(&mut legacy_or_1559, chain);
+
+                            async fn send<T, U>(signer: SignerMiddleware<T, U>, legacy_or_1559: TypedTransaction) -> eyre::Result<Option<TransactionReceipt>>
+                                where SignerMiddleware<T, U>: Middleware
+                            {
+                                tracing::debug!("sending transaction: {:?}", legacy_or_1559);
+                                match signer
+                                    .send_transaction(legacy_or_1559, None)
+                                    .await {
+                                        Ok(pending) => {
+                                            pending
+                                                .await
+                                                .map_err(|e| eyre::eyre!(e))
+                                        }
+                                        Err(e) => Err(eyre::eyre!(e.to_string()))
                                 }
-                                Err(e) => {
-                                    // TODO: give more detailed info on transaction failure
-                                    panic!("Aborting! A transaction failed: {:#?}", e)
+                            }
+
+                            match rt.block_on(send(signer, legacy_or_1559)) {
+                                Ok(Some(res)) => {
+                                    println!("{}", serde_json::to_string_pretty(&res).expect("Bad serialization"));
                                 }
+
+                                Ok(None) => {
+                                    panic!("Failed to get transaction receipt?")
+                                }
+                                Err(e) => panic!("Aborting! A transaction failed to send: {:#?}", e)
                             };
                         });
                 } else {
@@ -418,6 +446,14 @@ pub struct BuildOutput {
     pub predeploy_libraries: Vec<ethers::types::Bytes>,
 }
 
+fn set_chain_id(tx: &mut TypedTransaction, chain_id: u64) {
+    match tx {
+        TypedTransaction::Legacy(tx) => tx.chain_id = Some(chain_id.into()),
+        TypedTransaction::Eip1559(tx) => tx.chain_id = Some(chain_id.into()),
+        _ => panic!("Wrong transaction type for expected output"),
+    }
+}
+
 fn into_legacy(tx: TypedTransaction) -> TransactionRequest {
     match tx {
         TypedTransaction::Legacy(tx) => tx,
@@ -425,21 +461,27 @@ fn into_legacy(tx: TypedTransaction) -> TransactionRequest {
     }
 }
 
-// Keeping this here for use when anvil supports eip1559
-// fn into_1559(tx: TypedTransaction) -> Eip1559TransactionRequest {
-//     match tx {
-//         TypedTransaction::Legacy(tx) => Eip1559TransactionRequest {
-//             from: tx.from,
-//             to: tx.to,
-//             value: tx.value,
-//             data: tx.data,
-//             nonce: tx.nonce,
-//             ..Default::default()
-//         },
-//         TypedTransaction::Eip1559(tx) => tx,
-//         _ => panic!("Wrong transaction type for expected output"),
-//     }
-// }
+fn into_legacy_ref(tx: &TypedTransaction) -> &TransactionRequest {
+    match tx {
+        TypedTransaction::Legacy(ref tx) => tx,
+        _ => panic!("Wrong transaction type for expected output"),
+    }
+}
+
+fn into_1559(tx: TypedTransaction) -> Eip1559TransactionRequest {
+    match tx {
+        TypedTransaction::Legacy(tx) => Eip1559TransactionRequest {
+            from: tx.from,
+            to: tx.to,
+            value: tx.value,
+            data: tx.data,
+            nonce: tx.nonce,
+            ..Default::default()
+        },
+        TypedTransaction::Eip1559(tx) => tx,
+        _ => panic!("Wrong transaction type for expected output"),
+    }
+}
 
 impl ScriptArgs {
     /// Compiles the file with auto-detection and compiler params.
@@ -539,7 +581,7 @@ impl ScriptArgs {
         evm_opts: &EvmOpts,
         config: &Config,
         decoder: &mut CallTraceDecoder,
-    ) -> eyre::Result<()> {
+    ) -> eyre::Result<VecDeque<TypedTransaction>> {
         let runtime = RuntimeOrHandle::new();
         let env = runtime.block_on(evm_opts.evm_env());
         // the db backend that serves all the data
@@ -559,6 +601,7 @@ impl ScriptArgs {
         let mut runner = Runner::new(builder.build(db), evm_opts.initial_balance, evm_opts.sender);
         let mut failed = false;
         let mut sum_gas = 0;
+        let mut final_txs = transactions.clone();
         transactions
             .into_iter()
             .map(|tx| match tx {
@@ -575,7 +618,13 @@ impl ScriptArgs {
                     )
                     .expect("Internal EVM error")
             })
-            .for_each(|mut result| {
+            .enumerate()
+            .for_each(|(i, mut result)| {
+                match &mut final_txs[i] {
+                    TypedTransaction::Legacy(tx) => tx.gas = Some(U256::from(result.gas * 12 / 10)),
+                    _ => unreachable!(),
+                }
+
                 sum_gas += result.gas;
                 if !result.success {
                     failed = true;
@@ -590,7 +639,7 @@ impl ScriptArgs {
         if failed {
             Err(eyre::Report::msg("Simulated execution failed"))
         } else {
-            Ok(())
+            Ok(final_txs)
         }
     }
 
@@ -711,9 +760,6 @@ impl<DB: DatabaseRef> Runner<DB> {
         // We max out their balance so that they can deploy and make calls.
         self.executor.set_balance(self.sender, U256::MAX);
         self.executor.set_balance(*CALLER, U256::MAX);
-
-        // We set the nonce of the deployer accounts to 1 to get the same addresses as DappTools
-        self.executor.set_nonce(self.sender, 1);
 
         // Deploy libraries
         let mut traces: Vec<(TraceKind, CallTraceArena)> = libraries
