@@ -214,7 +214,7 @@ where
                         Some(block) => Ok(block
                             .hash
                             .expect("empty block hash on mined block, this should never happen")),
-                        None => Err(eyre::eyre!("block {} not found", number)),
+                        None => Err(eyre::eyre!("block {number} not found")),
                     };
                     (block_hash, number)
                 });

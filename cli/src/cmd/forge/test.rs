@@ -348,13 +348,13 @@ fn short_test_result(name: &str, result: &forge::TestResult) {
     } else {
         let txt = match (&result.reason, &result.counterexample) {
             (Some(ref reason), Some(ref counterexample)) => {
-                format!("[FAIL. Reason: {}. Counterexample: {}]", reason, counterexample)
+                format!("[FAIL. Reason: {reason}. Counterexample: {counterexample}]")
             }
             (None, Some(ref counterexample)) => {
-                format!("[FAIL. Counterexample: {}]", counterexample)
+                format!("[FAIL. Counterexample: {counterexample}]")
             }
             (Some(ref reason), None) => {
-                format!("[FAIL. Reason: {}]", reason)
+                format!("[FAIL. Reason: {reason}]")
             }
             (None, None) => "[FAIL]".to_string(),
         };
@@ -447,9 +447,9 @@ pub fn custom_run(mut args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<
                 }
                 n =>
                     Err(
-                    eyre::eyre!("{} tests matched your criteria, but exactly 1 test must match in order to run the debugger.\n
+                    eyre::eyre!("{n} tests matched your criteria, but exactly 1 test must match in order to run the debugger.\n
                         \n
-                        Use --match-contract and --match-path to further limit the search.", n))
+                        Use --match-contract and --match-path to further limit the search."))
             }
     } else {
         let TestArgs { filter, .. } = args;
@@ -525,7 +525,7 @@ fn test(
                     if !console_logs.is_empty() {
                         println!("Logs:");
                         for log in console_logs {
-                            println!("  {}", log);
+                            println!("  {log}");
                         }
                         println!();
                     }
@@ -571,7 +571,7 @@ fn test(
 
                     if !decoded_traces.is_empty() {
                         println!("Traces:");
-                        decoded_traces.into_iter().for_each(|trace| println!("{}", trace));
+                        decoded_traces.into_iter().for_each(|trace| println!("{trace}"));
                     }
 
                     if gas_reporting {

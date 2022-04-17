@@ -175,7 +175,7 @@ impl Binder {
 
         let compiled = project.compile()?;
         if compiled.has_compiler_errors() {
-            eyre::bail!("Compiled with errors:\n{}", compiled);
+            eyre::bail!("Compiled with errors:\n{compiled}");
         }
 
         trace!("Generating bindings");

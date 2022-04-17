@@ -98,11 +98,11 @@ impl EvmOpts {
     pub fn get_remote_chain_id(&self) -> Option<Chain> {
         if let Some(ref url) = self.fork_url {
             if url.contains("mainnet") {
-                tracing::trace!("auto detected mainnet chain from url {}", url);
+                tracing::trace!("auto detected mainnet chain from url {url}");
                 return Some(Chain::Mainnet)
             }
             let provider = Provider::try_from(url.as_str())
-                .unwrap_or_else(|_| panic!("Failed to establish provider to {}", url));
+                .unwrap_or_else(|_| panic!("Failed to establish provider to {url}"));
 
             if let Ok(id) = foundry_utils::RuntimeOrHandle::new().block_on(provider.get_chainid()) {
                 return Chain::try_from(id.as_u64()).ok()

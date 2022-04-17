@@ -190,7 +190,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         if let Some(remainder) = lines.next() {
             // Call with `self.write_str` and not `write!`, so we can have `\n` at the beginning
             // without triggering an indentation
-            self.write_str(&format!("\n{}", remainder))?;
+            self.write_str(&format!("\n{remainder}"))?;
         }
 
         Ok(())

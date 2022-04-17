@@ -116,15 +116,15 @@ pub fn parse_libraries(
         let mut items = lib.split(':');
         let file = items
             .next()
-            .ok_or_else(|| SolcError::msg(format!("failed to parse invalid library: {}", lib)))?;
+            .ok_or_else(|| SolcError::msg(format!("failed to parse invalid library: {lib}")))?;
         let lib = items
             .next()
-            .ok_or_else(|| SolcError::msg(format!("failed to parse invalid library: {}", lib)))?;
+            .ok_or_else(|| SolcError::msg(format!("failed to parse invalid library: {lib}")))?;
         let addr = items
             .next()
-            .ok_or_else(|| SolcError::msg(format!("failed to parse invalid library: {}", lib)))?;
+            .ok_or_else(|| SolcError::msg(format!("failed to parse invalid library: {lib}")))?;
         if items.next().is_some() {
-            return Err(SolcError::msg(format!("failed to parse invalid library: {}", lib)))
+            return Err(SolcError::msg(format!("failed to parse invalid library: {lib}")))
         }
         libraries
             .entry(file.to_string())
@@ -148,7 +148,7 @@ pub fn to_array_value(val: &str) -> Result<Value, figment::Error> {
             .into(),
         Value::Empty(_, _) => Vec::<Value>::new().into(),
         val @ Value::Array(_, _) => val,
-        _ => return Err(format!("Invalid value `{}`, expected an array", val).into()),
+        _ => return Err(format!("Invalid value `{val}`, expected an array").into()),
     };
     Ok(value)
 }

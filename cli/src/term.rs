@@ -133,7 +133,7 @@ impl Spinner {
         if self.no_progress {
             return
         }
-        println!("\r\x1b[2K\x1b[1m[\x1b[31m-\x1b[0;1m]\x1b[0m {}", line);
+        println!("\r\x1b[2K\x1b[1m[\x1b[31m-\x1b[0;1m]\x1b[0m {line}");
     }
 }
 
@@ -242,17 +242,17 @@ impl Reporter for SpinnerReporter {
 
     /// Invoked before a new [`Solc`] bin is installed
     fn on_solc_installation_start(&self, version: &Version) {
-        self.send_msg(format!("installing solc version \"{}\"", version));
+        self.send_msg(format!("installing solc version \"{version}\""));
     }
 
     /// Invoked before a new [`Solc`] bin was successfully installed
     fn on_solc_installation_success(&self, version: &Version) {
-        self.send_msg(format!("Successfully installed solc {}", version));
+        self.send_msg(format!("Successfully installed solc {version}"));
     }
 
     fn on_solc_installation_error(&self, version: &Version, error: &str) {
         self.send_msg(
-            Colour::Red.paint(format!("Failed to install solc {}: {}", version, error)).to_string(),
+            Colour::Red.paint(format!("Failed to install solc {version}: {error}")).to_string(),
         );
     }
 

@@ -305,22 +305,20 @@ impl GitReference {
         let id = match self {
             GitReference::Tag(s) => {
                 let resolve_tag = move || -> eyre::Result<git2::Oid> {
-                    let refname = format!("refs/remotes/origin/tags/{}", s);
+                    let refname = format!("refs/remotes/origin/tags/{s}");
                     let id = repo.refname_to_id(&refname)?;
                     let obj = repo.find_object(id, None)?;
                     let obj = obj.peel(ObjectType::Commit)?;
                     Ok(obj.id())
                 };
-                resolve_tag().with_context(|| format!("failed to find tag `{}`", s))?
+                resolve_tag().with_context(|| format!("failed to find tag `{s}`"))?
             }
             GitReference::Branch(s) => {
-                let name = format!("origin/{}", s);
+                let name = format!("origin/{s}");
                 let b = repo
                     .find_branch(&name, git2::BranchType::Remote)
-                    .with_context(|| format!("failed to find branch `{}`", s))?;
-                b.get()
-                    .target()
-                    .ok_or_else(|| eyre::eyre!("branch `{}` did not have a target", s))?
+                    .with_context(|| format!("failed to find branch `{s}`"))?;
+                b.get().target().ok_or_else(|| eyre::eyre!("branch `{s}` did not have a target"))?
             }
 
             // use the HEAD commit
@@ -647,11 +645,8 @@ where
         }
         msg.push('\n');
         if !ssh_agent_attempts.is_empty() {
-            let names = ssh_agent_attempts
-                .iter()
-                .map(|s| format!("`{}`", s))
-                .collect::<Vec<_>>()
-                .join(", ");
+            let names =
+                ssh_agent_attempts.iter().map(|s| format!("`{s}`")).collect::<Vec<_>>().join(", ");
             msg.push_str(&format!(
                 "\n* attempted ssh-agent authentication, but \
                  no usernames succeeded: {}",
@@ -746,7 +741,7 @@ pub fn fetch(
         return fetch_with_cli(repo, url, &refspecs, tags)
     }
 
-    debug!("doing a fetch for {}", url);
+    debug!("doing a fetch for {url}");
     let git_config = git2::Config::open_default()?;
 
     with_retry(|| {
@@ -774,7 +769,7 @@ pub fn fetch(
                     Ok(()) => break,
                     Err(e) => e,
                 };
-                debug!("fetch failed: {}", err);
+                debug!("fetch failed: {err}");
 
                 if !repo_reinitialized &&
                     matches!(err.class(), ErrorClass::Reference | ErrorClass::Odb)

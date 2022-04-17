@@ -39,7 +39,7 @@ pub fn fuzz_param(param: &ParamType) -> impl Strategy<Value = Token> {
                     num.into_token()
                 })
                 .boxed(),
-            _ => panic!("unsupported solidity type int{}", n),
+            _ => panic!("unsupported solidity type int{n}"),
         },
         ParamType::Uint(n) => {
             super::UintStrategy::new(*n, vec![]).prop_map(|x| x.into_token()).boxed()
@@ -103,7 +103,7 @@ pub fn fuzz_param_from_state(param: &ParamType, state: EvmFuzzState) -> BoxedStr
                     num.into_token()
                 })
                 .boxed(),
-            _ => panic!("unsupported solidity type int{}", n),
+            _ => panic!("unsupported solidity type int{n}"),
         },
         ParamType::Uint(n) => match n / 8 {
             32 => value.prop_map(move |value| U256::from(value).into_token()).boxed(),
@@ -112,7 +112,7 @@ pub fn fuzz_param_from_state(param: &ParamType, state: EvmFuzzState) -> BoxedStr
                     (U256::from(value) % (U256::from(2usize).pow(U256::from(y * 8)))).into_token()
                 })
                 .boxed(),
-            _ => panic!("unsupported solidity type uint{}", n),
+            _ => panic!("unsupported solidity type uint{n}"),
         },
         ParamType::Bool => value.prop_map(move |value| Token::Bool(value[31] == 1)).boxed(),
         ParamType::String => value

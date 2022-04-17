@@ -40,7 +40,7 @@ impl Cmd for ConfigArgs {
             config.to_string_pretty()?
         };
 
-        println!("{}", s);
+        println!("{s}");
         Ok(())
     }
 }

@@ -48,7 +48,7 @@ impl Cmd for FlattenArgs {
         let target_path = dunce::canonicalize(target_path)?;
         let flattened = paths
             .flatten(&target_path)
-            .map_err(|err| eyre::Error::msg(format!("Failed to flatten the file: {}", err)))?;
+            .map_err(|err| eyre::Error::msg(format!("Failed to flatten the file: {err}")))?;
 
         match output {
             Some(output) => {
@@ -56,7 +56,7 @@ impl Cmd for FlattenArgs {
                 std::fs::write(&output, flattened)?;
                 println!("Flattened file written at {}", output.display());
             }
-            None => println!("{}", flattened),
+            None => println!("{flattened}"),
         };
 
         Ok(())

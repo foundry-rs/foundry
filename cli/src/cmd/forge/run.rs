@@ -222,7 +222,7 @@ impl Cmd for RunArgs {
 
                         if should_include {
                             decoder.decode(trace);
-                            println!("{}", trace);
+                            println!("{trace}");
                         }
                     }
                     println!();
@@ -240,7 +240,7 @@ impl Cmd for RunArgs {
             let console_logs = decode_console_logs(&result.logs);
             if !console_logs.is_empty() {
                 for log in console_logs {
-                    println!("  {}", log);
+                    println!("  {log}");
                 }
             }
         }
@@ -304,7 +304,7 @@ impl RunArgs {
                 dependencies: &mut run_dependencies,
                 matched: false,
             },
-            |file, key| (format!("{}:{}", file, key), file, key),
+            |file, key| (format!("{file}:{key}"), file, key),
             |post_link_input| {
                 let PostLinkInput {
                     contract,

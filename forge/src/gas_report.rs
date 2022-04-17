@@ -119,7 +119,7 @@ impl Display for GasReport {
 
             let mut table = Table::new();
             table.load_preset(UTF8_FULL).apply_modifier(UTF8_ROUND_CORNERS);
-            table.set_header(vec![Cell::new(format!("{} contract", name))
+            table.set_header(vec![Cell::new(format!("{name} contract"))
                 .add_attribute(Attribute::Bold)
                 .fg(Color::Green)]);
             table.add_row(vec![
