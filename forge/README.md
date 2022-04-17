@@ -174,7 +174,7 @@ which implements the following methods:
 
 - `function getNonce(address account)`: Get nonce for an account.
 
-- `function travel(uint x) public` Sets the block chainid to `x`.
+- `function chainId(uint x) public` Sets the block chainid to `x`.
 
 The below example uses the `warp` cheatcode to override the timestamp & `expectRevert` to expect a specific revert string:
 

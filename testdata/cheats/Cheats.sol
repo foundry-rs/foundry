@@ -65,5 +65,5 @@ interface Cheats {
     // Get nonce for an account
     function getNonce(address) external returns(uint64);
     // Set block.chainid (newChainId)
-    function travel(uint256) external;
+    function chainId(uint256) external;
 }

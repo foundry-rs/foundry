@@ -43,7 +43,7 @@ ethers::contract::abigen!(
             assume(bool)
             setNonce(address,uint64)
             getNonce(address)
-            travel(uint256)
+            chainId(uint256)
     ]"#,
 );
 pub use hevm_mod::{HEVMCalls, HEVM_ABI};

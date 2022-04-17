@@ -4,17 +4,17 @@ pragma solidity >=0.8.0;
 import "ds-test/test.sol";
 import "./Cheats.sol";
 
-contract TravelTest is DSTest {
+contract ChainIdTest is DSTest {
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
 
-    function testTravel() public {
-        cheats.travel(10);
-        assertEq(block.chainid, 10, "travel failed");
+    function testChainId() public {
+        cheats.chainId(10);
+        assertEq(block.chainid, 10, "chainId switch failed");
     }
 
-    function testTravelFuzzed(uint128 jump) public {
+    function testChainIdFuzzed(uint128 jump) public {
         uint pre = block.chainid;
-        cheats.travel(block.chainid + jump);
-        assertEq(block.chainid, pre + jump, "travel failed");
+        cheats.chainId(block.chainid + jump);
+        assertEq(block.chainid, pre + jump, "chainId switch failed");
     }
 }
