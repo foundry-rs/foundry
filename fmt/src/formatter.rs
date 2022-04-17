@@ -5,7 +5,7 @@ use std::fmt::Write;
 use indent_write::fmt::IndentWriter;
 use solang_parser::pt::{
     ContractDefinition, DocComment, EnumDefinition, Expression, Identifier, Loc, SourceUnit,
-    SourceUnitPart, StringLiteral, StructDefinition, Type, VariableDeclaration,
+    SourceUnitPart, StringLiteral, StructDefinition, Type, TypeDefinition, VariableDeclaration,
 };
 
 use crate::{
@@ -510,6 +510,19 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    fn visit_type_definition(&mut self, def: &mut TypeDefinition) -> VResult {
+        if !def.doc.is_empty() {
+            def.doc.visit(self)?;
+            writeln!(self)?;
+        }
+
+        write!(self, "type {} is ", def.name.name)?;
+        def.ty.visit(self)?;
+        write!(self, ";")?;
+
+        Ok(())
+    }
+
     fn visit_stray_semicolon(&mut self) -> VResult {
         write!(self, ";")?;
 
@@ -648,5 +661,10 @@ struct Bar {
 }
 ",
         );
+    }
+
+    #[test]
+    fn type_definition() {
+        test_directory("TypeDefinition");
     }
 }

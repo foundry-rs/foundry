@@ -175,6 +175,12 @@ pub trait Visitor {
         Ok(())
     }
 
+    fn visit_type_definition(&mut self, def: &mut TypeDefinition) -> VResult {
+        self.visit_source(def.loc)?;
+
+        Ok(())
+    }
+
     fn visit_stray_semicolon(&mut self) -> VResult;
 
     fn visit_newline(&mut self) -> VResult;
@@ -239,6 +245,7 @@ impl Visitable for SourceUnitPart {
             SourceUnitPart::ErrorDefinition(error) => v.visit_error(error),
             SourceUnitPart::FunctionDefinition(function) => v.visit_function(function),
             SourceUnitPart::VariableDefinition(variable) => v.visit_var_definition(variable),
+            SourceUnitPart::TypeDefinition(def) => v.visit_type_definition(def),
             SourceUnitPart::StraySemicolon(_) => v.visit_stray_semicolon(),
         }
     }
@@ -263,6 +270,7 @@ impl Visitable for ContractPart {
             ContractPart::EnumDefinition(enumeration) => v.visit_enum(enumeration),
             ContractPart::VariableDefinition(variable) => v.visit_var_definition(variable),
             ContractPart::FunctionDefinition(function) => v.visit_function(function),
+            ContractPart::TypeDefinition(def) => v.visit_type_definition(def),
             ContractPart::StraySemicolon(_) => v.visit_stray_semicolon(),
             ContractPart::Using(using) => v.visit_using(using),
         }
