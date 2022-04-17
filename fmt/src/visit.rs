@@ -226,6 +226,20 @@ pub trait Visitor {
         Ok(())
     }
 
+    fn visit_function_attribute(&mut self, attr: &mut FunctionAttribute) -> VResult {
+        if let Some(loc) = match attr {
+            FunctionAttribute::Mutability(mutability) => Some(mutability.loc()),
+            FunctionAttribute::Visibility(visibility) => visibility.loc(),
+            FunctionAttribute::Virtual(loc) |
+            FunctionAttribute::Override(loc, _) |
+            FunctionAttribute::BaseOrModifier(loc, _) => Some(*loc),
+        } {
+            self.visit_source(loc)?;
+        }
+
+        Ok(())
+    }
+
     fn visit_struct(&mut self, structure: &mut StructDefinition) -> VResult {
         if !structure.doc.is_empty() {
             self.visit_doc_comments(&mut structure.doc)?;
@@ -415,6 +429,14 @@ impl Visitable for VariableDeclaration {
 impl Visitable for Expression {
     fn visit(&mut self, v: &mut impl Visitor) -> VResult {
         v.visit_expr(self.loc(), self)?;
+
+        Ok(())
+    }
+}
+
+impl Visitable for FunctionAttribute {
+    fn visit(&mut self, v: &mut impl Visitor) -> VResult {
+        v.visit_function_attribute(self)?;
 
         Ok(())
     }

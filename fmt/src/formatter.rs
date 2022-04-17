@@ -1,12 +1,13 @@
 //! A Solidity formatter
 
-use std::fmt::Write;
+use std::{collections::HashSet, fmt::Write};
 
 use indent_write::fmt::IndentWriter;
+use itertools::Itertools;
 use solang_parser::pt::{
-    CodeLocation, ContractDefinition, DocComment, EnumDefinition, Expression, FunctionDefinition,
-    Identifier, Loc, SourceUnit, SourceUnitPart, Statement, StringLiteral, StructDefinition, Type,
-    TypeDefinition, VariableDeclaration,
+    CodeLocation, ContractDefinition, DocComment, EnumDefinition, Expression, FunctionAttribute,
+    FunctionDefinition, Identifier, Loc, Mutability, SourceUnit, SourceUnitPart, Statement,
+    StringLiteral, StructDefinition, Type, TypeDefinition, VariableDeclaration, Visibility,
 };
 
 use crate::{
@@ -109,10 +110,14 @@ impl<'a, W: Write> Formatter<'a, W> {
             .saturating_add(s.len())
     }
 
+    fn will_it_fit(&self, text: &str) -> bool {
+        self.len_indented_with_current(text) <= self.config.line_length
+    }
+
     /// Is length of the line consisting of `items` separated by `separator` with respect to
     /// already written line greater than `config.line_length`
     fn is_separated_multiline(&self, items: &[String], separator: &str) -> bool {
-        self.len_indented_with_current(&items.join(separator)) > self.config.line_length
+        !self.will_it_fit(&items.join(separator))
     }
 
     /// Write `items` separated by `separator` with respect to `config.line_length` setting
@@ -489,23 +494,137 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             writeln!(self)?;
         }
 
-        // Workaround for cases when function in the original source code had parameters and
-        // modifiers spanned across multiple lines, thus having its own indentation that we
-        // need to reset.
-        let signature = self.visit_to_string(&mut func.loc)?;
-        let level = self.level;
-        self.dedent(level);
-        write!(self, "{}{}", " ".repeat(self.config.tab_width * level), signature)?;
-        self.indent(level);
+        write!(self, "{}", func.ty)?;
+
+        if let Some(Identifier { name, .. }) = &func.name {
+            write!(self, " {name}")?;
+        }
+
+        let params = func
+            .params
+            .iter_mut()
+            .map(|(loc, param)| self.visit_to_string(loc))
+            .collect::<Result<Vec<_>, _>>()?;
+        let params_multiline = params.len() > 2 || self.is_separated_multiline(&params, ", ");
+
+        write!(self, "(")?;
+        if params_multiline {
+            writeln!(self)?;
+            self.indent(1);
+        }
+        self.write_separated(&params, ", ", params_multiline)?;
+        if params_multiline {
+            self.dedent(1);
+            writeln!(self)?;
+        }
+        write!(self, ")")?;
+
+        let attributes = func
+            .attributes
+            .iter_mut()
+            .sorted_by_key(|attribute| match attribute {
+                FunctionAttribute::Visibility(_) => 0,
+                FunctionAttribute::Mutability(_) => 1,
+                FunctionAttribute::Virtual(_) => 2,
+                FunctionAttribute::Override(_, _) => 3,
+                FunctionAttribute::BaseOrModifier(_, _) => 4,
+            })
+            // .dedup_by(|attribute1, attribute2| match (attribute1, attribute2) {
+            //     (
+            //         FunctionAttribute::Mutability(mutability1),
+            //         FunctionAttribute::Mutability(mutability2),
+            //     ) => matches!(
+            //         (mutability1, mutability2),
+            //         (Mutability::Pure(_), Mutability::Pure(_)) |
+            //             (Mutability::View(_), Mutability::View(_)) |
+            //             (Mutability::Constant(_), Mutability::Constant(_)) |
+            //             (Mutability::Payable(_), Mutability::Payable(_))
+            //     ),
+            //     (
+            //         FunctionAttribute::Visibility(visibility1),
+            //         FunctionAttribute::Visibility(visibility2),
+            //     ) => matches!(
+            //         (visibility1, visibility2),
+            //         (Visibility::External(_), Visibility::External(_)) |
+            //             (Visibility::Public(_), Visibility::Public(_)) |
+            //             (Visibility::Internal(_), Visibility::Internal(_)) |
+            //             (Visibility::Private(_), Visibility::Private(_))
+            //     ),
+            //     (FunctionAttribute::Virtual(_), FunctionAttribute::Virtual(_)) => true,
+            //     (
+            //         FunctionAttribute::Override(_, bases1),
+            //         FunctionAttribute::Override(_, bases2),
+            //     ) => {
+            //         bases1.iter().map(|ident| &ident.name).collect::<HashSet<_>>() ==
+            //             bases2.iter().map(|ident| &ident.name).collect::<HashSet<_>>()
+            //     }
+            //     (
+            //         FunctionAttribute::BaseOrModifier(_, base1),
+            //         FunctionAttribute::BaseOrModifier(_, base2),
+            //     ) => base1.name == base2.name && base1.args == base2.args,
+            //     _ => false,
+            // })
+            .map(|attribute| self.visit_to_string(attribute))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let returns = func
+            .returns
+            .iter_mut()
+            .map(|(loc, param)| self.visit_to_string(loc))
+            .collect::<Result<Vec<_>, _>>()?;
+        let returns_multiline = returns.len() > 2 || self.is_separated_multiline(&returns, ", ");
+
+        let one_line = format!(
+            "{}{}{}",
+            attributes.join(" "),
+            if attributes.is_empty() || returns.is_empty() { "" } else { " " },
+            if returns.is_empty() {
+                "".to_string()
+            } else {
+                format!("returns ({})", returns.join(", "))
+            }
+        );
+
+        let one_line_fits = self.will_it_fit(&format!(" {one_line}")) && !returns_multiline;
+
+        if !one_line.is_empty() && one_line_fits {
+            write!(self, " {one_line}")?;
+        } else {
+            if !attributes.is_empty() {
+                writeln!(self)?;
+                self.indent(1);
+                self.write_separated(&attributes, "", true)?;
+                self.dedent(1);
+            }
+
+            if !returns.is_empty() {
+                if !attributes.is_empty() || params_multiline {
+                    self.indent(1);
+                }
+                writeln!(self)?;
+                write!(self, "returns (")?;
+                if returns_multiline {
+                    writeln!(self)?;
+                    self.indent(1);
+                }
+                self.write_separated(&returns, ", ", returns_multiline)?;
+                if returns_multiline {
+                    self.dedent(1);
+                    writeln!(self)?;
+                }
+                write!(self, ")")?;
+                if !attributes.is_empty() || params_multiline {
+                    self.dedent(1);
+                }
+            }
+        }
 
         match &mut func.body {
             Some(body) => {
-                // Same, until we reconstruct function parameters and modifiers on our own,
-                // we need to respect style of the original source code
-                if self.blank_lines(func.loc, body.loc()) > 0 {
-                    writeln!(self)?;
-                } else if !signature.ends_with(char::is_whitespace) {
+                if self.will_it_fit("{") && one_line_fits && !returns_multiline {
                     write!(self, " ")?;
+                } else {
+                    writeln!(self)?;
                 }
                 body.visit(self)?
             }
@@ -739,13 +858,18 @@ mod tests {
     }
 
     #[test]
-    fn contract_definitions() {
-        test_directory("ContractDefinitions");
+    fn contract_definition() {
+        test_directory("ContractDefinition");
     }
 
     #[test]
-    fn enum_definitions() {
-        test_directory("EnumDefinitions");
+    fn enum_definition() {
+        test_directory("EnumDefinition");
+    }
+
+    #[test]
+    fn function_definition() {
+        test_directory("FunctionDefinition");
     }
 
     #[test]
