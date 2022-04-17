@@ -1,4 +1,4 @@
-use std::{fmt::Write, path::PathBuf};
+use std::{fmt::Write, io, io::Read, path::PathBuf};
 
 use clap::Parser;
 use console::{style, Style};
@@ -10,6 +10,8 @@ use similar::{ChangeTag, TextDiff};
 use forge_fmt::{Formatter, FormatterConfig, Visitable};
 
 use crate::cmd::Cmd;
+
+const STDIN_PATH: &str = "stdin";
 
 #[derive(Debug, Clone, Parser)]
 pub struct FmtArgs {
@@ -56,6 +58,8 @@ impl Cmd for FmtArgs {
             ethers::solc::utils::source_files(root)
         } else if root.file_name().unwrap().to_string_lossy().ends_with(".sol") {
             vec![root]
+        } else if root == PathBuf::from("-") {
+            vec![PathBuf::from(STDIN_PATH)]
         } else {
             vec![]
         };
@@ -64,7 +68,14 @@ impl Cmd for FmtArgs {
             .par_iter()
             .enumerate()
             .map(|(i, path)| {
-                let source = std::fs::read_to_string(&path)?;
+                let source = if path == &PathBuf::from(STDIN_PATH) {
+                    let mut buf = String::new();
+                    io::stdin().read_to_string(&mut buf)?;
+                    buf
+                } else {
+                    std::fs::read_to_string(&path)?
+                };
+
                 let (mut source_unit, _comments) = solang_parser::parse(&source, i)
                     .map_err(|diags| eyre::eyre!(
                             "Failed to parse Solidity code for {}. Leaving source unchanged.\nDebug info: {:?}",
