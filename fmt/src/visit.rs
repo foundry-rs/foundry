@@ -158,6 +158,7 @@ pub trait Visitor {
         Ok(())
     }
 
+    #[allow(clippy::type_complexity)]
     fn visit_try(
         &mut self,
         loc: Loc,
