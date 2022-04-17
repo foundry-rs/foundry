@@ -25,6 +25,7 @@ impl LineOfCode for SourceUnitPart {
             SourceUnitPart::ErrorDefinition(error) => error.loc,
             SourceUnitPart::FunctionDefinition(function) => function.loc,
             SourceUnitPart::VariableDefinition(variable) => variable.loc,
+            SourceUnitPart::TypeDefinition(def) => def.loc,
         }
     }
 }
@@ -40,6 +41,7 @@ impl LineOfCode for ContractPart {
             ContractPart::FunctionDefinition(function) => function.loc(),
             ContractPart::StraySemicolon(loc) => *loc,
             ContractPart::Using(using) => using.loc,
+            ContractPart::TypeDefinition(def) => def.loc,
         }
     }
 }

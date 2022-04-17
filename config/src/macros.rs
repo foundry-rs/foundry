@@ -68,7 +68,7 @@ macro_rules! impl_figment_convert {
             }
         }
 
-        impl<'a> From<&'a $name> for Config {
+        impl<'a> From<&'a $name> for $crate::Config {
             fn from(args: &'a $name) -> Self {
                 let figment: $crate::figment::Figment = args.into();
                 $crate::Config::from_provider(figment).sanitized()
@@ -86,7 +86,7 @@ macro_rules! impl_figment_convert {
             }
         }
 
-        impl<'a> From<&'a $name> for Config {
+        impl<'a> From<&'a $name> for $crate::Config {
             fn from(args: &'a $name) -> Self {
                 let figment: $crate::figment::Figment = args.into();
                 $crate::Config::from_provider(figment).sanitized()
@@ -105,7 +105,7 @@ macro_rules! impl_figment_convert_cast {
             }
         }
 
-        impl<'a> From<&'a $name> for Config {
+        impl<'a> From<&'a $name> for $crate::Config {
             fn from(args: &'a $name) -> Self {
                 let figment: $crate::figment::Figment = args.into();
                 $crate::Config::from_provider(figment).sanitized()

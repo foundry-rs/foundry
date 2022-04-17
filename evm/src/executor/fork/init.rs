@@ -5,6 +5,7 @@ use revm::{BlockEnv, CfgEnv, Env, TxEnv};
 /// ethereum provider.
 pub async fn environment<M: Middleware>(
     provider: &M,
+    memory_limit: u64,
     override_chain_id: Option<u64>,
     pin_block: Option<u64>,
     origin: Address,
@@ -24,8 +25,7 @@ pub async fn environment<M: Middleware>(
     Ok(Env {
         cfg: CfgEnv {
             chain_id: override_chain_id.unwrap_or(rpc_chain_id.as_u64()).into(),
-            // 16 MiB
-            memory_limit: 2u64.pow(24),
+            memory_limit,
             ..Default::default()
         },
         block: BlockEnv {

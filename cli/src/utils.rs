@@ -129,6 +129,16 @@ pub fn parse_u256(s: &str) -> eyre::Result<U256> {
     Ok(if s.starts_with("0x") { U256::from_str(s)? } else { U256::from_dec_str(s)? })
 }
 
+/// Return `rpc-url` cli argument if given, or consume `eth-rpc-url` from foundry.toml. Default to
+/// `localhost:8545`
+pub fn consume_config_rpc_url(rpc_url: Option<String>) -> String {
+    if let Some(rpc_url) = rpc_url {
+        rpc_url
+    } else {
+        Config::load().eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string())
+    }
+}
+
 /// Parses an ether value from a string.
 ///
 /// The amount can be tagged with a unit, e.g. "1ether".

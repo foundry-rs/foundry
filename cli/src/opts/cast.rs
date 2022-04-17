@@ -1,6 +1,6 @@
 use super::{ClapChain, EthereumOpts, Wallet};
 use crate::{
-    cmd::cast::{call::CallArgs, find_block::FindBlockArgs},
+    cmd::cast::find_block::FindBlockArgs,
     utils::{parse_ether_value, parse_u256},
 };
 use clap::{Parser, Subcommand, ValueHint};
@@ -152,17 +152,26 @@ Examples:
         #[clap(long = "json", short = 'j', help_heading = "DISPLAY OPTIONS")]
         to_json: bool,
         #[clap(long, env = "ETH_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
     },
     #[clap(name = "block-number")]
     #[clap(about = "Get the latest block number.")]
     BlockNumber {
         #[clap(long, env = "ETH_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
     },
     #[clap(name = "call")]
     #[clap(about = "Perform a call on an account without publishing a transaction.")]
-    Call(CallArgs),
+    Call {
+        #[clap(help = "the address you want to query", parse(try_from_str = parse_name_or_address))]
+        address: NameOrAddress,
+        sig: String,
+        args: Vec<String>,
+        #[clap(long, short, help = "the block you want to query, can also be earliest/latest/pending", parse(try_from_str = parse_block_id))]
+        block: Option<BlockId>,
+        #[clap(flatten)]
+        eth: EthereumOpts,
+    },
     #[clap(about = "ABI-encode a function with arguments.")]
     Calldata {
         #[clap(
@@ -177,25 +186,25 @@ Examples:
     #[clap(about = "Get the symbolic name of the current chain.")]
     Chain {
         #[clap(long, env = "ETH_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
     },
     #[clap(name = "chain-id")]
     #[clap(about = "Get the Ethereum chain ID.")]
     ChainId {
         #[clap(long, env = "ETH_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
     },
     #[clap(name = "client")]
     #[clap(about = "Get the current client version.")]
     Client {
         #[clap(long, env = "ETH_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
     },
     #[clap(name = "compute-address")]
     #[clap(about = "Compute the contract address from a given nonce and deployer address.")]
     ComputeAddress {
         #[clap(long, env = "ETH_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
         #[clap(help = "The deployer address.")]
         address: String,
         #[clap(long, help = "The nonce of the deployer address.", parse(try_from_str = parse_u256))]
@@ -212,7 +221,7 @@ Examples:
         #[clap(long = "json", short = 'j', help_heading = "DISPLAY OPTIONS")]
         to_json: bool,
         #[clap(long, env = "ETH_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
     },
     #[clap(name = "receipt")]
     #[clap(about = "Get the transaction receipt for a transaction.")]
@@ -232,7 +241,7 @@ Examples:
         #[clap(long = "json", short = 'j', help_heading = "DISPLAY OPTIONS")]
         to_json: bool,
         #[clap(long, env = "ETH_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
     },
     #[clap(name = "send")]
     #[clap(about = "Sign and publish a transaction.")]
@@ -424,7 +433,7 @@ Tries to decode the calldata using 4byte.directory unless --offline is passed."#
         )]
         block: Option<BlockId>,
         #[clap(short, long, env = "ETH_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
     },
     #[clap(name = "balance")]
     #[clap(about = "Get the balance of an account in wei.")]
@@ -440,7 +449,7 @@ Tries to decode the calldata using 4byte.directory unless --offline is passed."#
         #[clap(help = "The account you want to query", parse(try_from_str = parse_name_or_address))]
         who: NameOrAddress,
         #[clap(short, long, env = "ETH_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
     },
     #[clap(name = "basefee")]
     #[clap(about = "Get the basefee of a block.")]
@@ -454,7 +463,7 @@ Tries to decode the calldata using 4byte.directory unless --offline is passed."#
         )]
         block: Option<BlockId>,
         #[clap(short, long, env = "ETH_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
     },
     #[clap(name = "code")]
     #[clap(about = "Get the bytecode of a contract.")]
@@ -470,13 +479,13 @@ Tries to decode the calldata using 4byte.directory unless --offline is passed."#
         #[clap(help = "The contract address.", parse(try_from_str = parse_name_or_address))]
         who: NameOrAddress,
         #[clap(short, long, env = "ETH_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
     },
     #[clap(name = "gas-price")]
     #[clap(about = "Get the current gas price.")]
     GasPrice {
         #[clap(short, long, env = "ETH_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
     },
     #[clap(name = "keccak")]
     #[clap(about = "Hash arbitrary data using keccak-256.")]
@@ -487,7 +496,7 @@ Tries to decode the calldata using 4byte.directory unless --offline is passed."#
         #[clap(help = "The name to lookup.")]
         who: Option<String>,
         #[clap(short, long, env = "ETH_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
         #[clap(long, short, help = "Perform a reverse lookup to verify that the name is correct.")]
         verify: bool,
     },
@@ -497,7 +506,7 @@ Tries to decode the calldata using 4byte.directory unless --offline is passed."#
         #[clap(help = "The account to perform the lookup for.")]
         who: Option<Address>,
         #[clap(short, long, env = "ETH_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
         #[clap(
             long,
             short,
@@ -512,7 +521,7 @@ Tries to decode the calldata using 4byte.directory unless --offline is passed."#
         #[clap(help = "The storage slot number (hex or decimal)", parse(try_from_str = parse_slot))]
         slot: H256,
         #[clap(short, long, env = "ETH_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
         #[clap(
             long,
             short = 'B',
@@ -529,7 +538,7 @@ Tries to decode the calldata using 4byte.directory unless --offline is passed."#
         #[clap(help = "The storage slot numbers (hex or decimal).", parse(try_from_str = parse_slot))]
         slots: Vec<H256>,
         #[clap(short, long, env = "ETH_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
         #[clap(
             long,
             short = 'B',
@@ -553,7 +562,7 @@ Tries to decode the calldata using 4byte.directory unless --offline is passed."#
         #[clap(help = "The address you want to get the nonce for.", parse(try_from_str = parse_name_or_address))]
         who: NameOrAddress,
         #[clap(short, long, env = "ETH_RPC_URL")]
-        rpc_url: String,
+        rpc_url: Option<String>,
     },
     #[clap(name = "etherscan-source")]
     #[clap(about = "Get the source code of a contract from Etherscan.")]
@@ -565,7 +574,7 @@ Tries to decode the calldata using 4byte.directory unless --offline is passed."#
         #[clap(short, help = "The output directory to expand source tree into.", value_hint = ValueHint::DirPath)]
         directory: Option<PathBuf>,
         #[clap(long, env = "ETHERSCAN_API_KEY")]
-        etherscan_api_key: String,
+        etherscan_api_key: Option<String>,
     },
     #[clap(name = "wallet", about = "Wallet management utilities.")]
     Wallet {
