@@ -572,11 +572,17 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         unchecked: bool,
         statements: &mut Vec<Statement>,
     ) -> VResult {
-        let multiline = self.source[loc.start()..loc.end()].matches('\n').count() > 0;
-
         if unchecked {
             write!(self, "unchecked ")?;
         }
+
+        if statements.is_empty() {
+            self.write_empty_brackets()?;
+            return Ok(())
+        }
+
+        let multiline = self.source[loc.start()..loc.end()].matches('\n').count() > 0;
+
         if multiline {
             writeln!(self, "{{")?;
             self.indent(1);
@@ -687,7 +693,7 @@ mod tests {
                         lines.next();
                     }
 
-                    return Some((config, lines.join("\n")))
+                    return Some((filename.to_string(), config, lines.join("\n")))
                 }
             }
 
@@ -695,12 +701,17 @@ mod tests {
         })
         .collect::<Vec<_>>();
 
-        for (config, formatted) in tests {
-            test_formatter(config, original.as_ref().expect("original.sol not found"), &formatted);
+        for (filename, config, formatted) in tests {
+            test_formatter(
+                &filename,
+                config,
+                original.as_ref().expect("original.sol not found"),
+                &formatted,
+            );
         }
     }
 
-    fn test_formatter(config: FormatterConfig, source: &str, expected: &str) {
+    fn test_formatter(filename: &str, config: FormatterConfig, source: &str, expected: &str) {
         #[derive(PartialEq, Eq)]
         struct PrettyString(String);
 
@@ -719,7 +730,12 @@ mod tests {
         let formatted = PrettyString(result);
         let expected = PrettyString(expected.trim_start().to_string());
 
-        pretty_assertions::assert_eq!(formatted, expected, "(formatted == expected)");
+        pretty_assertions::assert_eq!(
+            formatted,
+            expected,
+            "(formatted == expected) in {}",
+            filename
+        );
     }
 
     #[test]
@@ -738,67 +754,17 @@ mod tests {
     }
 
     #[test]
-    fn struct_definition() {
-        test_formatter(
-            FormatterConfig::default(),
-            "struct   Foo  {   
-              } struct   Bar  {    uint foo ;string bar ;  }",
-            "
-struct Foo {}
+    fn statement_block() {
+        test_directory("StatementBlock");
+    }
 
-struct Bar {
-    uint256 foo;
-    string bar;
-}
-",
-        );
+    #[test]
+    fn struct_definition() {
+        test_directory("StructDefinition");
     }
 
     #[test]
     fn type_definition() {
         test_directory("TypeDefinition");
-    }
-
-    #[test]
-    fn statement_block() {
-        test_formatter(
-            FormatterConfig::default(),
-            "
-contract Contract {
-    function test() { unchecked { a += 1; }
-    
-        unchecked {
-        a += 1;
-        }
-        
-        
-unchecked { a += 1;
-        }
-    unchecked {}
-
-    1 + 1;
-
-
-    }
-}",
-            "
-contract Contract {
-    function test() {
-        unchecked {a += 1;}
-
-        unchecked {
-            a += 1;
-        }
-
-        unchecked {
-            a += 1;
-        }
-        unchecked {}
-
-        1 + 1;
-    }
-}
-",
-        );
     }
 }
