@@ -1667,6 +1667,7 @@ name = "forge-fmt"
 version = "0.2.0"
 dependencies = [
  "indent_write",
+ "itertools",
  "pretty_assertions",
  "semver",
  "solang-parser",
