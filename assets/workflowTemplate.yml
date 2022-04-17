@@ -1,16 +1,19 @@
-on: workflow_dispatch
-
 name: test
+
+on: workflow_dispatch
 
 env:
   FOUNDRY_PROFILE: ci
-
+  
 jobs:
   check:
+    strategy:
+      fail-fast: false
+      
     name: Foundry project
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
         with:
           submodules: recursive
 
@@ -18,6 +21,11 @@ jobs:
         uses: foundry-rs/foundry-toolchain@v1
         with:
           version: nightly
+          
+      - name: Run Forge build
+        run: forge build
+        id: build
 
-      - name: Run tests
+      - name: Run Forge tests
         run: forge test -vvv
+        id: test
