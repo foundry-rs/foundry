@@ -443,69 +443,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_statement(&mut self, stmt: &mut Statement) -> VResult {
-        match stmt {
-            Statement::Block { loc, unchecked, statements } => {
-                let multiline = self.source[loc.start()..loc.end()].matches('\n').count() > 0;
-
-                if *unchecked {
-                    write!(self, "unchecked ")?;
-                }
-                if multiline {
-                    writeln!(self, "{{")?;
-                    self.indent(1);
-                } else {
-                    self.write_opening_bracket()?;
-                }
-
-                // We need to skip statements which evaluate to empty string on visiting.
-                // It may happen on empty unchecked blocks,
-                let mut statements_iter = statements.iter_mut().peekable();
-                while let Some(stmt) = statements_iter.next() {
-                    stmt.visit(self)?;
-                    if multiline {
-                        writeln!(self)?;
-                    }
-
-                    // If source has zero blank lines between statements, leave it as is. If one
-                    //  or more, separate statements with one blank line.
-                    if let Some(next_stmt) = statements_iter.peek() {
-                        if self.blank_lines(stmt.loc(), next_stmt.loc()) > 1 {
-                            writeln!(self)?;
-                        }
-                    }
-                }
-
-                if multiline {
-                    self.dedent(1);
-                    write!(self, "}}")?;
-                } else {
-                    self.write_closing_bracket()?;
-                }
-            }
-            Statement::Break(_) => write!(self, "break;")?,
-            Statement::Continue(_) => write!(self, "continue;")?,
-            Statement::Emit(_, expr) => {
-                write!(self, "emit ")?;
-                expr.loc().visit(self)?;
-                write!(self, ";")?;
-            }
-            Statement::Expression(..) |
-            Statement::VariableDefinition(..) |
-            Statement::Revert(..) |
-            Statement::Return(..) => {
-                stmt.loc().visit(self)?;
-                write!(self, ";")?;
-            }
-            _ => stmt.loc().visit(self)?,
-        }
-
-        Ok(())
-    }
-
-    fn visit_expr(&mut self, expr: &mut Expression) -> VResult {
+    fn visit_expr(&mut self, loc: Loc, expr: &mut Expression) -> VResult {
         match expr {
-            Expression::Type(loc, typ) => match typ {
+            Expression::Type(_, typ) => match typ {
                 Type::Address => write!(self, "address")?,
                 Type::AddressPayable => write!(self, "address payable")?,
                 Type::Payable => write!(self, "payable")?,
@@ -523,9 +463,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     to.visit(self)?;
                     write!(self, ")")?;
                 }
-                Type::Function { .. } => loc.visit(self)?,
+                Type::Function { .. } => self.visit_source(loc)?,
             },
-            _ => expr.visit(self)?,
+            _ => self.visit_source(loc)?,
         };
 
         Ok(())
@@ -622,6 +562,72 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
     fn visit_newline(&mut self) -> VResult {
         writeln!(self)?;
+
+        Ok(())
+    }
+
+    fn visit_block(
+        &mut self,
+        loc: Loc,
+        unchecked: bool,
+        statements: &mut Vec<Statement>,
+    ) -> VResult {
+        let multiline = self.source[loc.start()..loc.end()].matches('\n').count() > 0;
+
+        if unchecked {
+            write!(self, "unchecked ")?;
+        }
+        if multiline {
+            writeln!(self, "{{")?;
+            self.indent(1);
+        } else {
+            self.write_opening_bracket()?;
+        }
+
+        // We need to skip statements which evaluate to empty string on visiting.
+        // It may happen on empty unchecked blocks,
+        let mut statements_iter = statements.iter_mut().peekable();
+        while let Some(stmt) = statements_iter.next() {
+            stmt.visit(self)?;
+            if multiline {
+                writeln!(self)?;
+            }
+
+            // If source has zero blank lines between statements, leave it as is. If one
+            //  or more, separate statements with one blank line.
+            if let Some(next_stmt) = statements_iter.peek() {
+                if self.blank_lines(stmt.loc(), next_stmt.loc()) > 1 {
+                    writeln!(self)?;
+                }
+            }
+        }
+
+        if multiline {
+            self.dedent(1);
+            write!(self, "}}")?;
+        } else {
+            self.write_closing_bracket()?;
+        }
+
+        Ok(())
+    }
+
+    fn visit_break(&mut self) -> VResult {
+        write!(self, "break;")?;
+
+        Ok(())
+    }
+
+    fn visit_continue(&mut self) -> VResult {
+        write!(self, "continue;")?;
+
+        Ok(())
+    }
+
+    fn visit_emit(&mut self, _loc: Loc, event: &mut Expression) -> VResult {
+        write!(self, "emit ")?;
+        self.visit_source(event.loc())?;
+        write!(self, ";")?;
 
         Ok(())
     }
