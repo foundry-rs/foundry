@@ -51,8 +51,8 @@ impl Display for SizeReport {
         table.load_preset(UTF8_FULL).apply_modifier(UTF8_ROUND_CORNERS);
         table.set_header(vec![
             Cell::new("Contract").add_attribute(Attribute::Bold).fg(Color::Blue),
-            Cell::new("Size").add_attribute(Attribute::Bold).fg(Color::Blue),
-            Cell::new("Margin").add_attribute(Attribute::Bold).fg(Color::Blue),
+            Cell::new("Size (kB)").add_attribute(Attribute::Bold).fg(Color::Blue),
+            Cell::new("Margin (kB)").add_attribute(Attribute::Bold).fg(Color::Blue),
         ]);
 
         let contracts = self.contracts.iter().filter(|(_, c)| !c.is_test_contract && c.size > 0);
@@ -66,8 +66,8 @@ impl Display for SizeReport {
 
             table.add_row(vec![
                 Cell::new(name).fg(color),
-                Cell::new(contract.size).fg(color),
-                Cell::new(margin).fg(color),
+                Cell::new(contract.size as f64 / 1000.0).fg(color),
+                Cell::new(margin as f64 / 1000.0).fg(color),
             ]);
         }
 
