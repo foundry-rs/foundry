@@ -69,6 +69,16 @@ pub struct NodeConfig {
     pub enable_tracing: bool,
 }
 
+// === impl NodeConfig ===
+
+impl NodeConfig {
+    /// Test config
+    #[doc(hidden)]
+    pub fn test() -> Self {
+        Self { enable_tracing: false, ..Default::default() }
+    }
+}
+
 impl Default for NodeConfig {
     fn default() -> Self {
         // generate some random wallets

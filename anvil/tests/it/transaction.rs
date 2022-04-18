@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_transfer_eth() {
-    let (_api, handle) = spawn(NodeConfig::default().port(next_port())).await;
+    let (_api, handle) = spawn(NodeConfig::test().port(next_port())).await;
     let provider = handle.http_provider();
 
     let accounts: Vec<_> = handle.dev_wallets().collect();
@@ -42,7 +42,7 @@ async fn can_transfer_eth() {
 async fn can_deploy_greeter() {
     abigen!(Greeter, "test-data/greeter.json");
 
-    let (_api, handle) = spawn(NodeConfig::default().port(next_port())).await;
+    let (_api, handle) = spawn(NodeConfig::test().port(next_port())).await;
     let provider = handle.http_provider();
 
     let wallet = handle.dev_wallets().next().unwrap();
@@ -59,7 +59,7 @@ async fn can_deploy_greeter() {
 async fn can_deploy_greeter_ws() {
     abigen!(Greeter, "test-data/greeter.json");
 
-    let (_api, handle) = spawn(NodeConfig::default().port(next_port())).await;
+    let (_api, handle) = spawn(NodeConfig::test().port(next_port())).await;
     let provider = handle.ws_provider().await;
 
     let wallet = handle.dev_wallets().next().unwrap();

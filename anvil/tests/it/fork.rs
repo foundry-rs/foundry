@@ -15,7 +15,7 @@ const RPC_RPC_URL: &str = "https://eth-mainnet.alchemyapi.io/v2/Lc7oIGYeL_QvInzI
 const BLOCK_NUMBER: u64 = 14_608_400u64;
 
 fn fork_config() -> NodeConfig {
-    NodeConfig::default()
+    NodeConfig::test()
         .port(next_port())
         .eth_rpc_url(Some(RPC_RPC_URL))
         .fork_block_number(Some(BLOCK_NUMBER))
