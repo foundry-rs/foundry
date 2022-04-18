@@ -57,6 +57,8 @@ pub struct EthApi {
     signers: Arc<Vec<Box<dyn Signer>>>,
     /// data required for `eth_feeHistory`
     fee_history_cache: FeeHistoryCache,
+    /// max number of items kept in fee cache
+    fee_history_limit: u64,
     /// access to the actual miner
     ///
     /// This access is required in order to adjust miner settings based on requests received from
@@ -73,9 +75,18 @@ impl EthApi {
         backend: Arc<backend::mem::Backend>,
         signers: Arc<Vec<Box<dyn Signer>>>,
         fee_history_cache: FeeHistoryCache,
+        fee_history_limit: u64,
         miner: Miner,
     ) -> Self {
-        Self { pool, backend, is_mining: true, signers, fee_history_cache, miner }
+        Self {
+            pool,
+            backend,
+            is_mining: true,
+            signers,
+            fee_history_cache,
+            fee_history_limit,
+            miner,
+        }
     }
 
     /// Executes the [EthRequest] and returns an RPC [RpcResponse]
@@ -623,7 +634,8 @@ impl EthApi {
         let highest = number;
         let lowest = highest.saturating_sub(block_count);
 
-        if lowest < self.backend.best_number().as_u64() {
+        // only support ranges that are in cache range
+        if lowest < self.backend.best_number().as_u64().saturating_sub(self.fee_history_limit) {
             return Err(FeeHistoryError::InvalidBlockRange.into())
         }
 

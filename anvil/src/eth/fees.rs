@@ -105,6 +105,11 @@ impl FeeHistoryService {
         }
     }
 
+    /// Returns the configured history limit
+    pub fn fee_history_limit(&self) -> u64 {
+        self.fee_history_limit
+    }
+
     fn create_cache_entry(
         &self,
         hash: H256,

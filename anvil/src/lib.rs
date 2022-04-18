@@ -96,6 +96,7 @@ pub async fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
         Arc::clone(&backend),
         Arc::new(vec![dev_signer]),
         fee_history_cache,
+        fee_history_service.fee_history_limit(),
         miner.clone(),
     );
 

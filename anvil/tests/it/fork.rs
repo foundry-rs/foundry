@@ -4,7 +4,7 @@ use crate::{next_port, utils};
 use anvil::{spawn, NodeConfig};
 use ethers::{
     prelude::Middleware,
-    types::{Address, Chain},
+    types::{Address, BlockNumber, Chain},
 };
 
 #[allow(unused)]
@@ -78,4 +78,14 @@ async fn test_fork_eth_get_nonce() {
     let api_nonce = api.transaction_count(addr, None).await.unwrap();
     let provider_nonce = provider.get_transaction_count(addr, None).await.unwrap();
     assert_eq!(api_nonce, provider_nonce);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_eth_fee_history() {
+    let (api, handle) = spawn(fork_config()).await;
+    let provider = handle.http_provider();
+
+    let count = 10u64;
+    let _history = api.fee_history(count.into(), BlockNumber::Latest, vec![]).unwrap();
+    let _provider_history = provider.fee_history(count, BlockNumber::Latest, &[]).await.unwrap();
 }
