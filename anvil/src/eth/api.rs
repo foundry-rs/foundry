@@ -172,6 +172,7 @@ impl EthApi {
             EthRequest::DebugTraceTransaction(tx) => {
                 self.debug_trace_transaction(tx).await.to_rpc_result()
             }
+            EthRequest::TraceTransaction(tx) => self.trace_transaction(tx).await.to_rpc_result(),
             EthRequest::ImpersonateAccount(addr) => {
                 self.anvil_impersonate_account(addr).await.to_rpc_result()
             }
@@ -614,8 +615,6 @@ impl EthApi {
     /// Introduced in EIP-1159 for getting information on the appropriate priority fee to use.
     ///
     /// Handler for ETH RPC call: `eth_feeHistory`
-    ///
-    /// TODO actually track fee history
     pub fn fee_history(
         &self,
         block_count: U256,
@@ -715,11 +714,18 @@ impl EthApi {
         Err(BlockchainError::RpcUnimplemented)
     }
 
-    /// Returns traces for the transaction hash
+    /// Returns traces for the transaction hash for geth's tracing endpoint
     ///
     /// Handler for RPC call: `debug_traceTransaction`
-    pub async fn debug_trace_transaction(&self, _tx_hash: H256) -> Result<Vec<Trace>> {
+    pub async fn debug_trace_transaction(&self, tx_hash: H256) -> Result<Vec<Trace>> {
         Err(BlockchainError::RpcUnimplemented)
+    }
+
+    /// Returns traces for the transaction hash via parity's tracing endpoint
+    ///
+    /// Handler for RPC call: `debug_traceTransaction`
+    pub async fn trace_transaction(&self, tx_hash: H256) -> Result<Vec<Trace>> {
+        self.backend.trace_transaction(tx_hash).await
     }
 }
 

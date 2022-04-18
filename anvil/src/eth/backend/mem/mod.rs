@@ -29,7 +29,7 @@ use anvil_core::{
 };
 use ethers::{
     types::{
-        Address, Block as EthersBlock, Bytes, Filter as EthersFilter, Log, Transaction,
+        Address, Block as EthersBlock, Bytes, Filter as EthersFilter, Log, Trace, Transaction,
         TransactionReceipt,
     },
     utils::{keccak256, rlp},
@@ -714,6 +714,24 @@ impl Backend {
     ) -> Result<U256, BlockchainError> {
         trace!(target: "backend", "get nonce for {:?}", address);
         Ok(self.current_nonce(address))
+    }
+
+    /// Returns the traces for the given transaction
+    pub async fn trace_transaction(&self, hash: H256) -> Result<Vec<Trace>, BlockchainError> {
+        if let Some(traces) = self.mined_trace_transaction(hash) {
+            return Ok(traces)
+        }
+
+        if let Some(ref fork) = self.fork {
+            return Ok(fork.trace_transaction(hash).await?)
+        }
+
+        Ok(vec![])
+    }
+
+    /// Returns the traces for the given transaction
+    pub fn mined_trace_transaction(&self, hash: H256) -> Option<Vec<Trace>> {
+        todo!()
     }
 
     pub async fn transaction_receipt(

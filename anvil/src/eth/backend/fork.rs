@@ -9,7 +9,9 @@ use std::{collections::HashMap, sync::Arc};
 use ethers::{
     prelude::BlockNumber,
     providers::{Middleware, ProviderError},
-    types::{Address, Block, Bytes, Filter, Log, Transaction, TransactionReceipt, TxHash, U256},
+    types::{
+        Address, Block, Bytes, Filter, Log, Trace, Transaction, TransactionReceipt, TxHash, U256,
+    },
 };
 use foundry_evm::utils::u256_to_h256_le;
 use parking_lot::{
@@ -156,6 +158,18 @@ impl ClientFork {
         Ok(None)
     }
 
+    pub async fn trace_transaction(&self, hash: H256) -> Result<Vec<Trace>, ProviderError> {
+        if let Some(traces) = self.storage_read().transaction_traces.get(&hash).cloned() {
+            return Ok(traces)
+        }
+
+        let traces = self.provider().trace_transaction(hash).await?;
+        let mut storage = self.storage_write();
+        storage.transaction_traces.insert(hash, traces.clone());
+
+        Ok(traces)
+    }
+
     pub async fn transaction_receipt(
         &self,
         hash: H256,
@@ -231,5 +245,6 @@ pub struct ForkedStorage {
     pub hashes: HashMap<u64, H256>,
     pub transactions: HashMap<H256, Transaction>,
     pub transaction_receipts: HashMap<H256, TransactionReceipt>,
+    pub transaction_traces: HashMap<H256, Vec<Trace>>,
     pub code_at: HashMap<(Address, u64), Bytes>,
 }

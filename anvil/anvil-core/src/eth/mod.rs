@@ -128,9 +128,13 @@ pub enum EthRequest {
     #[serde(rename = "eth_unsubscribe", with = "sequence")]
     EthUnSubscribe(SubscriptionId),
 
-    /// non-standard endpoint for traces
+    /// geth's `debug_traceTransaction`  endpoint
     #[serde(rename = "debug_traceTransaction", with = "sequence")]
     DebugTraceTransaction(H256),
+
+    /// Trace transaction endpoint for parity's `trace_transaction`
+    #[serde(rename = "trace_transaction", with = "sequence")]
+    TraceTransaction(H256),
 
     // Custom endpoints, they're not extracted to a separate type out of serde convenience
     /// send transactions impersonating specific account and contract addresses.
