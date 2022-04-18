@@ -5,7 +5,7 @@ use std::fmt::Write;
 use indent_write::fmt::IndentWriter;
 use itertools::Itertools;
 use solang_parser::pt::{
-    CodeLocation as _, ContractDefinition, DocComment, EnumDefinition, Expression,
+    CodeLocation as _, ContractDefinition, ContractPart, DocComment, EnumDefinition, Expression,
     FunctionAttribute, FunctionDefinition, Identifier, Loc, Parameter, SourceUnit, SourceUnitPart,
     Statement, StringLiteral, StructDefinition, Type, TypeDefinition, VariableDeclaration,
 };
@@ -340,7 +340,10 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 // If source has zero blank lines between declarations, leave it as is. If one
                 //  or more, separate declarations with one blank line.
                 if let Some(next_part) = contract_parts_iter.peek() {
-                    if self.blank_lines(part.loc(), next_part.loc()) >= 1 {
+                    let blank_lines = self.blank_lines(part.loc(), next_part.loc());
+                    if matches!(part, ContractPart::FunctionDefinition(_)) && blank_lines > 0 ||
+                        blank_lines > 1
+                    {
                         writeln!(self)?;
                     }
                 }
