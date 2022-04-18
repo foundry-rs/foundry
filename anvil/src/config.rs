@@ -65,6 +65,8 @@ pub struct NodeConfig {
     pub fork_block_number: Option<u64>,
     /// The generator used to generate the dev accounts
     pub account_generator: Option<AccountGenerator>,
+    /// whether to enable tracing
+    pub enable_tracing: bool,
 }
 
 impl Default for NodeConfig {
@@ -88,6 +90,7 @@ impl Default for NodeConfig {
             fork_block_number: None,
             account_generator: None,
             base_fee: INITIAL_BASE_FEE.into(),
+            enable_tracing: true,
         }
     }
 }
@@ -186,6 +189,13 @@ impl NodeConfig {
     #[must_use]
     pub fn fork_block_number<U: Into<u64>>(mut self, fork_block_number: Option<U>) -> Self {
         self.fork_block_number = fork_block_number.map(Into::into);
+        self
+    }
+
+    /// Sets whether to enable tracing
+    #[must_use]
+    pub fn with_tracing(mut self, enable_tracing: bool) -> Self {
+        self.enable_tracing = enable_tracing;
         self
     }
 

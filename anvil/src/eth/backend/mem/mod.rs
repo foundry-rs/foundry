@@ -29,8 +29,8 @@ use anvil_core::{
 };
 use ethers::{
     types::{
-        Address, Block as EthersBlock, Bytes, Filter as EthersFilter,
-        Log, Trace, Transaction, TransactionReceipt,
+        Address, Block as EthersBlock, Bytes, Filter as EthersFilter, Log, Trace, Transaction,
+        TransactionReceipt,
     },
     utils::{keccak256, rlp},
 };

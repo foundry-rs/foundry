@@ -21,8 +21,6 @@ pub struct App {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    anvil::init_tracing();
-
     let app = App::parse();
     app.node.run().await?;
 

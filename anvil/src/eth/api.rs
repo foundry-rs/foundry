@@ -12,7 +12,7 @@ use crate::{
         sign::Signer,
     },
     revm::TransactOut,
-    Miner, MiningMode, Provider,
+    LoggingManager, Miner, MiningMode, Provider,
 };
 use anvil_core::{
     eth::{
@@ -65,6 +65,8 @@ pub struct EthApi {
     /// This access is required in order to adjust miner settings based on requests received from
     /// custom RPC endpoints
     miner: Miner,
+    /// allows to enabled/disable logging
+    logger: LoggingManager,
 }
 
 // === impl Eth RPC API ===
@@ -78,6 +80,7 @@ impl EthApi {
         fee_history_cache: FeeHistoryCache,
         fee_history_limit: u64,
         miner: Miner,
+        logger: LoggingManager,
     ) -> Self {
         Self {
             pool,
@@ -87,6 +90,7 @@ impl EthApi {
             fee_history_cache,
             fee_history_limit,
             miner,
+            logger,
         }
     }
 
@@ -882,8 +886,9 @@ impl EthApi {
     /// Enable or disable logging.
     ///
     /// Handler for RPC call: `anvil_setLoggingEnabled`
-    pub async fn anvil_set_logging(&self, _enable: bool) -> Result<()> {
-        Err(BlockchainError::RpcUnimplemented)
+    pub async fn anvil_set_logging(&self, enable: bool) -> Result<()> {
+        self.logger.set_enabled(enable);
+        Ok(())
     }
 
     /// Set the minimum gas price for the node.

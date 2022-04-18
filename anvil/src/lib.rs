@@ -16,10 +16,13 @@ use ethers::{
     types::{Address, U256},
 };
 
-use crate::eth::{
-    backend::info::StorageInfo,
-    fees::{FeeHistoryService, FeeManager},
-    miner::Miner,
+use crate::{
+    eth::{
+        backend::info::StorageInfo,
+        fees::{FeeHistoryService, FeeManager},
+        miner::Miner,
+    },
+    logging::{LoggingManager, NodeLogLayer},
 };
 use eth::backend::fork::ClientFork;
 use ethers::providers::Ws;
@@ -35,10 +38,12 @@ use tokio::task::{JoinError, JoinHandle};
 
 mod service;
 
+/// ethereum related implementations
+pub mod eth;
 /// axum RPC server implementations
 pub mod server;
 
-pub mod eth;
+pub mod logging;
 
 #[cfg(feature = "cmd")]
 pub mod cmd;
@@ -63,6 +68,8 @@ pub mod cmd;
 /// # }
 /// ```
 pub async fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
+    let logger = if config.enable_tracing { init_tracing() } else { Default::default() };
+
     let backend = Arc::new(config.setup().await);
 
     let fork = backend.get_fork().cloned();
@@ -98,6 +105,7 @@ pub async fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
         fee_history_cache,
         fee_history_service.fee_history_limit(),
         miner.clone(),
+        logger,
     );
 
     let node_service = NodeService::new(pool, backend, miner, fee_history_service);
@@ -212,8 +220,27 @@ impl Future for NodeHandle {
 
 #[allow(unused)]
 #[doc(hidden)]
-pub fn init_tracing() {
-    tracing_subscriber::FmtSubscriber::builder()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
+pub fn init_tracing() -> LoggingManager {
+    use tracing_subscriber::prelude::*;
+
+    let manager = LoggingManager::default();
+    // check whether `RUST_LOG` is explicitly set
+    if std::env::var("RUST_LOG").is_ok() {
+        tracing_subscriber::Registry::default()
+            .with(tracing_subscriber::EnvFilter::from_default_env())
+            .with(tracing_subscriber::fmt::layer())
+            .init();
+    } else {
+        tracing_subscriber::Registry::default()
+            .with(NodeLogLayer::new(manager.clone()))
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .without_time()
+                    .with_target(false)
+                    .with_level(false),
+            )
+            .init();
+    }
+
+    manager
 }
