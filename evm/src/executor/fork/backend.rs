@@ -260,10 +260,9 @@ where
                     ProviderRequest::Account(fut) => {
                         if let Poll::Ready((resp, addr)) = fut.poll_unpin(cx) {
                             // get the response
-                            let (balance, nonce, code) = resp.unwrap_or_else(|_| {
-                            trace!( target: "backendhandler", "Failed to get account for {}", addr);
-                            Default::default()
-                        });
+                            let (balance, nonce, code) = resp.unwrap_or_else(|report| {
+                                panic!("Failed to get account for {}\n{}", addr, report);
+                            });
 
                             // convert it to revm-style types
                             let (code, code_hash) = if !code.0.is_empty() {
@@ -288,10 +287,9 @@ where
                     }
                     ProviderRequest::Storage(fut) => {
                         if let Poll::Ready((resp, addr, idx)) = fut.poll_unpin(cx) {
-                            let value = resp.unwrap_or_else(|_| {
-                            trace!( target: "backendhandler", "Failed to get storage for {} at {}", addr, idx);
-                            Default::default()
-                        });
+                            let value = resp.unwrap_or_else(|report| {
+                                panic!("Failed to get storage for {} at {}\n{}", addr, idx, report);
+                            });
 
                             // update the cache
                             pin.db.storage().write().entry(addr).or_default().insert(idx, value);
@@ -307,10 +305,9 @@ where
                     }
                     ProviderRequest::BlockHash(fut) => {
                         if let Poll::Ready((block_hash, number)) = fut.poll_unpin(cx) {
-                            let value = block_hash.unwrap_or_else(|_| {
-                            trace!( target: "backendhandler", "Failed to get block hash for {}", number);
-                            Default::default()
-                        });
+                            let value = block_hash.unwrap_or_else(|report| {
+                                panic!("Failed to get block hash for {}\n{}", number, report);
+                            });
 
                             // update the cache
                             pin.db.block_hashes().write().insert(number, value);
@@ -520,10 +517,12 @@ mod tests {
 
     #[test]
     fn can_read_write_cache() {
+        let provider = Provider::<Http>::try_from(ENDPOINT).unwrap();
         let tmpdir = tempfile::tempdir().unwrap();
         let cache_path = tmpdir.path().join("storage.json");
+        let runtime = RuntimeOrHandle::new();
 
-        let block_num = 14435000;
+        let block_num = runtime.block_on(provider.get_block_number()).unwrap().as_u64();
         let env = revm::Env::default();
 
         let fork = Fork {
@@ -533,7 +532,6 @@ mod tests {
             chain_id: 1,
         };
 
-        let runtime = RuntimeOrHandle::new();
         let backend = runtime.block_on(fork.spawn_backend(&env));
 
         // some rng contract from etherscan
