@@ -7,6 +7,8 @@ First add `foundry-binder` to your cargo build-dependencies.
 ```toml
 [build-dependencies]
 foundry-binder = { git = "https://github.com/gakonst/foundry" }
+# required in order to enable ssh support in [libgit2](https://github.com/rust-lang/git2-rs)
+git2 = "0.13"
 ```
 
 ```rust

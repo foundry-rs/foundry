@@ -86,6 +86,7 @@ pub mod test_helpers {
         sender: Address::from_str("00a329c0648769a73afac7f9381e08fb43dbea72").unwrap(),
         initial_balance: U256::MAX,
         ffi: true,
+        memory_limit: 2u64.pow(24),
         ..Default::default()
     });
 

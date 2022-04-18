@@ -5,5 +5,4 @@
 //! implement `figment::Provider` which allows the subcommand to override the config's defaults, see
 //! [`foundry_config::Config`].
 
-pub mod call;
 pub mod find_block;

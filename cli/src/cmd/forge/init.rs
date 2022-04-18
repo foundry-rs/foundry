@@ -97,7 +97,9 @@ impl Cmd for InitArgs {
 
             // make the dirs
             let src = root.join("src");
-            let test = src.join("test");
+            std::fs::create_dir_all(&src)?;
+
+            let test = root.join("test");
             std::fs::create_dir_all(&test)?;
 
             // write the contract file
@@ -158,6 +160,7 @@ fn init_git_repo(root: &Path, no_commit: bool) -> eyre::Result<()> {
         let gitignore_path = root.join(".gitignore");
         std::fs::write(gitignore_path, include_str!("../../../../assets/.gitignoreTemplate"))?;
 
+        // git init
         Command::new("git")
             .arg("init")
             .current_dir(&root)
@@ -165,6 +168,12 @@ fn init_git_repo(root: &Path, no_commit: bool) -> eyre::Result<()> {
             .stderr(Stdio::piped())
             .spawn()?
             .wait()?;
+
+        // create github workflow
+        let gh = root.join(".github").join("workflows");
+        std::fs::create_dir_all(&gh)?;
+        let workflow_path = gh.join("test.yml");
+        std::fs::write(workflow_path, include_str!("../../../../assets/workflowTemplate.yml"))?;
 
         if !no_commit {
             Command::new("git").args(&["add", "."]).current_dir(&root).spawn()?.wait()?;

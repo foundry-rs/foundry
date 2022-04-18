@@ -12,7 +12,7 @@ pub struct EvmOpts {
     #[serde(flatten)]
     pub env: Env,
 
-    /// fetch state over a remote instead of starting from empty state
+    /// Fetch state over a remote instead of starting from empty state
     #[serde(rename = "eth_rpc_url")]
     pub fork_url: Option<String>,
 
@@ -33,6 +33,9 @@ pub struct EvmOpts {
 
     /// Verbosity mode of EVM output as number of occurences
     pub verbosity: u8,
+
+    /// The memory limit of the EVM in bytes.
+    pub memory_limit: u64,
 }
 
 impl EvmOpts {
@@ -40,9 +43,15 @@ impl EvmOpts {
         if let Some(ref fork_url) = self.fork_url {
             let provider =
                 Provider::try_from(fork_url.as_str()).expect("could not instantiated provider");
-            environment(&provider, self.env.chain_id, self.fork_block_number, self.sender)
-                .await
-                .expect("could not instantiate forked environment")
+            environment(
+                &provider,
+                self.memory_limit,
+                self.env.chain_id,
+                self.fork_block_number,
+                self.sender,
+            )
+            .await
+            .expect("could not instantiate forked environment")
         } else {
             revm::Env {
                 block: BlockEnv {
@@ -57,8 +66,7 @@ impl EvmOpts {
                     chain_id: self.env.chain_id.unwrap_or(99).into(),
                     spec_id: SpecId::LONDON,
                     perf_all_precompiles_have_balance: false,
-                    // 16 MiB
-                    memory_limit: 2u64.pow(24),
+                    memory_limit: self.memory_limit,
                 },
                 tx: TxEnv {
                     gas_price: self.env.gas_price.into(),

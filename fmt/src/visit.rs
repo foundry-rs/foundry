@@ -57,33 +57,50 @@ pub trait Visitor {
         Ok(())
     }
 
-    fn visit_statement(&mut self, stmt: &mut Statement) -> VResult {
-        self.visit_source(stmt.loc())?;
+    fn visit_assembly(
+        &mut self,
+        loc: Loc,
+        _dialect: &mut Option<StringLiteral>,
+        _block: &mut YulBlock,
+    ) -> VResult {
+        self.visit_source(loc)?;
 
         Ok(())
     }
 
-    fn visit_assembly(&mut self, stmt: &mut YulStatement) -> VResult {
-        self.visit_source(stmt.loc())?;
+    fn visit_block(
+        &mut self,
+        loc: Loc,
+        _unchecked: bool,
+        _statements: &mut Vec<Statement>,
+    ) -> VResult {
+        self.visit_source(loc)?;
 
         Ok(())
     }
 
-    fn visit_arg(&mut self, arg: &mut NamedArgument) -> VResult {
-        self.visit_source(arg.loc)?;
+    fn visit_args(&mut self, loc: Loc, _args: &mut Vec<NamedArgument>) -> VResult {
+        self.visit_source(loc)?;
 
         Ok(())
     }
 
-    fn visit_expr(&mut self, _expr: &mut Expression) -> VResult {
+    /// Doesn't write semicolon at the end because expressions can appear as both
+    /// part of other node and a statement in the function body
+    fn visit_expr(&mut self, loc: Loc, _expr: &mut Expression) -> VResult {
+        self.visit_source(loc)?;
+
         Ok(())
     }
 
-    fn visit_emit(&mut self, _expr: &mut Expression) -> VResult {
+    fn visit_emit(&mut self, loc: Loc, _event: &mut Expression) -> VResult {
+        self.visit_source(loc)?;
+        self.visit_stray_semicolon()?;
+
         Ok(())
     }
 
-    fn visit_var_def(&mut self, var: &mut VariableDefinition) -> VResult {
+    fn visit_var_definition(&mut self, var: &mut VariableDefinition) -> VResult {
         if !var.doc.is_empty() {
             self.visit_doc_comments(&mut var.doc)?;
             self.visit_newline()?;
@@ -94,7 +111,42 @@ pub trait Visitor {
         Ok(())
     }
 
-    fn visit_return(&mut self, _expr: &mut Option<Expression>) -> VResult {
+    fn visit_var_definition_stmt(
+        &mut self,
+        loc: Loc,
+        _declaration: &mut VariableDeclaration,
+        _expr: &mut Option<Expression>,
+    ) -> VResult {
+        self.visit_source(loc)?;
+        self.visit_stray_semicolon()?;
+
+        Ok(())
+    }
+
+    /// Doesn't write semicolon at the end because variable declarations can appear in both
+    /// struct definition and function body as a statement
+    fn visit_var_declaration(&mut self, var: &mut VariableDeclaration) -> VResult {
+        self.visit_source(var.loc)?;
+
+        Ok(())
+    }
+
+    fn visit_return(&mut self, loc: Loc, _expr: &mut Option<Expression>) -> VResult {
+        self.visit_source(loc)?;
+        self.visit_stray_semicolon()?;
+
+        Ok(())
+    }
+
+    fn visit_revert(
+        &mut self,
+        loc: Loc,
+        _error: &mut Option<Identifier>,
+        _args: &mut Vec<Expression>,
+    ) -> VResult {
+        self.visit_source(loc)?;
+        self.visit_stray_semicolon()?;
+
         Ok(())
     }
 
@@ -106,11 +158,58 @@ pub trait Visitor {
         Ok(())
     }
 
-    fn visit_do_while(&mut self, _stmt: &mut Statement, _expr: &mut Expression) -> VResult {
+    #[allow(clippy::type_complexity)]
+    fn visit_try(
+        &mut self,
+        loc: Loc,
+        _expr: &mut Expression,
+        _returns: &mut Option<(Vec<(Loc, Option<Parameter>)>, Box<Statement>)>,
+        _clauses: &mut Vec<CatchClause>,
+    ) -> VResult {
+        self.visit_source(loc)?;
+
         Ok(())
     }
 
-    fn visit_while(&mut self, _expr: &mut Expression, _stmt: &mut Statement) -> VResult {
+    fn visit_if(
+        &mut self,
+        loc: Loc,
+        _cond: &mut Expression,
+        _if_branch: &mut Box<Statement>,
+        _else_branch: &mut Option<Box<Statement>>,
+    ) -> VResult {
+        self.visit_source(loc)?;
+
+        Ok(())
+    }
+
+    fn visit_do_while(
+        &mut self,
+        loc: Loc,
+        _cond: &mut Statement,
+        _body: &mut Expression,
+    ) -> VResult {
+        self.visit_source(loc)?;
+
+        Ok(())
+    }
+
+    fn visit_while(&mut self, loc: Loc, _cond: &mut Expression, _body: &mut Statement) -> VResult {
+        self.visit_source(loc)?;
+
+        Ok(())
+    }
+
+    fn visit_for(
+        &mut self,
+        loc: Loc,
+        _init: &mut Option<Box<Statement>>,
+        _cond: &mut Option<Box<Expression>>,
+        _update: &mut Option<Box<Statement>>,
+        _body: &mut Option<Box<Statement>>,
+    ) -> VResult {
+        self.visit_source(loc)?;
+
         Ok(())
     }
 
@@ -161,6 +260,12 @@ pub trait Visitor {
 
     fn visit_event_parameter(&mut self, param: &mut EventParameter) -> VResult {
         self.visit_source(param.loc)?;
+
+        Ok(())
+    }
+
+    fn visit_type_definition(&mut self, def: &mut TypeDefinition) -> VResult {
+        self.visit_source(def.loc)?;
 
         Ok(())
     }
@@ -228,7 +333,8 @@ impl Visitable for SourceUnitPart {
             SourceUnitPart::EventDefinition(event) => v.visit_event(event),
             SourceUnitPart::ErrorDefinition(error) => v.visit_error(error),
             SourceUnitPart::FunctionDefinition(function) => v.visit_function(function),
-            SourceUnitPart::VariableDefinition(variable) => v.visit_var_def(variable),
+            SourceUnitPart::VariableDefinition(variable) => v.visit_var_definition(variable),
+            SourceUnitPart::TypeDefinition(def) => v.visit_type_definition(def),
             SourceUnitPart::StraySemicolon(_) => v.visit_stray_semicolon(),
         }
     }
@@ -251,8 +357,9 @@ impl Visitable for ContractPart {
             ContractPart::EventDefinition(event) => v.visit_event(event),
             ContractPart::ErrorDefinition(error) => v.visit_error(error),
             ContractPart::EnumDefinition(enumeration) => v.visit_enum(enumeration),
-            ContractPart::VariableDefinition(variable) => v.visit_var_def(variable),
+            ContractPart::VariableDefinition(variable) => v.visit_var_definition(variable),
             ContractPart::FunctionDefinition(function) => v.visit_function(function),
+            ContractPart::TypeDefinition(def) => v.visit_type_definition(def),
             ContractPart::StraySemicolon(_) => v.visit_stray_semicolon(),
             ContractPart::Using(using) => v.visit_using(using),
         }
@@ -261,7 +368,53 @@ impl Visitable for ContractPart {
 
 impl Visitable for Statement {
     fn visit(&mut self, v: &mut impl Visitor) -> VResult {
-        v.visit_statement(self)?;
+        match self {
+            Statement::Block { loc, unchecked, statements } => {
+                v.visit_block(*loc, *unchecked, statements)
+            }
+            Statement::Assembly { loc, dialect, block } => v.visit_assembly(*loc, dialect, block),
+            Statement::Args(loc, args) => v.visit_args(*loc, args),
+            Statement::If(loc, cond, if_branch, else_branch) => {
+                v.visit_if(*loc, cond, if_branch, else_branch)
+            }
+            Statement::While(loc, cond, body) => v.visit_while(*loc, cond, body),
+            Statement::Expression(loc, expr) => {
+                v.visit_expr(*loc, expr)?;
+                v.visit_stray_semicolon()
+            }
+            Statement::VariableDefinition(loc, declaration, expr) => {
+                v.visit_var_definition_stmt(*loc, declaration, expr)
+            }
+            Statement::For(loc, init, cond, update, body) => {
+                v.visit_for(*loc, init, cond, update, body)
+            }
+            Statement::DoWhile(loc, cond, body) => v.visit_do_while(*loc, cond, body),
+            Statement::Continue(_) => v.visit_continue(),
+            Statement::Break(_) => v.visit_break(),
+            Statement::Return(loc, expr) => v.visit_return(*loc, expr),
+            Statement::Revert(loc, error, args) => v.visit_revert(*loc, error, args),
+            Statement::Emit(loc, event) => v.visit_emit(*loc, event),
+            Statement::Try(loc, expr, returns, clauses) => {
+                v.visit_try(*loc, expr, returns, clauses)
+            }
+            // TODO: statement doc comments are parsed differently than doc comments attached to
+            //  another node. Ideally, Solang should parse them into `solang::pt::DocComment` enum.
+            Statement::DocComment(..) => Ok(()),
+        }
+    }
+}
+
+impl Visitable for VariableDeclaration {
+    fn visit(&mut self, v: &mut impl Visitor) -> VResult {
+        v.visit_var_declaration(self)?;
+
+        Ok(())
+    }
+}
+
+impl Visitable for Expression {
+    fn visit(&mut self, v: &mut impl Visitor) -> VResult {
+        v.visit_expr(self.loc(), self)?;
 
         Ok(())
     }

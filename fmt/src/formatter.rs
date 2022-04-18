@@ -4,8 +4,9 @@ use std::fmt::Write;
 
 use indent_write::fmt::IndentWriter;
 use solang_parser::pt::{
-    ContractDefinition, DocComment, EnumDefinition, Identifier, Loc, SourceUnit, SourceUnitPart,
-    StringLiteral,
+    CodeLocation, ContractDefinition, DocComment, EnumDefinition, Expression, FunctionDefinition,
+    Identifier, Loc, SourceUnit, SourceUnitPart, Statement, StringLiteral, StructDefinition, Type,
+    TypeDefinition, VariableDeclaration,
 };
 
 use crate::{
@@ -74,13 +75,13 @@ impl<'a, W: Write> Formatter<'a, W> {
     fn indent(&mut self, delta: usize) {
         let level = self.level();
 
-        *level = level.saturating_add(delta)
+        *level += delta;
     }
 
     fn dedent(&mut self, delta: usize) {
         let level = self.level();
 
-        *level = level.saturating_sub(delta)
+        *level -= delta;
     }
 
     /// Write opening bracket with respect to `config.bracket_spacing` setting:
@@ -147,9 +148,9 @@ impl<'a, W: Write> Formatter<'a, W> {
         Ok(buf.w)
     }
 
-    /// Returns number of blank lines between two parts of source code
-    fn blank_lines<T: LineOfCode>(&self, a: &mut T, b: &&mut T) -> usize {
-        return self.source[a.loc().end()..b.loc().start()].matches('\n').count()
+    /// Returns number of blank lines between two LOCs
+    fn blank_lines(&self, a: Loc, b: Loc) -> usize {
+        return self.source[a.end()..b.start()].matches('\n').count()
     }
 }
 
@@ -220,7 +221,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                         is_import(next_unit) &&
                         // If source has zero blank lines between imports, leave it as is. If one
                         //  or more, separate imports with one blank line.
-                        self.blank_lines(unit, next_unit) > 1)
+                        self.blank_lines(unit.loc(), next_unit.loc()) > 1)
                 {
                     writeln!(self)?;
                 }
@@ -323,7 +324,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 // If source has zero blank lines between declarations, leave it as is. If one
                 //  or more, separate declarations with one blank line.
                 if let Some(next_part) = contract_parts_iter.peek() {
-                    if self.blank_lines(part, next_part) > 1 {
+                    if self.blank_lines(part.loc(), next_part.loc()) > 1 {
                         writeln!(self)?;
                     }
                 }
@@ -412,7 +413,13 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_enum(&mut self, enumeration: &mut EnumDefinition) -> VResult {
+        if !enumeration.doc.is_empty() {
+            enumeration.doc.visit(self)?;
+            writeln!(self)?;
+        }
+
         write!(self, "enum {} ", &enumeration.name.name)?;
+
         if enumeration.values.is_empty() {
             self.write_empty_brackets()?;
         } else {
@@ -436,6 +443,117 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    fn visit_expr(&mut self, loc: Loc, expr: &mut Expression) -> VResult {
+        match expr {
+            Expression::Type(_, typ) => match typ {
+                Type::Address => write!(self, "address")?,
+                Type::AddressPayable => write!(self, "address payable")?,
+                Type::Payable => write!(self, "payable")?,
+                Type::Bool => write!(self, "bool")?,
+                Type::String => write!(self, "string")?,
+                Type::Int(n) => write!(self, "int{}", n)?,
+                Type::Uint(n) => write!(self, "uint{}", n)?,
+                Type::Bytes(n) => write!(self, "bytes{}", n)?,
+                Type::Rational => write!(self, "rational")?,
+                Type::DynamicBytes => write!(self, "bytes")?,
+                Type::Mapping(_, from, to) => {
+                    write!(self, "mapping(")?;
+                    from.visit(self)?;
+                    write!(self, " => ")?;
+                    to.visit(self)?;
+                    write!(self, ")")?;
+                }
+                Type::Function { .. } => self.visit_source(loc)?,
+            },
+            _ => self.visit_source(loc)?,
+        };
+
+        Ok(())
+    }
+
+    fn visit_var_declaration(&mut self, var: &mut VariableDeclaration) -> VResult {
+        var.ty.visit(self)?;
+
+        if let Some(storage) = &var.storage {
+            write!(self, " {}", storage)?;
+        }
+
+        write!(self, " {}", var.name.name)?;
+
+        Ok(())
+    }
+
+    fn visit_function(&mut self, func: &mut FunctionDefinition) -> VResult {
+        if !func.doc.is_empty() {
+            func.doc.visit(self)?;
+            writeln!(self)?;
+        }
+
+        // Workaround for cases when function in the original source code had parameters and
+        // modifiers spanned across multiple lines, thus having its own indentation that we
+        // need to reset.
+        let signature = self.visit_to_string(&mut func.loc)?;
+        let level = self.level;
+        self.dedent(level);
+        write!(self, "{}{}", " ".repeat(self.config.tab_width * level), signature)?;
+        self.indent(level);
+
+        match &mut func.body {
+            Some(body) => {
+                // Same, until we reconstruct function parameters and modifiers on our own,
+                // we need to respect style of the original source code
+                if self.blank_lines(func.loc, body.loc()) > 0 {
+                    writeln!(self)?;
+                } else if !signature.ends_with(char::is_whitespace) {
+                    write!(self, " ")?;
+                }
+                body.visit(self)?
+            }
+            None => write!(self, ";")?,
+        };
+
+        Ok(())
+    }
+
+    fn visit_struct(&mut self, structure: &mut StructDefinition) -> VResult {
+        if !structure.doc.is_empty() {
+            structure.doc.visit(self)?;
+            writeln!(self)?;
+        }
+
+        write!(self, "struct {} ", &structure.name.name)?;
+
+        if structure.fields.is_empty() {
+            self.write_empty_brackets()?;
+        } else {
+            writeln!(self, "{{")?;
+
+            self.indent(1);
+            for field in structure.fields.iter_mut() {
+                field.visit(self)?;
+                writeln!(self, ";")?;
+            }
+            self.dedent(1);
+
+            write!(self, "}}")?;
+        }
+
+        Ok(())
+    }
+
+    fn visit_type_definition(&mut self, def: &mut TypeDefinition) -> VResult {
+        if !def.doc.is_empty() {
+            def.doc.visit(self)?;
+            writeln!(self)?;
+        }
+
+        write!(self, "type {} is ", def.name.name)?;
+        def.ty.visit(self)?;
+        write!(self, ";")?;
+
+        Ok(())
+    }
+
     fn visit_stray_semicolon(&mut self) -> VResult {
         write!(self, ";")?;
 
@@ -447,82 +565,153 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         Ok(())
     }
+
+    fn visit_block(
+        &mut self,
+        loc: Loc,
+        unchecked: bool,
+        statements: &mut Vec<Statement>,
+    ) -> VResult {
+        if unchecked {
+            write!(self, "unchecked ")?;
+        }
+
+        if statements.is_empty() {
+            self.write_empty_brackets()?;
+            return Ok(())
+        }
+
+        let multiline = self.source[loc.start()..loc.end()].matches('\n').count() > 0;
+
+        if multiline {
+            writeln!(self, "{{")?;
+            self.indent(1);
+        } else {
+            self.write_opening_bracket()?;
+        }
+
+        // We need to skip statements which evaluate to empty string on visiting.
+        // It may happen on empty unchecked blocks,
+        let mut statements_iter = statements.iter_mut().peekable();
+        while let Some(stmt) = statements_iter.next() {
+            stmt.visit(self)?;
+            if multiline {
+                writeln!(self)?;
+            }
+
+            // If source has zero blank lines between statements, leave it as is. If one
+            //  or more, separate statements with one blank line.
+            if let Some(next_stmt) = statements_iter.peek() {
+                if self.blank_lines(stmt.loc(), next_stmt.loc()) > 1 {
+                    writeln!(self)?;
+                }
+            }
+        }
+
+        if multiline {
+            self.dedent(1);
+            write!(self, "}}")?;
+        } else {
+            self.write_closing_bracket()?;
+        }
+
+        Ok(())
+    }
+
+    fn visit_break(&mut self) -> VResult {
+        write!(self, "break;")?;
+
+        Ok(())
+    }
+
+    fn visit_continue(&mut self) -> VResult {
+        write!(self, "continue;")?;
+
+        Ok(())
+    }
+
+    fn visit_emit(&mut self, _loc: Loc, event: &mut Expression) -> VResult {
+        write!(self, "emit ")?;
+        self.visit_source(event.loc())?;
+        write!(self, ";")?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use itertools::Itertools;
     use std::{fs, path::PathBuf};
 
     use crate::visit::Visitable;
 
     use super::*;
 
-    fn test_directory(dir: &str) {
-        let snapshot_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("testdata/prettier-plugin-solidity/tests/format")
-            .join(dir)
-            .join("__snapshots__/jsfmt.spec.js.snap");
+    fn test_directory(base_name: &str) {
+        let mut original = None;
 
-        let snapshot = fs::read_to_string(snapshot_path).unwrap();
+        let tests = fs::read_dir(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata").join(base_name),
+        )
+        .unwrap()
+        .filter_map(|path| {
+            let path = path.unwrap().path();
+            let source = fs::read_to_string(&path).unwrap();
 
-        snapshot
-            .strip_prefix("// Jest Snapshot v1, https://goo.gl/fbAQLP")
-            .unwrap()
-            .split("`;")
-            .for_each(|test| {
-                let is_header = |line: &str, name: &str| {
-                    line.starts_with('=') && line.ends_with('=') && line.contains(name)
-                };
+            if let Some(filename) = path.file_name().and_then(|name| name.to_str()) {
+                if filename == "original.sol" {
+                    original = Some(source);
+                } else if filename
+                    .strip_suffix("fmt.sol")
+                    .map(|filename| filename.strip_suffix('.'))
+                    .is_some()
+                {
+                    let mut config = FormatterConfig::default();
 
-                let mut lines = test.split('\n');
-
-                let config = lines
-                    .by_ref()
-                    .skip_while(|line| !is_header(line, "options"))
-                    .take_while(|line| !is_header(line, "input"))
-                    .filter_map(|line| {
-                        let parts = line.splitn(2, ':').collect::<Vec<_>>();
-
-                        if parts.len() != 2 {
-                            return None
+                    let mut lines = source.split('\n').peekable();
+                    while let Some(line) = lines.peek() {
+                        let entry = line
+                            .strip_prefix("//")
+                            .and_then(|line| line.trim().strip_prefix("config:"))
+                            .map(str::trim);
+                        if entry.is_none() {
+                            break
                         }
 
-                        let key = parts[0];
-                        let value = parts[1].trim();
-
-                        if key == "parsers" && value != r#"["solidity-parse"]"# {
-                            return None
+                        if let Some((key, value)) = entry.unwrap().split_once("=") {
+                            match key {
+                                "line-length" => config.line_length = value.parse().unwrap(),
+                                "tab-width" => config.tab_width = value.parse().unwrap(),
+                                "bracket-spacing" => {
+                                    config.bracket_spacing = value.parse().unwrap()
+                                }
+                                _ => panic!("Unknown config key: {key}"),
+                            }
                         }
 
-                        Some((key, value))
-                    })
-                    .fold(FormatterConfig::default(), |mut config, (key, value)| {
-                        match key {
-                            "bracketSpacing" => config.bracket_spacing = value == "true",
-                            "compiler" => (),      // TODO: set compiler in config
-                            "explicitTypes" => (), // TODO: set explicit_types in config
-                            "parsers" => (),
-                            "printWidth" => config.line_length = value.parse().unwrap(),
-                            _ => panic!("Unknown snapshot options key: {}", key),
-                        }
+                        lines.next();
+                    }
 
-                        config
-                    });
+                    return Some((filename.to_string(), config, lines.join("\n")))
+                }
+            }
 
-                let input = lines
-                    .by_ref()
-                    .take_while(|line| !is_header(line, "output"))
-                    .collect::<Vec<_>>()
-                    .join("\n");
+            None
+        })
+        .collect::<Vec<_>>();
 
-                let output =
-                    lines.take_while(|line| !is_header(line, "")).collect::<Vec<_>>().join("\n");
-
-                test_formatter(config, &input, &output);
-            });
+        for (filename, config, formatted) in tests {
+            test_formatter(
+                &filename,
+                config,
+                original.as_ref().expect("original.sol not found"),
+                &formatted,
+            );
+        }
     }
 
-    fn test_formatter(config: FormatterConfig, source: &str, expected: &str) {
+    fn test_formatter(filename: &str, config: FormatterConfig, source: &str, expected: &str) {
         #[derive(PartialEq, Eq)]
         struct PrettyString(String);
 
@@ -541,7 +730,12 @@ mod tests {
         let formatted = PrettyString(result);
         let expected = PrettyString(expected.trim_start().to_string());
 
-        pretty_assertions::assert_eq!(formatted, expected, "(formatted == expected)");
+        pretty_assertions::assert_eq!(
+            formatted,
+            expected,
+            "(formatted == expected) in {}",
+            filename
+        );
     }
 
     #[test]
@@ -557,5 +751,20 @@ mod tests {
     #[test]
     fn import_directive() {
         test_directory("ImportDirective");
+    }
+
+    #[test]
+    fn statement_block() {
+        test_directory("StatementBlock");
+    }
+
+    #[test]
+    fn struct_definition() {
+        test_directory("StructDefinition");
+    }
+
+    #[test]
+    fn type_definition() {
+        test_directory("TypeDefinition");
     }
 }

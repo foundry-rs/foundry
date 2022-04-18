@@ -1,6 +1,6 @@
 use super::{AddressIdentity, TraceIdentifier};
 use ethers::{
-    abi::{Abi, Address},
+    abi::{Abi, Address, Event},
     prelude::ArtifactId,
 };
 use std::{borrow::Cow, collections::BTreeMap};
@@ -20,6 +20,11 @@ impl LocalTraceIdentifier {
                 })
                 .collect(),
         }
+    }
+
+    /// Get all the events of the local contracts.
+    pub fn events(&self) -> Vec<Event> {
+        self.local_contracts.iter().flat_map(|(_, (_, abi))| abi.events().cloned()).collect()
     }
 }
 

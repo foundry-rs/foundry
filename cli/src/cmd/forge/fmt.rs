@@ -1,4 +1,9 @@
-use std::{fmt::Write, path::PathBuf};
+use std::{
+    fmt::{Display, Write},
+    io,
+    io::Read,
+    path::{Path, PathBuf},
+};
 
 use clap::Parser;
 use console::{style, Style};
@@ -13,7 +18,10 @@ use crate::cmd::Cmd;
 
 #[derive(Debug, Clone, Parser)]
 pub struct FmtArgs {
-    #[clap(help = "path to the file or directory", conflicts_with = "root")]
+    #[clap(
+        help = "path to the file, directory or '-' to read from stdin",
+        conflicts_with = "root"
+    )]
     path: Option<PathBuf>,
     #[clap(help = "project's root path, default being the current working directory", long)]
     root: Option<PathBuf>,
@@ -22,9 +30,29 @@ pub struct FmtArgs {
         long
     )]
     check: bool,
+    #[clap(
+        help = "in 'check' and stdin modes, outputs raw formatted code instead of diff",
+        long = "raw",
+        short
+    )]
+    raw: bool,
 }
 
 struct Line(Option<usize>);
+
+enum Input<T: AsRef<Path>> {
+    Path(T),
+    Stdin(String),
+}
+
+impl<T: AsRef<Path>> Display for Input<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Input::Path(path) => write!(f, "{}", path.as_ref().to_string_lossy()),
+            Input::Stdin(_) => write!(f, "stdin"),
+        }
+    }
+}
 
 impl std::fmt::Display for Line {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -52,23 +80,31 @@ impl Cmd for FmtArgs {
             ProjectPathsConfig::find_source_dir(&root)
         };
 
-        let paths = if root.is_dir() {
-            ethers::solc::utils::source_files(root)
+        let inputs = if root == PathBuf::from("-") || !atty::is(atty::Stream::Stdin) {
+            let mut buf = String::new();
+            io::stdin().read_to_string(&mut buf)?;
+            vec![Input::Stdin(buf)]
+        } else if root.is_dir() {
+            ethers::solc::utils::source_files(root).into_iter().map(Input::Path).collect()
         } else if root.file_name().unwrap().to_string_lossy().ends_with(".sol") {
-            vec![root]
+            vec![Input::Path(root)]
         } else {
             vec![]
         };
 
-        let diffs = paths
+        let diffs = inputs
             .par_iter()
             .enumerate()
-            .map(|(i, path)| {
-                let source = std::fs::read_to_string(&path)?;
+            .map(|(i, input)| {
+                let source = match input {
+                    Input::Path(path) => std::fs::read_to_string(&path)?,
+                    Input::Stdin(source) => source.to_string()
+                };
+
                 let (mut source_unit, _comments) = solang_parser::parse(&source, i)
                     .map_err(|diags| eyre::eyre!(
                             "Failed to parse Solidity code for {}. Leaving source unchanged.\nDebug info: {:?}",
-                            path.to_string_lossy(),
+                            input,
                             diags
                         ))?;
 
@@ -81,18 +117,22 @@ impl Cmd for FmtArgs {
                 solang_parser::parse(&output, 0).map_err(|diags| {
                     eyre::eyre!(
                             "Failed to construct valid Solidity code for {}. Leaving source unchanged.\nDebug info: {:?}",
-                            path.to_string_lossy(),
+                            input,
                             diags
                         )
                 })?;
 
-                if self.check {
+                if self.check || matches!(input, Input::Stdin(_)) {
+                    if self.raw {
+                        println!("{}", output);
+                    }
+
                     let diff = TextDiff::from_lines(&source, &output);
 
                     if diff.ratio() < 1.0 {
                         let mut diff_summary = String::new();
 
-                        writeln!(diff_summary, "Diff in {}:", path.to_string_lossy())?;
+                        writeln!(diff_summary, "Diff in {}:", input)?;
                         for (j, group) in diff.grouped_ops(3).iter().enumerate() {
                             if j > 0 {
                                 writeln!(diff_summary, "{:-^1$}", "-", 80)?;
@@ -127,20 +167,25 @@ impl Cmd for FmtArgs {
 
                         return Ok(Some(diff_summary))
                     }
-                } else {
+                } else if let Input::Path(path) = input {
                     std::fs::write(path, output)?;
                 }
 
                 Ok(None)
             })
-            .collect::<eyre::Result<Vec<Option<String>>>>()?;
+            .collect::<eyre::Result<Vec<_>>>()?
+            .into_iter()
+            .flatten()
+            .collect::<Vec<String>>();
 
         if !diffs.is_empty() {
-            for (i, diff) in diffs.iter().flatten().enumerate() {
-                if i > 0 {
-                    println!();
+            if !self.raw {
+                for (i, diff) in diffs.iter().enumerate() {
+                    if i > 0 {
+                        println!();
+                    }
+                    print!("{}", diff);
                 }
-                print!("{}", diff);
             }
 
             std::process::exit(1);
