@@ -14,7 +14,10 @@ use ethers_core::{
         rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream},
     },
 };
-use foundry_evm::revm::{CreateScheme, TransactTo, TxEnv};
+use foundry_evm::{
+    revm::{CreateScheme, TransactTo, TxEnv},
+    trace::node::CallTraceNode,
+};
 use serde::{Deserialize, Serialize};
 
 mod ethers_compat;
@@ -880,7 +883,7 @@ impl PendingTransaction {
 }
 
 /// Represents all relevant information of an executed transaction
-#[derive(Debug, Eq, PartialEq, Clone, Default)]
+#[derive(Debug, PartialEq, Clone, Default)]
 pub struct TransactionInfo {
     pub transaction_hash: H256,
     pub transaction_index: u32,
@@ -889,6 +892,7 @@ pub struct TransactionInfo {
     pub contract_address: Option<Address>,
     pub logs: Vec<Log>,
     pub logs_bloom: Bloom,
+    pub traces: Vec<CallTraceNode>,
 }
 
 #[cfg(test)]

@@ -11,8 +11,10 @@ use ethers::{
     utils::rlp,
 };
 use foundry_evm::{
+    executor::inspector::Tracer,
     revm,
     revm::{BlockEnv, CfgEnv, Env, Return, TransactOut},
+    trace::node::CallTraceNode,
 };
 use std::sync::Arc;
 
@@ -23,6 +25,7 @@ pub struct ExecutedTransaction {
     out: TransactOut,
     gas: u64,
     logs: Vec<Log>,
+    traces: Vec<CallTraceNode>,
 }
 
 // == impl ExecutedTransaction ==
@@ -88,7 +91,7 @@ impl<'a, DB: Db + ?Sized> TransactionExecutor<'a, DB> {
         for (idx, tx) in self.enumerate() {
             let receipt = tx.create_receipt();
             cumulative_gas_used = cumulative_gas_used.saturating_add(receipt.gas_used());
-            let ExecutedTransaction { transaction, logs, out, .. } = tx;
+            let ExecutedTransaction { transaction, logs, out, traces, .. } = tx;
             logs_bloom(logs.clone(), &mut bloom);
 
             let contract_address = if let TransactOut::Create(_, contract_address) = out {
@@ -104,6 +107,7 @@ impl<'a, DB: Db + ?Sized> TransactionExecutor<'a, DB> {
                 contract_address,
                 logs,
                 logs_bloom: *receipt.logs_bloom(),
+                traces,
             };
 
             transaction_infos.push(info);
@@ -150,16 +154,22 @@ impl<'a, DB: Db + ?Sized> Iterator for TransactionExecutor<'a, DB> {
         evm.env = self.env_for(&transaction.pending_transaction);
         evm.database(&mut self.db);
 
-        // transact and commit the transaction
-        let (exit, out, gas, logs) = evm.transact_commit();
+        // records all call traces
+        let mut tracer = Tracer::default();
 
-        Some(ExecutedTransaction {
+        // transact and commit the transaction
+        let (exit, out, gas, logs) = evm.inspect_commit(&mut tracer);
+
+        let tx = ExecutedTransaction {
             transaction,
             exit,
             out,
             gas,
             logs: logs.into_iter().map(Into::into).collect(),
-        })
+            traces: tracer.traces.arena,
+        };
+
+        Some(tx)
     }
 }
 

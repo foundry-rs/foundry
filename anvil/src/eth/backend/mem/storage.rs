@@ -1,7 +1,9 @@
 //! In-memory blockchain storage
 use crate::{eth::backend::time::duration_since_unix_epoch, mem::MinedTransaction};
 use anvil_core::eth::block::{Block, PartialHeader};
-use ethers::prelude::{BlockId, BlockNumber, H256, H256 as TxHash, U64};
+use ethers::{
+    prelude::{BlockId, BlockNumber, H256, H256 as TxHash, U64},
+};
 use parking_lot::RwLock;
 use std::{collections::HashMap, sync::Arc};
 
@@ -60,6 +62,8 @@ impl Default for BlockchainStorage {
     }
 }
 
+// === impl BlockchainStorage ===
+
 impl BlockchainStorage {
     /// Returns the hash for [BlockNumber]
     pub fn hash(&self, number: BlockNumber) -> Option<H256> {
@@ -78,6 +82,8 @@ pub struct Blockchain {
     /// underlying storage that supports concurrent reads
     pub storage: Arc<RwLock<BlockchainStorage>>,
 }
+
+// === impl BlockchainStorage ===
 
 impl Blockchain {
     pub fn forked(block_number: u64, block_hash: H256) -> Self {
