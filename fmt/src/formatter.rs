@@ -459,6 +459,56 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    fn visit_block(
+        &mut self,
+        loc: Loc,
+        unchecked: bool,
+        statements: &mut Vec<Statement>,
+    ) -> VResult {
+        if unchecked {
+            write!(self, "unchecked ")?;
+        }
+
+        if statements.is_empty() {
+            self.write_empty_brackets()?;
+            return Ok(())
+        }
+
+        let multiline = self.source[loc.start()..loc.end()].contains('\n');
+
+        if multiline {
+            writeln!(self, "{{")?;
+            self.indent(1);
+        } else {
+            self.write_opening_bracket()?;
+        }
+
+        let mut statements_iter = statements.iter_mut().peekable();
+        while let Some(stmt) = statements_iter.next() {
+            stmt.visit(self)?;
+            if multiline {
+                writeln!(self)?;
+            }
+
+            // If source has zero blank lines between statements, leave it as is. If one
+            //  or more, separate statements with one blank line.
+            if let Some(next_stmt) = statements_iter.peek() {
+                if self.blank_lines(stmt.loc(), next_stmt.loc()) > 1 {
+                    writeln!(self)?;
+                }
+            }
+        }
+
+        if multiline {
+            self.dedent(1);
+            write!(self, "}}")?;
+        } else {
+            self.write_closing_bracket()?;
+        }
+
+        Ok(())
+    }
+
     fn visit_expr(&mut self, loc: Loc, expr: &mut Expression) -> VResult {
         match expr {
             Expression::Type(_, typ) => match typ {
@@ -487,6 +537,14 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    fn visit_emit(&mut self, _loc: Loc, event: &mut Expression) -> VResult {
+        write!(self, "emit ")?;
+        event.loc().visit(self)?;
+        write!(self, ";")?;
+
+        Ok(())
+    }
+
     fn visit_var_declaration(&mut self, var: &mut VariableDeclaration) -> VResult {
         var.ty.visit(self)?;
 
@@ -495,6 +553,18 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         }
 
         write!(self, " {}", var.name.name)?;
+
+        Ok(())
+    }
+
+    fn visit_break(&mut self) -> VResult {
+        write!(self, "break;")?;
+
+        Ok(())
+    }
+
+    fn visit_continue(&mut self) -> VResult {
+        write!(self, "continue;")?;
 
         Ok(())
     }
@@ -574,123 +644,27 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_struct(&mut self, structure: &mut StructDefinition) -> VResult {
-        if !structure.doc.is_empty() {
-            structure.doc.visit(self)?;
-            writeln!(self)?;
-        }
+    fn visit_function_attribute_list(&mut self, list: &mut Vec<FunctionAttribute>) -> VResult {
+        let attributes = list
+            .iter_mut()
+            .sorted_by_key(|attribute| match attribute {
+                FunctionAttribute::Visibility(_) => 0,
+                FunctionAttribute::Mutability(_) => 1,
+                FunctionAttribute::Virtual(_) => 2,
+                FunctionAttribute::Override(_, _) => 3,
+                FunctionAttribute::BaseOrModifier(_, _) => 4,
+            })
+            .map(|attribute| {
+                let attribute = self.visit_to_string(attribute)?;
+                Ok(if let Some(stripped_attribute) = attribute.strip_suffix("()") {
+                    stripped_attribute.to_string()
+                } else {
+                    attribute
+                })
+            })
+            .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
 
-        write!(self, "struct {} ", &structure.name.name)?;
-
-        if structure.fields.is_empty() {
-            self.write_empty_brackets()?;
-        } else {
-            writeln!(self, "{{")?;
-
-            self.indent(1);
-            for field in structure.fields.iter_mut() {
-                field.visit(self)?;
-                writeln!(self, ";")?;
-            }
-            self.dedent(1);
-
-            write!(self, "}}")?;
-        }
-
-        Ok(())
-    }
-
-    fn visit_type_definition(&mut self, def: &mut TypeDefinition) -> VResult {
-        if !def.doc.is_empty() {
-            def.doc.visit(self)?;
-            writeln!(self)?;
-        }
-
-        write!(self, "type {} is ", def.name.name)?;
-        def.ty.visit(self)?;
-        write!(self, ";")?;
-
-        Ok(())
-    }
-
-    fn visit_stray_semicolon(&mut self) -> VResult {
-        write!(self, ";")?;
-
-        Ok(())
-    }
-
-    fn visit_newline(&mut self) -> VResult {
-        writeln!(self)?;
-
-        Ok(())
-    }
-
-    fn visit_block(
-        &mut self,
-        loc: Loc,
-        unchecked: bool,
-        statements: &mut Vec<Statement>,
-    ) -> VResult {
-        if unchecked {
-            write!(self, "unchecked ")?;
-        }
-
-        if statements.is_empty() {
-            self.write_empty_brackets()?;
-            return Ok(())
-        }
-
-        let multiline = self.source[loc.start()..loc.end()].contains('\n');
-
-        if multiline {
-            writeln!(self, "{{")?;
-            self.indent(1);
-        } else {
-            self.write_opening_bracket()?;
-        }
-
-        let mut statements_iter = statements.iter_mut().peekable();
-        while let Some(stmt) = statements_iter.next() {
-            stmt.visit(self)?;
-            if multiline {
-                writeln!(self)?;
-            }
-
-            // If source has zero blank lines between statements, leave it as is. If one
-            //  or more, separate statements with one blank line.
-            if let Some(next_stmt) = statements_iter.peek() {
-                if self.blank_lines(stmt.loc(), next_stmt.loc()) > 1 {
-                    writeln!(self)?;
-                }
-            }
-        }
-
-        if multiline {
-            self.dedent(1);
-            write!(self, "}}")?;
-        } else {
-            self.write_closing_bracket()?;
-        }
-
-        Ok(())
-    }
-
-    fn visit_break(&mut self) -> VResult {
-        write!(self, "break;")?;
-
-        Ok(())
-    }
-
-    fn visit_continue(&mut self) -> VResult {
-        write!(self, "continue;")?;
-
-        Ok(())
-    }
-
-    fn visit_emit(&mut self, _loc: Loc, event: &mut Expression) -> VResult {
-        write!(self, "emit ")?;
-        event.loc().visit(self)?;
-        write!(self, ";")?;
+        self.write_items(&attributes, true)?;
 
         Ok(())
     }
@@ -737,6 +711,51 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    fn visit_struct(&mut self, structure: &mut StructDefinition) -> VResult {
+        if !structure.doc.is_empty() {
+            structure.doc.visit(self)?;
+            writeln!(self)?;
+        }
+
+        write!(self, "struct {} ", &structure.name.name)?;
+
+        if structure.fields.is_empty() {
+            self.write_empty_brackets()?;
+        } else {
+            writeln!(self, "{{")?;
+
+            self.indent(1);
+            for field in structure.fields.iter_mut() {
+                field.visit(self)?;
+                writeln!(self, ";")?;
+            }
+            self.dedent(1);
+
+            write!(self, "}}")?;
+        }
+
+        Ok(())
+    }
+
+    fn visit_type_definition(&mut self, def: &mut TypeDefinition) -> VResult {
+        if !def.doc.is_empty() {
+            def.doc.visit(self)?;
+            writeln!(self)?;
+        }
+
+        write!(self, "type {} is ", def.name.name)?;
+        def.ty.visit(self)?;
+        write!(self, ";")?;
+
+        Ok(())
+    }
+
+    fn visit_stray_semicolon(&mut self) -> VResult {
+        write!(self, ";")?;
+
+        Ok(())
+    }
+
     fn visit_opening_paren(&mut self) -> VResult {
         write!(self, "(")?;
 
@@ -749,27 +768,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_function_attribute_list(&mut self, list: &mut Vec<FunctionAttribute>) -> VResult {
-        let attributes = list
-            .iter_mut()
-            .sorted_by_key(|attribute| match attribute {
-                FunctionAttribute::Visibility(_) => 0,
-                FunctionAttribute::Mutability(_) => 1,
-                FunctionAttribute::Virtual(_) => 2,
-                FunctionAttribute::Override(_, _) => 3,
-                FunctionAttribute::BaseOrModifier(_, _) => 4,
-            })
-            .map(|attribute| {
-                let attribute = self.visit_to_string(attribute)?;
-                Ok(if let Some(stripped_attribute) = attribute.strip_suffix("()") {
-                    stripped_attribute.to_string()
-                } else {
-                    attribute
-                })
-            })
-            .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
-
-        self.write_items(&attributes, true)?;
+    fn visit_newline(&mut self) -> VResult {
+        writeln!(self)?;
 
         Ok(())
     }
