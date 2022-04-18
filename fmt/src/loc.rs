@@ -1,13 +1,17 @@
 use solang_parser::pt::{
-    CodeLocation, ContractPart, FunctionDefinition, Import, Loc, SourceUnitPart, YulExpression,
-    YulStatement,
+    CodeLocation as _, ContractPart, FunctionAttribute, FunctionDefinition, Import, Loc,
+    OptionalCodeLocation as _, SourceUnitPart, YulExpression, YulStatement,
 };
 
-pub trait LineOfCode {
+pub trait CodeLocation {
     fn loc(&self) -> Loc;
 }
 
-impl LineOfCode for SourceUnitPart {
+pub trait OptionalCodeLocation {
+    fn loc(&self) -> Option<Loc>;
+}
+
+impl CodeLocation for SourceUnitPart {
     fn loc(&self) -> Loc {
         match self {
             SourceUnitPart::ContractDefinition(contract) => contract.loc,
@@ -30,7 +34,7 @@ impl LineOfCode for SourceUnitPart {
     }
 }
 
-impl LineOfCode for ContractPart {
+impl CodeLocation for ContractPart {
     fn loc(&self) -> Loc {
         match self {
             ContractPart::StructDefinition(structure) => structure.loc,
@@ -46,7 +50,7 @@ impl LineOfCode for ContractPart {
     }
 }
 
-impl LineOfCode for YulStatement {
+impl CodeLocation for YulStatement {
     fn loc(&self) -> Loc {
         match self {
             YulStatement::Assign(loc, _, _) |
@@ -64,7 +68,7 @@ impl LineOfCode for YulStatement {
     }
 }
 
-impl LineOfCode for YulExpression {
+impl CodeLocation for YulExpression {
     fn loc(&self) -> Loc {
         match self {
             YulExpression::BoolLiteral(loc, _, _) |
@@ -79,12 +83,24 @@ impl LineOfCode for YulExpression {
     }
 }
 
-impl LineOfCode for FunctionDefinition {
+impl CodeLocation for FunctionDefinition {
     fn loc(&self) -> Loc {
         Loc::File(
             self.loc.file_no(),
             self.loc.start(),
             self.body.as_ref().map(|body| body.loc().end()).unwrap_or_else(|| self.loc.end()),
         )
+    }
+}
+
+impl OptionalCodeLocation for FunctionAttribute {
+    fn loc(&self) -> Option<Loc> {
+        match self {
+            FunctionAttribute::Mutability(mutability) => Some(mutability.loc()),
+            FunctionAttribute::Visibility(visibility) => visibility.loc(),
+            FunctionAttribute::Virtual(loc) |
+            FunctionAttribute::Override(loc, _) |
+            FunctionAttribute::BaseOrModifier(loc, _) => Some(*loc),
+        }
     }
 }

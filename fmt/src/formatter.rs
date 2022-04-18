@@ -5,14 +5,15 @@ use std::{collections::HashSet, fmt::Write};
 use indent_write::fmt::IndentWriter;
 use itertools::Itertools;
 use solang_parser::pt::{
-    CodeLocation, ContractDefinition, DocComment, EnumDefinition, Expression, FunctionAttribute,
-    FunctionDefinition, Identifier, Loc, Mutability, SourceUnit, SourceUnitPart, Statement,
-    StringLiteral, StructDefinition, Type, TypeDefinition, VariableDeclaration, Visibility,
+    CodeLocation as _, ContractDefinition, DocComment, EnumDefinition, Expression,
+    FunctionAttribute, FunctionDefinition, Identifier, Loc, Mutability, Parameter, SourceUnit,
+    SourceUnitPart, Statement, StringLiteral, StructDefinition, Type, TypeDefinition,
+    VariableDeclaration, Visibility,
 };
 
 use crate::{
-    loc::LineOfCode,
-    visit::{VResult, Visitable, Visitor},
+    loc::CodeLocation,
+    visit::{ParameterList, VResult, Visitable, Visitor},
 };
 
 /// Contains the config and rule set
@@ -110,6 +111,7 @@ impl<'a, W: Write> Formatter<'a, W> {
             .saturating_add(s.len())
     }
 
+    /// Is length of the line with respect to already written line greater than `config.line_length`
     fn will_it_fit(&self, text: &str) -> bool {
         self.len_indented_with_current(text) <= self.config.line_length
     }
@@ -120,23 +122,33 @@ impl<'a, W: Write> Formatter<'a, W> {
         !self.will_it_fit(&items.join(separator))
     }
 
-    /// Write `items` separated by `separator` with respect to `config.line_length` setting
-    fn write_separated(
+    /// Write `items` with no separator with respect to `config.line_length` setting
+    fn write_items(
         &mut self,
-        items: &[String],
+        items: impl IntoIterator<Item = impl AsRef<str> + std::fmt::Display>,
+        multiline: bool,
+    ) -> std::fmt::Result {
+        self.write_items_separated(items, "", multiline)
+    }
+
+    /// Write `items` separated by `separator` with respect to `config.line_length` setting
+    fn write_items_separated(
+        &mut self,
+        items: impl IntoIterator<Item = impl AsRef<str> + std::fmt::Display>,
         separator: &str,
         multiline: bool,
     ) -> std::fmt::Result {
         if multiline {
-            for (i, item) in items.iter().enumerate() {
-                write!(self, "{}", item)?;
+            let mut items = items.into_iter().peekable();
+            while let Some(item) = items.next() {
+                write!(self, "{}", item.as_ref())?;
 
-                if i != items.len() - 1 {
+                if items.peek().is_some() {
                     writeln!(self, "{}", separator.trim_end())?;
                 }
             }
         } else {
-            write!(self, "{}", items.join(separator))?;
+            write!(self, "{}", items.into_iter().join(separator))?;
         }
 
         Ok(())
@@ -305,7 +317,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 write!(self, " ")?;
             }
 
-            self.write_separated(&bases, ", ", multiline)?;
+            self.write_items_separated(&bases, ", ", multiline)?;
 
             if multiline {
                 self.dedent(1);
@@ -329,7 +341,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 // If source has zero blank lines between declarations, leave it as is. If one
                 //  or more, separate declarations with one blank line.
                 if let Some(next_part) = contract_parts_iter.peek() {
-                    if self.blank_lines(part.loc(), next_part.loc()) > 1 {
+                    if self.blank_lines(part.loc(), next_part.loc()) >= 1 {
                         writeln!(self)?;
                     }
                 }
@@ -403,7 +415,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             self.write_opening_bracket()?;
         }
 
-        self.write_separated(&imports, ", ", multiline)?;
+        self.write_items_separated(&imports, ", ", multiline)?;
 
         if multiline {
             self.dedent(1);
@@ -500,120 +512,49 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             write!(self, " {name}")?;
         }
 
-        let params = func
-            .params
-            .iter_mut()
-            .map(|(loc, param)| self.visit_to_string(loc))
-            .collect::<Result<Vec<_>, _>>()?;
-        let params_multiline = params.len() > 2 || self.is_separated_multiline(&params, ", ");
+        let params = self.visit_to_string(&mut func.params)?;
+        let params_multiline = params.contains('\n');
 
-        write!(self, "(")?;
-        if params_multiline {
-            writeln!(self)?;
-            self.indent(1);
-        }
-        self.write_separated(&params, ", ", params_multiline)?;
-        if params_multiline {
-            self.dedent(1);
-            writeln!(self)?;
-        }
-        write!(self, ")")?;
+        self.write_items(params.lines(), params_multiline)?;
 
-        let attributes = func
-            .attributes
-            .iter_mut()
-            .sorted_by_key(|attribute| match attribute {
-                FunctionAttribute::Visibility(_) => 0,
-                FunctionAttribute::Mutability(_) => 1,
-                FunctionAttribute::Virtual(_) => 2,
-                FunctionAttribute::Override(_, _) => 3,
-                FunctionAttribute::BaseOrModifier(_, _) => 4,
-            })
-            // .dedup_by(|attribute1, attribute2| match (attribute1, attribute2) {
-            //     (
-            //         FunctionAttribute::Mutability(mutability1),
-            //         FunctionAttribute::Mutability(mutability2),
-            //     ) => matches!(
-            //         (mutability1, mutability2),
-            //         (Mutability::Pure(_), Mutability::Pure(_)) |
-            //             (Mutability::View(_), Mutability::View(_)) |
-            //             (Mutability::Constant(_), Mutability::Constant(_)) |
-            //             (Mutability::Payable(_), Mutability::Payable(_))
-            //     ),
-            //     (
-            //         FunctionAttribute::Visibility(visibility1),
-            //         FunctionAttribute::Visibility(visibility2),
-            //     ) => matches!(
-            //         (visibility1, visibility2),
-            //         (Visibility::External(_), Visibility::External(_)) |
-            //             (Visibility::Public(_), Visibility::Public(_)) |
-            //             (Visibility::Internal(_), Visibility::Internal(_)) |
-            //             (Visibility::Private(_), Visibility::Private(_))
-            //     ),
-            //     (FunctionAttribute::Virtual(_), FunctionAttribute::Virtual(_)) => true,
-            //     (
-            //         FunctionAttribute::Override(_, bases1),
-            //         FunctionAttribute::Override(_, bases2),
-            //     ) => {
-            //         bases1.iter().map(|ident| &ident.name).collect::<HashSet<_>>() ==
-            //             bases2.iter().map(|ident| &ident.name).collect::<HashSet<_>>()
-            //     }
-            //     (
-            //         FunctionAttribute::BaseOrModifier(_, base1),
-            //         FunctionAttribute::BaseOrModifier(_, base2),
-            //     ) => base1.name == base2.name && base1.args == base2.args,
-            //     _ => false,
-            // })
-            .map(|attribute| self.visit_to_string(attribute))
-            .collect::<Result<Vec<_>, _>>()?;
+        let attributes = self.visit_to_string(&mut func.attributes)?;
+        let attributes = attributes.lines().collect::<Vec<_>>();
 
-        let returns = func
-            .returns
-            .iter_mut()
-            .map(|(loc, param)| self.visit_to_string(loc))
-            .collect::<Result<Vec<_>, _>>()?;
-        let returns_multiline = returns.len() > 2 || self.is_separated_multiline(&returns, ", ");
+        let returns = self.visit_to_string(&mut func.returns)?;
+        let returns_multiline = returns.contains('\n');
+        let returns_indent = !attributes.is_empty() || params_multiline || returns_multiline;
 
         let one_line = format!(
             "{}{}{}",
             attributes.join(" "),
-            if attributes.is_empty() || returns.is_empty() { "" } else { " " },
-            if returns.is_empty() {
-                "".to_string()
-            } else {
-                format!("returns ({})", returns.join(", "))
-            }
+            if attributes.is_empty() || func.returns.is_empty() { "" } else { " " },
+            if func.returns.is_empty() { "".to_string() } else { format!("returns {returns}") }
         );
-
         let one_line_fits = self.will_it_fit(&format!(" {one_line}")) && !returns_multiline;
 
+        // Check that we can fit both attributes and return arguments in one line.
         if !one_line.is_empty() && one_line_fits {
             write!(self, " {one_line}")?;
         } else {
+            // If attributes and returns can't fit in one line, we write all attributes in multiple
+            // lines.
             if !attributes.is_empty() {
                 writeln!(self)?;
                 self.indent(1);
-                self.write_separated(&attributes, "", true)?;
+                self.write_items(&attributes, true)?;
                 self.dedent(1);
             }
 
-            if !returns.is_empty() {
-                if !attributes.is_empty() || params_multiline {
+            if !func.returns.is_empty() {
+                if returns_indent {
                     self.indent(1);
                 }
                 writeln!(self)?;
-                write!(self, "returns (")?;
-                if returns_multiline {
-                    writeln!(self)?;
-                    self.indent(1);
-                }
-                self.write_separated(&returns, ", ", returns_multiline)?;
-                if returns_multiline {
-                    self.dedent(1);
-                    writeln!(self)?;
-                }
-                write!(self, ")")?;
-                if !attributes.is_empty() || params_multiline {
+                write!(self, "returns ")?;
+
+                self.write_items(returns.lines(), returns_multiline)?;
+
+                if returns_indent {
                     self.dedent(1);
                 }
             }
@@ -700,7 +641,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             return Ok(())
         }
 
-        let multiline = self.source[loc.start()..loc.end()].matches('\n').count() > 0;
+        let multiline = self.source[loc.start()..loc.end()].contains('\n');
 
         if multiline {
             writeln!(self, "{{")?;
@@ -709,8 +650,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             self.write_opening_bracket()?;
         }
 
-        // We need to skip statements which evaluate to empty string on visiting.
-        // It may happen on empty unchecked blocks,
         let mut statements_iter = statements.iter_mut().peekable();
         while let Some(stmt) = statements_iter.next() {
             stmt.visit(self)?;
@@ -751,8 +690,87 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
     fn visit_emit(&mut self, _loc: Loc, event: &mut Expression) -> VResult {
         write!(self, "emit ")?;
-        self.visit_source(event.loc())?;
+        event.loc().visit(self)?;
         write!(self, ";")?;
+
+        Ok(())
+    }
+
+    fn visit_parameter(&mut self, parameter: &mut Parameter) -> VResult {
+        parameter.ty.visit(self)?;
+
+        if let Some(storage) = &parameter.storage {
+            write!(self, " {storage}")?;
+        }
+
+        if let Some(name) = &parameter.name {
+            write!(self, " {}", name.name)?;
+        }
+
+        Ok(())
+    }
+
+    /// Write parameter list with opening and closing parenthesis respecting multiline case.
+    /// More info in [Visitor::visit_parameter_list].
+    fn visit_parameter_list(&mut self, list: &mut ParameterList) -> VResult {
+        let params = list
+            .iter_mut()
+            .map(|(_, param)| param.as_mut().map(|param| self.visit_to_string(param)).transpose())
+            .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+
+        let params_multiline = params.len() > 2 || self.is_separated_multiline(&params, ", ");
+
+        self.visit_opening_paren()?;
+        if params_multiline {
+            writeln!(self)?;
+            self.indent(1);
+        }
+        self.write_items_separated(&params, ", ", params_multiline)?;
+        if params_multiline {
+            self.dedent(1);
+            writeln!(self)?;
+        }
+        self.visit_closing_paren()?;
+
+        Ok(())
+    }
+
+    fn visit_opening_paren(&mut self) -> VResult {
+        write!(self, "(")?;
+
+        Ok(())
+    }
+
+    fn visit_closing_paren(&mut self) -> VResult {
+        write!(self, ")")?;
+
+        Ok(())
+    }
+
+    fn visit_function_attribute_list(&mut self, list: &mut Vec<FunctionAttribute>) -> VResult {
+        let attributes = list
+            .iter_mut()
+            .sorted_by_key(|attribute| match attribute {
+                FunctionAttribute::Visibility(_) => 0,
+                FunctionAttribute::Mutability(_) => 1,
+                FunctionAttribute::Virtual(_) => 2,
+                FunctionAttribute::Override(_, _) => 3,
+                FunctionAttribute::BaseOrModifier(_, _) => 4,
+            })
+            .map(|attribute| {
+                let attribute = self.visit_to_string(attribute)?;
+                Ok(if let Some(stripped_attribute) = attribute.strip_suffix("()") {
+                    stripped_attribute.to_string()
+                } else {
+                    attribute
+                })
+            })
+            .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
+
+        self.write_items(&attributes, true)?;
 
         Ok(())
     }
