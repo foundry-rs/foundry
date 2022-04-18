@@ -335,14 +335,27 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 part.visit(self)?;
                 writeln!(self)?;
 
-                // If source has zero blank lines between parts and the next part is not a function
-                // definition, leave it as is. If it has one or more blank lines or the next part is
-                // a function definition, separate parts with one blank line.
+                // If source has zero blank lines between parts and the current part is not a
+                // function, leave it as is. If it has one or more blank lines or
+                // the current part is a function, separate parts with one blank
+                // line.
                 if let Some(next_part) = contract_parts_iter.peek() {
                     let blank_lines = self.blank_lines(part.loc(), next_part.loc());
-                    if matches!(part, ContractPart::FunctionDefinition(_)) && blank_lines > 0 ||
-                        blank_lines > 1
-                    {
+                    let is_function =
+                        if let ContractPart::FunctionDefinition(function_definition) = part {
+                            matches!(
+                                **function_definition,
+                                FunctionDefinition {
+                                    ty: FunctionTy::Function |
+                                        FunctionTy::Receive |
+                                        FunctionTy::Fallback,
+                                    ..
+                                }
+                            )
+                        } else {
+                            false
+                        };
+                    if is_function && blank_lines > 0 || blank_lines > 1 {
                         writeln!(self)?;
                     }
                 }
@@ -552,8 +565,22 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             if func.returns.is_empty() { "".to_string() } else { format!("returns {returns}") }
         );
         let attributes_return = attributes_return.trim();
-        let attributes_return_fits_one_line =
-            self.will_it_fit(&format!(" {attributes_return}")) && !returns_multiline;
+
+        let (body, body_first_line) = match &mut func.body {
+            Some(body) => {
+                let body_string = self.visit_to_string(body)?;
+                let first_line = body_string.lines().next().unwrap_or_default();
+
+                // TODO: when we implement visitors for statements, write `body_string` here instead
+                //  of visiting it twice.
+                (Some(body), format!(" {first_line}"))
+            }
+            None => (None, ";".to_string()),
+        };
+
+        let attributes_return_fits_one_line = self
+            .will_it_fit(&format!(" {attributes_return}{body_first_line}")) &&
+            !returns_multiline;
 
         // Check that we can fit both attributes and return arguments in one line.
         if !attributes_return.is_empty() && attributes_return_fits_one_line {
@@ -583,21 +610,19 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             }
         }
 
-        match &mut func.body {
+        match body {
             Some(body) => {
-                let body_string = self.visit_to_string(body)?;
-                let first_line = body_string.lines().next().unwrap_or_default();
-                if self.will_it_fit(format!(" {}", first_line)) && attributes_return_fits_one_line {
+                if self.will_it_fit(format!(" {}", body_first_line)) &&
+                    attributes_return_fits_one_line
+                {
                     write!(self, " ")?;
                 } else {
                     writeln!(self)?;
                 }
-                // TODO: when we implement visitors for statements, write `body_string` here instead
-                //  of visiting it twice.
                 body.visit(self)?;
             }
             None => write!(self, ";")?,
-        };
+        }
 
         Ok(())
     }
@@ -615,17 +640,31 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 FunctionAttribute::Override(_, _) => 3,
                 FunctionAttribute::BaseOrModifier(_, _) => 4,
             })
-            .map(|attribute| {
-                let attribute = self.visit_to_string(attribute)?;
-                Ok(if let Some(stripped_attribute) = attribute.strip_suffix("()") {
-                    stripped_attribute.to_string()
-                } else {
-                    attribute
-                })
-            })
+            .map(|attribute| self.visit_to_string(attribute))
             .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
 
         self.write_items(&attributes, true)?;
+
+        Ok(())
+    }
+
+    fn visit_function_attribute(&mut self, attribute: &mut FunctionAttribute) -> VResult {
+        match attribute {
+            FunctionAttribute::Mutability(mutability) => write!(self, "{mutability}")?,
+            FunctionAttribute::Visibility(visibility) => write!(self, "{visibility}")?,
+            FunctionAttribute::Virtual(_) => write!(self, "virtual")?,
+            FunctionAttribute::Override(loc, _) => loc.visit(self)?,
+            FunctionAttribute::BaseOrModifier(loc, _) => {
+                let base_or_modifier = self.visit_to_string(loc)?;
+                write!(
+                    self,
+                    "{}",
+                    // TODO: strip empty parentheses only for modifiers. Currently, we can't detect
+                    //  whether it's a base constructor or modifier.
+                    base_or_modifier.strip_suffix("()").unwrap_or(&base_or_modifier)
+                )?;
+            }
+        };
 
         Ok(())
     }
@@ -885,6 +924,12 @@ mod tests {
         );
     }
 
+    // TODO: see in `visit_function_attribute`
+    // #[test]
+    // fn constructor_definition() {
+    //     test_directory("ConstructorDefinition");
+    // }
+
     #[test]
     fn contract_definition() {
         test_directory("ContractDefinition");
@@ -903,6 +948,11 @@ mod tests {
     #[test]
     fn import_directive() {
         test_directory("ImportDirective");
+    }
+
+    #[test]
+    fn modifier_definition() {
+        test_directory("ModifierDefinition");
     }
 
     #[test]

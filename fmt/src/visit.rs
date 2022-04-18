@@ -228,8 +228,8 @@ pub trait Visitor {
         Ok(())
     }
 
-    fn visit_function_attribute(&mut self, attr: &mut FunctionAttribute) -> VResult {
-        if let Some(loc) = attr.loc() {
+    fn visit_function_attribute(&mut self, attribute: &mut FunctionAttribute) -> VResult {
+        if let Some(loc) = attribute.loc() {
             self.visit_source(loc)?;
         }
 
