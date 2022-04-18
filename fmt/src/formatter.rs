@@ -1,14 +1,13 @@
 //! A Solidity formatter
 
-use std::{collections::HashSet, fmt::Write};
+use std::fmt::Write;
 
 use indent_write::fmt::IndentWriter;
 use itertools::Itertools;
 use solang_parser::pt::{
     CodeLocation as _, ContractDefinition, DocComment, EnumDefinition, Expression,
-    FunctionAttribute, FunctionDefinition, Identifier, Loc, Mutability, Parameter, SourceUnit,
-    SourceUnitPart, Statement, StringLiteral, StructDefinition, Type, TypeDefinition,
-    VariableDeclaration, Visibility,
+    FunctionAttribute, FunctionDefinition, Identifier, Loc, Parameter, SourceUnit, SourceUnitPart,
+    Statement, StringLiteral, StructDefinition, Type, TypeDefinition, VariableDeclaration,
 };
 
 use crate::{
