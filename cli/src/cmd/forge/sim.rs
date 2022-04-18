@@ -100,7 +100,6 @@ impl Cmd for SimArgs {
                         break
                     }
 
-                    executor.set_nonce(past_tx.from, past_tx.nonce.as_u64());
                     if let Some(to) = past_tx.to {
                         executor
                             .call_raw_committing(past_tx.from, to, past_tx.input.0, past_tx.value)
@@ -110,7 +109,6 @@ impl Cmd for SimArgs {
                     }
                 }
 
-                executor.set_nonce(tx.from, tx.nonce.as_u64());
                 if let Some(to) = tx.to {
                     let RawCallResult { reverted, gas, logs, traces, debug: run_debug, .. } =
                         executor.call_raw_committing(tx.from, to, tx.input.0, tx.value)?;
