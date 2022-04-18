@@ -64,6 +64,7 @@ pub mod cmd;
 /// ```
 pub async fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
     let backend = Arc::new(config.setup().await);
+
     let fork = backend.get_fork().cloned();
 
     let NodeConfig { accounts, automine, port, max_transactions, .. } = config.clone();

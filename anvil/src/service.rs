@@ -8,6 +8,7 @@ use std::{
     sync::Arc,
     task::{Context, Poll},
 };
+
 use tracing::trace;
 
 /// The type that drives the blockchain's state

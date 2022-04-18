@@ -996,6 +996,11 @@ impl EthApi {
 // === impl EthApi utility functions ===
 
 impl EthApi {
+    /// Returns true if forked
+    pub fn is_fork(&self) -> bool {
+        self.backend.is_fork()
+    }
+
     /// Mines exactly one block
     fn mine_one(&self) {
         let transactions = self.pool.ready_transactions().collect::<Vec<_>>();

@@ -83,6 +83,7 @@ impl ClientFork {
         address: Address,
         blocknumber: u64,
     ) -> Result<Bytes, ProviderError> {
+        trace!(target: "backend::fork", "get_code={:?}", address);
         if let Some(code) = self.storage_read().code_at.get(&(address, blocknumber)).cloned() {
             return Ok(code)
         }
@@ -99,14 +100,7 @@ impl ClientFork {
         address: Address,
         blocknumber: u64,
     ) -> Result<U256, ProviderError> {
-        // if let Some(code) = self.storage_read()..get(&(address, blocknumber)).cloned() {
-        //     return Ok(code)
-        // }
-        //
-        // let code = self.provider().get_code(address, Some(blocknumber.into())).await?;
-        // let mut storage = self.storage_write();
-        // storage.code_at.insert((address, blocknumber), code.clone());
-
+        trace!(target: "backend::fork", "get_balance={:?}", address);
         self.provider().get_balance(address, Some(blocknumber.into())).await
     }
 
@@ -115,6 +109,7 @@ impl ClientFork {
         address: Address,
         blocknumber: u64,
     ) -> Result<U256, ProviderError> {
+        trace!(target: "backend::fork", "get_nonce={:?}", address);
         self.provider().get_transaction_count(address, Some(blocknumber.into())).await
     }
 

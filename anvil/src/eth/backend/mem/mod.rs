@@ -112,6 +112,7 @@ impl Backend {
     ) -> Self {
         // insert genesis accounts
         {
+            trace!(target: "backend", "setting genesis balances");
             let mut db = db.write();
             for account in accounts {
                 let mut info = db.basic(account);

@@ -1,7 +1,9 @@
 use std::sync::atomic::{AtomicU16, Ordering};
 
 mod api;
+mod fork;
 mod transaction;
+pub mod utils;
 mod wsapi;
 
 // keeps track of ports that can be used
