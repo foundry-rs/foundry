@@ -154,7 +154,7 @@ impl<'a, W: Write> Formatter<'a, W> {
         visitable: &mut impl Visitable,
     ) -> Result<String, Box<dyn std::error::Error>> {
         self.bufs.push(FormatBuffer::default());
-        Visitable::visit(visitable, self)?;
+        visitable.visit(self)?;
         let buf = self.bufs.pop().unwrap();
 
         Ok(buf.w)
@@ -273,10 +273,12 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_doc_comments(&mut self, doc_comments: &mut [DocComment]) -> VResult {
-        for (i, doc_comment) in doc_comments.iter_mut().enumerate() {
-            if i > 0 {
-                writeln!(self)?;
-            }
+        let mut iter = doc_comments.iter_mut();
+        if let Some(doc_comment) = iter.next() {
+            doc_comment.visit(self)?
+        }
+        for doc_comment in iter {
+            writeln!(self)?;
             doc_comment.visit(self)?;
         }
 
@@ -640,6 +642,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 } else {
                     writeln!(self)?;
                 }
+                // TODO: when we implement visitors for statements, write `body_string` here instead
+                //  of visiting it twice.
                 body.visit(self)?;
             }
             None => write!(self, ";")?,
