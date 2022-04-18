@@ -106,7 +106,7 @@ impl<'a, W: Write> Formatter<'a, W> {
             .saturating_add(s.as_ref().len())
     }
 
-    /// Is length of the line with respect to already written line greater than `config.line_length`
+    /// Is length of the `text` with respect to already written line <= `config.line_length`
     fn will_it_fit(&self, text: impl AsRef<str>) -> bool {
         self.len_indented_with_current(text) <= self.config.line_length
     }
@@ -632,15 +632,14 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         match &mut func.body {
             Some(body) => {
-                let body = self.visit_to_string(body)?;
-                if self.will_it_fit(format!(" {}", body.lines().next().unwrap_or_default())) &&
-                    attributes_return_fits_one_line
-                {
+                let body_string = self.visit_to_string(body)?;
+                let first_line = body_string.lines().next().unwrap_or_default();
+                if self.will_it_fit(format!(" {}", first_line)) && attributes_return_fits_one_line {
                     write!(self, " ")?;
                 } else {
                     writeln!(self)?;
                 }
-                self.write_items(body.lines(), true)?;
+                body.visit(self)?;
             }
             None => write!(self, ";")?,
         };
