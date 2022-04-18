@@ -1,7 +1,14 @@
 //! In-memory blockchain storage
-use crate::{eth::backend::time::duration_since_unix_epoch, mem::MinedTransaction};
-use anvil_core::eth::block::{Block, PartialHeader};
-use ethers::prelude::{BlockId, BlockNumber, H256, H256 as TxHash, U64};
+use crate::eth::backend::time::duration_since_unix_epoch;
+use anvil_core::eth::{
+    block::{Block, PartialHeader},
+    receipt::TypedReceipt,
+    transaction::TransactionInfo,
+};
+use ethers::prelude::{
+    Action::Call, ActionType, BlockId, BlockNumber, Trace, H256, H256 as TxHash, U64,
+};
+use foundry_evm::trace::{node::CallTraceNode, CallTrace};
 use parking_lot::RwLock;
 use std::{collections::HashMap, sync::Arc};
 
@@ -107,5 +114,56 @@ impl Blockchain {
     /// Returns the total number of blocks
     pub fn blocks_count(&self) -> usize {
         self.storage.read().blocks.len()
+    }
+}
+
+/// Container type for a mined transaction
+#[derive(Debug, Clone)]
+pub struct MinedTransaction {
+    pub info: TransactionInfo,
+    pub receipt: TypedReceipt,
+    pub block_hash: H256,
+    pub block_number: u64,
+}
+
+// === impl MinedTransaction ===
+
+impl MinedTransaction {
+    /// Returns the traces of the transaction for `trace_transaction`
+    pub fn parity_traces(&self) -> Vec<Trace> {
+        let mut traces = Vec::with_capacity(self.info.traces.len());
+        for node in self.info.traces.iter().cloned() {
+            let CallTraceNode { parent: _, children, idx: _, trace, logs: _, ordering: _ } = node;
+            let CallTrace {
+                depth: _,
+                success: _,
+                contract: _,
+                label: _,
+                address: _,
+                kind: _,
+                value: _,
+                data: _,
+                output: _,
+                gas_cost: _,
+            } = trace;
+
+            // TODO need to record more trace info
+
+            let trace = Trace {
+                action: Call(Default::default()),
+                result: None,
+                trace_address: vec![],
+                subtraces: children.len(),
+                transaction_position: Some(self.info.transaction_index as usize),
+                transaction_hash: Some(self.info.transaction_hash),
+                block_number: self.block_number,
+                block_hash: self.block_hash,
+                action_type: ActionType::Call,
+                error: None,
+            };
+            traces.push(trace)
+        }
+
+        traces
     }
 }

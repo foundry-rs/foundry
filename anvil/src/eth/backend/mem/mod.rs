@@ -29,7 +29,7 @@ use anvil_core::{
 };
 use ethers::{
     types::{
-        Action::Call, ActionType, Address, Block as EthersBlock, Bytes, Filter as EthersFilter,
+        Address, Block as EthersBlock, Bytes, Filter as EthersFilter,
         Log, Trace, Transaction, TransactionReceipt,
     },
     utils::{keccak256, rlp},
@@ -37,68 +37,17 @@ use ethers::{
 use foundry_evm::{
     revm,
     revm::{db::CacheDB, Account, CreateScheme, Env, Return, TransactOut, TransactTo, TxEnv},
-    trace::{node::CallTraceNode, CallTrace},
     utils::u256_to_h256_le,
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use parking_lot::{Mutex, RwLock};
 use std::sync::Arc;
-use storage::Blockchain;
+use storage::{Blockchain, MinedTransaction};
 use tracing::trace;
 
 pub mod storage;
 
 pub type State = foundry_evm::HashMap<Address, Account>;
-
-#[derive(Debug, Clone)]
-pub struct MinedTransaction {
-    pub info: TransactionInfo,
-    pub receipt: TypedReceipt,
-    pub block_hash: H256,
-    pub block_number: u64,
-}
-
-// === impl MinedTransaction ===
-
-impl MinedTransaction {
-    /// Returns the traces of the transaction for `trace_transaction`
-    pub fn parity_traces(&self) -> Vec<Trace> {
-        let mut traces = Vec::with_capacity(self.info.traces.len());
-        for node in self.info.traces.iter().cloned() {
-            let CallTraceNode { parent: _, children, idx: _, trace, logs: _, ordering: _ } = node;
-            let CallTrace {
-                depth: _,
-                success: _,
-                contract: _,
-                label: _,
-                address: _,
-                kind: _,
-                value: _,
-                data: _,
-                output: _,
-                gas_cost: _,
-            } = trace;
-
-            // TODO need to record more trace info
-
-            let trace = Trace {
-                action: Call(Default::default()),
-                result: None,
-                trace_address: vec![],
-                subtraces: children.len(),
-                transaction_position: Some(self.info.transaction_index as usize),
-                transaction_hash: Some(self.info.transaction_hash),
-                block_number: self.block_number,
-                block_hash: self.block_hash,
-                action_type: ActionType::Call,
-                error: None,
-            };
-            traces.push(trace)
-        }
-
-        traces
-    }
-}
 
 /// Gives access to the [revm::Database]
 #[derive(Clone)]
