@@ -29,9 +29,6 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v2
 
-      - name: Clone testdata for fmt tests
-        run: make fmt-testdata
-
       - name: Apple M1 setup
         if: ${{ matrix.job.target == 'aarch64-apple-darwin' }}
         run: |

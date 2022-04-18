@@ -572,11 +572,17 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         unchecked: bool,
         statements: &mut Vec<Statement>,
     ) -> VResult {
-        let multiline = self.source[loc.start()..loc.end()].matches('\n').count() > 0;
-
         if unchecked {
             write!(self, "unchecked ")?;
         }
+
+        if statements.is_empty() {
+            self.write_empty_brackets()?;
+            return Ok(())
+        }
+
+        let multiline = self.source[loc.start()..loc.end()].matches('\n').count() > 0;
+
         if multiline {
             writeln!(self, "{{")?;
             self.indent(1);
@@ -635,78 +641,77 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
 #[cfg(test)]
 mod tests {
+    use itertools::Itertools;
     use std::{fs, path::PathBuf};
 
     use crate::visit::Visitable;
 
     use super::*;
 
-    fn test_directory(dir: &str) {
-        let snapshot_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("testdata/prettier-plugin-solidity/tests/format")
-            .join(dir)
-            .join("__snapshots__/jsfmt.spec.js.snap");
+    fn test_directory(base_name: &str) {
+        let mut original = None;
 
-        let snapshot = fs::read_to_string(snapshot_path).unwrap();
+        let tests = fs::read_dir(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata").join(base_name),
+        )
+        .unwrap()
+        .filter_map(|path| {
+            let path = path.unwrap().path();
+            let source = fs::read_to_string(&path).unwrap();
 
-        snapshot
-            .strip_prefix("// Jest Snapshot v1, https://goo.gl/fbAQLP")
-            .unwrap()
-            .split("`;")
-            .for_each(|test| {
-                let is_header = |line: &str, name: &str| {
-                    line.starts_with('=') && line.ends_with('=') && line.contains(name)
-                };
+            if let Some(filename) = path.file_name().and_then(|name| name.to_str()) {
+                if filename == "original.sol" {
+                    original = Some(source);
+                } else if filename
+                    .strip_suffix("fmt.sol")
+                    .map(|filename| filename.strip_suffix('.'))
+                    .is_some()
+                {
+                    let mut config = FormatterConfig::default();
 
-                let mut lines = test.split('\n');
-
-                let config = lines
-                    .by_ref()
-                    .skip_while(|line| !is_header(line, "options"))
-                    .take_while(|line| !is_header(line, "input"))
-                    .filter_map(|line| {
-                        let parts = line.splitn(2, ':').collect::<Vec<_>>();
-
-                        if parts.len() != 2 {
-                            return None
+                    let mut lines = source.split('\n').peekable();
+                    while let Some(line) = lines.peek() {
+                        let entry = line
+                            .strip_prefix("//")
+                            .and_then(|line| line.trim().strip_prefix("config:"))
+                            .map(str::trim);
+                        if entry.is_none() {
+                            break
                         }
 
-                        let key = parts[0];
-                        let value = parts[1].trim();
-
-                        if key == "parsers" && value != r#"["solidity-parse"]"# {
-                            return None
+                        if let Some((key, value)) = entry.unwrap().split_once("=") {
+                            match key {
+                                "line-length" => config.line_length = value.parse().unwrap(),
+                                "tab-width" => config.tab_width = value.parse().unwrap(),
+                                "bracket-spacing" => {
+                                    config.bracket_spacing = value.parse().unwrap()
+                                }
+                                _ => panic!("Unknown config key: {key}"),
+                            }
                         }
 
-                        Some((key, value))
-                    })
-                    .fold(FormatterConfig::default(), |mut config, (key, value)| {
-                        match key {
-                            "bracketSpacing" => config.bracket_spacing = value == "true",
-                            "compiler" => (),      // TODO: set compiler in config
-                            "explicitTypes" => (), // TODO: set explicit_types in config
-                            "parsers" => (),
-                            "printWidth" => config.line_length = value.parse().unwrap(),
-                            _ => panic!("Unknown snapshot options key: {}", key),
-                        }
+                        lines.next();
+                    }
 
-                        config
-                    });
+                    return Some((filename.to_string(), config, lines.join("\n")))
+                }
+            }
 
-                let input = lines
-                    .by_ref()
-                    .take_while(|line| !is_header(line, "output"))
-                    .collect::<Vec<_>>()
-                    .join("\n");
+            None
+        })
+        .collect::<Vec<_>>();
 
-                let output =
-                    lines.take_while(|line| !is_header(line, "")).collect::<Vec<_>>().join("\n");
-
-                test_formatter(config, &input, &output);
-            });
+        for (filename, config, formatted) in tests {
+            test_formatter(
+                &filename,
+                config,
+                original.as_ref().expect("original.sol not found"),
+                &formatted,
+            );
+        }
     }
 
-    fn test_formatter(config: FormatterConfig, source: &str, expected: &str) {
+    fn test_formatter(filename: &str, config: FormatterConfig, source: &str, expected: &str) {
         #[derive(PartialEq, Eq)]
         struct PrettyString(String);
 
@@ -725,7 +730,12 @@ mod tests {
         let formatted = PrettyString(result);
         let expected = PrettyString(expected.trim_start().to_string());
 
-        pretty_assertions::assert_eq!(formatted, expected, "(formatted == expected)");
+        pretty_assertions::assert_eq!(
+            formatted,
+            expected,
+            "(formatted == expected) in {}",
+            filename
+        );
     }
 
     #[test]
@@ -744,67 +754,17 @@ mod tests {
     }
 
     #[test]
-    fn struct_definition() {
-        test_formatter(
-            FormatterConfig::default(),
-            "struct   Foo  {   
-              } struct   Bar  {    uint foo ;string bar ;  }",
-            "
-struct Foo {}
+    fn statement_block() {
+        test_directory("StatementBlock");
+    }
 
-struct Bar {
-    uint256 foo;
-    string bar;
-}
-",
-        );
+    #[test]
+    fn struct_definition() {
+        test_directory("StructDefinition");
     }
 
     #[test]
     fn type_definition() {
         test_directory("TypeDefinition");
-    }
-
-    #[test]
-    fn statement_block() {
-        test_formatter(
-            FormatterConfig::default(),
-            "
-contract Contract {
-    function test() { unchecked { a += 1; }
-    
-        unchecked {
-        a += 1;
-        }
-        
-        
-unchecked { a += 1;
-        }
-    unchecked {}
-
-    1 + 1;
-
-
-    }
-}",
-            "
-contract Contract {
-    function test() {
-        unchecked {a += 1;}
-
-        unchecked {
-            a += 1;
-        }
-
-        unchecked {
-            a += 1;
-        }
-        unchecked {}
-
-        1 + 1;
-    }
-}
-",
-        );
     }
 }

@@ -17,3 +17,4 @@ solang-parser = "0.1.12"
 
 [dev-dependencies]
 pretty_assertions = "1.0.0"
+itertools = "0.10.3"
