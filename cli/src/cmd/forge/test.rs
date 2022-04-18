@@ -173,6 +173,13 @@ pub struct TestArgs {
     #[clap(flatten, next_help_heading = "EVM OPTIONS")]
     evm_opts: EvmArgs,
 
+    #[clap(
+        long,
+        env = "ETHERSCAN_API_KEY",
+        help = "Set etherscan api key to better decode traces"
+    )]
+    etherscan_api_key: Option<String>,
+
     #[clap(flatten, next_help_heading = "BUILD OPTIONS")]
     opts: CoreBuildArgs,
 
@@ -196,7 +203,12 @@ impl TestArgs {
         // merge all configs
         let figment: Figment = self.into();
         let evm_opts = figment.extract()?;
-        let config = Config::from_provider(figment).sanitized();
+        let mut config = Config::from_provider(figment).sanitized();
+
+        // merging etherscan api key into Config
+        if let Some(etherscan_api_key) = &self.etherscan_api_key {
+            config.etherscan_api_key = Some(etherscan_api_key.to_string());
+        }
         Ok((config, evm_opts))
     }
 
