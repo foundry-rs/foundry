@@ -717,7 +717,7 @@ impl EthApi {
     /// Returns traces for the transaction hash for geth's tracing endpoint
     ///
     /// Handler for RPC call: `debug_traceTransaction`
-    pub async fn debug_trace_transaction(&self, tx_hash: H256) -> Result<Vec<Trace>> {
+    pub async fn debug_trace_transaction(&self, _tx_hash: H256) -> Result<Vec<Trace>> {
         Err(BlockchainError::RpcUnimplemented)
     }
 

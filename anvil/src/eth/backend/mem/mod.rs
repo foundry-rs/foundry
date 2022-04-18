@@ -29,14 +29,15 @@ use anvil_core::{
 };
 use ethers::{
     types::{
-        Address, Block as EthersBlock, Bytes, Filter as EthersFilter, Log, Trace, Transaction,
-        TransactionReceipt,
+        Action::Call, ActionType, Address, Block as EthersBlock, Bytes, Filter as EthersFilter,
+        Log, Trace, Transaction, TransactionReceipt,
     },
     utils::{keccak256, rlp},
 };
 use foundry_evm::{
     revm,
     revm::{db::CacheDB, Account, CreateScheme, Env, Return, TransactOut, TransactTo, TxEnv},
+    trace::{node::CallTraceNode, CallTrace},
     utils::u256_to_h256_le,
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
@@ -54,6 +55,49 @@ pub struct MinedTransaction {
     pub info: TransactionInfo,
     pub receipt: TypedReceipt,
     pub block_hash: H256,
+    pub block_number: u64,
+}
+
+// === impl MinedTransaction ===
+
+impl MinedTransaction {
+    /// Returns the traces of the transaction for `trace_transaction`
+    pub fn parity_traces(&self) -> Vec<Trace> {
+        let mut traces = Vec::with_capacity(self.info.traces.len());
+        for node in self.info.traces.iter().cloned() {
+            let CallTraceNode { parent: _, children, idx: _, trace, logs: _, ordering: _ } = node;
+            let CallTrace {
+                depth: _,
+                success: _,
+                contract: _,
+                label: _,
+                address: _,
+                kind: _,
+                value: _,
+                data: _,
+                output: _,
+                gas_cost: _,
+            } = trace;
+
+            // TODO need to record more trace info
+
+            let trace = Trace {
+                action: Call(Default::default()),
+                result: None,
+                trace_address: vec![],
+                subtraces: children.len(),
+                transaction_position: Some(self.info.transaction_index as usize),
+                transaction_hash: Some(self.info.transaction_hash),
+                block_number: self.block_number,
+                block_hash: self.block_hash,
+                action_type: ActionType::Call,
+                error: None,
+            };
+            traces.push(trace)
+        }
+
+        traces
+    }
 }
 
 /// Gives access to the [revm::Database]
@@ -337,7 +381,8 @@ impl Backend {
 
         // insert all transactions
         for (info, receipt) in transactions.into_iter().zip(receipts) {
-            let mined_tx = MinedTransaction { info, receipt, block_hash };
+            let mined_tx =
+                MinedTransaction { info, receipt, block_hash, block_number: block_number.as_u64() };
             storage.transactions.insert(mined_tx.info.transaction_hash, mined_tx);
         }
 
@@ -731,7 +776,7 @@ impl Backend {
 
     /// Returns the traces for the given transaction
     pub fn mined_trace_transaction(&self, hash: H256) -> Option<Vec<Trace>> {
-        todo!()
+        self.blockchain.storage.read().transactions.get(&hash).map(|tx| tx.parity_traces())
     }
 
     pub async fn transaction_receipt(
