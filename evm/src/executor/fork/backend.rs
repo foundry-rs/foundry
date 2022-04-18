@@ -517,10 +517,12 @@ mod tests {
 
     #[test]
     fn can_read_write_cache() {
+        let provider = Provider::<Http>::try_from(ENDPOINT).unwrap();
         let tmpdir = tempfile::tempdir().unwrap();
         let cache_path = tmpdir.path().join("storage.json");
+        let runtime = RuntimeOrHandle::new();
 
-        let block_num = 14435000;
+        let block_num = runtime.block_on(provider.get_block_number()).unwrap().as_u64();
         let env = revm::Env::default();
 
         let fork = Fork {
@@ -530,7 +532,6 @@ mod tests {
             chain_id: 1,
         };
 
-        let runtime = RuntimeOrHandle::new();
         let backend = runtime.block_on(fork.spawn_backend(&env));
 
         // some rng contract from etherscan
