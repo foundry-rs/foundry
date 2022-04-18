@@ -333,8 +333,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 part.visit(self)?;
                 writeln!(self)?;
 
-                // If source has zero blank lines between declarations, leave it as is. If one
-                //  or more, separate declarations with one blank line.
+                // If source has zero blank lines between parts and the next part is not a function
+                // definition, leave it as is. If it has one or more blank lines or the next part is
+                // a function definition, separate parts with one blank line.
                 if let Some(next_part) = contract_parts_iter.peek() {
                     let blank_lines = self.blank_lines(part.loc(), next_part.loc());
                     if matches!(part, ContractPart::FunctionDefinition(_)) && blank_lines > 0 ||
