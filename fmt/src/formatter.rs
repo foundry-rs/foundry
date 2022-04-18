@@ -104,14 +104,14 @@ impl<'a, W: Write> Formatter<'a, W> {
     }
 
     /// Length of the line `s` with respect to already written line
-    fn len_indented_with_current(&self, s: &str) -> usize {
+    fn len_indented_with_current(&self, s: impl AsRef<str>) -> usize {
         if self.pending_indent { self.config.tab_width * self.level } else { 0 }
             .saturating_add(self.current_line)
-            .saturating_add(s.len())
+            .saturating_add(s.as_ref().len())
     }
 
     /// Is length of the line with respect to already written line greater than `config.line_length`
-    fn will_it_fit(&self, text: &str) -> bool {
+    fn will_it_fit(&self, text: impl AsRef<str>) -> bool {
         self.len_indented_with_current(text) <= self.config.line_length
     }
 
@@ -591,19 +591,21 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         let returns = self.visit_to_string(&mut func.returns)?;
         let returns_multiline = returns.contains('\n');
-        let returns_indent = !attributes.is_empty() || params_multiline || returns_multiline;
+        let returns_indent = params_multiline || !attributes.is_empty() || returns_multiline;
 
-        let one_line = format!(
-            "{}{}{}",
+        // Compose one line string consisting of attributes and return parameters.
+        let attributes_return = format!(
+            "{} {}",
             attributes.join(" "),
-            if attributes.is_empty() || func.returns.is_empty() { "" } else { " " },
             if func.returns.is_empty() { "".to_string() } else { format!("returns {returns}") }
         );
-        let one_line_fits = self.will_it_fit(&format!(" {one_line}")) && !returns_multiline;
+        let attributes_return = attributes_return.trim();
+        let attributes_return_fits_one_line =
+            self.will_it_fit(&format!(" {attributes_return}")) && !returns_multiline;
 
         // Check that we can fit both attributes and return arguments in one line.
-        if !one_line.is_empty() && one_line_fits {
-            write!(self, " {one_line}")?;
+        if !attributes_return.is_empty() && attributes_return_fits_one_line {
+            write!(self, " {attributes_return}")?;
         } else {
             // If attributes and returns can't fit in one line, we write all attributes in multiple
             // lines.
@@ -631,12 +633,15 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         match &mut func.body {
             Some(body) => {
-                if self.will_it_fit("{") && one_line_fits && !returns_multiline {
+                let body = self.visit_to_string(body)?;
+                if self.will_it_fit(format!(" {}", body.lines().next().unwrap_or_default())) &&
+                    attributes_return_fits_one_line
+                {
                     write!(self, " ")?;
                 } else {
                     writeln!(self)?;
                 }
-                body.visit(self)?
+                self.write_items(body.lines(), true)?;
             }
             None => write!(self, ";")?,
         };
@@ -644,6 +649,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
+    /// Write each function attribute on a new line because we don't have enough information in
+    /// visit function regarding one line/multiline cases. We can transform it into one line later
+    /// by `.split("\n").join(" ")`.
     fn visit_function_attribute_list(&mut self, list: &mut Vec<FunctionAttribute>) -> VResult {
         let attributes = list
             .iter_mut()
