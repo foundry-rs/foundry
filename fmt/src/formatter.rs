@@ -461,56 +461,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         Ok(())
     }
 
-    fn visit_block(
-        &mut self,
-        loc: Loc,
-        unchecked: bool,
-        statements: &mut Vec<Statement>,
-    ) -> VResult {
-        if unchecked {
-            write!(self, "unchecked ")?;
-        }
-
-        if statements.is_empty() {
-            self.write_empty_brackets()?;
-            return Ok(())
-        }
-
-        let multiline = self.source[loc.start()..loc.end()].contains('\n');
-
-        if multiline {
-            writeln!(self, "{{")?;
-            self.indent(1);
-        } else {
-            self.write_opening_bracket()?;
-        }
-
-        let mut statements_iter = statements.iter_mut().peekable();
-        while let Some(stmt) = statements_iter.next() {
-            stmt.visit(self)?;
-            if multiline {
-                writeln!(self)?;
-            }
-
-            // If source has zero blank lines between statements, leave it as is. If one
-            //  or more, separate statements with one blank line.
-            if let Some(next_stmt) = statements_iter.peek() {
-                if self.blank_lines(stmt.loc(), next_stmt.loc()) > 1 {
-                    writeln!(self)?;
-                }
-            }
-        }
-
-        if multiline {
-            self.dedent(1);
-            write!(self, "}}")?;
-        } else {
-            self.write_closing_bracket()?;
-        }
-
-        Ok(())
-    }
-
     fn visit_expr(&mut self, loc: Loc, expr: &mut Expression) -> VResult {
         match expr {
             Expression::Type(_, typ) => match typ {
@@ -763,6 +713,56 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
     fn visit_stray_semicolon(&mut self) -> VResult {
         write!(self, ";")?;
+
+        Ok(())
+    }
+
+    fn visit_block(
+        &mut self,
+        loc: Loc,
+        unchecked: bool,
+        statements: &mut Vec<Statement>,
+    ) -> VResult {
+        if unchecked {
+            write!(self, "unchecked ")?;
+        }
+
+        if statements.is_empty() {
+            self.write_empty_brackets()?;
+            return Ok(())
+        }
+
+        let multiline = self.source[loc.start()..loc.end()].contains('\n');
+
+        if multiline {
+            writeln!(self, "{{")?;
+            self.indent(1);
+        } else {
+            self.write_opening_bracket()?;
+        }
+
+        let mut statements_iter = statements.iter_mut().peekable();
+        while let Some(stmt) = statements_iter.next() {
+            stmt.visit(self)?;
+            if multiline {
+                writeln!(self)?;
+            }
+
+            // If source has zero blank lines between statements, leave it as is. If one
+            //  or more, separate statements with one blank line.
+            if let Some(next_stmt) = statements_iter.peek() {
+                if self.blank_lines(stmt.loc(), next_stmt.loc()) > 1 {
+                    writeln!(self)?;
+                }
+            }
+        }
+
+        if multiline {
+            self.dedent(1);
+            write!(self, "}}")?;
+        } else {
+            self.write_closing_bracket()?;
+        }
 
         Ok(())
     }
