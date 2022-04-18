@@ -1,5 +1,10 @@
 use crate::{
-    eth::{call::CallRequest, filter::Filter, transaction::EthTransactionRequest},
+    eth::{
+        call::CallRequest,
+        filter::Filter,
+        subscription::{SubscriptionId, SubscriptionKind, SubscriptionParams},
+        transaction::EthTransactionRequest,
+    },
     types::{EvmMineOptions, Forking, Index},
 };
 use ethers_core::{
@@ -12,6 +17,7 @@ pub mod block;
 pub mod call;
 pub mod filter;
 pub mod receipt;
+pub mod subscription;
 pub mod transaction;
 pub mod trie;
 pub mod utils;
@@ -113,6 +119,14 @@ pub enum EthRequest {
         BlockNumber,
         #[serde(default)] Vec<f64>,
     ),
+
+    /// Subscribe to an eth subscription
+    #[serde(rename = "eth_subscribe")]
+    EthSubscribe(SubscriptionKind, #[serde(default)] SubscriptionParams),
+
+    /// Unsubscribe from an eth subscription
+    #[serde(rename = "eth_unsubscribe", with = "sequence")]
+    EthUnSubscribe(SubscriptionId),
 
     /// non-standard endpoint for traces
     #[serde(rename = "debug_traceTransaction", with = "sequence")]
@@ -245,7 +259,7 @@ pub enum EthRequest {
     /// Turn on call traces for transactions that are returned to the user when they execute a
     /// transaction (instead of just txhash/receipt)
     #[serde(rename = "anvil_enableTraces", with = "sequence")]
-    EnableTrances,
+    EnableTraces,
 }
 
 fn deserialize_number<'de, D>(deserializer: D) -> Result<U256, D::Error>
@@ -494,6 +508,32 @@ mod tests {
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
 
         let s = r#"{"method": "evm_mine"}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_eth_unsubscribe() {
+        let s = r#"{"id": 1, "method": "eth_unsubscribe", "params": ["0x9cef478923ff08bf67fde6c64013158d"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_eth_subscribe() {
+        let s = r#"{"id": 1, "method": "eth_subscribe", "params": ["newHeads"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"id": 1, "method": "eth_subscribe", "params": ["logs", {"address": "0x8320fe7702b96808f7bbc0d4a888ed1468216cfd", "topics": ["0xd78a0cb8bb633d06981248b816e7bd33c2a35a6089241d099fa519e361cab902"]}]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"id": 1, "method": "eth_subscribe", "params": ["newPendingTransactions"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"id": 1, "method": "eth_subscribe", "params": ["syncing"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }

@@ -125,9 +125,10 @@ impl FilteredParams {
     pub fn new(filter: Option<Filter>) -> Self {
         if let Some(filter) = filter {
             let flat_topics = filter.topics.as_ref().map(Self::flatten).unwrap_or_default();
-            return FilteredParams { filter: Some(filter), flat_topics }
+            FilteredParams { filter: Some(filter), flat_topics }
+        } else {
+            Default::default()
         }
-        Self::default()
     }
 
     /// Returns the [BloomFilter] for the given address

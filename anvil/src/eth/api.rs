@@ -18,6 +18,7 @@ use anvil_core::{
     eth::{
         call::CallRequest,
         filter::Filter,
+        subscription::{SubscriptionId, SubscriptionKind, SubscriptionParams},
         transaction::{
             EthTransactionRequest, LegacyTransaction, PendingTransaction, TypedTransaction,
             TypedTransactionRequest,
@@ -224,7 +225,11 @@ impl EthApi {
             EthRequest::EthSendUnsignedTransaction(tx) => {
                 self.eth_send_unsigned_transaction(*tx).await.to_rpc_result()
             }
-            EthRequest::EnableTrances => self.anvil_enable_traces().await.to_rpc_result(),
+            EthRequest::EnableTraces => self.anvil_enable_traces().await.to_rpc_result(),
+            EthRequest::EthSubscribe(kind, params) => {
+                self.subscribe(kind, params).await.to_rpc_result()
+            }
+            EthRequest::EthUnSubscribe(id) => self.unsubscribe(id).await.to_rpc_result(),
         }
     }
 
@@ -714,6 +719,29 @@ impl EthApi {
     ///
     /// Handler for RPC call: `debug_traceTransaction`
     pub async fn debug_trace_transaction(&self, _tx_hash: H256) -> Result<Vec<Trace>> {
+        Err(BlockchainError::RpcUnimplemented)
+    }
+}
+
+// == impl EthApi pubsub ==
+
+impl EthApi {
+    /// Creates a new Subscription.
+    /// Returns a new subscription Id.
+    ///
+    /// Handler for RPC call: `eth_subscribe`
+    pub async fn subscribe(
+        &self,
+        _kind: SubscriptionKind,
+        _params: SubscriptionParams,
+    ) -> Result<SubscriptionId> {
+        Err(BlockchainError::RpcUnimplemented)
+    }
+
+    /// Cancels the subscription for thi given `id`
+    ///
+    /// Handler for RPC call: `eth_unsubscribe`
+    pub async fn unsubscribe(&self, _id: SubscriptionId) -> Result<bool> {
         Err(BlockchainError::RpcUnimplemented)
     }
 }
