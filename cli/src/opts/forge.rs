@@ -14,6 +14,7 @@ use crate::cmd::forge::{
     install::InstallArgs,
     remappings::RemappingArgs,
     run::RunArgs,
+    sim::SimArgs,
     snapshot, test, tree,
     verify::{VerifyArgs, VerifyCheckArgs},
 };
@@ -58,6 +59,10 @@ pub enum Subcommands {
     #[clap(about = "Run a single smart contract as a script.")]
     #[clap(alias = "r")]
     Run(RunArgs),
+
+    #[clap(about = "Simulate a past commited transaction.")]
+    #[clap(alias = "s")]
+    Sim(SimArgs),
 
     #[clap(
         alias = "u",
