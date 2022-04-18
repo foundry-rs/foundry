@@ -8,7 +8,10 @@ use tracing_subscriber::{layer::Context, Layer};
 /// The target that identifies the events intended to be logged to stdout
 pub(crate) const NODE_USER_LOG_TARGET: &str = "node::user";
 
-/// A logger that listens for node related events and displays them
+/// A logger that listens for node related events and displays them.
+///
+/// This layer is intended to be used as filter for `NODE_USER_LOG_TARGET` events that will
+/// eventually be logged to stdout
 #[derive(Debug, Clone, Default)]
 pub struct NodeLogLayer {
     state: LoggingManager,
@@ -23,6 +26,7 @@ impl NodeLogLayer {
     }
 }
 
+// use `Layer`'s filter function to globally enable/disable `NODE_USER_LOG_TARGET` events
 impl<S> Layer<S> for NodeLogLayer
 where
     S: tracing::Subscriber,
