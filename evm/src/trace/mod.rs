@@ -103,8 +103,8 @@ impl fmt::Display for CallTraceArena {
             writeln!(writer, "{}{}", left, node.trace)?;
 
             // Display logs and subcalls
-            let left_prefix = format!("{}{}", child, BRANCH);
-            let right_prefix = format!("{}{}", child, PIPE);
+            let left_prefix = format!("{child}{BRANCH}");
+            let right_prefix = format!("{child}{PIPE}");
             for child in &node.ordering {
                 match child {
                     LogCallOrder::Log(index) => {
@@ -168,7 +168,7 @@ impl fmt::Display for RawOrDecodedLog {
                     writeln!(
                         f,
                         "{:>13}: {}",
-                        if i == 0 { "emit topic 0".to_string() } else { format!("topic {}", i) },
+                        if i == 0 { "emit topic 0".to_string() } else { format!("topic {i}") },
                         Colour::Cyan.paint(format!("0x{}", hex::encode(&topic)))
                     )?;
                 }
@@ -182,7 +182,7 @@ impl fmt::Display for RawOrDecodedLog {
             RawOrDecodedLog::Decoded(name, params) => {
                 let params = params
                     .iter()
-                    .map(|(name, value)| format!("{}: {}", name, value))
+                    .map(|(name, value)| format!("{name}: {value}"))
                     .collect::<Vec<String>>()
                     .join(", ");
 

@@ -281,7 +281,7 @@ impl<'a> IntoFunction for &'a str {
     fn into(self) -> Function {
         AbiParser::default()
             .parse_function(self)
-            .unwrap_or_else(|_| panic!("could not convert {} to function", self))
+            .unwrap_or_else(|_| panic!("could not convert {self} to function"))
     }
 }
 
@@ -548,13 +548,13 @@ pub async fn fourbyte(selector: &str) -> Result<Vec<(String, i32)>> {
     }
     let selector = &selector[..8];
 
-    let url = format!("https://www.4byte.directory/api/v1/signatures/?hex_signature={}", selector);
+    let url = format!("https://www.4byte.directory/api/v1/signatures/?hex_signature={selector}");
     let res = reqwest::get(url).await?;
     let res = res.text().await?;
     let api_response = match serde_json::from_str::<ApiResponse>(&res) {
         Ok(inner) => inner,
         Err(err) => {
-            eyre::bail!("Could not decode response:\n {}.\nError: {}", res, err)
+            eyre::bail!("Could not decode response:\n {res}.\nError: {err}")
         }
     };
 
@@ -631,8 +631,7 @@ pub async fn fourbyte_event(topic: &str) -> Result<Vec<(String, i32)>> {
     }
     let topic = &topic[..8];
 
-    let url =
-        format!("https://www.4byte.directory/api/v1/event-signatures/?hex_signature={}", topic);
+    let url = format!("https://www.4byte.directory/api/v1/event-signatures/?hex_signature={topic}");
     let res = reqwest::get(url).await?;
     let api_response = res.json::<ApiResponse>().await?;
 
@@ -748,19 +747,19 @@ pub fn format_token(param: &Token) -> String {
             }
         }
         Token::Uint(num) => num.to_string(),
-        Token::Bool(b) => format!("{}", b),
+        Token::Bool(b) => format!("{b}"),
         Token::String(s) => format!("{:?}", s),
         Token::FixedArray(tokens) => {
             let string = tokens.iter().map(format_token).collect::<Vec<String>>().join(", ");
-            format!("[{}]", string)
+            format!("[{string}]")
         }
         Token::Array(tokens) => {
             let string = tokens.iter().map(format_token).collect::<Vec<String>>().join(", ");
-            format!("[{}]", string)
+            format!("[{string}]")
         }
         Token::Tuple(tokens) => {
             let string = tokens.iter().map(format_token).collect::<Vec<String>>().join(", ");
-            format!("({})", string)
+            format!("({string})")
         }
     }
 }
@@ -809,7 +808,7 @@ fn format_param(param: &Param, structs: &mut HashSet<String>) -> String {
             ParamType::FixedArray(_, _) |
             ParamType::Tuple(_),
     );
-    let kind = if is_memory { format!("{} memory", kind) } else { kind };
+    let kind = if is_memory { format!("{kind} memory") } else { kind };
 
     if param.name.is_empty() {
         kind
@@ -857,7 +856,7 @@ fn get_param_type(
                 .collect::<Vec<_>>()
                 .join(" ");
 
-            let v2_struct = format!("struct {} {{ {} }}", name, args);
+            let v2_struct = format!("struct {name} {{ {args} }}");
             (name, Some(v2_struct))
         }
         // If not, just get the string of the param kind.
@@ -902,7 +901,7 @@ pub fn abi_to_solidity(contract_abi: &Abi, mut contract_name: &str) -> Result<St
                 .join(", ");
 
             let event_final = format!("event {}({})", event.name, inputs);
-            format!("{};", event_final)
+            format!("{event_final};")
         })
         .collect::<Vec<_>>()
         .join("\n    ");
@@ -931,13 +930,13 @@ pub fn abi_to_solidity(contract_abi: &Abi, mut contract_name: &str) -> Result<St
 
             let mut func = format!("function {}({})", function.name, inputs);
             if !mutability.is_empty() {
-                func = format!("{} {}", func, mutability);
+                func = format!("{func} {mutability}");
             }
-            func = format!("{} external", func);
+            func = format!("{func} external");
             if !outputs.is_empty() {
-                func = format!("{} returns ({})", func, outputs);
+                func = format!("{func} returns ({outputs})");
             }
-            format!("{};", func)
+            format!("{func};")
         })
         .collect::<Vec<_>>()
         .join("\n    ");
@@ -1071,7 +1070,7 @@ mod tests {
             &mut known_contracts,
             Address::default(),
             &mut deployable_contracts,
-            |file, key| (format!("{}.json:{}", key, key), file, key),
+            |file, key| (format!("{key}.json:{key}"), file, key),
             |post_link_input| {
                 match post_link_input.id.slug().as_str() {
                     "DSTest.json:DSTest" => {
@@ -1102,7 +1101,7 @@ mod tests {
                             *nested_lib_unlinked
                         );
                     }
-                    s => panic!("unexpected slug {}", s),
+                    s => panic!("unexpected slug {s}"),
                 }
                 Ok(())
             },

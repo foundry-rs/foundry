@@ -112,7 +112,7 @@ forgetest!(can_verify_random_contract, |prj: TestProject, mut cmd: TestCommand| 
 
         let out = cmd.stdout_lossy();
         let address = parse_deployed_address(out.as_str())
-            .unwrap_or_else(|| panic!("Failed to parse deployer {}", out));
+            .unwrap_or_else(|| panic!("Failed to parse deployer {out}"));
 
         cmd.forge_fuse().arg("verify-contract").root_arg().args([
             "--chain-id".to_string(),

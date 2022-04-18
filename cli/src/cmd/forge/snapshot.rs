@@ -138,7 +138,7 @@ impl FromStr for Format {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "t" | "table" => Ok(Format::Table),
-            _ => Err(format!("Unrecognized format `{}`", s)),
+            _ => Err(format!("Unrecognized format `{s}`")),
         }
     }
 }
@@ -231,7 +231,7 @@ impl FromStr for SnapshotEntry {
                     })
                 })
             })
-            .ok_or_else(|| format!("Could not extract Snapshot Entry for {}", s))
+            .ok_or_else(|| format!("Could not extract Snapshot Entry for {s}"))
     }
 }
 
@@ -245,8 +245,7 @@ fn read_snapshot(path: impl AsRef<Path>) -> eyre::Result<Vec<SnapshotEntry>> {
     )
     .lines()
     {
-        entries
-            .push(SnapshotEntry::from_str(line?.as_str()).map_err(|err| eyre::eyre!("{}", err))?);
+        entries.push(SnapshotEntry::from_str(line?.as_str()).map_err(|err| eyre::eyre!("{err}"))?);
     }
     Ok(entries)
 }
@@ -393,11 +392,11 @@ fn fmt_pct_change(change: f64) -> String {
 
 fn fmt_change(change: i128) -> String {
     match change.cmp(&0) {
-        Ordering::Less => Colour::Green.paint(format!("{}", change)).to_string(),
+        Ordering::Less => Colour::Green.paint(format!("{change}")).to_string(),
         Ordering::Equal => {
-            format!("{}", change)
+            format!("{change}")
         }
-        Ordering::Greater => Colour::Red.paint(format!("{}", change)).to_string(),
+        Ordering::Greater => Colour::Red.paint(format!("{change}")).to_string(),
     }
 }
 

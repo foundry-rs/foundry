@@ -500,7 +500,7 @@ forgetest_ignore!(can_compile_local_spells, |_: TestProject, mut cmd: TestComman
         .join("../../foundry-integration-tests/testdata/spells-mainnet")
         .to_string_lossy()
         .to_string();
-    println!("project root: \"{}\"", root);
+    println!("project root: \"{root}\"");
 
     let eth_rpc_url = env::var("ETH_RPC_URL").unwrap();
     let dss_exec_lib = "src/DssSpell.sol:DssExecLib:0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4";

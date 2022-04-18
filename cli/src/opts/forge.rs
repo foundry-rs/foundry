@@ -214,7 +214,7 @@ impl FromStr for FullContractInfo {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let (path, name) = s
             .split_once(':')
-            .ok_or_else(|| eyre::eyre!("Expected `<path>:<contractname>`, got `{}`", s))?;
+            .ok_or_else(|| eyre::eyre!("Expected `<path>:<contractname>`, got `{s}`"))?;
         Ok(Self { path: path.to_string(), name: name.trim().to_string() })
     }
 }
@@ -264,9 +264,9 @@ impl FromStr for Dependency {
             format!("https://{}.{}/{}", brand, tld, project)
         } else {
             if !GH_REPO_REGEX.is_match(dependency) {
-                eyre::bail!("invalid github repository name `{}`", dependency);
+                eyre::bail!("invalid github repository name `{dependency}`");
             }
-            format!("https://{}/{}", GITHUB, dependency)
+            format!("https://{GITHUB}/{dependency}")
         };
 
         // everything after the "@" should be considered the version

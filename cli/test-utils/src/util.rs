@@ -97,7 +97,7 @@ impl TestProject {
     /// to a logical grouping of tests.
     pub fn new(name: &str, style: PathStyle) -> Self {
         let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
-        let project = pretty_err(name, TempProject::with_style(&format!("{}-{}", name, id), style));
+        let project = pretty_err(name, TempProject::with_style(&format!("{name}-{id}"), style));
         Self::with_project(project)
     }
 

@@ -89,7 +89,7 @@ where
         )?;
         // handle case when return type is not specified
         Ok(if decoded.is_empty() {
-            format!("{}\n", res)
+            format!("{res}\n")
         } else {
             // seth compatible user-friendly return type conversions
             let out = decoded
@@ -102,7 +102,7 @@ where
                         Token::FixedBytes(inner) => format!("0x{}", hex::encode(inner)),
                         // print as decimal
                         Token::Uint(inner) | Token::Int(inner) => inner.to_string(),
-                        _ => format!("{}", item),
+                        _ => format!("{item}"),
                     }
                 })
                 .collect::<Vec<_>>();
@@ -299,7 +299,7 @@ where
                 .ok_or_else(|| eyre::eyre!("block {:?} not found", block))?;
             if let Some(ref field) = field {
                 get_pretty_block_attr(block, field.to_string())
-                    .unwrap_or_else(|| format!("{} is not a valid block field", field))
+                    .unwrap_or_else(|| format!("{field} is not a valid block field"))
             } else if to_json {
                 serde_json::to_value(&block).unwrap().to_string()
             } else {
@@ -317,7 +317,7 @@ where
                     "use --full to view transactions".to_string()
                 } else {
                     get_pretty_block_attr(block, field.to_string())
-                        .unwrap_or_else(|| format!("{} is not a valid block field", field))
+                        .unwrap_or_else(|| format!("{field} is not a valid block field"))
                 }
             } else if to_json {
                 serde_json::to_value(&block).unwrap().to_string()
@@ -539,14 +539,14 @@ where
             serde_json::to_value(&transaction_result)?
                 .get(field)
                 .cloned()
-                .ok_or_else(|| eyre::eyre!("field {} not found", field))?
+                .ok_or_else(|| eyre::eyre!("field {field} not found"))?
         } else {
             serde_json::to_value(&transaction_result)?
         };
 
         let transaction = if let Some(ref field) = field {
             get_pretty_tx_attr(transaction_result, field.to_string())
-                .unwrap_or_else(|| format!("{} is not a valid tx field", field))
+                .unwrap_or_else(|| format!("{field} is not a valid tx field"))
         } else if to_json {
             serde_json::to_string(&transaction)?
         } else {
@@ -606,7 +606,7 @@ where
             serde_json::to_value(&receipt)?
                 .get(field)
                 .cloned()
-                .ok_or_else(|| eyre::eyre!("field {} not found", field))?
+                .ok_or_else(|| eyre::eyre!("field {field} not found"))?
         } else {
             serde_json::to_value(&receipt)?
         };
@@ -638,7 +638,7 @@ impl SimpleCast {
     /// ```
     pub fn from_utf8(s: &str) -> String {
         let s: String = s.as_bytes().to_hex();
-        format!("0x{}", s)
+        format!("0x{s}")
     }
     /// Generates an interface in solidity from either a local file ABI or a verified contract on
     /// Etherscan. It returns a vector of [`InterfaceSource`] structs that contain the source of the
@@ -886,7 +886,7 @@ impl SimpleCast {
         let func = AbiParser::default().parse_function(sig.as_ref())?;
         let calldata = encode_args(&func, args)?.to_hex::<String>();
         let encoded = &calldata[8..];
-        Ok(format!("0x{}", encoded))
+        Ok(format!("0x{encoded}"))
     }
 
     /// Converts decimal input to hex
@@ -1135,7 +1135,7 @@ impl SimpleCast {
             _ => keccak256(data).to_hex(),
         };
 
-        Ok(format!("0x{}", hash))
+        Ok(format!("0x{hash}"))
     }
 
     /// Converts ENS names to their namehash representation
@@ -1172,7 +1172,7 @@ impl SimpleCast {
         }
 
         let namehash: String = node.to_hex();
-        Ok(format!("0x{}", namehash))
+        Ok(format!("0x{namehash}"))
     }
 
     /// Performs ABI encoding to produce the hexadecimal calldata with the given arguments.
@@ -1271,7 +1271,7 @@ impl SimpleCast {
         from_value: &str,
         slot_number: &str,
     ) -> Result<String> {
-        let sig = format!("x({},{})", from_type, to_type);
+        let sig = format!("x({from_type},{to_type})");
         let encoded = Self::abi_encode(&sig, &[from_value, slot_number])?;
         let location: String = Self::keccak(&encoded)?;
         Ok(location)

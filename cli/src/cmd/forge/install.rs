@@ -164,7 +164,7 @@ fn install_as_submodule(dep: &Dependency, libs: &Path, no_commit: bool) -> eyre:
     } else if stderr.contains("paths are ignored by one of your .gitignore files") {
         let error =
             stderr.lines().filter(|l| !l.starts_with("hint:")).collect::<Vec<&str>>().join("\n");
-        eyre::bail!("{}", error)
+        eyre::bail!("{error}")
     } else if !&output.status.success() {
         eyre::bail!("{}", stderr.trim())
     }
@@ -191,9 +191,9 @@ fn install_as_submodule(dep: &Dependency, libs: &Path, no_commit: bool) -> eyre:
         if !no_commit {
             Command::new("git").args(&["add", &libs.display().to_string()]).spawn()?.wait()?;
         }
-        format!("forge install: {}\n\n{}", target_dir, tag)
+        format!("forge install: {target_dir}\n\n{tag}")
     } else {
-        format!("forge install: {}", target_dir)
+        format!("forge install: {target_dir}")
     };
 
     if !no_commit {

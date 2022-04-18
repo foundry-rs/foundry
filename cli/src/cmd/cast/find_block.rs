@@ -34,8 +34,8 @@ impl FindBlockArgs {
         let cast_provider = Cast::new(provider);
 
         let res = join!(cast_provider.timestamp(last_block_num), cast_provider.timestamp(1));
-        let ts_block_latest = res.0.unwrap();
-        let ts_block_1 = res.1.unwrap();
+        let ts_block_latest = res.0?;
+        let ts_block_1 = res.1?;
 
         let block_num = if ts_block_latest.lt(&ts_target) {
             // If the most recent block's timestamp is below the target, return it
@@ -83,7 +83,7 @@ impl FindBlockArgs {
             }
             matching_block.unwrap_or(low_block)
         };
-        println!("{}", block_num);
+        println!("{block_num}");
 
         Ok(())
     }

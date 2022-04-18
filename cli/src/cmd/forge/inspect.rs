@@ -82,7 +82,7 @@ impl FromStr for ContractArtifactFields {
             "metadata" | "meta" => Ok(ContractArtifactFields::Metadata),
             "userdoc" | "userDoc" | "user-doc" => Ok(ContractArtifactFields::UserDoc),
             "ewasm" | "e-wasm" => Ok(ContractArtifactFields::Ewasm),
-            _ => Err(format!("Unknown field: {}", s)),
+            _ => Err(format!("Unknown field: {s}")),
         }
     }
 }
@@ -163,7 +163,7 @@ impl Cmd for InspectArgs {
 
         // Unwrap the inner artifact
         let artifact = found_artifact.ok_or_else(|| {
-            eyre::eyre!("Could not find artifact `{}` in the compiled artifacts", contract)
+            eyre::eyre!("Could not find artifact `{contract}` in the compiled artifacts")
         })?;
 
         // Match on ContractArtifactFields and Pretty Print

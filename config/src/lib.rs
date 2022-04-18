@@ -532,7 +532,7 @@ impl Config {
             self.src.file_name().and_then(|s| s.to_str()).filter(|s| !s.is_empty())
         {
             remappings.push(Remapping {
-                name: format!("{}/", src_dir_name),
+                name: format!("{src_dir_name}/"),
                 path: format!("{}", self.src.display()),
             });
         }
@@ -744,7 +744,7 @@ impl Config {
         Some(
             Config::foundry_cache_dir()?
                 .join(chain_id.into().to_string())
-                .join(format!("{}", block))
+                .join(format!("{block}"))
                 .join("storage.json"),
         )
     }
