@@ -1,17 +1,14 @@
-use solang_parser::pt::{
-    CodeLocation as _, ContractPart, FunctionAttribute, FunctionDefinition, Import, Loc,
-    OptionalCodeLocation as _, SourceUnitPart, YulExpression, YulStatement,
-};
+use solang_parser::pt::*;
 
-pub trait CodeLocation {
+pub trait LineOfCode {
     fn loc(&self) -> Loc;
 }
 
-pub trait OptionalCodeLocation {
+pub trait OptionalLineOfCode {
     fn loc(&self) -> Option<Loc>;
 }
 
-impl CodeLocation for SourceUnitPart {
+impl LineOfCode for SourceUnitPart {
     fn loc(&self) -> Loc {
         match self {
             SourceUnitPart::ContractDefinition(contract) => contract.loc,
@@ -34,7 +31,7 @@ impl CodeLocation for SourceUnitPart {
     }
 }
 
-impl CodeLocation for ContractPart {
+impl LineOfCode for ContractPart {
     fn loc(&self) -> Loc {
         match self {
             ContractPart::StructDefinition(structure) => structure.loc,
@@ -50,7 +47,7 @@ impl CodeLocation for ContractPart {
     }
 }
 
-impl CodeLocation for YulStatement {
+impl LineOfCode for YulStatement {
     fn loc(&self) -> Loc {
         match self {
             YulStatement::Assign(loc, _, _) |
@@ -68,7 +65,7 @@ impl CodeLocation for YulStatement {
     }
 }
 
-impl CodeLocation for YulExpression {
+impl LineOfCode for YulExpression {
     fn loc(&self) -> Loc {
         match self {
             YulExpression::BoolLiteral(loc, _, _) |
@@ -83,7 +80,7 @@ impl CodeLocation for YulExpression {
     }
 }
 
-impl CodeLocation for FunctionDefinition {
+impl LineOfCode for FunctionDefinition {
     fn loc(&self) -> Loc {
         Loc::File(
             self.loc.file_no(),
@@ -93,7 +90,7 @@ impl CodeLocation for FunctionDefinition {
     }
 }
 
-impl OptionalCodeLocation for FunctionAttribute {
+impl OptionalLineOfCode for FunctionAttribute {
     fn loc(&self) -> Option<Loc> {
         match self {
             FunctionAttribute::Mutability(mutability) => Some(mutability.loc()),

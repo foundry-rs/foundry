@@ -1,7 +1,7 @@
 //! Visitor helpers to traverse the [solang](https://github.com/hyperledger-labs/solang) Solidity Parse Tree
 
-use crate::loc::{CodeLocation, OptionalCodeLocation};
-use solang_parser::pt::{CodeLocation as _, *};
+use crate::loc::{LineOfCode, OptionalLineOfCode};
+use solang_parser::pt::{CodeLocation, *};
 
 /// The error type a [Visitor] may return
 pub type VResult = Result<(), Box<dyn std::error::Error>>;
@@ -257,7 +257,7 @@ pub trait Visitor {
     }
 
     /// Write parameter list used in function/constructor/fallback/modifier arguments, return
-    /// arguments and try return arguments. Includes opening and closing parenthesis.
+    /// arguments and try return arguments including opening and closing parenthesis.
     fn visit_parameter_list(&mut self, list: &mut ParameterList) -> VResult {
         self.visit_opening_paren()?;
         if let (Some((first_loc, _)), Some((last_loc, _))) = (list.first(), list.last()) {

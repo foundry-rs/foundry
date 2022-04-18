@@ -4,14 +4,10 @@ use std::fmt::Write;
 
 use indent_write::fmt::IndentWriter;
 use itertools::Itertools;
-use solang_parser::pt::{
-    CodeLocation as _, ContractDefinition, ContractPart, DocComment, EnumDefinition, Expression,
-    FunctionAttribute, FunctionDefinition, Identifier, Loc, Parameter, SourceUnit, SourceUnitPart,
-    Statement, StringLiteral, StructDefinition, Type, TypeDefinition, VariableDeclaration,
-};
+use solang_parser::pt::*;
 
 use crate::{
-    loc::CodeLocation,
+    loc::LineOfCode,
     visit::{ParameterList, VResult, Visitable, Visitor},
 };
 
