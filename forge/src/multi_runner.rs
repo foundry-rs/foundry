@@ -66,7 +66,7 @@ impl MultiContractRunnerBuilder {
             &mut known_contracts,
             evm_opts.sender,
             &mut deployable_contracts,
-            |file, key| (format!("{}.json:{}", key, key), file, key),
+            |file, key| (format!("{key}.json:{key}"), file, key),
             |post_link_input| {
                 let PostLinkInput {
                     contract,

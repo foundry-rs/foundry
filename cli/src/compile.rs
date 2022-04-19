@@ -151,7 +151,7 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
             println!("No files changed, compilation skipped");
         } else {
             // print the compiler output / warnings
-            println!("{}", output);
+            println!("{output}");
 
             // print any sizes or names
             if print_names {
@@ -162,7 +162,7 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
                         version.major, version.minor, version.patch
                     );
                     for (name, _) in contracts {
-                        println!("    - {}", name);
+                        println!("    - {name}");
                     }
                 }
             }
@@ -190,7 +190,7 @@ If you are in a subdirectory in a Git repository, try adding `--root .`"#,
                     }
                 }
 
-                println!("{}", size_report);
+                println!("{size_report}");
 
                 // exit with error if any contract exceeds the size limit, excluding test contracts.
                 let exit_status = if size_report.exceeds_size_limit() { 1 } else { 0 };
@@ -236,6 +236,6 @@ pub fn compile_files(project: &Project, files: Vec<PathBuf>) -> eyre::Result<Pro
     if output.has_compiler_errors() {
         eyre::bail!(output.to_string())
     }
-    println!("{}", output);
+    println!("{output}");
     Ok(output)
 }

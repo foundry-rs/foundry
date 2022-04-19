@@ -57,7 +57,7 @@ fn get_code(path: &str) -> Result<Bytes, Bytes> {
         let contract_name =
             if parts.len() == 1 { parts[0].replace(".sol", "") } else { parts[1].to_string() };
         let out_dir = ProjectPathsConfig::find_artifacts_dir(Path::new("./"));
-        out_dir.join(format!("{}/{}.json", file, contract_name))
+        out_dir.join(format!("{file}/{contract_name}.json"))
     };
 
     let mut buffer = String::new();

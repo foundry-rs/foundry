@@ -104,13 +104,10 @@ impl Cmd for InitArgs {
 
             // write the contract file
             let contract_path = src.join("Contract.sol");
-            std::fs::write(contract_path, include_str!("../../../../assets/ContractTemplate.sol"))?;
+            std::fs::write(contract_path, include_str!("../../../assets/ContractTemplate.sol"))?;
             // write the tests
             let contract_path = test.join("Contract.t.sol");
-            std::fs::write(
-                contract_path,
-                include_str!("../../../../assets/ContractTemplate.t.sol"),
-            )?;
+            std::fs::write(contract_path, include_str!("../../../assets/ContractTemplate.t.sol"))?;
 
             let dest = root.join(Config::FILE_NAME);
             if !dest.exists() {
@@ -158,7 +155,7 @@ fn init_git_repo(root: &Path, no_commit: bool) -> eyre::Result<()> {
 
     if !is_git.success() {
         let gitignore_path = root.join(".gitignore");
-        std::fs::write(gitignore_path, include_str!("../../../../assets/.gitignoreTemplate"))?;
+        std::fs::write(gitignore_path, include_str!("../../../assets/.gitignoreTemplate"))?;
 
         // git init
         Command::new("git")
@@ -173,7 +170,7 @@ fn init_git_repo(root: &Path, no_commit: bool) -> eyre::Result<()> {
         let gh = root.join(".github").join("workflows");
         std::fs::create_dir_all(&gh)?;
         let workflow_path = gh.join("test.yml");
-        std::fs::write(workflow_path, include_str!("../../../../assets/workflowTemplate.yml"))?;
+        std::fs::write(workflow_path, include_str!("../../../assets/workflowTemplate.yml"))?;
 
         if !no_commit {
             Command::new("git").args(&["add", "."]).current_dir(&root).spawn()?.wait()?;

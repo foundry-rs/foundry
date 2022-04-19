@@ -79,7 +79,7 @@ impl FromStr for Chain {
         } else {
             s.parse::<u64>()
                 .map(Chain::Id)
-                .map_err(|_| format!("Expected known chain or integer, found: {}", s))
+                .map_err(|_| format!("Expected known chain or integer, found: {s}"))
         }
     }
 }

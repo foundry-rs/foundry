@@ -132,7 +132,7 @@ impl Cmd for FmtArgs {
                     if diff.ratio() < 1.0 {
                         let mut diff_summary = String::new();
 
-                        writeln!(diff_summary, "Diff in {}:", input)?;
+                        writeln!(diff_summary, "Diff in {input}:")?;
                         for (j, group) in diff.grouped_ops(3).iter().enumerate() {
                             if j > 0 {
                                 writeln!(diff_summary, "{:-^1$}", "-", 80)?;
@@ -184,7 +184,7 @@ impl Cmd for FmtArgs {
                     if i > 0 {
                         println!();
                     }
-                    print!("{}", diff);
+                    print!("{diff}");
                 }
             }
 

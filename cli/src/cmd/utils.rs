@@ -83,12 +83,12 @@ fn get_artifact_from_path(
     Ok((
         artifact
             .abi
-            .ok_or_else(|| eyre::Error::msg(format!("abi not found for {}", contract_name)))?,
+            .ok_or_else(|| eyre::Error::msg(format!("abi not found for {contract_name}")))?,
         artifact
             .bytecode
-            .ok_or_else(|| eyre::Error::msg(format!("bytecode not found for {}", contract_name)))?,
+            .ok_or_else(|| eyre::Error::msg(format!("bytecode not found for {contract_name}")))?,
         artifact
             .deployed_bytecode
-            .ok_or_else(|| eyre::Error::msg(format!("bytecode not found for {}", contract_name)))?,
+            .ok_or_else(|| eyre::Error::msg(format!("bytecode not found for {contract_name}")))?,
     ))
 }

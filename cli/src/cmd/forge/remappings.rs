@@ -36,7 +36,7 @@ impl Cmd for RemappingArgs {
         };
         let remappings: Vec<_> =
             lib_path.iter().flat_map(|lib| relative_remappings(lib, &root)).collect();
-        remappings.iter().for_each(|x| println!("{}", x));
+        remappings.iter().for_each(|x| println!("{x}"));
         Ok(())
     }
 }

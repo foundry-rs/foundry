@@ -328,7 +328,7 @@ fn on_action<F, T>(
             if let Some(status) = completion {
                 match status {
                     Some(ProcessEnd::ExitError(code)) => {
-                        tracing::trace!("Command exited with {}", code)
+                        tracing::trace!("Command exited with {code}")
                     }
                     Some(ProcessEnd::ExitSignal(sig)) => {
                         tracing::trace!("Command killed by {:?}", sig)
@@ -396,7 +396,7 @@ pub fn runtime(args: &WatchArgs) -> eyre::Result<RuntimeConfig> {
         let envs = summarise_events_to_env(prespawn.events.iter());
         if let Some(mut command) = prespawn.command().await {
             for (k, v) in envs {
-                command.env(format!("CARGO_WATCH_{}_PATH", k), v);
+                command.env(format!("CARGO_WATCH_{k}_PATH"), v);
             }
         }
 

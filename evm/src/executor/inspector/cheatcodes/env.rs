@@ -180,6 +180,10 @@ pub fn apply<DB: Database>(
             let account = data.subroutine.state().get(&inner.0).unwrap();
             Ok(abi::encode(&[Token::Uint(account.info.nonce.into())]).into())
         }
+        HEVMCalls::ChainId(inner) => {
+            data.env.cfg.chain_id = inner.0;
+            Ok(Bytes::new())
+        }
         _ => return None,
     })
 }
