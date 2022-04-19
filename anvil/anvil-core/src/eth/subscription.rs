@@ -1,7 +1,11 @@
 //! Subscription types
 
 use crate::eth::{block::Header, filter::Filter};
-use ethers_core::types::{Log, TxHash};
+use ethers_core::{
+    rand::{distributions::Alphanumeric, thread_rng, Rng},
+    types::{Log, TxHash},
+    utils::hex,
+};
 use serde::{de::Error, Deserialize, Deserializer, Serialize};
 
 /// Result of a subscription
@@ -78,4 +82,42 @@ pub enum SubscriptionId {
     Number(u64),
     /// string sub id, a hash for example
     String(String),
+}
+
+// === impl SubscriptionId ===
+
+impl SubscriptionId {
+    /// Generates a new random hex identifier
+    pub fn random_hex() -> Self {
+        SubscriptionId::String(hex_id())
+    }
+}
+
+/// Provides random hex identifier with a certain length
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+pub struct HexIdProvider {
+    len: usize,
+}
+
+// === impl  HexIdProvider ===
+
+impl HexIdProvider {
+    /// Generates a random hex encoded Id
+    pub fn gen(&self) -> String {
+        let id: String =
+            (&mut thread_rng()).sample_iter(Alphanumeric).map(char::from).take(self.len).collect();
+        let out = hex::encode(id);
+        format!("0x{}", out)
+    }
+}
+
+impl Default for HexIdProvider {
+    fn default() -> Self {
+        Self { len: 16 }
+    }
+}
+
+/// Returns a new random hex identifier
+pub fn hex_id() -> String {
+    HexIdProvider::default().gen()
 }

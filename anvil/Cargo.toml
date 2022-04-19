@@ -25,6 +25,7 @@ vergen = { version = "6.0.0", default-features = false, features = [
 foundry-evm = { path = "../evm" }
 anvil-core = { path = "anvil-core" }
 anvil-rpc = { path = "anvil-rpc" }
+anvil-server = { path = "anvil-server" }
 foundry-utils = { path = "../utils" }
 foundry-common = { path = "../common", optional = true }
 forge = { path = "../forge", optional = true }

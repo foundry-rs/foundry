@@ -1,69 +1,87 @@
-use crate::server::RpcHandler;
-
-use anvil_rpc::{
-    error::RpcError,
-    request::{Request, RpcCall},
-    response::{Response, RpcResponse},
+//! Contains RPC handlers
+use crate::EthApi;
+use anvil_core::eth::{subscription::SubscriptionId, EthPubSub, EthRequest, EthRpcCall};
+use anvil_rpc::response::ResponseResult;
+use anvil_server::{RpcHandler, WsContext, WsRpcHandler};
+use futures::Stream;
+use std::{
+    pin::Pin,
+    task::{Context, Poll},
 };
-use axum::{
-    extract::{rejection::JsonRejection, Extension},
-    Json,
-};
-use futures::{future, FutureExt};
-use tracing::{trace, warn};
 
-/// Handles incoming JSON-RPC Request
-pub async fn handle<Handler: RpcHandler>(
-    request: Result<Json<Request>, JsonRejection>,
-    Extension(handler): Extension<Handler>,
-) -> Json<Response> {
-    match request {
-        Err(err) => {
-            warn!("invalid request={:?}", err);
-            Response::error(RpcError::invalid_request()).into()
-        }
-        Ok(req) => handle_request(req.0, handler)
-            .await
-            .unwrap_or_else(|| Response::error(RpcError::invalid_request()))
-            .into(),
+/// A `RpcHandler` that expects `EthRequest` rpc calls via http
+#[derive(Clone)]
+pub struct HttpEthRpcHandler {
+    /// Access to the node
+    api: EthApi,
+}
+
+// === impl WsEthRpcHandler ===
+
+impl HttpEthRpcHandler {
+    /// Creates a new instance of the handler using the given `EthApi`
+    pub fn new(api: EthApi) -> Self {
+        Self { api }
     }
 }
 
-/// Handle the JSON-RPC [Request]
-///
-/// This will try to deserialize the payload into the request type of the handler and if successful
-/// invoke the handler
-pub async fn handle_request<Handler: RpcHandler>(
-    req: Request,
-    handler: Handler,
-) -> Option<Response> {
-    /// processes batch calls
-    fn responses_as_batch(outs: Vec<Option<RpcResponse>>) -> Option<Response> {
-        let batch: Vec<_> = outs.into_iter().flatten().collect();
-        (!batch.is_empty()).then(|| Response::Batch(batch))
+#[async_trait::async_trait]
+impl RpcHandler for HttpEthRpcHandler {
+    type Request = EthRequest;
+
+    async fn on_request(&self, request: Self::Request) -> ResponseResult {
+        self.api.execute(request).await
+    }
+}
+
+/// A `RpcHandler` that expects `EthRequest` rpc calls and `EthPubSub` via websocket
+#[derive(Clone)]
+pub struct WsEthRpcHandler {
+    /// Access to the node
+    api: EthApi,
+}
+
+impl WsEthRpcHandler {
+    /// Creates a new instance of the handler using the given `EthApi`
+    pub fn new(api: EthApi) -> Self {
+        Self { api }
     }
 
-    match req {
-        Request::Single(call) => handle_call(call, handler).await.map(Response::Single),
-        Request::Batch(calls) => {
-            future::join_all(calls.into_iter().map(move |call| handle_call(call, handler.clone())))
-                .map(responses_as_batch)
-                .await
+    /// Invoked for an ethereum pubsub rpc call
+    async fn on_pub_sub(&self, pubsub: EthPubSub, cx: WsContext<Self>) -> ResponseResult {
+        match pubsub {
+            EthPubSub::EthSubscribe(_kind, _params) => {
+                todo!()
+            }
+            EthPubSub::EthUnSubscribe(id) => {
+                let canceled = cx.remove_subscription(&id).is_some();
+                ResponseResult::Success(canceled.into())
+            }
         }
     }
 }
 
-/// handle a single RPC method call
-async fn handle_call<Handler: RpcHandler>(call: RpcCall, handler: Handler) -> Option<RpcResponse> {
-    match call {
-        RpcCall::MethodCall(call) => Some(handler.on_call(call).await),
-        RpcCall::Notification(notification) => {
-            trace!("received rpc notification method={}", notification.method);
-            None
+#[async_trait::async_trait]
+impl WsRpcHandler for WsEthRpcHandler {
+    type Request = EthRpcCall;
+    type SubscriptionId = SubscriptionId;
+    type Subscription = EthSubscription;
+
+    async fn on_request(&self, request: Self::Request, cx: WsContext<Self>) -> ResponseResult {
+        match request {
+            EthRpcCall::Request(request) => self.api.execute(request).await,
+            EthRpcCall::PubSub(pubsub) => self.on_pub_sub(pubsub, cx).await,
         }
-        RpcCall::Invalid { id } => {
-            trace!("invalid rpc call id={}", id);
-            Some(RpcResponse::invalid_request(id))
-        }
+    }
+}
+
+/// Represents an ethereum subscription
+pub struct EthSubscription;
+
+impl Stream for EthSubscription {
+    type Item = ResponseResult;
+
+    fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        Poll::Pending
     }
 }

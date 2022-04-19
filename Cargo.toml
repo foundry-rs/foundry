@@ -3,6 +3,7 @@ members = [
     "anvil",
     "anvil/anvil-core",
     "anvil/anvil-rpc",
+    "anvil/anvil-server",
     "cast",
     "binder",
     "cli",

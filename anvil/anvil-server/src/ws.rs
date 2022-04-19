@@ -1,7 +1,4 @@
-use crate::{
-    server::{handler::handle_request, RpcHandler},
-};
-use anvil_core::eth::{subscription::SubscriptionId};
+use crate::{handler::handle_request, RpcHandler};
 use anvil_rpc::{
     error::RpcError,
     request::Request,
@@ -18,10 +15,7 @@ use axum::{
 use futures::Stream;
 use parking_lot::Mutex;
 use serde::de::DeserializeOwned;
-use std::{
-    collections::HashMap,
-    sync::Arc,
-};
+use std::{collections::HashMap, fmt, hash::Hash, sync::Arc};
 use tracing::{trace, warn};
 
 /// Handles incoming Websocket upgrade
@@ -63,50 +57,53 @@ async fn handle_ws_socket<Handler: WsRpcHandler>(mut socket: WebSocket, handler:
 pub trait WsRpcHandler: Clone + Send + Sync + 'static {
     /// The request type to expect
     type Request: DeserializeOwned + Send + Sync;
+    /// The identifier to use for subscriptions
+    type SubscriptionId: Hash + PartialEq + Eq + Send + Sync + fmt::Debug;
+    /// The subscription type this handle may create
     type Subscription: Stream<Item = ResponseResult> + Send + Sync;
 
     /// Invoked when the request was received
-    async fn on_request(
-        &self,
-        request: Self::Request,
-        cx: WsContext<Self::Subscription>,
-    ) -> ResponseResult;
+    async fn on_request(&self, request: Self::Request, cx: WsContext<Self>) -> ResponseResult;
 }
 
 /// Contains additional context and tracks subscriptions
-pub struct WsContext<Subscription> {
-    /// all active subscriptions `(id, name) -> Stream`
-    subscriptions: Arc<Mutex<HashMap<(SubscriptionId, String), Subscription>>>,
+pub struct WsContext<Handler: WsRpcHandler> {
+    /// all active subscriptions `id -> Stream`
+    subscriptions: Arc<Mutex<HashMap<Handler::SubscriptionId, Handler::Subscription>>>,
 }
 
 // === impl WsContext ===
 
-impl<Subscription> WsContext<Subscription> {
+impl<Handler: WsRpcHandler> WsContext<Handler> {
     /// Adds new active subscription
     ///
     /// Returns the previous subscription, if any
     pub fn add_subscription<F>(
         &self,
-        name: &str,
-        id: &SubscriptionId,
-        subscription: Subscription,
-    ) -> Option<Subscription> {
-        self.subscriptions.lock().insert((id.clone(), name.into()), subscription)
+        id: Handler::SubscriptionId,
+        subscription: Handler::Subscription,
+    ) -> Option<Handler::Subscription> {
+        trace!(target: "rpc::ws", "adding subscription id {:?}", id);
+        self.subscriptions.lock().insert(id, subscription)
     }
 
     /// Removes an existing subscription
-    pub fn remove_subscription(&self, name: &str, id: &SubscriptionId) -> Option<Subscription> {
-        self.subscriptions.lock().remove(&(id.clone(), name.into()))
+    pub fn remove_subscription(
+        &self,
+        id: &Handler::SubscriptionId,
+    ) -> Option<Handler::Subscription> {
+        trace!(target: "rpc::ws", "removing subscription id {:?}", id);
+        self.subscriptions.lock().remove(id)
     }
 }
 
-impl<Subscription> Clone for WsContext<Subscription> {
+impl<Handler: WsRpcHandler> Clone for WsContext<Handler> {
     fn clone(&self) -> Self {
-        Self { subscriptions: self.subscriptions.clone() }
+        Self { subscriptions: Arc::clone(&self.subscriptions) }
     }
 }
 
-impl<Subscription> Default for WsContext<Subscription> {
+impl<Handler: WsRpcHandler> Default for WsContext<Handler> {
     fn default() -> Self {
         Self { subscriptions: Arc::new(Mutex::new(HashMap::new())) }
     }
@@ -115,7 +112,7 @@ impl<Subscription> Default for WsContext<Subscription> {
 /// A compatibility helper type to use common `RpcHandler` functions
 struct ContextAwareHandler<Handler: WsRpcHandler> {
     handler: Handler,
-    context: WsContext<Handler::Subscription>,
+    context: WsContext<Handler>,
 }
 
 impl<Handler: WsRpcHandler> Clone for ContextAwareHandler<Handler> {
@@ -139,8 +136,8 @@ impl<Handler: WsRpcHandler> RpcHandler for ContextAwareHandler<Handler> {
 struct WsConnection<Handler: WsRpcHandler> {
     /// the handler for the websocket connection
     handler: Handler,
-
-    context: WsContext<Handler::Subscription>,
+    /// contains all the subscription related context
+    context: WsContext<Handler>,
 }
 
 // === impl WsConnection ===
