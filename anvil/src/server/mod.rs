@@ -13,7 +13,7 @@ mod handler;
 mod http;
 mod ws;
 
-/// Configures an [axum::Server] that handles [EthApi] related JSON-RPC calls via HTTP
+/// Configures an [axum::Server] that handles [EthApi] related JSON-RPC calls via HTTP and WS
 pub fn serve(addr: SocketAddr, api: EthApi) -> impl Future<Output = hyper::Result<()>> {
     let svc = Router::new()
         .route("/", post(handler::handle_rpc).get(ws::ws_handler))
@@ -23,9 +23,27 @@ pub fn serve(addr: SocketAddr, api: EthApi) -> impl Future<Output = hyper::Resul
     Server::bind(&addr).serve(svc)
 }
 
+// /// Configures an [axum::Server] that handles [EthApi] related JSON-RPC calls via HTTP
+// pub fn serve2<Http, Ws>(
+//     addr: SocketAddr,
+//     http: Http,
+//     ws: Ws,
+// ) -> impl Future<Output = hyper::Result<()>>
+// where
+//     Http: RpcHandler,
+//     Ws: RpcHandler,
+// {
+//     let svc = Router::new()
+//         .route("/", post(handler::handle_rpc).get(ws::ws_handler))
+//         .layer(Extension(api))
+//         .layer(TraceLayer::new_for_http())
+//         .into_make_service();
+//     Server::bind(&addr).serve(svc)
+// }
+
 /// Helper trait that is used to execute ethereum rpc calls
 #[async_trait::async_trait]
-pub trait RpcHandler {
+pub trait RpcHandler: Clone + Send + Sync + 'static {
     /// The request type to expect
     type Request: DeserializeOwned;
 
