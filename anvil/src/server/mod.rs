@@ -1,14 +1,7 @@
 //! Contains the code to launch an ethereum RPC-Server
 use crate::EthApi;
-
-
-
-
 use handler::{HttpEthRpcHandler, WsEthRpcHandler};
-use std::{
-    future::Future,
-    net::SocketAddr,
-};
+use std::{future::Future, net::SocketAddr};
 
 mod handler;
 

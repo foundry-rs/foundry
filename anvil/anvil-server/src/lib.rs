@@ -38,6 +38,19 @@ where
     Server::bind(&addr).serve(svc)
 }
 
+/// Configures an [axum::Server] that handles RPC-Calls listing for POST on `/`
+pub fn serve_http<Http>(addr: SocketAddr, http: Http) -> impl Future<Output = hyper::Result<()>>
+where
+    Http: RpcHandler,
+{
+    let svc = Router::new()
+        .route("/", post(handler::handle::<Http>))
+        .layer(Extension(http))
+        .layer(TraceLayer::new_for_http())
+        .into_make_service();
+    Server::bind(&addr).serve(svc)
+}
+
 /// Helper trait that is used to execute ethereum rpc calls
 #[async_trait::async_trait]
 pub trait RpcHandler: Clone + Send + Sync + 'static {
