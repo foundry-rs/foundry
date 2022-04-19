@@ -1,13 +1,12 @@
 //! general eth api tests
 
-use crate::{init_tracing, next_port};
+use crate::next_port;
 use anvil::{spawn, NodeConfig};
 use ethers::prelude::Middleware;
 use futures::StreamExt;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_sub_new_heads() {
-    init_tracing();
     let (api, handle) = spawn(NodeConfig::test().port(next_port())).await;
 
     let provider = handle.ws_provider().await;

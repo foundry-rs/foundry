@@ -12,7 +12,7 @@ use axum::{
     response::IntoResponse,
     Extension,
 };
-use futures::{stream::Fuse, FutureExt, SinkExt, Stream, StreamExt};
+use futures::{FutureExt, SinkExt, Stream, StreamExt};
 use parking_lot::Mutex;
 use serde::de::DeserializeOwned;
 use std::{
@@ -135,7 +135,7 @@ struct WsConnection<Handler: WsRpcHandler> {
     /// contains all the subscription related context
     context: WsContext<Handler>,
     /// The established websocket
-    socket: Fuse<WebSocket>,
+    socket: WebSocket,
     /// currently in progress requests
     processing: Vec<Pin<Box<dyn Future<Output = Response> + Send>>>,
     /// pending messages to send
@@ -147,7 +147,7 @@ struct WsConnection<Handler: WsRpcHandler> {
 impl<Handler: WsRpcHandler> WsConnection<Handler> {
     pub fn new(socket: WebSocket, handler: Handler) -> Self {
         Self {
-            socket: socket.fuse(),
+            socket,
             handler,
             context: Default::default(),
             pending: Default::default(),
@@ -214,14 +214,23 @@ impl<Handler: WsRpcHandler> Future for WsConnection<Handler> {
                 }
             }
 
-            while let Poll::Ready(Some(msg)) = pin.socket.poll_next_unpin(cx) {
-                if let Ok(msg) = msg {
-                    if pin.on_message(msg) {
+            loop {
+                match pin.socket.poll_next_unpin(cx) {
+                    Poll::Ready(Some(msg)) => {
+                        if let Ok(msg) = msg {
+                            if pin.on_message(msg) {
+                                return Poll::Ready(())
+                            }
+                        } else {
+                            trace!(target: "rpc::ws", "client disconnected");
+                            return Poll::Ready(())
+                        }
+                    }
+                    Poll::Ready(None) => {
+                        trace!(target: "rpc::ws", "socket connection finished");
                         return Poll::Ready(())
                     }
-                } else {
-                    trace!(target: "rpc::ws", "client disconnected");
-                    return Poll::Ready(())
+                    Poll::Pending => break,
                 }
             }
 
