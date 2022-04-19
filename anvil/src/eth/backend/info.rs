@@ -2,8 +2,8 @@
 
 use crate::mem::Backend;
 use anvil_core::eth::{block::Block, receipt::TypedReceipt};
-use ethers::types::H256;
-use std::sync::Arc;
+use ethers::types::{Block as EthersBlock, TxHash, H256};
+use std::{fmt, sync::Arc};
 
 /// A type that can fetch data related to the ethereum storage.
 ///
@@ -40,5 +40,17 @@ impl StorageInfo {
     /// Returns the block with the given hash
     pub fn block(&self, hash: H256) -> Option<Block> {
         self.backend.get_block_by_hash(hash)
+    }
+
+    /// Returns the block with the given hash in the format of the ethereum API
+    pub fn eth_block(&self, hash: H256) -> Option<EthersBlock<TxHash>> {
+        let block = self.block(hash)?;
+        self.backend.convert_block(block)
+    }
+}
+
+impl fmt::Debug for StorageInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("StorageInfo").finish_non_exhaustive()
     }
 }

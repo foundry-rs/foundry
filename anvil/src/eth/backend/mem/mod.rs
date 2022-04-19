@@ -596,7 +596,7 @@ impl Backend {
     }
 
     /// Takes a block as it's stored internally and returns the eth api conform block format
-    fn convert_block(&self, block: Block) -> Option<EthersBlock<TxHash>> {
+    pub fn convert_block(&self, block: Block) -> Option<EthersBlock<TxHash>> {
         let size = U256::from(rlp::encode(&block).len() as u32);
 
         let Block { header, transactions, .. } = block;

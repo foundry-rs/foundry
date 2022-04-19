@@ -9,7 +9,8 @@ use ethers_core::{
 use serde::{de::Error, Deserialize, Deserializer, Serialize};
 
 /// Result of a subscription
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(untagged)]
 pub enum SubscriptionResult {
     /// New block header
     Header(Box<Header>),

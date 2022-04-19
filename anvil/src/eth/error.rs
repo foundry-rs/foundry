@@ -75,16 +75,21 @@ pub(crate) trait ToRpcResponseResult {
     fn to_rpc_result(self) -> ResponseResult;
 }
 
+/// Converts a serializable value into a `ResponseResult`
+pub fn to_rpc_result<T: Serialize>(val: T) -> ResponseResult {
+    match serde_json::to_value(val) {
+        Ok(success) => ResponseResult::Success(success),
+        Err(err) => {
+            error!("Failed serialize rpc response: {:?}", err);
+            ResponseResult::error(RpcError::internal_error())
+        }
+    }
+}
+
 impl<T: Serialize> ToRpcResponseResult for Result<T> {
     fn to_rpc_result(self) -> ResponseResult {
         match self {
-            Ok(val) => match serde_json::to_value(val) {
-                Ok(success) => ResponseResult::Success(success),
-                Err(err) => {
-                    error!("Failed serialize rpc response: {:?}", err);
-                    ResponseResult::error(RpcError::internal_error())
-                }
-            },
+            Ok(val) => to_rpc_result(val),
             Err(err) => match err {
                 BlockchainError::Pool(err) => {
                     error!("txpool error: {:?}", err);

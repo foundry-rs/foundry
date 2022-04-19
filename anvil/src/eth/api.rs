@@ -1,6 +1,7 @@
 use crate::{
     eth::{
         backend,
+        backend::notifications::NewBlockNotifications,
         error::{BlockchainError, FeeHistoryError, Result, ToRpcResponseResult},
         fees::{FeeDetails, FeeHistory, FeeHistoryCache},
         miner::{FixedBlockTimeMiner, NoMine},
@@ -12,13 +13,12 @@ use crate::{
         sign::Signer,
     },
     revm::TransactOut,
-    LoggingManager, Miner, MiningMode, Provider,
+    LoggingManager, Miner, MiningMode, Provider, StorageInfo,
 };
 use anvil_core::{
     eth::{
         call::CallRequest,
         filter::Filter,
-        subscription::{SubscriptionId, SubscriptionKind, SubscriptionParams},
         transaction::{
             EthTransactionRequest, LegacyTransaction, PendingTransaction, TypedTransaction,
             TypedTransactionRequest,
@@ -39,6 +39,7 @@ use ethers::{
     utils::rlp,
 };
 use foundry_evm::utils::u256_to_h256_le;
+use futures::channel::mpsc::Receiver;
 use std::{sync::Arc, time::Duration};
 use tracing::trace;
 
@@ -729,29 +730,6 @@ impl EthApi {
     }
 }
 
-// == impl EthApi pubsub ==
-
-impl EthApi {
-    /// Creates a new Subscription.
-    /// Returns a new subscription Id.
-    ///
-    /// Handler for RPC call: `eth_subscribe`
-    pub async fn subscribe(
-        &self,
-        _kind: SubscriptionKind,
-        _params: SubscriptionParams,
-    ) -> Result<SubscriptionId> {
-        Err(BlockchainError::RpcUnimplemented)
-    }
-
-    /// Cancels the subscription for thi given `id`
-    ///
-    /// Handler for RPC call: `eth_unsubscribe`
-    pub async fn unsubscribe(&self, _id: SubscriptionId) -> Result<bool> {
-        Err(BlockchainError::RpcUnimplemented)
-    }
-}
-
 // == impl EthApi anvil endpoints ==
 
 impl EthApi {
@@ -1043,6 +1021,21 @@ impl EthApi {
 // === impl EthApi utility functions ===
 
 impl EthApi {
+    /// Returns a new block event stream that yields Notifications when a new block was added
+    pub fn new_block_notifications(&self) -> NewBlockNotifications {
+        self.backend.new_block_notifications()
+    }
+
+    /// Returns a new listeners for ready transactions
+    pub fn new_ready_transactions(&self) -> Receiver<TxHash> {
+        self.pool.add_ready_listener()
+    }
+
+    /// Returns a new accessor for certain storage elements
+    pub fn storage_info(&self) -> StorageInfo {
+        StorageInfo::new(Arc::clone(&self.backend))
+    }
+
     /// Returns true if forked
     pub fn is_fork(&self) -> bool {
         self.backend.is_fork()

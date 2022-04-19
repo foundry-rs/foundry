@@ -12,10 +12,17 @@ use axum::{
     response::IntoResponse,
     Extension,
 };
-use futures::Stream;
+use futures::{Stream, StreamExt};
 use parking_lot::Mutex;
 use serde::de::DeserializeOwned;
-use std::{collections::HashMap, fmt, hash::Hash, sync::Arc};
+use std::{
+    collections::{HashMap, VecDeque},
+    fmt,
+    hash::Hash,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+};
 use tracing::{trace, warn};
 
 /// Handles incoming Websocket upgrade
@@ -78,7 +85,7 @@ impl<Handler: WsRpcHandler> WsContext<Handler> {
     /// Adds new active subscription
     ///
     /// Returns the previous subscription, if any
-    pub fn add_subscription<F>(
+    pub fn add_subscription(
         &self,
         id: Handler::SubscriptionId,
         subscription: Handler::Subscription,
@@ -106,6 +113,14 @@ impl<Handler: WsRpcHandler> Clone for WsContext<Handler> {
 impl<Handler: WsRpcHandler> Default for WsContext<Handler> {
     fn default() -> Self {
         Self { subscriptions: Arc::new(Mutex::new(HashMap::new())) }
+    }
+}
+
+impl<Handler: WsRpcHandler> Stream for WsContext<Handler> {
+    type Item = ResponseResult;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        todo!()
     }
 }
 
@@ -204,5 +219,13 @@ impl<Handler: WsRpcHandler> WsConnection<Handler> {
             }
             Err(err) => Err(axum::Error::new(err)),
         }
+    }
+}
+
+impl<Handler: WsRpcHandler> Stream for WsConnection<Handler> {
+    type Item = ();
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        todo!()
     }
 }
