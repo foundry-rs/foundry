@@ -40,7 +40,7 @@ pub async fn handle_ws<Handler: WsRpcHandler>(
 #[async_trait::async_trait]
 pub trait WsRpcHandler: Clone + Send + Sync + Unpin + 'static {
     /// The request type to expect
-    type Request: DeserializeOwned + Send + Sync;
+    type Request: DeserializeOwned + Send + Sync + fmt::Debug;
     /// The identifier to use for subscriptions
     type SubscriptionId: Hash + PartialEq + Eq + Send + Sync + fmt::Debug;
     /// The subscription type this handle may create
@@ -69,7 +69,12 @@ impl<Handler: WsRpcHandler> WsContext<Handler> {
     ) -> Option<Handler::Subscription> {
         trace!(target: "rpc::ws", "adding subscription id {:?}", id);
         let mut subscriptions = self.subscriptions.lock();
-        let removed = self.remove_subscription(&id);
+        let mut removed = None;
+        if let Some(idx) = subscriptions.iter().position(|(i, _)| id == *i) {
+            trace!(target: "rpc::ws", "removed subscription id {:?}", id);
+            removed = Some(subscriptions.swap_remove(idx).1);
+        }
+        trace!(target: "rpc::ws", "added subscription id {:?}", id);
         subscriptions.push((id, subscription));
         removed
     }
@@ -79,9 +84,9 @@ impl<Handler: WsRpcHandler> WsContext<Handler> {
         &self,
         id: &Handler::SubscriptionId,
     ) -> Option<Handler::Subscription> {
-        trace!(target: "rpc::ws", "removing subscription id {:?}", id);
         let mut subscriptions = self.subscriptions.lock();
         if let Some(idx) = subscriptions.iter().position(|(i, _)| id == i) {
+            trace!(target: "rpc::ws", "removed subscription id {:?}", id);
             return Some(subscriptions.swap_remove(idx).1)
         }
         None
@@ -158,7 +163,7 @@ impl<Handler: WsRpcHandler> WsConnection<Handler> {
     fn on_message(&mut self, msg: Message) -> bool {
         match msg {
             Message::Text(text) => {
-                trace!(target: "rpc::ws", "client send str: {:?}", text);
+                trace!(target: "rpc::ws", "received: {:?}", text);
                 let handler = self.compat_helper();
                 self.processing.push(Box::pin(async move {
                     match serde_json::from_str::<Request>(&text) {
@@ -195,12 +200,12 @@ impl<Handler: WsRpcHandler> Future for WsConnection<Handler> {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let pin = self.get_mut();
-
         loop {
             // drive the sink
             while let Poll::Ready(Ok(())) = pin.socket.poll_ready_unpin(cx) {
                 // only start sending if socket is ready
                 if let Some(msg) = pin.pending.pop_front() {
+                    trace!(target: "rpc::ws", "sending ws message");
                     if let Err(err) = pin.socket.start_send_unpin(msg) {
                         error!(target: "rpc::ws", "Failed to send message {:?}", err);
                     }

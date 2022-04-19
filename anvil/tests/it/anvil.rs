@@ -1,12 +1,11 @@
 //! tests for anvil specifc logic
 
-use crate::{init_tracing, next_port};
+use crate::next_port;
 use anvil::{spawn, NodeConfig};
-use ethers::{prelude::Middleware};
+use ethers::prelude::Middleware;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_can_change_mining_mode() {
-    init_tracing();
     let (api, handle) = spawn(NodeConfig::test().port(next_port())).await;
     let provider = handle.http_provider();
 

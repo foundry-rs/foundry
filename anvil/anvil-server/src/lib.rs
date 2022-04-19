@@ -9,7 +9,7 @@ use anvil_rpc::{
 };
 use axum::{extract::Extension, routing::post, Router, Server};
 use serde::de::DeserializeOwned;
-use std::{future::Future, net::SocketAddr};
+use std::{fmt, future::Future, net::SocketAddr};
 use tower_http::trace::TraceLayer;
 use tracing::{trace, warn};
 
@@ -55,7 +55,7 @@ where
 #[async_trait::async_trait]
 pub trait RpcHandler: Clone + Send + Sync + 'static {
     /// The request type to expect
-    type Request: DeserializeOwned + Send + Sync;
+    type Request: DeserializeOwned + Send + Sync + fmt::Debug;
 
     /// Invoked when the request was received
     async fn on_request(&self, request: Self::Request) -> ResponseResult;
@@ -81,8 +81,9 @@ pub trait RpcHandler: Clone + Send + Sync + 'static {
 
         match serde_json::from_value::<Self::Request>(call) {
             Ok(req) => {
+                trace!(target: "rpc", "received handler request {:?}", req);
                 let result = self.on_request(req).await;
-                trace!(target: "rpc", "sending rpc result {:?}", result);
+                trace!(target: "rpc", "prepared rpc result {:?}", result);
                 RpcResponse::new(id, result)
             }
             Err(err) => {

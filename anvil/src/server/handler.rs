@@ -20,6 +20,7 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
+use tracing::trace;
 
 /// A `RpcHandler` that expects `EthRequest` rpc calls via http
 #[derive(Clone)]
@@ -62,9 +63,10 @@ impl WsEthRpcHandler {
     /// Invoked for an ethereum pubsub rpc call
     async fn on_pub_sub(&self, pubsub: EthPubSub, cx: WsContext<Self>) -> ResponseResult {
         let id = SubscriptionId::random_hex();
-
+        trace!(target: "rpc::ws", "received pubsub request {:?}", pubsub);
         match pubsub {
             EthPubSub::EthUnSubscribe(id) => {
+                trace!(target: "rpc::ws", "canceling subscription {:?}", id);
                 let canceled = cx.remove_subscription(&id).is_some();
                 ResponseResult::Success(canceled.into())
             }
@@ -76,6 +78,7 @@ impl WsEthRpcHandler {
 
                 let subscription = match kind {
                     SubscriptionKind::Logs => {
+                        trace!(target: "rpc::ws", "received logs subscription {:?}", params);
                         let blocks = self.api.new_block_notifications();
                         let storage = self.api.storage_info();
                         EthSubscription::Logs(Box::new(LogsListener {
@@ -87,11 +90,13 @@ impl WsEthRpcHandler {
                         }))
                     }
                     SubscriptionKind::NewHeads => {
+                        trace!(target: "rpc::ws", "received header subscription");
                         let blocks = self.api.new_block_notifications();
                         let storage = self.api.storage_info();
                         EthSubscription::Header(blocks, storage, id.clone())
                     }
                     SubscriptionKind::NewPendingTransactions => {
+                        trace!(target: "rpc::ws", "received pending transactions subscription");
                         EthSubscription::PendingTransactions(
                             self.api.new_ready_transactions(),
                             id.clone(),
@@ -104,6 +109,7 @@ impl WsEthRpcHandler {
 
                 cx.add_subscription(id.clone(), subscription);
 
+                trace!(target: "rpc::ws", "created new subscription: {:?}", id);
                 to_rpc_result(id)
             }
         }
@@ -117,6 +123,7 @@ impl WsRpcHandler for WsEthRpcHandler {
     type Subscription = EthSubscription;
 
     async fn on_request(&self, request: Self::Request, cx: WsContext<Self>) -> ResponseResult {
+        trace!(target: "rpc::ws", "received ws request {:?}", request);
         match request {
             EthRpcCall::Request(request) => self.api.execute(request).await,
             EthRpcCall::PubSub(pubsub) => self.on_pub_sub(pubsub, cx).await,

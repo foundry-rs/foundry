@@ -97,6 +97,7 @@ impl EthApi {
 
     /// Executes the [EthRequest] and returns an RPC [RpcResponse]
     pub async fn execute(&self, request: EthRequest) -> ResponseResult {
+        trace!(target: "rpc::api", "executing eth request {:?}", request);
         match request {
             EthRequest::EthGetBalance(addr, block) => {
                 self.balance(addr, block).await.to_rpc_result()

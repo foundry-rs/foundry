@@ -56,13 +56,16 @@ pub async fn handle_request<Handler: RpcHandler>(
 /// handle a single RPC method call
 async fn handle_call<Handler: RpcHandler>(call: RpcCall, handler: Handler) -> Option<RpcResponse> {
     match call {
-        RpcCall::MethodCall(call) => Some(handler.on_call(call).await),
+        RpcCall::MethodCall(call) => {
+            trace!(target: "rpc", "handling call {:?}", call);
+            Some(handler.on_call(call).await)
+        }
         RpcCall::Notification(notification) => {
-            trace!("received rpc notification method={}", notification.method);
+            trace!(target: "rpc", "received rpc notification method={}", notification.method);
             None
         }
         RpcCall::Invalid { id } => {
-            trace!("invalid rpc call id={}", id);
+            trace!(target: "rpc", "invalid rpc call id={}", id);
             Some(RpcResponse::invalid_request(id))
         }
     }
