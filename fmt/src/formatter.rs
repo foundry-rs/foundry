@@ -571,8 +571,6 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 let body_string = self.visit_to_string(body)?;
                 let first_line = body_string.lines().next().unwrap_or_default();
 
-                // TODO: when we implement visitors for statements, write `body_string` here instead
-                //  of visiting it twice.
                 (Some(body), format!(" {first_line}"))
             }
             None => (None, ";".to_string()),
@@ -619,6 +617,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 } else {
                     writeln!(self)?;
                 }
+                // TODO: when we implement visitors for statements, write `body_string` here instead
+                //  of visiting it twice.
                 body.visit(self)?;
             }
             None => write!(self, ";")?,
@@ -660,7 +660,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                     self,
                     "{}",
                     // TODO: strip empty parentheses only for modifiers. Currently, we can't detect
-                    //  whether it's a base constructor or modifier.
+                    //  whether it's a base constructor or modifier. We probably need to keep track
+                    //  of the current contract definition that's in processing?
                     base_or_modifier.strip_suffix("()").unwrap_or(&base_or_modifier)
                 )?;
             }
