@@ -61,6 +61,7 @@ clap = { version = "3.0.10", features = [
     "env",
     "wrap_help",
 ], optional = true }
+async-trait = "0.1.53"
 
 [dev-dependencies]
 ethers = { git = "https://github.com/gakonst/ethers-rs", features = ["abigen", "legacy"] }

@@ -1,5 +1,13 @@
-use crate::{server::handler::handle_request, EthApi};
-use anvil_rpc::{error::RpcError, request::Request, response::Response};
+use crate::{
+    server::{handler::handle_request, RpcHandler},
+    EthApi,
+};
+use anvil_core::eth::EthRpcCall;
+use anvil_rpc::{
+    error::RpcError,
+    request::Request,
+    response::{Response, ResponseResult},
+};
 use axum::{
     extract::{
         ws::{Message, WebSocket},
@@ -9,6 +17,22 @@ use axum::{
     Extension,
 };
 use tracing::{trace, warn};
+
+/// A `RpcHandler` that expects `EthRequest` rpc calls and `EthPubSub` via websocket
+#[derive(Clone)]
+pub struct WsEthRpcHandler {
+    /// Access to the node
+    api: EthApi,
+}
+
+#[async_trait::async_trait]
+impl RpcHandler for WsEthRpcHandler {
+    type Request = EthRpcCall;
+
+    async fn on_request(&self, request: Self::Request) -> ResponseResult {
+        todo!()
+    }
+}
 
 /// Handles incoming Websocket upgrade
 pub async fn ws_handler(

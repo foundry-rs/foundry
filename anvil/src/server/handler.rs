@@ -75,6 +75,11 @@ async fn execute_method_call(call: RpcMethodCall, api: EthApi) -> RpcResponse {
     });
 
     match serde_json::from_value::<EthRequest>(call) {
+        Ok(req) => {
+            let result = api.execute(req).await;
+            trace!(target: "rpc", "sending rpc result {:?}", result);
+            RpcResponse::new(id, result)
+        }
         Err(err) => {
             let msg = err.to_string();
             warn!(target: "rpc", "failed to deserialize method `{}`: {}", m, msg);
@@ -83,11 +88,6 @@ async fn execute_method_call(call: RpcMethodCall, api: EthApi) -> RpcResponse {
             } else {
                 RpcResponse::new(id, RpcError::invalid_params(msg))
             }
-        }
-        Ok(req) => {
-            let result = api.execute(req).await;
-            trace!(target: "rpc", "sending rpc result {:?}", result);
-            RpcResponse::new(id, result)
         }
     }
 }

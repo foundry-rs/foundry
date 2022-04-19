@@ -231,10 +231,6 @@ impl EthApi {
                 self.eth_send_unsigned_transaction(*tx).await.to_rpc_result()
             }
             EthRequest::EnableTraces => self.anvil_enable_traces().await.to_rpc_result(),
-            EthRequest::EthSubscribe(kind, params) => {
-                self.subscribe(kind, params).await.to_rpc_result()
-            }
-            EthRequest::EthUnSubscribe(id) => self.unsubscribe(id).await.to_rpc_result(),
         }
     }
 

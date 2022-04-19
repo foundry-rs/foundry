@@ -120,14 +120,6 @@ pub enum EthRequest {
         #[serde(default)] Vec<f64>,
     ),
 
-    /// Subscribe to an eth subscription
-    #[serde(rename = "eth_subscribe")]
-    EthSubscribe(SubscriptionKind, #[serde(default)] SubscriptionParams),
-
-    /// Unsubscribe from an eth subscription
-    #[serde(rename = "eth_unsubscribe", with = "sequence")]
-    EthUnSubscribe(SubscriptionId),
-
     /// geth's `debug_traceTransaction`  endpoint
     #[serde(rename = "debug_traceTransaction", with = "sequence")]
     DebugTraceTransaction(H256),
@@ -264,6 +256,27 @@ pub enum EthRequest {
     /// transaction (instead of just txhash/receipt)
     #[serde(rename = "anvil_enableTraces", with = "sequence")]
     EnableTraces,
+}
+
+/// Represents ethereum JSON-RPC API
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(tag = "method", content = "params")]
+pub enum EthPubSub {
+    /// Subscribe to an eth subscription
+    #[serde(rename = "eth_subscribe")]
+    EthSubscribe(SubscriptionKind, #[serde(default)] SubscriptionParams),
+
+    /// Unsubscribe from an eth subscription
+    #[serde(rename = "eth_unsubscribe", with = "sequence")]
+    EthUnSubscribe(SubscriptionId),
+}
+
+/// Container type for either a request or a pub sub
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(untagged)]
+pub enum EthRpcCall {
+    Request(EthRequest),
+    PubSub(EthPubSub),
 }
 
 fn deserialize_number<'de, D>(deserializer: D) -> Result<U256, D::Error>
@@ -520,26 +533,26 @@ mod tests {
     fn test_serde_eth_unsubscribe() {
         let s = r#"{"id": 1, "method": "eth_unsubscribe", "params": ["0x9cef478923ff08bf67fde6c64013158d"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
-        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+        let _req = serde_json::from_value::<EthPubSub>(value).unwrap();
     }
 
     #[test]
     fn test_serde_eth_subscribe() {
         let s = r#"{"id": 1, "method": "eth_subscribe", "params": ["newHeads"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
-        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+        let _req = serde_json::from_value::<EthPubSub>(value).unwrap();
 
         let s = r#"{"id": 1, "method": "eth_subscribe", "params": ["logs", {"address": "0x8320fe7702b96808f7bbc0d4a888ed1468216cfd", "topics": ["0xd78a0cb8bb633d06981248b816e7bd33c2a35a6089241d099fa519e361cab902"]}]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
-        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+        let _req = serde_json::from_value::<EthPubSub>(value).unwrap();
 
         let s = r#"{"id": 1, "method": "eth_subscribe", "params": ["newPendingTransactions"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
-        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+        let _req = serde_json::from_value::<EthPubSub>(value).unwrap();
 
         let s = r#"{"id": 1, "method": "eth_subscribe", "params": ["syncing"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
-        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+        let _req = serde_json::from_value::<EthPubSub>(value).unwrap();
     }
 
     #[test]
