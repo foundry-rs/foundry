@@ -75,7 +75,7 @@ impl NodeConfig {
     /// Test config
     #[doc(hidden)]
     pub fn test() -> Self {
-        Self { enable_tracing: false, ..Default::default() }
+        Self { enable_tracing: false, silent: true, ..Default::default() }
     }
 }
 

@@ -1,7 +1,9 @@
 use std::sync::atomic::{AtomicU16, Ordering};
 
+mod anvil;
 mod api;
 mod fork;
+mod pubsub;
 mod transaction;
 pub mod utils;
 mod wsapi;

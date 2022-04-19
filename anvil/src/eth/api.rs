@@ -4,7 +4,7 @@ use crate::{
         backend::notifications::NewBlockNotifications,
         error::{BlockchainError, FeeHistoryError, Result, ToRpcResponseResult},
         fees::{FeeDetails, FeeHistory, FeeHistoryCache},
-        miner::{FixedBlockTimeMiner, NoMine},
+        miner::FixedBlockTimeMiner,
         pool::{
             transactions::{to_marker, PoolTransaction, TxMarker},
             Pool,
@@ -184,7 +184,7 @@ impl EthApi {
             EthRequest::StopImpersonatingAccount => {
                 self.anvil_stop_impersonating_account().await.to_rpc_result()
             }
-            EthRequest::GetAutoMine => self.anvil_get_auto_mine().await.to_rpc_result(),
+            EthRequest::GetAutoMine => self.anvil_get_auto_mine().to_rpc_result(),
             EthRequest::Mine(blocks, interval) => {
                 self.anvil_mine(blocks, interval).await.to_rpc_result()
             }
@@ -192,7 +192,7 @@ impl EthApi {
                 self.anvil_set_auto_mine(enabled).await.to_rpc_result()
             }
             EthRequest::SetIntervalMining(interval) => {
-                self.anvil_set_interval_mining(interval).await.to_rpc_result()
+                self.anvil_set_interval_mining(interval).to_rpc_result()
             }
             EthRequest::DropTransaction(tx) => {
                 self.anvil_drop_transaction(tx).await.to_rpc_result()
@@ -752,7 +752,7 @@ impl EthApi {
     /// Returns true if auto mining is enabled, and false.
     ///
     /// Handler for ETH RPC call: `anvil_getAutomine`
-    pub async fn anvil_get_auto_mine(&self) -> Result<bool> {
+    pub fn anvil_get_auto_mine(&self) -> Result<bool> {
         Ok(self.miner.is_auto_mine())
     }
 
@@ -765,7 +765,7 @@ impl EthApi {
             if enable_automine {
                 return Ok(())
             }
-            self.miner.set_mining_mode(MiningMode::None(NoMine::default()));
+            self.miner.set_mining_mode(MiningMode::None);
         } else if enable_automine {
             let listener = self.pool.add_ready_listener();
             let mode = MiningMode::instant(1_000, listener);
@@ -799,7 +799,7 @@ impl EthApi {
     /// Sets the mining behavior to interval with the given interval (seconds)
     ///
     /// Handler for ETH RPC call: `evm_setIntervalMining`
-    pub async fn anvil_set_interval_mining(&self, secs: u64) -> Result<()> {
+    pub fn anvil_set_interval_mining(&self, secs: u64) -> Result<()> {
         self.miner.set_mining_mode(MiningMode::FixedBlockTime(FixedBlockTimeMiner::new(
             Duration::from_secs(secs),
         )));

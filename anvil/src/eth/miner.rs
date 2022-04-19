@@ -10,6 +10,7 @@ use futures::{
 use parking_lot::{lock_api::RwLockWriteGuard, RawRwLock, RwLock};
 use std::{
     collections::HashSet,
+    fmt,
     pin::Pin,
     sync::{
         atomic::{AtomicBool, Ordering::Relaxed},
@@ -19,11 +20,16 @@ use std::{
     time::Duration,
 };
 use tokio::time::Interval;
+use tracing::trace;
 
 #[derive(Debug, Clone)]
 pub struct Miner {
     /// The mode this miner currently operates in
     mode: Arc<RwLock<MiningMode>>,
+    /// used for task wake up when the mining mode was forcefully changed
+    ///
+    /// This will register the task so we can manually wake it up if the mining mode was changed
+    inner: Arc<MinerInner>,
 }
 
 // === impl Miner ===
@@ -31,7 +37,7 @@ pub struct Miner {
 impl Miner {
     /// Returns a new miner with that operates in the given `mode`
     pub fn new(mode: MiningMode) -> Self {
-        Self { mode: Arc::new(RwLock::new(mode)) }
+        Self { mode: Arc::new(RwLock::new(mode)), inner: Default::default() }
     }
 
     /// Returns the write lock of the mining mode
@@ -53,10 +59,8 @@ impl Miner {
     /// Sets the mining mode to operate in
     pub fn set_mining_mode(&self, mode: MiningMode) {
         let mode = std::mem::replace(&mut *self.mode_write(), mode);
-        if let MiningMode::None(nomine) = mode {
-            // ensure the service that drives the miner gets woken up
-            nomine.wake();
-        }
+        trace!(target: "miner", "updated mining mode {:?}", mode);
+        self.inner.wake();
     }
 
     /// polls the [Pool] and returns those transactions that should be put in a block according to
@@ -68,7 +72,41 @@ impl Miner {
         pool: &Arc<Pool>,
         cx: &mut Context<'_>,
     ) -> Poll<Vec<Arc<PoolTransaction>>> {
+        self.inner.register(cx);
         self.mode.write().poll(pool, cx)
+    }
+}
+
+/// A Mining mode that does nothing
+#[derive(Debug)]
+pub struct MinerInner {
+    waker: AtomicWaker,
+    set: AtomicBool,
+}
+
+// === impl MinerInner ===
+
+impl MinerInner {
+    /// Call the waker again
+    fn wake(&self) {
+        self.set.store(true, Relaxed);
+        self.waker.wake();
+    }
+
+    fn register(&self, cx: &mut Context<'_>) {
+        // avoid waker reregistration.
+        if self.set.load(Relaxed) {
+            return
+        }
+
+        self.waker.register(cx.waker());
+        self.set.load(Relaxed);
+    }
+}
+
+impl Default for MinerInner {
+    fn default() -> Self {
+        Self { waker: AtomicWaker::new(), set: AtomicBool::new(false) }
     }
 }
 
@@ -76,7 +114,7 @@ impl Miner {
 #[derive(Debug)]
 pub enum MiningMode {
     /// A miner that does nothing
-    None(NoMine),
+    None,
     /// A miner that listens for new transactions that are ready.
     ///
     /// Either one transaction will be mined per block, or any number of transactions will be
@@ -108,45 +146,10 @@ impl MiningMode {
         cx: &mut Context<'_>,
     ) -> Poll<Vec<Arc<PoolTransaction>>> {
         match self {
-            MiningMode::None(miner) => miner.poll(pool, cx),
+            MiningMode::None => Poll::Pending,
             MiningMode::Auto(miner) => miner.poll(pool, cx),
             MiningMode::FixedBlockTime(miner) => miner.poll(pool, cx),
         }
-    }
-}
-
-/// A Mining mode that does nothing
-#[derive(Debug)]
-pub struct NoMine {
-    waker: AtomicWaker,
-    set: AtomicBool,
-}
-
-// === impl NoMine ===
-
-impl NoMine {
-    /// Call the waker again
-    fn wake(&self) {
-        self.set.store(true, Relaxed);
-        self.waker.wake();
-    }
-
-    fn poll(&mut self, _: &Arc<Pool>, cx: &mut Context<'_>) -> Poll<Vec<Arc<PoolTransaction>>> {
-        // avoid waker reregistration.
-        if self.set.load(Relaxed) {
-            return Poll::Pending
-        }
-
-        self.waker.register(cx.waker());
-        self.set.load(Relaxed);
-
-        Poll::Pending
-    }
-}
-
-impl Default for NoMine {
-    fn default() -> Self {
-        Self { waker: AtomicWaker::new(), set: AtomicBool::new(false) }
     }
 }
 
@@ -184,7 +187,6 @@ impl Default for FixedBlockTimeMiner {
 }
 
 /// A miner that Listens for new ready transactions
-#[derive(Debug)]
 pub struct ReadyTransactionMiner {
     /// how many transactions to mine per block
     max_transactions: usize,
@@ -214,5 +216,13 @@ impl ReadyTransactionMiner {
         }
 
         Poll::Ready(transactions)
+    }
+}
+
+impl fmt::Debug for ReadyTransactionMiner {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ReadyTransactionMiner")
+            .field("max_transactions", &self.max_transactions)
+            .finish_non_exhaustive()
     }
 }
