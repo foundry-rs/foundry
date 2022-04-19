@@ -10,10 +10,11 @@ use anvil_core::eth::{
     subscription::{SubscriptionId, SubscriptionKind, SubscriptionParams, SubscriptionResult},
     EthPubSub, EthRequest, EthRpcCall,
 };
-use anvil_rpc::{error::RpcError, response::ResponseResult};
+use anvil_rpc::{error::RpcError, request::Version, response::ResponseResult};
 use anvil_server::{RpcHandler, WsContext, WsRpcHandler};
 use ethers::types::{Log as EthersLog, TxHash, H256, U256, U64};
 use futures::{channel::mpsc::Receiver, ready, Stream, StreamExt};
+use serde::Serialize;
 use std::{
     collections::VecDeque,
     pin::Pin,
@@ -60,6 +61,8 @@ impl WsEthRpcHandler {
 
     /// Invoked for an ethereum pubsub rpc call
     async fn on_pub_sub(&self, pubsub: EthPubSub, cx: WsContext<Self>) -> ResponseResult {
+        let id = SubscriptionId::random_hex();
+
         match pubsub {
             EthPubSub::EthUnSubscribe(id) => {
                 let canceled = cx.remove_subscription(&id).is_some();
@@ -80,22 +83,25 @@ impl WsEthRpcHandler {
                             storage,
                             filter: params,
                             queued: Default::default(),
+                            id: id.clone(),
                         }))
                     }
                     SubscriptionKind::NewHeads => {
                         let blocks = self.api.new_block_notifications();
                         let storage = self.api.storage_info();
-                        EthSubscription::Header(blocks, storage)
+                        EthSubscription::Header(blocks, storage, id.clone())
                     }
                     SubscriptionKind::NewPendingTransactions => {
-                        EthSubscription::PendingTransactions(self.api.new_ready_transactions())
+                        EthSubscription::PendingTransactions(
+                            self.api.new_ready_transactions(),
+                            id.clone(),
+                        )
                     }
                     SubscriptionKind::Syncing => {
                         return RpcError::internal_error_with("Not implemented").into()
                     }
                 };
 
-                let id = SubscriptionId::random_hex();
                 cx.add_subscription(id.clone(), subscription);
 
                 to_rpc_result(id)
@@ -125,15 +131,20 @@ pub struct LogsListener {
     storage: StorageInfo,
     filter: FilteredParams,
     queued: VecDeque<EthersLog>,
+    id: SubscriptionId,
 }
 
 // === impl SubscriptionListener ===
 
 impl LogsListener {
-    fn poll(&mut self, cx: &mut Context<'_>) -> Poll<Option<ResponseResult>> {
+    fn poll(&mut self, cx: &mut Context<'_>) -> Poll<Option<EthSubscriptionResponse>> {
         loop {
             if let Some(log) = self.queued.pop_front() {
-                return Poll::Ready(Some(to_rpc_result(log)))
+                let params = EthSubscriptionParams {
+                    subscription: self.id.clone(),
+                    result: to_rpc_result(log),
+                };
+                return Poll::Ready(Some(EthSubscriptionResponse::new(params)))
             }
 
             if let Some(block) = ready!(self.blocks.poll_next_unpin(cx)) {
@@ -153,25 +164,50 @@ impl LogsListener {
     }
 }
 
+#[derive(Debug, PartialEq, Clone, Serialize)]
+pub struct EthSubscriptionResponse {
+    jsonrpc: Version,
+    method: &'static str,
+    params: EthSubscriptionParams,
+}
+
+// === impl EthSubscriptionResponse ===
+
+impl EthSubscriptionResponse {
+    pub fn new(params: EthSubscriptionParams) -> Self {
+        Self { jsonrpc: Version::V2, method: "eth_subscription", params }
+    }
+}
+
+#[derive(Debug, PartialEq, Clone, Serialize)]
+pub struct EthSubscriptionParams {
+    subscription: SubscriptionId,
+    #[serde(flatten)]
+    result: ResponseResult,
+}
+
 /// Represents an ethereum subscription
 #[derive(Debug)]
 pub enum EthSubscription {
     Logs(Box<LogsListener>),
-    Header(NewBlockNotifications, StorageInfo),
-    PendingTransactions(Receiver<TxHash>),
+    Header(NewBlockNotifications, StorageInfo, SubscriptionId),
+    PendingTransactions(Receiver<TxHash>, SubscriptionId),
 }
 
-impl Stream for EthSubscription {
-    type Item = ResponseResult;
+// === impl EthSubscription ===
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let pin = self.get_mut();
-        match pin {
+impl EthSubscription {
+    fn poll_response(&mut self, cx: &mut Context<'_>) -> Poll<Option<EthSubscriptionResponse>> {
+        match self {
             EthSubscription::Logs(listener) => listener.poll(cx),
-            EthSubscription::Header(blocks, storage) => {
+            EthSubscription::Header(blocks, storage, id) => {
                 if let Some(block) = ready!(blocks.poll_next_unpin(cx)) {
                     if let Some(block) = storage.eth_block(block.hash) {
-                        Poll::Ready(Some(to_rpc_result(block)))
+                        let params = EthSubscriptionParams {
+                            subscription: id.clone(),
+                            result: to_rpc_result(block),
+                        };
+                        Poll::Ready(Some(EthSubscriptionResponse::new(params)))
                     } else {
                         Poll::Pending
                     }
@@ -179,12 +215,28 @@ impl Stream for EthSubscription {
                     Poll::Ready(None)
                 }
             }
-            EthSubscription::PendingTransactions(tx) => {
+            EthSubscription::PendingTransactions(tx, id) => {
                 let res = ready!(tx.poll_next_unpin(cx))
                     .map(SubscriptionResult::TransactionHash)
-                    .map(to_rpc_result);
+                    .map(to_rpc_result)
+                    .map(|result| {
+                        let params = EthSubscriptionParams { subscription: id.clone(), result };
+                        EthSubscriptionResponse::new(params)
+                    });
                 Poll::Ready(res)
             }
+        }
+    }
+}
+
+impl Stream for EthSubscription {
+    type Item = serde_json::Value;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let pin = self.get_mut();
+        match ready!(pin.poll_response(cx)) {
+            None => Poll::Ready(None),
+            Some(res) => Poll::Ready(Some(serde_json::to_value(res).expect("can't fail;"))),
         }
     }
 }

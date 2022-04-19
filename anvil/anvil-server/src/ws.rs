@@ -12,18 +12,19 @@ use axum::{
     response::IntoResponse,
     Extension,
 };
-use futures::{Stream, StreamExt};
+use futures::{stream::Fuse, FutureExt, SinkExt, Stream, StreamExt};
 use parking_lot::Mutex;
 use serde::de::DeserializeOwned;
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::VecDeque,
     fmt,
+    future::Future,
     hash::Hash,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
 };
-use tracing::{trace, warn};
+use tracing::{error, trace, warn};
 
 /// Handles incoming Websocket upgrade
 ///
@@ -32,42 +33,18 @@ pub async fn handle_ws<Handler: WsRpcHandler>(
     ws: WebSocketUpgrade,
     Extension(handler): Extension<Handler>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(|socket| handle_ws_socket(socket, handler))
-}
-
-/// Entrypoint once a new `WebSocket` was established
-async fn handle_ws_socket<Handler: WsRpcHandler>(mut socket: WebSocket, handler: Handler) {
-    let mut conn = WsConnection::new(handler);
-
-    while let Some(msg) = socket.recv().await {
-        if let Ok(msg) = msg {
-            match conn.handle_msg(&mut socket, msg).await {
-                Ok(None) => {
-                    trace!(target: "rpc::ws", "ws client disconnected gracefully");
-                    return
-                }
-                Err(err) => {
-                    trace!(target: "rpc::ws", "ws client disconnected {:?}", err);
-                    return
-                }
-                _ => {}
-            }
-        } else {
-            trace!(target: "rpc::ws", "client disconnected");
-            return
-        }
-    }
+    ws.on_upgrade(|socket| WsConnection::new(socket, handler))
 }
 
 /// The general purpose trait for handling RPC requests via websockets
 #[async_trait::async_trait]
-pub trait WsRpcHandler: Clone + Send + Sync + 'static {
+pub trait WsRpcHandler: Clone + Send + Sync + Unpin + 'static {
     /// The request type to expect
     type Request: DeserializeOwned + Send + Sync;
     /// The identifier to use for subscriptions
     type SubscriptionId: Hash + PartialEq + Eq + Send + Sync + fmt::Debug;
     /// The subscription type this handle may create
-    type Subscription: Stream<Item = ResponseResult> + Send + Sync;
+    type Subscription: Stream<Item = serde_json::Value> + Send + Sync + Unpin;
 
     /// Invoked when the request was received
     async fn on_request(&self, request: Self::Request, cx: WsContext<Self>) -> ResponseResult;
@@ -76,7 +53,7 @@ pub trait WsRpcHandler: Clone + Send + Sync + 'static {
 /// Contains additional context and tracks subscriptions
 pub struct WsContext<Handler: WsRpcHandler> {
     /// all active subscriptions `id -> Stream`
-    subscriptions: Arc<Mutex<HashMap<Handler::SubscriptionId, Handler::Subscription>>>,
+    subscriptions: Arc<Mutex<Vec<(Handler::SubscriptionId, Handler::Subscription)>>>,
 }
 
 // === impl WsContext ===
@@ -91,7 +68,10 @@ impl<Handler: WsRpcHandler> WsContext<Handler> {
         subscription: Handler::Subscription,
     ) -> Option<Handler::Subscription> {
         trace!(target: "rpc::ws", "adding subscription id {:?}", id);
-        self.subscriptions.lock().insert(id, subscription)
+        let mut subscriptions = self.subscriptions.lock();
+        let removed = self.remove_subscription(&id);
+        subscriptions.push((id, subscription));
+        removed
     }
 
     /// Removes an existing subscription
@@ -100,7 +80,11 @@ impl<Handler: WsRpcHandler> WsContext<Handler> {
         id: &Handler::SubscriptionId,
     ) -> Option<Handler::Subscription> {
         trace!(target: "rpc::ws", "removing subscription id {:?}", id);
-        self.subscriptions.lock().remove(id)
+        let mut subscriptions = self.subscriptions.lock();
+        if let Some(idx) = subscriptions.iter().position(|(i, _)| id == i) {
+            return Some(subscriptions.swap_remove(idx).1)
+        }
+        None
     }
 }
 
@@ -112,15 +96,7 @@ impl<Handler: WsRpcHandler> Clone for WsContext<Handler> {
 
 impl<Handler: WsRpcHandler> Default for WsContext<Handler> {
     fn default() -> Self {
-        Self { subscriptions: Arc::new(Mutex::new(HashMap::new())) }
-    }
-}
-
-impl<Handler: WsRpcHandler> Stream for WsContext<Handler> {
-    type Item = ResponseResult;
-
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        todo!()
+        Self { subscriptions: Arc::new(Mutex::new(Vec::new())) }
     }
 }
 
@@ -153,13 +129,25 @@ struct WsConnection<Handler: WsRpcHandler> {
     handler: Handler,
     /// contains all the subscription related context
     context: WsContext<Handler>,
+    /// The established websocket
+    socket: Fuse<WebSocket>,
+    /// currently in progress requests
+    processing: Vec<Pin<Box<dyn Future<Output = Response> + Send>>>,
+    /// pending messages to send
+    pending: VecDeque<Message>,
 }
 
 // === impl WsConnection ===
 
 impl<Handler: WsRpcHandler> WsConnection<Handler> {
-    pub fn new(handler: Handler) -> Self {
-        Self { handler, context: Default::default() }
+    pub fn new(socket: WebSocket, handler: Handler) -> Self {
+        Self {
+            socket: socket.fuse(),
+            handler,
+            context: Default::default(),
+            pending: Default::default(),
+            processing: Default::default(),
+        }
     }
 
     /// Returns a compatibility `RpcHandler`
@@ -167,65 +155,110 @@ impl<Handler: WsRpcHandler> WsConnection<Handler> {
         ContextAwareHandler { handler: self.handler.clone(), context: self.context.clone() }
     }
 
-    async fn handle_msg(
-        &mut self,
-        socket: &mut WebSocket,
-        msg: Message,
-    ) -> Result<Option<()>, axum::Error> {
+    fn on_message(&mut self, msg: Message) -> bool {
         match msg {
             Message::Text(text) => {
                 trace!(target: "rpc::ws", "client send str: {:?}", text);
-                self.handle_text(socket, text).await?;
+                let handler = self.compat_helper();
+                self.processing.push(Box::pin(async move {
+                    match serde_json::from_str::<Request>(&text) {
+                        Ok(req) => handle_request(req, handler)
+                            .await
+                            .unwrap_or_else(|| Response::error(RpcError::invalid_request())),
+                        Err(err) => {
+                            warn!("invalid request={:?}", err);
+                            Response::error(RpcError::invalid_request())
+                        }
+                    }
+                }));
             }
             Message::Binary(_) => {
                 warn!(target: "rpc::ws","unexpected binary data");
-                return Ok(None)
+                return true
             }
             Message::Close(_) => {
                 trace!(target: "rpc::ws", "ws client disconnected");
-                return Ok(None)
+                return true
             }
             Message::Ping(ping) => {
                 trace!(target: "rpc::ws", "received ping");
-                socket.send(Message::Pong(ping)).await?;
+                self.pending.push_back(Message::Pong(ping));
             }
             _ => {}
         }
-        Ok(Some(()))
-    }
-
-    async fn get_rpc_response(&self, text: String) -> Response {
-        match serde_json::from_str::<Request>(&text) {
-            Ok(req) => handle_request(req, self.compat_helper())
-                .await
-                .unwrap_or_else(|| Response::error(RpcError::invalid_request())),
-            Err(err) => {
-                warn!("invalid request={:?}", err);
-                Response::error(RpcError::invalid_request())
-            }
-        }
-    }
-
-    async fn handle_text(
-        &mut self,
-        socket: &mut WebSocket,
-        text: String,
-    ) -> Result<(), axum::Error> {
-        let resp = self.get_rpc_response(text).await;
-        match serde_json::to_string(&resp) {
-            Ok(txt) => {
-                socket.send(Message::Text(txt)).await?;
-                Ok(())
-            }
-            Err(err) => Err(axum::Error::new(err)),
-        }
+        false
     }
 }
 
-impl<Handler: WsRpcHandler> Stream for WsConnection<Handler> {
-    type Item = ();
+impl<Handler: WsRpcHandler> Future for WsConnection<Handler> {
+    type Output = ();
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        todo!()
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let pin = self.get_mut();
+
+        loop {
+            // drive the sink
+            while let Poll::Ready(Ok(())) = pin.socket.poll_ready_unpin(cx) {
+                // only start sending if socket is ready
+                if let Some(msg) = pin.pending.pop_front() {
+                    if let Err(err) = pin.socket.start_send_unpin(msg) {
+                        error!(target: "rpc::ws", "Failed to send message {:?}", err);
+                    }
+                } else {
+                    break
+                }
+            }
+
+            while let Poll::Ready(Some(msg)) = pin.socket.poll_next_unpin(cx) {
+                if let Ok(msg) = msg {
+                    if pin.on_message(msg) {
+                        return Poll::Ready(())
+                    }
+                } else {
+                    trace!(target: "rpc::ws", "client disconnected");
+                    return Poll::Ready(())
+                }
+            }
+
+            let mut progress = false;
+            for n in (0..pin.processing.len()).rev() {
+                let mut req = pin.processing.swap_remove(n);
+                match req.poll_unpin(cx) {
+                    Poll::Ready(resp) => {
+                        if let Ok(text) = serde_json::to_string(&resp) {
+                            pin.pending.push_back(Message::Text(text));
+                            progress = true;
+                        }
+                    }
+                    Poll::Pending => pin.processing.push(req),
+                }
+            }
+
+            {
+                // process subscription events
+                let mut subscriptions = pin.context.subscriptions.lock();
+                'outer: for n in (0..subscriptions.len()).rev() {
+                    let (id, mut sub) = subscriptions.swap_remove(n);
+                    'inner: loop {
+                        match sub.poll_next_unpin(cx) {
+                            Poll::Ready(Some(res)) => {
+                                if let Ok(text) = serde_json::to_string(&res) {
+                                    pin.pending.push_back(Message::Text(text));
+                                    progress = true;
+                                }
+                            }
+                            Poll::Ready(None) => continue 'outer,
+                            Poll::Pending => break 'inner,
+                        }
+                    }
+
+                    subscriptions.push((id, sub));
+                }
+            }
+
+            if !progress {
+                return Poll::Pending
+            }
+        }
     }
 }
