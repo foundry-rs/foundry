@@ -766,6 +766,7 @@ async fn main() -> eyre::Result<()> {
         Subcommands::Completions { shell } => {
             generate(shell, &mut Opts::command(), "cast", &mut std::io::stdout())
         }
+        Subcommands::Run(cmd) => cmd.run()?,
     };
     Ok(())
 }

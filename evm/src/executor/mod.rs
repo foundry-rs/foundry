@@ -215,6 +215,14 @@ where
         self.db.insert_cache(address, account);
     }
 
+    pub fn enable_tracing(&mut self) {
+        self.inspector_config.tracing = true;
+    }
+
+    pub fn enable_debugger(&mut self) {
+        self.inspector_config.debugger = true;
+    }
+
     /// Calls the `setUp()` function on a contract.
     pub fn setup(&mut self, address: Address) -> std::result::Result<CallResult<()>, EvmError> {
         self.call_committing::<(), _, _>(*CALLER, address, "setUp()", (), 0.into(), None)

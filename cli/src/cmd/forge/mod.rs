@@ -48,7 +48,6 @@ pub mod inspect;
 pub mod install;
 pub mod remappings;
 pub mod run;
-pub mod sim;
 pub mod snapshot;
 pub mod test;
 pub mod tree;
