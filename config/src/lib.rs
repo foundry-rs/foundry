@@ -139,16 +139,16 @@ pub struct Config {
     /// list of solidity error codes to always silence in the compiler output
     pub ignored_error_codes: Vec<SolidityErrorCode>,
     /// Only run test functions matching the specified regex pattern.
-    #[serde(rename = "match-test")]
+    #[serde(rename = "match-test", with = "serde_regex")]
     pub test_pattern: Option<regex::Regex>,
     /// Only run test functions that do not match the specified regex pattern.
-    #[serde(rename = "no-match-test")]
+    #[serde(rename = "no-match-test", with = "serde_regex")]
     pub test_pattern_inverse: Option<regex::Regex>,
     /// Only run tests in contracts matching the specified regex pattern.
-    #[serde(rename = "match-contract")]
+    #[serde(rename = "match-contract", with = "serde_regex")]
     pub contract_pattern: Option<regex::Regex>,
     /// Only run tests in contracts that do not match the specified regex pattern.
-    #[serde(rename = "no-match-contract")]
+    #[serde(rename = "no-match-contract", with = "serde_regex")]
     pub contract_pattern_inverse: Option<regex::Regex>,
     /// Only run tests in source files matching the specified glob pattern.
     #[serde(rename = "match-path")]
