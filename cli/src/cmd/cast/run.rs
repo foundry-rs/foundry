@@ -69,8 +69,8 @@ impl Cmd for RunArgs {
 
             let builder = ExecutorBuilder::new()
                 .with_config(env)
-                .with_spec(crate::utils::evm_spec(&config.evm_version))
-                .with_gas_limit(evm_opts.gas_limit());
+                .with_spec(crate::utils::evm_spec(&config.evm_version));
+
             let mut executor = builder.build(db);
 
             // Set the state to the moment right before the transaction
@@ -84,6 +84,8 @@ impl Cmd for RunArgs {
                         break
                     }
 
+                    executor.set_gas_limit(tx.gas);
+
                     if let Some(to) = past_tx.to {
                         executor
                             .call_raw_committing(past_tx.from, to, past_tx.input.0, past_tx.value)
@@ -95,10 +97,10 @@ impl Cmd for RunArgs {
             }
 
             let mut result = {
-                executor.enable_tracing();
+                executor.set_tracing(true).set_gas_limit(tx.gas);
 
                 if self.debug {
-                    executor.enable_debugger();
+                    executor.set_debugger(true);
                 }
 
                 if let Some(to) = tx.to {
