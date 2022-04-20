@@ -5,7 +5,7 @@ use crate::{
         subscription::{SubscriptionId, SubscriptionKind, SubscriptionParams},
         transaction::EthTransactionRequest,
     },
-    types::{EvmMineOptions, Forking, Index},
+    types::{EvmMineOptions, Forking, GethDebugTracingOptions, Index},
 };
 use ethers_core::{
     abi::ethereum_types::H64,
@@ -121,8 +121,8 @@ pub enum EthRequest {
     ),
 
     /// geth's `debug_traceTransaction`  endpoint
-    #[serde(rename = "debug_traceTransaction", with = "sequence")]
-    DebugTraceTransaction(H256),
+    #[serde(rename = "debug_traceTransaction")]
+    DebugTraceTransaction(H256, #[serde(default)] GethDebugTracingOptions),
 
     /// Trace transaction endpoint for parity's `trace_transaction`
     #[serde(rename = "trace_transaction", with = "sequence")]
@@ -553,6 +553,21 @@ mod tests {
         let s = r#"{"id": 1, "method": "eth_subscribe", "params": ["syncing"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthPubSub>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_debug_trace_transaction() {
+        let s = r#"{"method": "debug_traceTransaction", "params": ["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"method": "debug_traceTransaction", "params": ["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff", {}]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"method": "debug_traceTransaction", "params": ["0x4a3b0fce2cb9707b0baa68640cf2fe858c8bb4121b2a8cb904ff369d38a560ff", {"disableStorage": true}]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
 
     #[test]

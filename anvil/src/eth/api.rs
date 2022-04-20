@@ -26,7 +26,7 @@ use anvil_core::{
         },
         EthRequest,
     },
-    types::{EvmMineOptions, Forking, Index, Work},
+    types::{EvmMineOptions, Forking, GethDebugTracingOptions, Index, Work},
 };
 use anvil_rpc::response::ResponseResult;
 use ethers::{
@@ -176,8 +176,8 @@ impl EthApi {
             }
 
             // non eth-standard rpc calls
-            EthRequest::DebugTraceTransaction(tx) => {
-                self.debug_trace_transaction(tx).await.to_rpc_result()
+            EthRequest::DebugTraceTransaction(tx, opts) => {
+                self.debug_trace_transaction(tx, opts).await.to_rpc_result()
             }
             EthRequest::TraceTransaction(tx) => self.trace_transaction(tx).await.to_rpc_result(),
             EthRequest::ImpersonateAccount(addr) => {
@@ -751,7 +751,11 @@ impl EthApi {
     /// Returns traces for the transaction hash for geth's tracing endpoint
     ///
     /// Handler for RPC call: `debug_traceTransaction`
-    pub async fn debug_trace_transaction(&self, _tx_hash: H256) -> Result<Vec<Trace>> {
+    pub async fn debug_trace_transaction(
+        &self,
+        _tx_hash: H256,
+        opts: GethDebugTracingOptions,
+    ) -> Result<Vec<Trace>> {
         node_info!("debug_traceTransaction");
         Err(BlockchainError::RpcUnimplemented)
     }
