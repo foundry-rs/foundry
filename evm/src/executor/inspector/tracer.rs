@@ -31,6 +31,7 @@ impl Tracer {
         data: Vec<u8>,
         value: U256,
         kind: CallKind,
+        caller: Address,
     ) {
         self.trace_stack.push(self.traces.push_trace(
             0,
@@ -41,6 +42,7 @@ impl Tracer {
                 data: RawOrDecodedCall::Raw(data),
                 value,
                 status: Return::Continue,
+                caller,
                 ..Default::default()
             },
         ));
@@ -85,6 +87,7 @@ where
                 call.input.to_vec(),
                 call.transfer.value,
                 call.context.scheme.into(),
+                call.context.caller,
             );
         }
 
@@ -133,6 +136,7 @@ where
             call.init_code.to_vec(),
             call.value,
             CallKind::Create,
+            call.caller,
         );
 
         (Return::Continue, None, Gas::new(call.gas_limit), Bytes::new())

@@ -895,6 +895,24 @@ pub struct TransactionInfo {
     pub traces: Vec<CallTraceNode>,
 }
 
+// === impl TransactionInfo ===
+
+impl TransactionInfo {
+    /// Returns the callgraph of the trace
+    pub fn trace_call_graph(&self, idx: usize) -> Vec<usize> {
+        let mut graph = vec![];
+        let mut node = &self.traces[idx];
+
+        while let Some(parent) = node.parent {
+            node = &self.traces[parent];
+            graph.push(node.trace.depth);
+        }
+        graph.reverse();
+        graph.push(self.traces[idx].trace.depth);
+        graph
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

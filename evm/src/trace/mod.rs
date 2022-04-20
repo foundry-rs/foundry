@@ -16,7 +16,7 @@ use ethers::{
     types::U256,
 };
 use node::CallTraceNode;
-use revm::Return;
+use revm::{CallContext, Return};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
@@ -216,6 +216,17 @@ pub enum RawOrDecodedCall {
     Decoded(String, Vec<String>),
 }
 
+impl RawOrDecodedCall {
+    pub fn to_raw(&self) -> Vec<u8> {
+        match self {
+            RawOrDecodedCall::Raw(raw) => raw.clone(),
+            RawOrDecodedCall::Decoded(_, _) => {
+                vec![]
+            }
+        }
+    }
+}
+
 impl Default for RawOrDecodedCall {
     fn default() -> Self {
         RawOrDecodedCall::Raw(Vec::new())
@@ -229,6 +240,15 @@ pub enum RawOrDecodedReturnData {
     Raw(Vec<u8>),
     /// Decoded return data
     Decoded(String),
+}
+
+impl RawOrDecodedReturnData {
+    pub fn to_raw(&self) -> Vec<u8> {
+        match self {
+            RawOrDecodedReturnData::Raw(raw) => raw.clone(),
+            RawOrDecodedReturnData::Decoded(val) => val.as_bytes().to_vec(),
+        }
+    }
 }
 
 impl Default for RawOrDecodedReturnData {
@@ -269,11 +289,13 @@ pub struct CallTrace {
     pub contract: Option<String>,
     /// The label for the destination address, if any
     pub label: Option<String>,
+    /// caller of this call
+    pub caller: Address,
     /// The destination address of the call
     pub address: Address,
     /// The kind of call this is
     pub kind: CallKind,
-    /// The value tranfered in the call
+    /// The value transferred in the call
     pub value: U256,
     /// The calldata for the call, or the init code for contract creations
     pub data: RawOrDecodedCall,
@@ -284,6 +306,8 @@ pub struct CallTrace {
     pub gas_cost: u64,
     /// The status of the trace's call
     pub status: Return,
+    /// call context of the runtime
+    pub call_context: Option<CallContext>,
 }
 
 // === impl CallTrace ===
@@ -314,6 +338,7 @@ impl Default for CallTrace {
             success: Default::default(),
             contract: Default::default(),
             label: Default::default(),
+            caller: Default::default(),
             address: Default::default(),
             kind: Default::default(),
             value: Default::default(),
@@ -321,6 +346,7 @@ impl Default for CallTrace {
             output: Default::default(),
             gas_cost: Default::default(),
             status: Return::Continue,
+            call_context: Default::default(),
         }
     }
 }

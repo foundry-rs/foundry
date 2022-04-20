@@ -5,10 +5,8 @@ use anvil_core::eth::{
     receipt::TypedReceipt,
     transaction::TransactionInfo,
 };
-use ethers::prelude::{
-    Action as ParityTraceAction, ActionType, BlockId, BlockNumber, Trace, H256, H256 as TxHash, U64,
-};
-use foundry_evm::trace::{node::CallTraceNode, CallTrace};
+use ethers::prelude::{BlockId, BlockNumber, Trace, H256, H256 as TxHash, U64};
+
 use parking_lot::RwLock;
 use std::{collections::HashMap, sync::Arc};
 
@@ -132,43 +130,24 @@ impl MinedTransaction {
     /// Returns the traces of the transaction for `trace_transaction`
     pub fn parity_traces(&self) -> Vec<Trace> {
         let mut traces = Vec::with_capacity(self.info.traces.len());
-        for node in self.info.traces.iter().cloned() {
-            let CallTraceNode { parent: _, children, idx: _, trace, logs: _, ordering: _ } = node;
-            let CallTrace {
-                depth: _,
-                success: _,
-                contract: _,
-                label: _,
-                address: _,
-                kind,
-                value: _,
-                data: _,
-                output: _,
-                gas_cost: _,
-                ..
-            } = trace;
-
-            // TODO need to record more trace info
-
+        for (idx, node) in self.info.traces.iter().cloned().enumerate() {
+            let action = node.parity_action();
+            let result = node.parity_result();
             let trace = Trace {
-                action: ParityTraceAction::Call(Default::default()),
-                result: None,
-                trace_address: vec![],
-                subtraces: children.len(),
+                action,
+                result: Some(result),
+                trace_address: self.info.trace_call_graph(idx),
+                subtraces: node.children.len(),
                 transaction_position: Some(self.info.transaction_index as usize),
                 transaction_hash: Some(self.info.transaction_hash),
                 block_number: self.block_number,
                 block_hash: self.block_hash,
-                action_type: ActionType::Call,
+                action_type: node.kind().into(),
                 error: None,
             };
             traces.push(trace)
         }
 
         traces
-    }
-
-    fn get_action(&self, node: &CallTraceNode) -> ParityTraceAction {
-        todo!()
     }
 }

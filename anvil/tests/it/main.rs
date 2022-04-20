@@ -5,6 +5,7 @@ mod api;
 mod fork;
 mod ganache;
 mod pubsub;
+mod traces;
 mod transaction;
 pub mod utils;
 mod wsapi;

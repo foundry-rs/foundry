@@ -1,13 +1,8 @@
 //! general eth api tests
 
-use crate::{init_tracing, next_port};
+use crate::next_port;
 use anvil::{spawn, NodeConfig};
-use ethers::{
-    contract::abigen,
-    middleware::SignerMiddleware,
-    prelude::Middleware,
-    types::{Filter, ValueOrArray},
-};
+use ethers::{contract::abigen, middleware::SignerMiddleware, prelude::Middleware};
 use futures::StreamExt;
 use std::sync::Arc;
 
@@ -30,7 +25,6 @@ async fn test_sub_new_heads() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_sub_logs() {
-    init_tracing();
     abigen!(EmitLogs, "test-data/emit_logs.json");
 
     let (_api, handle) = spawn(NodeConfig::test().port(next_port())).await;
@@ -46,7 +40,7 @@ async fn test_sub_logs() {
     let val = contract.get_value().call().await.unwrap();
     assert_eq!(val, msg);
 
-    let val = contract
+    let _val = contract
         .set_value("Next Message".to_string())
         .legacy()
         .send()
