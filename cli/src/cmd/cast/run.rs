@@ -1,5 +1,6 @@
 use crate::{cmd::Cmd, utils};
 use ansi_term::Colour;
+use cast::trace::CallTraceDecoder;
 use clap::Parser;
 use ethers::{
     abi::Address,
@@ -99,6 +100,7 @@ impl RunArgs {
                 }
             }
 
+            // Execute our transaction
             let mut result = {
                 executor.set_tracing(true).set_gas_limit(tx.gas);
 
@@ -158,39 +160,48 @@ impl RunArgs {
             }
 
             if self.debug {
-                // TODO Get source from etherscan
-                let source_code: BTreeMap<u32, String> = BTreeMap::new();
-                let calls: Vec<DebugArena> = vec![result.debug];
-                let flattened =
-                    calls.last().expect("we should have collected debug info").flatten(0);
-                let tui = Tui::new(flattened, 0, decoder.contracts, HashMap::new(), source_code)?;
-                match tui.start().expect("Failed to start tui") {
-                    TUIExitReason::CharExit => return Ok(()),
-                }
+                run_debugger(result, decoder)?;
             } else {
-                if result.traces.is_empty() {
-                    eyre::bail!("Unexpected error: No traces. Please report this as a bug: https://github.com/foundry-rs/foundry/issues/new?assignees=&labels=T-bug&template=BUG-FORM.yml");
-                }
-
-                println!("Traces:");
-                for (_, trace) in &mut result.traces {
-                    decoder.decode(trace);
-                    println!("{trace}");
-                }
-                println!();
-
-                if result.success {
-                    println!("{}", Colour::Green.paint("Script ran successfully."));
-                } else {
-                    println!("{}", Colour::Red.paint("Script failed."));
-                }
-
-                println!("Gas used: {}", result.gas);
+                print_traces(&mut result, decoder)?;
             }
         }
         Ok(())
     }
 }
+
+fn run_debugger(result: RunResult, decoder: CallTraceDecoder) -> eyre::Result<()> {
+    // TODO Get source from etherscan
+    let source_code: BTreeMap<u32, String> = BTreeMap::new();
+    let calls: Vec<DebugArena> = vec![result.debug];
+    let flattened = calls.last().expect("we should have collected debug info").flatten(0);
+    let tui = Tui::new(flattened, 0, decoder.contracts, HashMap::new(), source_code)?;
+    match tui.start().expect("Failed to start tui") {
+        TUIExitReason::CharExit => Ok(()),
+    }
+}
+
+fn print_traces(result: &mut RunResult, decoder: CallTraceDecoder) -> eyre::Result<()> {
+    if result.traces.is_empty() {
+        eyre::bail!("Unexpected error: No traces. Please report this as a bug: https://github.com/foundry-rs/foundry/issues/new?assignees=&labels=T-bug&template=BUG-FORM.yml");
+    }
+
+    println!("Traces:");
+    for (_, trace) in &mut result.traces {
+        decoder.decode(trace);
+        println!("{trace}");
+    }
+    println!();
+
+    if result.success {
+        println!("{}", Colour::Green.paint("Script ran successfully."));
+    } else {
+        println!("{}", Colour::Red.paint("Script failed."));
+    }
+
+    println!("Gas used: {}", result.gas);
+    Ok(())
+}
+
 struct RunResult {
     pub success: bool,
     pub traces: Vec<(TraceKind, CallTraceArena)>,
