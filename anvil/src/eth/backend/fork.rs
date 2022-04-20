@@ -170,6 +170,18 @@ impl ClientFork {
         Ok(traces)
     }
 
+    pub async fn trace_block(&self, number: u64) -> Result<Vec<Trace>, ProviderError> {
+        if let Some(traces) = self.storage_read().block_traces.get(&number).cloned() {
+            return Ok(traces)
+        }
+
+        let traces = self.provider().trace_block(number.into()).await?;
+        let mut storage = self.storage_write();
+        storage.block_traces.insert(number, traces.clone());
+
+        Ok(traces)
+    }
+
     pub async fn transaction_receipt(
         &self,
         hash: H256,
@@ -246,5 +258,6 @@ pub struct ForkedStorage {
     pub transactions: HashMap<H256, Transaction>,
     pub transaction_receipts: HashMap<H256, TransactionReceipt>,
     pub transaction_traces: HashMap<H256, Vec<Trace>>,
+    pub block_traces: HashMap<u64, Vec<Trace>>,
     pub code_at: HashMap<(Address, u64), Bytes>,
 }

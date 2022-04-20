@@ -734,6 +734,33 @@ impl Backend {
         self.blockchain.storage.read().transactions.get(&hash).map(|tx| tx.parity_traces())
     }
 
+    /// Returns the traces for the given transaction
+    pub fn mined_parity_trace_block(&self, block: u64) -> Option<Vec<Trace>> {
+        let block = self.get_block(block)?;
+        let mut traces = vec![];
+        let storage = self.blockchain.storage.read();
+        for tx in block.transactions {
+            traces.extend(storage.transactions.get(&tx.hash())?.parity_traces());
+        }
+        Some(traces)
+    }
+
+    /// Returns the traces for the given block
+    pub async fn trace_block(&self, block: BlockNumber) -> Result<Vec<Trace>, BlockchainError> {
+        let number = self.convert_block_number(Some(block));
+        if let Some(traces) = self.mined_parity_trace_block(number) {
+            return Ok(traces)
+        }
+
+        if let Some(ref fork) = self.fork {
+            if fork.predates_fork(number) {
+                return Ok(fork.trace_block(number).await?)
+            }
+        }
+
+        Ok(vec![])
+    }
+
     pub async fn transaction_receipt(
         &self,
         hash: H256,

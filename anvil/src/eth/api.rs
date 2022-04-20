@@ -180,6 +180,7 @@ impl EthApi {
                 self.debug_trace_transaction(tx, opts).await.to_rpc_result()
             }
             EthRequest::TraceTransaction(tx) => self.trace_transaction(tx).await.to_rpc_result(),
+            EthRequest::TraceBlock(block) => self.trace_block(block).await.to_rpc_result(),
             EthRequest::ImpersonateAccount(addr) => {
                 self.anvil_impersonate_account(addr).await.to_rpc_result()
             }
@@ -754,7 +755,7 @@ impl EthApi {
     pub async fn debug_trace_transaction(
         &self,
         _tx_hash: H256,
-        opts: GethDebugTracingOptions,
+        _opts: GethDebugTracingOptions,
     ) -> Result<Vec<Trace>> {
         node_info!("debug_traceTransaction");
         Err(BlockchainError::RpcUnimplemented)
@@ -762,10 +763,18 @@ impl EthApi {
 
     /// Returns traces for the transaction hash via parity's tracing endpoint
     ///
-    /// Handler for RPC call: `debug_traceTransaction`
+    /// Handler for RPC call: `trace_transaction`
     pub async fn trace_transaction(&self, tx_hash: H256) -> Result<Vec<Trace>> {
-        node_info!("debug_traceTransaction");
+        node_info!("trace_transaction");
         self.backend.trace_transaction(tx_hash).await
+    }
+
+    /// Returns traces for the transaction hash via parity's tracing endpoint
+    ///
+    /// Handler for RPC call: `trace_block`
+    pub async fn trace_block(&self, block: BlockNumber) -> Result<Vec<Trace>> {
+        node_info!("trace_block");
+        self.backend.trace_block(block).await
     }
 }
 

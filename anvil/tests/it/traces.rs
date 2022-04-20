@@ -1,7 +1,6 @@
 use crate::next_port;
 use anvil::{spawn, NodeConfig};
-use ethers::prelude::{abigen, Middleware, Signer, SignerMiddleware, TransactionRequest};
-use std::sync::Arc;
+use ethers::prelude::{Middleware, Signer, TransactionRequest};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_transfer_parity_traces() {
@@ -20,4 +19,10 @@ async fn test_get_transfer_parity_traces() {
 
     let traces = provider.trace_transaction(tx.transaction_hash).await.unwrap();
     assert!(!traces.is_empty());
+
+    let num = provider.get_block_number().await.unwrap();
+    let block_traces = provider.trace_block(num.into()).await.unwrap();
+    assert!(!block_traces.is_empty());
+
+    assert_eq!(traces, block_traces);
 }

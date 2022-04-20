@@ -128,6 +128,10 @@ pub enum EthRequest {
     #[serde(rename = "trace_transaction", with = "sequence")]
     TraceTransaction(H256),
 
+    /// Trace transaction endpoint for parity's `trace_block`
+    #[serde(rename = "trace_block", with = "sequence")]
+    TraceBlock(BlockNumber),
+
     // Custom endpoints, they're not extracted to a separate type out of serde convenience
     /// send transactions impersonating specific account and contract addresses.
     #[serde(
