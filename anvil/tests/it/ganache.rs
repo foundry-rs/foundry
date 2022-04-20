@@ -1,5 +1,6 @@
 //! tests against local ganache for local debug purposes
 #![allow(unused)]
+use crate::init_tracing;
 use ethers::{
     core::k256::SecretKey,
     prelude::{abigen, Middleware, Signer, SignerMiddleware, TransactionRequest, Ws},
@@ -33,9 +34,10 @@ async fn test_ganache_deploy() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn test_ganache_emit_logs() {
+    init_tracing();
     abigen!(EmitLogs, "test-data/emit_logs.json");
 
-    let key_str = "6cb43ebdac51b59c4f317c1424840165c5709c4e77ede2bd1cbcd30f9bde80e4";
+    let key_str = "be2fc1d97ddb1e0abc4a9e61ceb69d0c9200f781f15486b395b39ca502281bd0";
     let key_hex = hex::decode(key_str).expect("could not parse as hex");
     let key = SecretKey::from_be_bytes(&key_hex).expect("did not get private key");
     let wallet: LocalWallet = key.into();
