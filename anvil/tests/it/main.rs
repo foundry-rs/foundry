@@ -10,7 +10,7 @@ pub mod utils;
 mod wsapi;
 
 // keeps track of ports that can be used
-pub static NEXT_PORT: AtomicU16 = AtomicU16::new(8545);
+pub static NEXT_PORT: AtomicU16 = AtomicU16::new(8546);
 
 pub fn next_port() -> u16 {
     NEXT_PORT.fetch_add(1, Ordering::SeqCst)

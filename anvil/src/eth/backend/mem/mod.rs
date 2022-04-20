@@ -321,10 +321,10 @@ impl Backend {
 
         trace!(
             target: "backend",
-            "Mined block {} with {} tx [{:?}]",
+            "Mined block {} with {} tx {:?}",
             block_number,
             transactions.len(),
-            transactions.iter().map(|tx| tx.transaction_hash)
+            transactions.iter().map(|tx| tx.transaction_hash).collect::<Vec<_>>()
         );
 
         // update block metadata
