@@ -55,8 +55,6 @@ async fn test_sub_logs() {
         .await
         .unwrap()
         .unwrap();
-    //
-    dbg!(val);
     // let log = logs_sub.next().await.unwrap();
     //
     // dbg!(log);

@@ -6,7 +6,7 @@ use anvil_core::eth::{
     transaction::TransactionInfo,
 };
 use ethers::prelude::{
-    Action::Call, ActionType, BlockId, BlockNumber, Trace, H256, H256 as TxHash, U64,
+    Action as ParityTraceAction, ActionType, BlockId, BlockNumber, Trace, H256, H256 as TxHash, U64,
 };
 use foundry_evm::trace::{node::CallTraceNode, CallTrace};
 use parking_lot::RwLock;
@@ -140,17 +140,18 @@ impl MinedTransaction {
                 contract: _,
                 label: _,
                 address: _,
-                kind: _,
+                kind,
                 value: _,
                 data: _,
                 output: _,
                 gas_cost: _,
+                ..
             } = trace;
 
             // TODO need to record more trace info
 
             let trace = Trace {
-                action: Call(Default::default()),
+                action: ParityTraceAction::Call(Default::default()),
                 result: None,
                 trace_address: vec![],
                 subtraces: children.len(),
@@ -165,5 +166,9 @@ impl MinedTransaction {
         }
 
         traces
+    }
+
+    fn get_action(&self, node: &CallTraceNode) -> ParityTraceAction {
+        todo!()
     }
 }

@@ -718,7 +718,7 @@ impl Backend {
 
     /// Returns the traces for the given transaction
     pub async fn trace_transaction(&self, hash: H256) -> Result<Vec<Trace>, BlockchainError> {
-        if let Some(traces) = self.mined_trace_transaction(hash) {
+        if let Some(traces) = self.mined_parity_trace_transaction(hash) {
             return Ok(traces)
         }
 
@@ -730,7 +730,7 @@ impl Backend {
     }
 
     /// Returns the traces for the given transaction
-    pub fn mined_trace_transaction(&self, hash: H256) -> Option<Vec<Trace>> {
+    pub fn mined_parity_trace_transaction(&self, hash: H256) -> Option<Vec<Trace>> {
         self.blockchain.storage.read().transactions.get(&hash).map(|tx| tx.parity_traces())
     }
 

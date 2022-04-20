@@ -9,6 +9,8 @@ pub mod debug;
 
 /// Forge test execution backends
 pub mod executor;
+
+use ethers::types::ActionType;
 pub use executor::abi;
 
 /// Fuzzing wrapper for executors
@@ -57,5 +59,16 @@ impl From<CallScheme> for CallKind {
 impl From<CreateScheme> for CallKind {
     fn from(_: CreateScheme) -> Self {
         CallKind::Create
+    }
+}
+
+impl From<CallKind> for ActionType {
+    fn from(kind: CallKind) -> Self {
+        match kind {
+            CallKind::Call | CallKind::StaticCall | CallKind::DelegateCall | CallKind::CallCode => {
+                ActionType::Call
+            }
+            CallKind::Create => ActionType::Create,
+        }
     }
 }

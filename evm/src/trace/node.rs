@@ -3,6 +3,7 @@ use crate::{
     trace::{
         utils, CallTrace, LogCallOrder, RawOrDecodedCall, RawOrDecodedLog, RawOrDecodedReturnData,
     },
+    CallKind,
 };
 use ethers::{
     abi::{Abi, Function},
@@ -30,6 +31,11 @@ pub struct CallTraceNode {
 }
 
 impl CallTraceNode {
+    /// Returns the kind of call the trace belongs to
+    pub fn kind(&self) -> &CallKind {
+        &self.trace.kind
+    }
+
     /// Decode a regular function
     pub fn decode_function(
         &mut self,

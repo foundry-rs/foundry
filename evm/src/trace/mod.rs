@@ -16,6 +16,7 @@ use ethers::{
     types::U256,
 };
 use node::CallTraceNode;
+use revm::Return;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
@@ -252,7 +253,7 @@ impl fmt::Display for RawOrDecodedReturnData {
 }
 
 /// A trace of a call.
-#[derive(Clone, Debug, PartialEq, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct CallTrace {
     /// The depth of the call
     pub depth: usize,
@@ -272,7 +273,7 @@ pub struct CallTrace {
     pub address: Address,
     /// The kind of call this is
     pub kind: CallKind,
-    /// The value tranferred in the call
+    /// The value tranfered in the call
     pub value: U256,
     /// The calldata for the call, or the init code for contract creations
     pub data: RawOrDecodedCall,
@@ -281,7 +282,11 @@ pub struct CallTrace {
     pub output: RawOrDecodedReturnData,
     /// The gas cost of the call
     pub gas_cost: u64,
+    /// The status of the trace's call
+    pub status: Return,
 }
+
+// === impl CallTrace ===
 
 impl CallTrace {
     /// Updates a trace given another trace
@@ -299,6 +304,24 @@ impl CallTrace {
     /// Whether this is a contract creation or not
     pub fn created(&self) -> bool {
         matches!(self.kind, CallKind::Create)
+    }
+}
+
+impl Default for CallTrace {
+    fn default() -> Self {
+        Self {
+            depth: Default::default(),
+            success: Default::default(),
+            contract: Default::default(),
+            label: Default::default(),
+            address: Default::default(),
+            kind: Default::default(),
+            value: Default::default(),
+            data: Default::default(),
+            output: Default::default(),
+            gas_cost: Default::default(),
+            status: Return::Continue,
+        }
     }
 }
 
