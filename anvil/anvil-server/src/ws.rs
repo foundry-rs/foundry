@@ -50,13 +50,13 @@ pub trait WsRpcHandler: Clone + Send + Sync + Unpin + 'static {
     async fn on_request(&self, request: Self::Request, cx: WsContext<Self>) -> ResponseResult;
 }
 
-type WsSubscriptions<Handler: WsRpcHandler> =
-    Arc<Mutex<Vec<(Handler::SubscriptionId, Handler::Subscription)>>>;
+type WsSubscriptions<SubscriptionId, Subscription> =
+    Arc<Mutex<Vec<(SubscriptionId, Subscription)>>>;
 
 /// Contains additional context and tracks subscriptions
 pub struct WsContext<Handler: WsRpcHandler> {
     /// all active subscriptions `id -> Stream`
-    subscriptions: WsSubscriptions<Handler>,
+    subscriptions: WsSubscriptions<Handler::SubscriptionId, Handler::Subscription>,
 }
 
 // === impl WsContext ===
