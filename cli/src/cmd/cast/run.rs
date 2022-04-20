@@ -44,28 +44,31 @@ pub struct RunArgs {
 impl Cmd for RunArgs {
     type Output = ();
     fn run(self) -> eyre::Result<Self::Output> {
+        RuntimeOrHandle::new().block_on(self.run_tx())
+    }
+}
+
+impl RunArgs {
+    async fn run_tx(self) -> eyre::Result<()> {
         let figment = Config::figment();
         let mut evm_opts = figment.extract::<EvmOpts>()?;
         let config = Config::from_provider(figment).sanitized();
 
-        let runtime = RuntimeOrHandle::new();
         let provider =
             Provider::try_from(self.rpc_url.as_str()).expect("could not instantiate provider");
 
-        if let Some(tx) = runtime.block_on(
-            provider.get_transaction(H256::from_str(&self.tx).expect("invalid tx hash")),
-        )? {
+        if let Some(tx) =
+            provider.get_transaction(H256::from_str(&self.tx).expect("invalid tx hash")).await?
+        {
             let tx_block_number = tx.block_number.expect("no block number").as_u64();
             let tx_hash = tx.hash();
             evm_opts.fork_url = Some(self.rpc_url);
             evm_opts.fork_block_number = Some(tx_block_number - 1);
 
             // Set up the execution environment
-            let env = runtime.block_on(evm_opts.evm_env());
-            let db = runtime.block_on(Backend::new(
-                utils::get_fork(&evm_opts, &config.rpc_storage_caching),
-                &env,
-            ));
+            let env = evm_opts.evm_env().await;
+            let db =
+                Backend::new(utils::get_fork(&evm_opts, &config.rpc_storage_caching), &env).await;
 
             let builder = ExecutorBuilder::new()
                 .with_config(env)
@@ -77,7 +80,7 @@ impl Cmd for RunArgs {
             if !self.quick {
                 println!("Executing previous transactions from the block.");
 
-                let block_txes = runtime.block_on(provider.get_block_with_txs(tx_block_number))?;
+                let block_txes = provider.get_block_with_txs(tx_block_number).await?;
 
                 for past_tx in block_txes.unwrap().transactions.into_iter() {
                     if past_tx.hash().eq(&tx_hash) {
