@@ -138,6 +138,24 @@ pub struct Config {
     pub etherscan_api_key: Option<String>,
     /// list of solidity error codes to always silence in the compiler output
     pub ignored_error_codes: Vec<SolidityErrorCode>,
+    /// Only run test functions matching the specified regex pattern.
+    #[serde(rename = "match-test")]
+    pub test_pattern: Option<regex::Regex>,
+    /// Only run test functions that do not match the specified regex pattern.
+    #[serde(rename = "no-match-test")]
+    pub test_pattern_inverse: Option<regex::Regex>,
+    /// Only run tests in contracts matching the specified regex pattern.
+    #[serde(rename = "match-contract")]
+    pub contract_pattern: Option<regex::Regex>,
+    /// Only run tests in contracts that do not match the specified regex pattern.
+    #[serde(rename = "no-match-contract")]
+    pub contract_pattern_inverse: Option<regex::Regex>,
+    /// Only run tests in source files matching the specified glob pattern.
+    #[serde(rename = "match-path")]
+    pub path_pattern: Option<globset::Glob>,
+    /// Only run tests in source files that do not match the specified glob pattern.
+    #[serde(rename = "no-match-path")]
+    pub path_pattern_inverse: Option<globset::Glob>,
     /// The number of test cases that must execute for each property test
     pub fuzz_runs: u32,
     /// Whether to allow ffi cheatcodes in test
@@ -910,6 +928,12 @@ impl Default for Config {
             extra_output_files: Default::default(),
             names: false,
             sizes: false,
+            test_pattern: None,
+            test_pattern_inverse: None,
+            contract_pattern: None,
+            contract_pattern_inverse: None,
+            path_pattern: None,
+            path_pattern_inverse: None,
             fuzz_runs: 256,
             fuzz_max_local_rejects: 1024,
             fuzz_max_global_rejects: 65536,
