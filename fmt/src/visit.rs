@@ -1,10 +1,12 @@
 //! Visitor helpers to traverse the [solang](https://github.com/hyperledger-labs/solang) Solidity Parse Tree
 
-use crate::loc::LineOfCode;
+use crate::loc::*;
 use solang_parser::pt::*;
 
 /// The error type a [Visitor] may return
 pub type VResult = Result<(), Box<dyn std::error::Error>>;
+
+pub type ParameterList = Vec<(Loc, Option<Parameter>)>;
 
 /// A trait that is invoked while traversing the Solidity Parse Tree.
 /// Each method of the [Visitor] trait is a hook that can be potentially overridden.
@@ -85,7 +87,7 @@ pub trait Visitor {
         Ok(())
     }
 
-    /// Doesn't write semicolon at the end because expressions can appear as both
+    /// Don't write semicolon at the end because expressions can appear as both
     /// part of other node and a statement in the function body
     fn visit_expr(&mut self, loc: Loc, _expr: &mut Expression) -> VResult {
         self.visit_source(loc)?;
@@ -123,7 +125,7 @@ pub trait Visitor {
         Ok(())
     }
 
-    /// Doesn't write semicolon at the end because variable declarations can appear in both
+    /// Don't write semicolon at the end because variable declarations can appear in both
     /// struct definition and function body as a statement
     fn visit_var_declaration(&mut self, var: &mut VariableDeclaration) -> VResult {
         self.visit_source(var.loc)?;
@@ -226,6 +228,46 @@ pub trait Visitor {
         Ok(())
     }
 
+    fn visit_function_attribute(&mut self, attribute: &mut FunctionAttribute) -> VResult {
+        if let Some(loc) = attribute.loc() {
+            self.visit_source(loc)?;
+        }
+
+        Ok(())
+    }
+
+    fn visit_function_attribute_list(&mut self, list: &mut Vec<FunctionAttribute>) -> VResult {
+        if let (Some(first), Some(last)) = (list.first(), list.last()) {
+            if let (Some(first_loc), Some(last_loc)) = (first.loc(), last.loc()) {
+                self.visit_source(Loc::File(
+                    first_loc.file_no(),
+                    first_loc.start(),
+                    last_loc.end(),
+                ))?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn visit_parameter(&mut self, parameter: &mut Parameter) -> VResult {
+        self.visit_source(parameter.loc)?;
+
+        Ok(())
+    }
+
+    /// Write parameter list used in function/constructor/fallback/modifier arguments, return
+    /// arguments and try return arguments including opening and closing parenthesis.
+    fn visit_parameter_list(&mut self, list: &mut ParameterList) -> VResult {
+        self.visit_opening_paren()?;
+        if let (Some((first_loc, _)), Some((last_loc, _))) = (list.first(), list.last()) {
+            self.visit_source(Loc::File(first_loc.file_no(), first_loc.start(), last_loc.end()))?;
+        }
+        self.visit_closing_paren()?;
+
+        Ok(())
+    }
+
     fn visit_struct(&mut self, structure: &mut StructDefinition) -> VResult {
         if !structure.doc.is_empty() {
             self.visit_doc_comments(&mut structure.doc)?;
@@ -271,6 +313,10 @@ pub trait Visitor {
     }
 
     fn visit_stray_semicolon(&mut self) -> VResult;
+
+    fn visit_opening_paren(&mut self) -> VResult;
+
+    fn visit_closing_paren(&mut self) -> VResult;
 
     fn visit_newline(&mut self) -> VResult;
 
@@ -415,6 +461,38 @@ impl Visitable for VariableDeclaration {
 impl Visitable for Expression {
     fn visit(&mut self, v: &mut impl Visitor) -> VResult {
         v.visit_expr(self.loc(), self)?;
+
+        Ok(())
+    }
+}
+
+impl Visitable for FunctionAttribute {
+    fn visit(&mut self, v: &mut impl Visitor) -> VResult {
+        v.visit_function_attribute(self)?;
+
+        Ok(())
+    }
+}
+
+impl Visitable for Vec<FunctionAttribute> {
+    fn visit(&mut self, v: &mut impl Visitor) -> VResult {
+        v.visit_function_attribute_list(self)?;
+
+        Ok(())
+    }
+}
+
+impl Visitable for Parameter {
+    fn visit(&mut self, v: &mut impl Visitor) -> VResult {
+        v.visit_parameter(self)?;
+
+        Ok(())
+    }
+}
+
+impl Visitable for ParameterList {
+    fn visit(&mut self, v: &mut impl Visitor) -> VResult {
+        v.visit_parameter_list(self)?;
 
         Ok(())
     }
