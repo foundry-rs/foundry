@@ -503,11 +503,16 @@ impl EthApi {
             request.max_priority_fee_per_gas,
         )?;
 
-        let out = match self.backend.call(request, fees).1 {
+        let (exit, out, gas, _) = self.backend.call(request, fees);
+
+        trace!(target = "node", "Call status {:?}, gas {}", exit, gas);
+
+        let out = match out {
             TransactOut::None => Default::default(),
             TransactOut::Call(out) => out.to_vec().into(),
             TransactOut::Create(out, _) => out.to_vec().into(),
         };
+
         Ok(out)
     }
 
