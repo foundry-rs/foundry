@@ -619,7 +619,7 @@ If an address is specified, then the ABI is fetched from Etherscan."#
         #[clap(arg_enum)]
         shell: clap_complete::Shell,
     },
-    #[clap(name = "run", about = "Runs a published transaction in a local environment.")]
+    #[clap(name = "run", about = "Runs a published transaction in a local environment and prints the trace.")]
     Run(RunArgs),
 }
 
