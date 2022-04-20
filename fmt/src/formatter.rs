@@ -559,12 +559,12 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         let returns_indent = params_multiline || !attributes.is_empty() || returns_multiline;
 
         // Compose one line string consisting of attributes and return parameters.
-        let attributes_return = format!(
+        let attributes_returns = format!(
             "{} {}",
             attributes.join(" "),
             if func.returns.is_empty() { "".to_string() } else { format!("returns {returns}") }
         );
-        let attributes_return = attributes_return.trim();
+        let attributes_returns = attributes_returns.trim();
 
         let (body, body_first_line) = match &mut func.body {
             Some(body) => {
@@ -576,13 +576,13 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             None => (None, ";".to_string()),
         };
 
-        let attributes_return_fits_one_line = self
-            .will_it_fit(&format!(" {attributes_return}{body_first_line}")) &&
+        let attributes_returns_fits_one_line = self
+            .will_it_fit(&format!(" {attributes_returns}{body_first_line}")) &&
             !returns_multiline;
 
         // Check that we can fit both attributes and return arguments in one line.
-        if !attributes_return.is_empty() && attributes_return_fits_one_line {
-            write!(self, " {attributes_return}")?;
+        if !attributes_returns.is_empty() && attributes_returns_fits_one_line {
+            write!(self, " {attributes_returns}")?;
         } else {
             // If attributes and returns can't fit in one line, we write all attributes in multiple
             // lines.
@@ -611,7 +611,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         match body {
             Some(body) => {
                 if self.will_it_fit(format!(" {}", body_first_line)) &&
-                    attributes_return_fits_one_line
+                    attributes_returns_fits_one_line
                 {
                     write!(self, " ")?;
                 } else {
