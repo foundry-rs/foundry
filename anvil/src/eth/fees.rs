@@ -272,6 +272,7 @@ pub struct FeeDetails {
 }
 
 impl FeeDetails {
+    /// All values zero
     pub fn zero() -> Self {
         Self {
             gas_price: Some(U256::zero()),
@@ -280,6 +281,13 @@ impl FeeDetails {
         }
     }
 
+    /// Turns this type into a tuple
+    pub fn split(self) -> (Option<U256>, Option<U256>, Option<U256>) {
+        let Self { gas_price, max_fee_per_gas, max_priority_fee_per_gas } = self;
+        (gas_price, max_fee_per_gas, max_priority_fee_per_gas)
+    }
+
+    /// Creates a new instance from the request's gas related values
     pub fn new(
         request_gas_price: Option<U256>,
         request_max_fee: Option<U256>,

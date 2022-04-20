@@ -2,7 +2,12 @@
 
 use crate::eth::pool::transactions::PoolTransaction;
 use anvil_rpc::{error::RpcError, response::ResponseResult};
-use ethers::{providers::ProviderError, signers::WalletError, types::SignatureError};
+use ethers::{
+    providers::ProviderError,
+    signers::WalletError,
+    types::{SignatureError, U256},
+};
+use foundry_evm::revm::Return;
 use serde::Serialize;
 use tracing::error;
 
@@ -36,6 +41,8 @@ pub enum BlockchainError {
     FeeHistory(#[from] FeeHistoryError),
     #[error(transparent)]
     ForkProvider(#[from] ProviderError),
+    #[error("EVM error {0:?}")]
+    EvmError(Return),
 }
 
 /// Errors that can occur in the transaction pool
@@ -68,6 +75,8 @@ pub enum InvalidTransactionError {
     /// But transaction is still valid.
     #[error("Insufficient funds for gas * price + value")]
     ExhaustsGasResources,
+    #[error("Out of gas: required gas exceeds allowance: {0:?}")]
+    OutOfGas(U256),
 }
 
 /// Helper trait to easily convert results to rpc results
@@ -125,6 +134,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 BlockchainError::ForkProvider(err) => {
                     error!("fork provider error: {:?}", err);
                     RpcError::internal_error_with(format!("Fork Error: {:?}", err))
+                }
+                BlockchainError::EvmError(reason) => {
+                    RpcError::internal_error_with(format!("Evm Error: {:?}", reason))
                 }
             }
             .into(),
