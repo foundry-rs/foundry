@@ -79,19 +79,10 @@ impl CallTraceDecoder {
     /// The call trace decoder always knows how to decode calls to the cheatcode address, as well
     /// as DSTest-style logs.
     pub fn new() -> Self {
-        let hevm_abi = HARDHAT_CONSOLE_ABI
+        let functions = HARDHAT_CONSOLE_ABI
             .functions()
             .map(|func| (func.short_signature(), vec![func.clone()]))
-            .collect::<BTreeMap<[u8; 4], Vec<Function>>>();
-
-        let hardhat_console_abi = HEVM_ABI
-            .functions()
-            .map(|func| (func.short_signature(), vec![func.clone()]))
-            .collect::<BTreeMap<[u8; 4], Vec<Function>>>();
-
-        let functions = hevm_abi
-            .into_iter()
-            .chain(hardhat_console_abi)
+            .chain(HEVM_ABI.functions().map(|func| (func.short_signature(), vec![func.clone()])))
             .collect::<BTreeMap<[u8; 4], Vec<Function>>>();
 
         Self {
