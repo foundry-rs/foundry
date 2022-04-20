@@ -139,17 +139,17 @@ pub struct Config {
     /// list of solidity error codes to always silence in the compiler output
     pub ignored_error_codes: Vec<SolidityErrorCode>,
     /// Only run test functions matching the specified regex pattern.
-    #[serde(rename = "match-test", with = "serde_regex")]
-    pub test_pattern: Option<regex::Regex>,
+    #[serde(rename = "match-test")]
+    pub test_pattern: Option<RegexWrapper>,
     /// Only run test functions that do not match the specified regex pattern.
-    #[serde(rename = "no-match-test", with = "serde_regex")]
-    pub test_pattern_inverse: Option<regex::Regex>,
+    #[serde(rename = "no-match-test")]
+    pub test_pattern_inverse: Option<RegexWrapper>,
     /// Only run tests in contracts matching the specified regex pattern.
-    #[serde(rename = "match-contract", with = "serde_regex")]
-    pub contract_pattern: Option<regex::Regex>,
+    #[serde(rename = "match-contract")]
+    pub contract_pattern: Option<RegexWrapper>,
     /// Only run tests in contracts that do not match the specified regex pattern.
-    #[serde(rename = "no-match-contract", with = "serde_regex")]
-    pub contract_pattern_inverse: Option<regex::Regex>,
+    #[serde(rename = "no-match-contract")]
+    pub contract_pattern_inverse: Option<RegexWrapper>,
     /// Only run tests in source files matching the specified glob pattern.
     #[serde(rename = "match-path")]
     pub path_pattern: Option<globset::Glob>,
@@ -848,6 +848,28 @@ impl From<Config> for Figment {
         let merge = figment.merge(remappings);
 
         Figment::from(c).merge(merge).select(profile)
+    }
+}
+
+/// Wrapper type for `regex::Regex` that implements `PartialEq`
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(transparent)]
+pub struct RegexWrapper {
+    #[serde(with = "serde_regex")]
+    inner: regex::Regex
+}
+
+impl std::ops::Deref for RegexWrapper {
+    type Target = regex::Regex;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl std::cmp::PartialEq for RegexWrapper {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_str() == other.as_str()
     }
 }
 
