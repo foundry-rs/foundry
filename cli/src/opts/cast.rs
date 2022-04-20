@@ -22,6 +22,10 @@ pub enum Subcommands {
     #[clap(name = "--max-uint")]
     #[clap(about = "Get the maximum u256 value.")]
     MaxUint,
+    #[clap(name = "--address-zero", about = "Get zero address")]
+    AddressZero,
+    #[clap(name = "--hash-zero", about = "Get zero hash")]
+    HashZero,
     #[clap(aliases = &["--from-ascii"])]
     #[clap(name = "--from-utf8")]
     #[clap(about = "Convert UTF8 text to hex.")]

@@ -13,7 +13,7 @@ use ethers::{
     core::{
         abi::parse_abi,
         rand::thread_rng,
-        types::{BlockId, BlockNumber::Latest},
+        types::{BlockId, BlockNumber::Latest, H256},
     },
     providers::{Middleware, Provider},
     signers::{LocalWallet, Signer},
@@ -58,6 +58,12 @@ async fn main() -> eyre::Result<()> {
         }
         Subcommands::MaxUint => {
             println!("{}", SimpleCast::max_uint()?);
+        }
+        Subcommands::AddressZero => {
+            println!("{:?}", Address::zero());
+        }
+        Subcommands::HashZero => {
+            println!("{:?}", H256::zero());
         }
         Subcommands::FromUtf8 { text } => {
             let val = unwrap_or_stdin(text)?;
