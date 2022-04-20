@@ -59,6 +59,12 @@ async fn main() -> eyre::Result<()> {
         Subcommands::MaxUint => {
             println!("{}", SimpleCast::max_uint()?);
         }
+        Subcommands::AddressZero => {
+            println!("0x0000000000000000000000000000000000000000");
+        }
+        Subcommands::HashZero => {
+            println!("0x0000000000000000000000000000000000000000000000000000000000000000");
+        }
         Subcommands::FromUtf8 { text } => {
             let val = unwrap_or_stdin(text)?;
             println!("{}", SimpleCast::from_utf8(&val));
