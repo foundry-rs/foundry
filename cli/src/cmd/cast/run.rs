@@ -88,7 +88,7 @@ impl RunArgs {
                         break
                     }
 
-                    executor.set_gas_limit(tx.gas);
+                    executor.set_gas_limit(past_tx.gas);
 
                     if let Some(to) = past_tx.to {
                         executor
