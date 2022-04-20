@@ -553,7 +553,7 @@ impl EthApi {
     pub fn estimate_gas(&self, request: CallRequest, _: Option<BlockNumber>) -> Result<U256> {
         node_info!("eth_estimateGas");
         let (exit, _, gas, _) = self.backend.call(request, FeeDetails::zero());
-        trace!(target = "node", "Estimated Gas for call {:?}, status {:?}", gas, exit);
+        trace!(target : "node", "Estimated Gas for call {:?}, status {:?}", gas, exit);
         Ok(gas.into())
     }
 

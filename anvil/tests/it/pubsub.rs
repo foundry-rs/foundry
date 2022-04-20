@@ -1,6 +1,6 @@
 //! general eth api tests
 
-use crate::next_port;
+use crate::{init_tracing, next_port};
 use anvil::{spawn, NodeConfig};
 use ethers::{contract::abigen, middleware::SignerMiddleware, prelude::Middleware};
 use futures::StreamExt;
@@ -25,6 +25,7 @@ async fn test_sub_new_heads() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_sub_logs() {
+    init_tracing();
     abigen!(EmitLogs, "test-data/emit_logs.json");
 
     let (_api, handle) = spawn(NodeConfig::test().port(next_port())).await;
@@ -37,11 +38,13 @@ async fn test_sub_logs() {
     let contract =
         EmitLogs::deploy(Arc::clone(&client), msg.clone()).unwrap().legacy().send().await.unwrap();
 
-    let val = contract.get_value().call().await.unwrap();
-    assert_eq!(val, msg);
+    // let val = contract.get_value().call().await.unwrap();
+    // assert_eq!(val, msg);
 
-    let _val = contract
+    dbg!("UPDATING");
+    let val = contract
         .set_value("Next Message".to_string())
+        // .gas(33215u64)
         .legacy()
         .send()
         .await
@@ -49,6 +52,7 @@ async fn test_sub_logs() {
         .await
         .unwrap()
         .unwrap();
+    dbg!(val.logs);
     // let log = logs_sub.next().await.unwrap();
     //
     // dbg!(log);

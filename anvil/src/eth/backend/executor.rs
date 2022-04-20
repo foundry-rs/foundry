@@ -162,6 +162,8 @@ impl<'a, DB: Db + ?Sized> Iterator for TransactionExecutor<'a, DB> {
         // transact and commit the transaction
         let (exit, out, gas, logs) = evm.inspect_commit(&mut tracer);
 
+        trace!(target: "backend::executor", "transacted [{:?}], result: {:?} gas {}", transaction.hash(), exit, gas);
+
         let tx = ExecutedTransaction {
             transaction,
             exit,

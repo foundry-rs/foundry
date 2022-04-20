@@ -85,7 +85,7 @@ impl Default for NodeConfig {
         let genesis_accounts = random_wallets(10);
         Self {
             chain_id: CHAIN_ID,
-            gas_limit: U256::from(6_721_975),
+            gas_limit: U256::from(u64::MAX),
             gas_price: U256::from(20_000_000_000u64),
             accounts: genesis_accounts.iter().map(|w| (w.address(), w.clone())).collect(),
             genesis_accounts,
