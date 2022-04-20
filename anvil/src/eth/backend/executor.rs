@@ -17,6 +17,7 @@ use foundry_evm::{
     trace::node::CallTraceNode,
 };
 use std::sync::Arc;
+use tracing::trace;
 
 /// Represents an executed transaction (transacted on the DB)
 pub struct ExecutedTransaction {
@@ -95,6 +96,7 @@ impl<'a, DB: Db + ?Sized> TransactionExecutor<'a, DB> {
             logs_bloom(logs.clone(), &mut bloom);
 
             let contract_address = if let TransactOut::Create(_, contract_address) = out {
+                trace!(target: "backend", "New contract deployed: at {:?}", contract_address);
                 contract_address
             } else {
                 None

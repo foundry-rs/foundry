@@ -319,7 +319,13 @@ impl Backend {
         let block_hash = block.header.hash();
         let block_number: U64 = env.block.number.as_u64().into();
 
-        trace!(target: "backend", "Created block {} with {} tx: [{:?}]", block_number, transactions.len(), block_hash);
+        trace!(
+            target: "backend",
+            "Mined block {} with {} tx [{:?}]",
+            block_number,
+            transactions.len(),
+            transactions.iter().map(|tx| tx.transaction_hash)
+        );
 
         // update block metadata
         storage.best_number = block_number;

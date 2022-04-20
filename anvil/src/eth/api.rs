@@ -4,6 +4,7 @@ use crate::{
         backend::notifications::NewBlockNotifications,
         error::{BlockchainError, FeeHistoryError, Result, ToRpcResponseResult},
         fees::{FeeDetails, FeeHistory, FeeHistoryCache},
+        macros::node_info,
         miner::FixedBlockTimeMiner,
         pool::{
             transactions::{to_marker, PoolTransaction, TxMarker},
@@ -258,6 +259,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_protocolVersion`
     pub fn protocol_version(&self) -> Result<u64> {
+        node_info!("eth_protocolVersion");
         Ok(1)
     }
 
@@ -265,6 +267,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_hashrate`
     pub fn hashrate(&self) -> Result<U256> {
+        node_info!("eth_hashrate");
         Ok(U256::zero())
     }
 
@@ -272,6 +275,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_coinbase`
     pub fn author(&self) -> Result<Address> {
+        node_info!("eth_coinbase");
         Ok(self.backend.coinbase())
     }
 
@@ -279,6 +283,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_mining`
     pub fn is_mining(&self) -> Result<bool> {
+        node_info!("eth_mining");
         Ok(self.is_mining)
     }
 
@@ -288,6 +293,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_chainId`
     pub fn chain_id(&self) -> Result<Option<U64>> {
+        node_info!("eth_chainId");
         Ok(Some(self.backend.chain_id().as_u64().into()))
     }
 
@@ -299,6 +305,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_accounts`
     pub fn accounts(&self) -> Result<Vec<Address>> {
+        node_info!("eth_accounts");
         let mut accounts = Vec::new();
         for signer in self.signers.iter() {
             accounts.append(&mut signer.accounts());
@@ -310,6 +317,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_blockNumber`
     pub fn block_number(&self) -> Result<U256> {
+        node_info!("eth_blockNumber");
         Ok(self.backend.best_number().as_u64().into())
     }
 
@@ -317,6 +325,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_getBalance`
     pub async fn balance(&self, address: Address, number: Option<BlockNumber>) -> Result<U256> {
+        node_info!("eth_getBalance");
         self.backend.get_balance(address, number).await
     }
 
@@ -329,6 +338,7 @@ impl EthApi {
         index: U256,
         number: Option<BlockNumber>,
     ) -> Result<H256> {
+        node_info!("eth_getStorageAt");
         self.backend.storage_at(address, index, number).await
     }
 
@@ -336,6 +346,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_getBlockByHash`
     pub async fn block_by_hash(&self, hash: H256, _full: bool) -> Result<Option<Block<TxHash>>> {
+        node_info!("eth_getBlockByHash");
         self.backend.block_by_hash(hash).await
     }
 
@@ -347,6 +358,7 @@ impl EthApi {
         number: BlockNumber,
         _: bool,
     ) -> Result<Option<Block<TxHash>>> {
+        node_info!("eth_getBlockByNumber");
         self.backend.block_by_number(number).await
     }
 
@@ -358,6 +370,7 @@ impl EthApi {
         address: Address,
         number: Option<BlockNumber>,
     ) -> Result<U256> {
+        node_info!("eth_getTransactionCount");
         self.backend.get_nonce(address, number).await
     }
 
@@ -365,6 +378,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_getBlockTransactionCountByHash`
     pub fn block_transaction_count_by_hash(&self, _: H256) -> Result<Option<U256>> {
+        node_info!("eth_getBlockTransactionCountByHash");
         Err(BlockchainError::RpcUnimplemented)
     }
 
@@ -372,6 +386,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_getBlockTransactionCountByNumber`
     pub fn block_transaction_count_by_number(&self, _: BlockNumber) -> Result<Option<U256>> {
+        node_info!("eth_getBlockTransactionCountByNumber");
         Err(BlockchainError::RpcUnimplemented)
     }
 
@@ -379,6 +394,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_getUncleCountByBlockHash`
     pub fn block_uncles_count_by_hash(&self, _: H256) -> Result<U256> {
+        node_info!("eth_getUncleCountByBlockHash");
         Err(BlockchainError::RpcUnimplemented)
     }
 
@@ -386,6 +402,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_getUncleCountByBlockNumber`
     pub fn block_uncles_count_by_number(&self, _: BlockNumber) -> Result<U256> {
+        node_info!("eth_getUncleCountByBlockNumber");
         Err(BlockchainError::RpcUnimplemented)
     }
 
@@ -393,6 +410,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_getCode`
     pub async fn get_code(&self, address: Address, block: Option<BlockNumber>) -> Result<Bytes> {
+        node_info!("eth_getCode");
         self.backend.get_code(address, block).await
     }
 
@@ -400,6 +418,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_sendTransaction`
     pub async fn send_transaction(&self, request: EthTransactionRequest) -> Result<TxHash> {
+        node_info!("eth_sendTransaction");
         let from = request.from.map(Ok).unwrap_or_else(|| {
             self.accounts()?.get(0).cloned().ok_or(BlockchainError::NoSignerAvailable)
         })?;
@@ -424,6 +443,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_sendRawTransaction`
     pub fn send_raw_transaction(&self, tx: Bytes) -> Result<TxHash> {
+        node_info!("eth_sendRawTransaction");
         let data = tx.as_ref();
         if data.is_empty() {
             return Err(BlockchainError::EmptyRawTransactionData)
@@ -475,7 +495,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_call`
     pub fn call(&self, request: CallRequest, _number: Option<BlockNumber>) -> Result<Bytes> {
-        trace!(target: "backend", "eth_call");
+        node_info!("eth_call");
         let fees = FeeDetails::new(
             request.gas_price,
             request.max_fee_per_gas,
@@ -500,6 +520,7 @@ impl EthApi {
         request: CallRequest,
         _number: Option<BlockNumber>,
     ) -> Result<AccessList> {
+        node_info!("eth_createAccessList");
         let from = request.from;
         let mut state = self.backend.call(request, FeeDetails::zero()).3;
 
@@ -524,9 +545,9 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_estimateGas`
     pub fn estimate_gas(&self, request: CallRequest, _: Option<BlockNumber>) -> Result<U256> {
-        trace!(target: "backend", "eth_estimateGas");
-        let gas = self.backend.call(request, FeeDetails::zero()).2;
-
+        node_info!("eth_estimateGas");
+        let (exit, _, gas, _) = self.backend.call(request, FeeDetails::zero());
+        trace!(target = "node", "Estimated Gas for call {:?}, status {:?}", gas, exit);
         Ok(gas.into())
     }
 
@@ -534,6 +555,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_getTransactionByHash`
     pub async fn transaction_by_hash(&self, hash: H256) -> Result<Option<Transaction>> {
+        node_info!("eth_getTransactionByHash");
         // TODO also check pending tx
         self.backend.transaction_by_hash(hash).await
     }
@@ -546,6 +568,7 @@ impl EthApi {
         hash: H256,
         index: Index,
     ) -> Result<Option<Transaction>> {
+        node_info!("eth_getTransactionByBlockHashAndIndex");
         self.backend.transaction_by_block_hash_and_index(hash, index).await
     }
 
@@ -557,6 +580,7 @@ impl EthApi {
         block: BlockNumber,
         idx: Index,
     ) -> Result<Option<Transaction>> {
+        node_info!("eth_getTransactionByBlockNumberAndIndex");
         self.backend.transaction_by_block_number_and_index(block, idx).await
     }
 
@@ -564,6 +588,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_getTransactionReceipt`
     pub async fn transaction_receipt(&self, hash: H256) -> Result<Option<TransactionReceipt>> {
+        node_info!("eth_getTransactionReceipt");
         self.backend.transaction_receipt(hash).await
     }
 
@@ -575,6 +600,7 @@ impl EthApi {
         _: H256,
         _: Index,
     ) -> Result<Option<Block<TxHash>>> {
+        node_info!("eth_getUncleByBlockHashAndIndex");
         Ok(None)
     }
 
@@ -590,6 +616,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_getLogs`
     pub async fn logs(&self, filter: Filter) -> Result<Vec<Log>> {
+        node_info!("eth_getLogs");
         self.backend.logs(filter).await
     }
 
@@ -597,6 +624,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_getWork`
     pub fn work(&self) -> Result<Work> {
+        node_info!("eth_getWork");
         Err(BlockchainError::RpcUnimplemented)
     }
 
@@ -604,6 +632,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_submitWork`
     pub fn submit_work(&self, _: H64, _: H256, _: H256) -> Result<bool> {
+        node_info!("eth_submitWork");
         Err(BlockchainError::RpcUnimplemented)
     }
 
@@ -611,6 +640,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_submitHashrate`
     pub fn submit_hashrate(&self, _: U256, _: H256) -> Result<bool> {
+        node_info!("eth_submitHashrate");
         Err(BlockchainError::RpcUnimplemented)
     }
 
@@ -623,6 +653,7 @@ impl EthApi {
         newest_block: BlockNumber,
         reward_percentiles: Vec<f64>,
     ) -> Result<FeeHistory> {
+        node_info!("eth_feeHistory");
         // max number of blocks in the requested range
         const MAX_BLOCK_COUNT: u64 = 1024u64;
 
@@ -713,6 +744,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `eth_maxPriorityFeePerGas`
     pub fn max_priority_fee_per_gas(&self) -> Result<U256> {
+        node_info!("eth_maxPriorityFeePerGas");
         Err(BlockchainError::RpcUnimplemented)
     }
 
@@ -720,6 +752,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `debug_traceTransaction`
     pub async fn debug_trace_transaction(&self, _tx_hash: H256) -> Result<Vec<Trace>> {
+        node_info!("debug_traceTransaction");
         Err(BlockchainError::RpcUnimplemented)
     }
 
@@ -727,6 +760,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `debug_traceTransaction`
     pub async fn trace_transaction(&self, tx_hash: H256) -> Result<Vec<Trace>> {
+        node_info!("debug_traceTransaction");
         self.backend.trace_transaction(tx_hash).await
     }
 }
@@ -738,6 +772,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `anvil_impersonateAccount`
     pub async fn anvil_impersonate_account(&self, address: Address) -> Result<()> {
+        node_info!("anvil_impersonateAccount");
         self.backend.cheats().impersonate(address);
         Ok(())
     }
@@ -746,6 +781,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `anvil_stopImpersonatingAccount`
     pub async fn anvil_stop_impersonating_account(&self) -> Result<()> {
+        node_info!("anvil_stopImpersonatingAccount");
         self.backend.cheats().stop_impersonating();
         Ok(())
     }
@@ -754,6 +790,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `anvil_getAutomine`
     pub fn anvil_get_auto_mine(&self) -> Result<bool> {
+        node_info!("anvil_getAutomine");
         Ok(self.miner.is_auto_mine())
     }
 
@@ -762,6 +799,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `evm_setAutomine`
     pub async fn anvil_set_auto_mine(&self, enable_automine: bool) -> Result<()> {
+        node_info!("evm_setAutomine");
         if self.miner.is_auto_mine() {
             if enable_automine {
                 return Ok(())
@@ -779,6 +817,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `anvil_mine`
     pub async fn anvil_mine(&self, num_blocks: Option<U256>, interval: Option<U256>) -> Result<()> {
+        node_info!("anvil_mine");
         let interval = interval.map(|i| i.as_u64());
         let blocks = num_blocks.unwrap_or_else(U256::one);
         if blocks == U256::zero() {
@@ -801,6 +840,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `evm_setIntervalMining`
     pub fn anvil_set_interval_mining(&self, secs: u64) -> Result<()> {
+        node_info!("evm_setIntervalMining");
         self.miner.set_mining_mode(MiningMode::FixedBlockTime(FixedBlockTimeMiner::new(
             Duration::from_secs(secs),
         )));
@@ -811,6 +851,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `anvil_dropTransaction`
     pub async fn anvil_drop_transaction(&self, tx_hash: H256) -> Result<Option<H256>> {
+        node_info!("anvil_dropTransaction");
         Ok(self.pool.drop_transaction(tx_hash).map(|tx| *tx.hash()))
     }
 
@@ -818,6 +859,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `anvil_reset`
     pub async fn anvil_reset(&self, _forking: Forking) -> Result<()> {
+        node_info!("anvil_reset");
         Err(BlockchainError::RpcUnimplemented)
     }
 
@@ -825,6 +867,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `anvil_setBalance`
     pub async fn anvil_set_balance(&self, address: Address, balance: U256) -> Result<()> {
+        node_info!("anvil_setBalance");
         self.backend.set_balance(address, balance);
         Ok(())
     }
@@ -833,6 +876,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `anvil_setCode`
     pub async fn anvil_set_code(&self, address: Address, code: Bytes) -> Result<()> {
+        node_info!("anvil_setCode");
         self.backend.set_code(address, code);
         Ok(())
     }
@@ -841,6 +885,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `anvil_setNonce`
     pub async fn anvil_set_nonce(&self, address: Address, nonce: U256) -> Result<()> {
+        node_info!("anvil_setNonce");
         self.backend.set_nonce(address, nonce);
         Ok(())
     }
@@ -854,6 +899,7 @@ impl EthApi {
         slot: U256,
         val: U256,
     ) -> Result<()> {
+        node_info!("anvil_setStorageAt");
         self.backend.set_storage_at(address, slot, val);
         Ok(())
     }
@@ -862,6 +908,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `anvil_setLoggingEnabled`
     pub async fn anvil_set_logging(&self, enable: bool) -> Result<()> {
+        node_info!("anvil_setLoggingEnabled");
         self.logger.set_enabled(enable);
         Ok(())
     }
@@ -870,6 +917,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `anvil_setMinGasPrice`
     pub async fn anvil_set_min_gas_price(&self, gas: U256) -> Result<()> {
+        node_info!("anvil_setMinGasPrice");
         self.backend.set_gas_price(gas);
         Ok(())
     }
@@ -878,6 +926,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `anvil_setNextBlockBaseFeePerGas`
     pub async fn anvil_set_next_block_base_fee_per_gas(&self, basefee: U256) -> Result<()> {
+        node_info!("anvil_setNextBlockBaseFeePerGas");
         self.backend.set_base_fee(basefee);
         Ok(())
     }
@@ -886,6 +935,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `anvil_setCoinbase`
     pub async fn anvil_set_coinbase(&self, address: Address) -> Result<()> {
+        node_info!("anvil_setCoinbase");
         self.backend.set_coinbase(address);
         Ok(())
     }
@@ -894,6 +944,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `evm_snapshot`
     pub async fn evm_snapshot(&self) -> Result<U256> {
+        node_info!("evm_snapshot");
         Err(BlockchainError::RpcUnimplemented)
     }
 
@@ -902,6 +953,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `evm_revert`
     pub async fn evm_revert(&self, _id: U256) -> Result<()> {
+        node_info!("evm_revert");
         Err(BlockchainError::RpcUnimplemented)
     }
 
@@ -909,6 +961,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `evm_increaseTime`
     pub async fn evm_increase_time(&self, seconds: U256) -> Result<()> {
+        node_info!("evm_increaseTime");
         self.backend.time().increase_time(seconds.try_into().unwrap_or(u64::MAX));
         Ok(())
     }
@@ -917,6 +970,7 @@ impl EthApi {
     ///
     /// Handler for RPC call: `evm_setNextBlockTimestamp`
     pub fn evm_set_next_block_timestamp(&self, seconds: u64) -> Result<()> {
+        node_info!("evm_setNextBlockTimestamp");
         self.backend.time().set_next_block_timestamp(seconds);
         Ok(())
     }
@@ -928,6 +982,7 @@ impl EthApi {
     /// This will mine the blocks regardless of the configured mining mode.
     /// **Note**: ganache returns `0x0` here as placeholder for additional meta-data in the future.
     pub async fn evm_mine(&self, opts: Option<EvmMineOptions>) -> Result<String> {
+        node_info!("evm_mine");
         let mut blocks_to_mine = 1u64;
 
         if let Some(opts) = opts {
@@ -961,6 +1016,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `anvil_setBlock`
     pub fn anvil_set_block(&self, block_number: U256) -> Result<()> {
+        node_info!("anvil_setBlock");
         self.backend.set_block_number(block_number);
         Ok(())
     }
@@ -969,6 +1025,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `anvil_setRpcUrl`
     pub fn anvil_set_rpc_url(&self, url: String) -> Result<()> {
+        node_info!("anvil_setRpcUrl");
         if let Some(fork) = self.backend.get_fork() {
             let new_provider = Arc::new(Provider::try_from(&url).map_err(|_| {
                 ProviderError::CustomError(format!("Failed to parse invalid url {}", url))
@@ -986,6 +1043,7 @@ impl EthApi {
     ///
     /// Handler for ETH RPC call: `anvil_enableTraces`
     pub async fn anvil_enable_traces(&self) -> Result<()> {
+        node_info!("anvil_enableTraces");
         Err(BlockchainError::RpcUnimplemented)
     }
 
@@ -996,6 +1054,7 @@ impl EthApi {
         &self,
         request: EthTransactionRequest,
     ) -> Result<TxHash> {
+        node_info!("eth_sendUnsignedTransaction");
         // either use the impersonated account of the request's `from` field
         let from =
             self.get_impersonated().or(request.from).ok_or(BlockchainError::NoSignerAvailable)?;
@@ -1132,6 +1191,7 @@ impl EthApi {
         let pool_transaction = PoolTransaction { requires, provides, pending_transaction };
 
         let tx = self.pool.add_transaction(pool_transaction)?;
+        trace!(target: "node", "Added transaction: {:?}", tx.hash());
         Ok(*tx.hash())
     }
 }
