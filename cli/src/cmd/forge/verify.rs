@@ -136,6 +136,7 @@ impl VerifyArgs {
             libraries: vec![],
             via_ir: false,
             config_path: None,
+            revert_strings: None,
         };
 
         let project = build_args.project()?;
