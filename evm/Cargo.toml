@@ -23,7 +23,7 @@ thiserror = "1.0.29"
 
 # Logging
 tracing = "0.1.26"
-tracing-subscriber = "=0.3.9"
+tracing-subscriber = "0.3.11"
 tracing-error = "0.2.0"
 
 # Threading/futures
