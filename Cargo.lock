@@ -482,6 +482,7 @@ dependencies = [
  "ethers-providers",
  "ethers-signers",
  "eyre",
+ "foundry-evm",
  "foundry-utils",
  "futures",
  "hex",

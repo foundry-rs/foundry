@@ -10,6 +10,7 @@ keywords = ["ethereum", "web3"]
 
 [dependencies]
 foundry-utils = { path = "../utils" }
+foundry-evm = { path = "./../evm" }
 futures = "0.3.17"
 ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
