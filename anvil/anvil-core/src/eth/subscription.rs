@@ -7,6 +7,7 @@ use ethers_core::{
     utils::hex,
 };
 use serde::{de::Error, Deserialize, Deserializer, Serialize};
+use std::fmt;
 
 /// Result of a subscription
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -91,6 +92,15 @@ impl SubscriptionId {
     /// Generates a new random hex identifier
     pub fn random_hex() -> Self {
         SubscriptionId::String(hex_id())
+    }
+}
+
+impl fmt::Display for SubscriptionId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SubscriptionId::Number(num) => num.fmt(f),
+            SubscriptionId::String(s) => s.fmt(f),
+        }
     }
 }
 

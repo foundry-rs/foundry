@@ -22,6 +22,7 @@ use crate::{
         fees::{FeeHistoryService, FeeManager},
         miner::Miner,
     },
+    filter::Filters,
     logging::{LoggingManager, NodeLogLayer},
 };
 use eth::backend::fork::ClientFork;
@@ -36,15 +37,21 @@ use std::{
 };
 use tokio::task::{JoinError, JoinHandle};
 
+/// contains the background service that drives the node
 mod service;
 
 /// ethereum related implementations
 pub mod eth;
+/// support for polling filters
+pub mod filter;
+/// commandline output
+pub mod logging;
+/// types for subscriptions
+pub mod pubsub;
 /// axum RPC server implementations
 pub mod server;
 
-pub mod logging;
-
+/// contains cli command
 #[cfg(feature = "cmd")]
 pub mod cmd;
 
@@ -97,6 +104,8 @@ pub async fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
         StorageInfo::new(Arc::clone(&backend)),
     );
 
+    let filters = Filters::default();
+
     // create the cloneable api wrapper
     let api = EthApi::new(
         Arc::clone(&pool),
@@ -106,9 +115,10 @@ pub async fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
         fee_history_service.fee_history_limit(),
         miner.clone(),
         logger,
+        filters.clone(),
     );
 
-    let node_service = NodeService::new(pool, backend, miner, fee_history_service);
+    let node_service = NodeService::new(pool, backend, miner, fee_history_service, filters);
 
     let socket = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port);
 

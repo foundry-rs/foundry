@@ -8,7 +8,9 @@ use std::{
     sync::Arc,
     task::{Context, Poll},
 };
+use tokio::time::Interval;
 
+use crate::filter::Filters;
 use tracing::trace;
 
 /// The type that drives the blockchain's state
@@ -26,6 +28,10 @@ pub struct NodeService {
     miner: Miner,
     /// maintenance task for fee history related tasks
     fee_history: FeeHistoryService,
+    /// Tracks all active filters
+    filters: Filters,
+    /// The interval at which to check for filters that need to be evicted
+    filter_eviction_interval: Interval,
 }
 
 impl NodeService {
@@ -34,8 +40,16 @@ impl NodeService {
         backend: Arc<backend::mem::Backend>,
         miner: Miner,
         fee_history: FeeHistoryService,
+        filters: Filters,
     ) -> Self {
-        Self { pool, backend, miner, fee_history }
+        Self {
+            pool,
+            backend,
+            miner,
+            fee_history,
+            filter_eviction_interval: tokio::time::interval(filters.keep_alive()),
+            filters,
+        }
     }
 }
 
@@ -60,6 +74,12 @@ impl Future for NodeService {
 
         // poll the fee history task
         let _ = pin.fee_history.poll_unpin(cx);
+
+        if pin.filter_eviction_interval.poll_tick(cx).is_ready() {
+            let filters = pin.filters.clone();
+            // evict filters that timed out
+            tokio::task::spawn(async move { filters.evict().await });
+        }
 
         Poll::Pending
     }

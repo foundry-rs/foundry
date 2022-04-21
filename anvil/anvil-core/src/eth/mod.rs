@@ -104,6 +104,7 @@ pub enum EthRequest {
     #[serde(rename = "eth_getLogs")]
     EthGetLogs(Filter),
 
+    /// Creates a filter object, based on filter options, to notify when the state changes (logs).
     #[serde(rename = "eth_newFilter")]
     EthNewFilter(Filter),
 

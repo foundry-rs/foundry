@@ -15,13 +15,14 @@ use crate::{
         sign,
         sign::Signer,
     },
+    filter::{EthFilter, Filters, LogsFilter},
     revm::TransactOut,
     LoggingManager, Miner, MiningMode, Provider, StorageInfo,
 };
 use anvil_core::{
     eth::{
         call::CallRequest,
-        filter::Filter,
+        filter::{Filter, FilteredParams},
         transaction::{
             EthTransactionRequest, LegacyTransaction, PendingTransaction, TypedTransaction,
             TypedTransactionRequest,
@@ -71,12 +72,15 @@ pub struct EthApi {
     miner: Miner,
     /// allows to enabled/disable logging
     logger: LoggingManager,
+    /// Tracks all active filters
+    filters: Filters,
 }
 
 // === impl Eth RPC API ===
 
 impl EthApi {
     /// Creates a new instance
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         pool: Arc<Pool>,
         backend: Arc<backend::mem::Backend>,
@@ -85,6 +89,7 @@ impl EthApi {
         fee_history_limit: u64,
         miner: Miner,
         logger: LoggingManager,
+        filters: Filters,
     ) -> Self {
         Self {
             pool,
@@ -95,6 +100,7 @@ impl EthApi {
             fee_history_limit,
             miner,
             logger,
+            filters,
         }
     }
 
@@ -237,24 +243,14 @@ impl EthApi {
                 self.eth_send_unsigned_transaction(*tx).await.to_rpc_result()
             }
             EthRequest::EnableTraces => self.anvil_enable_traces().await.to_rpc_result(),
-            EthRequest::EthNewFilter(_) => {
-                todo!()
-            }
-            EthRequest::EthGetFilterChanges(_) => {
-                todo!()
-            }
-            EthRequest::EthNewBlockFilter => {
-                todo!()
-            }
+            EthRequest::EthNewFilter(filter) => self.new_filter(filter).await.to_rpc_result(),
+            EthRequest::EthGetFilterChanges(id) => self.get_filter_changes(&id).await,
+            EthRequest::EthNewBlockFilter => self.new_block_filter().await.to_rpc_result(),
             EthRequest::EthNewPendingTransactionFilter => {
-                todo!()
+                self.new_pending_transaction_filter().await.to_rpc_result()
             }
-            EthRequest::EthGetFilterLogs(_) => {
-                todo!()
-            }
-            EthRequest::EthUninstallFilter(_) => {
-                todo!()
-            }
+            EthRequest::EthGetFilterLogs(id) => self.get_filter_logs(&id).await,
+            EthRequest::EthUninstallFilter(id) => self.uninstall_filter(&id).await.to_rpc_result(),
         }
     }
 
@@ -871,6 +867,58 @@ impl EthApi {
     pub fn max_priority_fee_per_gas(&self) -> Result<U256> {
         node_info!("eth_maxPriorityFeePerGas");
         Err(BlockchainError::RpcUnimplemented)
+    }
+
+    /// Creates a filter object, based on filter options, to notify when the state changes (logs).
+    ///
+    /// Handler for ETH RPC call: `eth_newFilter`
+    pub async fn new_filter(&self, filter: Filter) -> Result<String> {
+        node_info!("eth_newFilter");
+        let filter = EthFilter::Logs(Box::new(LogsFilter {
+            blocks: self.new_block_notifications(),
+            storage: self.storage_info(),
+            filter: FilteredParams::new(Some(filter)),
+        }));
+        Ok(self.filters.add_filter(filter).await)
+    }
+
+    /// Creates a filter in the node, to notify when a new block arrives.
+    ///
+    /// Handler for ETH RPC call: `eth_newBlockFilter`
+    pub async fn new_block_filter(&self) -> Result<String> {
+        node_info!("eth_newBlockFilter");
+        let filter = EthFilter::Blocks(self.new_block_notifications());
+        Ok(self.filters.add_filter(filter).await)
+    }
+
+    /// Creates a filter in the node, to notify when new pending transactions arrive.
+    ///
+    /// Handler for ETH RPC call: `eth_newPendingTransactionFilter`
+    pub async fn new_pending_transaction_filter(&self) -> Result<String> {
+        node_info!("eth_newPendingTransactionFilter");
+        let filter = EthFilter::PendingTransactions(self.new_ready_transactions());
+        Ok(self.filters.add_filter(filter).await)
+    }
+
+    /// Polling method for a filter, which returns an array of logs which occurred since last poll.
+    ///
+    /// Handler for ETH RPC call: `eth_getFilterChanges`
+    pub async fn get_filter_changes(&self, id: &str) -> ResponseResult {
+        self.filters.get_filter_changes(id).await
+    }
+
+    /// Returns an array of all logs matching filter with given id.
+    ///
+    /// Handler for ETH RPC call: `eth_getFilterLogs`
+    pub async fn get_filter_logs(&self, id: &str) -> ResponseResult {
+        node_info!("eth_getFilterLogs");
+        self.filters.get_filter_logs(id).await
+    }
+
+    /// Handler for ETH RPC call: `eth_uninstallFilter`
+    pub async fn uninstall_filter(&self, id: &str) -> Result<bool> {
+        node_info!("eth_uninstallFilter");
+        Ok(self.filters.uninstall_filter(id).await.is_some())
     }
 
     /// Returns traces for the transaction hash for geth's tracing endpoint
