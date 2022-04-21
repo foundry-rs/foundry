@@ -856,7 +856,7 @@ impl From<Config> for Figment {
 #[serde(transparent)]
 pub struct RegexWrapper {
     #[serde(with = "serde_regex")]
-    inner: regex::Regex
+    inner: regex::Regex,
 }
 
 impl std::ops::Deref for RegexWrapper {
