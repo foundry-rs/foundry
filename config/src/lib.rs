@@ -873,9 +873,9 @@ impl std::cmp::PartialEq for RegexWrapper {
     }
 }
 
-impl Into<regex::Regex> for RegexWrapper {
-    fn into(self) -> regex::Regex {
-        self.inner.to_owned()
+impl From<RegexWrapper> for regex::Regex {
+    fn from(wrapper: RegexWrapper) -> Self {
+        wrapper.inner
     }
 }
 

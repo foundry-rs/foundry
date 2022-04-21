@@ -88,10 +88,10 @@ impl Filter {
             filter.contract_pattern_inverse = config.contract_pattern_inverse.map(|p| p.into());
         }
         if filter.path_pattern.is_none() {
-            filter.path_pattern = config.path_pattern.map(|p| p.into());
+            filter.path_pattern = config.path_pattern;
         }
         if filter.path_pattern_inverse.is_none() {
-            filter.path_pattern_inverse = config.path_pattern_inverse.map(|p| p.into());
+            filter.path_pattern_inverse = config.path_pattern_inverse;
         }
         filter
     }
@@ -391,7 +391,7 @@ fn short_test_result(name: &str, result: &forge::TestResult) {
     println!("{} {} {}", status, name, result.kind.gas_used());
 }
 
-pub fn custom_run(mut args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<TestOutcome> {
+pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<TestOutcome> {
     // Merge all configs
     let (config, mut evm_opts) = args.config_and_evm_opts()?;
 
