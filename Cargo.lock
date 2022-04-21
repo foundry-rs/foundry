@@ -3735,7 +3735,7 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "1.2.0"
-source = "git+https://github.com/bluealloy/revm#06ff5f9b9898467c84d66bd846cc672a261ca10d"
+source = "git+https://github.com/bluealloy/revm#48afd55f4c707600e4c44772fe8cb9359f8f8770"
 dependencies = [
  "arrayref",
  "auto_impl",
@@ -3753,7 +3753,7 @@ dependencies = [
 [[package]]
 name = "revm_precompiles"
 version = "0.4.0"
-source = "git+https://github.com/bluealloy/revm#06ff5f9b9898467c84d66bd846cc672a261ca10d"
+source = "git+https://github.com/bluealloy/revm#48afd55f4c707600e4c44772fe8cb9359f8f8770"
 dependencies = [
  "bytes",
  "k256",
