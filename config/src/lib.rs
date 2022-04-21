@@ -873,6 +873,12 @@ impl std::cmp::PartialEq for RegexWrapper {
     }
 }
 
+impl Into<regex::Regex> for RegexWrapper {
+    fn into(self) -> regex::Regex {
+        self.inner.to_owned()
+    }
+}
+
 /// A helper wrapper around the root path used during Config detection
 #[derive(Debug, PartialEq, Eq, Hash, Clone, PartialOrd, Ord, Deserialize, Serialize)]
 #[serde(transparent)]
