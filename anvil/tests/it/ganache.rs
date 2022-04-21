@@ -37,7 +37,7 @@ async fn test_ganache_emit_logs() {
     init_tracing();
     abigen!(EmitLogs, "test-data/emit_logs.json");
 
-    let key_str = "be2fc1d97ddb1e0abc4a9e61ceb69d0c9200f781f15486b395b39ca502281bd0";
+    let key_str = "f3ce4cb221f6784021f3b7edfd6f8ac0c2c568cd7eb2b36f827449975489d234";
     let key_hex = hex::decode(key_str).expect("could not parse as hex");
     let key = SecretKey::from_be_bytes(&key_hex).expect("did not get private key");
     let wallet: LocalWallet = key.into();

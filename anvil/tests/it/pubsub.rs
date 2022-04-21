@@ -1,8 +1,13 @@
-//! general eth api tests
+//! tests for subscriptions
 
-use crate::{init_tracing, next_port};
+use crate::{next_port};
 use anvil::{spawn, NodeConfig};
-use ethers::{contract::abigen, middleware::SignerMiddleware, prelude::Middleware};
+use ethers::{
+    contract::abigen,
+    middleware::SignerMiddleware,
+    prelude::Middleware,
+    types::{Filter, ValueOrArray},
+};
 use futures::StreamExt;
 use std::sync::Arc;
 
@@ -25,7 +30,6 @@ async fn test_sub_new_heads() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_sub_logs() {
-    init_tracing();
     abigen!(EmitLogs, "test-data/emit_logs.json");
 
     let (_api, handle) = spawn(NodeConfig::test().port(next_port())).await;
@@ -38,13 +42,16 @@ async fn test_sub_logs() {
     let contract =
         EmitLogs::deploy(Arc::clone(&client), msg.clone()).unwrap().legacy().send().await.unwrap();
 
-    // let val = contract.get_value().call().await.unwrap();
-    // assert_eq!(val, msg);
+    let val = contract.get_value().call().await.unwrap();
+    assert_eq!(val, msg);
 
-    dbg!("UPDATING");
-    let val = contract
+    // subscribe to events from the contract
+    let filter = Filter::new().address(ValueOrArray::Value(contract.address()));
+    let mut logs_sub = client.subscribe_logs(&filter).await.unwrap();
+
+    // send a tx triggering an event
+    let receipt = contract
         .set_value("Next Message".to_string())
-        // .gas(33215u64)
         .legacy()
         .send()
         .await
@@ -52,16 +59,10 @@ async fn test_sub_logs() {
         .await
         .unwrap()
         .unwrap();
-    dbg!(val.logs);
-    // let log = logs_sub.next().await.unwrap();
-    //
-    // dbg!(log);
-    // // mine a block every 1 seconds
-    // api.anvil_set_interval_mining(1).unwrap();
-    //
-    // let blocks = blocks.take(3).collect::<Vec<_>>().await;
-    // let block_numbers = blocks.into_iter().map(|b|
-    // b.number.unwrap().as_u64()).collect::<Vec<_>>();
-    //
-    // assert_eq!(block_numbers, vec![1, 2, 3]);
+
+    // get the emitted event
+    let log = logs_sub.next().await.unwrap();
+
+    // ensure the log in the receipt is the same as received via subscription stream
+    assert_eq!(receipt.logs[0], log);
 }
