@@ -853,7 +853,7 @@ impl Backend {
                         )),
                         transaction_log_index: Some(U256::from(i)),
                         log_type: None,
-                        removed: None,
+                        removed: Some(false),
                     })
                     .collect()
             },

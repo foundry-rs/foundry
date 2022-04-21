@@ -237,6 +237,24 @@ impl EthApi {
                 self.eth_send_unsigned_transaction(*tx).await.to_rpc_result()
             }
             EthRequest::EnableTraces => self.anvil_enable_traces().await.to_rpc_result(),
+            EthRequest::EthNewFilter(_) => {
+                todo!()
+            }
+            EthRequest::EthGetFilterChanges(_) => {
+                todo!()
+            }
+            EthRequest::EthNewBlockFilter => {
+                todo!()
+            }
+            EthRequest::EthNewPendingTransactionFilter => {
+                todo!()
+            }
+            EthRequest::EthGetFilterLogs(_) => {
+                todo!()
+            }
+            EthRequest::EthUninstallFilter(_) => {
+                todo!()
+            }
         }
     }
 
@@ -621,9 +639,8 @@ impl EthApi {
             Return::OutOfGas => return Err(InvalidTransactionError::OutOfGas(gas_limit).into()),
             // need to check if the revert was due to lack of gas or unrelated reason
             Return::Revert => {
-                // if price or limit was included in the request then
-                // If the user has provided a gas limit or a gas price, we can reexecute the request
-                // with the max gas limit to check if revert is gas related or not
+                // if price or limit was included in the request then we can execute the request
+                // again with the max gas limit to check if revert is gas related or not
                 if request.gas.is_some() || request.gas_price.is_some() {
                     request.gas = Some(self.backend.gas_limit());
                     let (exit, _, _gas, _) = self.backend.call(request, fees);
@@ -644,6 +661,16 @@ impl EthApi {
                 return Err(BlockchainError::EvmError(reason))
             }
         }
+
+        const CALL_STIPEND: u64 = 2_300;
+
+        // the gas returned by `Backend::call()` is the actually consumed gas, however there might
+        // be the case if the gas left prior to an SSTORE is less than the `CALL_STIPEND` which
+        // would cause a `Return::OutOfGas` if the tx's gas_limit is set to `gas`, See EIP-2200.
+        // Adding the CALL_STIPEND on top will prevent that.
+        let gas = gas + CALL_STIPEND;
+
+        // TODO this could be optimized with a binary search
 
         trace!(target : "node", "Estimated Gas for call {:?}, status {:?}", gas, exit);
         Ok(gas.into())

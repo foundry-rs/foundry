@@ -104,6 +104,31 @@ pub enum EthRequest {
     #[serde(rename = "eth_getLogs")]
     EthGetLogs(Filter),
 
+    #[serde(rename = "eth_newFilter")]
+    EthNewFilter(Filter),
+
+    /// Polling method for a filter, which returns an array of logs which occurred since last poll.
+    #[serde(rename = "eth_getFilterChanges", with = "sequence")]
+    EthGetFilterChanges(String),
+
+    /// Creates a filter in the node, to notify when a new block arrives.
+    /// To check if the state has changed, call `eth_getFilterChanges`.
+    #[serde(rename = "eth_newBlockFilter")]
+    EthNewBlockFilter,
+
+    /// Creates a filter in the node, to notify when new pending transactions arrive.
+    /// To check if the state has changed, call `eth_getFilterChanges`.
+    #[serde(rename = "eth_newPendingTransactionFilter")]
+    EthNewPendingTransactionFilter,
+
+    /// Returns an array of all logs matching filter with given id.
+    #[serde(rename = "eth_getFilterLogs", with = "sequence")]
+    EthGetFilterLogs(String),
+
+    /// Removes the filter, returns true if the filter was installed
+    #[serde(rename = "eth_uninstallFilter", with = "sequence")]
+    EthUninstallFilter(String),
+
     #[serde(rename = "eth_getWork")]
     EthGetWork,
 

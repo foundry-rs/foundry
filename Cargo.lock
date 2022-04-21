@@ -89,6 +89,7 @@ dependencies = [
  "futures",
  "hyper",
  "parking_lot 0.12.0",
+ "pretty_assertions",
  "serde",
  "serde_json",
  "thiserror",
