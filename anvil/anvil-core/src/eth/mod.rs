@@ -101,11 +101,11 @@ pub enum EthRequest {
     #[serde(rename = "eth_getUncleByBlockNumberAndIndex")]
     EthGetUncleByBlockNumberAndIndex(BlockNumber, Index),
 
-    #[serde(rename = "eth_getLogs")]
+    #[serde(rename = "eth_getLogs", with = "sequence")]
     EthGetLogs(Filter),
 
     /// Creates a filter object, based on filter options, to notify when the state changes (logs).
-    #[serde(rename = "eth_newFilter")]
+    #[serde(rename = "eth_newFilter", with = "sequence")]
     EthNewFilter(Filter),
 
     /// Polling method for a filter, which returns an array of logs which occurred since last poll.
@@ -555,6 +555,20 @@ mod tests {
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
 
         let s = r#"{"method": "evm_mine"}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_eth_get_logs() {
+        let s = r#"{"jsonrpc":"2.0","method":"eth_getLogs","params":[{"topics":["0x000000000000000000000000a94f5374fce5edbc8e2a8697c15331677e6ebf0b"]}],"id":74}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_eth_new_filter() {
+        let s = r#"{"method": "eth_newFilter", "params": [{"topics":["0x000000000000000000000000a94f5374fce5edbc8e2a8697c15331677e6ebf0b"]}],"id":73}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
