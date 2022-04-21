@@ -139,22 +139,22 @@ pub struct Config {
     /// list of solidity error codes to always silence in the compiler output
     pub ignored_error_codes: Vec<SolidityErrorCode>,
     /// Only run test functions matching the specified regex pattern.
-    #[serde(rename = "match-test")]
+    #[serde(rename = "match_test")]
     pub test_pattern: Option<RegexWrapper>,
     /// Only run test functions that do not match the specified regex pattern.
-    #[serde(rename = "no-match-test")]
+    #[serde(rename = "no_match_test")]
     pub test_pattern_inverse: Option<RegexWrapper>,
     /// Only run tests in contracts matching the specified regex pattern.
-    #[serde(rename = "match-contract")]
+    #[serde(rename = "match_contract")]
     pub contract_pattern: Option<RegexWrapper>,
     /// Only run tests in contracts that do not match the specified regex pattern.
-    #[serde(rename = "no-match-contract")]
+    #[serde(rename = "no_match_contract")]
     pub contract_pattern_inverse: Option<RegexWrapper>,
     /// Only run tests in source files matching the specified glob pattern.
-    #[serde(rename = "match-path")]
+    #[serde(rename = "match_path")]
     pub path_pattern: Option<globset::Glob>,
     /// Only run tests in source files that do not match the specified glob pattern.
-    #[serde(rename = "no-match-path")]
+    #[serde(rename = "no_match_path")]
     pub path_pattern_inverse: Option<globset::Glob>,
     /// The number of test cases that must execute for each property test
     pub fuzz_runs: u32,
