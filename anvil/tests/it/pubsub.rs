@@ -1,6 +1,6 @@
 //! tests for subscriptions
 
-use crate::{next_port};
+use crate::next_port;
 use anvil::{spawn, NodeConfig};
 use ethers::{
     contract::abigen,
