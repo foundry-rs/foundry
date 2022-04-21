@@ -118,7 +118,7 @@ impl CreateArgs {
                             eyre::bail!("constructor args path not found");
                         }
                         let file = fs::read_to_string(constructor_args_path)?;
-                        file.split(' ').map(|s| s.to_string()).collect::<Vec<String>>()
+                        file.split_whitespace().map(|s| s.to_string()).collect::<Vec<String>>()
                     } else {
                         self.constructor_args.clone()
                     };
