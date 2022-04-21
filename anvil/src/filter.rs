@@ -7,11 +7,13 @@ use crate::{
 use anvil_core::eth::{filter::FilteredParams, subscription::SubscriptionId};
 use anvil_rpc::response::ResponseResult;
 use ethers::prelude::{Log as EthersLog, H256 as TxHash};
-use futures::{channel::mpsc::Receiver, StreamExt};
+use futures::{channel::mpsc::Receiver, Stream, StreamExt};
 
 use std::{
     collections::HashMap,
+    pin::Pin,
     sync::Arc,
+    task::{Context, Poll},
     time::{Duration, Instant},
 };
 use tokio::sync::Mutex;
@@ -47,7 +49,10 @@ impl Filters {
         {
             let mut filters = self.active_filters.lock().await;
             if let Some((filter, timestamp)) = filters.get_mut(id) {
-                let resp = filter.poll().await;
+                let resp = filter
+                    .next()
+                    .await
+                    .unwrap_or_else(|| ResponseResult::success(Vec::<()>::new()));
                 *timestamp = Instant::now();
                 return resp
             }
@@ -104,24 +109,26 @@ pub enum EthFilter {
 
 // === impl EthFilter ===
 
-impl EthFilter {
-    /// Returns the next result to send to the subscriber
-    pub async fn poll(&mut self) -> ResponseResult {
-        match self {
-            EthFilter::Logs(logs) => Ok(logs.get_logs().await).to_rpc_result(),
+impl Stream for EthFilter {
+    type Item = ResponseResult;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let pin = self.get_mut();
+        match pin {
+            EthFilter::Logs(logs) => Poll::Ready(Some(Ok(logs.poll(cx)).to_rpc_result())),
             EthFilter::Blocks(blocks) => {
                 let mut new_blocks = Vec::new();
-                while let Some(block) = blocks.next().await {
+                while let Poll::Ready(Some(block)) = blocks.poll_next_unpin(cx) {
                     new_blocks.push(block.hash);
                 }
-                Ok(new_blocks).to_rpc_result()
+                Poll::Ready(Some(Ok(new_blocks).to_rpc_result()))
             }
             EthFilter::PendingTransactions(tx) => {
                 let mut new_txs = Vec::new();
-                while let Some(tx_hash) = tx.next().await {
+                while let Poll::Ready(Some(tx_hash)) = tx.poll_next_unpin(cx) {
                     new_txs.push(tx_hash);
                 }
-                Ok(new_txs).to_rpc_result()
+                Poll::Ready(Some(Ok(new_txs).to_rpc_result()))
             }
         }
     }
@@ -139,9 +146,9 @@ pub struct LogsFilter {
 
 impl LogsFilter {
     /// Returns all the logs since the last time this filter was polled
-    pub async fn get_logs(&mut self) -> Vec<EthersLog> {
+    pub fn poll(&mut self, cx: &mut Context<'_>) -> Vec<EthersLog> {
         let mut logs = Vec::new();
-        while let Some(block) = self.blocks.next().await {
+        while let Poll::Ready(Some(block)) = self.blocks.poll_next_unpin(cx) {
             let b = self.storage.block(block.hash);
             let receipts = self.storage.receipts(block.hash);
             if let (Some(receipts), Some(block)) = (receipts, b) {

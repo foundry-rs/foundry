@@ -1,11 +1,12 @@
 //! tests for subscriptions
 
-use crate::next_port;
+use crate::{init_tracing, next_port};
 use anvil::{spawn, NodeConfig};
 use ethers::{
     contract::abigen,
     middleware::SignerMiddleware,
     prelude::Middleware,
+    signers::Signer,
     types::{Filter, ValueOrArray},
 };
 use futures::StreamExt;
@@ -65,4 +66,46 @@ async fn test_sub_logs() {
 
     // ensure the log in the receipt is the same as received via subscription stream
     assert_eq!(receipt.logs[0], log);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_filters() {
+    init_tracing();
+    abigen!(EmitLogs, "test-data/emit_logs.json");
+
+    let (_api, handle) = spawn(NodeConfig::test().port(next_port())).await;
+    let provider = handle.http_provider();
+
+    let wallet = handle.dev_wallets().next().unwrap();
+    let from = wallet.address();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let msg = "First Message".to_string();
+    let contract =
+        EmitLogs::deploy(Arc::clone(&client), msg.clone()).unwrap().legacy().send().await.unwrap();
+
+    let filter = contract.value_changed_filter();
+    let mut stream = filter.stream().await.unwrap();
+
+    // send a tx triggering an event
+    let _receipt = contract
+        .set_value("Next Message".to_string())
+        .legacy()
+        .send()
+        .await
+        .unwrap()
+        .await
+        .unwrap()
+        .unwrap();
+
+    // get the emitted event
+    let log = stream.next().await.unwrap().unwrap();
+    assert_eq!(
+        log,
+        ValueChangedFilter {
+            author: from,
+            old_value: "First Message".to_string(),
+            new_value: "Next Message".to_string(),
+        },
+    );
 }
