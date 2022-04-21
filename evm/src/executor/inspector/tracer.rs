@@ -1,8 +1,5 @@
 use crate::{
-    executor::{
-        inspector::utils::{gas_used, get_create_address},
-        HARDHAT_CONSOLE_ADDRESS,
-    },
+    executor::inspector::utils::{gas_used, get_create_address},
     trace::{
         CallTrace, CallTraceArena, LogCallOrder, RawOrDecodedCall, RawOrDecodedLog,
         RawOrDecodedReturnData,
@@ -75,15 +72,13 @@ where
         call: &mut CallInputs,
         _: bool,
     ) -> (Return, Gas, Bytes) {
-        if call.contract != HARDHAT_CONSOLE_ADDRESS {
-            self.start_trace(
-                data.subroutine.depth() as usize,
-                call.context.code_address,
-                call.input.to_vec(),
-                call.transfer.value,
-                call.context.scheme.into(),
-            );
-        }
+        self.start_trace(
+            data.subroutine.depth() as usize,
+            call.context.code_address,
+            call.input.to_vec(),
+            call.transfer.value,
+            call.context.scheme.into(),
+        );
 
         (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
     }
@@ -98,20 +93,18 @@ where
     fn call_end(
         &mut self,
         data: &mut EVMData<'_, DB>,
-        call: &CallInputs,
+        _call: &CallInputs,
         gas: Gas,
         status: Return,
         retdata: Bytes,
         _: bool,
     ) -> (Return, Gas, Bytes) {
-        if call.contract != HARDHAT_CONSOLE_ADDRESS {
-            self.fill_trace(
-                matches!(status, return_ok!()),
-                gas_used(data.env.cfg.spec_id, gas.spend(), gas.refunded() as u64),
-                retdata.to_vec(),
-                None,
-            );
-        }
+        self.fill_trace(
+            matches!(status, return_ok!()),
+            gas_used(data.env.cfg.spec_id, gas.spend(), gas.refunded() as u64),
+            retdata.to_vec(),
+            None,
+        );
 
         (status, gas, retdata)
     }

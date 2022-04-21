@@ -3,7 +3,7 @@ use super::{
     RawOrDecodedReturnData,
 };
 use crate::{
-    abi::{CHEATCODE_ADDRESS, CONSOLE_ABI, HEVM_ABI},
+    abi::{CHEATCODE_ADDRESS, CONSOLE_ABI, HARDHAT_CONSOLE_ABI, HARDHAT_CONSOLE_ADDRESS, HEVM_ABI},
     trace::{node::CallTraceNode, utils},
 };
 use ethers::{
@@ -79,6 +79,12 @@ impl CallTraceDecoder {
     /// The call trace decoder always knows how to decode calls to the cheatcode address, as well
     /// as DSTest-style logs.
     pub fn new() -> Self {
+        let functions = HARDHAT_CONSOLE_ABI
+            .functions()
+            .map(|func| (func.short_signature(), vec![func.clone()]))
+            .chain(HEVM_ABI.functions().map(|func| (func.short_signature(), vec![func.clone()])))
+            .collect::<BTreeMap<[u8; 4], Vec<Function>>>();
+
         Self {
             // TODO: These are the Ethereum precompiles. We should add a way to support precompiles
             // for other networks, too.
@@ -153,11 +159,12 @@ impl CallTraceDecoder {
             ]
             .into(),
             contracts: Default::default(),
-            labels: [(CHEATCODE_ADDRESS, "VM".to_string())].into(),
-            functions: HEVM_ABI
-                .functions()
-                .map(|func| (func.short_signature(), vec![func.clone()]))
-                .collect::<BTreeMap<[u8; 4], Vec<Function>>>(),
+            labels: [
+                (CHEATCODE_ADDRESS, "VM".to_string()),
+                (HARDHAT_CONSOLE_ADDRESS, "console".to_string()),
+            ]
+            .into(),
+            functions,
             events: CONSOLE_ABI
                 .events()
                 .map(|event| ((event.signature(), indexed_inputs(event)), vec![event.clone()]))
