@@ -305,7 +305,7 @@ pub enum EthPubSub {
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(untagged)]
 pub enum EthRpcCall {
-    Request(EthRequest),
+    Request(Box<EthRequest>),
     PubSub(EthPubSub),
 }
 
