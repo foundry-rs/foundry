@@ -1,7 +1,7 @@
 use clap::Parser;
 use ethers::utils::WEI_IN_ETHER;
 
-use crate::{eth::fees::INITIAL_BASE_FEE, AccountGenerator, NodeConfig, CHAIN_ID};
+use crate::{AccountGenerator, NodeConfig, CHAIN_ID};
 use forge::executor::opts::EvmOpts;
 use foundry_common::evm::EvmArgs;
 
@@ -44,22 +44,18 @@ impl NodeArgs {
             foundry_config::find_project_root_path().unwrap(),
         )
         .merge(&self.evm_opts);
-        let mut evm_opts = figment.extract::<EvmOpts>().expect("EvmOpts are subset");
+        let evm_opts = figment.extract::<EvmOpts>().expect("EvmOpts are subset");
         let genesis_balance = WEI_IN_ETHER.saturating_mul(self.balance.into());
-
-        if evm_opts.env.gas_price == 0 {
-            evm_opts.env.gas_price = NodeConfig::default().gas_price.as_u64();
-        }
 
         NodeConfig::default()
             .chain_id(evm_opts.env.chain_id.unwrap_or(CHAIN_ID))
-            .gas_limit(evm_opts.env.gas_limit)
-            .gas_price(evm_opts.env.gas_price)
+            .gas_limit(self.evm_opts.env.gas_limit)
+            .gas_price(self.evm_opts.env.gas_price)
             .account_generator(self.account_generator())
             .genesis_balance(genesis_balance)
             .port(self.port)
             .eth_rpc_url(evm_opts.fork_url)
-            .base_fee(self.evm_opts.env.block_base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE))
+            .base_fee(self.evm_opts.env.block_base_fee_per_gas)
             .fork_block_number(evm_opts.fork_block_number)
     }
 

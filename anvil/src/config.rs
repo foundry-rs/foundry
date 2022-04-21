@@ -121,22 +121,28 @@ impl NodeConfig {
 
     /// Sets the gas limit
     #[must_use]
-    pub fn gas_limit<U: Into<U256>>(mut self, gas_limit: U) -> Self {
-        self.gas_limit = gas_limit.into();
+    pub fn gas_limit<U: Into<U256>>(mut self, gas_limit: Option<U>) -> Self {
+        if let Some(gas_limit) = gas_limit {
+            self.gas_limit = gas_limit.into();
+        }
         self
     }
 
     /// Sets the gas price
     #[must_use]
-    pub fn gas_price<U: Into<U256>>(mut self, gas_price: U) -> Self {
-        self.gas_price = gas_price.into();
+    pub fn gas_price<U: Into<U256>>(mut self, gas_price: Option<U>) -> Self {
+        if let Some(gas_price) = gas_price {
+            self.gas_price = gas_price.into();
+        }
         self
     }
 
     /// Sets the base fee
     #[must_use]
-    pub fn base_fee<U: Into<U256>>(mut self, base_fee: U) -> Self {
-        self.base_fee = base_fee.into();
+    pub fn base_fee<U: Into<U256>>(mut self, base_fee: Option<U>) -> Self {
+        if let Some(base_fee) = base_fee {
+            self.base_fee = base_fee.into();
+        }
         self
     }
 
@@ -244,7 +250,7 @@ Private Keys
         if let Some(ref gen) = self.account_generator {
             print!(
                 r#"
-Wallte
+Wallet
 ==================
 Mnemonic:          {}
 Derivation path:   {}
