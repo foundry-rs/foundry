@@ -114,11 +114,18 @@ impl CreateArgs {
             Some(ref v) => {
                 let constructor_args =
                     if let Some(ref constructor_args_path) = self.constructor_args_path {
-                        if !std::path::Path::new(&constructor_args_path).exists() {
+                        let path = std::path::Path::new(&constructor_args_path);
+                        if !path.exists() {
                             eyre::bail!("constructor args path not found");
                         }
-                        let file = fs::read_to_string(constructor_args_path)?;
-                        file.split_whitespace().map(|s| s.to_string()).collect::<Vec<String>>()
+                        if path.extension() == Some(std::ffi::OsStr::new("json")) {
+                            let file = fs::File::open(constructor_args_path)?;
+                            serde_json::from_reader(file)
+                                .expect("constructor args file content should be JSON array")
+                        } else {
+                            let file = fs::read_to_string(constructor_args_path)?;
+                            file.split_whitespace().map(|s| s.to_string()).collect::<Vec<String>>()
+                        }
                     } else {
                         self.constructor_args.clone()
                     };
