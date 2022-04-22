@@ -200,7 +200,11 @@ where
     fn log(&mut self, _: &mut EVMData<'_, DB>, address: &Address, topics: &[H256], data: &Bytes) {
         // Match logs if `expectEmit` has been called
         if !self.expected_emits.is_empty() {
-            handle_expect_emit(self, RawLog { topics: topics.to_vec(), data: data.to_vec() }, address);
+            handle_expect_emit(
+                self,
+                RawLog { topics: topics.to_vec(), data: data.to_vec() },
+                address,
+            );
         }
     }
 
