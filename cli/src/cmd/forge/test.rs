@@ -220,7 +220,10 @@ impl TestArgs {
     /// Returns the [`watchexec::InitConfig`] and [`watchexec::RuntimeConfig`] necessary to
     /// bootstrap a new [`watchexe::Watchexec`] loop.
     pub(crate) fn watchexec_config(&self) -> eyre::Result<(InitConfig, RuntimeConfig)> {
-        self.watch.watchexec_config(|| Config::from(self).src)
+        self.watch.watchexec_config(|| {
+            let config = Config::from(self);
+            vec![config.src, config.test]
+        })
     }
 }
 

@@ -272,7 +272,10 @@ impl BuildArgs {
     /// bootstrap a new [`watchexe::Watchexec`] loop.
     pub(crate) fn watchexec_config(&self) -> eyre::Result<(InitConfig, RuntimeConfig)> {
         // use the path arguments or if none where provided the `src` dir
-        self.watch.watchexec_config(|| Config::from(self).src)
+        self.watch.watchexec_config(|| {
+            let config = Config::from(self);
+            vec![config.src, config.test]
+        })
     }
 }
 
