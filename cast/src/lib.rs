@@ -13,6 +13,7 @@ use ethers_core::{
 use ethers_etherscan::Client;
 use ethers_providers::{Middleware, PendingTransaction};
 use eyre::{Context, Result};
+pub use foundry_evm::*;
 use foundry_utils::{encode_args, to_table};
 use print_utils::{get_pretty_block_attr, get_pretty_tx_attr, UIfmt};
 use rustc_hex::{FromHexIter, ToHex};

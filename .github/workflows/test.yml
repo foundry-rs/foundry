@@ -108,8 +108,7 @@ jobs:
       - name: Install toolchain
         uses: actions-rs/toolchain@v1
         with:
-          # nightly regression https://github.com/rust-lang/rust/issues/95267
-          toolchain: nightly-2022-03-20
+          toolchain: nightly
           profile: minimal
           components: rustfmt, clippy
           override: true
@@ -119,10 +118,10 @@ jobs:
           cache-on-failure: true
 
       - name: cargo fmt
-        run: cargo +nightly-2022-03-20 fmt --all -- --check
+        run: cargo +nightly fmt --all -- --check
 
       - name: cargo clippy
-        run: cargo +nightly-2022-03-20 clippy --all --all-features -- -D warnings
+        run: cargo +nightly clippy --all --all-features -- -D warnings
 
   cross-platform:
     name: Cross-platform tests

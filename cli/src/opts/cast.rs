@@ -1,6 +1,6 @@
 use super::{ClapChain, EthereumOpts, Wallet};
 use crate::{
-    cmd::cast::find_block::FindBlockArgs,
+    cmd::cast::{find_block::FindBlockArgs, run::RunArgs},
     utils::{parse_ether_value, parse_u256},
 };
 use clap::{Parser, Subcommand, ValueHint};
@@ -623,6 +623,11 @@ If an address is specified, then the ABI is fetched from Etherscan."#
         #[clap(arg_enum)]
         shell: clap_complete::Shell,
     },
+    #[clap(
+        name = "run",
+        about = "Runs a published transaction in a local environment and prints the trace."
+    )]
+    Run(RunArgs),
 }
 
 #[derive(Debug, Parser)]
