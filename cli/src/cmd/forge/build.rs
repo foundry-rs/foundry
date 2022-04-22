@@ -141,7 +141,7 @@ pub struct CoreBuildArgs {
 
     #[clap(
         help_heading = "PROJECT OPTIONS",
-        help = r#"How to treat revert (and require) reason strings. Possible values are "default", "strip", "debug" and "verboseDebug""#,
+        help = r#"Revert string configuration. Possible values are "default", "strip" (remove), "debug" (Solidity-generated revert strings) and "verboseDebug""#,
         long = "revert-strings",
         value_name = "revert"
     )]
