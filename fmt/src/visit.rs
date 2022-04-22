@@ -250,6 +250,12 @@ pub trait Visitor {
         Ok(())
     }
 
+    fn visit_base(&mut self, base: &mut Base) -> VResult {
+        self.visit_source(base.loc)?;
+
+        Ok(())
+    }
+
     fn visit_parameter(&mut self, parameter: &mut Parameter) -> VResult {
         self.visit_source(parameter.loc)?;
 
@@ -493,6 +499,14 @@ impl Visitable for Parameter {
 impl Visitable for ParameterList {
     fn visit(&mut self, v: &mut impl Visitor) -> VResult {
         v.visit_parameter_list(self)?;
+
+        Ok(())
+    }
+}
+
+impl Visitable for Base {
+    fn visit(&mut self, v: &mut impl Visitor) -> VResult {
+        v.visit_base(self)?;
 
         Ok(())
     }
