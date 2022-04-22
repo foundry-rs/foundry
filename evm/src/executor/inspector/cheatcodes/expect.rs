@@ -114,11 +114,13 @@ pub struct ExpectedEmit {
     /// │topic 1│topic 2│topic 3│data│
     /// └───────┴───────┴───────┴────┘
     pub checks: [bool; 4],
+    /// If present, check originating address against this
+    pub address: Option<Address>,
     /// Whether the log was actually found in the subcalls
     pub found: bool,
 }
 
-pub fn handle_expect_emit(state: &mut Cheatcodes, log: RawLog) {
+pub fn handle_expect_emit(state: &mut Cheatcodes, log: RawLog, address: &Address) {
     // Fill or check the expected emits
     if let Some(next_expect_to_fill) =
         state.expected_emits.iter_mut().find(|expect| expect.log.is_none())
@@ -135,7 +137,8 @@ pub fn handle_expect_emit(state: &mut Cheatcodes, log: RawLog) {
             if expected.topics.len() != log.topics.len() {
                 next_expect.found = false;
             } else {
-                let topics_match = log
+                // Match topics
+                next_expect.found = log
                     .topics
                     .iter()
                     .skip(1)
@@ -143,12 +146,15 @@ pub fn handle_expect_emit(state: &mut Cheatcodes, log: RawLog) {
                     .filter(|(i, _)| next_expect.checks[*i])
                     .all(|(i, topic)| topic == &expected.topics[i + 1]);
 
-                // Maybe check data
-                next_expect.found = if next_expect.checks[3] {
-                    expected.data == log.data && topics_match
-                } else {
-                    topics_match
-                };
+                // Maybe match source address
+                if let Some(addr) = next_expect.address {
+                    next_expect.found &= addr == *address;
+                }
+
+                // Maybe match data
+                if next_expect.checks[3] {
+                    next_expect.found &= expected.data == log.data;
+                }
             }
         }
     }
@@ -167,10 +173,19 @@ pub fn apply<DB: Database>(
         HEVMCalls::ExpectRevert2(inner) => {
             expect_revert(state, inner.0.to_vec().into(), data.subroutine.depth())
         }
-        HEVMCalls::ExpectEmit(inner) => {
+        HEVMCalls::ExpectEmit0(inner) => {
             state.expected_emits.push(ExpectedEmit {
                 depth: data.subroutine.depth() - 1,
                 checks: [inner.0, inner.1, inner.2, inner.3],
+                ..Default::default()
+            });
+            Ok(Bytes::new())
+        }
+        HEVMCalls::ExpectEmit1(inner) => {
+            state.expected_emits.push(ExpectedEmit {
+                depth: data.subroutine.depth() - 1,
+                checks: [inner.0, inner.1, inner.2, inner.3],
+                address: Some(inner.4),
                 ..Default::default()
             });
             Ok(Bytes::new())
