@@ -195,7 +195,7 @@ async fn main() -> eyre::Result<()> {
 
             let mut builder =
                 TxBuilder::new(&provider, config.sender, address, eth.chain, false).await?;
-            builder.set_args(&sig, args).await?.etherscan_api_key(eth.etherscan_api_key);
+            builder.etherscan_api_key(eth.etherscan_api_key).set_args(&sig, args).await?;
             let builder_output = builder.build();
             println!("{}", Cast::new(provider).call(builder_output, block).await?);
         }
