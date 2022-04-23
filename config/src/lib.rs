@@ -882,7 +882,7 @@ impl From<RegexWrapper> for regex::Regex {
 
 impl From<regex::Regex> for RegexWrapper {
     fn from(re: Regex) -> Self {
-       RegexWrapper { inner: re }
+        RegexWrapper { inner: re }
     }
 }
 
@@ -891,22 +891,22 @@ pub(crate) mod from_opt_glob {
     use serde::{Deserialize, Deserializer, Serializer};
 
     pub fn serialize<S>(value: &Option<globset::Glob>, serializer: S) -> Result<S::Ok, S::Error>
-        where
-            S: Serializer,
+    where
+        S: Serializer,
     {
         match value {
             Some(glob) => serializer.serialize_str(glob.glob()),
-            None => serializer.serialize_none()
+            None => serializer.serialize_none(),
         }
     }
 
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<globset::Glob>, D::Error>
-        where
-            D: Deserializer<'de>,
+    where
+        D: Deserializer<'de>,
     {
         let s: Option<String> = Option::deserialize(deserializer)?;
         if let Some(s) = s {
-            return Ok(Some(globset::Glob::new(&s).map_err(serde::de::Error::custom)?));
+            return Ok(Some(globset::Glob::new(&s).map_err(serde::de::Error::custom)?))
         }
         Ok(None)
     }

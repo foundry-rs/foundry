@@ -3,10 +3,7 @@ use foundry_cli_test_utils::{
     forgetest,
     util::{TestCommand, TestProject},
 };
-use foundry_config::{
-    Config,
-    RegexWrapper
-};
+use foundry_config::{Config, RegexWrapper};
 use std::str::FromStr;
 
 // import forge utils as mod
