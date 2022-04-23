@@ -210,6 +210,20 @@ contract ExpectEmitTest is DSTest {
         );
     }
 
+    function testExpectEmitAddress() public {
+        cheats.expectEmit(true, true, true, true, address(emitter));
+        emit Something(1, 2, 3, 4);
+
+        emitter.emitEvent(1, 2, 3, 4);
+    }
+
+    function testFailExpectEmitAddress() public {
+        cheats.expectEmit(true, true, true, true, address(0));
+        emit Something(1, 2, 3, 4);
+
+        emitter.emitEvent(1, 2, 3, 4);
+    }
+
     /// Ref: issue #760
     function testFailLowLevelWithoutEmit() public {
         LowLevelCaller caller = new LowLevelCaller();

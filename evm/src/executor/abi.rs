@@ -35,6 +35,7 @@ ethers::contract::abigen!(
             record()
             accesses(address)(bytes32[],bytes32[])
             expectEmit(bool,bool,bool,bool)
+            expectEmit(bool,bool,bool,bool,address)
             mockCall(address,bytes,bytes)
             clearMockedCalls()
             expectCall(address,bytes)
