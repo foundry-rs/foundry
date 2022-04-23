@@ -13,6 +13,7 @@ readme = "README.md"
 dirs-next = "2.0.0"
 semver = { version = "1.0.5", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
+serde_regex = "1.1.0"
 toml = "0.5"
 figment = { version = "0.10", features = ["toml", "env"] }
 eyre = "0.6.5"
@@ -20,6 +21,8 @@ ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features =
 ethers-solc = { git = "https://github.com/gakonst/ethers-rs", default-features = false, features = ["async", "svm-solc"] }
 Inflector = "0.11.4"
 regex = "1.5.5"
+#globset = { version = "0.4.8", features = ["serde1"] }
+globset = "0.4.8"
 
 [dev-dependencies]
 pretty_assertions = "1.0.0"

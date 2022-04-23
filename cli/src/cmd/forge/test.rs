@@ -71,6 +71,32 @@ pub struct Filter {
     pub path_pattern_inverse: Option<globset::Glob>,
 }
 
+impl Filter {
+    pub fn with_merged_config(&self) -> Self {
+        let config = Config::load();
+        let mut filter = self.clone();
+        if filter.test_pattern.is_none() {
+            filter.test_pattern = config.test_pattern.map(|p| p.into());
+        }
+        if filter.test_pattern_inverse.is_none() {
+            filter.test_pattern_inverse = config.test_pattern_inverse.map(|p| p.into());
+        }
+        if filter.contract_pattern.is_none() {
+            filter.contract_pattern = config.contract_pattern.map(|p| p.into());
+        }
+        if filter.contract_pattern_inverse.is_none() {
+            filter.contract_pattern_inverse = config.contract_pattern_inverse.map(|p| p.into());
+        }
+        if filter.path_pattern.is_none() {
+            filter.path_pattern = config.path_pattern;
+        }
+        if filter.path_pattern_inverse.is_none() {
+            filter.path_pattern_inverse = config.path_pattern_inverse;
+        }
+        filter
+    }
+}
+
 impl FileFilter for Filter {
     /// Returns true if the file regex pattern match the `file`
     ///
@@ -193,9 +219,9 @@ impl TestArgs {
         &self.opts
     }
 
-    /// Returns the flattened [`Filter`] arguments
-    pub fn filter(&self) -> &Filter {
-        &self.filter
+    /// Returns the flattened [`Filter`] arguments merged with [`Config`]
+    pub fn filter(&self) -> Filter {
+        self.filter.with_merged_config()
     }
 
     /// Returns the currently configured [Config] and the extracted [EvmOpts] from that config
@@ -368,7 +394,7 @@ fn short_test_result(name: &str, result: &forge::TestResult) {
     println!("{} {} {}", status, name, result.kind.gas_used());
 }
 
-pub fn custom_run(mut args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<TestOutcome> {
+pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<TestOutcome> {
     // Merge all configs
     let (config, mut evm_opts) = args.config_and_evm_opts()?;
 
@@ -382,12 +408,13 @@ pub fn custom_run(mut args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<
         ..Default::default()
     };
     let fuzzer = proptest::test_runner::TestRunner::new(cfg);
+    let mut filter = args.filter();
 
     // Set up the project
     let project = config.project()?;
     let compiler = ProjectCompiler::default();
     let output = if config.sparse_mode {
-        compiler.compile_sparse(&project, args.filter.clone())
+        compiler.compile_sparse(&project, filter.clone())
     } else {
         compiler.compile(&project)
     }?;
@@ -409,11 +436,11 @@ pub fn custom_run(mut args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<
         .build(project.paths.root, output, evm_opts)?;
 
     if args.debug.is_some() {
-        args.filter.test_pattern = args.debug;
-        match runner.count_filtered_tests(&args.filter) {
+        filter.test_pattern = args.debug;
+        match runner.count_filtered_tests(&filter) {
                 1 => {
                     // Run the test
-                    let results = runner.test(&args.filter, None, true)?;
+                    let results = runner.test(&filter, None, true)?;
 
                     // Get the result of the single test
                     let (id, sig, test_kind, counterexample) = results.iter().map(|(id, SuiteResult{ test_results, .. })| {
@@ -455,7 +482,6 @@ pub fn custom_run(mut args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<
                         Use --match-contract and --match-path to further limit the search."))
             }
     } else {
-        let TestArgs { filter, .. } = args;
         test(
             config,
             runner,

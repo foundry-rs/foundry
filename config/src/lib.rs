@@ -43,6 +43,7 @@ pub use chain::Chain;
 
 // reexport so cli types can implement `figment::Provider` to easily merge compiler arguments
 pub use figment;
+use regex::Regex;
 
 /// Foundry configuration
 ///
@@ -141,6 +142,24 @@ pub struct Config {
     pub etherscan_api_key: Option<String>,
     /// list of solidity error codes to always silence in the compiler output
     pub ignored_error_codes: Vec<SolidityErrorCode>,
+    /// Only run test functions matching the specified regex pattern.
+    #[serde(rename = "match_test")]
+    pub test_pattern: Option<RegexWrapper>,
+    /// Only run test functions that do not match the specified regex pattern.
+    #[serde(rename = "no_match_test")]
+    pub test_pattern_inverse: Option<RegexWrapper>,
+    /// Only run tests in contracts matching the specified regex pattern.
+    #[serde(rename = "match_contract")]
+    pub contract_pattern: Option<RegexWrapper>,
+    /// Only run tests in contracts that do not match the specified regex pattern.
+    #[serde(rename = "no_match_contract")]
+    pub contract_pattern_inverse: Option<RegexWrapper>,
+    /// Only run tests in source files matching the specified glob pattern.
+    #[serde(rename = "match_path", with = "from_opt_glob")]
+    pub path_pattern: Option<globset::Glob>,
+    /// Only run tests in source files that do not match the specified glob pattern.
+    #[serde(rename = "no_match_path", with = "from_opt_glob")]
+    pub path_pattern_inverse: Option<globset::Glob>,
     /// The number of test cases that must execute for each property test
     pub fuzz_runs: u32,
     /// Whether to allow ffi cheatcodes in test
@@ -843,6 +862,66 @@ impl From<Config> for Figment {
     }
 }
 
+/// Wrapper type for `regex::Regex` that implements `PartialEq`
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(transparent)]
+pub struct RegexWrapper {
+    #[serde(with = "serde_regex")]
+    inner: regex::Regex,
+}
+
+impl std::ops::Deref for RegexWrapper {
+    type Target = regex::Regex;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl std::cmp::PartialEq for RegexWrapper {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl From<RegexWrapper> for regex::Regex {
+    fn from(wrapper: RegexWrapper) -> Self {
+        wrapper.inner
+    }
+}
+
+impl From<regex::Regex> for RegexWrapper {
+    fn from(re: Regex) -> Self {
+        RegexWrapper { inner: re }
+    }
+}
+
+/// Ser/de `globset::Glob` explicitly to handle `Option<Glob>` properly
+pub(crate) mod from_opt_glob {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &Option<globset::Glob>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match value {
+            Some(glob) => serializer.serialize_str(glob.glob()),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<globset::Glob>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s: Option<String> = Option::deserialize(deserializer)?;
+        if let Some(s) = s {
+            return Ok(Some(globset::Glob::new(&s).map_err(serde::de::Error::custom)?))
+        }
+        Ok(None)
+    }
+}
+
 /// A helper wrapper around the root path used during Config detection
 #[derive(Debug, PartialEq, Eq, Hash, Clone, PartialOrd, Ord, Deserialize, Serialize)]
 #[serde(transparent)]
@@ -920,6 +999,12 @@ impl Default for Config {
             extra_output_files: Default::default(),
             names: false,
             sizes: false,
+            test_pattern: None,
+            test_pattern_inverse: None,
+            contract_pattern: None,
+            contract_pattern_inverse: None,
+            path_pattern: None,
+            path_pattern_inverse: None,
             fuzz_runs: 256,
             fuzz_max_local_rejects: 1024,
             fuzz_max_global_rejects: 65536,
