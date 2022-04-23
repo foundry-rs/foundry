@@ -164,6 +164,8 @@ which implements the following methods:
   
 - `function expectEmit(bool,bool,bool,bool) external`: Expects the next emitted event. Params check topic 1, topic 2, topic 3 and data are the same.
 
+- `function expectEmit(bool,bool,bool,bool,address) external`: Expects the next emitted event. Params check topic 1, topic 2, topic 3 and data are the same. Also checks supplied address against address of originating contract.
+
 - `function getCode(string calldata) external returns (bytes memory)`: Fetches bytecode from a contract artifact. The parameter can either be in the form `ContractFile.sol` (if the filename and contract name are the same), `ContractFile.sol:ContractName`, or `./path/to/artifact.json`.
 
 - `function label(address addr, string calldata label) external`: Label an address in test traces.
@@ -218,6 +220,7 @@ Below is another example using the `expectEmit` cheatcode to check events:
 ```solidity
 interface Vm {
     function expectEmit(bool,bool,bool,bool) external;
+    function expectEmit(bool,bool,bool,bool,address) external;
 }
 
 contract T is DSTest {
@@ -227,6 +230,14 @@ contract T is DSTest {
         ExpectEmit emitter = new ExpectEmit();
         // check topic 1, topic 2, and data are the same as the following emitted event
         vm.expectEmit(true,true,false,true);
+        emit Transfer(address(this), address(1337), 1337);
+        emitter.t();
+    }
+  
+    function testExpectEmitWithAddress() public {
+        ExpectEmit emitter = new ExpectEmit();
+        // do the same as above and check emitting address
+        vm.expectEmit(true,true,false,true,address(emitter));
         emit Transfer(address(this), address(1337), 1337);
         emitter.t();
     }

@@ -210,7 +210,7 @@ contract Greeter {
     assert!(output.contains(
         "
 Compiler run successful (with warnings)
-Warning: Unused function parameter. Remove or comment out the variable name to silence this warning.
+warning[5667]: Warning: Unused function parameter. Remove or comment out the variable name to silence this warning.
 ",
     ));
 });

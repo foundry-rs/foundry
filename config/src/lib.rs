@@ -11,7 +11,10 @@ use crate::caching::StorageCachingConfig;
 use ethers_core::types::{Address, U256};
 pub use ethers_solc::artifacts::OptimizerDetails;
 use ethers_solc::{
-    artifacts::{output_selection::ContractOutputSelection, BytecodeHash, Optimizer, Settings},
+    artifacts::{
+        output_selection::ContractOutputSelection, serde_helpers, BytecodeHash, DebuggingSettings,
+        Optimizer, RevertStrings, Settings,
+    },
     cache::SOLIDITY_FILES_CACHE_FILENAME,
     error::SolcError,
     remappings::{RelativeRemapping, Remapping},
@@ -40,6 +43,7 @@ pub use chain::Chain;
 
 // reexport so cli types can implement `figment::Provider` to easily merge compiler arguments
 pub use figment;
+use regex::Regex;
 
 /// Foundry configuration
 ///
@@ -138,6 +142,24 @@ pub struct Config {
     pub etherscan_api_key: Option<String>,
     /// list of solidity error codes to always silence in the compiler output
     pub ignored_error_codes: Vec<SolidityErrorCode>,
+    /// Only run test functions matching the specified regex pattern.
+    #[serde(rename = "match_test")]
+    pub test_pattern: Option<RegexWrapper>,
+    /// Only run test functions that do not match the specified regex pattern.
+    #[serde(rename = "no_match_test")]
+    pub test_pattern_inverse: Option<RegexWrapper>,
+    /// Only run tests in contracts matching the specified regex pattern.
+    #[serde(rename = "match_contract")]
+    pub contract_pattern: Option<RegexWrapper>,
+    /// Only run tests in contracts that do not match the specified regex pattern.
+    #[serde(rename = "no_match_contract")]
+    pub contract_pattern_inverse: Option<RegexWrapper>,
+    /// Only run tests in source files matching the specified glob pattern.
+    #[serde(rename = "match_path", with = "from_opt_glob")]
+    pub path_pattern: Option<globset::Glob>,
+    /// Only run tests in source files that do not match the specified glob pattern.
+    #[serde(rename = "no_match_path", with = "from_opt_glob")]
+    pub path_pattern_inverse: Option<globset::Glob>,
     /// The number of test cases that must execute for each property test
     pub fuzz_runs: u32,
     /// Whether to allow ffi cheatcodes in test
@@ -221,6 +243,9 @@ pub struct Config {
     /// The metadata hash is machine dependent. By default, this is set to [BytecodeHash::None] to allow for deterministic code, See: <https://docs.soliditylang.org/en/latest/metadata.html>
     #[serde(with = "from_str_lowercase")]
     pub bytecode_hash: BytecodeHash,
+    /// How to treat revert (and require) reason strings.
+    #[serde(with = "serde_helpers::display_from_str_opt")]
+    pub revert_strings: Option<RevertStrings>,
     /// Whether to compile in sparse mode
     ///
     /// If this option is enabled, only the required contracts/files will be selected to be
@@ -567,6 +592,10 @@ impl Config {
             evm_version: Some(self.evm_version),
             libraries,
             metadata: Some(self.bytecode_hash.into()),
+            debug: self.revert_strings.map(|revert_strings| DebuggingSettings {
+                revert_strings: Some(revert_strings),
+                debug_info: Vec::new(),
+            }),
             ..Default::default()
         }
         .with_extra_output(self.configured_artifacts_handler().output_selection())
@@ -833,6 +862,66 @@ impl From<Config> for Figment {
     }
 }
 
+/// Wrapper type for `regex::Regex` that implements `PartialEq`
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(transparent)]
+pub struct RegexWrapper {
+    #[serde(with = "serde_regex")]
+    inner: regex::Regex,
+}
+
+impl std::ops::Deref for RegexWrapper {
+    type Target = regex::Regex;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl std::cmp::PartialEq for RegexWrapper {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl From<RegexWrapper> for regex::Regex {
+    fn from(wrapper: RegexWrapper) -> Self {
+        wrapper.inner
+    }
+}
+
+impl From<regex::Regex> for RegexWrapper {
+    fn from(re: Regex) -> Self {
+        RegexWrapper { inner: re }
+    }
+}
+
+/// Ser/de `globset::Glob` explicitly to handle `Option<Glob>` properly
+pub(crate) mod from_opt_glob {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &Option<globset::Glob>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match value {
+            Some(glob) => serializer.serialize_str(glob.glob()),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<globset::Glob>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s: Option<String> = Option::deserialize(deserializer)?;
+        if let Some(s) = s {
+            return Ok(Some(globset::Glob::new(&s).map_err(serde::de::Error::custom)?))
+        }
+        Ok(None)
+    }
+}
+
 /// A helper wrapper around the root path used during Config detection
 #[derive(Debug, PartialEq, Eq, Hash, Clone, PartialOrd, Ord, Deserialize, Serialize)]
 #[serde(transparent)]
@@ -910,6 +999,12 @@ impl Default for Config {
             extra_output_files: Default::default(),
             names: false,
             sizes: false,
+            test_pattern: None,
+            test_pattern_inverse: None,
+            contract_pattern: None,
+            contract_pattern_inverse: None,
+            path_pattern: None,
+            path_pattern_inverse: None,
             fuzz_runs: 256,
             fuzz_max_local_rejects: 1024,
             fuzz_max_global_rejects: 65536,
@@ -939,6 +1034,7 @@ impl Default for Config {
             rpc_storage_caching: Default::default(),
             no_storage_caching: false,
             bytecode_hash: BytecodeHash::Ipfs,
+            revert_strings: None,
             sparse_mode: false,
         }
     }
@@ -1108,8 +1204,12 @@ impl<P: Provider> Provider for BackwardsCompatProvider<P> {
 
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
         let mut map = Map::new();
+        let solc_env = std::env::var("FOUNDRY_SOLC_VERSION")
+            .or_else(|_| std::env::var("DAPP_SOLC_VERSION"))
+            .map(Value::from)
+            .ok();
         for (profile, mut dict) in self.0.data()? {
-            if let Some(v) = dict.remove("solc_version") {
+            if let Some(v) = solc_env.clone().or_else(|| dict.remove("solc_version")) {
                 dict.insert("solc".to_string(), v);
             }
             map.insert(profile, dict);
@@ -1643,6 +1743,7 @@ mod tests {
                 via_ir = true
                 rpc_storage_caching = { chains = [1, "optimism", 999999], endpoints = "all"}
                 bytecode_hash = "ipfs"
+                revert_strings = "strip"
             "#,
             )?;
 
@@ -1666,6 +1767,7 @@ mod tests {
                         endpoints: CachedEndpoints::All
                     },
                     bytecode_hash: BytecodeHash::Ipfs,
+                    revert_strings: Some(RevertStrings::Strip),
                     ..Config::default()
                 }
             );
@@ -1710,6 +1812,9 @@ mod tests {
             let config = Config::load();
             assert_eq!(config.solc, Some(SolcReq::Local("path/to/local/solc".into())));
 
+            jail.set_env("FOUNDRY_SOLC_VERSION", "0.6.6");
+            let config = Config::load();
+            assert_eq!(config.solc, Some(SolcReq::Version("0.6.6".parse().unwrap())));
             Ok(())
         });
     }
