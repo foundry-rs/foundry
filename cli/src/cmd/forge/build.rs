@@ -9,7 +9,7 @@ use crate::{
     opts::forge::CompilerArgs,
 };
 use clap::{Parser, ValueHint};
-use ethers::solc::{remappings::Remapping, utils::canonicalized};
+use ethers::solc::{artifacts::RevertStrings, remappings::Remapping, utils::canonicalized};
 use foundry_config::{
     figment::{
         self,
@@ -138,6 +138,15 @@ pub struct CoreBuildArgs {
     )]
     #[serde(skip)]
     pub config_path: Option<PathBuf>,
+
+    #[clap(
+        help_heading = "PROJECT OPTIONS",
+        help = r#"Revert string configuration. Possible values are "default", "strip" (remove), "debug" (Solidity-generated revert strings) and "verboseDebug""#,
+        long = "revert-strings",
+        value_name = "revert"
+    )]
+    #[serde(skip)]
+    pub revert_strings: Option<RevertStrings>,
 }
 
 impl CoreBuildArgs {
@@ -200,6 +209,10 @@ impl Provider for CoreBuildArgs {
         if let Some(ref extra) = self.compiler.extra_output_files {
             let selection: Vec<_> = extra.iter().map(|s| s.to_string()).collect();
             dict.insert("extra_output_files".to_string(), selection.into());
+        }
+
+        if let Some(ref revert) = self.revert_strings {
+            dict.insert("revert_strings".to_string(), revert.to_string().into());
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))

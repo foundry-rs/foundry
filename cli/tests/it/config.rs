@@ -1,6 +1,7 @@
 //! Contains various tests for checking forge commands related to config values
 use ethers::{
     prelude::artifacts::YulDetails,
+    solc::artifacts::RevertStrings,
     types::{Address, U256},
 };
 use forge::executor::opts::EvmOpts;
@@ -83,6 +84,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         },
         no_storage_caching: true,
         bytecode_hash: Default::default(),
+        revert_strings: Some(RevertStrings::Strip),
         sparse_mode: true,
         __non_exhaustive: (),
     };

@@ -11,7 +11,10 @@ use crate::caching::StorageCachingConfig;
 use ethers_core::types::{Address, U256};
 pub use ethers_solc::artifacts::OptimizerDetails;
 use ethers_solc::{
-    artifacts::{output_selection::ContractOutputSelection, BytecodeHash, Optimizer, Settings},
+    artifacts::{
+        output_selection::ContractOutputSelection, serde_helpers, BytecodeHash, DebuggingSettings,
+        Optimizer, RevertStrings, Settings,
+    },
     cache::SOLIDITY_FILES_CACHE_FILENAME,
     error::SolcError,
     remappings::{RelativeRemapping, Remapping},
@@ -221,6 +224,9 @@ pub struct Config {
     /// The metadata hash is machine dependent. By default, this is set to [BytecodeHash::None] to allow for deterministic code, See: <https://docs.soliditylang.org/en/latest/metadata.html>
     #[serde(with = "from_str_lowercase")]
     pub bytecode_hash: BytecodeHash,
+    /// How to treat revert (and require) reason strings.
+    #[serde(with = "serde_helpers::display_from_str_opt")]
+    pub revert_strings: Option<RevertStrings>,
     /// Whether to compile in sparse mode
     ///
     /// If this option is enabled, only the required contracts/files will be selected to be
@@ -567,6 +573,10 @@ impl Config {
             evm_version: Some(self.evm_version),
             libraries,
             metadata: Some(self.bytecode_hash.into()),
+            debug: self.revert_strings.map(|revert_strings| DebuggingSettings {
+                revert_strings: Some(revert_strings),
+                debug_info: Vec::new(),
+            }),
             ..Default::default()
         }
         .with_extra_output(self.configured_artifacts_handler().output_selection())
@@ -939,6 +949,7 @@ impl Default for Config {
             rpc_storage_caching: Default::default(),
             no_storage_caching: false,
             bytecode_hash: BytecodeHash::Ipfs,
+            revert_strings: None,
             sparse_mode: false,
         }
     }
@@ -1643,6 +1654,7 @@ mod tests {
                 via_ir = true
                 rpc_storage_caching = { chains = [1, "optimism", 999999], endpoints = "all"}
                 bytecode_hash = "ipfs"
+                revert_strings = "strip"
             "#,
             )?;
 
@@ -1666,6 +1678,7 @@ mod tests {
                         endpoints: CachedEndpoints::All
                     },
                     bytecode_hash: BytecodeHash::Ipfs,
+                    revert_strings: Some(RevertStrings::Strip),
                     ..Config::default()
                 }
             );
