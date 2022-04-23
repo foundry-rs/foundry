@@ -1119,8 +1119,12 @@ impl<P: Provider> Provider for BackwardsCompatProvider<P> {
 
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
         let mut map = Map::new();
+        let solc_env = std::env::var("FOUNDRY_SOLC_VERSION")
+            .or_else(|_| std::env::var("DAPP_SOLC_VERSION"))
+            .map(Value::from)
+            .ok();
         for (profile, mut dict) in self.0.data()? {
-            if let Some(v) = dict.remove("solc_version") {
+            if let Some(v) = solc_env.clone().or_else(|| dict.remove("solc_version")) {
                 dict.insert("solc".to_string(), v);
             }
             map.insert(profile, dict);
@@ -1723,6 +1727,9 @@ mod tests {
             let config = Config::load();
             assert_eq!(config.solc, Some(SolcReq::Local("path/to/local/solc".into())));
 
+            jail.set_env("FOUNDRY_SOLC_VERSION", "0.6.6");
+            let config = Config::load();
+            assert_eq!(config.solc, Some(SolcReq::Version("0.6.6".parse().unwrap())));
             Ok(())
         });
     }
