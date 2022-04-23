@@ -40,6 +40,7 @@ pub use chain::Chain;
 
 // reexport so cli types can implement `figment::Provider` to easily merge compiler arguments
 pub use figment;
+use regex::Regex;
 
 /// Foundry configuration
 ///
@@ -151,10 +152,10 @@ pub struct Config {
     #[serde(rename = "no_match_contract")]
     pub contract_pattern_inverse: Option<RegexWrapper>,
     /// Only run tests in source files matching the specified glob pattern.
-    #[serde(rename = "match_path")]
+    #[serde(rename = "match_path", with = "from_opt_glob")]
     pub path_pattern: Option<globset::Glob>,
     /// Only run tests in source files that do not match the specified glob pattern.
-    #[serde(rename = "no_match_path")]
+    #[serde(rename = "no_match_path", with = "from_opt_glob")]
     pub path_pattern_inverse: Option<globset::Glob>,
     /// The number of test cases that must execute for each property test
     pub fuzz_runs: u32,
@@ -876,6 +877,38 @@ impl std::cmp::PartialEq for RegexWrapper {
 impl From<RegexWrapper> for regex::Regex {
     fn from(wrapper: RegexWrapper) -> Self {
         wrapper.inner
+    }
+}
+
+impl From<regex::Regex> for RegexWrapper {
+    fn from(re: Regex) -> Self {
+       RegexWrapper { inner: re }
+    }
+}
+
+/// Ser/de `globset::Glob` explicitly to handle `Option<Glob>` properly
+pub(crate) mod from_opt_glob {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &Option<globset::Glob>, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+    {
+        match value {
+            Some(glob) => serializer.serialize_str(glob.glob()),
+            None => serializer.serialize_none()
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<globset::Glob>, D::Error>
+        where
+            D: Deserializer<'de>,
+    {
+        let s: Option<String> = Option::deserialize(deserializer)?;
+        if let Some(s) = s {
+            return Ok(Some(globset::Glob::new(&s).map_err(serde::de::Error::custom)?));
+        }
+        Ok(None)
     }
 }
 
