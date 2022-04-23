@@ -135,7 +135,6 @@ impl VerifyArgs {
             force: false,
             libraries: vec![],
             via_ir: false,
-            config_path: None,
             revert_strings: None,
         };
 
