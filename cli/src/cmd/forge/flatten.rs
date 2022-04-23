@@ -39,6 +39,7 @@ impl Cmd for FlattenArgs {
             force: false,
             libraries: vec![],
             via_ir: false,
+            revert_strings: None,
         };
 
         let config = Config::from(&build_args);

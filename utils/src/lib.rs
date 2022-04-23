@@ -19,6 +19,7 @@ use std::{
     collections::{BTreeMap, HashSet},
     env::VarError,
     fmt,
+    str::FromStr,
 };
 
 use tokio::runtime::{Handle, Runtime};
@@ -502,15 +503,29 @@ pub async fn get_func_etherscan(
 pub fn parse_tokens<'a, I: IntoIterator<Item = (&'a ParamType, &'a str)>>(
     params: I,
     lenient: bool,
-) -> eyre::Result<Vec<Token>> {
+) -> Result<Vec<Token>> {
     params
         .into_iter()
         .map(|(param, value)| {
-            if lenient {
+            let mut token = if lenient {
                 LenientTokenizer::tokenize(param, value)
             } else {
                 StrictTokenizer::tokenize(param, value)
+            };
+
+            if token.is_err() && value.starts_with("0x") {
+                if let ParamType::Uint(_) = param {
+                    // try again if value is hex
+                    if let Ok(value) = U256::from_str(value).map(|v| v.to_string()) {
+                        token = if lenient {
+                            LenientTokenizer::tokenize(param, &value)
+                        } else {
+                            StrictTokenizer::tokenize(param, &value)
+                        };
+                    }
+                }
             }
+            token
         })
         .collect::<Result<_, _>>()
         .wrap_err("Failed to parse tokens")
@@ -1004,6 +1019,19 @@ mod tests {
         solc::{artifacts::CompactContractBytecode, Project, ProjectPathsConfig},
         types::{Address, Bytes},
     };
+
+    #[test]
+    fn parse_hex_uint_tokens() {
+        let param = ParamType::Uint(256);
+
+        let tokens = parse_tokens(std::iter::once((&param, "100")), true).unwrap();
+        assert_eq!(tokens, vec![Token::Uint(100u64.into())]);
+
+        let val: U256 = 100u64.into();
+        let hex_val = format!("0x{:x}", val);
+        let tokens = parse_tokens(std::iter::once((&param, hex_val.as_str())), true).unwrap();
+        assert_eq!(tokens, vec![Token::Uint(100u64.into())]);
+    }
 
     #[test]
     fn test_linking() {

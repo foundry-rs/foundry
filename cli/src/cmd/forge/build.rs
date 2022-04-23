@@ -9,7 +9,7 @@ use crate::{
     opts::forge::CompilerArgs,
 };
 use clap::{Parser, ValueHint};
-use ethers::solc::{remappings::Remapping, utils::canonicalized};
+use ethers::solc::{artifacts::RevertStrings, remappings::Remapping, utils::canonicalized};
 use foundry_config::{
     figment::{
         self,
@@ -129,6 +129,15 @@ pub struct CoreBuildArgs {
     )]
     #[serde(rename = "out", skip_serializing_if = "Option::is_none")]
     pub out_path: Option<PathBuf>,
+
+    #[clap(
+        help_heading = "PROJECT OPTIONS",
+        help = r#"Revert string configuration. Possible values are "default", "strip" (remove), "debug" (Solidity-generated revert strings) and "verboseDebug""#,
+        long = "revert-strings",
+        value_name = "revert"
+    )]
+    #[serde(skip)]
+    pub revert_strings: Option<RevertStrings>,
 }
 
 impl CoreBuildArgs {
@@ -191,6 +200,10 @@ impl Provider for CoreBuildArgs {
         if let Some(ref extra) = self.compiler.extra_output_files {
             let selection: Vec<_> = extra.iter().map(|s| s.to_string()).collect();
             dict.insert("extra_output_files".to_string(), selection.into());
+        }
+
+        if let Some(ref revert) = self.revert_strings {
+            dict.insert("revert_strings".to_string(), revert.to_string().into());
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
@@ -263,7 +276,10 @@ impl BuildArgs {
     /// bootstrap a new [`watchexe::Watchexec`] loop.
     pub(crate) fn watchexec_config(&self) -> eyre::Result<(InitConfig, RuntimeConfig)> {
         // use the path arguments or if none where provided the `src` dir
-        self.watch.watchexec_config(|| Config::from(self).src)
+        self.watch.watchexec_config(|| {
+            let config = Config::from(self);
+            vec![config.src, config.test]
+        })
     }
 }
 
