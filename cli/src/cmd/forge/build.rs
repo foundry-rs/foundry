@@ -25,7 +25,7 @@ use watchexec::config::{InitConfig, RuntimeConfig};
 // Loads project's figment and merges the build cli arguments into it
 impl<'a> From<&'a CoreBuildArgs> for Figment {
     fn from(args: &'a CoreBuildArgs) -> Self {
-        let figment = if let Some(ref config_path) = args.config_path {
+        let figment = if let Some(ref config_path) = args.project_paths.config_path {
             if !config_path.exists() {
                 panic!("error: config-path `{}` does not exist", config_path.display())
             }
@@ -54,7 +54,7 @@ impl<'a> From<&'a CoreBuildArgs> for Config {
         let mut config = Config::from_provider(figment).sanitized();
         // if `--config-path` is set we need to adjust the config's root path to the actual root
         // path for the project, otherwise it will the parent dir of the `--config-path`
-        if args.config_path.is_some() {
+        if args.project_paths.config_path.is_some() {
             config.__root = args.project_paths.project_root().into();
         }
         config
@@ -129,15 +129,6 @@ pub struct CoreBuildArgs {
     )]
     #[serde(rename = "out", skip_serializing_if = "Option::is_none")]
     pub out_path: Option<PathBuf>,
-
-    #[clap(
-        help_heading = "PROJECT OPTIONS",
-        help = "Path to the config file.",
-        long = "config-path",
-        value_hint = ValueHint::FilePath
-    )]
-    #[serde(skip)]
-    pub config_path: Option<PathBuf>,
 
     #[clap(
         help_heading = "PROJECT OPTIONS",
@@ -340,7 +331,7 @@ pub struct ProjectPathsArgs {
 
     #[clap(help = "The project's remappings.", long, short)]
     #[serde(skip)]
-    pub remappings: Vec<ethers::solc::remappings::Remapping>,
+    pub remappings: Vec<Remapping>,
 
     #[clap(help = "The project's remappings from the environment.", long = "remappings-env")]
     #[serde(skip)]
@@ -371,6 +362,14 @@ pub struct ProjectPathsArgs {
     )]
     #[serde(skip)]
     pub hardhat: bool,
+
+    #[clap(
+        help = "Path to the config file.",
+        long = "config-path",
+        value_hint = ValueHint::FilePath
+    )]
+    #[serde(skip)]
+    pub config_path: Option<PathBuf>,
 }
 
 impl ProjectPathsArgs {

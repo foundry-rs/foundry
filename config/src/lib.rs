@@ -1465,7 +1465,7 @@ impl BasicConfig {
         Ok(format!(
             r#"[{}]
 {}
-# See more config options https://github.com/gakonst/foundry/tree/master/config"#,
+# See more config options https://github.com/foundry-rs/foundry/tree/master/config"#,
             self.profile, s
         ))
     }
