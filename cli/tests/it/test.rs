@@ -17,9 +17,7 @@ forgetest!(can_set_filter_values, |prj: TestProject, mut cmd: TestCommand| {
 
     let patt = regex::Regex::new("test*").unwrap();
     let glob = globset::Glob::from_str("foo/bar/baz*").unwrap();
-
-    println!("{:?}", glob);
-
+    
     // explicitly set patterns
     let config = Config {
         test_pattern: Some(patt.clone().into()),
