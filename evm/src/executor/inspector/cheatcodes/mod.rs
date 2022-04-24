@@ -269,7 +269,7 @@ where
                     Return::Revert,
                     remaining_gas,
                     format!(
-                        "Expected a call to 0x{} with data {}, but got none",
+                        "Expected a call to {:?} with data {}, but got none",
                         address,
                         ethers::types::Bytes::from(expecteds[0].clone())
                     )
