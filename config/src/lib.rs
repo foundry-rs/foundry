@@ -4,6 +4,7 @@
 use std::{
     borrow::Cow,
     collections::BTreeSet,
+    fs,
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -787,20 +788,26 @@ impl Config {
         Self::foundry_dir().map(|p| p.join("cache"))
     }
 
+    /// Returns the path to foundry chain's cache dir `~/.foundry/cache/<chain>`
+    pub fn foundry_chain_cache_dir(chain_id: impl Into<Chain>) -> Option<PathBuf> {
+        Some(Self::foundry_cache_dir()?.join(chain_id.into().to_string()))
+    }
+
     /// Returns the path to foundry's etherscan cache dir `~/.foundry/cache/<chain>/etherscan`
     pub fn foundry_etherscan_cache_dir(chain_id: impl Into<Chain>) -> Option<PathBuf> {
-        Some(Self::foundry_cache_dir()?.join(chain_id.into().to_string()).join("etherscan"))
+        Some(Self::foundry_chain_cache_dir(chain_id)?.join("etherscan"))
+    }
+
+    /// Returns the path to the cache dir of the `block` on the `chain`
+    /// `~/.foundry/cache/<chain>/<block>
+    pub fn foundry_block_cache_dir(chain_id: impl Into<Chain>, block: u64) -> Option<PathBuf> {
+        Some(Self::foundry_chain_cache_dir(chain_id)?.join(format!("{block}")))
     }
 
     /// Returns the path to the cache file of the `block` on the `chain`
     /// `~/.foundry/cache/<chain>/<block>/storage.json`
     pub fn foundry_block_cache_file(chain_id: impl Into<Chain>, block: u64) -> Option<PathBuf> {
-        Some(
-            Config::foundry_cache_dir()?
-                .join(chain_id.into().to_string())
-                .join(format!("{block}"))
-                .join("storage.json"),
-        )
+        Some(Self::foundry_block_cache_dir(chain_id, block)?.join("storage.json"))
     }
 
     #[doc = r#"Returns the path to `foundry`'s data directory inside the user's data directory
@@ -842,6 +849,42 @@ impl Config {
         }
         find(Env::var_or("FOUNDRY_CONFIG", Config::FILE_NAME).as_ref())
             .or_else(|| Self::foundry_dir_toml().filter(|p| p.exists()))
+    }
+
+    /// Clears the foundry cache
+    pub fn clean_foundry_cache() -> eyre::Result<()> {
+        if let Some(cache_dir) = Config::foundry_cache_dir() {
+            let path = cache_dir.as_path();
+            let _ = fs::remove_dir_all(path);
+        } else {
+            eyre::bail!("failed to get foundry_cache_dir");
+        }
+
+        Ok(())
+    }
+
+    /// Clears the foundry cache for `chain`
+    pub fn clean_foundry_chain_cache(chain: Chain) -> eyre::Result<()> {
+        if let Some(cache_dir) = Config::foundry_chain_cache_dir(chain) {
+            let path = cache_dir.as_path();
+            let _ = fs::remove_dir_all(path);
+        } else {
+            eyre::bail!("failed to get foundry_chain_cache_dir");
+        }
+
+        Ok(())
+    }
+
+    /// Clears the foundry cache for `chain` and `block`
+    pub fn clean_foundry_block_cache(chain: Chain, block: u64) -> eyre::Result<()> {
+        if let Some(cache_dir) = Config::foundry_block_cache_dir(chain, block) {
+            let path = cache_dir.as_path();
+            let _ = fs::remove_dir_all(path);
+        } else {
+            eyre::bail!("failed to get foundry_block_cache_dir");
+        }
+
+        Ok(())
     }
 }
 

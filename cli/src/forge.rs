@@ -5,7 +5,7 @@ mod suggestions;
 mod term;
 mod utils;
 
-use crate::cmd::{forge::watch, Cmd};
+use crate::cmd::{forge::cache::CacheSubcommands, forge::watch, Cmd};
 use opts::forge::{Dependency, Opts, Subcommands};
 use std::process::Command;
 
@@ -46,6 +46,11 @@ fn main() -> eyre::Result<()> {
         Subcommands::VerifyCheck(args) => {
             utils::block_on(args.run())?;
         }
+        Subcommands::Cache(cmd) => match cmd.sub {
+            CacheSubcommands::Clean(cmd) => {
+                cmd.run()?;
+            }
+        },
         Subcommands::Create(cmd) => {
             cmd.run()?;
         }
