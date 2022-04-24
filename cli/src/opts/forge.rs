@@ -153,7 +153,7 @@ pub struct CompilerArgs {
 
     #[clap(help = "The number of optimizer runs.", long)]
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub optimize_runs: Option<usize>,
+    pub optimizer_runs: Option<usize>,
 
     /// Extra output to include in the contract's artifact.
     ///
