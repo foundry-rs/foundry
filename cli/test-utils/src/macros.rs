@@ -164,7 +164,7 @@ macro_rules! forgetest_external {
             // Run the tests
             cmd.arg("test").args($forge_opts).args([
                 "--optimize",
-                "--optimize-runs",
+                "--optimizer-runs",
                 "20000",
                 "--ffi",
             ]);
