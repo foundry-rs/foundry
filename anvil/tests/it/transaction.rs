@@ -42,7 +42,6 @@ async fn can_transfer_eth() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_respect_nonces() {
-    init_tracing();
     let (api, handle) = spawn(NodeConfig::test().port(next_port())).await;
     let provider = handle.http_provider();
 
@@ -53,7 +52,6 @@ async fn can_respect_nonces() {
     let nonce = provider.get_transaction_count(from, None).await.unwrap();
     let amount = handle.genesis_balance().checked_div(3u64.into()).unwrap();
 
-    // set higher nonce
     let tx = TransactionRequest::new().to(to).value(amount).from(from);
 
     // send the transaction with higher nonce than on chain
@@ -75,6 +73,88 @@ async fn can_respect_nonces() {
     let block = provider.get_block(1u64).await.unwrap().unwrap();
     assert_eq!(2, block.transactions.len());
     assert_eq!(vec![tx.transaction_hash, higher_tx.transaction_hash], block.transactions);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_replace_transaction() {
+    init_tracing();
+    let (api, handle) = spawn(NodeConfig::test().port(next_port())).await;
+
+    // disable auto mining
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let provider = handle.http_provider();
+
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+
+    let nonce = provider.get_transaction_count(from, None).await.unwrap();
+    let gas_price = provider.get_gas_price().await.unwrap();
+    let amount = handle.genesis_balance().checked_div(3u64.into()).unwrap();
+
+    let tx = TransactionRequest::new().to(to).value(amount).from(from).nonce(nonce);
+
+    // send transaction with lower gas price
+    let lower_priced_pending_tx =
+        provider.send_transaction(tx.clone().gas_price(gas_price), None).await.unwrap();
+
+    // send the same transaction with higher gas price
+    let higher_priced_pending_tx =
+        provider.send_transaction(tx.gas_price(gas_price + 1u64), None).await.unwrap();
+
+    // mine exactly one block
+    api.mine_one();
+
+    // lower priced transaction was replaced
+    let lower_priced_receipt = lower_priced_pending_tx.await.unwrap();
+    assert!(lower_priced_receipt.is_none());
+
+    let higher_priced_receipt = higher_priced_pending_tx.await.unwrap().unwrap();
+
+    // ensure that only the replacement tx was mined
+    let block = provider.get_block(1u64).await.unwrap().unwrap();
+    assert_eq!(1, block.transactions.len());
+    assert_eq!(vec![higher_priced_receipt.transaction_hash], block.transactions);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_reject_underpriced_replacement() {
+    let (api, handle) = spawn(NodeConfig::test().port(next_port())).await;
+
+    // disable auto mining
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let provider = handle.http_provider();
+
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+
+    let nonce = provider.get_transaction_count(from, None).await.unwrap();
+    let gas_price = provider.get_gas_price().await.unwrap();
+    let amount = handle.genesis_balance().checked_div(3u64.into()).unwrap();
+
+    let tx = TransactionRequest::new().to(to).value(amount).from(from).nonce(nonce);
+
+    // send transaction with higher gas price
+    let higher_priced_pending_tx =
+        provider.send_transaction(tx.clone().gas_price(gas_price + 1u64), None).await.unwrap();
+
+    // send the same transaction with lower gas price
+    let lower_priced_pending_tx = provider.send_transaction(tx.gas_price(gas_price), None).await;
+
+    let replacement_err = lower_priced_pending_tx.unwrap_err();
+    assert!(replacement_err.to_string().contains("replacement transaction underpriced"));
+
+    // mine exactly one block
+    api.mine_one();
+    let higher_priced_receipt = higher_priced_pending_tx.await.unwrap().unwrap();
+
+    // ensure that only the higher priced tx was mined
+    let block = provider.get_block(1u64).await.unwrap().unwrap();
+    assert_eq!(1, block.transactions.len());
+    assert_eq!(vec![higher_priced_receipt.transaction_hash], block.transactions);
 }
 
 #[tokio::test(flavor = "multi_thread")]
