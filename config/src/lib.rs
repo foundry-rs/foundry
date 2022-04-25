@@ -1608,7 +1608,7 @@ mod tests {
             jail.create_file(
                 "remappings.txt",
                 r#"
-                file-ds-test/=lib/ds-test/
+                file-forge-std/=lib/forge-std/
                 file-other/=lib/other/
             "#,
             )?;
@@ -1617,21 +1617,21 @@ mod tests {
             assert_eq!(
                 config.remappings,
                 vec![
-                    Remapping::from_str("file-ds-test/=lib/ds-test/").unwrap().into(),
+                    Remapping::from_str("file-forge-std/=lib/forge-std/").unwrap().into(),
                     Remapping::from_str("file-other/=lib/other/").unwrap().into(),
                 ],
             );
 
-            jail.set_env("DAPP_REMAPPINGS", "ds-test=lib/ds-test/\nother/=lib/other/");
+            jail.set_env("DAPP_REMAPPINGS", "forge-std=lib/forge-std/\nother/=lib/other/");
             let config = Config::load();
 
             assert_eq!(
                 config.remappings,
                 vec![
                     // From environment
-                    Remapping::from_str("ds-test=lib/ds-test/").unwrap().into(),
+                    Remapping::from_str("forge-std=lib/forge-std/").unwrap().into(),
                     // From remapping.txt
-                    Remapping::from_str("file-ds-test/=lib/ds-test/").unwrap().into(),
+                    Remapping::from_str("file-forge-std/=lib/forge-std/").unwrap().into(),
                     Remapping::from_str("file-other/=lib/other/").unwrap().into(),
                     // From environment
                     Remapping::from_str("other/=lib/other/").unwrap().into(),
@@ -1660,7 +1660,7 @@ mod tests {
             jail.create_file(
                 "remappings.txt",
                 r#"
-                ds-test/=lib/ds-test/
+                forge-std/=lib/forge-std/
                 other/=lib/other/
             "#,
             )?;
@@ -1669,22 +1669,22 @@ mod tests {
             assert_eq!(
                 config.remappings,
                 vec![
-                    Remapping::from_str("ds-test/=lib/ds-test/").unwrap().into(),
+                    Remapping::from_str("forge-std/=lib/forge-std/").unwrap().into(),
                     Remapping::from_str("other/=lib/other/").unwrap().into(),
                 ],
             );
 
-            jail.set_env("DAPP_REMAPPINGS", "ds-test/=lib/ds-test/src/\nenv-lib/=lib/env-lib/");
+            jail.set_env("DAPP_REMAPPINGS", "forge-std/=lib/forge-std/src/\nenv-lib/=lib/env-lib/");
             let config = Config::load();
 
             // Remappings should now be:
-            // - ds-test from environment (lib/ds-test/src/)
+            // - forge-std from environment (lib/forge-std/src/)
             // - other from remappings.txt (lib/other/)
             // - env-lib from environment (lib/env-lib/)
             assert_eq!(
                 config.remappings,
                 vec![
-                    Remapping::from_str("ds-test/=lib/ds-test/src/").unwrap().into(),
+                    Remapping::from_str("forge-std/=lib/forge-std/src/").unwrap().into(),
                     Remapping::from_str("env-lib/=lib/env-lib/").unwrap().into(),
                     Remapping::from_str("other/=lib/other/").unwrap().into(),
                 ],
@@ -1694,7 +1694,7 @@ mod tests {
             assert_eq!(
                 config.get_all_remappings(),
                 vec![
-                    Remapping::from_str("ds-test/=lib/ds-test/src/").unwrap(),
+                    Remapping::from_str("forge-std/=lib/forge-std/src/").unwrap(),
                     Remapping::from_str("env-lib/=lib/env-lib/").unwrap(),
                     Remapping::from_str("other/=lib/other/").unwrap(),
                     Remapping::from_str("some-source/=some-source").unwrap(),
@@ -1739,7 +1739,7 @@ mod tests {
                 cache = true
                 eth_rpc_url = "https://example.com/"
                 verbosity = 3
-                remappings = ["ds-test=lib/ds-test/"]
+                remappings = ["forge-std=lib/forge-std/"]
                 via_ir = true
                 rpc_storage_caching = { chains = [1, "optimism", 999999], endpoints = "all"}
                 bytecode_hash = "ipfs"
@@ -1755,7 +1755,7 @@ mod tests {
                     out: "some-out".into(),
                     cache: true,
                     eth_rpc_url: Some("https://example.com/".to_string()),
-                    remappings: vec![Remapping::from_str("ds-test=lib/ds-test/").unwrap().into()],
+                    remappings: vec![Remapping::from_str("forge-std=lib/forge-std/").unwrap().into()],
                     verbosity: 3,
                     via_ir: true,
                     rpc_storage_caching: StorageCachingConfig {
