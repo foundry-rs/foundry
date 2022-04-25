@@ -26,8 +26,9 @@ use anvil_core::{
         transaction::{PendingTransaction, TransactionInfo, TypedTransaction},
         utils::to_access_list,
     },
-    types::Index,
+    types::{Forking, Index},
 };
+use anvil_rpc::error::RpcError;
 use ethers::{
     types::{
         Address, Block as EthersBlock, Bytes, Filter as EthersFilter, Log, Trace, Transaction,
@@ -143,6 +144,15 @@ impl Backend {
     /// Whether we're forked off some remote client
     pub fn is_fork(&self) -> bool {
         self.fork.is_some()
+    }
+
+    /// Resets the fork to a fresh state
+    pub fn reset_fork(&self, forking: Forking) -> Result<(), BlockchainError> {
+        if let Some(fork) = self.get_fork() {
+            fork.reset(forking.json_rpc_url.clone(), forking.block_number)
+        } else {
+            Err(RpcError::invalid_params("Forking not enabled").into())
+        }
     }
 
     /// Returns the `TimeManager` responsible for timestamps
@@ -436,7 +446,7 @@ impl Backend {
             return Ok(self.mined_logs_for_block(filter, block))
         }
 
-        if let Some(ref fork) = self.fork {
+        if let Some(fork) = self.get_fork() {
             let filter = filter.into();
             return Ok(fork.logs(&filter).await?)
         }
@@ -517,7 +527,7 @@ impl Backend {
         let mut all_logs = Vec::new();
 
         // get the range that predates the fork if any
-        if let Some(ref fork) = self.fork {
+        if let Some(fork) = self.get_fork() {
             let mut to_on_fork = to;
 
             if !fork.predates_fork(to) {
@@ -568,7 +578,7 @@ impl Backend {
             return Ok(tx)
         }
 
-        if let Some(ref fork) = self.fork {
+        if let Some(fork) = self.get_fork() {
             return Ok(fork.block_by_hash(hash).await?)
         }
 
@@ -589,7 +599,7 @@ impl Backend {
             return Ok(tx)
         }
 
-        if let Some(ref fork) = self.fork {
+        if let Some(fork) = self.get_fork() {
             return Ok(fork.block_by_number(self.convert_block_number(Some(number))).await?)
         }
 
@@ -738,7 +748,7 @@ impl Backend {
             return Ok(traces)
         }
 
-        if let Some(ref fork) = self.fork {
+        if let Some(fork) = self.get_fork() {
             return Ok(fork.trace_transaction(hash).await?)
         }
 
@@ -768,7 +778,7 @@ impl Backend {
             return Ok(traces)
         }
 
-        if let Some(ref fork) = self.fork {
+        if let Some(fork) = self.get_fork() {
             if fork.predates_fork(number) {
                 return Ok(fork.trace_block(number).await?)
             }
@@ -785,7 +795,7 @@ impl Backend {
             return Ok(tx)
         }
 
-        if let Some(ref fork) = self.fork {
+        if let Some(fork) = self.get_fork() {
             return Ok(fork.transaction_receipt(hash).await?)
         }
 
@@ -891,7 +901,7 @@ impl Backend {
         }
 
         let number = self.convert_block_number(Some(number));
-        if let Some(ref fork) = self.fork {
+        if let Some(fork) = self.get_fork() {
             if fork.predates_fork(number) {
                 return Ok(fork.transaction_by_block_number_and_index(number, index.into()).await?)
             }
@@ -909,7 +919,7 @@ impl Backend {
             return Ok(tx)
         }
 
-        if let Some(ref fork) = self.fork {
+        if let Some(fork) = self.get_fork() {
             return Ok(fork.transaction_by_block_hash_and_index(hash, index.into()).await?)
         }
 
@@ -937,7 +947,7 @@ impl Backend {
             return Ok(tx)
         }
 
-        if let Some(ref fork) = self.fork {
+        if let Some(fork) = self.get_fork() {
             return Ok(fork.transaction_by_hash(hash).await?)
         }
 

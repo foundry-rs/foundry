@@ -1,4 +1,4 @@
-use ethers_core::types::{BlockNumber, H256, U256};
+use ethers_core::types::{H256, U256};
 use serde::{
     de::{Error, Visitor},
     Deserialize, Deserializer, Serialize, Serializer,
@@ -29,8 +29,8 @@ pub struct GethDebugTracingOptions {
 #[derive(Clone, Debug, PartialEq, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Forking {
-    json_rpc_url: Option<String>,
-    block_number: Option<BlockNumber>,
+    pub json_rpc_url: Option<String>,
+    pub block_number: Option<u64>,
 }
 
 /// Additional `evm_mine` options

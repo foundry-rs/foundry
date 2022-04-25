@@ -6,6 +6,8 @@ use ethers::{
 };
 use std::{collections::HashMap, sync::Arc};
 
+use crate::eth::{backend::db::ForkedDatabase, error::BlockchainError};
+
 use ethers::{
     prelude::BlockNumber,
     providers::{Middleware, ProviderError},
@@ -20,6 +22,10 @@ use parking_lot::{
 };
 use tracing::trace;
 
+/// Represents a fork of a remote client
+///
+/// This type contains a subset of the [`EthApi`](crate::eth::EthApi) functions but will exclusively
+/// fetch the requested data from the remote client, if it wasn't already fetched.
 #[derive(Debug, Clone)]
 pub struct ClientFork {
     /// Contains the cached data
@@ -28,11 +34,30 @@ pub struct ClientFork {
     // Wrapping this in a lock, ensures we can update this on the fly via additional custom RPC
     // endpoints
     pub config: Arc<RwLock<ClientForkConfig>>,
+    /// This also holds a handle to the underlying database
+    pub database: ForkedDatabase,
 }
 
 // === impl ClientFork ===
 
 impl ClientFork {
+    /// Reset the fork to a fresh forked state, and optionally update the fork config
+    pub fn reset(
+        &self,
+        url: Option<String>,
+        block_number: Option<u64>,
+    ) -> Result<(), BlockchainError> {
+        self.database.reset(url.clone(), block_number)?;
+        self.config.write().update(url, block_number)?;
+        self.clear_cached_storage();
+        Ok(())
+    }
+
+    /// Removes all data cached from previous responses
+    pub fn clear_cached_storage(&self) {
+        self.storage.write().clear()
+    }
+
     /// Returns true whether the block predates the fork
     pub fn predates_fork(&self, block: u64) -> bool {
         block <= self.block_number()
@@ -240,6 +265,7 @@ impl ClientFork {
     }
 }
 
+/// Contains all fork metadata
 #[derive(Debug, Clone)]
 pub struct ClientForkConfig {
     pub eth_rpc_url: String,
@@ -248,6 +274,35 @@ pub struct ClientForkConfig {
     // TODO make provider agnostic
     pub provider: Arc<Provider<Http>>,
     pub chain_id: u64,
+}
+
+// === impl ClientForkConfig ===
+
+impl ClientForkConfig {
+    /// Updates the forking metadata
+    ///
+    /// # Errors
+    ///
+    /// This will fail if no new provider could be established (erroneous URL)
+    pub fn update(
+        &mut self,
+        url: Option<String>,
+        block_number: Option<u64>,
+    ) -> Result<(), BlockchainError> {
+        if let Some(url) = url {
+            self.provider = Arc::new(
+                Provider::try_from(&url).map_err(|_| BlockchainError::InvalidUrl(url.clone()))?,
+            );
+            trace!(target: "fork", "Updated rpc url  {}", url);
+            self.eth_rpc_url = url;
+        }
+        if let Some(block_number) = block_number {
+            self.block_number = block_number;
+            trace!(target: "fork", "Updated block number {}", block_number);
+        }
+
+        Ok(())
+    }
 }
 
 /// Contains cached state fetched to serve EthApi requests
@@ -260,4 +315,14 @@ pub struct ForkedStorage {
     pub transaction_traces: HashMap<H256, Vec<Trace>>,
     pub block_traces: HashMap<u64, Vec<Trace>>,
     pub code_at: HashMap<(Address, u64), Bytes>,
+}
+
+// === impl ForkedStorage ===
+
+impl ForkedStorage {
+    /// Clears all data
+    pub fn clear(&mut self) {
+        // simply replace with a completely new, empty instance
+        *self = Self::default()
+    }
 }

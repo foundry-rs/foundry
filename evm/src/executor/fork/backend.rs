@@ -37,9 +37,14 @@ enum ProviderRequest<Err> {
 /// The Request type the Backend listens for
 #[derive(Debug)]
 enum BackendRequest {
+    /// Fetch the account info
     Basic(Address, OneshotSender<AccountInfo>),
+    /// Fetch a storage slot
     Storage(Address, U256, OneshotSender<U256>),
+    /// Fetch a block hash
     BlockHash(u64, OneshotSender<H256>),
+    /// Sets the pinned block to fetch data from
+    SetPinnedBlock(BlockId),
 }
 
 /// Handles an internal provider and listens for requests.
@@ -136,6 +141,9 @@ where
                     // account present but not storage -> fetch storage
                     self.request_account_storage(addr, idx, sender);
                 }
+            }
+            BackendRequest::SetPinnedBlock(block_id) => {
+                self.block_id = Some(block_id);
             }
         }
     }
@@ -404,6 +412,12 @@ impl SharedBackend {
         let (backend, backend_rx) = channel(1);
         let handler = BackendHandler::new(provider, db, backend_rx, pin_block);
         (Self { backend }, handler)
+    }
+
+    /// Updates the pinned block to fetch data from
+    pub fn set_pinned_block(&self, block: impl Into<BlockId>) -> eyre::Result<()> {
+        let req = BackendRequest::SetPinnedBlock(block.into());
+        self.backend.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))
     }
 
     fn do_get_basic(&self, address: Address) -> eyre::Result<AccountInfo> {

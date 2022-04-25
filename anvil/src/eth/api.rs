@@ -208,7 +208,7 @@ impl EthApi {
             EthRequest::DropTransaction(tx) => {
                 self.anvil_drop_transaction(tx).await.to_rpc_result()
             }
-            EthRequest::Reset(res) => self.anvil_reset(res).await.to_rpc_result(),
+            EthRequest::Reset(fork) => self.anvil_reset(fork).await.to_rpc_result(),
             EthRequest::SetBalance(addr, val) => {
                 self.anvil_set_balance(addr, val).await.to_rpc_result()
             }
@@ -1040,12 +1040,18 @@ impl EthApi {
         Ok(self.pool.drop_transaction(tx_hash).map(|tx| *tx.hash()))
     }
 
-    /// Reset the fork to a fresh forked state, and optionally update the fork config
+    /// Reset the fork to a fresh forked state, and optionally update the fork config.
+    ///
+    /// If `forking` is `None` then this will disable forking entirely.
     ///
     /// Handler for RPC call: `anvil_reset`
-    pub async fn anvil_reset(&self, _forking: Forking) -> Result<()> {
+    pub async fn anvil_reset(&self, forking: Option<Forking>) -> Result<()> {
         node_info!("anvil_reset");
-        Err(BlockchainError::RpcUnimplemented)
+        if let Some(forking) = forking {
+            self.backend.reset_fork(forking)
+        } else {
+            Err(BlockchainError::RpcUnimplemented)
+        }
     }
 
     ///Modifies the balance of an account.

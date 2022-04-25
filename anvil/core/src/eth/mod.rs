@@ -204,7 +204,7 @@ pub enum EthRequest {
 
     /// Reset the fork to a fresh forked state, and optionally update the fork config
     #[serde(rename = "anvil_reset", alias = "hardhat_reset", with = "sequence")]
-    Reset(#[serde(default)] Forking),
+    Reset(#[serde(default)] Option<Forking>),
 
     /// Sets the backend rpc url
     #[serde(rename = "anvil_setRpcUrl", with = "sequence")]

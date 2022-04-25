@@ -35,6 +35,8 @@ pub enum BlockchainError {
     WalletError(#[from] WalletError),
     #[error("Rpc Endpoint not implemented")]
     RpcUnimplemented,
+    #[error("Rpc error {0:?}")]
+    RpcError(RpcError),
     #[error(transparent)]
     InvalidTransaction(#[from] InvalidTransactionError),
     #[error(transparent)]
@@ -43,6 +45,16 @@ pub enum BlockchainError {
     ForkProvider(#[from] ProviderError),
     #[error("EVM error {0:?}")]
     EvmError(Return),
+    #[error("Invalid url {0:?}")]
+    InvalidUrl(String),
+    #[error("Internal error: {0:?}")]
+    Internal(String),
+}
+
+impl From<RpcError> for BlockchainError {
+    fn from(err: RpcError) -> Self {
+        BlockchainError::RpcError(err)
+    }
 }
 
 /// Errors that can occur in the transaction pool
@@ -128,6 +140,7 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 BlockchainError::RpcUnimplemented => {
                     RpcError::internal_error_with("Not implemented")
                 }
+                BlockchainError::RpcError(err) => err,
                 BlockchainError::InvalidFeeInput => RpcError::invalid_params(
                     "Invalid input: `max_priority_fee_per_gas` greater than `max_fee_per_gas`",
                 ),
@@ -135,9 +148,11 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                     error!("fork provider error: {:?}", err);
                     RpcError::internal_error_with(format!("Fork Error: {:?}", err))
                 }
-                BlockchainError::EvmError(reason) => {
-                    RpcError::internal_error_with(format!("Evm Error: {:?}", reason))
+                err @ BlockchainError::EvmError(_) => {
+                    RpcError::internal_error_with(err.to_string())
                 }
+                err @ BlockchainError::InvalidUrl(_) => RpcError::invalid_params(err.to_string()),
+                BlockchainError::Internal(err) => RpcError::internal_error_with(err),
             }
             .into(),
         }

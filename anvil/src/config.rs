@@ -387,8 +387,7 @@ Chain ID:       {}
             )
             .await;
 
-            let db = Arc::new(RwLock::new(ForkedDatabase::new(backend, db)));
-
+            let db = ForkedDatabase::new(backend, db);
             let fork = ClientFork {
                 storage: Default::default(),
                 config: Arc::new(RwLock::new(ClientForkConfig {
@@ -398,7 +397,10 @@ Chain ID:       {}
                     provider,
                     chain_id,
                 })),
+                database: db.clone(),
             };
+
+            let db = Arc::new(RwLock::new(db));
 
             (db, Some(fork))
         } else {

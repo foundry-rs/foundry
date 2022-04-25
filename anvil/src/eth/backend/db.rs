@@ -1,6 +1,7 @@
 //! Helper types for working with [revm](foundry_evm::revm)
 
 use crate::{
+    eth::error::BlockchainError,
     revm::{Account, AccountInfo},
     U256,
 };
@@ -14,6 +15,7 @@ use foundry_evm::{
     HashMap as Map,
 };
 use std::sync::Arc;
+use tracing::log::trace;
 
 /// This bundles all required revm traits
 pub trait Db: DatabaseRef + Database + DatabaseCommit + Send + Sync + 'static {
@@ -74,7 +76,7 @@ impl Db for ForkedDatabase {
 /// endpoint. The inner in-memory database holds this storage and will be used for write operations.
 /// This database uses the `backend` for read and the `db` for write operations. But note the
 /// `backend` will also write (missing) data to the `db` in the background
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ForkedDatabase {
     /// responsible for fetching missing data
     ///
@@ -90,6 +92,25 @@ impl ForkedDatabase {
     /// Creates a new instance of this DB
     pub fn new(backend: SharedBackend, db: Arc<MemDb>) -> Self {
         Self { backend, db }
+    }
+
+    /// Reset the fork to a fresh forked state, and optionally update the fork config
+    pub fn reset(
+        &self,
+        _url: Option<String>,
+        block_number: Option<u64>,
+    ) -> Result<(), BlockchainError> {
+        if let Some(block_number) = block_number {
+            self.backend
+                .set_pinned_block(block_number)
+                .map_err(|err| BlockchainError::Internal(err.to_string()))?;
+        }
+
+        // TODO need to find a way to update generic provider via url
+
+        self.db.clear();
+        trace!(target: "fork", "Cleared database");
+        Ok(())
     }
 }
 

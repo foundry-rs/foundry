@@ -175,6 +175,13 @@ pub struct MemDb {
 }
 
 impl MemDb {
+    /// Clears all data stored in this db
+    pub fn clear(&self) {
+        self.accounts.write().clear();
+        self.storage.write().clear();
+        self.block_hashes.write().clear();
+    }
+
     // Inserts the account, replacing it if it exists already
     pub fn do_insert_account(&self, address: Address, account: AccountInfo) {
         self.accounts.write().insert(address, account);
