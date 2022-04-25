@@ -11,6 +11,7 @@ use ethers::{
 use std::sync::Arc;
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore]
 async fn test_ganache_deploy() {
     abigen!(Greeter, "test-data/greeter.json");
 
