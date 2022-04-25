@@ -328,3 +328,19 @@ forgetest_init!(can_parse_dapp_libraries, |prj: TestProject, mut cmd: TestComman
         vec!["src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6".to_string(),]
     );
 });
+
+// test that optimizer runs works
+forgetest!(can_set_optimizer_runs, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.set_current_dir(prj.root());
+
+    // explicitly set gas_price
+    let config = Config { optimizer_runs: 1337, ..Default::default() };
+    prj.write_config(config);
+
+    let config = cmd.config();
+
+    assert_eq!(config.optimizer_runs, 1337);
+
+    let config = prj.config_from_output(["--optimizer-runs", "300"]);
+    assert_eq!(config.optimizer_runs, 300);
+});
