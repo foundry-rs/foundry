@@ -1,4 +1,4 @@
-use crate::{init_tracing, next_port};
+use crate::next_port;
 use anvil::{spawn, NodeConfig};
 use ethers::prelude::{abigen, Middleware, Signer, SignerMiddleware, TransactionRequest};
 use futures::StreamExt;
@@ -77,7 +77,6 @@ async fn can_respect_nonces() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_replace_transaction() {
-    init_tracing();
     let (api, handle) = spawn(NodeConfig::test().port(next_port())).await;
 
     // disable auto mining
@@ -158,7 +157,7 @@ async fn can_reject_underpriced_replacement() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn can_deploy_greeter() {
+async fn can_deploy_greeter_http() {
     abigen!(Greeter, "test-data/greeter.json");
 
     let (_api, handle) = spawn(NodeConfig::test().port(next_port())).await;

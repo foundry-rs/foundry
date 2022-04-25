@@ -1,6 +1,6 @@
 //! tests for subscriptions
 
-use crate::{init_tracing, next_port};
+use crate::next_port;
 use anvil::{spawn, NodeConfig};
 use ethers::{
     contract::abigen,
@@ -70,7 +70,6 @@ async fn test_sub_logs() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_filters() {
-    init_tracing();
     abigen!(EmitLogs, "test-data/emit_logs.json");
 
     let (_api, handle) = spawn(NodeConfig::test().port(next_port())).await;

@@ -34,7 +34,6 @@ async fn test_ganache_deploy() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn test_ganache_emit_logs() {
-    init_tracing();
     abigen!(EmitLogs, "test-data/emit_logs.json");
 
     let key_str = "f3ce4cb221f6784021f3b7edfd6f8ac0c2c568cd7eb2b36f827449975489d234";

@@ -19,9 +19,9 @@ pub fn next_port() -> u16 {
 
 #[allow(unused)]
 pub(crate) fn init_tracing() {
-    tracing_subscriber::FmtSubscriber::builder()
+    let _ = tracing_subscriber::FmtSubscriber::builder()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
+        .try_init();
 }
 
 fn main() {}
