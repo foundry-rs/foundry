@@ -62,7 +62,10 @@ impl From<RpcError> for BlockchainError {
 pub enum PoolError {
     #[error("Transaction with cyclic dependent transactions")]
     CyclicTransaction,
-    #[error("Tx: [{0:?}] already imported")]
+    /// Thrown if a replacement transaction's gas price is below the already imported transaction
+    #[error("Tx: [{0:?}] insufficient gas price to replace existing transaction")]
+    ReplacementUnderpriced(Box<PoolTransaction>),
+    #[error("Tx: [{0:?}] already Imported")]
     AlreadyImported(Box<PoolTransaction>),
 }
 
@@ -114,7 +117,17 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
             Err(err) => match err {
                 BlockchainError::Pool(err) => {
                     error!("txpool error: {:?}", err);
-                    RpcError::internal_error()
+                    match err {
+                        PoolError::CyclicTransaction => {
+                            RpcError::transaction_rejected("Cyclic transaction detected")
+                        }
+                        PoolError::ReplacementUnderpriced(_) => {
+                            RpcError::transaction_rejected("replacement transaction underpriced")
+                        }
+                        PoolError::AlreadyImported(_) => {
+                            RpcError::transaction_rejected("transaction already imported")
+                        }
+                    }
                 }
                 BlockchainError::NoSignerAvailable => {
                     RpcError::invalid_params("No Signer available")

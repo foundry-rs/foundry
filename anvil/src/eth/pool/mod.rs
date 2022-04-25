@@ -61,6 +61,11 @@ impl Pool {
         rx
     }
 
+    /// Returns true if this pool already contains the transaction
+    pub fn contains(&self, tx_hash: &TxHash) -> bool {
+        self.inner.read().contains(tx_hash)
+    }
+
     /// Remove the given transactions from the pool
     pub fn remove_invalid(&self, tx_hashes: Vec<TxHash>) -> Vec<Arc<PoolTransaction>> {
         self.inner.write().remove_invalid(tx_hashes)
@@ -132,22 +137,22 @@ impl PoolInner {
     }
 
     /// Returns true if this pool already contains the transaction
-    fn contains(&self, tx_hash: &TxHash) -> bool {
+    pub fn contains(&self, tx_hash: &TxHash) -> bool {
         self.pending_transactions.contains(tx_hash) || self.ready_transactions.contains(tx_hash)
     }
 
     fn add_transaction(&mut self, tx: PoolTransaction) -> Result<AddedTransaction, PoolError> {
         if self.contains(tx.hash()) {
-            // TODO check for overpriced/underpriced replacement
             return Err(PoolError::AlreadyImported(Box::new(tx)))
         }
+
         let tx = PendingPoolTransaction::new(tx, self.ready_transactions.provided_markers());
         trace!(target: "txpool", "[{:?}] {:?}", tx.transaction.hash(), tx);
 
         // If all markers are not satisfied import to future
         if !tx.is_ready() {
             let hash = *tx.transaction.hash();
-            self.pending_transactions.add_transaction(tx);
+            self.pending_transactions.add_transaction(tx)?;
             return Ok(AddedTransaction::Pending { hash })
         }
         self.add_ready_transaction(tx)
@@ -159,6 +164,7 @@ impl PoolInner {
         tx: PendingPoolTransaction,
     ) -> Result<AddedTransaction, PoolError> {
         let hash = *tx.transaction.hash();
+        trace!(target: "txpool", "adding ready transaction [{:?}]", hash);
         let mut ready = ReadyTransaction::new(hash);
 
         let mut tx_queue = VecDeque::from([tx]);

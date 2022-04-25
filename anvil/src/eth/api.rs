@@ -1294,7 +1294,7 @@ impl EthApi {
     }
 
     /// Mines exactly one block
-    fn mine_one(&self) {
+    pub fn mine_one(&self) {
         let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
         let block_number = self.backend.mine_block(transactions.clone());
         trace!(target: "node", "mined block {}", block_number);

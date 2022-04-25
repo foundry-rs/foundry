@@ -1,6 +1,6 @@
 use crate::eth::{error::PoolError, util::hex_fmt_many};
 use anvil_core::eth::transaction::PendingTransaction;
-use ethers::types::{Address, TxHash};
+use ethers::types::{Address, TxHash, U256};
 use parking_lot::RwLock;
 use std::{
     cmp::Ordering,
@@ -9,6 +9,7 @@ use std::{
     sync::Arc,
     time::Instant,
 };
+use tracing::{trace, warn};
 
 /// A unique identifying marker for a transaction
 pub type TxMarker = Vec<u8>;
@@ -39,6 +40,11 @@ impl PoolTransaction {
     pub fn hash(&self) -> &TxHash {
         self.pending_transaction.hash()
     }
+
+    /// Returns the gas pric of this transaction
+    pub fn gas_price(&self) -> U256 {
+        self.pending_transaction.transaction.gas_price()
+    }
 }
 
 impl fmt::Debug for PoolTransaction {
@@ -60,6 +66,8 @@ impl fmt::Debug for PoolTransaction {
 pub struct PendingTransactions {
     /// markers that aren't yet provided by any transaction
     required_markers: HashMap<TxMarker, HashSet<TxHash>>,
+    /// mapping of the markers of a transaction to the hash of the transaction
+    waiting_markers: HashMap<Vec<TxMarker>, TxHash>,
     /// the transactions that are not ready yet are waiting for another tx to finish
     waiting_queue: HashMap<TxHash, PendingPoolTransaction>,
 }
@@ -68,19 +76,38 @@ pub struct PendingTransactions {
 
 impl PendingTransactions {
     /// Adds a transaction to Pending queue of transactions
-    pub fn add_transaction(&mut self, tx: PendingPoolTransaction) {
+    pub fn add_transaction(&mut self, tx: PendingPoolTransaction) -> Result<(), PoolError> {
         assert!(!tx.is_ready(), "transaction must not be ready");
         assert!(
             !self.waiting_queue.contains_key(tx.transaction.hash()),
             "transaction is already added"
         );
 
+        if let Some(replace) = self
+            .waiting_markers
+            .get(&tx.transaction.provides)
+            .and_then(|hash| self.waiting_queue.get(hash))
+        {
+            // check if underpriced
+            if tx.transaction.gas_price() < replace.transaction.gas_price() {
+                warn!(target: "txpool", "pending replacement transaction underpriced [{:?}]", tx.transaction.hash());
+                return Err(PoolError::ReplacementUnderpriced(Box::new(
+                    tx.transaction.as_ref().clone(),
+                )))
+            }
+        }
+
         // add all missing markers
         for marker in &tx.missing_markers {
             self.required_markers.entry(marker.clone()).or_default().insert(*tx.transaction.hash());
         }
+
+        // also track identifying markers
+        self.waiting_markers.insert(tx.transaction.provides.clone(), *tx.transaction.hash());
         // add tx to the queue
         self.waiting_queue.insert(*tx.transaction.hash(), tx);
+
+        Ok(())
     }
 
     /// Returns true if given transaction is part of the queue
@@ -106,6 +133,8 @@ impl PendingTransactions {
 
                     if tx.is_ready() {
                         let tx = self.waiting_queue.remove(&hash).expect("tx is included;");
+                        self.waiting_markers.remove(&tx.transaction.provides);
+
                         unlocked_ready.push(tx);
                     }
                 }
@@ -122,6 +151,7 @@ impl PendingTransactions {
         let mut removed = vec![];
         for hash in hashes {
             if let Some(waiting_tx) = self.waiting_queue.remove(&hash) {
+                self.waiting_markers.remove(&waiting_tx.transaction.provides);
                 for marker in waiting_tx.missing_markers {
                     let remove = if let Some(required) = self.required_markers.get_mut(&marker) {
                         required.remove(&hash);
@@ -309,9 +339,10 @@ impl ReadyTransactions {
             "transaction already included"
         );
 
+        let (replaced_tx, unlocks) = self.replaced_transactions(&tx.transaction)?;
+
         let id = self.next_id();
         let hash = *tx.transaction.hash();
-        let (replaced_tx, unlocks) = self.replaced_transactions(&tx.transaction)?;
 
         let mut independent = true;
         let mut requires_offset = 0;
@@ -361,12 +392,27 @@ impl ReadyTransactions {
             return Ok((Vec::new(), Vec::new()))
         }
 
+        // check if we're replacing the same transaction and if it can be replaced
+
         let mut unlocked_tx = Vec::new();
         {
             // construct a list of unlocked transactions
+            // also check for transactions that shouldn't be replaced because underpriced
             let ready = self.ready_tx.read();
-            for tx in remove_hashes.iter().filter_map(|hash| ready.get(hash)) {
-                unlocked_tx.extend(tx.unlocks.iter().cloned())
+            for to_remove in remove_hashes.iter().filter_map(|hash| ready.get(hash)) {
+                // if we're attempting to replace a transaction that provides the exact same markers
+                // (addr + nonce) then we check for gas price
+                if to_remove.provides() == tx.provides {
+                    // check if underpriced
+                    if tx.pending_transaction.transaction.gas_price() < to_remove.gas_price() {
+                        warn!(target: "txpool", "ready replacement transaction underpriced [{:?}]", tx.hash());
+                        return Err(PoolError::ReplacementUnderpriced(Box::new(tx.clone())))
+                    } else {
+                        trace!(target: "txpool", "replacing ready transaction [{:?}] with higher gas price [{:?}]", to_remove.transaction.transaction.hash(), tx.hash());
+                    }
+                }
+
+                unlocked_tx.extend(to_remove.unlocks.iter().cloned())
             }
         }
 
@@ -523,7 +569,7 @@ impl Eq for PoolTransactionRef {}
 
 impl PartialEq<Self> for PoolTransactionRef {
     fn eq(&self, other: &Self) -> bool {
-        self.cmp(other) == std::cmp::Ordering::Equal
+        self.cmp(other) == Ordering::Equal
     }
 }
 
@@ -534,7 +580,7 @@ impl PartialOrd<Self> for PoolTransactionRef {
 }
 
 impl Ord for PoolTransactionRef {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+    fn cmp(&self, other: &Self) -> Ordering {
         self.id.cmp(&other.id)
     }
 }
@@ -547,6 +593,18 @@ struct ReadyTransaction {
     pub unlocks: Vec<TxHash>,
     /// amount of required markers that are inherently provided
     pub requires_offset: usize,
+}
+
+// === impl ReadyTransaction ==
+
+impl ReadyTransaction {
+    pub fn provides(&self) -> &[TxMarker] {
+        &self.transaction.transaction.provides
+    }
+
+    pub fn gas_price(&self) -> U256 {
+        self.transaction.transaction.gas_price()
+    }
 }
 
 #[cfg(test)]
