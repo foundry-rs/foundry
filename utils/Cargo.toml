@@ -7,6 +7,7 @@ readme = "README.md"
 repository = "https://github.com/gakonst/foundry"
 
 [dependencies]
+foundry-config = { path = "../config" }
 ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-etherscan = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
 ethers-addressbook = { git = "https://github.com/gakonst/ethers-rs", default-features = false }
@@ -23,6 +24,9 @@ serde = "1.0.132"
 serde_json = { version = "1.0.67", default-features = false }
 tokio = { version = "1.12.0", features = ["rt-multi-thread", "macros"] }
 rlp = "0.5.1"
+dunce = "1.0.2"
+tempfile = "3.3.0"
+semver = "1.0.5"
 
 
 [dev-dependencies]

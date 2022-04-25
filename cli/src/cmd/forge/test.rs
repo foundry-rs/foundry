@@ -513,16 +513,17 @@ fn test(
         Ok(TestOutcome::new(results, allow_failure))
     } else {
         // Set up identifiers
-        let local_identifier = LocalTraceIdentifier::new(&runner.known_contracts);
+        let mut local_identifier = LocalTraceIdentifier::new(&runner.known_contracts);
         let remote_chain_id = runner.evm_opts.get_remote_chain_id();
         // Do not re-query etherscan for contracts that you've already queried today.
         // TODO: Make this configurable.
         let cache_ttl = Duration::from_secs(24 * 60 * 60);
-        let etherscan_identifier = EtherscanIdentifier::new(
+        let mut etherscan_identifier = EtherscanIdentifier::new(
             remote_chain_id,
             config.etherscan_api_key,
             remote_chain_id.and_then(Config::foundry_etherscan_cache_dir),
             cache_ttl,
+            false,
         );
 
         // Set up test reporter channel
@@ -570,8 +571,8 @@ fn test(
                     // Decode the traces
                     let mut decoded_traces = Vec::new();
                     for (kind, trace) in &mut result.traces {
-                        decoder.identify(trace, &local_identifier);
-                        decoder.identify(trace, &etherscan_identifier);
+                        decoder.identify(trace, &mut local_identifier);
+                        decoder.identify(trace, &mut etherscan_identifier);
 
                         let should_include = match kind {
                             // At verbosity level 3, we only display traces for failed tests

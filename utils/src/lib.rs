@@ -10,10 +10,14 @@ use ethers_core::{
 };
 use ethers_etherscan::Client;
 use ethers_solc::{
-    artifacts::{BytecodeObject, CompactBytecode, CompactContractBytecode},
-    ArtifactId,
+    artifacts::{
+        BytecodeObject, CompactBytecode, CompactContractBytecode, ContractBytecodeSome, Source,
+        Sources,
+    },
+    ArtifactId, Solc,
 };
 use eyre::{Result, WrapErr};
+use semver::Version;
 use serde::Deserialize;
 use std::{
     collections::{BTreeMap, HashSet},
@@ -22,6 +26,9 @@ use std::{
     str::FromStr,
 };
 
+pub use foundry_config::Config;
+use std::io::Write;
+use tempfile::NamedTempFile;
 use tokio::runtime::{Handle, Runtime};
 
 #[allow(clippy::large_enum_variant)]
@@ -1009,6 +1016,67 @@ pub fn init_tracing_subscriber() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init()
         .ok();
+}
+
+pub async fn compile_contract_source(
+    contract_name: String,
+    source: String,
+    optimization: bool,
+    runs: u32,
+    version: String,
+) -> Result<(ArtifactId, ContractBytecodeSome)> {
+    let mut file = NamedTempFile::new()?;
+    writeln!(file, "{}", source.clone())?;
+
+    let target_contract = dunce::canonicalize(&file.path())?;
+    let mut project = Config::default().ephemeral_no_artifacts_project()?;
+
+    if optimization {
+        project.solc_config.settings.optimizer.enable();
+    } else {
+        project.solc_config.settings.optimizer.disable();
+    }
+
+    project.solc_config.settings.optimizer.runs(runs as usize);
+    // todo what about via-ir
+
+    project.solc = if let Some(solc) = Solc::find_svm_installed_version(&version)? {
+        solc
+    } else {
+        let v: Version = version.trim_start_matches('v').parse()?;
+        Solc::install(&Version::new(v.major, v.minor, v.patch)).await?
+    };
+
+    let mut sources = Sources::new();
+    sources.insert(target_contract, Source { content: source });
+
+    let project_output = project.compile_with_version(&project.solc, sources)?;
+
+    if project_output.has_compiler_errors() {
+        eyre::bail!(project_output.to_string())
+    }
+
+    let (artifact_id, bytecode) = project_output
+        .into_contract_bytecodes()
+        .filter_map(|(artifact_id, contract)| {
+            if artifact_id.name != contract_name {
+                None
+            } else {
+                Some((
+                    artifact_id,
+                    ContractBytecodeSome {
+                        abi: contract.abi.unwrap(),
+                        bytecode: contract.bytecode.unwrap().into(),
+                        deployed_bytecode: contract.deployed_bytecode.unwrap().into(),
+                    },
+                ))
+            }
+        })
+        .into_iter()
+        .next()
+        .expect("there should be a contract with bytecode");
+
+    Ok((artifact_id, bytecode))
 }
 
 #[cfg(test)]

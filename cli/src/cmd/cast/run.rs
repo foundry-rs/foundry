@@ -4,7 +4,7 @@ use cast::trace::CallTraceDecoder;
 use clap::Parser;
 use ethers::{
     abi::Address,
-    prelude::{Middleware, Provider},
+    prelude::{artifacts::ContractBytecodeSome, ArtifactId, Middleware, Provider},
     types::H256,
 };
 use forge::{
@@ -14,11 +14,7 @@ use forge::{
 };
 use foundry_config::Config;
 use foundry_utils::RuntimeOrHandle;
-use std::{
-    collections::{BTreeMap, HashMap},
-    str::FromStr,
-    time::Duration,
-};
+use std::{collections::BTreeMap, str::FromStr, time::Duration};
 use ui::{TUIExitReason, Tui, Ui};
 
 #[derive(Debug, Clone, Parser)]
@@ -131,11 +127,12 @@ impl RunArgs {
                 }
             };
 
-            let etherscan_identifier = EtherscanIdentifier::new(
+            let mut etherscan_identifier = EtherscanIdentifier::new(
                 evm_opts.get_remote_chain_id(),
                 config.etherscan_api_key,
                 Config::foundry_etherscan_cache_dir(evm_opts.get_chain_id()),
                 Duration::from_secs(24 * 60 * 60),
+                true,
             );
 
             let labeled_addresses: BTreeMap<Address, String> = self
@@ -156,11 +153,13 @@ impl RunArgs {
             let mut decoder = CallTraceDecoderBuilder::new().with_labels(labeled_addresses).build();
 
             for (_, trace) in &mut result.traces {
-                decoder.identify(trace, &etherscan_identifier);
+                decoder.identify(trace, &mut etherscan_identifier);
             }
 
+            let (sources, bytecode) =
+                etherscan_identifier.get_compiled_contracts_with_sources().await?;
             if self.debug {
-                run_debugger(result, decoder)?;
+                run_debugger(result, decoder, bytecode, sources)?;
             } else {
                 print_traces(&mut result, decoder)?;
             }
@@ -169,12 +168,29 @@ impl RunArgs {
     }
 }
 
-fn run_debugger(result: RunResult, decoder: CallTraceDecoder) -> eyre::Result<()> {
-    // TODO Get source from etherscan
-    let source_code: BTreeMap<u32, String> = BTreeMap::new();
+fn run_debugger(
+    result: RunResult,
+    decoder: CallTraceDecoder,
+    known_contracts: BTreeMap<ArtifactId, ContractBytecodeSome>,
+    sources: BTreeMap<ArtifactId, String>,
+) -> eyre::Result<()> {
     let calls: Vec<DebugArena> = vec![result.debug];
     let flattened = calls.last().expect("we should have collected debug info").flatten(0);
-    let tui = Tui::new(flattened, 0, decoder.contracts, HashMap::new(), source_code)?;
+
+    let tui = Tui::new(
+        flattened,
+        0,
+        decoder.contracts,
+        known_contracts.into_iter().map(|(id, artifact)| (id.name, artifact)).collect(),
+        sources
+            .into_iter()
+            .map(|(id, source)| {
+                let mut sources = BTreeMap::new();
+                sources.insert(0, source);
+                (id.name, sources)
+            })
+            .collect(),
+    )?;
     match tui.start().expect("Failed to start tui") {
         TUIExitReason::CharExit => Ok(()),
     }

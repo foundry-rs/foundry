@@ -161,13 +161,13 @@ impl Cmd for RunArgs {
         // TODO: Could we use the Etherscan identifier here? Main issue: Pulling source code and
         // bytecode. Might be better to wait for an interactive debugger where we can do this on
         // the fly while retaining access to the database?
-        let local_identifier = LocalTraceIdentifier::new(&known_contracts);
+        let mut local_identifier = LocalTraceIdentifier::new(&known_contracts);
         let mut decoder = CallTraceDecoderBuilder::new()
             .with_labels(result.labeled_addresses.clone())
             .with_events(local_identifier.events())
             .build();
         for (_, trace) in &mut result.traces {
-            decoder.identify(trace, &local_identifier);
+            decoder.identify(trace, &mut local_identifier);
         }
 
         if self.debug {
@@ -195,10 +195,14 @@ impl Cmd for RunArgs {
                 0,
                 decoder.contracts,
                 highlevel_known_contracts
+                    .clone()
                     .into_iter()
                     .map(|(id, artifact)| (id.name, artifact))
                     .collect(),
-                source_code,
+                highlevel_known_contracts
+                    .into_iter()
+                    .map(|(id, _)| (id.name, source_code.clone()))
+                    .collect(),
             )?;
             match tui.start().expect("Failed to start tui") {
                 TUIExitReason::CharExit => return Ok(()),
