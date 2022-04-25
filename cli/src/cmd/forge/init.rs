@@ -128,7 +128,7 @@ impl Cmd for InitArgs {
                     println!("\"lib/ds-test\" already exists, skipping install....");
                     install(&root, vec![], opts)?;
                 } else {
-                    Dependency::from_str("https://github.com/dapphub/ds-test")
+                    Dependency::from_str("https://github.com/foundry-rs/forge-std")
                         .and_then(|dependency| install(&root, vec![dependency], opts))?;
                 }
             }
