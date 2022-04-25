@@ -452,6 +452,7 @@ impl EthApi {
 
         let requires = required_marker(nonce, on_chain_nonce, from);
         let provides = vec![to_marker(nonce.as_u64(), from)];
+        debug_assert!(requires != provides);
 
         self.add_pending_transaction(pending_transaction, requires, provides)
     }
@@ -1388,10 +1389,13 @@ impl EthApi {
 }
 
 fn required_marker(provided_nonce: U256, on_chain_nonce: U256, from: Address) -> Vec<TxMarker> {
+    if provided_nonce == on_chain_nonce {
+        return Vec::new()
+    }
     let prev_nonce = provided_nonce.saturating_sub(U256::one());
-    if on_chain_nonce < prev_nonce {
+    if on_chain_nonce <= prev_nonce {
         vec![to_marker(prev_nonce.as_u64(), from)]
     } else {
-        vec![]
+        Vec::new()
     }
 }

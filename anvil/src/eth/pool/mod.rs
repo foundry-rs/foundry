@@ -138,6 +138,7 @@ impl PoolInner {
 
     fn add_transaction(&mut self, tx: PoolTransaction) -> Result<AddedTransaction, PoolError> {
         if self.contains(tx.hash()) {
+            // TODO check for overpriced/underpriced replacement
             return Err(PoolError::AlreadyImported(Box::new(tx)))
         }
         let tx = PendingPoolTransaction::new(tx, self.ready_transactions.provided_markers());

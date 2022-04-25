@@ -163,7 +163,7 @@ impl PendingPoolTransaction {
             .iter()
             .filter(|marker| {
                 // is true if the marker is already satisfied either via transaction in the pool
-                provided.contains_key(&**marker)
+                !provided.contains_key(&**marker)
             })
             .cloned()
             .collect();

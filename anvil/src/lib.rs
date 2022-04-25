@@ -34,6 +34,7 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
+    time::Duration,
 };
 use tokio::task::{JoinError, JoinHandle};
 
@@ -183,7 +184,9 @@ impl NodeHandle {
 
     /// Returns a Provider for the http endpoint
     pub fn http_provider(&self) -> Provider<Http> {
-        Provider::<Http>::try_from(self.http_endpoint()).unwrap()
+        Provider::<Http>::try_from(self.http_endpoint())
+            .unwrap()
+            .interval(Duration::from_millis(2_0000))
     }
 
     /// Connects to the websocket Provider of the node
