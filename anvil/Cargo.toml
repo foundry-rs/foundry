@@ -29,7 +29,7 @@ anvil-server = { path = "server" }
 foundry-utils = { path = "../utils" }
 foundry-common = { path = "../common", optional = true }
 forge = { path = "../forge", optional = true }
-foundry-config = { path = "../config", optional = true }
+foundry-config = { path = "../config" }
 
 # evm support
 bytes = "1.1.0"
@@ -71,5 +71,5 @@ pretty_assertions = "1.2.1"
 tokio = { version = "1.10", features = ["full"] }
 
 [features]
-cmd = ["clap", "foundry-config", "foundry-common", "forge"]
+cmd = ["clap", "foundry-common", "forge"]
 cli = ["tokio/full", "cmd"]

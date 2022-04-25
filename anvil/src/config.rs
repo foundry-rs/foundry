@@ -1,5 +1,5 @@
 use colored::Colorize;
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 
 use crate::{
     eth::{
@@ -23,6 +23,7 @@ use ethers::{
     },
     utils::{format_ether, hex, WEI_IN_ETHER},
 };
+use foundry_config::Config;
 use foundry_evm::{
     executor::fork::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     revm,
@@ -67,6 +68,8 @@ pub struct NodeConfig {
     pub account_generator: Option<AccountGenerator>,
     /// whether to enable tracing
     pub enable_tracing: bool,
+    /// Explicitly disables the use of RPC caching.
+    pub no_storage_caching: bool,
 }
 
 // === impl NodeConfig ===
@@ -101,6 +104,7 @@ impl Default for NodeConfig {
             account_generator: None,
             base_fee: INITIAL_BASE_FEE.into(),
             enable_tracing: true,
+            no_storage_caching: false,
         }
     }
 }
@@ -191,6 +195,18 @@ impl NodeConfig {
     #[must_use]
     pub fn set_silent(mut self, silent: bool) -> Self {
         self.silent = silent;
+        self
+    }
+
+    /// Makes the node silent to not emit anything on stdout
+    #[must_use]
+    pub fn no_storage_caching(self) -> Self {
+        self.set_storage_caching(true)
+    }
+
+    #[must_use]
+    pub fn set_storage_caching(mut self, storage_caching: bool) -> Self {
+        self.no_storage_caching = storage_caching;
         self
     }
 
@@ -306,6 +322,20 @@ Chain ID:       {}
         println!();
     }
 
+    /// Returns the path where the cache file should be stored
+    ///
+    /// See also [ Config::foundry_block_cache_file()]
+    pub fn block_cache_path(&self) -> Option<PathBuf> {
+        if self.no_storage_caching || self.eth_rpc_url.is_none() {
+            return None
+        }
+        // cache only if block explicitly set
+        let block = self.fork_block_number?;
+        let chain_id = self.chain_id;
+
+        Config::foundry_block_cache_file(chain_id, block)
+    }
+
     /// Configures everything related to env, backend and database and returns the
     /// [Backend](mem::Backend)
     ///
@@ -345,8 +375,7 @@ Chain ID:       {}
 
             let meta = BlockchainDbMeta::new(env.clone(), eth_rpc_url.clone());
 
-            // TODO support cache path
-            let block_chain_db = BlockchainDb::new(meta, None);
+            let block_chain_db = BlockchainDb::new(meta, self.block_cache_path());
             let db = Arc::clone(block_chain_db.db());
 
             // This will spawn the background service that will use the provider to fetch blockchain

@@ -57,6 +57,7 @@ impl NodeArgs {
             .eth_rpc_url(evm_opts.fork_url)
             .base_fee(self.evm_opts.env.block_base_fee_per_gas)
             .fork_block_number(evm_opts.fork_block_number)
+            .set_storage_caching(evm_opts.no_storage_caching)
     }
 
     fn account_generator(&self) -> AccountGenerator {
