@@ -11,10 +11,11 @@ use crate::eth::{
         cheats::CheatsManager,
         fork::ClientFork,
         notifications::{NewBlockNotification, NewBlockNotifications},
-        time::TimeManager,
+        time::{utc_from_secs, TimeManager},
     },
     error::{BlockchainError, InvalidTransactionError},
     fees::{FeeDetails, FeeManager},
+    macros::node_info,
 };
 use anvil_core::{
     eth::{
@@ -334,12 +335,27 @@ impl Backend {
         storage.blocks.insert(block_hash, block);
         storage.hashes.insert(block_number, block_hash);
 
+        node_info!("");
         // insert all transactions
         for (info, receipt) in transactions.into_iter().zip(receipts) {
+            // log some tx info
+            {
+                node_info!("    Transaction: {:?}", info.transaction_hash);
+                if let Some(ref contract) = info.contract_address {
+                    node_info!("    Contract created: {:?}", contract);
+                }
+                node_info!("    Gas used: {}", receipt.gas_used());
+            }
+
             let mined_tx =
                 MinedTransaction { info, receipt, block_hash, block_number: block_number.as_u64() };
             storage.transactions.insert(mined_tx.info.transaction_hash, mined_tx);
         }
+        let timestamp = utc_from_secs(header.timestamp);
+
+        node_info!("    Block Number: {}", block_number);
+        node_info!("    Block Hash: {:?}", block_hash);
+        node_info!("    Block Time: {:?}\n", timestamp.to_rfc2822());
 
         // notify all listeners
         self.notify_on_new_block(header, block_hash);

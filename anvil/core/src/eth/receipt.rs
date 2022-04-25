@@ -30,7 +30,7 @@ impl From<Log> for revm::Log {
     }
 }
 
-impl rlp::Encodable for Log {
+impl Encodable for Log {
     fn rlp_append(&self, stream: &mut rlp::RlpStream) {
         stream.begin_list(3);
         stream.append(&self.address);
@@ -39,8 +39,8 @@ impl rlp::Encodable for Log {
     }
 }
 
-impl rlp::Decodable for Log {
-    fn decode(rlp: &rlp::Rlp) -> Result<Self, rlp::DecoderError> {
+impl Decodable for Log {
+    fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
         let result = Log {
             address: rlp.val_at(0)?,
             topics: rlp.list_at(1)?,
@@ -58,8 +58,8 @@ pub struct EIP658Receipt {
     pub logs: Vec<Log>,
 }
 
-impl rlp::Encodable for EIP658Receipt {
-    fn rlp_append(&self, stream: &mut rlp::RlpStream) {
+impl Encodable for EIP658Receipt {
+    fn rlp_append(&self, stream: &mut RlpStream) {
         stream.begin_list(4);
         stream.append(&self.status_code);
         stream.append(&self.gas_used);
@@ -68,8 +68,8 @@ impl rlp::Encodable for EIP658Receipt {
     }
 }
 
-impl rlp::Decodable for EIP658Receipt {
-    fn decode(rlp: &rlp::Rlp) -> Result<Self, rlp::DecoderError> {
+impl Decodable for EIP658Receipt {
+    fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
         let result = EIP658Receipt {
             status_code: rlp.val_at(0)?,
             gas_used: rlp.val_at(1)?,

@@ -11,11 +11,10 @@ use ethers::{
 use std::sync::Arc;
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
 async fn test_ganache_deploy() {
     abigen!(Greeter, "test-data/greeter.json");
 
-    let key_str = "6cb43ebdac51b59c4f317c1424840165c5709c4e77ede2bd1cbcd30f9bde80e4";
+    let key_str = "d3631fc655238848b503f1d0cf0e0d4deabed6b5e8b2dfb4dc0c9346f5f3aac1";
     let key_hex = hex::decode(key_str).expect("could not parse as hex");
     let key = SecretKey::from_be_bytes(&key_hex).expect("did not get private key");
     let wallet: LocalWallet = key.into();
