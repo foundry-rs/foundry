@@ -125,11 +125,16 @@ forgetest_init!(can_override_config, |prj: TestProject, mut cmd: TestCommand| {
 
     // ensure remappings contain test
     assert_eq!(profile.remappings.len(), 2);
-    assert_eq!("forge-std/=lib/forge-std/src/".to_string(), profile.remappings[0].to_string());
+    assert_eq!("ds-test/=lib/forge-std/lib/ds-test/src/".to_string(), profile.remappings[0].to_string());
+    assert_eq!("forge-std/=lib/forge-std/src/".to_string(), profile.remappings[1].to_string());
     // the loaded config has resolved, absolute paths
     assert_eq!(
-        format!("forge-std/={}/", prj.root().join("lib/forge-std/src").display()),
+        format!("ds-test/={}/", prj.root().join("lib/forge-std/lib/ds-test/src").display()),
         Remapping::from(config.remappings[0].clone()).to_string()
+    );
+    assert_eq!(
+        format!("forge-std/={}/", prj.root().join("lib/forge-std/src").display()),
+        Remapping::from(config.remappings[1].clone()).to_string()
     );
 
     cmd.arg("config");
