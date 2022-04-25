@@ -154,11 +154,15 @@ forgetest_init!(can_override_config, |prj: TestProject, mut cmd: TestCommand| {
     );
 
     // env vars work
-    std::env::set_var("DAPP_REMAPPINGS", "forge-std/=lib/forge-std/from-env/");
+    std::env::set_var("DAPP_REMAPPINGS", "ds-test/=lib/forge-std/lib/ds-test/from-env\nforge-std/=lib/forge-std/from-env/");
     let config = forge_utils::load_config();
     assert_eq!(
-        format!("forge-std/={}/", prj.root().join("lib/forge-std/from-env").display()),
+        format!("ds-test/={}/", prj.root().join("lib/forge-std/lib/ds-test/from-env").display()),
         Remapping::from(config.remappings[0].clone()).to_string()
+    );
+    assert_eq!(
+        format!("forge-std/={}/", prj.root().join("lib/forge-std/from-env").display()),
+        Remapping::from(config.remappings[1].clone()).to_string()
     );
 
     let config = prj.config_from_output(["--remappings", "forge-std/=lib/forge-std/from-cli"]);
