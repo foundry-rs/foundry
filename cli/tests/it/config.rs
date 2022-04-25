@@ -124,7 +124,7 @@ forgetest_init!(can_override_config, |prj: TestProject, mut cmd: TestCommand| {
     assert_eq!(config, profile.clone().sanitized());
 
     // ensure remappings contain test
-    assert_eq!(profile.remappings.len(), 1);
+    assert_eq!(profile.remappings.len(), 2);
     assert_eq!("forge-std/=lib/forge-std/src/".to_string(), profile.remappings[0].to_string());
     // the loaded config has resolved, absolute paths
     assert_eq!(
