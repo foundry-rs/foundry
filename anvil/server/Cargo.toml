@@ -8,7 +8,7 @@ Customizable RPC server
 """
 
 [dependencies]
-anvil-rpc = { path = "../anvil-rpc" }
+anvil-rpc = { path = "../rpc" }
 
 # axum related
 axum = { version = "0.5", features = ["ws"] }
