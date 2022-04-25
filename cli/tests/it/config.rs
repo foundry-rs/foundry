@@ -78,7 +78,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         eth_rpc_url: Some("localhost".to_string()),
         etherscan_api_key: None,
         verbosity: 4,
-        remappings: vec![Remapping::from_str("ds-test=lib/ds-test/").unwrap().into()],
+        remappings: vec![Remapping::from_str("forge-std=lib/forge-std/").unwrap().into()],
         libraries: vec![
             "src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6".to_string()
         ],
@@ -125,10 +125,10 @@ forgetest_init!(can_override_config, |prj: TestProject, mut cmd: TestCommand| {
 
     // ensure remappings contain test
     assert_eq!(profile.remappings.len(), 1);
-    assert_eq!("ds-test/=lib/ds-test/src/".to_string(), profile.remappings[0].to_string());
+    assert_eq!("forge-std/=lib/forge-std/src/".to_string(), profile.remappings[0].to_string());
     // the loaded config has resolved, absolute paths
     assert_eq!(
-        format!("ds-test/={}/", prj.root().join("lib/ds-test/src").display()),
+        format!("forge-std/={}/", prj.root().join("lib/forge-std/src").display()),
         Remapping::from(config.remappings[0].clone()).to_string()
     );
 
@@ -137,24 +137,24 @@ forgetest_init!(can_override_config, |prj: TestProject, mut cmd: TestCommand| {
     assert_eq!(expected.trim().to_string(), cmd.stdout().trim().to_string());
 
     // remappings work
-    let remappings_txt = prj.create_file("remappings.txt", "ds-test/=lib/ds-test/from-file/");
+    let remappings_txt = prj.create_file("remappings.txt", "forge-std/=lib/forge-std/from-file/");
     let config = forge_utils::load_config();
     assert_eq!(
-        format!("ds-test/={}/", prj.root().join("lib/ds-test/from-file").display()),
+        format!("forge-std/={}/", prj.root().join("lib/forge-std/from-file").display()),
         Remapping::from(config.remappings[0].clone()).to_string()
     );
 
     // env vars work
-    std::env::set_var("DAPP_REMAPPINGS", "ds-test/=lib/ds-test/from-env/");
+    std::env::set_var("DAPP_REMAPPINGS", "forge-std/=lib/forge-std/from-env/");
     let config = forge_utils::load_config();
     assert_eq!(
-        format!("ds-test/={}/", prj.root().join("lib/ds-test/from-env").display()),
+        format!("forge-std/={}/", prj.root().join("lib/forge-std/from-env").display()),
         Remapping::from(config.remappings[0].clone()).to_string()
     );
 
-    let config = prj.config_from_output(["--remappings", "ds-test/=lib/ds-test/from-cli"]);
+    let config = prj.config_from_output(["--remappings", "forge-std/=lib/forge-std/from-cli"]);
     assert_eq!(
-        format!("ds-test/={}/", prj.root().join("lib/ds-test/from-cli").display()),
+        format!("forge-std/={}/", prj.root().join("lib/forge-std/from-cli").display()),
         Remapping::from(config.remappings[0].clone()).to_string()
     );
 
