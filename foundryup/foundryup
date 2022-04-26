@@ -169,7 +169,7 @@ main() {
     # --root appends /bin to the directory it is given, so we pass FOUNDRY_DIR.
     RUSTFLAGS="-C target-cpu=native" ensure cargo install --path ./cli --bins --locked --force --root $FOUNDRY_DIR
     # install anvil
-    RUSTFLAGS="-C target-cpu=native" ensure cargo install --path ./anvil --bin anvil --features "cli" --locked --force --root $FOUNDRY_DIR
+    RUSTFLAGS="-C target-cpu=native" ensure cargo install --path ./anvil --bin anvil --locked --force --root $FOUNDRY_DIR
 
     # If help2man is installed, use it to add Foundry man pages.
     if command -v help2man &> /dev/null ; then
