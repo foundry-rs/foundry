@@ -83,8 +83,8 @@ forgetest!(can_init_no_git, |prj: TestProject, mut cmd: TestCommand| {
     prj.assert_config_exists();
 
     assert!(!prj.root().join(".git").exists());
-    assert!(prj.root().join("lib/ds-test").exists());
-    assert!(!prj.root().join("lib/ds-test/.git").exists());
+    assert!(prj.root().join("lib/forge-std").exists());
+    assert!(!prj.root().join("lib/forge-std/.git").exists());
 });
 
 // Checks that quiet mode does not print anything
@@ -104,7 +104,7 @@ forgetest!(can_init_non_empty, |prj: TestProject, mut cmd: TestCommand| {
     cmd.arg("--force");
     cmd.assert_non_empty_stdout();
     assert!(prj.root().join(".git").exists());
-    assert!(prj.root().join("lib/ds-test").exists());
+    assert!(prj.root().join("lib/forge-std").exists());
 });
 
 // Checks that remappings.txt and .vscode/settings.json is generated
@@ -128,7 +128,7 @@ forgetest!(can_init_vscode, |prj: TestProject, mut cmd: TestCommand| {
     let remappings = prj.root().join("remappings.txt");
     assert!(remappings.is_file());
     let content = std::fs::read_to_string(remappings).unwrap();
-    assert_eq!(content, "ds-test/=lib/ds-test/src/");
+    assert_eq!(content, "ds-test/=lib/forge-std/lib/ds-test/src/\nforge-std/=lib/forge-std/src/");
 });
 
 // checks that `clean` removes dapptools style paths
