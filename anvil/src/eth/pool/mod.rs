@@ -1,3 +1,31 @@
+//! # Transaction Pool implementation
+//!
+//! The transaction pool is responsible for managing a set of transactions that can be included in
+//! upcoming blocks.
+//!
+//! The main task of the pool is to prepare an ordered list of transactions that are ready to be
+//! included in a new block.
+//!
+//! Each imported block can affect the validity of transactions already in the pool.
+//! The miner expects the most up-to-date transactions when attempting to create a new block.
+//! After being included in a block, a transaction should be removed from the pool, this process is
+//! called _pruning_ and due to separation of concerns is triggered externally.
+//! The pool essentially performs following services:
+//!   * import transactions
+//!   * order transactions
+//!   * provide ordered set of transactions that are ready for inclusion
+//!   * prune transactions
+//!
+//! Each transaction in the pool contains markers that it _provides_ or _requires_. This property is
+//! used to determine whether it can be included in a block (transaction is ready) or whether it
+//! still _requires_ other transactions to be mined first (transaction is pending).
+//! A transaction is associated with the nonce of the account it's sent from. A unique identifying
+//! marker for a transaction is therefor the pair `(nonce + account)`. An incoming transaction with
+//! a `nonce > nonce on chain` will _require_ `(nonce -1, account)` first, before it is ready to be
+//! included in a block.
+//!
+//! This implementation is adapted from <https://github.com/paritytech/substrate/tree/master/client/transaction-pool>
+
 use crate::eth::{
     error::PoolError,
     pool::transactions::{
