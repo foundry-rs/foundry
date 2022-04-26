@@ -6,7 +6,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  # Will resolve to gakonst/foundry
+  # Will resolve to foundry-rs/foundry
   IMAGE_NAME: ${{ github.repository }}
 
 
