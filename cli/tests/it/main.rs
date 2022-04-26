@@ -5,7 +5,7 @@ mod cmd;
 #[cfg(not(feature = "external-integration-tests"))]
 mod config;
 #[cfg(not(feature = "external-integration-tests"))]
-mod test;
+mod test_cmd;
 #[cfg(not(feature = "external-integration-tests"))]
 mod verify;
 
