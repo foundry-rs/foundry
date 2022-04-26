@@ -446,7 +446,7 @@ mod tests {
 
     #[test]
     fn test_custom_get_automine() {
-        let s = r#"{"method": "anvil_getAutomine"}"#;
+        let s = r#"{"method": "anvil_getAutomine", "params": []}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }
