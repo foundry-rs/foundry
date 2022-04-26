@@ -1,9 +1,6 @@
 //! Contains various tests for checking forge commands related to verifying contracts on etherscan
 
-use ethers::{
-    etherscan,
-    types::{Address, Chain},
-};
+use ethers::types::Chain;
 use foundry_cli_test_utils::{
     forgetest,
     util::{TestCommand, TestProject},
