@@ -970,18 +970,24 @@ impl TransactionValidator for Backend {
         tx: &PendingTransaction,
     ) -> Result<(), InvalidTransactionError> {
         let account = self.db.read().basic(*tx.sender());
-        self.validate_pool_transaction_for(tx, account)
+        self.validate_pool_transaction_for(tx, &account, &*self.env().read())
     }
 
     fn validate_pool_transaction_for(
         &self,
         tx: &PendingTransaction,
-        account: AccountInfo,
+        account: &AccountInfo,
+        env: &Env,
     ) -> Result<(), InvalidTransactionError> {
         let tx = &tx.transaction;
+        if tx.gas_limit() > env.block.gas_limit {
+            return Err(InvalidTransactionError::GasTooHigh)
+        }
+
         // check nonce
-        if tx.nonce().as_u64() < account.nonce {
-            return Err(InvalidTransactionError::Payment)
+        let nonce: u64 = (*tx.nonce()).try_into().map_err(|_| InvalidTransactionError::NonceMax)?;
+        if nonce < account.nonce {
+            return Err(InvalidTransactionError::NonceTooLow)
         }
 
         let max_cost = tx.max_cost();
@@ -991,6 +997,19 @@ impl TransactionValidator for Backend {
 
         if account.balance < req_funds {
             return Err(InvalidTransactionError::Payment)
+        }
+        Ok(())
+    }
+
+    fn validate_for(
+        &self,
+        tx: &PendingTransaction,
+        account: &AccountInfo,
+        env: &Env,
+    ) -> Result<(), InvalidTransactionError> {
+        self.validate_pool_transaction_for(tx, account, env)?;
+        if tx.nonce().as_u64() > account.nonce {
+            return Err(InvalidTransactionError::NonceTooHigh)
         }
         Ok(())
     }

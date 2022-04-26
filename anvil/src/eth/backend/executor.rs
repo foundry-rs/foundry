@@ -189,16 +189,19 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
     fn next(&mut self) -> Option<Self::Item> {
         let transaction = self.pending.next()?;
         let account = self.db.basic(*transaction.pending_transaction.sender());
+        let env = self.env_for(&transaction.pending_transaction);
         // validate before executing
-        if let Err(err) =
-            self.validator.validate_pool_transaction_for(&transaction.pending_transaction, account)
-        {
+        if let Err(err) = self.validator.validate_pool_transaction_for(
+            &transaction.pending_transaction,
+            &account,
+            &env,
+        ) {
             trace!(target: "backend", "Skipping invalid tx execution [{:?}] {}", transaction.hash(), err);
             return Some(Err((transaction, err)))
         }
 
         let mut evm = revm::EVM::new();
-        evm.env = self.env_for(&transaction.pending_transaction);
+        evm.env = env;
         evm.database(&mut self.db);
 
         // records all call traces
