@@ -124,11 +124,11 @@ impl Cmd for InitArgs {
             if !offline {
                 let opts = DependencyInstallOpts { no_git, no_commit, quiet };
 
-                if root.join("lib/ds-test").exists() {
-                    println!("\"lib/ds-test\" already exists, skipping install....");
+                if root.join("lib/forge-std").exists() {
+                    println!("\"lib/forge-std\" already exists, skipping install....");
                     install(&root, vec![], opts)?;
                 } else {
-                    Dependency::from_str("https://github.com/dapphub/ds-test")
+                    Dependency::from_str("https://github.com/foundry-rs/forge-std")
                         .and_then(|dependency| install(&root, vec![dependency], opts))?;
                 }
             }
