@@ -91,6 +91,8 @@ pub struct TransactionExecutor<'a, Db: ?Sized, Validator: TransactionValidator> 
     pub block_env: BlockEnv,
     pub cfg_env: CfgEnv,
     pub parent_hash: H256,
+    /// Cumulative gas used by all executed transactions
+    pub gas_used: U256,
 }
 
 impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'a, DB, Validator> {
@@ -111,11 +113,12 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
 
         for (idx, tx) in self.enumerate() {
             let tx = match tx {
-                Ok(tx) => {
+                TransactionExecutionOutcome::Executed(tx) => {
                     included.push(tx.transaction.clone());
                     tx
                 }
-                Err((tx, _)) => {
+                TransactionExecutionOutcome::Exhausted(_) => continue,
+                TransactionExecutionOutcome::Invalid(tx, _) => {
                     invalid.push(tx);
                     continue
                 }
@@ -178,18 +181,31 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'
 }
 
 /// Represents the result of a single transaction execution attempt
-type TransactionExecutionResult =
-    Result<ExecutedTransaction, (Arc<PoolTransaction>, InvalidTransactionError)>;
+pub enum TransactionExecutionOutcome {
+    /// Transaction successfully executed
+    Executed(ExecutedTransaction),
+    /// Invalid transaction not executed
+    Invalid(Arc<PoolTransaction>, InvalidTransactionError),
+    /// Execution skipped because could exceed gas limit
+    Exhausted(Arc<PoolTransaction>),
+}
 
 impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
     for TransactionExecutor<'a, DB, Validator>
 {
-    type Item = TransactionExecutionResult;
+    type Item = TransactionExecutionOutcome;
 
     fn next(&mut self) -> Option<Self::Item> {
         let transaction = self.pending.next()?;
         let account = self.db.basic(*transaction.pending_transaction.sender());
         let env = self.env_for(&transaction.pending_transaction);
+
+        // check that we comply with the block's gas limit
+        let max_gas = self.gas_used.saturating_add(U256::from(env.tx.gas_limit));
+        if max_gas > env.block.gas_limit {
+            return Some(TransactionExecutionOutcome::Exhausted(transaction))
+        }
+
         // validate before executing
         if let Err(err) = self.validator.validate_pool_transaction_for(
             &transaction.pending_transaction,
@@ -197,7 +213,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
             &env,
         ) {
             trace!(target: "backend", "Skipping invalid tx execution [{:?}] {}", transaction.hash(), err);
-            return Some(Err((transaction, err)))
+            return Some(TransactionExecutionOutcome::Invalid(transaction, err))
         }
 
         let mut evm = revm::EVM::new();
@@ -210,6 +226,8 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
         // transact and commit the transaction
         let (exit, out, gas, logs) = evm.inspect_commit(&mut tracer);
 
+        self.gas_used.saturating_add(U256::from(gas));
+
         trace!(target: "backend::executor", "transacted [{:?}], result: {:?} gas {}", transaction.hash(), exit, gas);
 
         let tx = ExecutedTransaction {
@@ -221,7 +239,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
             traces: tracer.traces.arena,
         };
 
-        Some(Ok(tx))
+        Some(TransactionExecutionOutcome::Executed(tx))
     }
 }
 

@@ -295,6 +295,7 @@ impl Backend {
             block_env: env.block.clone(),
             cfg_env: env.cfg.clone(),
             parent_hash: storage.best_hash,
+            gas_used: U256::zero(),
         };
 
         // create the new block with the current timestamp
