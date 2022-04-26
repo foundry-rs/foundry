@@ -15,7 +15,7 @@ use ethers::{
         Address, Block, Bytes, Filter, Log, Trace, Transaction, TransactionReceipt, TxHash, U256,
     },
 };
-use foundry_evm::utils::u256_to_h256_le;
+use foundry_evm::utils::u256_to_h256_be;
 use parking_lot::{
     lock_api::{RwLockReadGuard, RwLockWriteGuard},
     RawRwLock, RwLock,
@@ -97,7 +97,7 @@ impl ClientFork {
         index: U256,
         number: Option<BlockNumber>,
     ) -> Result<H256, ProviderError> {
-        let index = u256_to_h256_le(index);
+        let index = u256_to_h256_be(index);
         self.provider().get_storage_at(address, index, number.map(Into::into)).await
     }
 

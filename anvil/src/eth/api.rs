@@ -42,7 +42,7 @@ use ethers::{
     },
     utils::rlp,
 };
-use foundry_evm::{revm::Return, utils::u256_to_h256_le};
+use foundry_evm::{revm::Return, utils::u256_to_h256_be};
 use futures::channel::mpsc::Receiver;
 use std::{sync::Arc, time::Duration};
 use tracing::trace;
@@ -587,7 +587,7 @@ impl EthApi {
         let items = state
             .into_iter()
             .map(|(address, acc)| {
-                let storage_keys = acc.storage.into_keys().map(u256_to_h256_le).collect();
+                let storage_keys = acc.storage.into_keys().map(u256_to_h256_be).collect();
                 AccessListItem { address, storage_keys }
             })
             .collect();

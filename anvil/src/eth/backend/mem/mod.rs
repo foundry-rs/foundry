@@ -45,7 +45,7 @@ use ethers::{
 use foundry_evm::{
     revm,
     revm::{db::CacheDB, Account, CreateScheme, Env, Return, TransactOut, TransactTo, TxEnv},
-    utils::u256_to_h256_le,
+    utils::u256_to_h256_be,
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
 use parking_lot::{Mutex, RwLock};
@@ -679,7 +679,7 @@ impl Backend {
     ) -> Result<H256, BlockchainError> {
         trace!(target: "backend", "get storage for {:?} at {:?}", address, index);
         let val = self.db.read().storage(address, index);
-        Ok(u256_to_h256_le(val))
+        Ok(u256_to_h256_be(val))
     }
 
     /// Returns the code of the address
