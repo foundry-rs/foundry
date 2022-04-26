@@ -1,7 +1,7 @@
 //! general eth api tests
 
 use crate::next_port;
-use anvil::{spawn, NodeConfig};
+use anvil::{eth::api::CLIENT_VERSION, spawn, NodeConfig};
 use ethers::{prelude::Middleware, types::U256};
 
 #[tokio::test(flavor = "multi_thread")]
@@ -43,4 +43,13 @@ async fn can_get_accounts() {
     let provider = handle.http_provider();
 
     let _ = provider.get_accounts().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_client_version() {
+    let (_api, handle) = spawn(NodeConfig::test().port(next_port())).await;
+    let provider = handle.http_provider();
+
+    let version = provider.client_version().await.unwrap();
+    assert_eq!(CLIENT_VERSION, version);
 }

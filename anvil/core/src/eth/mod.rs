@@ -26,6 +26,12 @@ pub mod utils;
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(tag = "method", content = "params")]
 pub enum EthRequest {
+    #[serde(rename = "web3_clientVersion", with = "empty_params")]
+    Web3ClientVersion(()),
+
+    #[serde(rename = "web3_sha3", with = "sequence")]
+    Web3Sha3(Bytes),
+
     #[serde(rename = "eth_chainId", with = "empty_params")]
     EthChainId(()),
 
@@ -411,6 +417,20 @@ mod empty_params {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_web3_client_version() {
+        let s = r#"{"method": "web3_clientVersion", "params":[]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_web3_sha3() {
+        let s = r#"{"method": "web3_sha3", "params":["0x68656c6c6f20776f726c64"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
 
     #[test]
     fn test_eth_accounts() {

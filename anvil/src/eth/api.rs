@@ -47,6 +47,9 @@ use futures::channel::mpsc::Receiver;
 use std::{sync::Arc, time::Duration};
 use tracing::trace;
 
+/// The client version: `anvil/v{major}.{minor}.{patch}`
+pub const CLIENT_VERSION: &str = concat!("anvil/v", env!("CARGO_PKG_VERSION"));
+
 /// The entry point for executing eth api RPC call - The Eth RPC interface.
 ///
 /// This type is cheap to clone and can be used concurrently
@@ -108,6 +111,8 @@ impl EthApi {
     pub async fn execute(&self, request: EthRequest) -> ResponseResult {
         trace!(target: "rpc::api", "executing eth request {:?}", request);
         match request {
+            EthRequest::Web3ClientVersion(()) => self.client_version().to_rpc_result(),
+            EthRequest::Web3Sha3(content) => self.sha3(content).to_rpc_result(),
             EthRequest::EthGetBalance(addr, block) => {
                 self.balance(addr, block).await.to_rpc_result()
             }
@@ -271,6 +276,23 @@ impl EthApi {
     /// Queries the current gas limit
     fn current_gas_limit(&self) -> Result<U256> {
         Ok(self.backend.gas_limit())
+    }
+
+    /// Returns the current client version.
+    ///
+    /// Handler for ETH RPC call: `web3_clientVersion`
+    pub fn client_version(&self) -> Result<String> {
+        node_info!("web3_clientVersion");
+        Ok(CLIENT_VERSION.to_string())
+    }
+
+    /// Returns Keccak-256 (not the standardized SHA3-256) of the given data.
+    ///
+    /// Handler for ETH RPC call: `web3_sha3`
+    pub fn sha3(&self, bytes: Bytes) -> Result<String> {
+        node_info!("web3_sha3");
+        let hash = ethers::utils::keccak256(bytes.as_ref());
+        Ok(ethers::utils::hex::encode(&hash[..]))
     }
 
     /// Returns protocol version encoded as a string (quotes are necessary).
