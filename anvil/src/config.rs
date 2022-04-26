@@ -249,7 +249,7 @@ impl NodeConfig {
             return
         }
         println!("  {}", BANNER.green());
-        println!("      {}", "https://github.com/gakonst/foundry".green());
+        println!("      {}", "https://github.com/foundry-rs/foundry".green());
 
         print!(
             r#"
@@ -261,7 +261,6 @@ Available Accounts
         for (idx, wallet) in self.genesis_accounts.iter().enumerate() {
             println!("({}) {:?} ({} ETH)", idx, wallet.address(), balance);
         }
-        println!();
 
         print!(
             r#"
