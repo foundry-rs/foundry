@@ -29,6 +29,9 @@ pub enum EthRequest {
     #[serde(rename = "eth_chainId", with = "empty_params")]
     EthChainId(()),
 
+    #[serde(rename = "eth_networkId", with = "empty_params")]
+    EthNetworkId(()),
+
     #[serde(rename = "eth_gasPrice", with = "empty_params")]
     EthGasPrice(()),
 
@@ -412,6 +415,13 @@ mod tests {
     #[test]
     fn test_eth_accounts() {
         let s = r#"{"method": "eth_accounts", "params":[]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_eth_network_id() {
+        let s = r#"{"method": "eth_networkId", "params":[]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }

@@ -118,6 +118,7 @@ impl EthApi {
                 self.send_transaction(*request).await.to_rpc_result()
             }
             EthRequest::EthChainId(_) => self.chain_id().to_rpc_result(),
+            EthRequest::EthNetworkId(_) => self.network_id().to_rpc_result(),
             EthRequest::EthGasPrice(_) => self.gas_price().to_rpc_result(),
             EthRequest::EthAccounts(_) => self.accounts().to_rpc_result(),
             EthRequest::EthBlockNumber(_) => self.block_number().to_rpc_result(),
@@ -311,6 +312,14 @@ impl EthApi {
     /// Handler for ETH RPC call: `eth_chainId`
     pub fn chain_id(&self) -> Result<Option<U64>> {
         node_info!("eth_chainId");
+        Ok(Some(self.backend.chain_id().as_u64().into()))
+    }
+
+    /// Returns the same as `chain_id`
+    ///
+    /// Handler for ETH RPC call: `eth_networkId`
+    pub fn network_id(&self) -> Result<Option<U64>> {
+        node_info!("eth_networkId");
         Ok(Some(self.backend.chain_id().as_u64().into()))
     }
 
