@@ -31,9 +31,21 @@ use foundry_evm::{
 };
 use parking_lot::RwLock;
 
+/// Default port the rpc will open
 pub const NODE_PORT: u16 = 8545;
-
+/// Default chain id of the node
 pub const CHAIN_ID: u64 = 1337;
+/// Default mnemonic for dev accounts
+pub const DEFAULT_MNEMONIC: &str = "test test test test test test test test test test test junk";
+
+const BANNER: &str = r#"
+                          _   _
+                         (_) | |
+   __ _   _ __   __   __  _  | |
+  / _` | | '_ \  \ \ / / | | | |
+ | (_| | | | | |  \ V /  | | | |
+  \__,_| |_| |_|   \_/   |_| |_|
+"#;
 
 /// Configurations of the EVM node
 #[derive(Debug, Clone)]
@@ -85,7 +97,7 @@ impl NodeConfig {
 impl Default for NodeConfig {
     fn default() -> Self {
         // generate some random wallets
-        let genesis_accounts = random_wallets(10);
+        let genesis_accounts = AccountGenerator::new(10).phrase(DEFAULT_MNEMONIC).gen();
         Self {
             chain_id: CHAIN_ID,
             gas_limit: U256::from(6_721_975),
@@ -479,25 +491,3 @@ impl AccountGenerator {
         wallets
     }
 }
-
-/// Generates random private-public key pair which can be used for signing messages
-pub fn random_wallets(num_accounts: usize) -> Vec<Wallet<SigningKey>> {
-    let builder = MnemonicBuilder::<English>::default()
-        .phrase("member yard spread wall vanish absorb hill lawn fetch equal purse shiver");
-    let mut wallets = Vec::with_capacity(num_accounts);
-
-    for i in 0..num_accounts {
-        let wallet = builder.clone().index(i as u32).unwrap().build().unwrap();
-        wallets.push(wallet)
-    }
-    wallets
-}
-
-const BANNER: &str = r#"
-                          _   _
-                         (_) | |
-   __ _   _ __   __   __  _  | |
-  / _` | | '_ \  \ \ / / | | | |
- | (_| | | | | |  \ V /  | | | |
-  \__,_| |_| |_|   \_/   |_| |_|
-"#;

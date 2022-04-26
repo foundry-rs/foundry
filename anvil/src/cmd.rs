@@ -1,7 +1,7 @@
 use clap::Parser;
 use ethers::utils::WEI_IN_ETHER;
 
-use crate::{AccountGenerator, NodeConfig, CHAIN_ID};
+use crate::{config::DEFAULT_MNEMONIC, AccountGenerator, NodeConfig, CHAIN_ID};
 use forge::executor::opts::EvmOpts;
 use foundry_common::evm::EvmArgs;
 
@@ -61,7 +61,7 @@ impl NodeArgs {
     }
 
     fn account_generator(&self) -> AccountGenerator {
-        let mut gen = AccountGenerator::new(self.accounts as usize);
+        let mut gen = AccountGenerator::new(self.accounts as usize).phrase(DEFAULT_MNEMONIC);
         if let Some(ref mnemonic) = self.mnemonic {
             gen = gen.phrase(mnemonic);
         }
