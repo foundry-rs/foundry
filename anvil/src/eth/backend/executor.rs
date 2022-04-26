@@ -1,4 +1,8 @@
-use crate::eth::{backend::db::Db, pool::transactions::PoolTransaction};
+use crate::eth::{
+    backend::{db::Db, validate::TransactionValidator},
+    error::InvalidTransactionError,
+    pool::transactions::PoolTransaction,
+};
 use anvil_core::eth::{
     block::{Block, BlockInfo, Header, PartialHeader},
     receipt::{EIP1559Receipt, EIP2930Receipt, EIP658Receipt, Log, TypedReceipt},
@@ -64,10 +68,24 @@ impl ExecutedTransaction {
     }
 }
 
+/// Represents the outcome of mining a new block
+#[derive(Debug, Clone)]
+pub struct ExecutedTransactions {
+    /// The block created after executing the `included` transactions
+    pub block: BlockInfo,
+    /// All transactions included in the
+    pub included: Vec<Arc<PoolTransaction>>,
+    /// All transactions that were invalid at the point of their execution and were not included in
+    /// the block
+    pub invalid: Vec<Arc<PoolTransaction>>,
+}
+
 /// An executor for a series of transactions
-pub struct TransactionExecutor<'a, Db: ?Sized> {
+pub struct TransactionExecutor<'a, Db: ?Sized, Validator: TransactionValidator> {
     /// where to insert the transactions
     pub db: &'a mut Db,
+    /// type used to validate before inclusion
+    pub validator: Validator,
     /// all pending transactions
     pub pending: std::vec::IntoIter<Arc<PoolTransaction>>,
     pub block_env: BlockEnv,
@@ -75,14 +93,16 @@ pub struct TransactionExecutor<'a, Db: ?Sized> {
     pub parent_hash: H256,
 }
 
-impl<'a, DB: Db + ?Sized> TransactionExecutor<'a, DB> {
+impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> TransactionExecutor<'a, DB, Validator> {
     /// Executes all transactions and puts them in a new block with the provided `timestamp`
-    pub fn create_block(self, timestamp: u64) -> BlockInfo {
+    pub fn execute(self, timestamp: u64) -> ExecutedTransactions {
         let mut transactions = Vec::new();
         let mut transaction_infos = Vec::new();
         let mut receipts = Vec::new();
         let mut bloom = Bloom::default();
         let mut cumulative_gas_used = U256::zero();
+        let mut invalid = Vec::new();
+        let mut included = Vec::new();
         let gas_limit = self.block_env.gas_limit;
         let parent_hash = self.parent_hash;
         let block_number = self.block_env.number;
@@ -90,6 +110,16 @@ impl<'a, DB: Db + ?Sized> TransactionExecutor<'a, DB> {
         let beneficiary = self.block_env.coinbase;
 
         for (idx, tx) in self.enumerate() {
+            let tx = match tx {
+                Ok(tx) => {
+                    included.push(tx.transaction.clone());
+                    tx
+                }
+                Err((tx, _)) => {
+                    invalid.push(tx);
+                    continue
+                }
+            };
             let receipt = tx.create_receipt();
             cumulative_gas_used = cumulative_gas_used.saturating_add(receipt.gas_used());
             let ExecutedTransaction { transaction, logs, out, traces, .. } = tx;
@@ -138,7 +168,8 @@ impl<'a, DB: Db + ?Sized> TransactionExecutor<'a, DB> {
         };
 
         let block = Block::new(partial_header, transactions.clone(), ommers);
-        BlockInfo { block, transactions: transaction_infos, receipts }
+        let block = BlockInfo { block, transactions: transaction_infos, receipts };
+        ExecutedTransactions { block, included, invalid }
     }
 
     fn env_for(&self, tx: &PendingTransaction) -> Env {
@@ -146,11 +177,24 @@ impl<'a, DB: Db + ?Sized> TransactionExecutor<'a, DB> {
     }
 }
 
-impl<'a, DB: Db + ?Sized> Iterator for TransactionExecutor<'a, DB> {
-    type Item = ExecutedTransaction;
+/// Represents the result of a single transaction execution attempt
+type TransactionExecutionResult =
+    Result<ExecutedTransaction, (Arc<PoolTransaction>, InvalidTransactionError)>;
+
+impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
+    for TransactionExecutor<'a, DB, Validator>
+{
+    type Item = TransactionExecutionResult;
 
     fn next(&mut self) -> Option<Self::Item> {
         let transaction = self.pending.next()?;
+
+        // validate before executing
+        if let Err(err) = self.validator.validate_pool_transaction(&transaction.pending_transaction)
+        {
+            trace!(target: "backend", "Skipping invalid tx execution [{:?}] {}", transaction.hash(), err);
+            return Some(Err((transaction, err)))
+        }
 
         let mut evm = revm::EVM::new();
         evm.env = self.env_for(&transaction.pending_transaction);
@@ -173,7 +217,7 @@ impl<'a, DB: Db + ?Sized> Iterator for TransactionExecutor<'a, DB> {
             traces: tracer.traces.arena,
         };
 
-        Some(tx)
+        Some(Ok(tx))
     }
 }
 

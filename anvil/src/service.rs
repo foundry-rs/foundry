@@ -62,14 +62,10 @@ impl Future for NodeService {
 
         while let Poll::Ready(transactions) = pin.miner.poll(&pin.pool, cx) {
             // miner returned a set of transaction to put into a new block
-            let block_number = pin.backend.mine_block(transactions.clone());
-            trace!(target: "node", "mined block {}", block_number);
-            // prune all the markers the mined transactions provide
-            let res = pin.pool.prune_markers(
-                block_number,
-                transactions.into_iter().flat_map(|tx| tx.provides.clone()),
-            );
-            trace!(target: "node", "pruned transaction markers {:?}", res);
+            let outcome = pin.backend.mine_block(transactions.clone());
+            trace!(target: "node", "mined block {}", outcome.block_number);
+            // prune the transactions from the pool
+            pin.pool.on_mined_block(outcome);
         }
 
         // poll the fee history task

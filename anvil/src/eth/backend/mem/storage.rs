@@ -7,6 +7,7 @@ use anvil_core::eth::{
 };
 use ethers::prelude::{BlockId, BlockNumber, Trace, H256, H256 as TxHash, U64};
 
+use crate::eth::pool::transactions::PoolTransaction;
 use parking_lot::RwLock;
 use std::{collections::HashMap, sync::Arc};
 
@@ -113,6 +114,18 @@ impl Blockchain {
     pub fn blocks_count(&self) -> usize {
         self.storage.read().blocks.len()
     }
+}
+
+/// Represents the outcome of mining a new block
+#[derive(Debug, Clone)]
+pub struct MinedBlockOutcome {
+    /// The block that was mined
+    pub block_number: U64,
+    /// All transactions included in the block
+    pub included: Vec<Arc<PoolTransaction>>,
+    /// All transactions that were attempted to be included but were invalid at the time of
+    /// execution
+    pub invalid: Vec<Arc<PoolTransaction>>,
 }
 
 /// Container type for a mined transaction

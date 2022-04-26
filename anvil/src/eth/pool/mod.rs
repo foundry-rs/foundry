@@ -26,12 +26,15 @@
 //!
 //! This implementation is adapted from <https://github.com/paritytech/substrate/tree/master/client/transaction-pool>
 
-use crate::eth::{
-    error::PoolError,
-    pool::transactions::{
-        PendingPoolTransaction, PendingTransactions, PoolTransaction, ReadyTransactions,
-        TransactionsIterator, TxMarker,
+use crate::{
+    eth::{
+        error::PoolError,
+        pool::transactions::{
+            PendingPoolTransaction, PendingTransactions, PoolTransaction, ReadyTransactions,
+            TransactionsIterator, TxMarker,
+        },
     },
+    mem::storage::MinedBlockOutcome,
 };
 use ethers::types::{TxHash, U64};
 use futures::channel::mpsc::{channel, Receiver, Sender};
@@ -56,6 +59,22 @@ impl Pool {
     /// Returns an iterator that yields all transactions that are currently ready
     pub fn ready_transactions(&self) -> TransactionsIterator {
         self.inner.read().ready_transactions()
+    }
+
+    /// Invoked when a set of transactions ([Self::ready_transactions()]) was executed.
+    ///
+    /// This will remove the transactions from the pool.
+    pub fn on_mined_block(&self, outcome: MinedBlockOutcome) -> PruneResult {
+        let MinedBlockOutcome { block_number, included, invalid } = outcome;
+
+        // remove invalid transactions from the pool
+        self.remove_invalid(invalid.into_iter().map(|tx| *tx.hash()).collect());
+
+        // prune all the markers the mined transactions provide
+        let res = self
+            .prune_markers(block_number, included.into_iter().flat_map(|tx| tx.provides.clone()));
+        trace!(target: "node", "pruned transaction markers {:?}", res);
+        res
     }
 
     /// Removes ready transactions for the given iterator of identifying markers.

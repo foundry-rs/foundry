@@ -6,16 +6,21 @@ use crate::eth::{
 };
 use ethers::prelude::{BlockNumber, TxHash, H256, U256, U64};
 
-use crate::eth::{
-    backend::{
-        cheats::CheatsManager,
-        fork::ClientFork,
-        notifications::{NewBlockNotification, NewBlockNotifications},
-        time::{utc_from_secs, TimeManager},
+use crate::{
+    eth::{
+        backend::{
+            cheats::CheatsManager,
+            executor::ExecutedTransactions,
+            fork::ClientFork,
+            notifications::{NewBlockNotification, NewBlockNotifications},
+            time::{utc_from_secs, TimeManager},
+            validate::TransactionValidator,
+        },
+        error::{BlockchainError, InvalidTransactionError},
+        fees::{FeeDetails, FeeManager},
+        macros::node_info,
     },
-    error::{BlockchainError, InvalidTransactionError},
-    fees::{FeeDetails, FeeManager},
-    macros::node_info,
+    mem::storage::MinedBlockOutcome,
 };
 use anvil_core::{
     eth::{
@@ -265,42 +270,11 @@ impl Backend {
         self.fees.elasticity()
     }
 
-    /// Validates the transaction's validity when it comes to nonce, payment
-    ///
-    /// This is intended to be checked before the transaction makes it into the pool and whether it
-    /// should rather be outright rejected if the sender has insufficient funds.
-    pub fn validate_transaction(
-        &self,
-        tx: &PendingTransaction,
-    ) -> Result<(), InvalidTransactionError> {
-        let sender = *tx.sender();
-        let tx = &tx.transaction;
-        let account = self.db.read().basic(sender);
-
-        // check nonce
-        if tx.nonce().as_u64() < account.nonce {
-            return Err(InvalidTransactionError::Payment)
-        }
-
-        let max_cost = tx.max_cost();
-        let value = tx.value();
-        // check sufficient funds: `gas * price + value`
-        let req_funds = max_cost.checked_add(value).ok_or(InvalidTransactionError::Payment)?;
-
-        if account.balance < req_funds {
-            return Err(InvalidTransactionError::Payment)
-        }
-        Ok(())
-    }
-
     /// Mines a new block and stores it.
     ///
     /// this will execute all transaction in the order they come in and return all the markers they
     /// provide.
-    ///
-    /// TODO(mattsse): currently we're assuming all transactions are valid:
-    ///  needs an additional validation step: gas limit, fee
-    pub fn mine_block(&self, pool_transactions: Vec<Arc<PoolTransaction>>) -> U64 {
+    pub fn mine_block(&self, pool_transactions: Vec<Arc<PoolTransaction>>) -> MinedBlockOutcome {
         trace!(target: "backend", "creating new block with {} transactions", pool_transactions.len());
 
         let current_base_fee = self.base_fee();
@@ -315,6 +289,7 @@ impl Backend {
 
         let executor = TransactionExecutor {
             db: &mut *db,
+            validator: self,
             pending: pool_transactions.into_iter(),
             block_env: env.block.clone(),
             cfg_env: env.cfg.clone(),
@@ -322,8 +297,9 @@ impl Backend {
         };
 
         // create the new block with the current timestamp
-        let BlockInfo { block, transactions, receipts } =
-            executor.create_block(self.time.current_timestamp());
+        let ExecutedTransactions { block, included, invalid } =
+            executor.execute(self.time.current_timestamp());
+        let BlockInfo { block, transactions, receipts } = block;
 
         let header = block.header.clone();
 
@@ -370,7 +346,7 @@ impl Backend {
         // notify all listeners
         self.notify_on_new_block(header, block_hash);
 
-        block_number
+        MinedBlockOutcome { block_number, included, invalid }
     }
 
     /// Executes the `CallRequest` without writing to the DB
@@ -984,6 +960,32 @@ impl Backend {
         self.new_block_listeners
             .lock()
             .retain(|tx| tx.unbounded_send(notification.clone()).is_ok());
+    }
+}
+
+impl TransactionValidator for Backend {
+    fn validate_pool_transaction(
+        &self,
+        tx: &PendingTransaction,
+    ) -> Result<(), InvalidTransactionError> {
+        let sender = *tx.sender();
+        let tx = &tx.transaction;
+        let account = self.db.read().basic(sender);
+
+        // check nonce
+        if tx.nonce().as_u64() < account.nonce {
+            return Err(InvalidTransactionError::Payment)
+        }
+
+        let max_cost = tx.max_cost();
+        let value = tx.value();
+        // check sufficient funds: `gas * price + value`
+        let req_funds = max_cost.checked_add(value).ok_or(InvalidTransactionError::Payment)?;
+
+        if account.balance < req_funds {
+            return Err(InvalidTransactionError::Payment)
+        }
+        Ok(())
     }
 }
 

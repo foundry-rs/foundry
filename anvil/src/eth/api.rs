@@ -1,7 +1,7 @@
 use crate::{
     eth::{
         backend,
-        backend::notifications::NewBlockNotifications,
+        backend::{notifications::NewBlockNotifications, validate::TransactionValidator},
         error::{
             BlockchainError, FeeHistoryError, InvalidTransactionError, Result, ToRpcResponseResult,
         },
@@ -448,7 +448,7 @@ impl EthApi {
         let pending_transaction = PendingTransaction::new(transaction)?;
 
         // pre-validate
-        self.backend.validate_transaction(&pending_transaction)?;
+        self.backend.validate_pool_transaction(&pending_transaction)?;
 
         let requires = required_marker(nonce, on_chain_nonce, from);
         let provides = vec![to_marker(nonce.as_u64(), from)];
@@ -487,7 +487,7 @@ impl EthApi {
         let pending_transaction = PendingTransaction::new(transaction)?;
 
         // pre-validate
-        self.backend.validate_transaction(&pending_transaction)?;
+        self.backend.validate_pool_transaction(&pending_transaction)?;
 
         let on_chain_nonce = self.backend.current_nonce(*pending_transaction.sender());
         let nonce = *pending_transaction.transaction.nonce();
@@ -1261,7 +1261,7 @@ impl EthApi {
         let pending_transaction = PendingTransaction::with_sender(transaction, from);
 
         // pre-validate
-        self.backend.validate_transaction(&pending_transaction)?;
+        self.backend.validate_pool_transaction(&pending_transaction)?;
 
         let requires = required_marker(nonce, on_chain_nonce, from);
         let provides = vec![to_marker(nonce.as_u64(), from)];
@@ -1296,14 +1296,10 @@ impl EthApi {
     /// Mines exactly one block
     pub fn mine_one(&self) {
         let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
-        let block_number = self.backend.mine_block(transactions.clone());
-        trace!(target: "node", "mined block {}", block_number);
-        // prune all the markers the mined transactions provide
-        let res = self.pool.prune_markers(
-            block_number,
-            transactions.into_iter().flat_map(|tx| tx.provides.clone()),
-        );
-        trace!(target: "node", "pruned transaction markers {:?}", res);
+        let outcome = self.backend.mine_block(transactions.clone());
+
+        trace!(target: "node", "mined block {}", outcome.block_number);
+        self.pool.on_mined_block(outcome);
     }
 
     fn build_typed_tx_request(
