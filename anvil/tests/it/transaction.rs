@@ -166,8 +166,18 @@ async fn can_deploy_greeter_http() {
     let wallet = handle.dev_wallets().next().unwrap();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
+    let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
+        .unwrap()
+        .legacy()
+        .send()
+        .await
+        .unwrap();
+
+    let greeting = greeter_contract.greet().call().await.unwrap();
+    assert_eq!("Hello World!", greeting);
+
     let greeter_contract =
-        Greeter::deploy(client, "Hello World!".to_string()).unwrap().legacy().send().await.unwrap();
+        Greeter::deploy(client, "Hello World!".to_string()).unwrap().send().await.unwrap();
 
     let greeting = greeter_contract.greet().call().await.unwrap();
     assert_eq!("Hello World!", greeting);
@@ -183,8 +193,18 @@ async fn can_deploy_greeter_ws() {
     let wallet = handle.dev_wallets().next().unwrap();
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
 
+    let greeter_contract = Greeter::deploy(Arc::clone(&client), "Hello World!".to_string())
+        .unwrap()
+        .legacy()
+        .send()
+        .await
+        .unwrap();
+
+    let greeting = greeter_contract.greet().call().await.unwrap();
+    assert_eq!("Hello World!", greeting);
+
     let greeter_contract =
-        Greeter::deploy(client, "Hello World!".to_string()).unwrap().legacy().send().await.unwrap();
+        Greeter::deploy(client, "Hello World!".to_string()).unwrap().send().await.unwrap();
 
     let greeting = greeter_contract.greet().call().await.unwrap();
     assert_eq!("Hello World!", greeting);
