@@ -27,6 +27,7 @@ use crate::{
 };
 use eth::backend::fork::ClientFork;
 use ethers::providers::Ws;
+use futures::FutureExt;
 use parking_lot::Mutex;
 use std::{
     future::Future,
@@ -36,7 +37,7 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
-use tokio::task::{JoinError, JoinHandle};
+use tokio::task::JoinError;
 
 /// contains the background service that drives the node
 mod service;
@@ -119,38 +120,40 @@ pub async fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
         filters.clone(),
     );
 
-    let node_service = NodeService::new(pool, backend, miner, fee_history_service, filters);
+    // spawn the node service
+    let node_service =
+        tokio::task::spawn(NodeService::new(pool, backend, miner, fee_history_service, filters));
 
     let socket = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port);
 
-    let serve = server::serve(socket, api.clone());
+    // launch the rpc server
+    let serve = tokio::task::spawn(server::serve(socket, api.clone()));
 
-    // spawn the server and the node service and poll as long as both are running
-    let inner = tokio::task::spawn(async move {
-        loop {
-            tokio::select! {
-                res = serve => {
-                    return res
-                },
-                res = node_service => {
-                     return res
-                }
-            }
-        }
-    });
+    // select over both tasks
+    let inner = futures::future::select(node_service, serve);
 
-    let handle = NodeHandle { config, inner, address: socket };
+    let handle = NodeHandle {
+        config,
+        inner: Box::pin(async move {
+            // wait for the first task to finish
+            inner.await.into_inner().0
+        }),
+        address: socket,
+    };
 
     handle.print(fork.as_ref());
 
     (api, handle)
 }
 
+type NodeFuture = Pin<Box<dyn Future<Output = Result<hyper::Result<()>, JoinError>>>>;
+
 /// A handle to the spawned node and server
 pub struct NodeHandle {
     config: NodeConfig,
     address: SocketAddr,
-    inner: JoinHandle<hyper::Result<()>>,
+    /// the future that drives the rpc service and the node service
+    inner: NodeFuture,
 }
 
 impl NodeHandle {
@@ -227,7 +230,7 @@ impl Future for NodeHandle {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let pin = self.get_mut();
-        Pin::new(&mut pin.inner).poll(cx)
+        pin.inner.poll_unpin(cx)
     }
 }
 
