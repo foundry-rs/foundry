@@ -85,6 +85,23 @@ pub enum InvalidTransactionError {
     /// General error when transaction is outdated, nonce too low
     #[error("Transaction is outdated")]
     Outdated,
+    /// returned if the nonce of a transaction is higher than the next one expected based on the
+    /// local chain.
+    #[error("Nonce too high")]
+    NonceTooHigh,
+    /// returned if the nonce of a transaction is lower than the one present in the local chain.
+    #[error("nonce too low")]
+    NonceTooLow,
+    /// Returned if the nonce of a transaction is too high
+    #[error("nonce has max value")]
+    NonceMax,
+    /// returned if the transaction gas exceeds the limit
+    #[error("intrinsic gas too low")]
+    GasTooHigh,
+    /// returned if the transaction is specified to use less gas than required to start the
+    /// invocation.
+    #[error("intrinsic gas too low")]
+    GasTooLow,
     /// The transaction would exhaust gas resources of current block.
     ///
     /// But transaction is still valid.
