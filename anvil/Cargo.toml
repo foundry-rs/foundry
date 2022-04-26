@@ -71,5 +71,6 @@ pretty_assertions = "1.2.1"
 tokio = { version = "1.10", features = ["full"] }
 
 [features]
+default = ["cli"]
 cmd = ["clap", "foundry-common", "forge"]
 cli = ["tokio/full", "cmd"]

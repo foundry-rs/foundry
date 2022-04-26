@@ -139,7 +139,7 @@ jobs:
           SVM_TARGET_PLATFORM: ${{ matrix.job.svm_target_platform }}
         with:
           command: build
-          args: --release --bins --features "anvil/cli" --target ${{ matrix.job.target }}
+          args: --release --bins --target ${{ matrix.job.target }}
 
       - name: Archive binaries
         id: artifacts
