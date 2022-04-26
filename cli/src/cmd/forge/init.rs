@@ -190,10 +190,11 @@ fn init_git_repo(root: &Path, no_commit: bool) -> eyre::Result<()> {
 fn init_vscode(root: &Path) -> eyre::Result<()> {
     let remappings_file = root.join("remappings.txt");
     if !remappings_file.exists() {
-        let remappings = remappings::relative_remappings(&root.join("lib"), root)
+        let mut remappings = remappings::relative_remappings(&root.join("lib"), root)
             .into_iter()
             .map(|r| r.to_string())
             .collect::<Vec<_>>();
+        remappings.sort();
         if !remappings.is_empty() {
             let content = remappings.join("\n");
             std::fs::write(remappings_file, content)?;
