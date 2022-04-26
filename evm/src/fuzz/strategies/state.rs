@@ -36,7 +36,7 @@ pub fn fuzz_calldata_from_state(
                 .unwrap_or_else(|_| {
                     panic!(
                         r#"Fuzzer generated invalid tokens {:?} for function `{}` inputs {:?}
-This is a bug, please open an issue: https://github.com/gakonst/foundry/issues"#,
+This is a bug, please open an issue: https://github.com/foundry-rs/foundry/issues"#,
                         tokens, func.name, func.inputs
                     )
                 })
