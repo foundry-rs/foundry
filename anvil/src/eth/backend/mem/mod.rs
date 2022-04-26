@@ -21,6 +21,7 @@ use crate::{
         macros::node_info,
     },
     mem::storage::MinedBlockOutcome,
+    revm::AccountInfo,
 };
 use anvil_core::{
     eth::{
@@ -968,10 +969,16 @@ impl TransactionValidator for Backend {
         &self,
         tx: &PendingTransaction,
     ) -> Result<(), InvalidTransactionError> {
-        let sender = *tx.sender();
-        let tx = &tx.transaction;
-        let account = self.db.read().basic(sender);
+        let account = self.db.read().basic(*tx.sender());
+        self.validate_pool_transaction_for(tx, account)
+    }
 
+    fn validate_pool_transaction_for(
+        &self,
+        tx: &PendingTransaction,
+        account: AccountInfo,
+    ) -> Result<(), InvalidTransactionError> {
+        let tx = &tx.transaction;
         // check nonce
         if tx.nonce().as_u64() < account.nonce {
             return Err(InvalidTransactionError::Payment)
