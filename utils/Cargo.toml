@@ -4,7 +4,7 @@ version = "0.2.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
-repository = "https://github.com/gakonst/foundry"
+repository = "https://github.com/foundry-rs/foundry"
 
 [dependencies]
 ethers-core = { git = "https://github.com/gakonst/ethers-rs", default-features = false }

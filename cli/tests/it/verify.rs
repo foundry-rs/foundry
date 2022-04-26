@@ -1,6 +1,9 @@
 //! Contains various tests for checking forge commands related to verifying contracts on etherscan
 
-use ethers::types::Chain;
+use ethers::{
+    etherscan,
+    types::{Address, Chain},
+};
 use foundry_cli_test_utils::{
     forgetest,
     util::{TestCommand, TestProject},
@@ -8,8 +11,13 @@ use foundry_cli_test_utils::{
 };
 use std::time::Duration;
 
-fn etherscan_key() -> Option<String> {
-    std::env::var("ETHERSCAN_API_KEY").ok()
+fn etherscan_key(chain: Chain) -> Option<String> {
+    match chain {
+        Chain::Fantom | Chain::FantomTestnet => {
+            std::env::var("FTMSCAN_API_KEY").or_else(|_| std::env::var("FANTOMSCAN_API_KEY")).ok()
+        }
+        _ => std::env::var("ETHERSCAN_API_KEY").ok(),
+    }
 }
 
 fn network_rpc_key(chain: &str) -> Option<String> {
@@ -36,7 +44,16 @@ impl VerifyExternalities {
             chain: Chain::Goerli,
             rpc: network_rpc_key("goerli")?,
             pk: network_private_key("goerli")?,
-            etherscan: etherscan_key()?,
+            etherscan: etherscan_key(Chain::Goerli)?,
+        })
+    }
+
+    fn ftm_testnet() -> Option<Self> {
+        Some(Self {
+            chain: Chain::FantomTestnet,
+            rpc: network_rpc_key("ftm_testnet")?,
+            pk: network_private_key("ftm_testnet")?,
+            etherscan: etherscan_key(Chain::FantomTestnet)?,
         })
     }
 
@@ -85,10 +102,9 @@ contract Unique {{
         .unwrap();
 }
 
-// tests that direct import paths are handled correctly
-forgetest!(can_verify_random_contract, |prj: TestProject, mut cmd: TestCommand| {
+fn verify_on_chain(info: Option<VerifyExternalities>, prj: TestProject, mut cmd: TestCommand) {
     // only execute if keys present
-    if let Some(info) = VerifyExternalities::goerli() {
+    if let Some(info) = info {
         add_unique(&prj);
 
         prj.inner()
@@ -164,7 +180,7 @@ forgetest!(can_verify_random_contract, |prj: TestProject, mut cmd: TestCommand| 
                         return Ok(())
                     }
                     eyre::bail!(
-                        "Failed to get verfiication, stdout: {}, stderr: {}",
+                        "Failed to get verification, stdout: {}, stderr: {}",
                         out,
                         String::from_utf8_lossy(&output.stderr)
                     )
@@ -172,6 +188,16 @@ forgetest!(can_verify_random_contract, |prj: TestProject, mut cmd: TestCommand| 
                 .expect("Failed to verify check")
         }
     }
+}
+
+// tests verify on goerli if correct env vars are set
+forgetest!(can_verify_random_contract_goerli, |prj: TestProject, cmd: TestCommand| {
+    verify_on_chain(VerifyExternalities::goerli(), prj, cmd);
+});
+
+// tests verify on Fantom testnet if correct env vars are set
+forgetest!(can_verify_random_contract_fantom_testnet, |prj: TestProject, cmd: TestCommand| {
+    verify_on_chain(VerifyExternalities::ftm_testnet(), prj, cmd);
 });
 
 /// Parses the address the contract was deployed to

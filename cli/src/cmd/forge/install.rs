@@ -90,6 +90,7 @@ pub(crate) fn install(
         let target_dir = if let Some(alias) = &dep.alias { alias } else { &dep.name };
         let DependencyInstallOpts { no_git, no_commit, quiet } = opts;
         p_println!(!quiet => "Installing {} in {:?}, (url: {}, tag: {:?})", dep.name, &libs.join(&target_dir), dep.url, dep.tag);
+        check_tag(&dep)?;
         if no_git {
             install_as_folder(&dep, &libs)?;
         } else {
@@ -97,6 +98,21 @@ pub(crate) fn install(
         }
 
         p_println!(!quiet => "    {} {}",    Colour::Green.paint("Installed"), dep.name);
+    }
+    Ok(())
+}
+
+/// make sure tag exists on the remote repository
+fn check_tag(dep: &Dependency) -> eyre::Result<()> {
+    if let Some(ref tag) = dep.tag {
+        let output = Command::new("git")
+            .args(&["ls-remote", &dep.url, tag])
+            .stdout(Stdio::piped())
+            .output()?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if !stdout.contains(tag) {
+            eyre::bail!("tag/branch/commit \"{}\" does not exists", tag)
+        }
     }
     Ok(())
 }

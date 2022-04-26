@@ -6,7 +6,7 @@ license = "MIT OR Apache-2.0"
 description = """
 Foundry configuration
 """
-repository = "https://github.com/gakonst/foundry"
+repository = "https://github.com/foundry-rs/foundry"
 readme = "README.md"
 
 [dependencies]

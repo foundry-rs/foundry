@@ -6,7 +6,7 @@ foundry cli test utilities
 """
 edition = "2021"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/gakonst/foundry"
+repository = "https://github.com/foundry-rs/foundry"
 
 [dependencies]
 tempfile = "3.2.0"
