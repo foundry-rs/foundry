@@ -28,3 +28,19 @@ async fn can_dev_get_balance() {
         assert_eq!(balance, genesis_balance);
     }
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_price() {
+    let (_api, handle) = spawn(NodeConfig::test().port(next_port())).await;
+    let provider = handle.http_provider();
+
+    let _ = provider.get_gas_price().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_accounts() {
+    let (_api, handle) = spawn(NodeConfig::test().port(next_port())).await;
+    let provider = handle.http_provider();
+
+    let _ = provider.get_accounts().await.unwrap();
+}

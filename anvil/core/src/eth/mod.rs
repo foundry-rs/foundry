@@ -26,17 +26,17 @@ pub mod utils;
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(tag = "method", content = "params")]
 pub enum EthRequest {
-    #[serde(rename = "eth_chainId")]
-    EthChainId,
+    #[serde(rename = "eth_chainId", with = "empty_params")]
+    EthChainId(()),
 
-    #[serde(rename = "eth_gasPrice")]
-    EthGasPrice,
+    #[serde(rename = "eth_gasPrice", with = "empty_params")]
+    EthGasPrice(()),
 
-    #[serde(rename = "eth_accounts")]
-    EthAccounts,
+    #[serde(rename = "eth_accounts", with = "empty_params")]
+    EthAccounts(()),
 
-    #[serde(rename = "eth_blockNumber")]
-    EthBlockNumber,
+    #[serde(rename = "eth_blockNumber", with = "empty_params")]
+    EthBlockNumber(()),
 
     #[serde(rename = "eth_getBalance")]
     EthGetBalance(Address, Option<BlockNumber>),
@@ -114,13 +114,13 @@ pub enum EthRequest {
 
     /// Creates a filter in the node, to notify when a new block arrives.
     /// To check if the state has changed, call `eth_getFilterChanges`.
-    #[serde(rename = "eth_newBlockFilter")]
-    EthNewBlockFilter,
+    #[serde(rename = "eth_newBlockFilter", with = "empty_params")]
+    EthNewBlockFilter(()),
 
     /// Creates a filter in the node, to notify when new pending transactions arrive.
     /// To check if the state has changed, call `eth_getFilterChanges`.
-    #[serde(rename = "eth_newPendingTransactionFilter")]
-    EthNewPendingTransactionFilter,
+    #[serde(rename = "eth_newPendingTransactionFilter", with = "empty_params")]
+    EthNewPendingTransactionFilter(()),
 
     /// Returns an array of all logs matching filter with given id.
     #[serde(rename = "eth_getFilterLogs", with = "sequence")]
@@ -130,8 +130,8 @@ pub enum EthRequest {
     #[serde(rename = "eth_uninstallFilter", with = "sequence")]
     EthUninstallFilter(String),
 
-    #[serde(rename = "eth_getWork")]
-    EthGetWork,
+    #[serde(rename = "eth_getWork", with = "empty_params")]
+    EthGetWork(()),
 
     #[serde(rename = "eth_submitWork")]
     EthSubmitWork(H64, H256, H256),
@@ -170,8 +170,8 @@ pub enum EthRequest {
     #[serde(rename = "anvil_stopImpersonatingAccount", alias = "hardhat_stopImpersonatingAccount")]
     StopImpersonatingAccount,
     /// Returns true if automatic mining is enabled, and false.
-    #[serde(rename = "anvil_getAutomine", alias = "hardhat_getAutomine")]
-    GetAutoMine,
+    #[serde(rename = "anvil_getAutomine", alias = "hardhat_getAutomine", with = "empty_params")]
+    GetAutoMine(()),
     /// Mines a series of blocks
     #[serde(rename = "anvil_mine", alias = "hardhat_mine")]
     Mine(
@@ -258,8 +258,8 @@ pub enum EthRequest {
 
     // Ganache compatible calls
     /// Snapshot the state of the blockchain at the current block.
-    #[serde(rename = "evm_snapshot")]
-    EvmSnapshot,
+    #[serde(rename = "evm_snapshot", with = "empty_params")]
+    EvmSnapshot(()),
 
     /// Revert the state of the blockchain to a previous snapshot.
     /// Takes a single parameter, which is the snapshot id to revert to.
@@ -284,8 +284,8 @@ pub enum EthRequest {
 
     /// Turn on call traces for transactions that are returned to the user when they execute a
     /// transaction (instead of just txhash/receipt)
-    #[serde(rename = "anvil_enableTraces", with = "sequence")]
-    EnableTraces,
+    #[serde(rename = "anvil_enableTraces", with = "empty_params")]
+    EnableTraces(()),
 }
 
 /// Represents ethereum JSON-RPC API
@@ -386,9 +386,49 @@ mod sequence {
     }
 }
 
+/// A module that deserializes `[]` optionally
+mod empty_params {
+    use serde::{Deserialize, Deserializer};
+
+    pub fn deserialize<'de, D>(d: D) -> Result<(), D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let seq = Option::<Vec<()>>::deserialize(d)?.unwrap_or_default();
+        if !seq.is_empty() {
+            return Err(serde::de::Error::custom(format!(
+                "expected params sequence with length 0 but got {}",
+                seq.len()
+            )))
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_eth_accounts() {
+        let s = r#"{"method": "eth_accounts", "params":[]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_eth_chain_id() {
+        let s = r#"{"method": "eth_chainId", "params":[]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_eth_block_number() {
+        let s = r#"{"method": "eth_blockNumber", "params":[]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
 
     #[test]
     fn test_custom_impersonate_account() {
@@ -516,7 +556,7 @@ mod tests {
 
     #[test]
     fn test_serde_custom_snapshot() {
-        let s = r#"{"method": "evm_snapshot"}"#;
+        let s = r#"{"method": "evm_snapshot", "params": [] }"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }

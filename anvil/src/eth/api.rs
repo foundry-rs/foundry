@@ -117,10 +117,10 @@ impl EthApi {
             EthRequest::EthSendTransaction(request) => {
                 self.send_transaction(*request).await.to_rpc_result()
             }
-            EthRequest::EthChainId => self.chain_id().to_rpc_result(),
-            EthRequest::EthGasPrice => self.gas_price().to_rpc_result(),
-            EthRequest::EthAccounts => self.accounts().to_rpc_result(),
-            EthRequest::EthBlockNumber => self.block_number().to_rpc_result(),
+            EthRequest::EthChainId(_) => self.chain_id().to_rpc_result(),
+            EthRequest::EthGasPrice(_) => self.gas_price().to_rpc_result(),
+            EthRequest::EthAccounts(_) => self.accounts().to_rpc_result(),
+            EthRequest::EthBlockNumber(_) => self.block_number().to_rpc_result(),
             EthRequest::EthGetStorageAt(addr, slot, block) => {
                 self.storage_at(addr, slot, block).await.to_rpc_result()
             }
@@ -172,7 +172,7 @@ impl EthApi {
                 self.uncle_by_block_number_and_index(num, index).to_rpc_result()
             }
             EthRequest::EthGetLogs(filter) => self.logs(filter).await.to_rpc_result(),
-            EthRequest::EthGetWork => self.work().to_rpc_result(),
+            EthRequest::EthGetWork(_) => self.work().to_rpc_result(),
             EthRequest::EthSubmitWork(nonce, pow, digest) => {
                 self.submit_work(nonce, pow, digest).to_rpc_result()
             }
@@ -195,7 +195,7 @@ impl EthApi {
             EthRequest::StopImpersonatingAccount => {
                 self.anvil_stop_impersonating_account().await.to_rpc_result()
             }
-            EthRequest::GetAutoMine => self.anvil_get_auto_mine().to_rpc_result(),
+            EthRequest::GetAutoMine(()) => self.anvil_get_auto_mine().to_rpc_result(),
             EthRequest::Mine(blocks, interval) => {
                 self.anvil_mine(blocks, interval).await.to_rpc_result()
             }
@@ -229,7 +229,7 @@ impl EthApi {
             EthRequest::SetNextBlockBaseFeePerGas(gas) => {
                 self.anvil_set_next_block_base_fee_per_gas(gas).await.to_rpc_result()
             }
-            EthRequest::EvmSnapshot => self.evm_snapshot().await.to_rpc_result(),
+            EthRequest::EvmSnapshot(_) => self.evm_snapshot().await.to_rpc_result(),
             EthRequest::EvmRevert(id) => self.evm_revert(id).await.to_rpc_result(),
             EthRequest::EvmIncreaseTime(time) => self.evm_increase_time(time).await.to_rpc_result(),
             EthRequest::EvmSetNextBlockTimeStamp(time) => {
@@ -242,11 +242,11 @@ impl EthApi {
             EthRequest::EthSendUnsignedTransaction(tx) => {
                 self.eth_send_unsigned_transaction(*tx).await.to_rpc_result()
             }
-            EthRequest::EnableTraces => self.anvil_enable_traces().await.to_rpc_result(),
+            EthRequest::EnableTraces(_) => self.anvil_enable_traces().await.to_rpc_result(),
             EthRequest::EthNewFilter(filter) => self.new_filter(filter).await.to_rpc_result(),
             EthRequest::EthGetFilterChanges(id) => self.get_filter_changes(&id).await,
-            EthRequest::EthNewBlockFilter => self.new_block_filter().await.to_rpc_result(),
-            EthRequest::EthNewPendingTransactionFilter => {
+            EthRequest::EthNewBlockFilter(_) => self.new_block_filter().await.to_rpc_result(),
+            EthRequest::EthNewPendingTransactionFilter(_) => {
                 self.new_pending_transaction_filter().await.to_rpc_result()
             }
             EthRequest::EthGetFilterLogs(id) => self.get_filter_logs(&id).await,
