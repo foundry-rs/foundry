@@ -39,7 +39,7 @@ ethers = { git = "https://github.com/gakonst/ethers-rs", features = ["ws"] }
 axum = { version = "0.5", features = ["ws"] }
 hyper = "0.14"
 tower = "0.4"
-tower-http = { version = "0.2", features = ["trace"] }
+tower-http = { version = "0.3", features = ["trace"] }
 
 # tracing
 tracing = "0.1.32"
