@@ -343,7 +343,7 @@ Chain ID:       {}
     pub(crate) async fn setup(&self) -> mem::Backend {
         // configure the revm environment
         let mut env = revm::Env {
-            cfg: CfgEnv { ..Default::default() },
+            cfg: CfgEnv { chain_id: self.chain_id.into(), ..Default::default() },
             block: BlockEnv {
                 gas_limit: self.gas_limit,
                 basefee: self.base_fee,

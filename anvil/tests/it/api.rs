@@ -53,3 +53,12 @@ async fn can_get_client_version() {
     let version = provider.client_version().await.unwrap();
     assert_eq!(CLIENT_VERSION, version);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_chain_id() {
+    let (_api, handle) = spawn(NodeConfig::test().port(next_port())).await;
+    let provider = handle.http_provider();
+
+    let chain_id = provider.get_chainid().await.unwrap();
+    assert_eq!(chain_id, 1337u64.into());
+}
