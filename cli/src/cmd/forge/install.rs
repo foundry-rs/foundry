@@ -102,16 +102,16 @@ pub(crate) fn install(
     Ok(())
 }
 
-/// make sure tag is exists on the remote repository
+/// make sure tag exists on the remote repository
 fn check_tag(dep: &Dependency) -> eyre::Result<()> {
     if let Some(ref tag) = dep.tag {
         let output = Command::new("git")
             .args(&["ls-remote", &dep.url, tag])
             .stdout(Stdio::piped())
             .output()?;
-        let stdout = str::from_utf8(&output.stdout).unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
         if !stdout.contains(tag) {
-            eyre::bail!("tag/branch/commit \"{}\" is not exists", tag)
+            eyre::bail!("tag/branch/commit \"{}\" does not exists", tag)
         }
     }
     Ok(())
