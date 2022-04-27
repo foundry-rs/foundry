@@ -1,6 +1,6 @@
 //! general eth api tests
 
-use crate::{init_tracing, next_port};
+use crate::next_port;
 use anvil::{eth::api::CLIENT_VERSION, spawn, NodeConfig, CHAIN_ID};
 use ethers::{
     prelude::Middleware,
@@ -78,7 +78,6 @@ async fn can_get_network_id() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_block_by_number() {
-    init_tracing();
     let (_api, handle) = spawn(NodeConfig::test().port(next_port())).await;
     let provider = handle.http_provider();
     let accounts: Vec<_> = handle.dev_wallets().collect();
@@ -86,10 +85,15 @@ async fn can_get_block_by_number() {
     let to = accounts[1].address();
     let amount = handle.genesis_balance().checked_div(2u64.into()).unwrap();
     // send a dummy transactions
-    dbg!(from);
     let tx = TransactionRequest::new().to(to).value(amount).from(from);
     let _ = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
 
     let block = provider.get_block_with_txs(1u64).await.unwrap().unwrap();
-    dbg!(block);
+    assert_eq!(block.transactions.len(), 1);
+
+    let block = provider.get_block(1u64).await.unwrap().unwrap();
+    assert_eq!(block.transactions.len(), 1);
+
+    let block = provider.get_block(block.hash.unwrap()).await.unwrap().unwrap();
+    assert_eq!(block.transactions.len(), 1);
 }

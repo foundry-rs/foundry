@@ -137,15 +137,20 @@ async fn can_reject_too_high_gas_limits() {
     // send transaction with the exact gas limit
     let pending = provider.send_transaction(tx.clone().gas(gas_limit), None).await;
 
+    assert!(pending.is_ok());
+
+    // send transaction with higher gas limit
+    let pending = provider.send_transaction(tx.clone().gas(gas_limit + 1u64), None).await;
+
     assert!(pending.is_err());
     let err = pending.unwrap_err();
-    assert!(err.to_string().contains("Insufficient funds"));
+    assert!(err.to_string().contains("gas too high"));
 
     api.anvil_set_balance(from, U256::MAX).await.unwrap();
     api.anvil_set_min_gas_price(0u64.into()).await.unwrap();
 
-    // send transaction with the exact gas limit
-    let _pending = provider.send_transaction(tx.clone().gas(gas_limit), None).await;
+    let pending = provider.send_transaction(tx.gas(gas_limit), None).await;
+    assert!(pending.is_ok());
 }
 
 #[tokio::test(flavor = "multi_thread")]
