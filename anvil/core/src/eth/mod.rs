@@ -35,13 +35,13 @@ pub enum EthRequest {
     #[serde(rename = "eth_chainId", with = "empty_params")]
     EthChainId(()),
 
-    #[serde(rename = "eth_networkId", with = "empty_params")]
+    #[serde(rename = "eth_networkId", alias = "net_version", with = "empty_params")]
     EthNetworkId(()),
 
     #[serde(rename = "eth_gasPrice", with = "empty_params")]
     EthGasPrice(()),
 
-    #[serde(rename = "eth_accounts", with = "empty_params")]
+    #[serde(rename = "eth_accounts", alias = "eth_requestAccounts", with = "empty_params")]
     EthAccounts(()),
 
     #[serde(rename = "eth_blockNumber", with = "empty_params")]
@@ -76,6 +76,10 @@ pub enum EthRequest {
 
     #[serde(rename = "eth_getCode")]
     EthGetCodeAt(Address, Option<BlockNumber>),
+
+    /// The sign method calculates an Ethereum specific signature with:
+    #[serde(rename = "eth_sign")]
+    EthSign(Address, Bytes),
 
     #[serde(rename = "eth_sendTransaction", with = "sequence")]
     EthSendTransaction(Box<EthTransactionRequest>),

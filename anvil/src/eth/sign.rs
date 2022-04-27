@@ -6,6 +6,7 @@ use anvil_core::eth::transaction::{
 use ethers::{
     core::k256::ecdsa::SigningKey,
     prelude::{Address, Wallet},
+    signers::Signer as EthersSigner,
     types::{
         transaction::eip2718::TypedTransaction as EthersTypedTransactionRequest, Signature, H256,
     },
@@ -13,11 +14,21 @@ use ethers::{
 use std::collections::HashMap;
 
 /// A transaction signer
+#[async_trait::async_trait]
 pub trait Signer: Send + Sync {
     /// returns the available accounts for this signer
     fn accounts(&self) -> Vec<Address>;
+
+    /// Returns `true` whether this signer can sign for this address
+    fn is_signer_for(&self, addr: Address) -> bool {
+        self.accounts().contains(&addr)
+    }
+
+    /// Returns the signature
+    async fn sign(&self, address: Address, message: &[u8]) -> Result<Signature, BlockchainError>;
+
     /// signs a transaction request using the given account in request
-    fn sign(
+    fn sign_transaction(
         &self,
         request: TypedTransactionRequest,
         address: &Address,
@@ -34,12 +45,23 @@ impl DevSigner {
     }
 }
 
+#[async_trait::async_trait]
 impl Signer for DevSigner {
     fn accounts(&self) -> Vec<Address> {
         self.accounts.keys().copied().collect()
     }
 
-    fn sign(
+    fn is_signer_for(&self, addr: Address) -> bool {
+        self.accounts.contains_key(&addr)
+    }
+
+    async fn sign(&self, address: Address, message: &[u8]) -> Result<Signature, BlockchainError> {
+        let signer = self.accounts.get(&address).ok_or(BlockchainError::NoSignerAvailable)?;
+
+        Ok(signer.sign_message(message).await?)
+    }
+
+    fn sign_transaction(
         &self,
         request: TypedTransactionRequest,
         address: &Address,

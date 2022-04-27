@@ -13,7 +13,7 @@ anvil-rpc = { path = "../rpc" }
 # axum related
 axum = { version = "0.5", features = ["ws"] }
 hyper = "0.14"
-tower-http = { version = "0.2", features = ["trace"] }
+tower-http = { version = "0.3", features = ["trace", "cors"] }
 
 # tracing
 tracing = "0.1.32"

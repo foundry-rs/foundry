@@ -7,10 +7,15 @@ use anvil_rpc::{
     request::RpcMethodCall,
     response::{ResponseResult, RpcResponse},
 };
-use axum::{extract::Extension, routing::post, Router, Server};
+use axum::{
+    extract::Extension,
+    http::{header, HeaderValue, Method},
+    routing::post,
+    Router, Server,
+};
 use serde::de::DeserializeOwned;
 use std::{fmt, future::Future, net::SocketAddr};
-use tower_http::trace::TraceLayer;
+use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{trace, warn};
 
 /// handlers for axum server
@@ -34,6 +39,14 @@ where
         .layer(Extension(http))
         .layer(Extension(ws))
         .layer(TraceLayer::new_for_http())
+        .layer(
+            // see https://docs.rs/tower-http/latest/tower_http/cors/index.html
+            // for more details
+            CorsLayer::new()
+                .allow_origin("*".parse::<HeaderValue>().unwrap())
+                .allow_headers(vec![header::CONTENT_TYPE])
+                .allow_methods(vec![Method::GET, Method::POST]),
+        )
         .into_make_service();
     Server::bind(&addr).serve(svc)
 }

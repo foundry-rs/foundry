@@ -145,7 +145,7 @@ async fn can_reject_too_high_gas_limits() {
     api.anvil_set_min_gas_price(0u64.into()).await.unwrap();
 
     // send transaction with the exact gas limit
-    let pending = provider.send_transaction(tx.clone().gas(gas_limit), None).await;
+    let _pending = provider.send_transaction(tx.clone().gas(gas_limit), None).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]

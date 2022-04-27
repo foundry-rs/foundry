@@ -154,6 +154,7 @@ impl EthApi {
             EthRequest::EthGetCodeAt(addr, block) => {
                 self.get_code(addr, block).await.to_rpc_result()
             }
+            EthRequest::EthSign(addr, content) => self.sign(addr, content).await.to_rpc_result(),
             EthRequest::EthSendRawTransaction(tx) => self.send_raw_transaction(tx).to_rpc_result(),
             EthRequest::EthCall(call, block) => self.call(call, block).to_rpc_result(),
             EthRequest::EthCreateAccessList(call, block) => {
@@ -267,7 +268,7 @@ impl EthApi {
     ) -> Result<TypedTransaction> {
         for signer in self.signers.iter() {
             if signer.accounts().contains(from) {
-                return signer.sign(request, from)
+                return signer.sign_transaction(request, from)
             }
         }
         Err(BlockchainError::NoSignerAvailable)
@@ -466,6 +467,16 @@ impl EthApi {
     pub async fn get_code(&self, address: Address, block: Option<BlockNumber>) -> Result<Bytes> {
         node_info!("eth_getCode");
         self.backend.get_code(address, block).await
+    }
+
+    /// The sign method calculates an Ethereum specific signature
+    ///
+    /// Handler for ETH RPC call: `eth_sign`
+    pub async fn sign(&self, address: Address, content: impl AsRef<[u8]>) -> Result<String> {
+        node_info!("eth_sign");
+        let signer = self.get_signer(address).ok_or(BlockchainError::NoSignerAvailable)?;
+        let signature = signer.sign(address, content.as_ref()).await?;
+        Ok(format!("0x{}", signature))
     }
 
     /// Sends a transaction
@@ -1310,6 +1321,12 @@ impl EthApi {
 // === impl EthApi utility functions ===
 
 impl EthApi {
+    /// Returns the first signer that can sign for the given address
+    #[allow(clippy::borrowed_box)]
+    pub fn get_signer(&self, address: Address) -> Option<&Box<dyn Signer>> {
+        self.signers.iter().find(|signer| signer.is_signer_for(address))
+    }
+
     /// Returns a new block event stream that yields Notifications when a new block was added
     pub fn new_block_notifications(&self) -> NewBlockNotifications {
         self.backend.new_block_notifications()

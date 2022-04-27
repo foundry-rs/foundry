@@ -1,7 +1,7 @@
 //! general eth api tests
 
 use crate::next_port;
-use anvil::{eth::api::CLIENT_VERSION, spawn, NodeConfig};
+use anvil::{eth::api::CLIENT_VERSION, spawn, NodeConfig, CHAIN_ID};
 use ethers::{prelude::Middleware, types::U256};
 
 #[tokio::test(flavor = "multi_thread")]
@@ -61,4 +61,13 @@ async fn can_get_chain_id() {
 
     let chain_id = provider.get_chainid().await.unwrap();
     assert_eq!(chain_id, 1337u64.into());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_network_id() {
+    let (_api, handle) = spawn(NodeConfig::test().port(next_port())).await;
+    let provider = handle.http_provider();
+
+    let chain_id = provider.get_net_version().await.unwrap();
+    assert_eq!(chain_id, CHAIN_ID.into());
 }

@@ -2,7 +2,7 @@
 
 use crate::next_port;
 use anvil::{spawn, NodeConfig};
-use ethers::{prelude::Middleware, types::U256};
+use ethers::{prelude::Middleware};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_set_gas_price() {
