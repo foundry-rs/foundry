@@ -128,3 +128,44 @@ contract FailTest is DSTest {
     cmd.args(["test", "--match-path", "*src/ATest.t.sol"]);
     cmd.stdout().contains("[PASS]") && !cmd.stdout().contains("[FAIL]")
 });
+
+// tests that hardhat console.log works
+forgetest!(can_test_console_log, PathStyle::HardHat, |prj: TestProject, mut cmd: TestCommand| {
+    prj.insert_ds_test();
+
+    prj.inner()
+        .add_source(
+            "ATest.t.sol",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+import "./test.sol";
+import "hardhat/console.sol";
+contract ATest is DSTest {
+    string private greeting;
+    
+    function testArray(uint64[2] calldata values) external {
+        assertTrue(true);
+    }
+
+    constructor(string memory _greeting) {
+        console.log("Deploying a Greeter with greeting:", _greeting);
+        greeting = _greeting;
+    }
+
+    function greet() public view returns (string memory) {
+        return greeting;
+    }
+
+    function setGreeting(string memory _greeting) public {
+        console.log("Changing greeting from '%s' to '%s'", greeting, _greeting);
+        greeting = _greeting;
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    cmd.args(["test", "--hh"]);
+    cmd.stdout().contains("[PASS]")
+});
