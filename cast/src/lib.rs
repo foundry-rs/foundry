@@ -14,8 +14,8 @@ use ethers_etherscan::Client;
 use ethers_providers::{Middleware, PendingTransaction};
 use eyre::{Context, Result};
 pub use foundry_evm::*;
-use foundry_utils::{encode_args, to_table};
-use print_utils::{get_pretty_block_attr, get_pretty_tx_attr, UIfmt};
+use foundry_utils::encode_args;
+use print_utils::{get_pretty_block_attr, get_pretty_tx_attr, get_pretty_tx_receipt_attr, UIfmt};
 use rustc_hex::{FromHexIter, ToHex};
 use std::{path::PathBuf, str::FromStr};
 pub use tx::TxBuilder;
@@ -585,7 +585,7 @@ where
 
         // if the async flag is provided, immediately exit if no tx is found,
         // otherwise try to poll for it
-        let receipt = if cast_async {
+        let receipt_result = if cast_async {
             match receipt {
                 Some(inner) => inner,
                 None => return Ok("receipt not found".to_string()),
@@ -604,15 +604,22 @@ where
         };
 
         let receipt = if let Some(ref field) = field {
-            serde_json::to_value(&receipt)?
+            serde_json::to_value(&receipt_result)?
                 .get(field)
                 .cloned()
                 .ok_or_else(|| eyre::eyre!("field {field} not found"))?
         } else {
-            serde_json::to_value(&receipt)?
+            serde_json::to_value(&receipt_result)?
         };
 
-        let receipt = if to_json { serde_json::to_string(&receipt)? } else { to_table(receipt) };
+        let receipt = if let Some(ref field) = field {
+            get_pretty_tx_receipt_attr(receipt_result, field.to_string())
+                .unwrap_or_else(|| format!("{field} is not a valid tx receipt field"))
+        } else if to_json {
+            serde_json::to_string(&receipt)?
+        } else {
+            receipt_result.pretty()
+        };
         Ok(receipt)
     }
 }
