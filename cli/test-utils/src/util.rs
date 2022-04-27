@@ -179,6 +179,12 @@ impl TestProject {
         self.inner().add_source("test.sol", s).unwrap()
     }
 
+    /// Adds forge-std as a source under "console.sol"
+    pub fn insert_forge_std(&self) -> PathBuf {
+        let s = include_str!("../../../testdata/lib/forge-std/src/console.sol");
+        self.inner().add_source("console.sol", s).unwrap()
+    }
+
     /// Asserts all project paths exist
     ///
     ///   - sources
