@@ -345,8 +345,14 @@ impl EthApi {
         Ok(Some(self.backend.chain_id().as_u64().into()))
     }
 
+    /// Returns the current gas price
     pub fn gas_price(&self) -> Result<U256> {
         Ok(self.backend.gas_price())
+    }
+
+    /// Returns the block gas limit
+    pub fn gas_limit(&self) -> U256 {
+        self.backend.gas_limit()
     }
 
     /// Returns the accounts list

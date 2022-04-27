@@ -243,6 +243,7 @@ impl Backend {
         self.db.write().set_storage_at(address, slot, val);
     }
 
+    /// Returns the block gas limit
     pub fn gas_limit(&self) -> U256 {
         self.env().read().block.gas_limit
     }

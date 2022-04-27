@@ -1,6 +1,9 @@
 use crate::next_port;
 use anvil::{spawn, NodeConfig};
-use ethers::prelude::{abigen, Middleware, Signer, SignerMiddleware, TransactionRequest};
+use ethers::{
+    prelude::{abigen, Middleware, Signer, SignerMiddleware, TransactionRequest},
+    types::U256,
+};
 use futures::StreamExt;
 use std::{sync::Arc, time::Duration};
 use tokio::time::timeout;
@@ -115,6 +118,34 @@ async fn can_replace_transaction() {
     let block = provider.get_block(1u64).await.unwrap().unwrap();
     assert_eq!(1, block.transactions.len());
     assert_eq!(vec![higher_priced_receipt.transaction_hash], block.transactions);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_reject_too_high_gas_limits() {
+    let (api, handle) = spawn(NodeConfig::test().port(next_port())).await;
+    let provider = handle.http_provider();
+
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+
+    let gas_limit = api.gas_limit();
+    let amount = handle.genesis_balance().checked_div(3u64.into()).unwrap();
+
+    let tx = TransactionRequest::new().to(to).value(amount).from(from);
+
+    // send transaction with the exact gas limit
+    let pending = provider.send_transaction(tx.clone().gas(gas_limit), None).await;
+
+    assert!(pending.is_err());
+    let err = pending.unwrap_err();
+    assert!(err.to_string().contains("Insufficient funds"));
+
+    api.anvil_set_balance(from, U256::MAX).await.unwrap();
+    api.anvil_set_min_gas_price(0u64.into()).await.unwrap();
+
+    // send transaction with the exact gas limit
+    let pending = provider.send_transaction(tx.clone().gas(gas_limit), None).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
