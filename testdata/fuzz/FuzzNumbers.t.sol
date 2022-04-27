@@ -3,7 +3,7 @@ pragma solidity >=0.8.0;
 
 import "ds-test/test.sol";
 
-// See https://github.com/gakonst/foundry/pull/735 for context
+// See https://github.com/foundry-rs/foundry/pull/735 for context
 contract FuzzNumbersTest is DSTest {
     function testPositive(uint256) public {
         assertTrue(true);

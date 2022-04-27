@@ -7,7 +7,7 @@ readme = "./README.md"
 description = """
 Generate rust bindings for solidity projects
 """
-repository = "https://github.com/gakonst/foundry"
+repository = "https://github.com/foundry-rs/foundry"
 keywords = ["ethereum", "web3", "solidity"]
 
 

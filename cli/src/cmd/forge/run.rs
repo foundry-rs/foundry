@@ -206,7 +206,7 @@ impl Cmd for RunArgs {
         } else {
             if verbosity >= 3 {
                 if result.traces.is_empty() {
-                    eyre::bail!("Unexpected error: No traces despite verbosity level. Please report this as a bug: https://github.com/gakonst/foundry/issues/new?assignees=&labels=T-bug&template=BUG-FORM.yml");
+                    eyre::bail!("Unexpected error: No traces despite verbosity level. Please report this as a bug: https://github.com/foundry-rs/foundry/issues/new?assignees=&labels=T-bug&template=BUG-FORM.yml");
                 }
 
                 if !result.success && verbosity == 3 || verbosity > 3 {
