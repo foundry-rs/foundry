@@ -1,3 +1,4 @@
+use atty::{self, Stream};
 use ethers_solc::{
     cache::SolFilesCache,
     project_util::{copy_dir, TempProject},
@@ -23,6 +24,9 @@ use std::{
 };
 
 static CURRENT_DIR_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+
+// This stores `true` if the current terminal is a tty
+pub static IS_TTY: Lazy<bool> = Lazy::new(|| atty::is(Stream::Stdout));
 
 /// Contains a `forge init` initialized project
 pub static FORGE_INITIALIZED: Lazy<TestProject> = Lazy::new(|| {
@@ -421,6 +425,14 @@ impl TestCommand {
         println!("stderr: {}", String::from_utf8_lossy(&output.stderr));
     }
 
+    /// Writes the content of the output to new fixture files
+    pub fn write_fixtures(&mut self, name: impl AsRef<str>) {
+        let name = name.as_ref();
+        let output = self.cmd.output().unwrap();
+        fs::write(format!("{}.stdout", name), &output.stdout).unwrap();
+        fs::write(format!("{}.stderr", name), &output.stdout).unwrap();
+    }
+
     /// Runs the command and asserts that it resulted in an error exit code.
     pub fn assert_err(&mut self) {
         let o = self.cmd.output().unwrap();
@@ -530,6 +542,50 @@ impl TestCommand {
     }
 }
 
+/// Extension trait for `std::process::Output`
+///
+/// These function will read the path's content and assert that the process' output matches the
+/// fixture. Since `forge` commands may emit colorized output depending on whether the current
+/// terminal is tty, the path argument can be wrapped in [tty_fixture_path()]
+pub trait OutputExt {
+    /// Ensure the command wrote the expected data to `stdout`.
+    fn stdout_matches_path(&self, expected_path: impl AsRef<Path>) -> &Self;
+
+    /// Ensure the command wrote the expected data to `stderr`.
+    fn stderr_matches_path(&self, expected_path: impl AsRef<Path>) -> &Self;
+}
+
+impl OutputExt for process::Output {
+    #[track_caller]
+    fn stdout_matches_path(&self, expected_path: impl AsRef<Path>) -> &Self {
+        let expected = fs::read_to_string(expected_path).unwrap();
+        pretty_assertions::assert_eq!(self.stdout, expected.as_bytes());
+        self
+    }
+
+    #[track_caller]
+    fn stderr_matches_path(&self, expected_path: impl AsRef<Path>) -> &Self {
+        let expected = fs::read_to_string(expected_path).unwrap();
+        pretty_assertions::assert_eq!(self.stderr, expected.as_bytes());
+        self
+    }
+}
+
+/// Returns the fixture path depending on whether the current terminal is tty
+///
+/// This is useful in combination with [OutputExt]
+pub fn tty_fixture_path(path: impl AsRef<Path>) -> PathBuf {
+    let path = path.as_ref();
+    if *IS_TTY {
+        return if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
+            path.with_extension(format!("tty.{}", ext))
+        } else {
+            path.with_extension("tt")
+        }
+    }
+    path.to_path_buf()
+}
+
 /// Return a recursive listing of all files and directories in the given
 /// directory. This is useful for debugging transient and odd failures in
 /// integration tests.
@@ -584,6 +640,21 @@ impl Retry {
             if let Some(ret) = self.r#try(&mut callback)? {
                 return Ok(ret)
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tty_path_works() {
+        let path = "tests/fixture/test.stdout";
+        if *IS_TTY {
+            assert_eq!(tty_fixture_path(path), PathBuf::from("tests/fixture/test.tty.stdout"));
+        } else {
+            assert_eq!(tty_fixture_path(path), PathBuf::from(path));
         }
     }
 }
