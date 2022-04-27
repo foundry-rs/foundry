@@ -37,8 +37,8 @@ use anvil_core::{
 use anvil_rpc::error::RpcError;
 use ethers::{
     types::{
-        Address, Block as EthersBlock, Bytes, Filter as EthersFilter, Log, Trace, Transaction,
-        TransactionReceipt,
+        Address, Block as EthersBlock, BlockId, Bytes, Filter as EthersFilter, Log, Trace,
+        Transaction, TransactionReceipt,
     },
     utils::{keccak256, rlp},
 };
@@ -51,7 +51,7 @@ use futures::channel::mpsc::{unbounded, UnboundedSender};
 use parking_lot::{Mutex, RwLock};
 use std::sync::Arc;
 use storage::{Blockchain, MinedTransaction};
-use tracing::trace;
+use tracing::{trace, warn};
 
 pub mod storage;
 
@@ -569,12 +569,12 @@ impl Backend {
         hash: H256,
     ) -> Result<Option<EthersBlock<Transaction>>, BlockchainError> {
         trace!(target: "backend", "get block by hash {:?}", hash);
-        if let tx @ Some(_) = self.mined_block_by_hash(hash) {
+        if let tx @ Some(_) = self.get_full_block(hash) {
             return Ok(tx)
         }
 
         if let Some(fork) = self.get_fork() {
-            return Ok(fork.block_by_hash(hash).await?)
+            return Ok(fork.block_by_hash_full(hash).await?)
         }
 
         Ok(None)
@@ -583,6 +583,21 @@ impl Backend {
     pub fn mined_block_by_hash(&self, hash: H256) -> Option<EthersBlock<TxHash>> {
         let block = self.blockchain.storage.read().blocks.get(&hash)?.clone();
         self.convert_block(block)
+    }
+
+    /// Returns all transactions given a block
+    fn mined_transactions_in_block(&self, block: &Block) -> Option<Vec<Transaction>> {
+        let mut transactions = Vec::with_capacity(block.transactions.len());
+        let base_fee = self.base_fee();
+        let storage = self.blockchain.storage.read();
+        for hash in block.transactions.iter().map(|tx| tx.hash()) {
+            let info = storage.transactions.get(&hash)?.info.clone();
+            let tx = block.transactions.get(info.transaction_index as usize)?.clone();
+
+            let tx = transaction_build(tx, Some(block.clone()), Some(info), true, Some(base_fee));
+            transactions.push(tx);
+        }
+        Some(transactions)
     }
 
     pub async fn block_by_number(
@@ -606,25 +621,28 @@ impl Backend {
         number: BlockNumber,
     ) -> Result<Option<EthersBlock<Transaction>>, BlockchainError> {
         trace!(target: "backend", "get block by number {:?}", number);
-        if let tx @ Some(_) = self.mined_block_by_number(number) {
+        if let tx @ Some(_) = self.get_full_block(number) {
             return Ok(tx)
         }
 
         if let Some(fork) = self.get_fork() {
-            return Ok(fork.block_by_number(self.convert_block_number(Some(number))).await?)
+            return Ok(fork.block_by_number_full(self.convert_block_number(Some(number))).await?)
         }
 
         Ok(None)
     }
 
-    pub fn get_block(&self, number: impl Into<BlockNumber>) -> Option<Block> {
-        let hash = {
-            let storage = self.blockchain.storage.read();
-            match number.into() {
-                BlockNumber::Latest => storage.best_hash,
-                BlockNumber::Earliest => storage.genesis_hash,
-                BlockNumber::Pending => return None,
-                BlockNumber::Number(num) => *storage.hashes.get(&num)?,
+    pub fn get_block(&self, id: impl Into<BlockId>) -> Option<Block> {
+        let hash = match id.into() {
+            BlockId::Hash(hash) => hash,
+            BlockId::Number(number) => {
+                let storage = self.blockchain.storage.read();
+                match number {
+                    BlockNumber::Latest => storage.best_hash,
+                    BlockNumber::Earliest => storage.genesis_hash,
+                    BlockNumber::Pending => return None,
+                    BlockNumber::Number(num) => *storage.hashes.get(&num)?,
+                }
             }
         };
         self.get_block_by_hash(hash)
@@ -636,6 +654,13 @@ impl Backend {
 
     pub fn mined_block_by_number(&self, number: BlockNumber) -> Option<EthersBlock<TxHash>> {
         self.convert_block(self.get_block(number)?)
+    }
+
+    pub fn get_full_block(&self, id: impl Into<BlockId>) -> Option<EthersBlock<Transaction>> {
+        let block = self.get_block(id)?;
+        let transactions = self.mined_transactions_in_block(&block)?;
+        let block = self.convert_block(block)?;
+        Some(block.into_full_block(transactions))
     }
 
     /// Takes a block as it's stored internally and returns the eth api conform block format
@@ -865,6 +890,8 @@ impl Backend {
             transaction_index: info.transaction_index.into(),
             block_hash: Some(block_hash),
             block_number: Some(block.header.number.as_u64().into()),
+            from: info.from,
+            to: info.to,
             cumulative_gas_used,
             gas_used: Some(gas_used),
             contract_address: info.contract_address,
@@ -1009,27 +1036,34 @@ impl TransactionValidator for Backend {
 
     fn validate_pool_transaction_for(
         &self,
-        tx: &PendingTransaction,
+        pending: &PendingTransaction,
         account: &AccountInfo,
         env: &Env,
     ) -> Result<(), InvalidTransactionError> {
-        let tx = &tx.transaction;
+        let tx = &pending.transaction;
         if tx.gas_limit() > env.block.gas_limit {
+            warn!(target: "backend", "[{:?}] gas too high", tx.hash());
             return Err(InvalidTransactionError::GasTooHigh)
         }
 
         // check nonce
         let nonce: u64 = (*tx.nonce()).try_into().map_err(|_| InvalidTransactionError::NonceMax)?;
         if nonce < account.nonce {
+            warn!(target: "backend", "[{:?}] nonce too low", tx.hash());
             return Err(InvalidTransactionError::NonceTooLow)
         }
 
         let max_cost = tx.max_cost();
         let value = tx.value();
         // check sufficient funds: `gas * price + value`
-        let req_funds = max_cost.checked_add(value).ok_or(InvalidTransactionError::Payment)?;
+        let req_funds = max_cost.checked_add(value).ok_or_else(|| {
+            warn!(target: "backend", "[{:?}] cost too high",
+            tx.hash());
+            InvalidTransactionError::Payment
+        })?;
 
         if account.balance < req_funds {
+            warn!(target: "backend", "[{:?}] insufficient allowance={}, required={} account={:?}", tx.hash(), account.balance, req_funds, *pending.sender());
             return Err(InvalidTransactionError::Payment)
         }
         Ok(())

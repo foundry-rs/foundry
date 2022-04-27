@@ -12,7 +12,8 @@ use ethers::{
     prelude::BlockNumber,
     providers::{Middleware, ProviderError},
     types::{
-        Address, Block, Bytes, Filter, Log, Trace, Transaction, TransactionReceipt, TxHash, U256,
+        Address, Block, BlockId, Bytes, Filter, Log, Trace, Transaction, TransactionReceipt,
+        TxHash, U256,
     },
 };
 use foundry_evm::utils::u256_to_h256_be;
@@ -228,15 +229,18 @@ impl ClientFork {
         if let Some(block) = self.storage_read().blocks.get(&hash).cloned() {
             return Ok(Some(block))
         }
+        let block = self.fetch_full_block(hash).await?.map(Into::into);
+        Ok(block)
+    }
 
-        if let Some(block) = self.provider().get_block(hash).await? {
-            let number = block.number.unwrap().as_u64();
-            let mut storage = self.storage_write();
-            storage.hashes.insert(number, hash);
-            storage.blocks.insert(hash, block.clone());
-            return Ok(Some(block))
+    pub async fn block_by_hash_full(
+        &self,
+        hash: H256,
+    ) -> Result<Option<Block<Transaction>>, ProviderError> {
+        if let Some(block) = self.storage_read().blocks.get(&hash).cloned() {
+            return Ok(Some(self.convert_to_full_block(block)))
         }
-        Ok(None)
+        self.fetch_full_block(hash).await
     }
 
     pub async fn block_by_number(
@@ -246,85 +250,62 @@ impl ClientFork {
         if let Some(block) = self
             .storage_read()
             .hashes
-            .get(&number)
+            .get(&block_number)
             .copied()
             .and_then(|hash| self.storage_read().blocks.get(&hash).cloned())
         {
             return Ok(Some(block))
         }
 
-        if let Some(block) = self.provider().get_block_with_txs(block_number).await? {
-            let Block {
-                hash,
-                parent_hash,
-                uncles_hash,
-                author,
-                state_root,
-                transactions_root,
-                receipts_root,
-                number,
-                gas_used,
-                gas_limit,
-                extra_data,
-                logs_bloom,
-                timestamp,
-                difficulty,
-                total_difficulty,
-                seal_fields,
-                uncles,
-                transactions,
-                size,
-                mix_hash,
-                nonce,
-                base_fee_per_gas,
-            } = block;
-            let block = Block {
-                hash,
-                parent_hash,
-                uncles_hash,
-                author,
-                state_root,
-                transactions_root,
-                receipts_root,
-                number,
-                gas_used,
-                gas_limit,
-                extra_data,
-                logs_bloom,
-                timestamp,
-                difficulty,
-                total_difficulty,
-                seal_fields,
-                uncles,
-                transactions: transactions.iter().map(|tx| tx.hash).collect(),
-                size,
-                mix_hash,
-                nonce,
-                base_fee_per_gas,
-            };
+        let block = self.fetch_full_block(block_number).await?.map(Into::into);
+        Ok(block)
+    }
 
+    pub async fn block_by_number_full(
+        &self,
+        block_number: u64,
+    ) -> Result<Option<Block<Transaction>>, ProviderError> {
+        if let Some(block) = self
+            .storage_read()
+            .hashes
+            .get(&block_number)
+            .copied()
+            .and_then(|hash| self.storage_read().blocks.get(&hash).cloned())
+        {
+            return Ok(Some(self.convert_to_full_block(block)))
+        }
+
+        self.fetch_full_block(block_number).await
+    }
+
+    async fn fetch_full_block(
+        &self,
+        block_id: impl Into<BlockId>,
+    ) -> Result<Option<Block<Transaction>>, ProviderError> {
+        if let Some(block) = self.provider().get_block_with_txs(block_id.into()).await? {
             let hash = block.hash.unwrap();
+            let block_number = block.number.unwrap().as_u64();
             let mut storage = self.storage_write();
-
             // also insert all transactions
-            storage.transactions.extend(transactions.into_iter().map(|tx| (tx.hash, tx)));
-
+            storage.transactions.extend(block.transactions.iter().map(|tx| (tx.hash, tx.clone())));
             storage.hashes.insert(block_number, hash);
-            storage.blocks.insert(hash, block.clone());
-
+            storage.blocks.insert(hash, block.clone().into());
             return Ok(Some(block))
         }
 
         Ok(None)
     }
 
-    pub async fn block_by_number_full(
-        &self,
-        number: u64,
-    ) -> Result<Option<Block<Transaction>>, ProviderError> {
-        if let Some(block) = self.block_by_number(number).await? {}
-
-        Ok(None)
+    /// Converts a block of hashes into a full block
+    fn convert_to_full_block(&self, block: Block<TxHash>) -> Block<Transaction> {
+        let storage = self.storage.read();
+        let mut transactions = Vec::with_capacity(block.transactions.len());
+        for tx in block.transactions.iter() {
+            if let Some(tx) = storage.transactions.get(tx).cloned() {
+                transactions.push(tx);
+            }
+        }
+        block.into_full_block(transactions)
     }
 }
 

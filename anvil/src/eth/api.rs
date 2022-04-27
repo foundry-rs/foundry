@@ -432,7 +432,10 @@ impl EthApi {
     /// Returns a _full_ block with given number
     ///
     /// Handler for ETH RPC call: `eth_getBlockByNumber`
-    pub async fn block_by_number_full(&self) -> Result<Option<Block<Transaction>>> {
+    pub async fn block_by_number_full(
+        &self,
+        number: BlockNumber,
+    ) -> Result<Option<Block<Transaction>>> {
         node_info!("eth_getBlockByNumber");
         self.backend.block_by_number_full(number).await
     }
@@ -514,6 +517,8 @@ impl EthApi {
 
         let transaction = self.sign_request(&from, request)?;
         let pending_transaction = PendingTransaction::new(transaction)?;
+        dbg!(from);
+        dbg!(pending_transaction.sender());
 
         // pre-validate
         self.backend.validate_pool_transaction(&pending_transaction)?;
