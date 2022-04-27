@@ -139,9 +139,9 @@ impl EthApi {
             }
             EthRequest::EthGetBlockByNumber(num, full) => {
                 if full {
-                    self.block_by_number(num).await.to_rpc_result()
-                } else {
                     self.block_by_number_full(num).await.to_rpc_result()
+                } else {
+                    self.block_by_number(num).await.to_rpc_result()
                 }
             }
             EthRequest::EthGetTransactionCount(addr, block) => {

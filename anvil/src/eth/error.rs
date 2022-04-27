@@ -96,7 +96,7 @@ pub enum InvalidTransactionError {
     #[error("nonce has max value")]
     NonceMax,
     /// returned if the transaction gas exceeds the limit
-    #[error("intrinsic gas too low")]
+    #[error("intrinsic gas too high")]
     GasTooHigh,
     /// returned if the transaction is specified to use less gas than required to start the
     /// invocation.
