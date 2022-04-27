@@ -16,6 +16,7 @@ use ethers::solc::{artifacts::CompactContractBytecode, Project, ProjectCompileOu
 
 /// Given a project and its compiled artifacts, proceeds to return the ABI, Bytecode and
 /// Runtime Bytecode of the given contract.
+#[track_caller]
 pub fn read_artifact(
     project: &Project,
     compiled: ProjectCompileOutput,
@@ -47,8 +48,8 @@ fn get_artifact_from_name(
         }
     }
 
-    Ok(match contract_artifact {
-        Some(artifact) => (
+    match contract_artifact {
+        Some(artifact) => Ok((
             artifact
                 .abi
                 .map(Into::into)
@@ -59,11 +60,11 @@ fn get_artifact_from_name(
             artifact.deployed_bytecode.ok_or_else(|| {
                 eyre::Error::msg(format!("bytecode not found for {}", contract.name))
             })?,
-        ),
+        )),
         None => {
             eyre::bail!("could not find artifact")
         }
-    })
+    }
 }
 
 /// Find using src/ContractSource.sol:ContractName
