@@ -48,7 +48,7 @@ impl NodeArgs {
         let genesis_balance = WEI_IN_ETHER.saturating_mul(self.balance.into());
 
         NodeConfig::default()
-            .chain_id(evm_opts.env.chain_id.unwrap_or(CHAIN_ID))
+            .chain_id(self.evm_opts.env.chain_id.unwrap_or(CHAIN_ID))
             .gas_limit(self.evm_opts.env.gas_limit)
             .gas_price(self.evm_opts.env.gas_price)
             .account_generator(self.account_generator())
@@ -61,7 +61,9 @@ impl NodeArgs {
     }
 
     fn account_generator(&self) -> AccountGenerator {
-        let mut gen = AccountGenerator::new(self.accounts as usize).phrase(DEFAULT_MNEMONIC);
+        let mut gen = AccountGenerator::new(self.accounts as usize)
+            .phrase(DEFAULT_MNEMONIC)
+            .chain_id(self.evm_opts.env.chain_id.unwrap_or(CHAIN_ID));
         if let Some(ref mnemonic) = self.mnemonic {
             gen = gen.phrase(mnemonic);
         }

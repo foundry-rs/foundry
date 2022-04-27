@@ -67,7 +67,6 @@ impl Signer for DevSigner {
         address: &Address,
     ) -> Result<TypedTransaction, BlockchainError> {
         let signer = self.accounts.get(address).ok_or(BlockchainError::NoSignerAvailable)?;
-
         let ethers_tx: EthersTypedTransactionRequest = request.clone().into();
 
         let signature = signer.sign_transaction_sync(&ethers_tx);

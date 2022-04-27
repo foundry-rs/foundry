@@ -435,6 +435,7 @@ Chain ID:       {}
 /// Can create dev accounts
 #[derive(Debug, Clone)]
 pub struct AccountGenerator {
+    chain_id: u64,
     amount: usize,
     phrase: String,
     derivation_path: Option<String>,
@@ -443,6 +444,7 @@ pub struct AccountGenerator {
 impl AccountGenerator {
     pub fn new(amount: usize) -> Self {
         Self {
+            chain_id: CHAIN_ID,
             amount,
             phrase: Mnemonic::<English>::new(&mut thread_rng())
                 .to_phrase()
@@ -454,6 +456,12 @@ impl AccountGenerator {
     #[must_use]
     pub fn phrase(mut self, phrase: impl Into<String>) -> Self {
         self.phrase = phrase.into();
+        self
+    }
+
+    #[must_use]
+    pub fn chain_id(mut self, chain_id: impl Into<u64>) -> Self {
+        self.chain_id = chain_id.into();
         self
     }
 
@@ -484,7 +492,7 @@ impl AccountGenerator {
         for idx in 0..self.amount {
             let builder =
                 builder.clone().derivation_path(&format!("{}{}", derivation_path, idx)).unwrap();
-            let wallet = builder.build().unwrap();
+            let wallet = builder.build().unwrap().with_chain_id(self.chain_id);
             wallets.push(wallet)
         }
         wallets

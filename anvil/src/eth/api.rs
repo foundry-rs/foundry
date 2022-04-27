@@ -1385,7 +1385,6 @@ impl EthApi {
         nonce: U256,
     ) -> Result<TypedTransactionRequest> {
         let chain_id = self.chain_id()?.ok_or(BlockchainError::ChainIdNotAvailable)?.as_u64();
-
         let max_fee_per_gas = request.max_fee_per_gas;
         let gas_price = request.gas_price;
 
