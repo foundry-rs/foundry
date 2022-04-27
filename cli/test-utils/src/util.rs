@@ -561,8 +561,10 @@ pub trait OutputExt {
 
 /// Patterns to remove from fixtures before comparing output
 ///
-/// This should strip everything that can vary from run to run, like elapsed time.
-static IGNORE_IN_FIXTURES: Lazy<Regex> = Lazy::new(|| Regex::new(r"finished in .*").unwrap());
+/// This should strip everything that can vary from run to run, like elapsed time, file paths
+static IGNORE_IN_FIXTURES: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(finished in (.*)?s|-->(.*).sol|Location(.*?)\.rs(.*)?Backtrace)").unwrap()
+});
 
 impl OutputExt for process::Output {
     #[track_caller]

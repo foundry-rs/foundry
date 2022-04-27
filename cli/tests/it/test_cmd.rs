@@ -4,7 +4,7 @@ use foundry_cli_test_utils::{
     util::{OutputExt, TestCommand, TestProject},
 };
 use foundry_config::Config;
-use std::str::FromStr;
+use std::{path::PathBuf, str::FromStr};
 
 // import forge utils as mod
 #[allow(unused)]
@@ -131,11 +131,14 @@ contract FailTest is DSTest {
 
 // tests that `forge test` will pick up tests that are stored in the `test = <path>` config value
 forgetest!(can_run_test_in_custom_test_folder, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.set_current_dir(prj.root());
     prj.insert_ds_test();
 
     // explicitly set the test folder
     let config = Config { test: "nested/forge-tests".into(), ..Default::default() };
     prj.write_config(config);
+    let config = cmd.config();
+    assert_eq!(config.test, PathBuf::from("nested/forge-tests"));
 
     prj.inner()
         .add_source(
@@ -154,6 +157,8 @@ contract MyTest is DSTest {
         .unwrap();
 
     cmd.arg("test");
-    cmd.unchecked_output()
-        .stdout_matches_path("tests/fixtures/can_run_test_in_custom_test_folder.stdout");
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_run_test_in_custom_test_folder.stdout"),
+    );
 });
