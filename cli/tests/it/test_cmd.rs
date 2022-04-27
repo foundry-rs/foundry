@@ -1,7 +1,7 @@
 //! Contains various tests for checking `forge test`
 use foundry_cli_test_utils::{
     forgetest,
-    util::{TestCommand, TestProject},
+    util::{OutputExt, TestCommand, TestProject},
 };
 use foundry_config::Config;
 use std::str::FromStr;
@@ -127,4 +127,33 @@ contract FailTest is DSTest {
 
     cmd.args(["test", "--match-path", "*src/ATest.t.sol"]);
     cmd.stdout().contains("[PASS]") && !cmd.stdout().contains("[FAIL]")
+});
+
+// tests that `forge test` will pick up tests that are stored in the `test = <path>` config value
+forgetest!(can_run_test_in_custom_test_folder, |prj: TestProject, mut cmd: TestCommand| {
+    prj.insert_ds_test();
+
+    // explicitly set the test folder
+    let config = Config { test: "nested/forge-tests".into(), ..Default::default() };
+    prj.write_config(config);
+
+    prj.inner()
+        .add_source(
+            "nested/forge-tests/MyTest.t.sol",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+import "../../test.sol";
+contract MyTest is DSTest {
+    function testTrue() public {
+        assertTrue(true);
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    cmd.arg("test");
+    cmd.unchecked_output()
+        .stdout_matches_path("tests/fixtures/can_run_test_in_custom_test_folder.stdout");
 });

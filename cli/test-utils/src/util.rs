@@ -7,6 +7,7 @@ use ethers_solc::{
 use foundry_config::Config;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
+use regex::Regex;
 use std::{
     env,
     ffi::OsStr,
@@ -426,11 +427,14 @@ impl TestCommand {
     }
 
     /// Writes the content of the output to new fixture files
-    pub fn write_fixtures(&mut self, name: impl AsRef<str>) {
+    pub fn write_fixtures(&mut self, name: impl AsRef<Path>) {
         let name = name.as_ref();
+        if let Some(parent) = name.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
         let output = self.cmd.output().unwrap();
-        fs::write(format!("{}.stdout", name), &output.stdout).unwrap();
-        fs::write(format!("{}.stderr", name), &output.stdout).unwrap();
+        fs::write(format!("{}.stdout", name.display()), &output.stdout).unwrap();
+        fs::write(format!("{}.stderr", name.display()), &output.stderr).unwrap();
     }
 
     /// Runs the command and asserts that it resulted in an error exit code.
@@ -555,18 +559,32 @@ pub trait OutputExt {
     fn stderr_matches_path(&self, expected_path: impl AsRef<Path>) -> &Self;
 }
 
+/// Patterns to remove from fixtures before comparing output
+///
+/// This should strip everything that can vary from run to run, like elapsed time.
+static IGNORE_IN_FIXTURES: Lazy<Regex> = Lazy::new(|| Regex::new(r"finished in .*").unwrap());
+
 impl OutputExt for process::Output {
     #[track_caller]
     fn stdout_matches_path(&self, expected_path: impl AsRef<Path>) -> &Self {
         let expected = fs::read_to_string(expected_path).unwrap();
-        pretty_assertions::assert_eq!(self.stdout, expected.as_bytes());
+        let expected = IGNORE_IN_FIXTURES.replace_all(&expected, "");
+        let stdout = String::from_utf8_lossy(&self.stdout);
+        let out = IGNORE_IN_FIXTURES.replace_all(&stdout, "");
+
+        pretty_assertions::assert_eq!(expected, out);
+
         self
     }
 
     #[track_caller]
     fn stderr_matches_path(&self, expected_path: impl AsRef<Path>) -> &Self {
         let expected = fs::read_to_string(expected_path).unwrap();
-        pretty_assertions::assert_eq!(self.stderr, expected.as_bytes());
+        let expected = IGNORE_IN_FIXTURES.replace_all(&expected, "");
+        let stderr = String::from_utf8_lossy(&self.stderr);
+        let out = IGNORE_IN_FIXTURES.replace_all(&stderr, "");
+
+        pretty_assertions::assert_eq!(expected, out);
         self
     }
 }
@@ -580,7 +598,7 @@ pub fn tty_fixture_path(path: impl AsRef<Path>) -> PathBuf {
         return if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
             path.with_extension(format!("tty.{}", ext))
         } else {
-            path.with_extension("tt")
+            path.with_extension("tty")
         }
     }
     path.to_path_buf()

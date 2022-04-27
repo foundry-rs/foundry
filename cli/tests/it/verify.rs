@@ -134,7 +134,7 @@ fn verify_on_chain(info: Option<VerifyExternalities>, prj: TestProject, mut cmd:
             "v0.8.10+commit.fc410830".to_string(),
             "--optimizer-runs".to_string(),
             "200".to_string(),
-            address.clone(),
+            address,
             contract_path.to_string(),
             info.etherscan.to_string(),
         ]);
@@ -210,7 +210,7 @@ fn parse_deployed_address(out: &str) -> Option<String> {
 fn parse_verification_guid(out: &str) -> Option<String> {
     for line in out.lines() {
         if line.contains("GUID") {
-            return Some(line.replace("GUID:", "").replace("`", "").trim().to_string())
+            return Some(line.replace("GUID:", "").replace('`', "").trim().to_string())
         }
     }
     None
