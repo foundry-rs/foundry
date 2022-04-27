@@ -1,4 +1,4 @@
-use ethers_core::types::{Block, Transaction, H256, U256, *};
+use ethers_core::types::{Block, Transaction, TransactionReceipt, H256, U256, *};
 
 pub fn to_bytes(uint: U256) -> Bytes {
     let mut buffer: [u8; 4 * 8] = [0; 4 * 8];
@@ -51,6 +51,25 @@ pub fn get_pretty_block_attr<TX>(block: Block<TX>, attr: String) -> Option<Strin
     }
 }
 
+pub fn get_pretty_tx_receipt_attr(receipt: TransactionReceipt, attr: String) -> Option<String> {
+    return match attr.as_str() {
+        "blockHash" | "block_hash" => Some(receipt.block_hash.pretty()),
+        "blockNumber" | "block_number" => Some(receipt.block_number.pretty()),
+        "contractAddress" | "contract_address" => Some(receipt.contract_address.pretty()),
+        "cumulativeGasUsed" | "cumulative_gas_used" => Some(receipt.cumulative_gas_used.pretty()),
+        "effectiveGasPrice" | "effective_gas_price" => Some(receipt.effective_gas_price.pretty()),
+        "gasUsed" | "gas_used" => Some(receipt.gas_used.pretty()),
+        "logs" => Some(receipt.logs.pretty()),
+        "logsBloom" | "logs_bloom" => Some(receipt.logs_bloom.pretty()),
+        "root" => Some(receipt.root.pretty()),
+        "status" => Some(receipt.status.pretty()),
+        "transactionHash" | "transaction_hash" => Some(receipt.transaction_hash.pretty()),
+        "transactionIndex" | "transaction_index" => Some(receipt.transaction_index.pretty()),
+        "type" | "transaction_type" => Some(receipt.transaction_type.pretty()),
+        _ => None,
+    }
+}
+
 pub trait UIfmt {
     fn pretty(&self) -> String;
 }
@@ -90,6 +109,67 @@ value                   {}",
         )
     }
 }
+
+impl UIfmt for TransactionReceipt {
+    fn pretty(&self) -> String {
+        format!(
+            "
+blockHash               {}
+blockNumber             {}
+contractAddress         {}
+cumulativeGasUsed       {}
+effectiveGasPrice       {}
+gasUsed                 {}
+logs                    {}
+logsBloom               {}
+root                    {}
+status                  {}
+transactionHash         {}
+transactionIndex        {}
+type                    {}",
+            self.block_hash.pretty(),
+            self.block_number.pretty(),
+            self.contract_address.pretty(),
+            self.cumulative_gas_used.pretty(),
+            self.effective_gas_price.pretty(),
+            self.gas_used.pretty(),
+            serde_json::to_string(&self.logs).unwrap(),
+            self.logs_bloom.pretty(),
+            self.root.pretty(),
+            self.status.pretty(),
+            self.transaction_hash.pretty(),
+            self.transaction_index.pretty(),
+            self.transaction_type.pretty()
+        )
+    }
+}
+
+impl UIfmt for Log {
+    fn pretty(&self) -> String {
+        format!(
+            "
+address: {}
+blockHash: {}
+blockNumber: {}
+data: {}
+logIndex: {}
+removed: {}
+topics: {}
+transactionHash: {}
+transactionIndex: {}",
+            self.address.pretty(),
+            self.block_hash.pretty(),
+            self.block_number.pretty(),
+            self.data.pretty(),
+            self.log_index.pretty(),
+            self.removed.pretty(),
+            self.topics.pretty(),
+            self.transaction_hash.pretty(),
+            self.transaction_index.pretty(),
+        )
+    }
+}
+
 impl UIfmt for Block<Transaction> {
     fn pretty(&self) -> String {
         format!(
@@ -185,16 +265,25 @@ transactions:        {}",
         )
     }
 }
+
 impl UIfmt for U64 {
     fn pretty(&self) -> String {
         self.to_string()
     }
 }
+
+impl UIfmt for bool {
+    fn pretty(&self) -> String {
+        self.to_string()
+    }
+}
+
 impl UIfmt for U256 {
     fn pretty(&self) -> String {
         self.to_string()
     }
 }
+
 impl UIfmt for H256 {
     fn pretty(&self) -> String {
         format!("{:#x}", self)
@@ -206,16 +295,19 @@ impl UIfmt for H160 {
         format!("{:#x}", self)
     }
 }
+
 impl UIfmt for Bytes {
     fn pretty(&self) -> String {
         format!("{:#x}", self)
     }
 }
+
 impl UIfmt for Bloom {
     fn pretty(&self) -> String {
         format!("{:#x}", self)
     }
 }
+
 impl<T: UIfmt> UIfmt for Option<T> {
     fn pretty(&self) -> String {
         if let Some(ref inner) = self {
@@ -231,7 +323,7 @@ impl<T: UIfmt> UIfmt for Vec<T> {
         if !self.is_empty() {
             format!(
                 "[\n{}]",
-                self.iter().fold("".to_string(), |acc, x| acc + tab_paragraph(x.pretty()).as_str())
+                self.iter().fold("".to_string(), |s, x| s + tab_paragraph(x.pretty()).as_str())
             )
         } else {
             "[]".to_string()
