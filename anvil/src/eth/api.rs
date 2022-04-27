@@ -517,8 +517,6 @@ impl EthApi {
 
         let transaction = self.sign_request(&from, request)?;
         let pending_transaction = PendingTransaction::new(transaction)?;
-        dbg!(from);
-        dbg!(pending_transaction.sender());
 
         // pre-validate
         self.backend.validate_pool_transaction(&pending_transaction)?;

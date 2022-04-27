@@ -86,6 +86,7 @@ async fn can_get_block_by_number() {
     let to = accounts[1].address();
     let amount = handle.genesis_balance().checked_div(2u64.into()).unwrap();
     // send a dummy transactions
+    dbg!(from);
     let tx = TransactionRequest::new().to(to).value(amount).from(from);
     let _ = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
 

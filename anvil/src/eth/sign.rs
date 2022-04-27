@@ -163,12 +163,12 @@ pub fn build_typed_transaction(
                 access_list: access_list.into(),
                 odd_y_parity: recid != 0,
                 r: {
-                    let mut rarr = [0_u8; 32];
+                    let mut rarr = [0u8; 32];
                     signature.r.to_big_endian(&mut rarr);
                     H256::from(rarr)
                 },
                 s: {
-                    let mut sarr = [0_u8; 32];
+                    let mut sarr = [0u8; 32];
                     signature.s.to_big_endian(&mut sarr);
                     H256::from(sarr)
                 },
