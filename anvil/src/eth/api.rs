@@ -131,10 +131,18 @@ impl EthApi {
                 self.storage_at(addr, slot, block).await.to_rpc_result()
             }
             EthRequest::EthGetBlockByHash(hash, full) => {
-                self.block_by_hash(hash, full).await.to_rpc_result()
+                if full {
+                    self.block_by_hash_full(hash).await.to_rpc_result()
+                } else {
+                    self.block_by_hash(hash).await.to_rpc_result()
+                }
             }
             EthRequest::EthGetBlockByNumber(num, full) => {
-                self.block_by_number(num, full).await.to_rpc_result()
+                if full {
+                    self.block_by_number(num).await.to_rpc_result()
+                } else {
+                    self.block_by_number_full(num).await.to_rpc_result()
+                }
             }
             EthRequest::EthGetTransactionCount(addr, block) => {
                 self.transaction_count(addr, block).await.to_rpc_result()
@@ -400,21 +408,33 @@ impl EthApi {
     /// Returns block with given hash.
     ///
     /// Handler for ETH RPC call: `eth_getBlockByHash`
-    pub async fn block_by_hash(&self, hash: H256, _full: bool) -> Result<Option<Block<TxHash>>> {
+    pub async fn block_by_hash(&self, hash: H256) -> Result<Option<Block<TxHash>>> {
         node_info!("eth_getBlockByHash");
         self.backend.block_by_hash(hash).await
+    }
+
+    /// Returns a _full_ block with given hash.
+    ///
+    /// Handler for ETH RPC call: `eth_getBlockByHash`
+    pub async fn block_by_hash_full(&self, hash: H256) -> Result<Option<Block<Transaction>>> {
+        node_info!("eth_getBlockByHash");
+        self.backend.block_by_hash_full(hash).await
     }
 
     /// Returns block with given number.
     ///
     /// Handler for ETH RPC call: `eth_getBlockByNumber`
-    pub async fn block_by_number(
-        &self,
-        number: BlockNumber,
-        _: bool,
-    ) -> Result<Option<Block<TxHash>>> {
+    pub async fn block_by_number(&self, number: BlockNumber) -> Result<Option<Block<TxHash>>> {
         node_info!("eth_getBlockByNumber");
         self.backend.block_by_number(number).await
+    }
+
+    /// Returns a _full_ block with given number
+    ///
+    /// Handler for ETH RPC call: `eth_getBlockByNumber`
+    pub async fn block_by_number_full(&self) -> Result<Option<Block<Transaction>>> {
+        node_info!("eth_getBlockByNumber");
+        self.backend.block_by_number_full(number).await
     }
 
     /// Returns the number of transactions sent from given address at given time (block number).

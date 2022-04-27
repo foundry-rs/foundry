@@ -71,3 +71,12 @@ async fn can_get_network_id() {
     let chain_id = provider.get_net_version().await.unwrap();
     assert_eq!(chain_id, CHAIN_ID.into());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_block_by_number() {
+    let (_api, handle) = spawn(NodeConfig::test().port(next_port())).await;
+    let provider = handle.http_provider();
+
+    let chain_id = provider.get_block_with_txs().await.unwrap();
+    assert_eq!(chain_id, CHAIN_ID.into());
+}

@@ -241,7 +241,7 @@ impl ClientFork {
 
     pub async fn block_by_number(
         &self,
-        number: u64,
+        block_number: u64,
     ) -> Result<Option<Block<TxHash>>, ProviderError> {
         if let Some(block) = self
             .storage_read()
@@ -253,13 +253,76 @@ impl ClientFork {
             return Ok(Some(block))
         }
 
-        if let Some(block) = self.provider().get_block(number).await? {
+        if let Some(block) = self.provider().get_block_with_txs(block_number).await? {
+            let Block {
+                hash,
+                parent_hash,
+                uncles_hash,
+                author,
+                state_root,
+                transactions_root,
+                receipts_root,
+                number,
+                gas_used,
+                gas_limit,
+                extra_data,
+                logs_bloom,
+                timestamp,
+                difficulty,
+                total_difficulty,
+                seal_fields,
+                uncles,
+                transactions,
+                size,
+                mix_hash,
+                nonce,
+                base_fee_per_gas,
+            } = block;
+            let block = Block {
+                hash,
+                parent_hash,
+                uncles_hash,
+                author,
+                state_root,
+                transactions_root,
+                receipts_root,
+                number,
+                gas_used,
+                gas_limit,
+                extra_data,
+                logs_bloom,
+                timestamp,
+                difficulty,
+                total_difficulty,
+                seal_fields,
+                uncles,
+                transactions: transactions.iter().map(|tx| tx.hash).collect(),
+                size,
+                mix_hash,
+                nonce,
+                base_fee_per_gas,
+            };
+
             let hash = block.hash.unwrap();
             let mut storage = self.storage_write();
-            storage.hashes.insert(number, hash);
+
+            // also insert all transactions
+            storage.transactions.extend(transactions.into_iter().map(|tx| (tx.hash, tx)));
+
+            storage.hashes.insert(block_number, hash);
             storage.blocks.insert(hash, block.clone());
+
             return Ok(Some(block))
         }
+
+        Ok(None)
+    }
+
+    pub async fn block_by_number_full(
+        &self,
+        number: u64,
+    ) -> Result<Option<Block<Transaction>>, ProviderError> {
+        if let Some(block) = self.block_by_number(number).await? {}
 
         Ok(None)
     }

@@ -564,6 +564,22 @@ impl Backend {
         Ok(None)
     }
 
+    pub async fn block_by_hash_full(
+        &self,
+        hash: H256,
+    ) -> Result<Option<EthersBlock<Transaction>>, BlockchainError> {
+        trace!(target: "backend", "get block by hash {:?}", hash);
+        if let tx @ Some(_) = self.mined_block_by_hash(hash) {
+            return Ok(tx)
+        }
+
+        if let Some(fork) = self.get_fork() {
+            return Ok(fork.block_by_hash(hash).await?)
+        }
+
+        Ok(None)
+    }
+
     pub fn mined_block_by_hash(&self, hash: H256) -> Option<EthersBlock<TxHash>> {
         let block = self.blockchain.storage.read().blocks.get(&hash)?.clone();
         self.convert_block(block)
@@ -573,6 +589,22 @@ impl Backend {
         &self,
         number: BlockNumber,
     ) -> Result<Option<EthersBlock<TxHash>>, BlockchainError> {
+        trace!(target: "backend", "get block by number {:?}", number);
+        if let tx @ Some(_) = self.mined_block_by_number(number) {
+            return Ok(tx)
+        }
+
+        if let Some(fork) = self.get_fork() {
+            return Ok(fork.block_by_number(self.convert_block_number(Some(number))).await?)
+        }
+
+        Ok(None)
+    }
+
+    pub async fn block_by_number_full(
+        &self,
+        number: BlockNumber,
+    ) -> Result<Option<EthersBlock<Transaction>>, BlockchainError> {
         trace!(target: "backend", "get block by number {:?}", number);
         if let tx @ Some(_) = self.mined_block_by_number(number) {
             return Ok(tx)

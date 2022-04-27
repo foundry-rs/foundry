@@ -8,6 +8,7 @@ pub mod mem;
 pub mod cheats;
 pub mod time;
 
+pub mod convert;
 pub mod executor;
 pub mod fork;
 pub mod info;
