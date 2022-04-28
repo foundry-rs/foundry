@@ -8,7 +8,7 @@ use forge::executor::opts::EvmOpts;
 use foundry_cli_test_utils::{
     ethers_solc::{remappings::Remapping, EvmVersion},
     forgetest, forgetest_init, pretty_eq,
-    util::{pretty_err, TestCommand, TestProject},
+    util::{pretty_err, OutputExt, TestCommand, TestProject},
 };
 use foundry_config::{
     caching::{CachedChains, CachedEndpoints, StorageCachingConfig},
@@ -210,6 +210,7 @@ forgetest_init!(can_get_evm_opts, |prj: TestProject, mut cmd: TestCommand| {
     let figment = Config::figment_with_root(prj.root()).merge(("debug", false));
     let evm_opts: EvmOpts = figment.extract().unwrap();
     assert_eq!(evm_opts.fork_url, Some(url.to_string()));
+    std::env::remove_var("FOUNDRY_ETH_RPC_URL");
 });
 
 // checks that we can set various config values
@@ -300,11 +301,9 @@ contract Foo {
         .unwrap();
 
     cmd.arg("build");
-
-    assert!(
-        cmd.stderr_lossy().contains(
-"The msize instruction cannot be used when the Yul optimizer is activated because it can change its semantics. Either disable the Yul optimizer or do not use the instruction."
-        )
+    cmd.unchecked_output().stderr_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_set_yul_optimizer.stderr"),
     );
 
     // disable yul optimizer explicitly
