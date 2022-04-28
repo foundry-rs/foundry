@@ -37,6 +37,7 @@ struct FormatBuffer {
     w: String,
 }
 
+// TODO: store context entities as references without copying
 #[derive(Default)]
 struct Context {
     contract: Option<ContractDefinition>,
