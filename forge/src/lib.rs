@@ -23,7 +23,7 @@ pub mod test_helpers {
     use crate::TestFilter;
     use ethers::{
         prelude::{artifacts::Settings, Lazy, ProjectCompileOutput, SolcConfig},
-        solc::{Project, ProjectPathsConfig},
+        solc::{artifacts::Libraries, Project, ProjectPathsConfig},
         types::{Address, U256},
     };
     use foundry_evm::{
@@ -56,10 +56,8 @@ pub mod test_helpers {
         let libs =
             ["fork/Fork.t.sol:DssExecLib:0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4".to_string()];
 
-        let settings = Settings {
-            libraries: foundry_config::parse_libraries(&libs).unwrap(),
-            ..Default::default()
-        };
+        let settings =
+            Settings { libraries: Libraries::parse(&libs).unwrap(), ..Default::default() };
 
         let solc_config = SolcConfig::builder().settings(settings).build();
         Project::builder()
