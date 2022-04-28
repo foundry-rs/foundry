@@ -130,6 +130,11 @@ impl TestProject {
         self.root().join(Config::FILE_NAME)
     }
 
+    /// Returns the path to the project's cache file
+    pub fn cache_path(&self) -> &PathBuf {
+        &self.paths().cache
+    }
+
     /// Writes the given config as toml to `foundry.toml`
     pub fn write_config(&self, config: Config) {
         let file = self.config_path();
@@ -139,6 +144,16 @@ impl TestProject {
     /// Asserts that the `<root>/foundry.toml` file exits
     pub fn assert_config_exists(&self) {
         assert!(self.config_path().exists());
+    }
+
+    /// Asserts that the `<root>/cache/sol-files-cache.json` file exits
+    pub fn assert_cache_exists(&self) {
+        assert!(self.cache_path().exists());
+    }
+
+    /// Asserts that the `<root>/out` file exits
+    pub fn assert_artifacts_dir_exists(&self) {
+        assert!(self.paths().artifacts.exists());
     }
 
     /// Creates all project dirs and ensure they were created
