@@ -2,7 +2,9 @@ use crate::opts::forge::ContractInfo;
 use ethers::{
     abi::Abi,
     prelude::artifacts::{CompactBytecode, CompactDeployedBytecode},
-    solc::cache::SolFilesCache,
+    solc::{
+        artifacts::CompactContractBytecode, cache::SolFilesCache, Project, ProjectCompileOutput,
+    },
 };
 use std::path::PathBuf;
 
@@ -11,8 +13,6 @@ pub trait Cmd: clap::Parser + Sized {
     type Output;
     fn run(self) -> eyre::Result<Self::Output>;
 }
-
-use ethers::solc::{artifacts::CompactContractBytecode, Project, ProjectCompileOutput};
 
 /// Given a project and its compiled artifacts, proceeds to return the ABI, Bytecode and
 /// Runtime Bytecode of the given contract.
@@ -36,6 +36,7 @@ fn get_artifact_from_name(
     compiled: ProjectCompileOutput,
 ) -> eyre::Result<(Abi, CompactBytecode, CompactDeployedBytecode)> {
     let mut contract_artifact = None;
+    let mut alternatives = Vec::new();
 
     for (artifact_id, artifact) in compiled.into_artifacts() {
         if artifact_id.name == contract.name {
@@ -46,6 +47,8 @@ fn get_artifact_from_name(
                 )
             }
             contract_artifact = Some(artifact);
+        } else {
+            alternatives.push(artifact_id.name);
         }
     }
 
@@ -65,7 +68,12 @@ fn get_artifact_from_name(
         return Ok((abi, code, deployed_code))
     }
 
-    eyre::bail!("could not find artifact")
+    eyre::bail!(
+        r#"could not find artifact: `{}`
+    Did you mean `{:?}`?"#,
+        contract.name
+        alternatives
+    )
 }
 
 /// Find using src/ContractSource.sol:ContractName
