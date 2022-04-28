@@ -47,6 +47,7 @@ use eyre::WrapErr;
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
     color_eyre::install()?;
+    utils::subscriber();
 
     let opts = Opts::parse();
     match opts.sub {
