@@ -13,7 +13,7 @@ pub use ethers_solc::artifacts::OptimizerDetails;
 use ethers_solc::{
     artifacts::{
         output_selection::ContractOutputSelection, serde_helpers, BytecodeHash, DebuggingSettings,
-        Optimizer, RevertStrings, Settings,
+        Libraries, Optimizer, RevertStrings, Settings,
     },
     cache::SOLIDITY_FILES_CACHE_FILENAME,
     error::SolcError,
@@ -590,7 +590,7 @@ impl Config {
     ///   - the optimizer (including details, if configured)
     ///   - evm version
     pub fn solc_settings(&self) -> Result<Settings, SolcError> {
-        let libraries = self.parsed_libraries()?.libs;
+        let libraries = self.parsed_libraries()?.with_applied_remappings(&self.project_paths());
         let optimizer = self.optimizer();
 
         let mut settings = Settings {
@@ -2065,7 +2065,7 @@ mod tests {
                 libs,
                 BTreeMap::from([
                     (
-                        "./src/SizeAuctionDiscount.sol".to_string(),
+                        PathBuf::from("./src/SizeAuctionDiscount.sol"),
                         BTreeMap::from([
                             (
                                 "Chainlink".to_string(),
@@ -2078,7 +2078,7 @@ mod tests {
                         ])
                     ),
                     (
-                        "./src/SizeAuction.sol".to_string(),
+                        PathBuf::from("./src/SizeAuction.sol"),
                         BTreeMap::from([
                             (
                                 "ChainlinkTWAP".to_string(),
@@ -2091,7 +2091,7 @@ mod tests {
                         ])
                     ),
                     (
-                        "./src/test/ChainlinkTWAP.t.sol".to_string(),
+                        PathBuf::from("./src/test/ChainlinkTWAP.t.sol"),
                         BTreeMap::from([(
                             "ChainlinkTWAP".to_string(),
                             "0xffedba5e171c4f15abaaabc86e8bd01f9b54dae5".to_string()
