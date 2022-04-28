@@ -1,11 +1,15 @@
 /// Decoding helpers
 pub mod decode;
 
-/// Call trace arena, decoding and formatting
+/// Call tracing
+/// Contains a call trace arena, decoding and formatting utilities
 pub mod trace;
 
 /// Debugger data structures
 pub mod debug;
+
+/// Coverage data structures
+pub mod coverage;
 
 /// Forge test execution backends
 pub mod executor;

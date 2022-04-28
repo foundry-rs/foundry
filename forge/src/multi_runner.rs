@@ -31,6 +31,8 @@ pub struct MultiContractRunnerBuilder {
     pub fork: Option<Fork>,
     /// Additional cheatcode inspector related settings derived from the `Config`
     pub cheats_config: Option<CheatsConfig>,
+    /// Whether or not to collect coverage info
+    pub coverage: bool,
 }
 
 pub type DeployableContracts = BTreeMap<ArtifactId, (Abi, Bytes, Vec<Bytes>)>;
@@ -128,6 +130,7 @@ impl MultiContractRunnerBuilder {
             source_paths,
             fork: self.fork,
             cheats_config: self.cheats_config.unwrap_or_default(),
+            coverage: self.coverage,
         })
     }
 
@@ -166,6 +169,12 @@ impl MultiContractRunnerBuilder {
         self.cheats_config = Some(cheats_config);
         self
     }
+
+    #[must_use]
+    pub fn with_coverage(mut self) -> Self {
+        self.coverage = true;
+        self
+    }
 }
 
 /// A multi contract runner receives a set of contracts deployed in an EVM instance and proceeds
@@ -192,6 +201,8 @@ pub struct MultiContractRunner {
     pub fork: Option<Fork>,
     /// Additional cheatcode inspector related settings derived from the `Config`
     pub cheats_config: CheatsConfig,
+    /// Whether or not to collect coverage info
+    pub coverage: bool,
 }
 
 impl MultiContractRunner {
@@ -279,6 +290,10 @@ impl MultiContractRunner {
 
                 if self.evm_opts.verbosity >= 3 {
                     builder = builder.with_tracing();
+                }
+
+                if self.coverage {
+                    builder = builder.with_coverage();
                 }
 
                 let executor = builder.build(db.clone());

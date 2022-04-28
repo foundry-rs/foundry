@@ -15,7 +15,6 @@ use foundry_evm::{
 };
 use proptest::test_runner::TestRunner;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
-
 use std::{collections::BTreeMap, time::Instant};
 
 pub struct ContractRunner<'a, DB: DatabaseRef> {
@@ -203,6 +202,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                         logs: vec![],
                         kind: TestKind::Standard(0),
                         traces: vec![],
+                        coverage: None,
                         labeled_addresses: BTreeMap::new(),
                     },
                 )]
@@ -225,6 +225,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
                         logs: setup.logs,
                         kind: TestKind::Standard(0),
                         traces: setup.traces,
+                        coverage: None,
                         labeled_addresses: setup.labeled_addresses,
                     },
                 )]
@@ -285,44 +286,50 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
 
         // Run unit test
         let start = Instant::now();
-        let (reverted, reason, gas, stipend, execution_traces, state_changeset) = match self
-            .executor
-            .call::<(), _, _>(self.sender, address, func.clone(), (), 0.into(), self.errors)
-        {
-            Ok(CallResult {
-                reverted,
-                gas,
-                stipend,
-                logs: execution_logs,
-                traces: execution_trace,
-                labels: new_labels,
-                state_changeset,
-                ..
-            }) => {
-                labeled_addresses.extend(new_labels);
-                logs.extend(execution_logs);
-                (reverted, None, gas, stipend, execution_trace, state_changeset)
-            }
-            Err(EvmError::Execution {
-                reverted,
-                reason,
-                gas,
-                stipend,
-                logs: execution_logs,
-                traces: execution_trace,
-                labels: new_labels,
-                state_changeset,
-                ..
-            }) => {
-                labeled_addresses.extend(new_labels);
-                logs.extend(execution_logs);
-                (reverted, Some(reason), gas, stipend, execution_trace, state_changeset)
-            }
-            Err(err) => {
-                tracing::error!(?err);
-                return Err(err.into())
-            }
-        };
+        let (reverted, reason, gas, stipend, execution_traces, coverage, state_changeset) =
+            match self.executor.call::<(), _, _>(
+                self.sender,
+                address,
+                func.clone(),
+                (),
+                0.into(),
+                self.errors,
+            ) {
+                Ok(CallResult {
+                    reverted,
+                    gas,
+                    stipend,
+                    logs: execution_logs,
+                    traces: execution_trace,
+                    coverage,
+                    labels: new_labels,
+                    state_changeset,
+                    ..
+                }) => {
+                    labeled_addresses.extend(new_labels);
+                    logs.extend(execution_logs);
+                    (reverted, None, gas, stipend, execution_trace, coverage, state_changeset)
+                }
+                Err(EvmError::Execution {
+                    reverted,
+                    reason,
+                    gas,
+                    stipend,
+                    logs: execution_logs,
+                    traces: execution_trace,
+                    labels: new_labels,
+                    state_changeset,
+                    ..
+                }) => {
+                    labeled_addresses.extend(new_labels);
+                    logs.extend(execution_logs);
+                    (reverted, Some(reason), gas, stipend, execution_trace, None, state_changeset)
+                }
+                Err(err) => {
+                    tracing::error!(?err);
+                    return Err(err.into())
+                }
+            };
         traces.extend(execution_traces.map(|traces| (TraceKind::Execution, traces)).into_iter());
 
         let success = self.executor.is_success(
@@ -346,6 +353,7 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
             logs,
             kind: TestKind::Standard(gas.overflowing_sub(stipend).0),
             traces,
+            coverage,
             labeled_addresses,
         })
     }
@@ -387,6 +395,8 @@ impl<'a, DB: DatabaseRef + Send + Sync> ContractRunner<'a, DB> {
             logs,
             kind: TestKind::Fuzz(result.cases),
             traces,
+            // TODO: Maybe support coverage for fuzz tests
+            coverage: None,
             labeled_addresses,
         })
     }

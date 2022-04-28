@@ -152,6 +152,13 @@ impl ExecutorBuilder {
         self
     }
 
+    /// Enables coverage collection
+    #[must_use]
+    pub fn with_coverage(mut self) -> Self {
+        self.inspector_config.coverage = true;
+        self
+    }
+
     /// Sets the EVM spec to use
     #[must_use]
     pub fn with_spec(mut self, spec: SpecId) -> Self {
