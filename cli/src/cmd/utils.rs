@@ -35,36 +35,37 @@ fn get_artifact_from_name(
     contract: ContractInfo,
     compiled: ProjectCompileOutput,
 ) -> eyre::Result<(Abi, CompactBytecode, CompactDeployedBytecode)> {
-    let mut has_found_contract = false;
     let mut contract_artifact = None;
 
     for (artifact_id, artifact) in compiled.into_artifacts() {
         if artifact_id.name == contract.name {
-            if has_found_contract {
-                eyre::bail!("contract with duplicate name. pass path")
+            if contract_artifact.is_some() {
+                eyre::bail!(
+                    "contract with duplicate name `{}`. please pass the path instead",
+                    contract.name
+                )
             }
-            has_found_contract = true;
             contract_artifact = Some(artifact);
         }
     }
 
-    match contract_artifact {
-        Some(artifact) => Ok((
-            artifact
-                .abi
-                .map(Into::into)
-                .ok_or_else(|| eyre::Error::msg(format!("abi not found for {}", contract.name)))?,
-            artifact.bytecode.ok_or_else(|| {
-                eyre::Error::msg(format!("bytecode not found for {}", contract.name))
-            })?,
-            artifact.deployed_bytecode.ok_or_else(|| {
-                eyre::Error::msg(format!("bytecode not found for {}", contract.name))
-            })?,
-        )),
-        None => {
-            eyre::bail!("could not find artifact")
-        }
+    if let Some(artifact) = contract_artifact {
+        let abi = artifact
+            .abi
+            .map(Into::into)
+            .ok_or_else(|| eyre::eyre!("abi not found for {}", contract.name))?;
+
+        let code = artifact
+            .bytecode
+            .ok_or_else(|| eyre::eyre!("bytecode not found for {}", contract.name))?;
+
+        let deployed_code = artifact
+            .deployed_bytecode
+            .ok_or_else(|| eyre::eyre!("bytecode not found for {}", contract.name))?;
+        return Ok((abi, code, deployed_code))
     }
+
+    eyre::bail!("could not find artifact")
 }
 
 /// Find using src/ContractSource.sol:ContractName
