@@ -519,3 +519,102 @@ forgetest_ignore!(can_compile_local_spells, |_: TestProject, mut cmd: TestComman
     ]);
     cmd.print_output();
 });
+
+// test that a failing `forge build` does not impact followup builds
+forgetest!(can_build_after_failure, |prj: TestProject, mut cmd: TestCommand| {
+    prj.insert_ds_test();
+
+    prj.inner()
+        .add_source(
+            "ATest.t.sol",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+import "./test.sol";
+contract ATest is DSTest {
+    function testExample() public {
+        assertTrue(true);
+    }
+}
+   "#,
+        )
+        .unwrap();
+    prj.inner()
+        .add_source(
+            "BTest.t.sol",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+import "./test.sol";
+contract BTest is DSTest {
+    function testExample() public {
+        assertTrue(true);
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    cmd.arg("build");
+    cmd.assert_non_empty_stdout();
+    prj.assert_cache_exists();
+    prj.assert_artifacts_dir_exists();
+
+    let syntax_err = r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+import "./test.sol";
+contract CTest is DSTest {
+    function testExample() public {
+        THIS WILL CAUSE AN ERROR
+    }
+}
+   "#;
+
+    // introduce contract with syntax error
+    prj.inner().add_source("CTest.t.sol", syntax_err).unwrap();
+
+    // `forge build --force` which should fail
+    cmd.arg("--force");
+    cmd.assert_err();
+
+    // but ensure this cleaned cache and artifacts
+    assert!(!prj.paths().artifacts.exists());
+    assert!(!prj.cache_path().exists());
+
+    // still errors
+    cmd.forge_fuse().arg("build");
+    cmd.assert_err();
+
+    // resolve the error by replacing the file
+    prj.inner()
+        .add_source(
+            "CTest.t.sol",
+            r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+import "./test.sol";
+contract CTest is DSTest {
+    function testExample() public {
+         assertTrue(true);
+    }
+}
+   "#,
+        )
+        .unwrap();
+
+    cmd.assert_non_empty_stdout();
+    prj.assert_cache_exists();
+    prj.assert_artifacts_dir_exists();
+
+    // ensure cache is unchanged after error
+    let cache = fs::read_to_string(prj.cache_path()).unwrap();
+
+    // introduce the error again but building without force
+    prj.inner().add_source("CTest.t.sol", syntax_err).unwrap();
+    cmd.assert_err();
+
+    // ensure unchanged cache file
+    let cache_after = fs::read_to_string(prj.cache_path()).unwrap();
+    assert_eq!(cache, cache_after);
+});
