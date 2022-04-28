@@ -152,3 +152,75 @@ pub fn to_array_value(val: &str) -> Result<Value, figment::Error> {
     };
     Ok(value)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn can_parse_libraries() {
+        let libraries = ["./src/lib/LibraryContract.sol:Library:0xaddress".to_string()];
+
+        let libs = parse_libraries(&libraries[..]).unwrap();
+
+        assert_eq!(
+            libs,
+            BTreeMap::from([(
+                "./src/lib/LibraryContract.sol".to_string(),
+                BTreeMap::from([("Library".to_string(), "0xaddress".to_string())])
+            )])
+        );
+    }
+
+    #[test]
+    fn can_parse_many_libraries() {
+        let libraries= [
+        "./src/SizeAuctionDiscount.sol:Chainlink:0xffedba5e171c4f15abaaabc86e8bd01f9b54dae5".to_string(),
+        "./src/SizeAuction.sol:ChainlinkTWAP:0xffedba5e171c4f15abaaabc86e8bd01f9b54dae5".to_string(),
+        "./src/SizeAuction.sol:Math:0x902f6cf364b8d9470d5793a9b2b2e86bddd21e0c".to_string(),
+        "./src/test/ChainlinkTWAP.t.sol:ChainlinkTWAP:0xffedba5e171c4f15abaaabc86e8bd01f9b54dae5".to_string(),
+        "./src/SizeAuctionDiscount.sol:Math:0x902f6cf364b8d9470d5793a9b2b2e86bddd21e0c".to_string(),
+        ];
+
+        let libs = parse_libraries(&libraries[..]).unwrap();
+
+        pretty_assertions::assert_eq!(
+            libs,
+            BTreeMap::from([
+                (
+                    "./src/SizeAuctionDiscount.sol".to_string(),
+                    BTreeMap::from([
+                        (
+                            "Chainlink".to_string(),
+                            "0xffedba5e171c4f15abaaabc86e8bd01f9b54dae5".to_string()
+                        ),
+                        (
+                            "Math".to_string(),
+                            "0x902f6cf364b8d9470d5793a9b2b2e86bddd21e0c".to_string()
+                        )
+                    ])
+                ),
+                (
+                    "./src/SizeAuction.sol".to_string(),
+                    BTreeMap::from([
+                        (
+                            "ChainlinkTWAP".to_string(),
+                            "0xffedba5e171c4f15abaaabc86e8bd01f9b54dae5".to_string()
+                        ),
+                        (
+                            "Math".to_string(),
+                            "0x902f6cf364b8d9470d5793a9b2b2e86bddd21e0c".to_string()
+                        )
+                    ])
+                ),
+                (
+                    "./src/test/ChainlinkTWAP.t.sol".to_string(),
+                    BTreeMap::from([(
+                        "ChainlinkTWAP".to_string(),
+                        "0xffedba5e171c4f15abaaabc86e8bd01f9b54dae5".to_string()
+                    )])
+                ),
+            ])
+        );
+    }
+}

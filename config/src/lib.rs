@@ -3,6 +3,7 @@
 
 use std::{
     borrow::Cow,
+    collections::BTreeMap,
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -579,12 +580,20 @@ impl Config {
         ConfigurableArtifacts::new(self.extra_output.clone(), self.extra_output_files.clone())
     }
 
+    /// Parses all libraries in the form of
+    /// `<file>:<lib>:<addr>`
+    pub fn parsed_libraries(
+        &self,
+    ) -> Result<BTreeMap<String, BTreeMap<String, String>>, SolcError> {
+        parse_libraries(&self.libraries)
+    }
+
     /// Returns the configured `solc` `Settings` that includes:
     ///   - all libraries
     ///   - the optimizer (including details, if configured)
     ///   - evm version
     pub fn solc_settings(&self) -> Result<Settings, SolcError> {
-        let libraries = parse_libraries(&self.libraries)?;
+        let libraries = self.parsed_libraries()?;
         let optimizer = self.optimizer();
 
         let mut settings = Settings {
@@ -2029,6 +2038,69 @@ mod tests {
                     "src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6"
                         .to_string()
                 ]
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_parse_many_libraries() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [default]
+               libraries= [
+                        './src/SizeAuctionDiscount.sol:Chainlink:0xffedba5e171c4f15abaaabc86e8bd01f9b54dae5',
+                        './src/SizeAuction.sol:ChainlinkTWAP:0xffedba5e171c4f15abaaabc86e8bd01f9b54dae5',
+                        './src/SizeAuction.sol:Math:0x902f6cf364b8d9470d5793a9b2b2e86bddd21e0c',
+                        './src/test/ChainlinkTWAP.t.sol:ChainlinkTWAP:0xffedba5e171c4f15abaaabc86e8bd01f9b54dae5',
+                        './src/SizeAuctionDiscount.sol:Math:0x902f6cf364b8d9470d5793a9b2b2e86bddd21e0c',
+                    ]       
+            "#,
+            )?;
+            let config = Config::load();
+
+            let libs = config.parsed_libraries().unwrap();
+
+            pretty_assertions::assert_eq!(
+                libs,
+                BTreeMap::from([
+                    (
+                        "./src/SizeAuctionDiscount.sol".to_string(),
+                        BTreeMap::from([
+                            (
+                                "Chainlink".to_string(),
+                                "0xffedba5e171c4f15abaaabc86e8bd01f9b54dae5".to_string()
+                            ),
+                            (
+                                "Math".to_string(),
+                                "0x902f6cf364b8d9470d5793a9b2b2e86bddd21e0c".to_string()
+                            )
+                        ])
+                    ),
+                    (
+                        "./src/SizeAuction.sol".to_string(),
+                        BTreeMap::from([
+                            (
+                                "ChainlinkTWAP".to_string(),
+                                "0xffedba5e171c4f15abaaabc86e8bd01f9b54dae5".to_string()
+                            ),
+                            (
+                                "Math".to_string(),
+                                "0x902f6cf364b8d9470d5793a9b2b2e86bddd21e0c".to_string()
+                            )
+                        ])
+                    ),
+                    (
+                        "./src/test/ChainlinkTWAP.t.sol".to_string(),
+                        BTreeMap::from([(
+                            "ChainlinkTWAP".to_string(),
+                            "0xffedba5e171c4f15abaaabc86e8bd01f9b54dae5".to_string()
+                        )])
+                    ),
+                ])
             );
 
             Ok(())
