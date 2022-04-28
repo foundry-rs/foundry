@@ -3,7 +3,6 @@
 
 use std::{
     borrow::Cow,
-    collections::BTreeMap,
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -582,10 +581,8 @@ impl Config {
 
     /// Parses all libraries in the form of
     /// `<file>:<lib>:<addr>`
-    pub fn parsed_libraries(
-        &self,
-    ) -> Result<BTreeMap<String, BTreeMap<String, String>>, SolcError> {
-        parse_libraries(&self.libraries)
+    pub fn parsed_libraries(&self) -> Result<Libraries, SolcError> {
+        Libraries::parse(&self.libraries)
     }
 
     /// Returns the configured `solc` `Settings` that includes:
@@ -593,7 +590,7 @@ impl Config {
     ///   - the optimizer (including details, if configured)
     ///   - evm version
     pub fn solc_settings(&self) -> Result<Settings, SolcError> {
-        let libraries = self.parsed_libraries()?;
+        let libraries = self.parsed_libraries()?.libs;
         let optimizer = self.optimizer();
 
         let mut settings = Settings {
@@ -1512,7 +1509,7 @@ fn canonic(path: impl Into<PathBuf>) -> PathBuf {
 mod tests {
     use ethers_solc::artifacts::YulDetails;
     use figment::error::Kind::InvalidType;
-    use std::str::FromStr;
+    use std::{collections::BTreeMap, str::FromStr};
 
     use crate::caching::{CachedChains, CachedEndpoints};
     use figment::{value::Value, Figment};
@@ -2062,7 +2059,7 @@ mod tests {
             )?;
             let config = Config::load();
 
-            let libs = config.parsed_libraries().unwrap();
+            let libs = config.parsed_libraries().unwrap().libs;
 
             pretty_assertions::assert_eq!(
                 libs,

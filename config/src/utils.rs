@@ -8,6 +8,7 @@ use ethers_solc::{
     remappings::{Remapping, RemappingError},
 };
 use figment::value::Value;
+use serde::{Deserialize, Serialize};
 
 /// Loads the config for the current project workspace
 pub fn load_config() -> Config {
@@ -96,42 +97,52 @@ pub fn remappings_from_env_var(env_var: &str) -> Option<Result<Vec<Remapping>, R
     Some(remappings_from_newline(&val).collect())
 }
 
-/// Parses all libraries in the form of
-/// `<file>:<lib>:<addr>`
-///
-/// # Example
-///
-/// ```
-/// use foundry_config::parse_libraries;
-/// let libs = parse_libraries(&[
-///     "src/DssSpell.sol:DssExecLib:0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4".to_string(),
-/// ])
-/// .unwrap();
-/// ```
-pub fn parse_libraries(
-    libs: &[String],
-) -> Result<BTreeMap<String, BTreeMap<String, String>>, SolcError> {
-    let mut libraries = BTreeMap::default();
-    for lib in libs {
-        let mut items = lib.split(':');
-        let file = items
-            .next()
-            .ok_or_else(|| SolcError::msg(format!("failed to parse invalid library: {lib}")))?;
-        let lib = items
-            .next()
-            .ok_or_else(|| SolcError::msg(format!("failed to parse invalid library: {lib}")))?;
-        let addr = items
-            .next()
-            .ok_or_else(|| SolcError::msg(format!("failed to parse invalid library: {lib}")))?;
-        if items.next().is_some() {
-            return Err(SolcError::msg(format!("failed to parse invalid library: {lib}")))
+/// A wrapper type for all libraries in the form of `<file>:<lib>:<addr>`
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Libraries {
+    /// All libraries, `(file path -> (Lib name -> Address))
+    pub libs: BTreeMap<String, BTreeMap<String, String>>,
+}
+
+// === impl Libraries ===
+
+impl Libraries {
+    /// Parses all libraries in the form of
+    /// `<file>:<lib>:<addr>`
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use foundry_config::{Libraries};
+    /// let libs = Libraries::parse(&[
+    ///     "src/DssSpell.sol:DssExecLib:0xfD88CeE74f7D78697775aBDAE53f9Da1559728E4".to_string(),
+    /// ])
+    /// .unwrap();
+    /// ```
+    pub fn parse(libs: &[String]) -> Result<Self, SolcError> {
+        let mut libraries = BTreeMap::default();
+        for lib in libs {
+            let mut items = lib.split(':');
+            let file = items
+                .next()
+                .ok_or_else(|| SolcError::msg(format!("failed to parse invalid library: {lib}")))?;
+            let lib = items
+                .next()
+                .ok_or_else(|| SolcError::msg(format!("failed to parse invalid library: {lib}")))?;
+            let addr = items
+                .next()
+                .ok_or_else(|| SolcError::msg(format!("failed to parse invalid library: {lib}")))?;
+            if items.next().is_some() {
+                return Err(SolcError::msg(format!("failed to parse invalid library: {lib}")))
+            }
+            libraries
+                .entry(file.to_string())
+                .or_insert_with(BTreeMap::default)
+                .insert(lib.to_string(), addr.to_string());
         }
-        libraries
-            .entry(file.to_string())
-            .or_insert_with(BTreeMap::default)
-            .insert(lib.to_string(), addr.to_string());
+        Ok(Self { libs: libraries })
     }
-    Ok(libraries)
 }
 
 /// Converts the `val` into a `figment::Value::Array`
@@ -161,7 +172,7 @@ mod tests {
     fn can_parse_libraries() {
         let libraries = ["./src/lib/LibraryContract.sol:Library:0xaddress".to_string()];
 
-        let libs = parse_libraries(&libraries[..]).unwrap();
+        let libs = Libraries::parse(&libraries[..]).unwrap().libs;
 
         assert_eq!(
             libs,
@@ -182,7 +193,7 @@ mod tests {
         "./src/SizeAuctionDiscount.sol:Math:0x902f6cf364b8d9470d5793a9b2b2e86bddd21e0c".to_string(),
         ];
 
-        let libs = parse_libraries(&libraries[..]).unwrap();
+        let libs = Libraries::parse(&libraries[..]).unwrap().libs;
 
         pretty_assertions::assert_eq!(
             libs,
