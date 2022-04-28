@@ -3,17 +3,112 @@
 Solidity formatter that respects (some parts of) the [Style Guide](https://docs.soliditylang.org/en/latest/style-guide.html) and
 is tested on the [Prettier Solidity Plugin](https://github.com/prettier-solidity/prettier-plugin-solidity) cases.
 
-## Features (WIP)
+## Features
+
+### Directives & Definitions
 
 - [x] Pragma directive
 - [x] Import directive
 - [ ] Contract definition
 - [x] Enum definition
-- [ ] Struct definition
+- [x] Struct definition
 - [ ] Event definition
-- [ ] Function definition
-- [ ] Function body
+- [ ] Error definition
+- [ ] Function / Modifier / Constructor definitions
 - [ ] Variable definition
+- [x] Type definition
+- [ ] Using
+
+### Statements
+
+See [Statement](https://github.com/hyperledger-labs/solang/blob/413841b5c759eb86d684bed0114ff5f74fffbbb1/solang-parser/src/pt.rs#L613-L649) enum in Solang
+
+- [x] Block
+- [ ] Assembly
+- [ ] Args
+- [ ] If
+- [ ] While
+- [x] Expression
+- [ ] VariableDefinition
+- [ ] For
+- [ ] DoWhile
+- [x] Continue
+- [x] Break
+- [ ] Return
+- [ ] Revert
+- [ ] Emit
+- [ ] Try
+- [ ] DocComment
+
+### Expressions
+
+See [Expression](https://github.com/hyperledger-labs/solang/blob/413841b5c759eb86d684bed0114ff5f74fffbbb1/solang-parser/src/pt.rs#L365-L431) enum in Solang
+
+- [ ] PostIncrement, PostDecrement, PreIncrement, PreDecrement, UnaryPlus, UnaryMinus, Not, Complement
+- [ ] Power, Multiply, Divide, Modulo, Add, Subtract
+- [ ] ShiftLeft, ShiftRight, BitwiseAnd, BitwiseXor, BitwiseOr
+- [ ] AssignOr, AssignAnd, AssignXor, AssignShiftLeft, AssignShiftRight, AssignAdd, AssignSubtract, AssignMultiply, AssignDivide, AssignModulo
+- [ ] Less, More, LessEqual, MoreEqual, Equal, NotEqual, And, Or
+- [ ] BoolLiteral, NumberLiteral, RationalNumberLiteral, HexNumberLiteral, StringLiteral, HexLiteral , AddressLiteral
+- [ ] ArraySubscript, ArraySlice
+- [ ] MemberAccess
+- [ ] FunctionCall
+- [ ] FunctionCallBlock
+- [ ] NamedFunctionCall
+- [ ] New
+- [ ] Delete
+- [ ] Ternary
+- [ ] Assign
+- [ ] Type
+    - [x] Address
+    - [x] Address Payable
+    - [x] Payable
+    - [x] Bool
+    - [x] String
+    - [x] Int
+    - [x] Uint
+    - [x] Bytes
+    - [x] Rational
+    - [x] Dynamic Bytes
+    - [x] Mapping
+    - [ ] Function
+- [ ] Variable
+- [ ] List
+- [ ] ArrayLiteral
+- [ ] Unit
+- [ ] This
+
+### Yul Statements
+
+See [YulStatement](https://github.com/hyperledger-labs/solang/blob/413841b5c759eb86d684bed0114ff5f74fffbbb1/solang-parser/src/pt.rs#L658-L670) enum in Solang
+
+- [ ] Assign
+- [ ] VariableDeclaration
+- [ ] If
+- [ ] For
+- [ ] Switch
+- [ ] Leave
+- [ ] Break
+- [ ] Continue
+- [ ] Block
+- [ ] FunctionDefinition
+- [ ] FunctionCall
+
+### Yul Expressions
+
+See [YulExpression](https://github.com/hyperledger-labs/solang/blob/413841b5c759eb86d684bed0114ff5f74fffbbb1/solang-parser/src/pt.rs#L695-L704) enum in Solang
+
+- [ ] BoolLiteral
+- [ ] NumberLiteral
+- [ ] HexNumberLiteral
+- [ ] HexStringLiteral
+- [ ] StringLiteral
+- [ ] Variable
+- [ ] FunctionCall
+- [ ] Member
+
+### Other
+
 - [ ] Comments
 
 ## Architecture
