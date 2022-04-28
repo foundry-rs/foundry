@@ -17,7 +17,6 @@ contract DappToolsParityTest is DSTest {
     }
 
     function testEnvironment() public {
-        assertEq(chainId(), 99, "chain id is incorrect");
         assertEq(block.number, 0);
         assertEq(
             blockhash(block.number),
