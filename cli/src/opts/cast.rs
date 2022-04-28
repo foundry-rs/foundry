@@ -258,7 +258,7 @@ Examples:
         rpc_url: Option<String>,
     },
     #[clap(name = "receipt")]
-    #[clap(alias = "r")]
+    #[clap(alias = "re")]
     #[clap(about = "Get the transaction receipt for a transaction.")]
     Receipt {
         #[clap(value_name = "TX_HASH")]
@@ -543,7 +543,7 @@ Tries to decode the calldata using 4byte.directory unless --offline is passed."#
     #[clap(about = "Hash arbitrary data using keccak-256.")]
     Keccak { data: String },
     #[clap(name = "resolve-name")]
-    #[clap(aliases = &["re", "rn"])]
+    #[clap(alias = "rn")]
     #[clap(about = "Perform an ENS lookup.")]
     ResolveName {
         #[clap(help = "The name to lookup.")]
