@@ -1,6 +1,7 @@
 pub mod cmd;
 pub mod compile;
 mod opts;
+mod suggestions;
 mod term;
 mod utils;
 

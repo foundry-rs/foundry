@@ -1,4 +1,4 @@
-use crate::opts::forge::ContractInfo;
+use crate::{opts::forge::ContractInfo, suggestions};
 use ethers::{
     abi::Abi,
     prelude::artifacts::{CompactBytecode, CompactDeployedBytecode},
@@ -68,12 +68,16 @@ fn get_artifact_from_name(
         return Ok((abi, code, deployed_code))
     }
 
-    eyre::bail!(
-        r#"could not find artifact: `{}`
-    Did you mean `{:?}`?"#,
-        contract.name
-        alternatives
-    )
+    let mut err = format!("could not find artifact: `{}`", contract.name);
+    if let Some(suggestion) = suggestions::did_you_mean(&contract.name, &alternatives).pop() {
+        err = format!(
+            r#"{}
+
+        Did you mean `{}`?"#,
+            err, suggestion
+        );
+    }
+    eyre::bail!(err)
 }
 
 /// Find using src/ContractSource.sol:ContractName

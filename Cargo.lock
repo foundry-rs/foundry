@@ -1748,6 +1748,7 @@ dependencies = [
  "serde_json",
  "similar",
  "solang-parser",
+ "strsim",
  "tokio",
  "toml",
  "tracing",
