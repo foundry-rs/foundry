@@ -37,6 +37,13 @@ struct FormatBuffer {
     w: String,
 }
 
+// TODO: store context entities as references without copying
+#[derive(Default)]
+struct Context {
+    contract: Option<ContractDefinition>,
+    function: Option<FunctionDefinition>,
+}
+
 /// A Solidity formatter
 pub struct Formatter<'a, W> {
     w: &'a mut W,
@@ -46,6 +53,7 @@ pub struct Formatter<'a, W> {
     pending_indent: bool,
     current_line: usize,
     bufs: Vec<FormatBuffer>,
+    context: Context,
 }
 
 impl<'a, W: Write> Formatter<'a, W> {
@@ -58,6 +66,7 @@ impl<'a, W: Write> Formatter<'a, W> {
             pending_indent: true,
             bufs: Vec::new(),
             current_line: 0,
+            context: Context::default(),
         }
     }
 
@@ -286,6 +295,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_contract(&mut self, contract: &mut ContractDefinition) -> VResult {
+        self.context.contract = Some(contract.clone());
+
         if !contract.doc.is_empty() {
             contract.doc.visit(self)?;
             writeln!(self)?;
@@ -299,10 +310,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             let bases = contract
                 .base
                 .iter_mut()
-                .map(|base| {
-                    // TODO
-                    self.visit_to_string(&mut base.loc)
-                })
+                .map(|base| self.visit_to_string(base))
                 .collect::<Result<Vec<_>, _>>()?;
 
             let multiline = self.is_separated_multiline(&bases, ", ");
@@ -364,6 +372,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
             write!(self, "}}")?;
         }
+
+        self.context.contract = None;
 
         Ok(())
     }
@@ -535,6 +545,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     }
 
     fn visit_function(&mut self, func: &mut FunctionDefinition) -> VResult {
+        self.context.function = Some(func.clone());
+
         if !func.doc.is_empty() {
             func.doc.visit(self)?;
             writeln!(self)?;
@@ -589,7 +601,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             if !attributes.is_empty() {
                 writeln!(self)?;
                 self.indent(1);
-                self.write_items(&attributes, true)?;
+                func.attributes.visit(self)?;
                 self.dedent(1);
             }
 
@@ -624,6 +636,8 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             None => write!(self, ";")?,
         }
 
+        self.context.function = None;
+
         Ok(())
     }
 
@@ -631,7 +645,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
     /// visit function regarding one line/multiline cases. We can transform it into one line later
     /// by `.split("\n").join(" ")`.
     fn visit_function_attribute_list(&mut self, list: &mut Vec<FunctionAttribute>) -> VResult {
-        let attributes = list
+        let mut attributes = list
             .iter_mut()
             .sorted_by_key(|attribute| match attribute {
                 FunctionAttribute::Visibility(_) => 0,
@@ -640,10 +654,14 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
                 FunctionAttribute::Override(_, _) => 3,
                 FunctionAttribute::BaseOrModifier(_, _) => 4,
             })
-            .map(|attribute| self.visit_to_string(attribute))
-            .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
+            .peekable();
 
-        self.write_items(&attributes, true)?;
+        while let Some(attribute) = attributes.next() {
+            attribute.visit(self)?;
+            if attributes.peek().is_some() {
+                writeln!(self)?;
+            }
+        }
 
         Ok(())
     }
@@ -654,18 +672,63 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             FunctionAttribute::Visibility(visibility) => write!(self, "{visibility}")?,
             FunctionAttribute::Virtual(_) => write!(self, "virtual")?,
             FunctionAttribute::Override(loc, _) => loc.visit(self)?,
-            FunctionAttribute::BaseOrModifier(loc, _) => {
-                let base_or_modifier = self.visit_to_string(loc)?;
-                write!(
-                    self,
-                    "{}",
-                    // TODO: strip empty parentheses only for modifiers. Currently, we can't detect
-                    //  whether it's a base constructor or modifier. We probably need to keep track
-                    //  of the current contract definition that's in processing?
-                    base_or_modifier.strip_suffix("()").unwrap_or(&base_or_modifier)
-                )?;
+            FunctionAttribute::BaseOrModifier(_, base) => {
+                let is_contract_base = self.context.contract.as_ref().map_or(false, |contract| {
+                    contract
+                        .base
+                        .iter()
+                        .any(|contract_base| contract_base.name.name == base.name.name)
+                });
+
+                if is_contract_base {
+                    base.visit(self)?;
+                } else {
+                    let base_or_modifier = self.visit_to_string(base)?;
+                    write!(
+                        self,
+                        "{}",
+                        base_or_modifier.strip_suffix("()").unwrap_or(&base_or_modifier)
+                    )?;
+                }
             }
         };
+
+        Ok(())
+    }
+
+    fn visit_base(&mut self, base: &mut Base) -> VResult {
+        let need_parents = self.context.function.is_some() || base.args.is_some();
+
+        write!(self, "{}", base.name.name)?;
+
+        if need_parents {
+            self.visit_opening_paren()?;
+        }
+
+        if let Some(args) = &mut base.args {
+            let args = args
+                .iter_mut()
+                .map(|arg| self.visit_to_string(arg))
+                .collect::<Result<Vec<_>, _>>()?;
+
+            let multiline = self.is_separated_multiline(&args, ", ");
+
+            if multiline {
+                writeln!(self)?;
+                self.indent(1);
+            }
+
+            self.write_items_separated(&args, ", ", multiline)?;
+
+            if multiline {
+                self.dedent(1);
+                writeln!(self)?;
+            }
+        }
+
+        if need_parents {
+            self.visit_closing_paren()?;
+        }
 
         Ok(())
     }
@@ -925,11 +988,10 @@ mod tests {
         );
     }
 
-    // TODO: see in `visit_function_attribute`
-    // #[test]
-    // fn constructor_definition() {
-    //     test_directory("ConstructorDefinition");
-    // }
+    #[test]
+    fn constructor_definition() {
+        test_directory("ConstructorDefinition");
+    }
 
     #[test]
     fn contract_definition() {
