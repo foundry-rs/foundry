@@ -9,10 +9,10 @@ is tested on the [Prettier Solidity Plugin](https://github.com/prettier-solidity
 
 - [x] Pragma directive
 - [x] Import directive
-- [ ] Contract definition
+- [x] Contract definition
 - [x] Enum definition
 - [x] Struct definition
-- [ ] Event definition
+- [x] Event definition
 - [ ] Error definition
 - [x] Function / Modifier / Constructor definitions
 - [ ] Variable definition

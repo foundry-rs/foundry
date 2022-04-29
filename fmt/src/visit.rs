@@ -344,36 +344,6 @@ pub trait Visitable {
     fn visit(&mut self, v: &mut impl Visitor) -> VResult;
 }
 
-impl Visitable for Loc {
-    fn visit(&mut self, v: &mut impl Visitor) -> VResult {
-        v.visit_source(*self)?;
-
-        Ok(())
-    }
-}
-
-impl Visitable for DocComment {
-    fn visit(&mut self, v: &mut impl Visitor) -> VResult {
-        v.visit_doc_comment(self)?;
-
-        Ok(())
-    }
-}
-
-impl Visitable for Vec<DocComment> {
-    fn visit(&mut self, v: &mut impl Visitor) -> VResult {
-        v.visit_doc_comments(self)?;
-
-        Ok(())
-    }
-}
-
-impl Visitable for SourceUnit {
-    fn visit(&mut self, v: &mut impl Visitor) -> VResult {
-        v.visit_source_unit(self)
-    }
-}
-
 impl Visitable for SourceUnitPart {
     fn visit(&mut self, v: &mut impl Visitor) -> VResult {
         match self {
@@ -456,58 +426,35 @@ impl Visitable for Statement {
     }
 }
 
-impl Visitable for VariableDeclaration {
+impl Visitable for Loc {
     fn visit(&mut self, v: &mut impl Visitor) -> VResult {
-        v.visit_var_declaration(self)?;
-
-        Ok(())
+        v.visit_source(*self)
     }
 }
 
 impl Visitable for Expression {
     fn visit(&mut self, v: &mut impl Visitor) -> VResult {
-        v.visit_expr(self.loc(), self)?;
-
-        Ok(())
+        v.visit_expr(self.loc(), self)
     }
 }
 
-impl Visitable for FunctionAttribute {
-    fn visit(&mut self, v: &mut impl Visitor) -> VResult {
-        v.visit_function_attribute(self)?;
-
-        Ok(())
-    }
+macro_rules! impl_visitable {
+    ($type:ty, $func:ident) => {
+        impl Visitable for $type {
+            fn visit(&mut self, v: &mut impl Visitor) -> VResult {
+                v.$func(self)
+            }
+        }
+    };
 }
 
-impl Visitable for Vec<FunctionAttribute> {
-    fn visit(&mut self, v: &mut impl Visitor) -> VResult {
-        v.visit_function_attribute_list(self)?;
-
-        Ok(())
-    }
-}
-
-impl Visitable for Parameter {
-    fn visit(&mut self, v: &mut impl Visitor) -> VResult {
-        v.visit_parameter(self)?;
-
-        Ok(())
-    }
-}
-
-impl Visitable for ParameterList {
-    fn visit(&mut self, v: &mut impl Visitor) -> VResult {
-        v.visit_parameter_list(self)?;
-
-        Ok(())
-    }
-}
-
-impl Visitable for Base {
-    fn visit(&mut self, v: &mut impl Visitor) -> VResult {
-        v.visit_base(self)?;
-
-        Ok(())
-    }
-}
+impl_visitable!(DocComment, visit_doc_comment);
+impl_visitable!(Vec<DocComment>, visit_doc_comments);
+impl_visitable!(SourceUnit, visit_source_unit);
+impl_visitable!(VariableDeclaration, visit_var_declaration);
+impl_visitable!(FunctionAttribute, visit_function_attribute);
+impl_visitable!(Vec<FunctionAttribute>, visit_function_attribute_list);
+impl_visitable!(Parameter, visit_parameter);
+impl_visitable!(ParameterList, visit_parameter_list);
+impl_visitable!(Base, visit_base);
+impl_visitable!(EventParameter, visit_event_parameter);
