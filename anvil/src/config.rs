@@ -387,18 +387,17 @@ Chain ID:       {}
             let meta = BlockchainDbMeta::new(env.clone(), eth_rpc_url.clone());
 
             let block_chain_db = BlockchainDb::new(meta, self.block_cache_path());
-            let db = Arc::clone(block_chain_db.db());
 
             // This will spawn the background service that will use the provider to fetch blockchain
             // data from the other client
             let backend = SharedBackend::spawn_backend(
                 Arc::clone(&provider),
-                block_chain_db,
+                block_chain_db.clone(),
                 Some(fork_block_number.into()),
             )
             .await;
 
-            let db = ForkedDatabase::new(backend, db);
+            let db = ForkedDatabase::new(backend, block_chain_db);
             let fork = ClientFork {
                 storage: Default::default(),
                 config: Arc::new(RwLock::new(ClientForkConfig {

@@ -17,7 +17,7 @@ use crate::{
     },
     filter::{EthFilter, Filters, LogsFilter},
     revm::TransactOut,
-    LoggingManager, Miner, MiningMode, Provider, StorageInfo,
+    ClientFork, LoggingManager, Miner, MiningMode, Provider, StorageInfo,
 };
 use anvil_core::{
     eth::{
@@ -1344,6 +1344,10 @@ impl EthApi {
 // === impl EthApi utility functions ===
 
 impl EthApi {
+    pub fn get_fork(&self) -> Option<&ClientFork> {
+        self.backend.get_fork()
+    }
+
     /// Returns the first signer that can sign for the given address
     #[allow(clippy::borrowed_box)]
     pub fn get_signer(&self, address: Address) -> Option<&Box<dyn Signer>> {

@@ -8,13 +8,12 @@ use crate::{
 use ethers::prelude::{Address, Bytes, H256};
 use foundry_evm::{
     executor::{
-        fork::{MemDb, SharedBackend},
+        fork::{BlockchainDb, SharedBackend},
         DatabaseRef,
     },
     revm::{db::CacheDB, Database, DatabaseCommit},
     HashMap as Map,
 };
-use std::sync::Arc;
 use tracing::log::trace;
 
 /// This bundles all required revm traits
@@ -61,11 +60,11 @@ impl<ExtDB: DatabaseRef + Send + Sync + 'static> Db for CacheDB<ExtDB> {
 /// Implement the helper for the fork database
 impl Db for ForkedDatabase {
     fn insert_account(&mut self, address: Address, account: AccountInfo) {
-        self.db.do_insert_account(address, account)
+        self.db.db().do_insert_account(address, account)
     }
 
     fn set_storage_at(&mut self, address: Address, slot: U256, val: U256) {
-        let mut db = self.db.storage.write();
+        let mut db = self.db.db().storage.write();
         db.entry(address).or_default().insert(slot, val);
     }
 }
@@ -85,12 +84,12 @@ pub struct ForkedDatabase {
     /// Contains all the data already fetched
     ///
     /// This is used for change commits
-    db: Arc<MemDb>,
+    db: BlockchainDb,
 }
 
 impl ForkedDatabase {
     /// Creates a new instance of this DB
-    pub fn new(backend: SharedBackend, db: Arc<MemDb>) -> Self {
+    pub fn new(backend: SharedBackend, db: BlockchainDb) -> Self {
         Self { backend, db }
     }
 
@@ -108,9 +107,14 @@ impl ForkedDatabase {
 
         // TODO need to find a way to update generic provider via url
 
-        self.db.clear();
+        self.db.db().clear();
         trace!(target: "fork", "Cleared database");
         Ok(())
+    }
+
+    /// Flushes the cache to disk if configured
+    pub fn flush_cache(&self) {
+        self.db.cache().flush()
     }
 }
 
@@ -152,6 +156,6 @@ impl DatabaseRef for ForkedDatabase {
 
 impl DatabaseCommit for ForkedDatabase {
     fn commit(&mut self, changes: Map<Address, Account>) {
-        self.db.do_commit(changes)
+        self.db.db().do_commit(changes)
     }
 }

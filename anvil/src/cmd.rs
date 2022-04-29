@@ -1,5 +1,6 @@
 use clap::Parser;
 use ethers::utils::WEI_IN_ETHER;
+use tracing::log::trace;
 
 use crate::{config::DEFAULT_MNEMONIC, AccountGenerator, NodeConfig, CHAIN_ID};
 use forge::executor::opts::EvmOpts;
@@ -74,8 +75,23 @@ impl NodeArgs {
     }
 
     /// Starts the node
+    ///
+    /// See also [crate::spawn()]
     pub async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
-        let (_api, handle) = crate::spawn(self.into_node_config()).await;
+        let (api, handle) = crate::spawn(self.into_node_config()).await;
+
+        // sets the signal handler to gracefully shutdown.
+        let fork = api.get_fork().cloned();
+        ctrlc::set_handler(move || {
+            // cleaning up and shutting down
+            // this will make sure that the fork RPC cache is flushed if caching is configured
+            trace!("received shutdown signal, shutting down");
+            if let Some(ref fork) = fork {
+                fork.database.flush_cache();
+            }
+            std::process::exit(0);
+        })
+        .expect("Error setting Ctrl-C handler");
 
         Ok(handle.await??)
     }
