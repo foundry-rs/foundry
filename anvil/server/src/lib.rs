@@ -23,10 +23,34 @@ mod handler;
 mod ws;
 pub use crate::ws::{WsContext, WsRpcHandler};
 
+/// Additional server settings
+#[derive(Debug, Clone)]
+pub struct ServerConfig {
+    /// The cors `allow_origin` header
+    pub allow_origin: Option<HeaderValue>,
+}
+
+// === impl ServerConfig ===
+
+impl ServerConfig {
+    /// Sets the "allow origin" header for cors
+    pub fn with_allow_origin(mut self, allow_origin: Option<HeaderValue>) -> Self {
+        self.allow_origin = allow_origin;
+        self
+    }
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self { allow_origin: Some("*".parse().unwrap()) }
+    }
+}
+
 /// Configures an [axum::Server] that handles RPC-Calls, both HTTP requests and requests via
 /// websocket
 pub fn serve_http_ws<Http, Ws>(
     addr: SocketAddr,
+    config: ServerConfig,
     http: Http,
     ws: Ws,
 ) -> impl Future<Output = hyper::Result<()>>
@@ -34,33 +58,59 @@ where
     Http: RpcHandler,
     Ws: WsRpcHandler,
 {
+    let ServerConfig { allow_origin } = config;
+
     let svc = Router::new()
         .route("/", post(handler::handle::<Http>).get(ws::handle_ws::<Ws>))
         .layer(Extension(http))
         .layer(Extension(ws))
-        .layer(TraceLayer::new_for_http())
-        .layer(
+        .layer(TraceLayer::new_for_http());
+
+    let svc = if let Some(allow_origin) = allow_origin {
+        svc.layer(
             // see https://docs.rs/tower-http/latest/tower_http/cors/index.html
             // for more details
             CorsLayer::new()
-                .allow_origin("*".parse::<HeaderValue>().unwrap())
+                .allow_origin(allow_origin)
                 .allow_headers(vec![header::CONTENT_TYPE])
                 .allow_methods(vec![Method::GET, Method::POST]),
         )
-        .into_make_service();
+    } else {
+        svc
+    }
+    .into_make_service();
     Server::bind(&addr).serve(svc)
 }
 
 /// Configures an [axum::Server] that handles RPC-Calls listing for POST on `/`
-pub fn serve_http<Http>(addr: SocketAddr, http: Http) -> impl Future<Output = hyper::Result<()>>
+pub fn serve_http<Http>(
+    addr: SocketAddr,
+    config: ServerConfig,
+    http: Http,
+) -> impl Future<Output = hyper::Result<()>>
 where
     Http: RpcHandler,
 {
+    let ServerConfig { allow_origin } = config;
+
     let svc = Router::new()
         .route("/", post(handler::handle::<Http>))
         .layer(Extension(http))
-        .layer(TraceLayer::new_for_http())
-        .into_make_service();
+        .layer(TraceLayer::new_for_http());
+    let svc = if let Some(allow_origin) = allow_origin {
+        svc.layer(
+            // see https://docs.rs/tower-http/latest/tower_http/cors/index.html
+            // for more details
+            CorsLayer::new()
+                .allow_origin(allow_origin)
+                .allow_headers(vec![header::CONTENT_TYPE])
+                .allow_methods(vec![Method::GET, Method::POST]),
+        )
+    } else {
+        svc
+    }
+    .into_make_service();
+
     Server::bind(&addr).serve(svc)
 }
 
