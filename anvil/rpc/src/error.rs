@@ -6,11 +6,11 @@ use std::{borrow::Cow, fmt};
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RpcError {
-    code: ErrorCode,
+    pub code: ErrorCode,
     /// error message
-    message: Cow<'static, str>,
+    pub message: Cow<'static, str>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    data: Option<serde_json::Value>,
+    pub data: Option<serde_json::Value>,
 }
 
 impl RpcError {

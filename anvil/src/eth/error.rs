@@ -1,11 +1,14 @@
 //! Aggregated error type for this module
 
 use crate::eth::pool::transactions::PoolTransaction;
-use anvil_rpc::{error::RpcError, response::ResponseResult};
+use anvil_rpc::{
+    error::{ErrorCode, RpcError},
+    response::ResponseResult,
+};
 use ethers::{
     providers::ProviderError,
     signers::WalletError,
-    types::{SignatureError, U256},
+    types::{Bytes, SignatureError, U256},
 };
 use foundry_evm::revm::Return;
 use serde::Serialize;
@@ -102,6 +105,9 @@ pub enum InvalidTransactionError {
     /// invocation.
     #[error("intrinsic gas too low")]
     GasTooLow,
+
+    #[error("execution reverted: {0:?}")]
+    Revert(Option<Bytes>),
     /// The transaction would exhaust gas resources of current block.
     ///
     /// But transaction is still valid.
@@ -152,9 +158,14 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 BlockchainError::ChainIdNotAvailable => {
                     RpcError::invalid_params("Chain Id not available")
                 }
-                BlockchainError::InvalidTransaction(err) => {
-                    RpcError::transaction_rejected(err.to_string())
-                }
+                BlockchainError::InvalidTransaction(err) => match err {
+                    InvalidTransactionError::Revert(data) => RpcError {
+                        code: ErrorCode::TransactionRejected,
+                        message: "execution reverted: ".into(),
+                        data: serde_json::to_value(data).ok(),
+                    },
+                    _ => RpcError::transaction_rejected(err.to_string()),
+                },
                 BlockchainError::FeeHistory(err) => RpcError::invalid_params(err.to_string()),
                 BlockchainError::EmptyRawTransactionData => {
                     RpcError::invalid_params("Empty transaction data")

@@ -1,9 +1,11 @@
 use crate::next_port;
 use anvil::{spawn, NodeConfig};
 use ethers::{
+    contract::ContractFactory,
     prelude::{abigen, Middleware, Signer, SignerMiddleware, TransactionRequest},
     types::U256,
 };
+use ethers_solc::{project_util::TempProject, Artifact};
 use futures::StreamExt;
 use std::{sync::Arc, time::Duration};
 use tokio::time::timeout;
@@ -244,4 +246,40 @@ async fn can_deploy_greeter_ws() {
 
     let greeting = greeter_contract.greet().call().await.unwrap();
     assert_eq!("Hello World!", greeting);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_deploy_reverting() {
+    let (_api, handle) = spawn(NodeConfig::test().port(next_port())).await;
+    let provider = Arc::new(handle.http_provider());
+    let wallet = handle.dev_wallets().next().unwrap();
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+    let prj = TempProject::dapptools().unwrap();
+    prj.add_source(
+        "Contract",
+        r#"
+pragma solidity 0.8.13;
+contract Contract {
+    constructor() {
+      require(false, "");
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let mut compiled = prj.compile().unwrap();
+    println!("{}", compiled);
+    assert!(!compiled.has_compiler_errors());
+    let contract = compiled.remove("Contract").unwrap();
+    let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
+
+    let factory = ContractFactory::new(abi.unwrap(), bytecode.unwrap(), client);
+    let contract = factory.deploy(()).unwrap().send().await;
+    assert!(contract.is_err());
+
+    // should catch the revert during estimation which results in an err
+    let err = contract.unwrap_err();
+    assert!(err.to_string().contains("execution reverted:"));
 }

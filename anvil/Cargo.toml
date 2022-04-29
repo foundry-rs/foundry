@@ -69,6 +69,7 @@ ctrlc = { version = "3", optional = true }
 
 [dev-dependencies]
 ethers = { git = "https://github.com/gakonst/ethers-rs", features = ["abigen"] }
+ethers-solc = { git = "https://github.com/gakonst/ethers-rs", features = ["project-util", "full"] }
 pretty_assertions = "1.2.1"
 tokio = { version = "1.10", features = ["full"] }
 

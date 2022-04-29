@@ -84,6 +84,7 @@ dependencies = [
  "colored",
  "ctrlc",
  "ethers",
+ "ethers-solc",
  "forge",
  "foundry-common",
  "foundry-config",

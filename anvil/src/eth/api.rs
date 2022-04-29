@@ -704,15 +704,17 @@ impl EthApi {
             Return::Return | Return::Continue | Return::SelfDestruct | Return::Stop => {
                 // succeeded
             }
-            Return::OutOfGas => return Err(InvalidTransactionError::OutOfGas(gas_limit).into()),
+            Return::OutOfGas | Return::LackOfFundForGasLimit => {
+                return Err(InvalidTransactionError::OutOfGas(gas_limit).into())
+            }
             // need to check if the revert was due to lack of gas or unrelated reason
             Return::Revert => {
                 // if price or limit was included in the request then we can execute the request
                 // again with the max gas limit to check if revert is gas related or not
-                if request.gas.is_some() || request.gas_price.is_some() {
+                return if request.gas.is_some() || request.gas_price.is_some() {
                     request.gas = Some(self.backend.gas_limit());
                     let (exit, _, _gas, _) = self.backend.call(request, fees);
-                    return match exit {
+                    match exit {
                         Return::Return | Return::Continue | Return::SelfDestruct | Return::Stop => {
                             // transaction succeeded by manually increasing the gas limit to highest
                             Err(InvalidTransactionError::OutOfGas(gas_limit).into())
@@ -722,6 +724,9 @@ impl EthApi {
                             Err(BlockchainError::EvmError(reason))
                         }
                     }
+                } else {
+                    // the transaction did fail due to lack of gas from the user
+                    Err(InvalidTransactionError::Revert(request.data).into())
                 }
             }
             reason => {
