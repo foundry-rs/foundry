@@ -234,19 +234,23 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             let is_pragma =
                 |u: &SourceUnitPart| matches!(u, SourceUnitPart::PragmaDirective(_, _, _, _));
             let is_import = |u: &SourceUnitPart| matches!(u, SourceUnitPart::ImportDirective(_, _));
-            let is_declaration = |u: &SourceUnitPart| !(is_pragma(u) || is_import(u));
+            let is_error = |u: &SourceUnitPart| matches!(u, SourceUnitPart::ErrorDefinition(_));
+            let is_declaration =
+                |u: &SourceUnitPart| !(is_pragma(u) || is_import(u) || is_error(u));
 
             unit.visit(self)?;
             writeln!(self)?;
 
             if let Some(next_unit) = source_unit_parts_iter.peek() {
+                // If source has zero blank lines between imports or errors, leave it as is. If one
+                // or more, separate with one blank line.
+                let separate = (is_import(unit) || is_error(unit)) &&
+                    (is_import(next_unit) || is_error(next_unit)) &&
+                    self.blank_lines(unit.loc(), next_unit.loc()) > 1;
+
                 if (is_declaration(unit) || is_declaration(next_unit)) ||
                     (is_pragma(unit) || is_pragma(next_unit)) ||
-                    (is_import(unit) &&
-                        is_import(next_unit) &&
-                        // If source has zero blank lines between imports, leave it as is. If one
-                        //  or more, separate imports with one blank line.
-                        self.blank_lines(unit.loc(), next_unit.loc()) > 1)
+                    separate
                 {
                     writeln!(self)?;
                 }
@@ -966,6 +970,49 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         Ok(())
     }
+
+    fn visit_error(&mut self, error: &mut ErrorDefinition) -> VResult {
+        if !error.doc.is_empty() {
+            error.doc.visit(self)?;
+            writeln!(self)?;
+        }
+
+        write!(self, "error {}(", error.name.name)?;
+
+        let params = error
+            .fields
+            .iter_mut()
+            .map(|param| self.visit_to_string(param))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let multiline = self.is_separated_multiline(&params, ", ");
+
+        if multiline {
+            writeln!(self)?;
+            self.indent(1);
+        }
+
+        self.write_items_separated(&params, ", ", multiline)?;
+
+        if multiline {
+            self.dedent(1);
+            writeln!(self)?;
+        }
+
+        write!(self, ");")?;
+
+        Ok(())
+    }
+
+    fn visit_error_parameter(&mut self, param: &mut ErrorParameter) -> VResult {
+        param.ty.visit(self)?;
+
+        if let Some(name) = &param.name {
+            write!(self, " {}", name.name)?;
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -1075,6 +1122,11 @@ mod tests {
     #[test]
     fn contract_definition() {
         test_directory("ContractDefinition");
+    }
+
+    #[test]
+    fn error_definition() {
+        test_directory("ErrorDefinition");
     }
 
     #[test]
