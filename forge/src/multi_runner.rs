@@ -488,6 +488,27 @@ mod tests {
                             Some(vec!["0".into(), "1".into(), "4".into(), "100".into()]),
                             None,
                         ),
+                        (
+                            "testStrings()",
+                            true,
+                            None,
+                            Some(vec!["0".into(), "1".into(), "testStrings".into()]),
+                            None,
+                        ),
+                        (
+                            "testLog()",
+                            true,
+                            None,
+                            Some(vec!["0".into(), "1".into(), "Error: Assertion Failed".into()]),
+                            None,
+                        ),
+                        (
+                            "testLogAddress()",
+                            true,
+                            None,
+                            Some(vec!["0".into(), "1".into(), "0x0000000000000000000000000000000000000001".into()]),
+                            None,
+                        ),
                     ],
                 ),
                 (

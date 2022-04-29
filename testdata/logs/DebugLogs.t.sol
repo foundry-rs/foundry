@@ -29,6 +29,18 @@ contract DebugLogsTest is DSTest {
         emit log_uint(5);
         require(false);
     }
+
+    function testStrings() public {
+        emit log_string("testStrings");
+    }
+
+    function testLog() public {
+        emit log("Error: Assertion Failed");
+    }
+
+    function testLogAddress() public {
+        emit log_address(address(1));
+    }
 }
 
 contract Fails is DSTest {
