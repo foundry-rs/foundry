@@ -13,7 +13,7 @@ is tested on the [Prettier Solidity Plugin](https://github.com/prettier-solidity
 - [x] Enum definition
 - [x] Struct definition
 - [x] Event definition
-- [ ] Error definition
+- [x] Error definition
 - [x] Function / Modifier / Constructor definitions
 - [ ] Variable definition
 - [x] Type definition

@@ -65,9 +65,7 @@ pub trait Visitor {
         _dialect: &mut Option<StringLiteral>,
         _block: &mut YulBlock,
     ) -> VResult {
-        self.visit_source(loc)?;
-
-        Ok(())
+        self.visit_source(loc)
     }
 
     fn visit_block(
@@ -76,23 +74,17 @@ pub trait Visitor {
         _unchecked: bool,
         _statements: &mut Vec<Statement>,
     ) -> VResult {
-        self.visit_source(loc)?;
-
-        Ok(())
+        self.visit_source(loc)
     }
 
     fn visit_args(&mut self, loc: Loc, _args: &mut Vec<NamedArgument>) -> VResult {
-        self.visit_source(loc)?;
-
-        Ok(())
+        self.visit_source(loc)
     }
 
     /// Don't write semicolon at the end because expressions can appear as both
     /// part of other node and a statement in the function body
     fn visit_expr(&mut self, loc: Loc, _expr: &mut Expression) -> VResult {
-        self.visit_source(loc)?;
-
-        Ok(())
+        self.visit_source(loc)
     }
 
     fn visit_emit(&mut self, loc: Loc, _event: &mut Expression) -> VResult {
@@ -128,9 +120,7 @@ pub trait Visitor {
     /// Don't write semicolon at the end because variable declarations can appear in both
     /// struct definition and function body as a statement
     fn visit_var_declaration(&mut self, var: &mut VariableDeclaration) -> VResult {
-        self.visit_source(var.loc)?;
-
-        Ok(())
+        self.visit_source(var.loc)
     }
 
     fn visit_return(&mut self, loc: Loc, _expr: &mut Option<Expression>) -> VResult {
@@ -168,9 +158,7 @@ pub trait Visitor {
         _returns: &mut Option<(Vec<(Loc, Option<Parameter>)>, Box<Statement>)>,
         _clauses: &mut Vec<CatchClause>,
     ) -> VResult {
-        self.visit_source(loc)?;
-
-        Ok(())
+        self.visit_source(loc)
     }
 
     fn visit_if(
@@ -180,9 +168,7 @@ pub trait Visitor {
         _if_branch: &mut Box<Statement>,
         _else_branch: &mut Option<Box<Statement>>,
     ) -> VResult {
-        self.visit_source(loc)?;
-
-        Ok(())
+        self.visit_source(loc)
     }
 
     fn visit_do_while(
@@ -191,15 +177,11 @@ pub trait Visitor {
         _cond: &mut Statement,
         _body: &mut Expression,
     ) -> VResult {
-        self.visit_source(loc)?;
-
-        Ok(())
+        self.visit_source(loc)
     }
 
     fn visit_while(&mut self, loc: Loc, _cond: &mut Expression, _body: &mut Statement) -> VResult {
-        self.visit_source(loc)?;
-
-        Ok(())
+        self.visit_source(loc)
     }
 
     fn visit_for(
@@ -210,9 +192,7 @@ pub trait Visitor {
         _update: &mut Option<Box<Statement>>,
         _body: &mut Option<Box<Statement>>,
     ) -> VResult {
-        self.visit_source(loc)?;
-
-        Ok(())
+        self.visit_source(loc)
     }
 
     fn visit_function(&mut self, func: &mut FunctionDefinition) -> VResult {
@@ -251,15 +231,11 @@ pub trait Visitor {
     }
 
     fn visit_base(&mut self, base: &mut Base) -> VResult {
-        self.visit_source(base.loc)?;
-
-        Ok(())
+        self.visit_source(base.loc)
     }
 
     fn visit_parameter(&mut self, parameter: &mut Parameter) -> VResult {
-        self.visit_source(parameter.loc)?;
-
-        Ok(())
+        self.visit_source(parameter.loc)
     }
 
     /// Write parameter list used in function/constructor/fallback/modifier arguments, return
@@ -295,6 +271,10 @@ pub trait Visitor {
         Ok(())
     }
 
+    fn visit_event_parameter(&mut self, param: &mut EventParameter) -> VResult {
+        self.visit_source(param.loc)
+    }
+
     fn visit_error(&mut self, error: &mut ErrorDefinition) -> VResult {
         if !error.doc.is_empty() {
             self.visit_doc_comments(&mut error.doc)?;
@@ -306,16 +286,12 @@ pub trait Visitor {
         Ok(())
     }
 
-    fn visit_event_parameter(&mut self, param: &mut EventParameter) -> VResult {
-        self.visit_source(param.loc)?;
-
-        Ok(())
+    fn visit_error_parameter(&mut self, param: &mut ErrorParameter) -> VResult {
+        self.visit_source(param.loc)
     }
 
     fn visit_type_definition(&mut self, def: &mut TypeDefinition) -> VResult {
-        self.visit_source(def.loc)?;
-
-        Ok(())
+        self.visit_source(def.loc)
     }
 
     fn visit_stray_semicolon(&mut self) -> VResult;
@@ -458,3 +434,4 @@ impl_visitable!(Parameter, visit_parameter);
 impl_visitable!(ParameterList, visit_parameter_list);
 impl_visitable!(Base, visit_base);
 impl_visitable!(EventParameter, visit_event_parameter);
+impl_visitable!(ErrorParameter, visit_error_parameter);
