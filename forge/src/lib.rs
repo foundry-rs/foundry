@@ -77,7 +77,7 @@ pub mod test_helpers {
     pub static EVM_OPTS: Lazy<EvmOpts> = Lazy::new(|| EvmOpts {
         env: Env {
             gas_limit: 18446744073709551615,
-            chain_id: Some(31337),
+            chain_id: Some(foundry_common::DEV_CHAIN_ID),
             tx_origin: Address::from_str("00a329c0648769a73afac7f9381e08fb43dbea72").unwrap(),
             ..Default::default()
         },
