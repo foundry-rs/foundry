@@ -64,7 +64,7 @@ async fn can_get_chain_id() {
     let provider = handle.http_provider();
 
     let chain_id = provider.get_chainid().await.unwrap();
-    assert_eq!(chain_id, 1337u64.into());
+    assert_eq!(chain_id, CHAIN_ID.into());
 }
 
 #[tokio::test(flavor = "multi_thread")]
