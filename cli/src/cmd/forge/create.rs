@@ -106,7 +106,7 @@ impl Cmd for CreateArgs {
         // Find Project & Compile
         let project = self.opts.project()?;
         let compiled = if self.json {
-            // Supress compile stdout messages when printing json output
+            // Suppress compile stdout messages when printing json output
             compile::suppress_compile(&project)?
         } else {
             compile::compile(&project, false, false)?

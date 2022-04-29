@@ -12,3 +12,4 @@ forgetest_external!(maple_loan, "maple-labs/loan");
 // Forking tests
 forgetest_external!(drai, "mds1/drai", 13633752, &["--chain-id", "99"]);
 forgetest_external!(gunilev, "hexonaut/guni-lev", 13633752);
+forgetest_external!(convex, "mds1/convex-shutdown-simulation", 14445961);
