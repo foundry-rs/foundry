@@ -344,42 +344,6 @@ pub trait Visitable {
     fn visit(&mut self, v: &mut impl Visitor) -> VResult;
 }
 
-macro_rules! impl_visitable {
-    ($type:ty, $func:ident) => {
-        impl Visitable for $type {
-            fn visit(&mut self, v: &mut impl Visitor) -> VResult {
-                v.$func(self)?;
-
-                Ok(())
-            }
-        }
-    };
-}
-
-macro_rules! impl_visitable_deref {
-    ($type:ty, $func:ident) => {
-        impl Visitable for $type {
-            fn visit(&mut self, v: &mut impl Visitor) -> VResult {
-                v.$func(*self)?;
-
-                Ok(())
-            }
-        }
-    };
-}
-
-macro_rules! impl_visitable_loc {
-    ($type:ty, $func:ident) => {
-        impl Visitable for $type {
-            fn visit(&mut self, v: &mut impl Visitor) -> VResult {
-                v.$func(self.loc(), self)?;
-
-                Ok(())
-            }
-        }
-    };
-}
-
 impl Visitable for SourceUnitPart {
     fn visit(&mut self, v: &mut impl Visitor) -> VResult {
         match self {
@@ -462,12 +426,32 @@ impl Visitable for Statement {
     }
 }
 
-impl_visitable_deref!(Loc, visit_source);
+impl Visitable for Loc {
+    fn visit(&mut self, v: &mut impl Visitor) -> VResult {
+        v.visit_source(*self)
+    }
+}
+
+impl Visitable for Expression {
+    fn visit(&mut self, v: &mut impl Visitor) -> VResult {
+        v.visit_expr(self.loc(), self)
+    }
+}
+
+macro_rules! impl_visitable {
+    ($type:ty, $func:ident) => {
+        impl Visitable for $type {
+            fn visit(&mut self, v: &mut impl Visitor) -> VResult {
+                v.$func(self)
+            }
+        }
+    };
+}
+
 impl_visitable!(DocComment, visit_doc_comment);
 impl_visitable!(Vec<DocComment>, visit_doc_comments);
 impl_visitable!(SourceUnit, visit_source_unit);
 impl_visitable!(VariableDeclaration, visit_var_declaration);
-impl_visitable_loc!(Expression, visit_expr);
 impl_visitable!(FunctionAttribute, visit_function_attribute);
 impl_visitable!(Vec<FunctionAttribute>, visit_function_attribute_list);
 impl_visitable!(Parameter, visit_parameter);
