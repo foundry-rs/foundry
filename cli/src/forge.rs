@@ -14,6 +14,7 @@ use clap_complete::generate;
 fn main() -> eyre::Result<()> {
     color_eyre::install()?;
     utils::subscriber();
+    utils::enable_paint();
 
     let opts = Opts::parse();
     match opts.sub {

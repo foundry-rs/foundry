@@ -1,5 +1,4 @@
 use crate::{cmd::Cmd, utils};
-use ansi_term::Colour;
 use cast::trace::CallTraceDecoder;
 use clap::Parser;
 use ethers::{
@@ -20,6 +19,7 @@ use std::{
     time::Duration,
 };
 use ui::{TUIExitReason, Tui, Ui};
+use yansi::Paint;
 
 #[derive(Debug, Clone, Parser)]
 pub struct RunArgs {
@@ -193,9 +193,9 @@ fn print_traces(result: &mut RunResult, decoder: CallTraceDecoder) -> eyre::Resu
     println!();
 
     if result.success {
-        println!("{}", Colour::Green.paint("Script ran successfully."));
+        println!("{}", Paint::green("Script ran successfully."));
     } else {
-        println!("{}", Colour::Red.paint("Script failed."));
+        println!("{}", Paint::red("Script failed."));
     }
 
     println!("Gas used: {}", result.gas);

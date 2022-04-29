@@ -2,9 +2,9 @@
 use std::{path::PathBuf, str};
 
 use crate::{cmd::Cmd, opts::forge::Dependency, utils::p_println};
-use ansi_term::Colour;
 use clap::{Parser, ValueHint};
 use foundry_config::find_project_root_path;
+use yansi::Paint;
 
 use std::{
     path::Path,
@@ -97,7 +97,7 @@ pub(crate) fn install(
             install_as_submodule(&dep, &libs, no_commit)?;
         }
 
-        p_println!(!quiet => "    {} {}",    Colour::Green.paint("Installed"), dep.name);
+        p_println!(!quiet => "    {} {}",    Paint::green("Installed"), dep.name);
     }
     Ok(())
 }

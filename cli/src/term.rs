@@ -1,6 +1,5 @@
 //! terminal utils
 
-use ansi_term::Colour;
 use atty::{self, Stream};
 use ethers::solc::{
     remappings::Remapping,
@@ -19,6 +18,7 @@ use std::{
     },
     time::Duration,
 };
+use yansi::Paint;
 
 /// Some spinners
 // https://github.com/gernest/wow/blob/master/spin/spinners.go
@@ -251,9 +251,7 @@ impl Reporter for SpinnerReporter {
     }
 
     fn on_solc_installation_error(&self, version: &Version, error: &str) {
-        self.send_msg(
-            Colour::Red.paint(format!("Failed to install solc {version}: {error}")).to_string(),
-        );
+        self.send_msg(Paint::red(format!("Failed to install solc {version}: {error}")).to_string());
     }
 
     fn on_unresolved_import(&self, import: &Path, remappings: &[Remapping]) {
