@@ -2,7 +2,6 @@ use crate::{
     cmd::{forge::build::CoreBuildArgs, Cmd},
     compile, utils,
 };
-use ansi_term::Colour;
 use clap::{Parser, ValueHint};
 use ethers::{
     abi::{Abi, RawLog},
@@ -28,6 +27,7 @@ use foundry_config::{figment::Figment, Config};
 use foundry_utils::{encode_args, IntoFunction, PostLinkInput, RuntimeOrHandle};
 use std::{collections::BTreeMap, path::PathBuf};
 use ui::{TUIExitReason, Tui, Ui};
+use yansi::Paint;
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::impl_figment_convert!(RunArgs, opts, evm_opts);
@@ -104,7 +104,7 @@ impl Cmd for RunArgs {
             if setup_fn.name != "setUp" {
                 println!(
                     "{} Found invalid setup function \"{}\" did you mean \"setUp()\"?",
-                    Colour::Yellow.bold().paint("Warning:"),
+                    Paint::yellow("Warning:").bold(),
                     setup_fn.signature()
                 );
             }
@@ -230,9 +230,9 @@ impl Cmd for RunArgs {
             }
 
             if result.success {
-                println!("{}", Colour::Green.paint("Script ran successfully."));
+                println!("{}", Paint::green("Script ran successfully."));
             } else {
-                println!("{}", Colour::Red.paint("Script failed."));
+                println!("{}", Paint::red("Script failed."));
             }
 
             println!("Gas used: {}", result.gas);

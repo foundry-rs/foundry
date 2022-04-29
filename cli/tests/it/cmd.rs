@@ -1,5 +1,4 @@
 //! Contains various tests for checking forge's commands
-use ansi_term::Colour;
 use ethers::solc::{
     artifacts::{BytecodeHash, Metadata},
     ConfigurableContractArtifact,
@@ -11,6 +10,7 @@ use foundry_cli_test_utils::{
 };
 use foundry_config::{parse_with_profile, BasicConfig, Config, SolidityErrorCode};
 use std::{env, fs};
+use yansi::Paint;
 
 // import forge utils as mod
 #[allow(unused)]
@@ -293,7 +293,7 @@ Gas used: 1751
 == Logs ==
   script ran
 ",
-        Colour::Green.paint("Script ran successfully.")
+        Paint::green("Script ran successfully.")
     ),));
 });
 
@@ -325,7 +325,7 @@ Gas used: 1751
 == Logs ==
   script ran
 ",
-        Colour::Green.paint("Script ran successfully.")
+        Paint::green("Script ran successfully.")
     ),));
 });
 
@@ -362,7 +362,7 @@ Gas used: 3957
   1
   2
 ",
-        Colour::Green.paint("Script ran successfully.")
+        Paint::green("Script ran successfully.")
     ),));
 });
 
