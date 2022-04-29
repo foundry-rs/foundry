@@ -26,3 +26,8 @@ futures = "0.3"
 serde_json = "1.0.67"
 serde = { version = "1.0.136", features = ["derive"] }
 async-trait = "0.1.53"
+
+clap = { version = "3.0.10", features = [
+    "derive",
+    "env",
+], optional = true }

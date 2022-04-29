@@ -248,13 +248,8 @@ async fn can_deploy_greeter_ws() {
     assert_eq!("Hello World!", greeting);
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn test_deploy_reverting() {
-    let (_api, handle) = spawn(NodeConfig::test().port(next_port())).await;
-    let provider = Arc::new(handle.http_provider());
-    let wallet = handle.dev_wallets().next().unwrap();
-    let client = Arc::new(SignerMiddleware::new(provider, wallet));
-
+#[test]
+fn test_deploy_reverting() {
     let prj = TempProject::dapptools().unwrap();
     prj.add_source(
         "Contract",
@@ -270,16 +265,25 @@ contract Contract {
     .unwrap();
 
     let mut compiled = prj.compile().unwrap();
-    println!("{}", compiled);
     assert!(!compiled.has_compiler_errors());
     let contract = compiled.remove("Contract").unwrap();
     let (abi, bytecode, _) = contract.into_contract_bytecode().into_parts();
 
-    let factory = ContractFactory::new(abi.unwrap(), bytecode.unwrap(), client);
-    let contract = factory.deploy(()).unwrap().send().await;
-    assert!(contract.is_err());
+    // need to run this in a runtime because svm's blocking install does panic if invoked in another
+    // async runtime
+    tokio::runtime::Runtime::new().unwrap().block_on(async move {
+        let (_api, handle) = spawn(NodeConfig::test().port(next_port())).await;
+        let provider = handle.ws_provider().await;
 
-    // should catch the revert during estimation which results in an err
-    let err = contract.unwrap_err();
-    assert!(err.to_string().contains("execution reverted:"));
+        let wallet = handle.dev_wallets().next().unwrap();
+        let client = Arc::new(SignerMiddleware::new(provider, wallet));
+
+        let factory = ContractFactory::new(abi.unwrap(), bytecode.unwrap(), client);
+        let contract = factory.deploy(()).unwrap().send().await;
+        assert!(contract.is_err());
+
+        // should catch the revert during estimation which results in an err
+        let err = contract.unwrap_err();
+        assert!(err.to_string().contains("execution reverted:"));
+    });
 }

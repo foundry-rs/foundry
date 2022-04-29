@@ -134,6 +134,7 @@ dependencies = [
  "anvil-rpc",
  "async-trait",
  "axum",
+ "clap",
  "futures",
  "hyper",
  "parking_lot 0.12.0",

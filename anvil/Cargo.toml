@@ -75,5 +75,5 @@ tokio = { version = "1.10", features = ["full"] }
 
 [features]
 default = ["cli"]
-cmd = ["foundry-common", "forge", "clap", "ctrlc"]
+cmd = ["foundry-common", "forge", "clap", "ctrlc", "anvil-server/clap"]
 cli = ["tokio/full", "cmd"]

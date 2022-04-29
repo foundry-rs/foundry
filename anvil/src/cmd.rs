@@ -1,3 +1,4 @@
+use anvil_server::ServerConfig;
 use clap::Parser;
 use ethers::utils::WEI_IN_ETHER;
 use tracing::log::trace;
@@ -37,6 +38,9 @@ pub struct NodeArgs {
         help = "Sets the derivation path of the child key to be derived [default: m/44'/60'/0'/0/]"
     )]
     pub derivation_path: Option<String>,
+
+    #[clap(flatten, next_help_heading = "SERVER OPTIONS")]
+    pub server_config: ServerConfig,
 }
 
 impl NodeArgs {
@@ -59,6 +63,7 @@ impl NodeArgs {
             .base_fee(self.evm_opts.env.block_base_fee_per_gas)
             .fork_block_number(evm_opts.fork_block_number)
             .set_storage_caching(evm_opts.no_storage_caching)
+            .server_config(self.server_config)
     }
 
     fn account_generator(&self) -> AccountGenerator {

@@ -13,6 +13,7 @@ use crate::{
     revm::db::CacheDB,
     FeeManager,
 };
+use anvil_server::ServerConfig;
 use ethers::{
     core::k256::ecdsa::SigningKey,
     prelude::{rand::thread_rng, Address, Wallet, U256},
@@ -82,6 +83,8 @@ pub struct NodeConfig {
     pub enable_tracing: bool,
     /// Explicitly disables the use of RPC caching.
     pub no_storage_caching: bool,
+    /// How to configure the server
+    pub server_config: ServerConfig,
 }
 
 // === impl NodeConfig ===
@@ -117,6 +120,7 @@ impl Default for NodeConfig {
             base_fee: INITIAL_BASE_FEE.into(),
             enable_tracing: true,
             no_storage_caching: false,
+            server_config: Default::default(),
         }
     }
 }
@@ -240,6 +244,12 @@ impl NodeConfig {
     #[must_use]
     pub fn with_tracing(mut self, enable_tracing: bool) -> Self {
         self.enable_tracing = enable_tracing;
+        self
+    }
+
+    #[must_use]
+    pub fn server_config(mut self, config: ServerConfig) -> Self {
+        self.server_config = config;
         self
     }
 

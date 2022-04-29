@@ -18,33 +18,12 @@ use std::{fmt, future::Future, net::SocketAddr};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{trace, warn};
 
+mod config;
 /// handlers for axum server
 mod handler;
 mod ws;
 pub use crate::ws::{WsContext, WsRpcHandler};
-
-/// Additional server settings
-#[derive(Debug, Clone)]
-pub struct ServerConfig {
-    /// The cors `allow_origin` header
-    pub allow_origin: Option<HeaderValue>,
-}
-
-// === impl ServerConfig ===
-
-impl ServerConfig {
-    /// Sets the "allow origin" header for cors
-    pub fn with_allow_origin(mut self, allow_origin: Option<HeaderValue>) -> Self {
-        self.allow_origin = allow_origin;
-        self
-    }
-}
-
-impl Default for ServerConfig {
-    fn default() -> Self {
-        Self { allow_origin: Some("*".parse().unwrap()) }
-    }
-}
+pub use config::ServerConfig;
 
 /// Configures an [axum::Server] that handles RPC-Calls, both HTTP requests and requests via
 /// websocket
@@ -58,7 +37,7 @@ where
     Http: RpcHandler,
     Ws: WsRpcHandler,
 {
-    let ServerConfig { allow_origin } = config;
+    let ServerConfig { allow_origin, no_cors } = config;
 
     let svc = Router::new()
         .route("/", post(handler::handle::<Http>).get(ws::handle_ws::<Ws>))
@@ -66,17 +45,17 @@ where
         .layer(Extension(ws))
         .layer(TraceLayer::new_for_http());
 
-    let svc = if let Some(allow_origin) = allow_origin {
+    let svc = if no_cors {
+        svc
+    } else {
         svc.layer(
             // see https://docs.rs/tower-http/latest/tower_http/cors/index.html
             // for more details
             CorsLayer::new()
-                .allow_origin(allow_origin)
+                .allow_origin(allow_origin.0)
                 .allow_headers(vec![header::CONTENT_TYPE])
                 .allow_methods(vec![Method::GET, Method::POST]),
         )
-    } else {
-        svc
     }
     .into_make_service();
     Server::bind(&addr).serve(svc)
@@ -91,23 +70,23 @@ pub fn serve_http<Http>(
 where
     Http: RpcHandler,
 {
-    let ServerConfig { allow_origin } = config;
+    let ServerConfig { allow_origin, no_cors } = config;
 
     let svc = Router::new()
         .route("/", post(handler::handle::<Http>))
         .layer(Extension(http))
         .layer(TraceLayer::new_for_http());
-    let svc = if let Some(allow_origin) = allow_origin {
+    let svc = if no_cors {
+        svc
+    } else {
         svc.layer(
             // see https://docs.rs/tower-http/latest/tower_http/cors/index.html
             // for more details
             CorsLayer::new()
-                .allow_origin(allow_origin)
+                .allow_origin(allow_origin.0)
                 .allow_headers(vec![header::CONTENT_TYPE])
                 .allow_methods(vec![Method::GET, Method::POST]),
         )
-    } else {
-        svc
     }
     .into_make_service();
 

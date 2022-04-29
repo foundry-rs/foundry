@@ -25,6 +25,7 @@ use crate::{
     filter::Filters,
     logging::{LoggingManager, NodeLogLayer},
 };
+
 use eth::backend::fork::ClientFork;
 use ethers::providers::Ws;
 use futures::FutureExt;
@@ -83,7 +84,8 @@ pub async fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
 
     let fork = backend.get_fork().cloned();
 
-    let NodeConfig { accounts, automine, port, max_transactions, .. } = config.clone();
+    let NodeConfig { accounts, automine, port, max_transactions, server_config, .. } =
+        config.clone();
 
     let pool = Arc::new(Pool::default());
 
@@ -127,7 +129,7 @@ pub async fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
     let socket = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port);
 
     // launch the rpc server
-    let serve = tokio::task::spawn(server::serve(socket, api.clone()));
+    let serve = tokio::task::spawn(server::serve(socket, api.clone(), server_config));
 
     // select over both tasks
     let inner = futures::future::select(node_service, serve);
