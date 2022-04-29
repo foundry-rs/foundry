@@ -1849,7 +1849,6 @@ dependencies = [
 name = "foundry-cli"
 version = "0.2.0"
 dependencies = [
- "ansi_term",
  "atty",
  "cast",
  "clap",
@@ -1891,6 +1890,7 @@ dependencies = [
  "vergen",
  "walkdir",
  "watchexec",
+ "yansi",
 ]
 
 [[package]]
@@ -1943,7 +1943,6 @@ dependencies = [
 name = "foundry-evm"
 version = "0.2.0"
 dependencies = [
- "ansi_term",
  "bytes",
  "ethers",
  "eyre",
@@ -1964,6 +1963,7 @@ dependencies = [
  "tracing-error",
  "tracing-subscriber",
  "url",
+ "yansi",
 ]
 
 [[package]]

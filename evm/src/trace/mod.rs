@@ -10,7 +10,6 @@ mod utils;
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
 
 use crate::{abi::CHEATCODE_ADDRESS, CallKind};
-use ansi_term::Colour;
 use ethers::{
     abi::{Address, RawLog},
     types::U256,
@@ -22,6 +21,7 @@ use std::{
     collections::HashSet,
     fmt::{self, Write},
 };
+use yansi::{Color, Paint};
 
 /// An arena of [CallTraceNode]s
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -170,14 +170,14 @@ impl fmt::Display for RawOrDecodedLog {
                         f,
                         "{:>13}: {}",
                         if i == 0 { "emit topic 0".to_string() } else { format!("topic {i}") },
-                        Colour::Cyan.paint(format!("0x{}", hex::encode(&topic)))
+                        Paint::cyan(format!("0x{}", hex::encode(&topic)))
                     )?;
                 }
 
                 write!(
                     f,
                     "          data: {}",
-                    Colour::Cyan.paint(format!("0x{}", hex::encode(&log.data)))
+                    Paint::cyan(format!("0x{}", hex::encode(&log.data)))
                 )
             }
             RawOrDecodedLog::Decoded(name, params) => {
@@ -187,7 +187,7 @@ impl fmt::Display for RawOrDecodedLog {
                     .collect::<Vec<String>>()
                     .join(", ");
 
-                write!(f, "emit {}({})", Colour::Cyan.paint(name.clone()), params)
+                write!(f, "emit {}({})", Paint::cyan(name.clone()), params)
             }
         }
     }
@@ -358,8 +358,8 @@ impl fmt::Display for CallTrace {
                 f,
                 "[{}] {}{} {}@{:?}",
                 self.gas_cost,
-                Colour::Yellow.paint(CALL),
-                Colour::Yellow.paint("new"),
+                Paint::yellow(CALL),
+                Paint::yellow("new"),
                 self.label.as_ref().unwrap_or(&"<Unknown>".to_string()),
                 self.address
             )?;
@@ -396,7 +396,7 @@ impl fmt::Display for CallTrace {
                     "".to_string()
                 },
                 inputs,
-                Colour::Yellow.paint(action),
+                Paint::yellow(action),
             )?;
         }
 
@@ -413,12 +413,12 @@ pub enum TraceKind {
 }
 
 /// Chooses the color of the trace depending on the destination address and status of the call.
-fn trace_color(trace: &CallTrace) -> Colour {
+fn trace_color(trace: &CallTrace) -> Color {
     if trace.address == CHEATCODE_ADDRESS {
-        Colour::Blue
+        Color::Blue
     } else if trace.success {
-        Colour::Green
+        Color::Green
     } else {
-        Colour::Red
+        Color::Red
     }
 }

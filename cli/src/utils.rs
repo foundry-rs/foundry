@@ -13,6 +13,7 @@ use std::{
 };
 use tracing_error::ErrorLayer;
 use tracing_subscriber::prelude::*;
+use yansi::Paint;
 
 // reexport all `foundry_config::utils`
 #[doc(hidden)]
@@ -247,6 +248,17 @@ macro_rules! p_println {
     }}
 }
 pub(crate) use p_println;
+
+/// Disables terminal colours if either:
+/// - Running windows and the terminal does not support colour codes.
+/// - Colour has been disabled by some environment variable.
+pub fn enable_paint() {
+    let is_windows = cfg!(windows) && !Paint::enable_windows_ascii();
+    let env_colour_disabled = std::env::var("NO_COLOR").is_ok();
+    if is_windows || env_colour_disabled {
+        Paint::disable();
+    }
+}
 
 #[cfg(test)]
 mod tests {

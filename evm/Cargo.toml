@@ -41,7 +41,7 @@ revm = { package = "revm", git = "https://github.com/bluealloy/revm", default-fe
 proptest = "1.0.0"
 
 # Display
-ansi_term = "0.12.1"
+yansi = "0.5.1"
 url = "2.2.2"
 
 [dev-dependencies]

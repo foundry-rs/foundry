@@ -9,7 +9,7 @@ use clap::{Parser, ValueHint};
 use foundry_config::Config;
 
 use crate::cmd::forge::{install::DependencyInstallOpts, remappings};
-use ansi_term::Colour;
+use yansi::Paint;
 
 use std::{
     path::{Path, PathBuf},
@@ -88,7 +88,7 @@ impl Cmd for InitArgs {
                     r#"{}: `forge init` cannot be run on a non-empty directory.
 
         run `forge init --force` to initialize regardless."#,
-                    Colour::Red.paint("error")
+                    Paint::red("error")
                 );
                 std::process::exit(1);
             }
@@ -138,7 +138,7 @@ impl Cmd for InitArgs {
             }
         }
 
-        p_println!(!quiet => "    {} forge project.",   Colour::Green.paint("Initialized"));
+        p_println!(!quiet => "    {} forge project.",   Paint::green("Initialized"));
         Ok(())
     }
 }

@@ -8,7 +8,6 @@ use crate::{
     utils,
     utils::FoundryPathExt,
 };
-use ansi_term::Colour;
 use clap::{AppSettings, Parser};
 use ethers::solc::FileFilter;
 use forge::{
@@ -32,6 +31,7 @@ use std::{
     time::Duration,
 };
 use watchexec::config::{InitConfig, RuntimeConfig};
+use yansi::Paint;
 
 #[derive(Debug, Clone, Parser)]
 pub struct Filter {
@@ -342,8 +342,8 @@ impl TestOutcome {
                 let successes = self.successes().count();
                 println!(
                     "Encountered a total of {} failing tests, {} tests succeeded",
-                    Colour::Red.paint(failures.to_string()),
-                    Colour::Green.paint(successes.to_string())
+                    Paint::red(failures.to_string()),
+                    Paint::green(successes.to_string())
                 );
                 std::process::exit(1);
             }
@@ -359,8 +359,7 @@ impl TestOutcome {
 
     pub fn summary(&self) -> String {
         let failed = self.failures().count();
-        let result =
-            if failed == 0 { Colour::Green.paint("ok") } else { Colour::Red.paint("FAILED") };
+        let result = if failed == 0 { Paint::green("ok") } else { Paint::red("FAILED") };
         format!(
             "Test result: {}. {} passed; {} failed; finished in {:.2?}",
             result,
@@ -373,7 +372,7 @@ impl TestOutcome {
 
 fn short_test_result(name: &str, result: &forge::TestResult) {
     let status = if result.success {
-        Colour::Green.paint("[PASS]")
+        Paint::green("[PASS]".to_string())
     } else {
         let txt = match (&result.reason, &result.counterexample) {
             (Some(ref reason), Some(ref counterexample)) => {
@@ -388,7 +387,7 @@ fn short_test_result(name: &str, result: &forge::TestResult) {
             (None, None) => "[FAIL]".to_string(),
         };
 
-        Colour::Red.paint(txt)
+        Paint::red(txt)
     };
 
     println!("{} {} {}", status, name, result.kind.gas_used());
@@ -538,7 +537,7 @@ fn test(
             let mut tests = suite_result.test_results.clone();
             println!();
             for warning in suite_result.warnings.iter() {
-                eprintln!("{} {}", Colour::Yellow.bold().paint("Warning:"), warning);
+                eprintln!("{} {}", Paint::yellow("Warning:").bold(), warning);
             }
             if !tests.is_empty() {
                 let term = if tests.len() > 1 { "tests" } else { "test" };
