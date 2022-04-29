@@ -5,7 +5,7 @@ use anvil::{eth::api::CLIENT_VERSION, spawn, NodeConfig, CHAIN_ID};
 use ethers::{
     prelude::Middleware,
     signers::Signer,
-    types::{TransactionRequest, U256},
+    types::{Block, Transaction, TransactionRequest, U256},
 };
 
 #[tokio::test(flavor = "multi_thread")]
@@ -88,7 +88,7 @@ async fn can_get_block_by_number() {
     let tx = TransactionRequest::new().to(to).value(amount).from(from);
     let _ = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
 
-    let block = provider.get_block_with_txs(1u64).await.unwrap().unwrap();
+    let block: Block<Transaction> = provider.get_block_with_txs(1u64).await.unwrap().unwrap();
     assert_eq!(block.transactions.len(), 1);
 
     let block = provider.get_block(1u64).await.unwrap().unwrap();
