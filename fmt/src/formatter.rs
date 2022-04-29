@@ -122,8 +122,12 @@ impl<'a, W: Write> Formatter<'a, W> {
 
     /// Is length of the line consisting of `items` separated by `separator` with respect to
     /// already written line greater than `config.line_length`
-    fn is_separated_multiline(&self, items: &[String], separator: &str) -> bool {
-        !self.will_it_fit(&items.join(separator))
+    fn is_separated_multiline(
+        &self,
+        items: impl IntoIterator<Item = impl AsRef<str> + std::fmt::Display>,
+        separator: &str,
+    ) -> bool {
+        !self.will_it_fit(items.into_iter().join(separator))
     }
 
     /// Write `items` with no separator with respect to `config.line_length` setting
@@ -598,7 +602,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         } else {
             // If attributes and returns can't fit in one line, we write all attributes in multiple
             // lines.
-            if !attributes.is_empty() {
+            if !func.attributes.is_empty() {
                 writeln!(self)?;
                 self.indent(1);
                 func.attributes.visit(self)?;
@@ -671,7 +675,30 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             FunctionAttribute::Mutability(mutability) => write!(self, "{mutability}")?,
             FunctionAttribute::Visibility(visibility) => write!(self, "{visibility}")?,
             FunctionAttribute::Virtual(_) => write!(self, "virtual")?,
-            FunctionAttribute::Override(loc, _) => loc.visit(self)?,
+            FunctionAttribute::Override(_, args) => {
+                write!(self, "override")?;
+                if !args.is_empty() {
+                    write!(self, "(")?;
+
+                    let args = args.iter().map(|arg| &arg.name).collect::<Vec<_>>();
+
+                    let multiline = self.is_separated_multiline(&args, ", ");
+
+                    if multiline {
+                        writeln!(self)?;
+                        self.indent(1);
+                    }
+
+                    self.write_items_separated(&args, ", ", multiline)?;
+
+                    if multiline {
+                        self.dedent(1);
+                        writeln!(self)?;
+                    }
+
+                    write!(self, ")")?;
+                }
+            }
             FunctionAttribute::BaseOrModifier(_, base) => {
                 let is_contract_base = self.context.contract.as_ref().map_or(false, |contract| {
                     contract
