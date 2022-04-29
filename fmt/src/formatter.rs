@@ -914,6 +914,58 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
 
         Ok(())
     }
+
+    fn visit_event(&mut self, event: &mut EventDefinition) -> VResult {
+        if !event.doc.is_empty() {
+            event.doc.visit(self)?;
+            writeln!(self)?;
+        }
+
+        write!(self, "event {}(", event.name.name)?;
+
+        let params = event
+            .fields
+            .iter_mut()
+            .map(|param| self.visit_to_string(param))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let multiline = self.is_separated_multiline(&params, ", ");
+
+        if multiline {
+            writeln!(self)?;
+            self.indent(1);
+        }
+
+        self.write_items_separated(&params, ", ", multiline)?;
+
+        if multiline {
+            self.dedent(1);
+            writeln!(self)?;
+        }
+
+        write!(self, ")")?;
+
+        if event.anonymous {
+            write!(self, " anonymous")?;
+        }
+
+        write!(self, ";")?;
+
+        Ok(())
+    }
+
+    fn visit_event_parameter(&mut self, param: &mut EventParameter) -> VResult {
+        param.ty.visit(self)?;
+
+        if param.indexed {
+            write!(self, " indexed")?;
+        }
+        if let Some(name) = &param.name {
+            write!(self, " {}", name.name)?;
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -1028,6 +1080,11 @@ mod tests {
     #[test]
     fn enum_definition() {
         test_directory("EnumDefinition");
+    }
+
+    #[test]
+    fn event_definition() {
+        test_directory("EventDefinition");
     }
 
     #[test]
