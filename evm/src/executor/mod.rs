@@ -516,12 +516,22 @@ where
     fn build_env(&self, caller: Address, transact_to: TransactTo, data: Bytes, value: U256) -> Env {
         Env {
             cfg: self.env.cfg.clone(),
-            block: BlockEnv { gas_limit: self.gas_limit, ..self.env.block.clone() },
+            // We always set the gas price to 0 so we can execute the transaction regardless of
+            // network conditions - the actual gas price is kept in `self.block` and is applied by
+            // the cheatcode handler if it is enabled
+            block: BlockEnv {
+                basefee: 0.into(),
+                gas_limit: self.gas_limit,
+                ..self.env.block.clone()
+            },
             tx: TxEnv {
                 caller,
                 transact_to,
                 data,
                 value,
+                // As above, we set the gas price to 0.
+                gas_price: 0.into(),
+                gas_priority_fee: None,
                 gas_limit: self.gas_limit.as_u64(),
                 ..self.env.tx.clone()
             },
