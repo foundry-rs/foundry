@@ -12,6 +12,7 @@ use ethers::{
     types::{transaction::eip2718::TypedTransaction, Chain, U256},
 };
 use eyre::{Context, Result};
+use foundry_config::Config;
 use foundry_utils::parse_tokens;
 use serde_json::json;
 use std::{fs, path::PathBuf, sync::Arc};
@@ -122,7 +123,10 @@ impl Cmd for CreateArgs {
         };
 
         // Add arguments to constructor
-        let provider = Provider::<Http>::try_from(self.eth.rpc_url()?)?;
+        let config = Config::from(&self.eth);
+        let provider = Provider::<Http>::try_from(
+            config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
+        )?;
         let params = match abi.constructor {
             Some(ref v) => {
                 let constructor_args =
