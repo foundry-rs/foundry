@@ -15,9 +15,7 @@ use ethers_providers::{Middleware, PendingTransaction};
 use eyre::{Context, Result};
 pub use foundry_evm::*;
 use foundry_utils::encode_args;
-use hex;
 use print_utils::{get_pretty_block_attr, get_pretty_tx_attr, get_pretty_tx_receipt_attr, UIfmt};
-use rlp;
 use rustc_hex::{FromHexIter, ToHex};
 use std::{path::PathBuf, str::FromStr};
 pub use tx::TxBuilder;
@@ -1083,18 +1081,31 @@ impl SimpleCast {
         }?)
     }
 
-    /// Encodes a string to hex
+    /// Encodes a string or list to hexadecimal rlp
     ///
     /// ```
     /// use cast::SimpleCast as Cast;
     ///
     /// fn main() -> eyre::Result<()> {
     ///     assert_eq!(Cast::to_rlp("foundry".to_string())?, "87666f756e647279");
+    ///     assert_eq!(Cast::to_rlp("[]".to_string()).unwrap(), "c0");
+    ///     assert_eq!(Cast::to_rlp("[a]".to_string()).unwrap(), "c161");
+    ///     assert_eq!(Cast::to_rlp("[a,b]".to_string()).unwrap(), "c26162");
     ///     Ok(())
     /// }
     /// ```
     pub fn to_rlp(value: String) -> Result<String> {
-        Ok(hex::encode(rlp::encode(&value.as_bytes())))
+        if !value.starts_with('[') {
+            Ok(hex::encode(rlp::encode(&value.as_bytes())))
+        } else {
+            let content = value.chars().skip(1).take(value.len() - 2).collect::<String>();
+            let list: Vec<String> = if content.is_empty() {
+                vec![]
+            } else {
+                content.split(',').map(|x| x.to_string()).collect()
+            };
+            Ok(hex::encode(rlp::encode_list::<String, String>(&list)))
+        }
     }
 
     /// Decodes rlp encoded hexadecimal string
@@ -1104,11 +1115,19 @@ impl SimpleCast {
     ///
     /// fn main() -> eyre::Result<()> {
     ///     assert_eq!(Cast::from_rlp("87666f756e647279".to_string())?, "foundry");
+    ///     assert_eq!(Cast::from_rlp("c0".to_string()).unwrap(), "[]");
+    ///     assert_eq!(Cast::from_rlp("c161".to_string()).unwrap(), "[a]");
+    ///     assert_eq!(Cast::from_rlp("c26162".to_string()).unwrap(), "[a,b]");
     ///     Ok(())
     /// }
     /// ```
     pub fn from_rlp(value: String) -> Result<String> {
-        Ok(rlp::decode(&hex::decode(value).expect("hex decoding failed")).expect("rlp decoding failed"))
+        let decoded = hex::decode(value).expect("could not decode hex");
+        if decoded[0] >= b'\xC0' {
+            Ok(format!("[{}]", rlp::decode_list::<String>(&decoded).join(",")))
+        } else {
+            Ok(rlp::decode(&decoded).expect("rlp decoding failed"))
+        }
     }
 
     /// Converts an Ethereum address to its checksum format
@@ -1359,4 +1378,13 @@ mod tests {
         assert_eq!(Cast::from_rlp("87666f756e647279".to_string()).unwrap(), "foundry");
     }
 
+    #[test]
+    fn rlp_test_list() {
+        assert_eq!(Cast::from_rlp("c0".to_string()).unwrap(), "[]");
+        assert_eq!(Cast::from_rlp("c161".to_string()).unwrap(), "[a]");
+        assert_eq!(Cast::from_rlp("c26162".to_string()).unwrap(), "[a,b]");
+        assert_eq!(Cast::to_rlp("[]".to_string()).unwrap(), "c0");
+        assert_eq!(Cast::to_rlp("[a]".to_string()).unwrap(), "c161");
+        assert_eq!(Cast::to_rlp("[a,b]".to_string()).unwrap(), "c26162");
+    }
 }
