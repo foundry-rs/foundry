@@ -15,7 +15,9 @@ use ethers_providers::{Middleware, PendingTransaction};
 use eyre::{Context, Result};
 pub use foundry_evm::*;
 use foundry_utils::encode_args;
+use hex;
 use print_utils::{get_pretty_block_attr, get_pretty_tx_attr, get_pretty_tx_receipt_attr, UIfmt};
+use rlp;
 use rustc_hex::{FromHexIter, ToHex};
 use std::{path::PathBuf, str::FromStr};
 pub use tx::TxBuilder;
@@ -1081,6 +1083,34 @@ impl SimpleCast {
         }?)
     }
 
+    /// Encodes a string to hex
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(Cast::to_rlp("foundry".to_string())?, "87666f756e647279");
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn to_rlp(value: String) -> Result<String> {
+        Ok(hex::encode(rlp::encode(&value.as_bytes())))
+    }
+
+    /// Decodes rlp encoded hexadecimal string
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// fn main() -> eyre::Result<()> {
+    ///     assert_eq!(Cast::from_rlp("87666f756e647279".to_string())?, "foundry");
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn from_rlp(value: String) -> Result<String> {
+        Ok(rlp::decode(&hex::decode(value).expect("hex decoding failed")).expect("rlp decoding failed"))
+    }
+
     /// Converts an Ethereum address to its checksum format
     /// according to [EIP-55](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-55.md)
     ///
@@ -1322,4 +1352,11 @@ mod tests {
         assert_eq!(Cast::concat_hex(vec!["0x00".to_string(), "0x01".to_string()]), "0x0001");
         assert_eq!(Cast::concat_hex(vec!["1".to_string(), "2".to_string()]), "0x12");
     }
+
+    #[test]
+    fn rlp_test() {
+        assert_eq!(Cast::to_rlp("foundry".to_string()).unwrap(), "87666f756e647279");
+        assert_eq!(Cast::from_rlp("87666f756e647279".to_string()).unwrap(), "foundry");
+    }
+
 }

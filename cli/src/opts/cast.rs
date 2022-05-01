@@ -184,6 +184,12 @@ Examples:
         #[clap(value_name = "UNIT")]
         unit: Option<String>,
     },
+    #[clap(name = "--to-rlp")]
+    #[clap(about = "Convert a string to RLP encoded data")]
+    ToRlp { value: Option<String> },
+    #[clap(name = "--from-rlp")]
+    #[clap(about = "Convert RLP encoded date to a string")]
+    FromRlp { value: Option<String> },
     #[clap(name = "access-list")]
     #[clap(visible_aliases = &["ac", "acl"])]
     #[clap(about = "Create an access list for a transaction.")]
