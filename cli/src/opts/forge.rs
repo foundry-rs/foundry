@@ -408,9 +408,9 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
     fn test_invalid_github_repo_dependency() {
         Dependency::from_str("solmate").unwrap();
+        assert_eq!(dep.url, None);
     }
 
     #[test]
