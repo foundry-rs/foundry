@@ -2,13 +2,12 @@
 
 use crate::{next_port, utils};
 use anvil::{spawn, NodeConfig};
+use anvil_core::types::Forking;
 use ethers::{
     prelude::Middleware,
-    types::{Address, BlockNumber, Chain},
+    signers::Signer,
+    types::{Address, BlockNumber, Chain, TransactionRequest},
 };
-
-#[allow(unused)]
-use anvil::init_tracing;
 
 const RPC_RPC_URL: &str = "https://eth-mainnet.alchemyapi.io/v2/Lc7oIGYeL_QvInzI0Wiu_pOZZDEKBrdf";
 
@@ -88,4 +87,42 @@ async fn test_fork_eth_fee_history() {
     let count = 10u64;
     let _history = api.fee_history(count.into(), BlockNumber::Latest, vec![]).unwrap();
     let _provider_history = provider.fee_history(count, BlockNumber::Latest, &[]).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_reset() {
+    let (api, handle) = spawn(fork_config()).await;
+    let provider = handle.http_provider();
+
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+    let block_number = provider.get_block_number().await.unwrap();
+    let balance_before = provider.get_balance(to, None).await.unwrap();
+    let amount = handle.genesis_balance().checked_div(2u64.into()).unwrap();
+
+    let tx = TransactionRequest::new().to(to).value(amount).from(from);
+
+    let tx = provider.send_transaction(tx, None).await.unwrap().await.unwrap().unwrap();
+    assert_eq!(tx.transaction_index, 0u64.into());
+
+    let nonce = provider.get_transaction_count(from, None).await.unwrap();
+
+    assert_eq!(nonce, 1u64.into());
+    let to_balance = provider.get_balance(to, None).await.unwrap();
+    assert_eq!(balance_before.saturating_add(amount), to_balance);
+
+    api.anvil_reset(Some(Forking {
+        json_rpc_url: None,
+        block_number: Some(block_number.as_u64()),
+    }))
+    .await
+    .unwrap();
+
+    let nonce = provider.get_transaction_count(from, None).await.unwrap();
+    assert_eq!(nonce, 0u64.into());
+    let balance = provider.get_balance(from, None).await.unwrap();
+    assert_eq!(balance, handle.genesis_balance());
+    let balance = provider.get_balance(to, None).await.unwrap();
+    assert_eq!(balance, handle.genesis_balance());
 }

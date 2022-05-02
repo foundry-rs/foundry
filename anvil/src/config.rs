@@ -448,10 +448,9 @@ Chain ID:       {}
             accounts: self.genesis_accounts.iter().map(|acc| acc.address()).collect(),
         };
         // only memory based backend for now
-        let backend =
-            mem::Backend::with_genesis(db, Arc::new(RwLock::new(env)), genesis, fees, fork);
+        
 
-        backend
+        mem::Backend::with_genesis(db, Arc::new(RwLock::new(env)), genesis, fees, fork)
     }
 }
 
