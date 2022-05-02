@@ -110,12 +110,12 @@ fn main() -> eyre::Result<()> {
 
 fn remove(root: impl AsRef<std::path::Path>, dependencies: Vec<Dependency>) -> eyre::Result<()> {
     let libs = std::path::Path::new("lib");
-    let git_mod_libs = std::path::Path::new(".git/modules/lib");
+    let git_mod_root = std::path::Path::new(".git/modules");
 
     dependencies.iter().try_for_each(|dep| -> eyre::Result<_> {
         let target_dir = if let Some(alias) = &dep.alias { alias } else { &dep.name };
         let path = libs.join(&target_dir);
-        let git_mod_path = git_mod_libs.join(&target_dir);
+        let git_mod_path = git_mod_root.join(&path);
         println!("Removing {} in {:?}, (url: {:?}, tag: {:?})", dep.name, path, dep.url, dep.tag);
 
         // remove submodule entry from .git/config
