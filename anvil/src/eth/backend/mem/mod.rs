@@ -5,6 +5,7 @@ use crate::eth::{
     pool::transactions::PoolTransaction,
 };
 use ethers::prelude::{BlockNumber, TxHash, H256, U256, U64};
+use std::collections::HashMap;
 
 use crate::{
     eth::{
@@ -84,6 +85,8 @@ pub struct Backend {
     genesis: GenesisConfig,
     /// listeners for new blocks that get notified when a new block was imported
     new_block_listeners: Arc<Mutex<Vec<UnboundedSender<NewBlockNotification>>>>,
+    /// keeps track of active snapshots at a specific block
+    active_snapshots: Arc<Mutex<HashMap<U256, (u64, H256)>>>,
 }
 
 impl Backend {
@@ -99,6 +102,7 @@ impl Backend {
             new_block_listeners: Default::default(),
             fees,
             genesis: Default::default(),
+            active_snapshots: Arc::new(Mutex::new(Default::default())),
         }
     }
 
@@ -135,6 +139,7 @@ impl Backend {
             new_block_listeners: Default::default(),
             fees,
             genesis,
+            active_snapshots: Arc::new(Mutex::new(Default::default())),
         };
 
         backend.apply_genesis();
@@ -281,6 +286,44 @@ impl Backend {
 
     pub fn elasticity(&self) -> f64 {
         self.fees.elasticity()
+    }
+
+    /// Creates a new `evm_snapshot` at the current height
+    ///
+    /// Returns the id of the snapshot created
+    pub fn create_snapshot(&self) -> U256 {
+        let num = self.best_number().as_u64();
+        let hash = self.best_hash();
+        let id = self.db.write().snapshot();
+        self.active_snapshots.lock().insert(id, (num, hash));
+        id
+    }
+
+    /// Reverts the state to the snapshot
+    pub fn revert_snapshot(&self, id: U256) -> bool {
+        let block = { self.active_snapshots.lock().remove(&id) };
+        if let Some((num, hash)) = block {
+            // revert the storage that's newer than the snapshot
+            let current_height = self.best_number().as_u64();
+            let mut storage = self.blockchain.storage.write();
+
+            for n in ((num + 1)..=current_height).rev() {
+                trace!(target: "backend", "reverting block {}", n);
+                let n: U64 = n.into();
+                if let Some(hash) = storage.hashes.remove(&n) {
+                    if let Some(block) = storage.blocks.remove(&hash) {
+                        for tx in block.transactions {
+                            let _ = storage.transactions.remove(&tx.hash());
+                        }
+                    }
+                }
+            }
+
+            storage.best_number = num.into();
+            storage.best_hash = hash;
+        }
+
+        self.db.write().revert(id)
     }
 
     /// Mines a new block and stores it.

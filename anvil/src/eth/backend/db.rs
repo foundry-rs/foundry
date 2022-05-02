@@ -40,5 +40,7 @@ pub trait Db: DatabaseRef + Database + DatabaseCommit + Send + Sync + 'static {
     fn snapshot(&mut self) -> U256;
 
     /// Reverts a snapshot
-    fn revert(&mut self, snapshot: U256);
+    ///
+    /// Returns `true` if the snapshot was reverted
+    fn revert(&mut self, snapshot: U256) -> bool;
 }

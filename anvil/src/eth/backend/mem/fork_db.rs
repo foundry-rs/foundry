@@ -35,7 +35,7 @@ impl Db for ForkedDatabase {
         id
     }
 
-    fn revert(&mut self, id: U256) {
+    fn revert(&mut self, id: U256) -> bool {
         let snapshot = { self.snapshots.lock().remove(id) };
         if let Some(snapshot) = snapshot {
             let DbSnapshot { accounts, storage, block_hashes } = snapshot;
@@ -57,10 +57,11 @@ impl Db for ForkedDatabase {
             }
 
             trace!(target: "backend::forkdb", "Reverted snapshot {}", id);
+            true
         } else {
             warn!(target: "backend::forkdb", "No snapshot to revert for {}", id);
+            false
         }
-        todo!()
     }
 }
 

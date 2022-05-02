@@ -84,12 +84,14 @@ impl Db for MemDb {
         id
     }
 
-    fn revert(&mut self, id: U256) {
+    fn revert(&mut self, id: U256) -> bool {
         if let Some(snapshot) = self.snapshots.remove(id) {
             self.inner = snapshot;
             trace!(target: "backend::memdb", "Reverted snapshot {}", id);
+            true
         } else {
             warn!(target: "backend::memdb", "No snapshot to revert for {}", id);
+            false
         }
     }
 }

@@ -1213,16 +1213,16 @@ impl EthApi {
     /// Handler for RPC call: `evm_snapshot`
     pub async fn evm_snapshot(&self) -> Result<U256> {
         node_info!("evm_snapshot");
-        Err(BlockchainError::RpcUnimplemented)
+        Ok(self.backend.create_snapshot())
     }
 
     /// Revert the state of the blockchain to a previous snapshot.
     /// Takes a single parameter, which is the snapshot id to revert to.
     ///
     /// Handler for RPC call: `evm_revert`
-    pub async fn evm_revert(&self, _id: U256) -> Result<()> {
+    pub async fn evm_revert(&self, id: U256) -> Result<bool> {
         node_info!("evm_revert");
-        Err(BlockchainError::RpcUnimplemented)
+        Ok(self.backend.revert_snapshot(id))
     }
 
     /// Jump forward in time by the given amount of time, in seconds.
