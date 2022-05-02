@@ -116,7 +116,7 @@ fn remove(root: impl AsRef<std::path::Path>, dependencies: Vec<Dependency>) -> e
         let target_dir = if let Some(alias) = &dep.alias { alias } else { &dep.name };
         let path = libs.join(&target_dir);
         let git_mod_path = git_mod_libs.join(&target_dir);
-        println!("Removing {} in {:?}, (url: {}, tag: {:?})", dep.name, path, dep.url, dep.tag);
+        println!("Removing {} in {:?}, (url: {:?}, tag: {:?})", dep.name, path, dep.url, dep.tag);
 
         // remove submodule entry from .git/config
         Command::new("git")

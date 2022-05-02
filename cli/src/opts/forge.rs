@@ -236,7 +236,7 @@ pub struct Dependency {
     /// The name of the dependency
     pub name: String,
     /// The url to the git repository corresponding to the dependency
-    pub url: String,
+    pub url: Option<String>,
     /// Optional tag corresponding to a Git SHA, tag, or branch.
     pub tag: Option<String>,
     /// Optional alias of the dependency
@@ -251,7 +251,7 @@ impl FromStr for Dependency {
     type Err = eyre::Error;
     fn from_str(dependency: &str) -> Result<Self, Self::Err> {
         // everything before "=" should be considered the alias
-        let (alias, dependency) = if let Some(split) = dependency.split_once(ALIAS_SEPARATOR) {
+        let (mut alias, dependency) = if let Some(split) = dependency.split_once(ALIAS_SEPARATOR) {
             (Some(String::from(split.0)), split.1)
         } else {
             (None, dependency)
@@ -261,26 +261,41 @@ impl FromStr for Dependency {
             let brand = captures.get(5).unwrap().as_str();
             let tld = captures.get(6).unwrap().as_str();
             let project = GH_REPO_PREFIX_REGEX.replace(dependency, "");
-            format!("https://{}.{}/{}", brand, tld, project)
+            Some(format!("https://{}.{}/{}", brand, tld, project))
         } else {
+            // If we don't have a URL and we don't have a valid
+            // GitHub repository name, then we assume this is the alias.
+            //
+            // This is to allow for conveniently removing aliased dependencies
+            // using `forge remove <alias>`
             if !GH_REPO_REGEX.is_match(dependency) {
-                eyre::bail!("invalid github repository name `{dependency}`");
+                alias = Some(dependency.to_string());
+                None
+            } else {
+                Some(format!("https://{GITHUB}/{dependency}"))
             }
-            format!("https://{GITHUB}/{dependency}")
         };
 
         // everything after the "@" should be considered the version
-        let mut split = url_with_version.split(VERSION_SEPARATOR);
-        let url =
-            split.next().ok_or_else(|| eyre::eyre!("no dependency path was provided"))?.to_string();
-        let name = url
-            .split('/')
-            .last()
-            .ok_or_else(|| eyre::eyre!("no dependency name found"))?
-            .to_string();
-        let tag = split.next().map(ToString::to_string);
+        let (url, name, tag) = if let Some(url_with_version) = url_with_version {
+            let mut split = url_with_version.split(VERSION_SEPARATOR);
+            let url = split
+                .next()
+                .ok_or_else(|| eyre::eyre!("no dependency path was provided"))?
+                .to_string();
+            let name = url
+                .split('/')
+                .last()
+                .ok_or_else(|| eyre::eyre!("no dependency name found"))?
+                .to_string();
+            let tag = split.next().map(ToString::to_string);
 
-        Ok(Dependency { name, url, tag, alias })
+            (Some(url), Some(name), tag)
+        } else {
+            (None, None, None)
+        };
+
+        Ok(Dependency { name: name.or_else(|| alias.clone()).unwrap(), url, tag, alias })
     }
 }
 
@@ -376,7 +391,7 @@ mod tests {
         .iter()
         .for_each(|(input, expected_path, expected_tag, expected_alias)| {
             let dep = Dependency::from_str(input).unwrap();
-            assert_eq!(dep.url, expected_path.to_string());
+            assert_eq!(dep.url, Some(expected_path.to_string()));
             assert_eq!(dep.tag, expected_tag.map(ToString::to_string));
             assert_eq!(dep.name, "lootloose");
             assert_eq!(dep.alias, expected_alias.map(ToString::to_string));
@@ -384,9 +399,18 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
+    fn can_parse_alias_only() {
+        let dep = Dependency::from_str("foo").unwrap();
+        assert_eq!(dep.name, "foo");
+        assert_eq!(dep.url, None);
+        assert_eq!(dep.tag, None);
+        assert_eq!(dep.alias, Some("foo".to_string()));
+    }
+
+    #[test]
     fn test_invalid_github_repo_dependency() {
-        Dependency::from_str("solmate").unwrap();
+        let dep = Dependency::from_str("solmate").unwrap();
+        assert_eq!(dep.url, None);
     }
 
     #[test]
