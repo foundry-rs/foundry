@@ -21,7 +21,7 @@ use crate::{
         fees::{FeeDetails, FeeManager},
         macros::node_info,
     },
-    mem::storage::MinedBlockOutcome,
+    mem::{in_memory_db::MemDb, storage::MinedBlockOutcome},
     revm::AccountInfo,
 };
 use anvil_core::{
@@ -45,7 +45,7 @@ use ethers::{
 };
 use foundry_evm::{
     revm,
-    revm::{db::CacheDB, Account, CreateScheme, Env, Return, TransactOut, TransactTo, TxEnv},
+    revm::{Account, CreateScheme, Env, Return, TransactOut, TransactTo, TxEnv},
     utils::u256_to_h256_be,
 };
 use futures::channel::mpsc::{unbounded, UnboundedSender};
@@ -54,6 +54,9 @@ use std::sync::Arc;
 use storage::{Blockchain, MinedTransaction};
 use tracing::{trace, warn};
 
+pub mod fork_db;
+pub mod in_memory_db;
+pub mod snapshot;
 pub mod storage;
 
 pub type State = foundry_evm::HashMap<Address, Account>;
@@ -101,7 +104,7 @@ impl Backend {
 
     /// Creates a new empty blockchain backend
     pub fn empty(env: Arc<RwLock<Env>>, gas_price: U256) -> Self {
-        let db = CacheDB::default();
+        let db = MemDb::default();
         let fees = FeeManager::new(gas_price, gas_price);
         Self::new(Arc::new(RwLock::new(db)), env, fees)
     }

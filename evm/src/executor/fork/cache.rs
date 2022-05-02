@@ -229,6 +229,16 @@ impl MemDb {
     }
 }
 
+impl Clone for MemDb {
+    fn clone(&self) -> Self {
+        Self {
+            accounts: RwLock::new(self.accounts.read().clone()),
+            storage: RwLock::new(self.storage.read().clone()),
+            block_hashes: RwLock::new(self.block_hashes.read().clone()),
+        }
+    }
+}
+
 impl DatabaseCommit for MemDb {
     fn commit(&mut self, changes: Map<Address, Account>) {
         self.do_commit(changes)

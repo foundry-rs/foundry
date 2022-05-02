@@ -4,14 +4,15 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 use crate::{
     eth::{
         backend::{
-            db::{Db, ForkedDatabase},
+            db::Db,
             fork::{ClientFork, ClientForkConfig},
             genesis::GenesisConfig,
+            mem::fork_db::ForkedDatabase,
         },
         fees::INITIAL_BASE_FEE,
     },
     mem,
-    revm::db::CacheDB,
+    mem::in_memory_db::MemDb,
     FeeManager,
 };
 use anvil_server::ServerConfig;
@@ -440,7 +441,7 @@ Chain ID:       {}
 
             (db, Some(fork))
         } else {
-            (Arc::new(RwLock::new(CacheDB::default())), None)
+            (Arc::new(RwLock::new(MemDb::default())), None)
         };
 
         let genesis = GenesisConfig {
@@ -448,7 +449,6 @@ Chain ID:       {}
             accounts: self.genesis_accounts.iter().map(|acc| acc.address()).collect(),
         };
         // only memory based backend for now
-        
 
         mem::Backend::with_genesis(db, Arc::new(RwLock::new(env)), genesis, fees, fork)
     }

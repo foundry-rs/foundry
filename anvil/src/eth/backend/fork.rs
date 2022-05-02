@@ -6,8 +6,9 @@ use ethers::{
 };
 use std::{collections::HashMap, sync::Arc};
 
-use crate::eth::{backend::db::ForkedDatabase, error::BlockchainError};
+use crate::eth::error::BlockchainError;
 
+use crate::eth::backend::mem::fork_db::ForkedDatabase;
 use ethers::{
     prelude::BlockNumber,
     providers::{Middleware, ProviderError},
