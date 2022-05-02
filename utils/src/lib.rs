@@ -753,14 +753,7 @@ pub fn format_token(param: &Token) -> String {
         Token::Address(addr) => format!("{:?}", addr),
         Token::FixedBytes(bytes) => format!("0x{}", hex::encode(&bytes)),
         Token::Bytes(bytes) => format!("0x{}", hex::encode(&bytes)),
-        Token::Int(mut num) => {
-            if num.bit(255) {
-                num = num - 1;
-                format!("-{}", num.overflowing_neg().0)
-            } else {
-                num.to_string()
-            }
-        }
+        Token::Int(num) => format!("{}", I256::from_raw(*num)),
         Token::Uint(num) => num.to_string(),
         Token::Bool(b) => format!("{b}"),
         Token::String(s) => format!("{:?}", s),
