@@ -21,7 +21,7 @@ use foundry_evm::{
     trace::node::CallTraceNode,
 };
 use std::sync::Arc;
-use tracing::trace;
+use tracing::{trace, warn};
 
 /// Represents an executed transaction (transacted on the DB)
 pub struct ExecutedTransaction {
@@ -199,7 +199,6 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
         let transaction = self.pending.next()?;
         let account = self.db.basic(*transaction.pending_transaction.sender());
         let env = self.env_for(&transaction.pending_transaction);
-
         // check that we comply with the block's gas limit
         let max_gas = self.gas_used.saturating_add(U256::from(env.tx.gas_limit));
         if max_gas > env.block.gas_limit {
@@ -212,7 +211,7 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
             &account,
             &env,
         ) {
-            trace!(target: "backend", "Skipping invalid tx execution [{:?}] {}", transaction.hash(), err);
+            warn!(target: "backend", "Skipping invalid tx execution [{:?}] {}", transaction.hash(), err);
             return Some(TransactionExecutionOutcome::Invalid(transaction, err))
         }
 
@@ -226,6 +225,12 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
         trace!(target: "backend", "[{:?}] executing", transaction.hash());
         // transact and commit the transaction
         let (exit, out, gas, logs) = evm.inspect_commit(&mut tracer);
+
+        if exit == Return::OutOfGas {
+            // this currently useful for debugging estimations
+            warn!(target: "backend", "[{:?}] executed with out of gas", transaction.hash())
+        }
+
         trace!(target: "backend", "[{:?}] executed with out={:?}, gas ={}", transaction.hash(), out, gas);
 
         self.gas_used.saturating_add(U256::from(gas));

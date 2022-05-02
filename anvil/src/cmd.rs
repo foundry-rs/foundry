@@ -26,7 +26,7 @@ pub struct NodeArgs {
     #[clap(
         long,
         help = "the balance of every genesis account in Ether, defaults to 100ETH",
-        default_value = "100"
+        default_value = "10000"
     )]
     pub balance: u64,
 

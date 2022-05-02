@@ -699,12 +699,11 @@ impl EthApi {
 
         // execute the call without writing to db
         let (exit, _, gas, _) = self.backend.call(call_to_estimate, fees.clone());
-
         match exit {
             Return::Return | Return::Continue | Return::SelfDestruct | Return::Stop => {
                 // succeeded
             }
-            Return::OutOfGas | Return::LackOfFundForGasLimit => {
+            Return::OutOfGas | Return::LackOfFundForGasLimit | Return::OutOfFund => {
                 return Err(InvalidTransactionError::OutOfGas(gas_limit).into())
             }
             // need to check if the revert was due to lack of gas or unrelated reason
@@ -741,11 +740,14 @@ impl EthApi {
         // be the case if the gas left prior to an SSTORE is less than the `CALL_STIPEND` which
         // would cause a `Return::OutOfGas` if the tx's gas_limit is set to `gas`, See EIP-2200.
         // Adding the CALL_STIPEND on top will prevent that.
-        let gas = gas + CALL_STIPEND;
+        let mut gas = gas + CALL_STIPEND;
 
+        // 2 safe factor until binary search
+        gas = gas.saturating_mul(2000) / 1000;
         // TODO this could be optimized with a binary search
 
         trace!(target : "node", "Estimated Gas for call {:?}, status {:?}", gas, exit);
+
         Ok(gas.into())
     }
 
