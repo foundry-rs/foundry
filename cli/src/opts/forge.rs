@@ -409,7 +409,7 @@ mod tests {
 
     #[test]
     fn test_invalid_github_repo_dependency() {
-        Dependency::from_str("solmate").unwrap();
+        let dep = Dependency::from_str("solmate").unwrap();
         assert_eq!(dep.url, None);
     }
 
