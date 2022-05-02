@@ -30,17 +30,66 @@ contract DebugLogsTest is DSTest {
         require(false);
     }
 
-    function testStrings() public {
-        emit log_string("testStrings");
-    }
-
     function testLog() public {
         emit log("Error: Assertion Failed");
+    }
+
+    function testLogs() public {
+        emit logs(bytes("abcd"));
     }
 
     function testLogAddress() public {
         emit log_address(address(1));
     }
+
+    function testLogBytes32() public {
+        emit log_bytes32(bytes32("abcd"));
+    }
+
+    function testLogInt() public {
+        emit log_int(int(1 ether));
+    }
+
+    function testLogBytes() public {
+        emit log_bytes(bytes("abcd"));
+    }
+
+    function testLogString() public {
+        emit log_string("here");
+    }
+
+    function testLogNamedAddress() public {
+        emit log_named_address('address', address(1));
+    }
+
+    function testLogNamedBytes32() public {
+        emit log_named_bytes32('abcd', bytes32("abcd"));
+    }
+
+    function testLogNamedDecimalInt() public {
+        emit log_named_decimal_int('amount', 1 ether, 18);
+    }
+
+    function testLogNamedDecimalUint() public {
+        emit log_named_decimal_uint('amount', 1 ether, 18);
+    }
+
+    function testLogNamedInt() public {
+        emit log_named_int('amount', 1 ether);
+    }
+
+    function testLogNamedUint() public {
+        emit log_named_int('amount', 1 ether);
+    }
+
+    function testLogNamedBytes() public {
+        emit log_named_bytes('abcd', bytes('abcd'));
+    }
+
+    function testLogNamedString() public {
+        emit log_named_string('key', 'val');
+    }
+
 }
 
 contract Fails is DSTest {
