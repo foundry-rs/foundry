@@ -78,6 +78,7 @@ impl EvmOpts {
         }
     }
 
+    /// Returns the gas limit to use
     pub fn gas_limit(&self) -> U256 {
         self.env.block_gas_limit.unwrap_or(self.env.gas_limit).into()
     }

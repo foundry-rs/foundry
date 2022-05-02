@@ -16,6 +16,7 @@ pub use stack::{InspectorData, InspectorStack};
 mod cheatcodes;
 pub use cheatcodes::Cheatcodes;
 
+use ethers::types::U256;
 use revm::BlockEnv;
 
 #[derive(Default, Clone, Debug)]
@@ -28,6 +29,11 @@ pub struct InspectorStackConfig {
     /// Used in the cheatcode handler to overwrite the block environment separately from the
     /// execution block environment.
     pub block: BlockEnv,
+    /// The gas price
+    ///
+    /// Used in the cheatcode handler to overwrite the gas price separately from the gas price
+    /// in the execution environment.
+    pub gas_price: U256,
     /// Whether or not tracing is enabled
     pub tracing: bool,
     /// Whether or not the debugger is enabled
@@ -42,6 +48,7 @@ impl InspectorStackConfig {
         stack.cheatcodes = self.cheatcodes.clone();
         if let Some(ref mut cheatcodes) = stack.cheatcodes {
             cheatcodes.block = Some(self.block.clone());
+            cheatcodes.gas_price = Some(self.gas_price);
         }
 
         if self.tracing {
