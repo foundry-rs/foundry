@@ -44,19 +44,20 @@ pub struct Opts {
 )]
 #[allow(clippy::large_enum_variant)]
 pub enum Subcommands {
-    #[clap(about = "Run the project's tests.")]
     #[clap(alias = "t")]
+    #[clap(about = "Run the project's tests.")]
     Test(test::TestArgs),
 
+    #[clap(alias = "bi")]
     #[clap(about = "Generate Rust bindings for smart contracts.")]
     Bind(BindArgs),
 
-    #[clap(about = "Build the project's smart contracts.")]
     #[clap(alias = "b")]
+    #[clap(about = "Build the project's smart contracts.")]
     Build(BuildArgs),
 
-    #[clap(about = "Run a single smart contract as a script.")]
     #[clap(alias = "r")]
+    #[clap(about = "Run a single smart contract as a script.")]
     Run(RunArgs),
 
     #[clap(
@@ -72,10 +73,11 @@ pub enum Subcommands {
         lib: Option<PathBuf>,
     },
 
-    /// Install one or multiple dependencies.
-    ///
-    /// If no arguments are provided, then existing dependencies will be installed.
-    #[clap(alias = "i")]
+    #[clap(
+        alias = "i",
+        about = "Install one or multiple dependencies.",
+        long_about = "Install one or multiple dependencies. If no arguments are provided, then existing dependencies will be installed."
+    )]
     Install(InstallArgs),
 
     #[clap(alias = "rm", about = "Remove one or multiple dependencies.")]
@@ -84,16 +86,18 @@ pub enum Subcommands {
         dependencies: Vec<Dependency>,
     },
 
-    #[clap(about = "Get the automatically inferred remappings for the project.")]
+    #[clap(alias = "re", about = "Get the automatically inferred remappings for the project.")]
     Remappings(RemappingArgs),
 
     #[clap(
+        alias = "v",
         about = "Verify smart contracts on Etherscan.",
         long_about = "Verify smart contracts on Etherscan."
     )]
     VerifyContract(VerifyArgs),
 
     #[clap(
+        alias = "vc",
         about = "Check verification status on Etherscan.",
         long_about = "Check verification status on Etherscan."
     )]
@@ -102,16 +106,16 @@ pub enum Subcommands {
     #[clap(alias = "c", about = "Deploy a smart contract.")]
     Create(CreateArgs),
 
-    #[clap(alias = "i", about = "Create a new Forge project.")]
+    #[clap(about = "Create a new Forge project.")]
     Init(InitArgs),
 
-    #[clap(about = "Generate shell completions script")]
+    #[clap(alias = "com", about = "Generate shell completions script")]
     Completions {
         #[clap(arg_enum)]
         shell: clap_complete::Shell,
     },
 
-    #[clap(about = "Remove the build artifacts and cache directories.")]
+    #[clap(alias = "cl", about = "Remove the build artifacts and cache directories.")]
     Clean {
         #[clap(
             help = "The project's root path. Defaults to the current working directory.",
@@ -121,19 +125,24 @@ pub enum Subcommands {
         root: Option<PathBuf>,
     },
 
-    #[clap(about = "Create a snapshot of each test's gas usage.")]
+    #[clap(alias = "s", about = "Create a snapshot of each test's gas usage.")]
     Snapshot(snapshot::SnapshotArgs),
 
-    #[clap(about = "Display the current config.")]
+    #[clap(alias = "co", about = "Display the current config.")]
     Config(config::ConfigArgs),
 
-    #[clap(about = "Flatten a source file and all of its imports into one file.")]
+    #[clap(alias = "f", about = "Flatten a source file and all of its imports into one file.")]
     Flatten(flatten::FlattenArgs),
+
     // #[clap(about = "formats Solidity source files")]
     // Fmt(FmtArgs),
-    #[clap(about = "Get specialized information about a smart contract")]
+    #[clap(alias = "in", about = "Get specialized information about a smart contract")]
     Inspect(inspect::InspectArgs),
-    #[clap(about = "Display a tree visualization of the project's dependency graph.")]
+
+    #[clap(
+        alias = "tr",
+        about = "Display a tree visualization of the project's dependency graph."
+    )]
     Tree(tree::TreeArgs),
 }
 
