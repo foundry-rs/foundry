@@ -78,6 +78,12 @@ pub struct ScriptArgs {
 
     #[clap(flatten, next_help_heading = "EVM OPTIONS")]
     pub evm_opts: EvmArgs,
+
+    #[clap(long, help = "resumes previous transaction batch. does NOT simulate execution. respects nonce constraint ")]
+    pub resume: bool,
+
+    #[clap(long, help = "resumes previous transactions batch. does NOT simulate execution. does not respect nonce constraint")]
+    pub force_resume: bool,
 }
 
 impl Cmd for ScriptArgs {
@@ -102,72 +108,8 @@ impl Cmd for ScriptArgs {
             known_contracts: default_known_contracts,
         } = self.build(&config, &evm_opts, nonce)?;
 
-        let mut known_contracts = highlevel_known_contracts
-            .iter()
-            .map(|(id, c)| {
-                (
-                    id.clone(),
-                    (
-                        c.abi.clone(),
-                        c.deployed_bytecode.clone().into_bytes().expect("not bytecode").to_vec(),
-                    ),
-                )
-            })
-            .collect::<BTreeMap<ArtifactId, (Abi, Vec<u8>)>>();
-
-        // execute once with default sender
-        let mut result = self.execute(contract, &evm_opts, None, &predeploy_libraries, &config)?;
-
-        let mut new_sender = None;
-        if let Some(ref txs) = result.transactions {
-            // If we did any linking with assumed predeploys, we cant support multiple deployers.
-            //
-            // If we didn't do any linking with predeploys, then none of the contracts will change
-            // their code based on the sender, so we can skip relinking + reexecuting.
-            if !predeploy_libraries.is_empty() {
-                for tx in txs.iter() {
-                    match tx {
-                        TypedTransaction::Legacy(tx) => {
-                            if tx.to.is_none() {
-                                let sender = tx.from.expect("no sender");
-                                if let Some(ns) = new_sender {
-                                    if sender != ns {
-                                        panic!("Currently, only 1 contract deployer is possible per public function. This limitation may be lifted in the future but for safety/simplicity this is currently disallowed. Split deployment into more functions & run separately.")
-                                    }
-                                } else if sender != evm_opts.sender {
-                                    new_sender = Some(sender);
-                                }
-                            }
-                        }
-                        _ => unreachable!(),
-                    }
-                }
-            }
-        }
-
-        // reexecute with the correct deployer after relinking contracts
-        if let Some(new_sender) = new_sender {
-            // if we had a new sender that requires relinking, we need to
-            // get the nonce mainnet for accurate addresses for predeploy libs
-            let mut nonce = if let Some(ref fork_url) = evm_opts.fork_url {
-                foundry_utils::next_nonce(new_sender, fork_url, None)?
-            } else {
-                U256::zero()
-            };
-            // relink with new sender
-            let BuildOutput {
-                target: _,
-                contract: c2,
-                highlevel_known_contracts: hkc,
-                predeploy_libraries: pl,
-                known_contracts: _default_known_contracts,
-            } = self.link(default_known_contracts, new_sender, nonce)?;
-
-            contract = c2;
-            highlevel_known_contracts = hkc;
-            predeploy_libraries = pl;
-
-            known_contracts = highlevel_known_contracts
+        if !self.force_resume && !self.resume {
+            let mut known_contracts = highlevel_known_contracts
                 .iter()
                 .map(|(id, c)| {
                     (
@@ -184,254 +126,225 @@ impl Cmd for ScriptArgs {
                 })
                 .collect::<BTreeMap<ArtifactId, (Abi, Vec<u8>)>>();
 
-            let lib_deploy = predeploy_libraries
-                .iter()
-                .enumerate()
-                .map(|(i, bytes)| {
-                    TypedTransaction::Legacy(TransactionRequest {
-                        from: Some(new_sender),
-                        data: Some(bytes.clone()),
-                        nonce: Some(nonce + i),
-                        ..Default::default()
-                    })
-                })
-                .collect();
+            // execute once with default sender
+            let mut result =
+                self.execute(contract, &evm_opts, None, &predeploy_libraries, &config)?;
 
-            nonce += predeploy_libraries.len().into();
-
-            result.transactions = Some(lib_deploy);
-
-            let result2 =
-                self.execute(contract, &evm_opts, Some(new_sender), &predeploy_libraries, &config)?;
-
-            result.success &= result2.success;
-
-            result.gas = result2.gas;
-            result.logs = result2.logs;
-            result.traces.extend(result2.traces);
-            result.debug = result2.debug;
-            result.labeled_addresses.extend(result2.labeled_addresses);
-            match (&mut result.transactions, result2.transactions) {
-                (Some(txs), Some(new_txs)) => {
-                    new_txs.iter().enumerate().for_each(|(i, tx)| {
-                        let mut tx = into_legacy(tx.clone());
-                        tx.nonce = Some(nonce + i);
-                        txs.push_back(TypedTransaction::Legacy(tx));
-                    });
-                    nonce += new_txs.len().into();
-                }
-                (None, Some(new_txs)) => {
-                    result.transactions = Some(new_txs);
-                }
-                _ => {}
-            }
-        } else {
-            let mut lib_deploy: VecDeque<TypedTransaction> = predeploy_libraries
-                .iter()
-                .enumerate()
-                .map(|(i, bytes)| {
-                    TypedTransaction::Legacy(TransactionRequest {
-                        from: Some(evm_opts.sender),
-                        data: Some(bytes.clone()),
-                        nonce: Some(nonce + i),
-                        ..Default::default()
-                    })
-                })
-                .collect();
-
-            nonce += predeploy_libraries.len().into();
-            // prepend predeploy libraries
-            if let Some(txs) = &mut result.transactions {
-                txs.iter().enumerate().for_each(|(i, tx)| {
-                    let mut tx = into_legacy(tx.clone());
-                    tx.nonce = Some(nonce + i);
-                    lib_deploy.push_back(TypedTransaction::Legacy(tx));
-                });
-                *txs = lib_deploy;
-            }
-        }
-
-        // Identify addresses in each trace
-        let local_identifier = LocalTraceIdentifier::new(&known_contracts);
-        let mut decoder =
-            CallTraceDecoderBuilder::new().with_labels(result.labeled_addresses.clone()).build();
-        for (_, trace) in &mut result.traces {
-            decoder.identify(trace, &local_identifier);
-        }
-
-        if verbosity >= 3 {
-            if result.traces.is_empty() {
-                eyre::bail!("Unexpected error: No traces despite verbosity level. Please report this as a bug: https://github.com/gakonst/foundry/issues/new?assignees=&labels=T-bug&template=BUG-FORM.yml");
-            }
-
-            if !result.success && verbosity == 3 || verbosity > 3 {
-                println!("Full Script Traces:");
-                for (kind, trace) in &mut result.traces {
-                    let should_include = match kind {
-                        TraceKind::Setup => (verbosity >= 5) || (verbosity == 4 && !result.success),
-                        TraceKind::Execution => verbosity > 3 || !result.success,
-                        _ => false,
-                    };
-
-                    if should_include {
-                        decoder.decode(trace);
-                        println!("{}", trace);
-                    }
-                }
-                println!();
-            }
-        }
-
-        if result.success {
-            println!("{}", Paint::green("Dry running script was successful."));
-        } else {
-            println!("{}", Paint::red("Dry running script failed."));
-        }
-
-        println!("Gas used: {}", result.gas);
-        println!("== Logs ==");
-        let console_logs = decode_console_logs(&result.logs);
-        if !console_logs.is_empty() {
-            for log in console_logs {
-                println!("  {}", log);
-            }
-        }
-
-        let mut deployment_sequence = ScriptSequence::new(
-            result.transactions.clone().expect("no transactions"),
-            &self.sig,
-            &target,
-            &config.out,
-        )?;
-        deployment_sequence.save()?;
-
-        println!("==========================");
-        println!("Simulated On-chain Traces:\n");
-        if let Some(txs) = result.transactions {
-            if let Ok(gas_filled_txs) =
-                self.execute_transactions(txs, &evm_opts, &config, &mut decoder)
-            {
-                let txs = gas_filled_txs;
-                if self.execute {
-                    // The user wants to actually send the transactions
-                    let mut local_wallets = vec![];
-                    if let Some(wallets) = self.wallets.private_keys()? {
-                        wallets.into_iter().for_each(|wallet| local_wallets.push(wallet));
-                    }
-
-                    if let Some(wallets) = self.wallets.interactives()? {
-                        wallets.into_iter().for_each(|wallet| local_wallets.push(wallet));
-                    }
-
-                    if let Some(wallets) = self.wallets.mnemonics()? {
-                        wallets.into_iter().for_each(|wallet| local_wallets.push(wallet));
-                    }
-
-                    if let Some(wallets) = self.wallets.keystores()? {
-                        wallets.into_iter().for_each(|wallet| local_wallets.push(wallet));
-                    }
-
-                    // TODO: Add trezor and ledger support (supported in multiwallet, just need to
-                    // add derivation + SignerMiddleware creation logic)
-                    if local_wallets.is_empty() {
-                        panic!("Error accessing local wallet when trying to send onchain transaction, did you set a private key, mnemonic or keystore?")
-                    }
-
-                    let fork_url =
-                        self.evm_opts.fork_url.expect("No fork_url provided for onchain sending");
-                    let provider = Provider::try_from(&fork_url).expect("Bad fork_url provider");
-
-                    let rt = RuntimeOrHandle::new();
-                    let chain = rt.block_on(provider.get_chainid())?.as_u64();
-                    let is_legacy = self.legacy ||
-                        Chain::try_from(chain).map(|x| Chain::is_legacy(&x)).unwrap_or_default();
-                    local_wallets = local_wallets
-                        .into_iter()
-                        .map(|wallet| wallet.with_chain_id(chain))
-                        .collect();
-
-                    // Iterate through transactions, matching the `from` field with the associated
-                    // wallet. Then send the transaction. Panics if we find a unknown `from`
-                    txs.into_iter()
-                        .map(|tx| {
-                            let from = into_legacy_ref(&tx).from.expect("No from for onchain transaction!");
-                            if let Some(wallet) =
-                                local_wallets.iter().find(|wallet| (**wallet).address() == from)
-                            {
-                                let signer =
-                                    SignerMiddleware::new(provider.clone(), wallet.clone());
-                                (tx, signer)
-                            } else {
-                                panic!("No associated wallet for `from` address: {:?}. Unlocked wallets: {:?}", from, local_wallets.iter().map(|wallet| wallet.address()).collect::<Vec<Address>>())
-                            }
-                        })
-                        .for_each(|(tx, signer)| {
-                            match foundry_utils::next_nonce(*tx.from().expect("no sender"), &fork_url, None) {
-                                Ok(nonce) => {
-                                    if nonce != *tx.nonce().expect("no nonce") {
-                                    deployment_sequence.save().expect("not able to save deployment sequence");
-                                    panic!("EOA nonce changed unexpectedly while sending transactions.");
-                                    }
-                                },
-                                Err(_) => {
-                                    deployment_sequence.save().expect("not able to save deployment sequence");
-                                    panic!("Not able to query the EOA nonce.");
-                                },
-                            }
-
-                            let mut legacy_or_1559 = if is_legacy { tx } else { TypedTransaction::Eip1559(into_1559(tx))};
-                            set_chain_id(&mut legacy_or_1559, chain);
-
-                            async fn send<T, U>(signer: SignerMiddleware<T, U>, legacy_or_1559: TypedTransaction) -> eyre::Result<Option<TransactionReceipt>>
-                                where SignerMiddleware<T, U>: Middleware
-                            {
-                                tracing::debug!("sending transaction: {:?}", legacy_or_1559);
-                                match signer
-                                    .send_transaction(legacy_or_1559, None)
-                                    .await {
-                                        Ok(pending) => {
-                                            pending
-                                                .await
-                                                .map_err(|e| eyre::eyre!(e))
+            let mut new_sender = None;
+            if let Some(ref txs) = result.transactions {
+                // If we did any linking with assumed predeploys, we cant support multiple
+                // deployers.
+                //
+                // If we didn't do any linking with predeploys, then none of the contracts will
+                // change their code based on the sender, so we can skip relinking +
+                // reexecuting.
+                if !predeploy_libraries.is_empty() {
+                    for tx in txs.iter() {
+                        match tx {
+                            TypedTransaction::Legacy(tx) => {
+                                if tx.to.is_none() {
+                                    let sender = tx.from.expect("no sender");
+                                    if let Some(ns) = new_sender {
+                                        if sender != ns {
+                                            panic!("Currently, only 1 contract deployer is possible per public function. This limitation may be lifted in the future but for safety/simplicity this is currently disallowed. Split deployment into more functions & run separately.")
                                         }
-                                        Err(e) => Err(eyre::eyre!(e.to_string()))
+                                    } else if sender != evm_opts.sender {
+                                        new_sender = Some(sender);
+                                    }
                                 }
                             }
+                            _ => unreachable!(),
+                        }
+                    }
+                }
+            }
 
-                            match rt.block_on(send(signer, legacy_or_1559)) {
-                                Ok(Some(res)) => {
-                                    let tx_str = serde_json::to_string_pretty(&res).expect("Bad serialization");
-                                    println!("{}", tx_str);
-                                    deployment_sequence.add_receipt(res);
-                                }
-
-                                Ok(None) => {
-                                    // todo what if it has been actually sent
-                                    deployment_sequence.save().expect("not able to save deployment sequence");
-                                    panic!("Failed to get transaction receipt?")
-                                }
-                                Err(e) => {
-                                    deployment_sequence.save().expect("not able to save deployment sequence");
-                                    panic!("Aborting! A transaction failed to send: {:#?}", e)
-                                }
-                            };
-
-                            deployment_sequence.index += 1;
-                        });
-
-                    deployment_sequence.save()?;
-
-                    println!("\n\n==========================");
-                    println!("\nONCHAIN EXECUTION COMPLETE & SUCCESSFUL. Transaction receipts written to {:?}", deployment_sequence.path);
+            // reexecute with the correct deployer after relinking contracts
+            if let Some(new_sender) = new_sender {
+                // if we had a new sender that requires relinking, we need to
+                // get the nonce mainnet for accurate addresses for predeploy libs
+                let mut nonce = if let Some(ref fork_url) = evm_opts.fork_url {
+                    foundry_utils::next_nonce(new_sender, fork_url, None)?
                 } else {
-                    println!("\n\n==========================");
-                    println!("\nSIMULATION COMPLETE. To send these transaction onchain, add `--execute` & wallet configuration(s) to the previously ran command. See forge script --help for more.");
+                    U256::zero()
+                };
+                // relink with new sender
+                let BuildOutput {
+                    target: _,
+                    contract: c2,
+                    highlevel_known_contracts: hkc,
+                    predeploy_libraries: pl,
+                    known_contracts: _default_known_contracts,
+                } = self.link(default_known_contracts, new_sender, nonce)?;
+
+                contract = c2;
+                highlevel_known_contracts = hkc;
+                predeploy_libraries = pl;
+
+                known_contracts = highlevel_known_contracts
+                    .iter()
+                    .map(|(id, c)| {
+                        (
+                            id.clone(),
+                            (
+                                c.abi.clone(),
+                                c.deployed_bytecode
+                                    .clone()
+                                    .into_bytes()
+                                    .expect("not bytecode")
+                                    .to_vec(),
+                            ),
+                        )
+                    })
+                    .collect::<BTreeMap<ArtifactId, (Abi, Vec<u8>)>>();
+
+                let lib_deploy = predeploy_libraries
+                    .iter()
+                    .enumerate()
+                    .map(|(i, bytes)| {
+                        TypedTransaction::Legacy(TransactionRequest {
+                            from: Some(new_sender),
+                            data: Some(bytes.clone()),
+                            nonce: Some(nonce + i),
+                            ..Default::default()
+                        })
+                    })
+                    .collect();
+
+                nonce += predeploy_libraries.len().into();
+
+                result.transactions = Some(lib_deploy);
+
+                let result2 = self.execute(
+                    contract,
+                    &evm_opts,
+                    Some(new_sender),
+                    &predeploy_libraries,
+                    &config,
+                )?;
+
+                result.success &= result2.success;
+
+                result.gas = result2.gas;
+                result.logs = result2.logs;
+                result.traces.extend(result2.traces);
+                result.debug = result2.debug;
+                result.labeled_addresses.extend(result2.labeled_addresses);
+                match (&mut result.transactions, result2.transactions) {
+                    (Some(txs), Some(new_txs)) => {
+                        new_txs.iter().enumerate().for_each(|(i, tx)| {
+                            let mut tx = into_legacy(tx.clone());
+                            tx.nonce = Some(nonce + i);
+                            txs.push_back(TypedTransaction::Legacy(tx));
+                        });
+                        nonce += new_txs.len().into();
+                    }
+                    (None, Some(new_txs)) => {
+                        result.transactions = Some(new_txs);
+                    }
+                    _ => {}
                 }
             } else {
-                panic!("One or more transactions failed when simulating the on-chain version. Check the trace via rerunning with `-vvv`")
+                let mut lib_deploy: VecDeque<TypedTransaction> = predeploy_libraries
+                    .iter()
+                    .enumerate()
+                    .map(|(i, bytes)| {
+                        TypedTransaction::Legacy(TransactionRequest {
+                            from: Some(evm_opts.sender),
+                            data: Some(bytes.clone()),
+                            nonce: Some(nonce + i),
+                            ..Default::default()
+                        })
+                    })
+                    .collect();
+
+                nonce += predeploy_libraries.len().into();
+                // prepend predeploy libraries
+                if let Some(txs) = &mut result.transactions {
+                    txs.iter().enumerate().for_each(|(i, tx)| {
+                        let mut tx = into_legacy(tx.clone());
+                        tx.nonce = Some(nonce + i);
+                        lib_deploy.push_back(TypedTransaction::Legacy(tx));
+                    });
+                    *txs = lib_deploy;
+                }
+            }
+
+            // Identify addresses in each trace
+            let local_identifier = LocalTraceIdentifier::new(&known_contracts);
+            let mut decoder = CallTraceDecoderBuilder::new()
+                .with_labels(result.labeled_addresses.clone())
+                .build();
+            for (_, trace) in &mut result.traces {
+                decoder.identify(trace, &local_identifier);
+            }
+
+            if verbosity >= 3 {
+                if result.traces.is_empty() {
+                    eyre::bail!("Unexpected error: No traces despite verbosity level. Please report this as a bug: https://github.com/gakonst/foundry/issues/new?assignees=&labels=T-bug&template=BUG-FORM.yml");
+                }
+
+                if !result.success && verbosity == 3 || verbosity > 3 {
+                    println!("Full Script Traces:");
+                    for (kind, trace) in &mut result.traces {
+                        let should_include = match kind {
+                            TraceKind::Setup => {
+                                (verbosity >= 5) || (verbosity == 4 && !result.success)
+                            }
+                            TraceKind::Execution => verbosity > 3 || !result.success,
+                            _ => false,
+                        };
+
+                        if should_include {
+                            decoder.decode(trace);
+                            println!("{}", trace);
+                        }
+                    }
+                    println!();
+                }
+            }
+
+            if result.success {
+                println!("{}", Colour::Green.paint("Dry running script was successful."));
+            } else {
+                println!("{}", Colour::Red.paint("Dry running script failed."));
+            }
+
+            println!("Gas used: {}", result.gas);
+            println!("== Logs ==");
+            let console_logs = decode_console_logs(&result.logs);
+            if !console_logs.is_empty() {
+                for log in console_logs {
+                    println!("  {}", log);
+                }
+            }
+
+            println!("==========================");
+            println!("Simulated On-chain Traces:\n");
+            if let Some(txs) = result.transactions {
+                if let Ok(gas_filled_txs) =
+                    self.execute_transactions(txs.clone(), &evm_opts, &config, &mut decoder)
+                {
+                    let txs = gas_filled_txs;
+                    let mut deployment_sequence =
+                        ScriptSequence::new(txs, &self.sig, &target, &config.out)?;
+                    deployment_sequence.save()?;
+
+                    if self.execute {
+                        self.send_transactions(&mut deployment_sequence)?;
+                    } else {
+                        println!("\n\n==========================");
+                        println!("\nSIMULATION COMPLETE. To send these transaction onchain, add `--execute` & wallet configuration(s) to the previously ran command. See forge script --help for more.");
+                    }
+                } else {
+                    panic!("One or more transactions failed when simulating the on-chain version. Check the trace via rerunning with `-vvv`")
+                }
+            } else {
+                panic!("No onchain transactions generated in script");
             }
         } else {
-            panic!("No onchain transactions generated in script");
+            let mut deployment_sequence = ScriptSequence::load(&self.sig, &target, &config.out)?;
+            self.send_transactions(&mut deployment_sequence)?;
         }
 
         Ok(())
@@ -736,6 +649,159 @@ impl ScriptArgs {
             highlevel_known_contracts,
             predeploy_libraries: run_dependencies,
         })
+    }
+
+    fn send_transactions(&self, deployment_sequence: &mut ScriptSequence) -> eyre::Result<()> {
+        // The user wants to actually send the transactions
+        let mut local_wallets = vec![];
+        if let Some(wallets) = self.wallets.private_keys()? {
+            wallets.into_iter().for_each(|wallet| local_wallets.push(wallet));
+        }
+
+        if let Some(wallets) = self.wallets.interactives()? {
+            wallets.into_iter().for_each(|wallet| local_wallets.push(wallet));
+        }
+
+        if let Some(wallets) = self.wallets.mnemonics()? {
+            wallets.into_iter().for_each(|wallet| local_wallets.push(wallet));
+        }
+
+        if let Some(wallets) = self.wallets.keystores()? {
+            wallets.into_iter().for_each(|wallet| local_wallets.push(wallet));
+        }
+
+        // TODO: Add trezor and ledger support (supported in multiwallet, just need to
+        // add derivation + SignerMiddleware creation logic)
+        if local_wallets.is_empty() {
+            panic!("Error accessing local wallet when trying to send onchain transaction, did you set a private key, mnemonic or keystore?")
+        }
+
+        let fork_url = self
+            .evm_opts
+            .fork_url
+            .as_ref()
+            .expect("No fork_url provided for onchain sending")
+            .clone();
+        let provider = Provider::try_from(&fork_url).expect("Bad fork_url provider");
+
+        let rt = RuntimeOrHandle::new();
+        let chain = rt.block_on(provider.get_chainid())?.as_u64();
+        let is_legacy =
+            self.legacy || Chain::try_from(chain).map(|x| Chain::is_legacy(&x)).unwrap_or_default();
+        local_wallets =
+            local_wallets.into_iter().map(|wallet| wallet.with_chain_id(chain)).collect();
+
+        // in case of --force-resume, we forgive the first nonce disparity of each from
+        let mut nonce_offset: BTreeMap<Address, U256> = BTreeMap::new();
+
+        // Iterate through transactions, matching the `from` field with the associated
+        // wallet. Then send the transaction. Panics if we find a unknown `from`
+        deployment_sequence
+            .clone()
+            .transactions
+            .range((deployment_sequence.index as usize)..)
+            .map(|tx| {
+                let from = into_legacy_ref(tx).from.expect("No from for onchain transaction!");
+                if let Some(wallet) =
+                    local_wallets.iter().find(|wallet| (**wallet).address() == from)
+                {
+                    let signer = SignerMiddleware::new(provider.clone(), wallet.clone());
+                    (tx.clone(), signer)
+                } else {
+                    panic!(
+                        "No associated wallet for `from` address: {:?}. Unlocked wallets: {:?}",
+                        from,
+                        local_wallets
+                            .iter()
+                            .map(|wallet| wallet.address())
+                            .collect::<Vec<Address>>()
+                    )
+                }
+            })
+            .for_each(|(tx, signer)| {
+                let mut legacy_or_1559 = if is_legacy {
+                    tx.clone()
+                } else {
+                    TypedTransaction::Eip1559(into_1559(tx.clone()))
+                };
+                set_chain_id(&mut legacy_or_1559, chain);
+
+                let from = *legacy_or_1559.from().expect("no sender");
+                match foundry_utils::next_nonce(from, &fork_url, None) {
+                    Ok(nonce) => {
+                        let tx_nonce = *legacy_or_1559.nonce().expect("no nonce");
+                        let offset = if self.force_resume {
+                            match nonce_offset.get(&from) {
+                                Some(offset) => *offset,
+                                None => {
+                                    let offset = nonce - tx_nonce;
+                                    nonce_offset.insert(from, offset);
+                                    offset
+                                }
+                            }
+                        } else {
+                            U256::from(0u32)
+                        };
+
+                        if nonce != tx_nonce + offset {
+                            deployment_sequence
+                                .save()
+                                .expect("not able to save deployment sequence");
+                            panic!("EOA nonce changed unexpectedly while sending transactions.");
+                        } else if !offset.is_zero() {
+                            legacy_or_1559.set_nonce(tx_nonce + offset);
+                        }
+                    }
+                    Err(_) => {
+                        deployment_sequence.save().expect("not able to save deployment sequence");
+                        panic!("Not able to query the EOA nonce.");
+                    }
+                }
+
+                async fn send<T, U>(
+                    signer: SignerMiddleware<T, U>,
+                    legacy_or_1559: TypedTransaction,
+                ) -> eyre::Result<Option<TransactionReceipt>>
+                where
+                    SignerMiddleware<T, U>: Middleware,
+                {
+                    tracing::debug!("sending transaction: {:?}", legacy_or_1559);
+                    match signer.send_transaction(legacy_or_1559, None).await {
+                        Ok(pending) => pending.await.map_err(|e| eyre::eyre!(e)),
+                        Err(e) => Err(eyre::eyre!(e.to_string())),
+                    }
+                }
+
+                let receipt = match rt.block_on(send(signer, legacy_or_1559)) {
+                    Ok(Some(res)) => {
+                        let tx_str = serde_json::to_string_pretty(&res).expect("Bad serialization");
+                        println!("{}", tx_str);
+                        res
+                    }
+
+                    Ok(None) => {
+                        // todo what if it has been actually sent
+                        deployment_sequence.save().expect("not able to save deployment sequence");
+                        panic!("Failed to get transaction receipt?")
+                    }
+                    Err(e) => {
+                        deployment_sequence.save().expect("not able to save deployment sequence");
+                        panic!("Aborting! A transaction failed to send: {:#?}", e)
+                    }
+                };
+
+                deployment_sequence.add_receipt(receipt);
+                deployment_sequence.index += 1;
+            });
+
+        deployment_sequence.save()?;
+
+        println!("\n\n==========================");
+        println!(
+            "\nONCHAIN EXECUTION COMPLETE & SUCCESSFUL. Transaction receipts written to {:?}",
+            deployment_sequence.path
+        );
+        Ok(())
     }
 }
 

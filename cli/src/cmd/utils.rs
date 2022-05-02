@@ -112,7 +112,7 @@ fn get_artifact_from_path(
     ))
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Clone)]
 pub struct ScriptSequence {
     pub index: u32,
     pub transactions: VecDeque<TypedTransaction>,
@@ -127,19 +127,16 @@ impl ScriptSequence {
         target: &ArtifactId,
         out: &PathBuf,
     ) -> eyre::Result<Self> {
-        // Save the transactions to a json file.
-        let mut out = out.clone();
-        let target_fname = target.source.file_name().expect("No file name");
-        out.push(target_fname);
-        out.push("scripted_transactions");
-        std::fs::create_dir_all(out.clone())?;
-        out.push(sig.to_owned() + ".json");
-
-        Ok(ScriptSequence { index: 0, transactions, receipts: vec![], path: out })
+        Ok(ScriptSequence {
+            index: 0,
+            transactions,
+            receipts: vec![],
+            path: ScriptSequence::get_path(sig, target, out)?,
+        })
     }
 
-    pub fn load(&self) -> eyre::Result<Self> {
-        let file = std::fs::read_to_string(&self.path)?;
+    pub fn load(sig: &String, target: &ArtifactId, out: &PathBuf) -> eyre::Result<Self> {
+        let file = std::fs::read_to_string(ScriptSequence::get_path(sig, target, out)?)?;
         serde_json::from_str(&file).map_err(|e| e.into())
     }
 
@@ -162,5 +159,15 @@ impl ScriptSequence {
 
     pub fn add_receipt(&mut self, receipt: TransactionReceipt) {
         self.receipts.push(receipt);
+    }
+
+    pub fn get_path(sig: &String, target: &ArtifactId, out: &PathBuf) -> eyre::Result<PathBuf> {
+        let mut out = out.clone();
+        let target_fname = target.source.file_name().expect("No file name");
+        out.push(target_fname);
+        out.push("scripted_transactions");
+        std::fs::create_dir_all(out.clone())?;
+        out.push(sig.to_owned() + ".json");
+        Ok(out)
     }
 }
