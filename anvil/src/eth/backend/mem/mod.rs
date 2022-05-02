@@ -295,6 +295,7 @@ impl Backend {
         let num = self.best_number().as_u64();
         let hash = self.best_hash();
         let id = self.db.write().snapshot();
+        trace!(target: "backend", "creating snapshot {} at {}", id, num);
         self.active_snapshots.lock().insert(id, (num, hash));
         id
     }
@@ -303,26 +304,28 @@ impl Backend {
     pub fn revert_snapshot(&self, id: U256) -> bool {
         let block = { self.active_snapshots.lock().remove(&id) };
         if let Some((num, hash)) = block {
-            // revert the storage that's newer than the snapshot
-            let current_height = self.best_number().as_u64();
-            let mut storage = self.blockchain.storage.write();
+            {
+                // revert the storage that's newer than the snapshot
+                let current_height = self.best_number().as_u64();
+                let mut storage = self.blockchain.storage.write();
 
-            for n in ((num + 1)..=current_height).rev() {
-                trace!(target: "backend", "reverting block {}", n);
-                let n: U64 = n.into();
-                if let Some(hash) = storage.hashes.remove(&n) {
-                    if let Some(block) = storage.blocks.remove(&hash) {
-                        for tx in block.transactions {
-                            let _ = storage.transactions.remove(&tx.hash());
+                for n in ((num + 1)..=current_height).rev() {
+                    trace!(target: "backend", "reverting block {}", n);
+                    let n: U64 = n.into();
+                    if let Some(hash) = storage.hashes.remove(&n) {
+                        if let Some(block) = storage.blocks.remove(&hash) {
+                            for tx in block.transactions {
+                                let _ = storage.transactions.remove(&tx.hash());
+                            }
                         }
                     }
                 }
+
+                storage.best_number = num.into();
+                storage.best_hash = hash;
             }
-
-            storage.best_number = num.into();
-            storage.best_hash = hash;
+            self.set_block_number(num.into());
         }
-
         self.db.write().revert(id)
     }
 
