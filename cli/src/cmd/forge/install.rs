@@ -83,7 +83,6 @@ pub(crate) fn install(
         ]);
         cmd.spawn()?.wait()?;
     }
-
     std::fs::create_dir_all(&libs)?;
 
     for dep in dependencies {
@@ -121,7 +120,7 @@ fn check_tag(dep: &Dependency) -> eyre::Result<()> {
 fn install_as_folder(dep: &Dependency, libs: &Path) -> eyre::Result<()> {
     let target_dir = if let Some(alias) = &dep.alias { alias } else { &dep.name };
     let output = Command::new("git")
-        .args(&["clone", &dep.url, target_dir])
+        .args(&["clone", "--recursive", &dep.url, target_dir])
         .current_dir(&libs)
         .stdout(Stdio::piped())
         .output()?;

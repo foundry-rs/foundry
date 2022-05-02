@@ -1,8 +1,10 @@
-use crate::opts::forge::ContractInfo;
+use crate::{opts::forge::ContractInfo, suggestions};
 use ethers::{
     abi::Abi,
     prelude::artifacts::{CompactBytecode, CompactDeployedBytecode},
-    solc::cache::SolFilesCache,
+    solc::{
+        artifacts::CompactContractBytecode, cache::SolFilesCache, Project, ProjectCompileOutput,
+    },
 };
 use std::path::PathBuf;
 
@@ -12,10 +14,9 @@ pub trait Cmd: clap::Parser + Sized {
     fn run(self) -> eyre::Result<Self::Output>;
 }
 
-use ethers::solc::{artifacts::CompactContractBytecode, Project, ProjectCompileOutput};
-
 /// Given a project and its compiled artifacts, proceeds to return the ABI, Bytecode and
 /// Runtime Bytecode of the given contract.
+#[track_caller]
 pub fn read_artifact(
     project: &Project,
     compiled: ProjectCompileOutput,
@@ -34,36 +35,49 @@ fn get_artifact_from_name(
     contract: ContractInfo,
     compiled: ProjectCompileOutput,
 ) -> eyre::Result<(Abi, CompactBytecode, CompactDeployedBytecode)> {
-    let mut has_found_contract = false;
     let mut contract_artifact = None;
+    let mut alternatives = Vec::new();
 
     for (artifact_id, artifact) in compiled.into_artifacts() {
         if artifact_id.name == contract.name {
-            if has_found_contract {
-                eyre::bail!("contract with duplicate name. pass path")
+            if contract_artifact.is_some() {
+                eyre::bail!(
+                    "contract with duplicate name `{}`. please pass the path instead",
+                    contract.name
+                )
             }
-            has_found_contract = true;
             contract_artifact = Some(artifact);
+        } else {
+            alternatives.push(artifact_id.name);
         }
     }
 
-    Ok(match contract_artifact {
-        Some(artifact) => (
-            artifact
-                .abi
-                .map(Into::into)
-                .ok_or_else(|| eyre::Error::msg(format!("abi not found for {}", contract.name)))?,
-            artifact.bytecode.ok_or_else(|| {
-                eyre::Error::msg(format!("bytecode not found for {}", contract.name))
-            })?,
-            artifact.deployed_bytecode.ok_or_else(|| {
-                eyre::Error::msg(format!("bytecode not found for {}", contract.name))
-            })?,
-        ),
-        None => {
-            eyre::bail!("could not find artifact")
-        }
-    })
+    if let Some(artifact) = contract_artifact {
+        let abi = artifact
+            .abi
+            .map(Into::into)
+            .ok_or_else(|| eyre::eyre!("abi not found for {}", contract.name))?;
+
+        let code = artifact
+            .bytecode
+            .ok_or_else(|| eyre::eyre!("bytecode not found for {}", contract.name))?;
+
+        let deployed_code = artifact
+            .deployed_bytecode
+            .ok_or_else(|| eyre::eyre!("bytecode not found for {}", contract.name))?;
+        return Ok((abi, code, deployed_code))
+    }
+
+    let mut err = format!("could not find artifact: `{}`", contract.name);
+    if let Some(suggestion) = suggestions::did_you_mean(&contract.name, &alternatives).pop() {
+        err = format!(
+            r#"{}
+
+        Did you mean `{}`?"#,
+            err, suggestion
+        );
+    }
+    eyre::bail!(err)
 }
 
 /// Find using src/ContractSource.sol:ContractName
