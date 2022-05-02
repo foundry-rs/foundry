@@ -1,12 +1,17 @@
 use crate::{opts::forge::ContractInfo, suggestions};
 use ethers::{
     abi::Abi,
-    prelude::artifacts::{CompactBytecode, CompactDeployedBytecode},
+    prelude::{
+        artifacts::{CompactBytecode, CompactDeployedBytecode},
+        ArtifactId,
+    },
+    types::transaction::eip2718::TypedTransaction,
     solc::{
         artifacts::CompactContractBytecode, cache::SolFilesCache, Project, ProjectCompileOutput,
-    },
+    }
 };
-use std::path::PathBuf;
+use serde::{Deserialize, Serialize};
+use std::{collections::VecDeque, io::Write, path::PathBuf};
 
 /// Common trait for all cli commands
 pub trait Cmd: clap::Parser + Sized {
@@ -105,4 +110,52 @@ fn get_artifact_from_path(
             .deployed_bytecode
             .ok_or_else(|| eyre::Error::msg(format!("bytecode not found for {contract_name}")))?,
     ))
+}
+
+#[derive(Deserialize, Serialize)]
+pub struct ScriptSequence {
+    pub index: u32,
+    pub transactions: VecDeque<TypedTransaction>,
+    path: PathBuf,
+}
+
+impl ScriptSequence {
+    pub fn new(
+        transactions: VecDeque<TypedTransaction>,
+        sig: &String,
+        target: &ArtifactId,
+        out: &PathBuf,
+    ) -> eyre::Result<Self> {
+        // Save the transactions to a json file.
+        let mut out = out.clone();
+        let target_fname = target.source.file_name().expect("No file name");
+        out.push(target_fname);
+        out.push("scripted_transactions");
+        std::fs::create_dir_all(out.clone())?;
+        out.push(sig.to_owned() + ".json");
+
+        Ok(ScriptSequence { index: 0, transactions, path: out })
+    }
+
+    pub fn load(&self) -> eyre::Result<Self> {
+        let file = std::fs::read_to_string(&self.path)?;
+        serde_json::from_str(&file).map_err(|e| e.into())
+    }
+
+    pub fn save(&self) -> eyre::Result<()> {
+        let tx_json = serde_json::to_string_pretty(&self).expect("Bad serializing");
+        println!("\nGenerated Transactions:\n\n{}", tx_json);
+
+        let mut file = std::fs::File::create(&self.path)?;
+        file.write_all(tx_json.as_bytes())?;
+
+        println!(
+            "\nTransactions written to: {}\n",
+            self.path.to_str().expect(
+                "Couldn't convert path to string. Transactions were written to file though."
+            )
+        );
+
+        Ok(())
+    }
 }
