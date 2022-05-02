@@ -424,7 +424,7 @@ mod tests {
                     vec![("testFailingAssertions()", true, None, None, None)],
                 ),
                 (
-                    "core/DappToolsParity.t.sol:DappToolsParityTest",
+                    "core/ContractEnvironment.t.sol:ContractEnvironmentTest",
                     vec![
                         ("testAddresses()", true, None, None, None),
                         ("testEnvironment()", true, None, None, None),
