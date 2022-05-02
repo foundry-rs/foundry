@@ -1087,16 +1087,16 @@ impl SimpleCast {
     /// use cast::SimpleCast as Cast;
     ///
     /// fn main() -> eyre::Result<()> {
-    ///     assert_eq!(Cast::to_rlp("foundry".to_string())?, "87666f756e647279");
-    ///     assert_eq!(Cast::to_rlp("[]".to_string()).unwrap(), "c0");
-    ///     assert_eq!(Cast::to_rlp("[a]".to_string()).unwrap(), "c161");
-    ///     assert_eq!(Cast::to_rlp("[a,b]".to_string()).unwrap(), "c26162");
+    ///     assert_eq!(Cast::to_rlp("foundry".to_string())?, "0x87666f756e647279");
+    ///     assert_eq!(Cast::to_rlp("[]".to_string()).unwrap(), "0xc0");
+    ///     assert_eq!(Cast::to_rlp("[a]".to_string()).unwrap(), "0xc161");
+    ///     assert_eq!(Cast::to_rlp("[a,b]".to_string()).unwrap(), "0xc26162");
     ///     Ok(())
     /// }
     /// ```
     pub fn to_rlp(value: String) -> Result<String> {
         if !value.starts_with('[') {
-            Ok(hex::encode(rlp::encode(&value.as_bytes())))
+            Ok(format!("0x{}", hex::encode(rlp::encode(&value.as_bytes()))))
         } else {
             let content = value.chars().skip(1).take(value.len() - 2).collect::<String>();
             let list: Vec<String> = if content.is_empty() {
@@ -1104,7 +1104,7 @@ impl SimpleCast {
             } else {
                 content.split(',').map(|x| x.to_string()).collect()
             };
-            Ok(hex::encode(rlp::encode_list::<String, String>(&list)))
+            Ok(format!("0x{}", hex::encode(rlp::encode_list::<String, String>(&list))))
         }
     }
 
@@ -1115,14 +1115,16 @@ impl SimpleCast {
     ///
     /// fn main() -> eyre::Result<()> {
     ///     assert_eq!(Cast::from_rlp("87666f756e647279".to_string())?, "foundry");
-    ///     assert_eq!(Cast::from_rlp("c0".to_string()).unwrap(), "[]");
+    ///     assert_eq!(Cast::from_rlp("0x87666f756e647279".to_string())?, "foundry");
+    ///     assert_eq!(Cast::from_rlp("0xc0".to_string()).unwrap(), "[]");
     ///     assert_eq!(Cast::from_rlp("c161".to_string()).unwrap(), "[a]");
-    ///     assert_eq!(Cast::from_rlp("c26162".to_string()).unwrap(), "[a,b]");
+    ///     assert_eq!(Cast::from_rlp("0xc26162".to_string()).unwrap(), "[a,b]");
     ///     Ok(())
     /// }
     /// ```
     pub fn from_rlp(value: String) -> Result<String> {
-        let decoded = hex::decode(value).expect("could not decode hex");
+        let striped_value = value.strip_prefix("0x").unwrap_or(&value);
+        let decoded = hex::decode(striped_value).expect("could not decode hex");
         if decoded[0] >= b'\xC0' {
             Ok(format!("[{}]", rlp::decode_list::<String>(&decoded).join(",")))
         } else {
@@ -1374,17 +1376,18 @@ mod tests {
 
     #[test]
     fn rlp_test() {
-        assert_eq!(Cast::to_rlp("foundry".to_string()).unwrap(), "87666f756e647279");
+        assert_eq!(Cast::to_rlp("foundry".to_string()).unwrap(), "0x87666f756e647279");
+        assert_eq!(Cast::from_rlp("0x87666f756e647279".to_string()).unwrap(), "foundry");
         assert_eq!(Cast::from_rlp("87666f756e647279".to_string()).unwrap(), "foundry");
     }
 
     #[test]
     fn rlp_test_list() {
-        assert_eq!(Cast::from_rlp("c0".to_string()).unwrap(), "[]");
+        assert_eq!(Cast::from_rlp("0xc0".to_string()).unwrap(), "[]");
         assert_eq!(Cast::from_rlp("c161".to_string()).unwrap(), "[a]");
-        assert_eq!(Cast::from_rlp("c26162".to_string()).unwrap(), "[a,b]");
-        assert_eq!(Cast::to_rlp("[]".to_string()).unwrap(), "c0");
-        assert_eq!(Cast::to_rlp("[a]".to_string()).unwrap(), "c161");
-        assert_eq!(Cast::to_rlp("[a,b]".to_string()).unwrap(), "c26162");
+        assert_eq!(Cast::from_rlp("0xc26162".to_string()).unwrap(), "[a,b]");
+        assert_eq!(Cast::to_rlp("[]".to_string()).unwrap(), "0xc0");
+        assert_eq!(Cast::to_rlp("[a]".to_string()).unwrap(), "0xc161");
+        assert_eq!(Cast::to_rlp("[a,b]".to_string()).unwrap(), "0xc26162");
     }
 }
