@@ -350,10 +350,9 @@ impl Cmd for ScriptArgs {
                         panic!("Error accessing local wallet when trying to send onchain transaction, did you set a private key, mnemonic or keystore?")
                     }
 
-                    let provider = Provider::try_from(
-                        self.evm_opts.fork_url.expect("No fork_url provided for onchain sending"),
-                    )
-                    .expect("Bad fork_url provider");
+                    let fork_url =
+                        self.evm_opts.fork_url.expect("No fork_url provided for onchain sending");
+                    let provider = Provider::try_from(&fork_url).expect("Bad fork_url provider");
 
                     let rt = RuntimeOrHandle::new();
                     let chain = rt.block_on(provider.get_chainid())?.as_u64();
@@ -381,6 +380,18 @@ impl Cmd for ScriptArgs {
                             }
                         })
                         .for_each(|(tx, signer)| {
+
+                            match foundry_utils::next_nonce(*tx.from().expect("no sender"), &fork_url, None) {
+                                Ok(nonce) => {
+                                    if nonce != *tx.nonce().expect("no nonce") {
+                                        panic!("EOA nonce changed unexpectedly while executing transactions.");
+                                    }
+                                },
+                                Err(_) => {
+                                    panic!("Not able to query the EOA nonce.");
+                                },
+                            }
+
                             let mut legacy_or_1559 = if is_legacy { tx } else { TypedTransaction::Eip1559(into_1559(tx))};
                             set_chain_id(&mut legacy_or_1559, chain);
 
