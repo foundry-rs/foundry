@@ -405,8 +405,10 @@ Chain ID:       {}
                 provider.get_block(fork_block_number).await.unwrap().unwrap().hash.unwrap();
 
             let chain_id = provider.get_chainid().await.unwrap().as_u64();
-            // need to update the dev signers as well
+            // need to update the dev signers and env with the chain id
             self.set_chain_id(chain_id);
+            env.cfg.chain_id = chain_id.into();
+            env.tx.chain_id = chain_id.into();
 
             let meta = BlockchainDbMeta::new(env.clone(), eth_rpc_url.clone());
 
