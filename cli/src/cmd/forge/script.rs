@@ -1,5 +1,5 @@
 use crate::{
-    cmd::{forge::build::BuildArgs, Cmd},
+    cmd::{forge::build::BuildArgs, Cmd, ScriptSequence},
     compile,
     opts::MultiWallet,
     utils,
@@ -298,25 +298,13 @@ impl Cmd for ScriptArgs {
             }
         }
 
-        let tx_json = serde_json::to_string_pretty(&result.transactions).expect("Bad serializing");
-        println!("\nGenerated Transactions:\n\n{}", tx_json);
-
-        // Save the transactions to a json file.
-        let mut out = config.out.clone();
-        let target_fname = target.source.file_name().expect("No file name");
-        out.push(target_fname);
-        out.push("scripted_transactions");
-        std::fs::create_dir_all(out.clone())?;
-        out.push(self.sig.clone() + ".json");
-        let mut file = std::fs::File::create(out.clone())?;
-        file.write_all(tx_json.as_bytes())?;
-
-        println!(
-            "\nTransactions written to: {}\n",
-            out.to_str().expect(
-                "Couldn't convert path to string. Transactions were written to file though."
-            )
-        );
+        let mut deployment_sequence = ScriptSequence::new(
+            result.transactions.clone().expect("no transactions"),
+            &self.sig,
+            &target,
+            &config.out,
+        )?;
+        deployment_sequence.save()?;
 
         println!("==========================");
         println!("Simulated On-chain Traces:\n");
@@ -380,14 +368,15 @@ impl Cmd for ScriptArgs {
                             }
                         })
                         .for_each(|(tx, signer)| {
-
                             match foundry_utils::next_nonce(*tx.from().expect("no sender"), &fork_url, None) {
                                 Ok(nonce) => {
                                     if nonce != *tx.nonce().expect("no nonce") {
-                                        panic!("EOA nonce changed unexpectedly while executing transactions.");
+                                    deployment_sequence.save().expect("not able to save deployment sequence");
+                                    panic!("EOA nonce changed unexpectedly while sending transactions.");
                                     }
                                 },
                                 Err(_) => {
+                                    deployment_sequence.save().expect("not able to save deployment sequence");
                                     panic!("Not able to query the EOA nonce.");
                                 },
                             }
@@ -419,10 +408,17 @@ impl Cmd for ScriptArgs {
                                 }
 
                                 Ok(None) => {
+                                    // todo what if it has been actually sent
+                                    deployment_sequence.save().expect("not able to save deployment sequence");
                                     panic!("Failed to get transaction receipt?")
                                 }
-                                Err(e) => panic!("Aborting! A transaction failed to send: {:#?}", e)
+                                Err(e) => {
+                                    deployment_sequence.save().expect("not able to save deployment sequence");
+                                    panic!("Aborting! A transaction failed to send: {:#?}", e)
+                                }
                             };
+
+                            deployment_sequence.index += 1;
                         });
 
                     let mut out = config.out.clone();
