@@ -135,7 +135,6 @@ impl Backend {
         };
 
         backend.apply_genesis();
-
         backend
     }
 
@@ -143,9 +142,7 @@ impl Backend {
     fn apply_genesis(&self) {
         trace!(target: "backend", "setting genesis balances");
         let mut db = self.db.write();
-        for account in self.genesis.accounts.iter().copied() {
-            let mut info = db.basic(account);
-            info.balance = self.genesis.balance;
+        for (account, info) in self.genesis.account_infos() {
             db.insert_account(account, info);
         }
     }

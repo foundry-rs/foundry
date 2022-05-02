@@ -223,8 +223,10 @@ impl<'a, DB: Db + ?Sized, Validator: TransactionValidator> Iterator
         // records all call traces
         let mut tracer = Tracer::default();
 
+        trace!(target: "backend", "[{:?}] executing", transaction.hash());
         // transact and commit the transaction
         let (exit, out, gas, logs) = evm.inspect_commit(&mut tracer);
+        trace!(target: "backend", "[{:?}] executed with out={:?}, gas ={}", transaction.hash(), out, gas);
 
         self.gas_used.saturating_add(U256::from(gas));
 
