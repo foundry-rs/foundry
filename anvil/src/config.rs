@@ -6,6 +6,7 @@ use crate::{
         backend::{
             db::{Db, ForkedDatabase},
             fork::{ClientFork, ClientForkConfig},
+            genesis::GenesisConfig,
         },
         fees::INITIAL_BASE_FEE,
     },
@@ -440,15 +441,13 @@ Chain ID:       {}
             (Arc::new(RwLock::new(CacheDB::default())), None)
         };
 
+        let genesis = GenesisConfig {
+            balance: self.genesis_balance,
+            accounts: self.genesis_accounts.iter().map(|acc| acc.address()).collect(),
+        };
         // only memory based backend for now
-        let backend = mem::Backend::with_genesis_balance(
-            db,
-            Arc::new(RwLock::new(env)),
-            self.genesis_balance,
-            self.genesis_accounts.iter().map(|acc| acc.address()),
-            fees,
-            fork,
-        );
+        let backend =
+            mem::Backend::with_genesis(db, Arc::new(RwLock::new(env)), genesis, fees, fork);
 
         backend
     }

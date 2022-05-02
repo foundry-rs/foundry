@@ -10,6 +10,7 @@ pub mod time;
 
 pub mod executor;
 pub mod fork;
+pub mod genesis;
 pub mod info;
 pub mod notifications;
 pub mod validate;

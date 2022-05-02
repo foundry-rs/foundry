@@ -12,6 +12,7 @@ use crate::{
             cheats::CheatsManager,
             executor::ExecutedTransactions,
             fork::ClientFork,
+            genesis::GenesisConfig,
             notifications::{NewBlockNotification, NewBlockNotifications},
             time::{utc_from_secs, TimeManager},
             validate::TransactionValidator,
@@ -74,10 +75,12 @@ pub struct Backend {
     time: TimeManager,
     /// Contains state of custom overrides
     cheats: CheatsManager,
-    /// listeners for new blocks that get notified when a new block was imported
-    new_block_listeners: Arc<Mutex<Vec<UnboundedSender<NewBlockNotification>>>>,
     /// contains fee data
     fees: FeeManager,
+    /// initialised genesis
+    genesis: GenesisConfig,
+    /// listeners for new blocks that get notified when a new block was imported
+    new_block_listeners: Arc<Mutex<Vec<UnboundedSender<NewBlockNotification>>>>,
 }
 
 impl Backend {
@@ -92,6 +95,7 @@ impl Backend {
             cheats: Default::default(),
             new_block_listeners: Default::default(),
             fees,
+            genesis: Default::default(),
         }
     }
 
@@ -103,25 +107,13 @@ impl Backend {
     }
 
     /// Initialises the balance of the given accounts
-    pub fn with_genesis_balance(
+    pub fn with_genesis(
         db: Arc<RwLock<dyn Db>>,
         env: Arc<RwLock<Env>>,
-        balance: U256,
-        accounts: impl IntoIterator<Item = Address>,
+        genesis: GenesisConfig,
         fees: FeeManager,
         fork: Option<ClientFork>,
     ) -> Self {
-        // insert genesis accounts
-        {
-            trace!(target: "backend", "setting genesis balances");
-            let mut db = db.write();
-            for account in accounts {
-                let mut info = db.basic(account);
-                info.balance = balance;
-                db.insert_account(account, info);
-            }
-        }
-
         // if this is a fork then adjust the blockchain storage
         let blockchain = if let Some(ref fork) = fork {
             trace!(target: "backend", "using forked blockchain at {}", fork.block_number());
@@ -130,7 +122,7 @@ impl Backend {
             Default::default()
         };
 
-        Self {
+        let backend = Self {
             db,
             blockchain,
             env,
@@ -139,6 +131,22 @@ impl Backend {
             cheats: Default::default(),
             new_block_listeners: Default::default(),
             fees,
+            genesis,
+        };
+
+        backend.apply_genesis();
+
+        backend
+    }
+
+    /// Applies the configured genesis settings
+    fn apply_genesis(&self) {
+        trace!(target: "backend", "setting genesis balances");
+        let mut db = self.db.write();
+        for account in self.genesis.accounts.iter().copied() {
+            let mut info = db.basic(account);
+            info.balance = self.genesis.balance;
+            db.insert_account(account, info);
         }
     }
 
@@ -155,7 +163,10 @@ impl Backend {
     /// Resets the fork to a fresh state
     pub fn reset_fork(&self, forking: Forking) -> Result<(), BlockchainError> {
         if let Some(fork) = self.get_fork() {
-            fork.reset(forking.json_rpc_url.clone(), forking.block_number)
+            // reset the fork entirely and reapply the genesis config
+            fork.reset(forking.json_rpc_url.clone(), forking.block_number)?;
+            self.apply_genesis();
+            Ok(())
         } else {
             Err(RpcError::invalid_params("Forking not enabled").into())
         }
