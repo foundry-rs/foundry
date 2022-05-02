@@ -1,19 +1,11 @@
 //! Helper types for working with [revm](foundry_evm::revm)
 
-use crate::{
-    revm::{AccountInfo},
-    U256,
-};
+use crate::{revm::AccountInfo, U256};
 use ethers::prelude::{Address, Bytes};
 use foundry_evm::{
-    executor::{
-        DatabaseRef,
-    },
+    executor::DatabaseRef,
     revm::{Database, DatabaseCommit},
 };
-
-
-
 
 /// This bundles all required revm traits
 pub trait Db: DatabaseRef + Database + DatabaseCommit + Send + Sync + 'static {
@@ -45,8 +37,8 @@ pub trait Db: DatabaseRef + Database + DatabaseCommit + Send + Sync + 'static {
     fn set_storage_at(&mut self, address: Address, slot: U256, val: U256);
 
     /// Creates a new snapshot
-    fn snapshot(&self) -> U256;
+    fn snapshot(&mut self) -> U256;
 
     /// Reverts a snapshot
-    fn revert(&self, snapshot: U256);
+    fn revert(&mut self, snapshot: U256);
 }

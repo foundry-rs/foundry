@@ -9,7 +9,7 @@ use crate::{
 use bytes::Bytes;
 use ethers::prelude::{H160, H256};
 use foundry_evm::{revm::InMemoryDB, HashMap as Map};
-use parking_lot::Mutex;
+use tracing::{trace, warn};
 
 /// In memory Database for anvil
 ///
@@ -17,12 +17,12 @@ use parking_lot::Mutex;
 #[derive(Debug)]
 pub struct MemDb {
     inner: InMemoryDB,
-    snapshots: Mutex<Snapshots<InMemoryDB>>,
+    snapshots: Snapshots<InMemoryDB>,
 }
 
 impl Default for MemDb {
     fn default() -> Self {
-        Self { inner: InMemoryDB::default(), snapshots: Mutex::new(Snapshots::default()) }
+        Self { inner: InMemoryDB::default(), snapshots: Default::default() }
     }
 }
 
@@ -78,12 +78,18 @@ impl Db for MemDb {
     }
 
     /// Creates a new snapshot
-    fn snapshot(&self) -> U256 {
-        let mut snapshots = self.snapshots.lock();
-        snapshots.insert(self.inner.clone())
+    fn snapshot(&mut self) -> U256 {
+        let id = self.snapshots.insert(self.inner.clone());
+        trace!(target: "backend::memdb", "Created new snapshot {}", id);
+        id
     }
 
-    fn revert(&self, _snapshot: U256) {
-        todo!()
+    fn revert(&mut self, id: U256) {
+        if let Some(snapshot) = self.snapshots.remove(id) {
+            self.inner = snapshot;
+            trace!(target: "backend::memdb", "Reverted snapshot {}", id);
+        } else {
+            warn!(target: "backend::memdb", "No snapshot to revert for {}", id);
+        }
     }
 }
