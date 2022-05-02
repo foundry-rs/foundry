@@ -3,7 +3,7 @@ use ethers::{
     abi::Abi,
     prelude::{
         artifacts::{CompactBytecode, CompactDeployedBytecode},
-        ArtifactId,
+        ArtifactId, TransactionReceipt,
     },
     types::transaction::eip2718::TypedTransaction,
     solc::{
@@ -116,7 +116,8 @@ fn get_artifact_from_path(
 pub struct ScriptSequence {
     pub index: u32,
     pub transactions: VecDeque<TypedTransaction>,
-    path: PathBuf,
+    pub receipts: Vec<TransactionReceipt>,
+    pub path: PathBuf,
 }
 
 impl ScriptSequence {
@@ -134,7 +135,7 @@ impl ScriptSequence {
         std::fs::create_dir_all(out.clone())?;
         out.push(sig.to_owned() + ".json");
 
-        Ok(ScriptSequence { index: 0, transactions, path: out })
+        Ok(ScriptSequence { index: 0, transactions, receipts: vec![], path: out })
     }
 
     pub fn load(&self) -> eyre::Result<Self> {
@@ -157,5 +158,9 @@ impl ScriptSequence {
         );
 
         Ok(())
+    }
+
+    pub fn add_receipt(&mut self, receipt: TransactionReceipt) {
+        self.receipts.push(receipt);
     }
 }
