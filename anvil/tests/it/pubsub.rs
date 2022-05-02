@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_sub_new_heads() {
-    let (api, handle) = spawn(NodeConfig::test().port(next_port())).await;
+    let (api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
 
     let provider = handle.ws_provider().await;
 
@@ -33,7 +33,7 @@ async fn test_sub_new_heads() {
 async fn test_sub_logs_legacy() {
     abigen!(EmitLogs, "test-data/emit_logs.json");
 
-    let (_api, handle) = spawn(NodeConfig::test().port(next_port())).await;
+    let (_api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
     let provider = handle.ws_provider().await;
 
     let wallet = handle.dev_wallets().next().unwrap();
@@ -72,7 +72,7 @@ async fn test_sub_logs_legacy() {
 async fn test_sub_logs() {
     abigen!(EmitLogs, "test-data/emit_logs.json");
 
-    let (_api, handle) = spawn(NodeConfig::test().port(next_port())).await;
+    let (_api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
     let provider = handle.ws_provider().await;
 
     let wallet = handle.dev_wallets().next().unwrap();
@@ -110,7 +110,7 @@ async fn test_sub_logs() {
 async fn test_filters_legacy() {
     abigen!(EmitLogs, "test-data/emit_logs.json");
 
-    let (_api, handle) = spawn(NodeConfig::test().port(next_port())).await;
+    let (_api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
     let provider = handle.http_provider();
 
     let wallet = handle.dev_wallets().next().unwrap();
@@ -151,7 +151,7 @@ async fn test_filters_legacy() {
 async fn test_filters() {
     abigen!(EmitLogs, "test-data/emit_logs.json");
 
-    let (_api, handle) = spawn(NodeConfig::test().port(next_port())).await;
+    let (_api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
     let provider = handle.http_provider();
 
     let wallet = handle.dev_wallets().next().unwrap();

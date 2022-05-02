@@ -53,17 +53,17 @@ impl NodeArgs {
         let genesis_balance = WEI_IN_ETHER.saturating_mul(self.balance.into());
 
         NodeConfig::default()
-            .chain_id(self.evm_opts.env.chain_id.unwrap_or(CHAIN_ID))
-            .gas_limit(self.evm_opts.env.gas_limit)
-            .gas_price(self.evm_opts.env.gas_price)
-            .account_generator(self.account_generator())
-            .genesis_balance(genesis_balance)
-            .port(self.port)
-            .eth_rpc_url(evm_opts.fork_url)
-            .base_fee(self.evm_opts.env.block_base_fee_per_gas)
-            .fork_block_number(evm_opts.fork_block_number)
-            .set_storage_caching(evm_opts.no_storage_caching)
-            .server_config(self.server_config)
+            .with_gas_limit(self.evm_opts.env.gas_limit)
+            .with_gas_price(self.evm_opts.env.gas_price)
+            .with_account_generator(self.account_generator())
+            .with_genesis_balance(genesis_balance)
+            .with_port(self.port)
+            .with_eth_rpc_url(evm_opts.fork_url)
+            .with_base_fee(self.evm_opts.env.block_base_fee_per_gas)
+            .with_fork_block_number(evm_opts.fork_block_number)
+            .with_storage_caching(evm_opts.no_storage_caching)
+            .with_server_config(self.server_config)
+            .with_chain_id(self.evm_opts.env.chain_id.unwrap_or(CHAIN_ID))
     }
 
     fn account_generator(&self) -> AccountGenerator {

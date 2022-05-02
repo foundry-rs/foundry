@@ -77,7 +77,7 @@ pub mod cmd;
 /// handle.await.unwrap();
 /// # }
 /// ```
-pub async fn spawn(config: NodeConfig) -> (EthApi, NodeHandle) {
+pub async fn spawn(mut config: NodeConfig) -> (EthApi, NodeHandle) {
     let logger = if config.enable_tracing { init_tracing() } else { Default::default() };
 
     let backend = Arc::new(config.setup().await);

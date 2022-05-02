@@ -6,7 +6,7 @@ use ethers::prelude::Middleware;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_can_change_mining_mode() {
-    let (api, handle) = spawn(NodeConfig::test().port(next_port())).await;
+    let (api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
     let provider = handle.http_provider();
 
     assert!(api.anvil_get_auto_mine().unwrap());

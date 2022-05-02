@@ -16,9 +16,9 @@ const BLOCK_NUMBER: u64 = 14_608_400u64;
 
 fn fork_config() -> NodeConfig {
     NodeConfig::test()
-        .port(next_port())
-        .eth_rpc_url(Some(RPC_RPC_URL))
-        .fork_block_number(Some(BLOCK_NUMBER))
+        .with_port(next_port())
+        .with_eth_rpc_url(Some(RPC_RPC_URL))
+        .with_fork_block_number(Some(BLOCK_NUMBER))
         .silent()
 }
 

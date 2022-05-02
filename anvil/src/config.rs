@@ -134,14 +134,25 @@ impl NodeConfig {
 
     /// Sets the chain ID
     #[must_use]
-    pub fn chain_id<U: Into<u64>>(mut self, chain_id: U) -> Self {
-        self.chain_id = chain_id.into();
+    pub fn with_chain_id<U: Into<u64>>(mut self, chain_id: U) -> Self {
+        self.set_chain_id(chain_id.into());
         self
+    }
+
+    /// Sets the chain id and updates all wallets
+    pub fn set_chain_id(&mut self, chain_id: impl Into<u64>) {
+        self.chain_id = chain_id.into();
+        self.genesis_accounts.iter_mut().for_each(|wallet| {
+            *wallet = wallet.clone().with_chain_id(self.chain_id);
+        });
+        self.accounts.values_mut().for_each(|wallet| {
+            *wallet = wallet.clone().with_chain_id(self.chain_id);
+        })
     }
 
     /// Sets the gas limit
     #[must_use]
-    pub fn gas_limit<U: Into<U256>>(mut self, gas_limit: Option<U>) -> Self {
+    pub fn with_gas_limit<U: Into<U256>>(mut self, gas_limit: Option<U>) -> Self {
         if let Some(gas_limit) = gas_limit {
             self.gas_limit = gas_limit.into();
         }
@@ -150,7 +161,7 @@ impl NodeConfig {
 
     /// Sets the gas price
     #[must_use]
-    pub fn gas_price<U: Into<U256>>(mut self, gas_price: Option<U>) -> Self {
+    pub fn with_gas_price<U: Into<U256>>(mut self, gas_price: Option<U>) -> Self {
         if let Some(gas_price) = gas_price {
             self.gas_price = gas_price.into();
         }
@@ -159,7 +170,7 @@ impl NodeConfig {
 
     /// Sets the base fee
     #[must_use]
-    pub fn base_fee<U: Into<U256>>(mut self, base_fee: Option<U>) -> Self {
+    pub fn with_base_fee<U: Into<U256>>(mut self, base_fee: Option<U>) -> Self {
         if let Some(base_fee) = base_fee {
             self.base_fee = base_fee.into();
         }
@@ -175,7 +186,7 @@ impl NodeConfig {
 
     /// Sets the genesis accounts
     #[must_use]
-    pub fn account_generator(mut self, generator: AccountGenerator) -> Self {
+    pub fn with_account_generator(mut self, generator: AccountGenerator) -> Self {
         let accounts = generator.gen();
         self.account_generator = Some(generator);
         self.genesis_accounts(accounts)
@@ -183,7 +194,7 @@ impl NodeConfig {
 
     /// Sets the balance of the genesis accounts in the genesis block
     #[must_use]
-    pub fn genesis_balance<U: Into<U256>>(mut self, balance: U) -> Self {
+    pub fn with_genesis_balance<U: Into<U256>>(mut self, balance: U) -> Self {
         self.genesis_balance = balance.into();
         self
     }
@@ -197,7 +208,7 @@ impl NodeConfig {
 
     /// Sets the port to use
     #[must_use]
-    pub fn port(mut self, port: u16) -> Self {
+    pub fn with_port(mut self, port: u16) -> Self {
         self.port = port;
         self
     }
@@ -217,25 +228,25 @@ impl NodeConfig {
     /// Makes the node silent to not emit anything on stdout
     #[must_use]
     pub fn no_storage_caching(self) -> Self {
-        self.set_storage_caching(true)
+        self.with_storage_caching(true)
     }
 
     #[must_use]
-    pub fn set_storage_caching(mut self, storage_caching: bool) -> Self {
+    pub fn with_storage_caching(mut self, storage_caching: bool) -> Self {
         self.no_storage_caching = storage_caching;
         self
     }
 
     /// Sets the `eth_rpc_url` to use when forking
     #[must_use]
-    pub fn eth_rpc_url<U: Into<String>>(mut self, eth_rpc_url: Option<U>) -> Self {
+    pub fn with_eth_rpc_url<U: Into<String>>(mut self, eth_rpc_url: Option<U>) -> Self {
         self.eth_rpc_url = eth_rpc_url.map(Into::into);
         self
     }
 
     /// Sets the `fork_block_number` to use to fork off from
     #[must_use]
-    pub fn fork_block_number<U: Into<u64>>(mut self, fork_block_number: Option<U>) -> Self {
+    pub fn with_fork_block_number<U: Into<u64>>(mut self, fork_block_number: Option<U>) -> Self {
         self.fork_block_number = fork_block_number.map(Into::into);
         self
     }
@@ -248,7 +259,7 @@ impl NodeConfig {
     }
 
     #[must_use]
-    pub fn server_config(mut self, config: ServerConfig) -> Self {
+    pub fn with_server_config(mut self, config: ServerConfig) -> Self {
         self.server_config = config;
         self
     }
@@ -361,7 +372,7 @@ Chain ID:       {}
     /// [Backend](mem::Backend)
     ///
     /// *Note*: only memory based backend for now
-    pub(crate) async fn setup(&self) -> mem::Backend {
+    pub(crate) async fn setup(&mut self) -> mem::Backend {
         // configure the revm environment
         let mut env = revm::Env {
             cfg: CfgEnv { chain_id: self.chain_id.into(), ..Default::default() },
@@ -393,6 +404,8 @@ Chain ID:       {}
                 provider.get_block(fork_block_number).await.unwrap().unwrap().hash.unwrap();
 
             let chain_id = provider.get_chainid().await.unwrap().as_u64();
+            // need to update the dev signers as well
+            self.set_chain_id(chain_id);
 
             let meta = BlockchainDbMeta::new(env.clone(), eth_rpc_url.clone());
 

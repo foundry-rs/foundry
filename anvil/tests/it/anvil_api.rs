@@ -6,7 +6,7 @@ use ethers::prelude::Middleware;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_set_gas_price() {
-    let (api, handle) = spawn(NodeConfig::test().port(next_port())).await;
+    let (api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
     let provider = handle.http_provider();
 
     let gas_price = 1337u64.into();

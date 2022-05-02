@@ -12,7 +12,7 @@ use tokio::time::timeout;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_transfer_eth() {
-    let (_api, handle) = spawn(NodeConfig::test().port(next_port())).await;
+    let (_api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
     let provider = handle.http_provider();
 
     let accounts: Vec<_> = handle.dev_wallets().collect();
@@ -47,7 +47,7 @@ async fn can_transfer_eth() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_respect_nonces() {
-    let (api, handle) = spawn(NodeConfig::test().port(next_port())).await;
+    let (api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
     let provider = handle.http_provider();
 
     let accounts: Vec<_> = handle.dev_wallets().collect();
@@ -82,7 +82,7 @@ async fn can_respect_nonces() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_replace_transaction() {
-    let (api, handle) = spawn(NodeConfig::test().port(next_port())).await;
+    let (api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
 
     // disable auto mining
     api.anvil_set_auto_mine(false).await.unwrap();
@@ -124,7 +124,7 @@ async fn can_replace_transaction() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_reject_too_high_gas_limits() {
-    let (api, handle) = spawn(NodeConfig::test().port(next_port())).await;
+    let (api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
     let provider = handle.http_provider();
 
     let accounts: Vec<_> = handle.dev_wallets().collect();
@@ -157,7 +157,7 @@ async fn can_reject_too_high_gas_limits() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_reject_underpriced_replacement() {
-    let (api, handle) = spawn(NodeConfig::test().port(next_port())).await;
+    let (api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
 
     // disable auto mining
     api.anvil_set_auto_mine(false).await.unwrap();
@@ -198,7 +198,7 @@ async fn can_reject_underpriced_replacement() {
 async fn can_deploy_greeter_http() {
     abigen!(Greeter, "test-data/greeter.json");
 
-    let (_api, handle) = spawn(NodeConfig::test().port(next_port())).await;
+    let (_api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
     let provider = handle.http_provider();
 
     let wallet = handle.dev_wallets().next().unwrap();
@@ -225,7 +225,7 @@ async fn can_deploy_greeter_http() {
 async fn can_deploy_greeter_ws() {
     abigen!(Greeter, "test-data/greeter.json");
 
-    let (_api, handle) = spawn(NodeConfig::test().port(next_port())).await;
+    let (_api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
     let provider = handle.ws_provider().await;
 
     let wallet = handle.dev_wallets().next().unwrap();
@@ -272,7 +272,7 @@ contract Contract {
     // need to run this in a runtime because svm's blocking install does panic if invoked in another
     // async runtime
     tokio::runtime::Runtime::new().unwrap().block_on(async move {
-        let (_api, handle) = spawn(NodeConfig::test().port(next_port())).await;
+        let (_api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
         let provider = handle.ws_provider().await;
 
         let wallet = handle.dev_wallets().next().unwrap();

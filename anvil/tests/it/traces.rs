@@ -4,7 +4,7 @@ use ethers::prelude::{Middleware, Signer, TransactionRequest};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_transfer_parity_traces() {
-    let (_api, handle) = spawn(NodeConfig::test().port(next_port())).await;
+    let (_api, handle) = spawn(NodeConfig::test().with_port(next_port())).await;
     let provider = handle.http_provider();
 
     let accounts: Vec<_> = handle.dev_wallets().collect();
