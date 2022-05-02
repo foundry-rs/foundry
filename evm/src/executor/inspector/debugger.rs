@@ -158,7 +158,10 @@ where
 
         // Calculate the current amount of gas used
         let gas = interpreter.gas();
-        let total_gas_spent = gas.spend() - self.previous_gas_block + self.current_gas_block;
+        let total_gas_spent = gas
+            .spend()
+            .saturating_sub(self.previous_gas_block)
+            .saturating_add(self.current_gas_block);
         if opcode_info.is_gas_block_end {
             self.previous_gas_block = interpreter.contract.gas_block(pc);
             self.current_gas_block = 0;
