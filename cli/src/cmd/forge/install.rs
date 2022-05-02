@@ -88,7 +88,8 @@ pub(crate) fn install(
     for dep in dependencies {
         let target_dir = if let Some(alias) = &dep.alias { alias } else { &dep.name };
         let DependencyInstallOpts { no_git, no_commit, quiet } = opts;
-        p_println!(!quiet => "Installing {} in {:?}, (url: {}, tag: {:?})", dep.name, &libs.join(&target_dir), dep.url, dep.tag);
+        p_println!(!quiet => "Installing {} in {:?} (url: {:?}, tag: {:?})", dep.name, &libs.join(&target_dir), dep.url, dep.tag);
+
         check_tag(&dep)?;
         if no_git {
             install_as_folder(&dep, &libs)?;
@@ -103,11 +104,9 @@ pub(crate) fn install(
 
 /// make sure tag exists on the remote repository
 fn check_tag(dep: &Dependency) -> eyre::Result<()> {
-    if let Some(ref tag) = dep.tag {
-        let output = Command::new("git")
-            .args(&["ls-remote", &dep.url, tag])
-            .stdout(Stdio::piped())
-            .output()?;
+    if let (Some(ref url), Some(ref tag)) = (&dep.url, &dep.tag) {
+        let output =
+            Command::new("git").args(&["ls-remote", url, tag]).stdout(Stdio::piped()).output()?;
         let stdout = String::from_utf8_lossy(&output.stdout);
         if !stdout.contains(tag) {
             eyre::bail!("tag/branch/commit \"{}\" does not exists", tag)
@@ -118,9 +117,14 @@ fn check_tag(dep: &Dependency) -> eyre::Result<()> {
 
 /// installs the dependency as an ordinary folder instead of a submodule
 fn install_as_folder(dep: &Dependency, libs: &Path) -> eyre::Result<()> {
+    if dep.url.is_none() {
+        eyre::bail!("Could not determine URL for dependency \"{}\"!", dep.name);
+    }
+    let url = dep.url.as_ref().unwrap();
+
     let target_dir = if let Some(alias) = &dep.alias { alias } else { &dep.name };
     let output = Command::new("git")
-        .args(&["clone", "--recursive", &dep.url, target_dir])
+        .args(&["clone", "--recursive", url, target_dir])
         .current_dir(&libs)
         .stdout(Stdio::piped())
         .output()?;
@@ -128,7 +132,7 @@ fn install_as_folder(dep: &Dependency, libs: &Path) -> eyre::Result<()> {
     let stderr = str::from_utf8(&output.stderr).unwrap();
 
     if stderr.contains("remote: Repository not found") {
-        eyre::bail!("Repo: \"{}\" not found!", &dep.url)
+        eyre::bail!("Repo: \"{}\" not found!", url)
     } else if stderr.contains("already exists and is not an empty directory") {
         eyre::bail!(
             "Destination path \"{}\" already exists and is not an empty directory.",
@@ -156,10 +160,15 @@ fn install_as_folder(dep: &Dependency, libs: &Path) -> eyre::Result<()> {
 
 /// installs the dependency as new submodule
 fn install_as_submodule(dep: &Dependency, libs: &Path, no_commit: bool) -> eyre::Result<()> {
+    if dep.url.is_none() {
+        eyre::bail!("Could not determine URL for dependency \"{}\"!", dep.name);
+    }
+    let url = dep.url.as_ref().unwrap();
+
     // install the dep
     let target_dir = if let Some(alias) = &dep.alias { alias } else { &dep.name };
     let output = Command::new("git")
-        .args(&["submodule", "add", &dep.url, target_dir])
+        .args(&["submodule", "add", url, target_dir])
         .current_dir(&libs)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -168,14 +177,14 @@ fn install_as_submodule(dep: &Dependency, libs: &Path, no_commit: bool) -> eyre:
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     if stderr.contains("remote: Repository not found") {
-        eyre::bail!("Repo: \"{}\" not found!", &dep.url)
+        eyre::bail!("Repo: \"{}\" not found!", url)
     } else if stderr.contains("already exists in the index") {
         eyre::bail!(
             "\"lib/{}\" already exists in the index, you can update it using forge update.",
             &target_dir
         )
     } else if stderr.contains("not a git repository") {
-        eyre::bail!("\"{}\" is not a git repository", &dep.url)
+        eyre::bail!("\"{}\" is not a git repository", url)
     } else if stderr.contains("paths are ignored by one of your .gitignore files") {
         let error =
             stderr.lines().filter(|l| !l.starts_with("hint:")).collect::<Vec<&str>>().join("\n");

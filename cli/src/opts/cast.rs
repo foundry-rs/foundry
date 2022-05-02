@@ -14,32 +14,41 @@ use std::{path::PathBuf, str::FromStr};
 )]
 pub enum Subcommands {
     #[clap(name = "--max-int")]
+    #[clap(aliases = &["max-int", "maxi"])]
     #[clap(about = "Get the maximum i256 value.")]
     MaxInt,
     #[clap(name = "--min-int")]
+    #[clap(aliases = &["min-int", "mini"])]
     #[clap(about = "Get the minimum i256 value.")]
     MinInt,
     #[clap(name = "--max-uint")]
+    #[clap(aliases = &["max-uint", "maxu"])]
     #[clap(about = "Get the maximum u256 value.")]
     MaxUint,
     #[clap(name = "--address-zero", about = "Get zero address")]
+    #[clap(aliases = &["address-zero", "az"])]
     AddressZero,
     #[clap(name = "--hash-zero", about = "Get zero hash")]
+    #[clap(aliases = &["hash-zero", "hz"])]
     HashZero,
-    #[clap(aliases = &["--from-ascii"])]
     #[clap(name = "--from-utf8")]
+    #[clap(aliases = &["from-utf8", "--from-ascii", "from-ascii", "fu", "fa"])]
     #[clap(about = "Convert UTF8 text to hex.")]
     FromUtf8 { text: Option<String> },
     #[clap(name = "--to-hex")]
+    #[clap(aliases = &["to-hex", "th", "2h"])]
     #[clap(about = "Convert an integer to hex.")]
     ToHex { decimal: Option<String> },
     #[clap(name = "--concat-hex")]
+    #[clap(aliases = &["concat-hex", "ch"])]
     #[clap(about = "Concatencate hex strings.")]
     ConcatHex { data: Vec<String> },
     #[clap(name = "--from-bin")]
+    #[clap(aliases = &["from-bin", "fb"])]
     #[clap(about = "Convert binary data into hex data.")]
     FromBin,
     #[clap(name = "--to-hexdata")]
+    #[clap(aliases = &["to-hexdata", "thd", "2hd"])]
     #[clap(
         about = "Normalize the input to lowercase, 0x-prefixed hex. See --help for more info.",
         long_about = r#"Normalize the input to lowercase, 0x-prefixed hex.
@@ -51,14 +60,16 @@ The input can be:
 - @tag, where the tag is defined in an environment variable"#
     )]
     ToHexdata { input: Option<String> },
-    #[clap(aliases = &["--to-checksum"])] // Compatibility with dapptools' cast
     #[clap(name = "--to-checksum-address")]
+    #[clap(aliases = &["to-checksum-address", "--to-checksum", "to-checksum", "ta", "2a"])] // Compatibility with dapptools' cast
     #[clap(about = "Convert an address to a checksummed format (EIP-55).")]
     ToCheckSumAddress { address: Option<Address> },
     #[clap(name = "--to-ascii")]
+    #[clap(aliases = &["to-ascii", "tas", "2as"])]
     #[clap(about = "Convert hex data to an ASCII string.")]
     ToAscii { hexdata: Option<String> },
     #[clap(name = "--from-fix")]
+    #[clap(aliases = &["from-fix", "ff"])]
     #[clap(about = "Convert a fixed point number into an integer.")]
     FromFix {
         decimals: Option<u128>,
@@ -66,12 +77,15 @@ The input can be:
         value: Option<String>,
     },
     #[clap(name = "--to-bytes32")]
+    #[clap(aliases = &["to-bytes32", "tb", "2b"])]
     #[clap(about = "Right-pads hex data to 32 bytes.")]
     ToBytes32 { bytes: Option<String> },
     #[clap(name = "--to-dec")]
+    #[clap(aliases = &["to-dec", "td", "2d"])]
     #[clap(about = "Convert hex value into a decimal number.")]
     ToDec { hexvalue: Option<String> },
     #[clap(name = "--to-fix")]
+    #[clap(aliases = &["to-fix", "tf", "2f"])]
     #[clap(about = "Convert an integer into a fixed point number.")]
     ToFix {
         decimals: Option<u128>,
@@ -79,12 +93,15 @@ The input can be:
         value: Option<String>,
     },
     #[clap(name = "--to-uint256")]
+    #[clap(aliases = &["to-uint256", "tu", "2u"])]
     #[clap(about = "Convert a number to a hex-encoded uint256.")]
     ToUint256 { value: Option<String> },
     #[clap(name = "--to-int256")]
+    #[clap(aliases = &["to-int256", "ti", "2i"])]
     #[clap(about = "Convert a number to a hex-encoded int256.")]
     ToInt256 { value: Option<String> },
     #[clap(name = "--to-unit")]
+    #[clap(aliases = &["to-unit", "tun", "2un"])]
     #[clap(
         about = "Convert an ETH amount into another unit (ether, gwei or wei).",
         long_about = r#"Convert an ETH amount into another unit (ether, gwei or wei).\
@@ -102,6 +119,7 @@ Examples:
         unit: String,
     },
     #[clap(name = "--to-wei")]
+    #[clap(aliases = &["to-wei", "tw", "2w"])]
     #[clap(about = "Convert an ETH amount to wei. Consider using --to-unit.")]
     ToWei {
         #[clap(allow_hyphen_values = true)] // negative values not yet supported internally
@@ -109,6 +127,7 @@ Examples:
         unit: Option<String>,
     },
     #[clap(name = "--from-wei")]
+    #[clap(aliases = &["from-wei", "fw"])]
     #[clap(about = "Convert wei into an ETH amount. Consider using --to-unit.")]
     FromWei {
         #[clap(allow_hyphen_values = true)] // negative values not yet supported internally
@@ -116,6 +135,7 @@ Examples:
         unit: Option<String>,
     },
     #[clap(name = "access-list")]
+    #[clap(aliases = &["ac", "acl"])]
     #[clap(about = "Create an access list for a transaction.")]
     AccessList {
         #[clap(help = "The destination of the transaction.", parse(try_from_str = parse_name_or_address))]
@@ -139,6 +159,7 @@ Examples:
         to_json: bool,
     },
     #[clap(name = "block")]
+    #[clap(alias = "bl")]
     #[clap(about = "Get information about a block.")]
     Block {
         #[clap(
@@ -159,12 +180,14 @@ Examples:
         rpc_url: Option<String>,
     },
     #[clap(name = "block-number")]
+    #[clap(alias = "bn")]
     #[clap(about = "Get the latest block number.")]
     BlockNumber {
         #[clap(long, env = "ETH_RPC_URL")]
         rpc_url: Option<String>,
     },
     #[clap(name = "call")]
+    #[clap(alias = "c")]
     #[clap(about = "Perform a call on an account without publishing a transaction.")]
     Call {
         #[clap(help = "the address you want to query", parse(try_from_str = parse_name_or_address))]
@@ -176,6 +199,7 @@ Examples:
         #[clap(flatten)]
         eth: EthereumOpts,
     },
+    #[clap(alias = "cd")]
     #[clap(about = "ABI-encode a function with arguments.")]
     Calldata {
         #[clap(
@@ -187,24 +211,28 @@ Examples:
         args: Vec<String>,
     },
     #[clap(name = "chain")]
+    #[clap(alias = "ch")]
     #[clap(about = "Get the symbolic name of the current chain.")]
     Chain {
         #[clap(long, env = "ETH_RPC_URL")]
         rpc_url: Option<String>,
     },
     #[clap(name = "chain-id")]
+    #[clap(aliases = &["ci", "cid"])]
     #[clap(about = "Get the Ethereum chain ID.")]
     ChainId {
         #[clap(long, env = "ETH_RPC_URL")]
         rpc_url: Option<String>,
     },
     #[clap(name = "client")]
+    #[clap(alias = "cl")]
     #[clap(about = "Get the current client version.")]
     Client {
         #[clap(long, env = "ETH_RPC_URL")]
         rpc_url: Option<String>,
     },
     #[clap(name = "compute-address")]
+    #[clap(alias = "ca")]
     #[clap(about = "Compute the contract address from a given nonce and deployer address.")]
     ComputeAddress {
         #[clap(long, env = "ETH_RPC_URL")]
@@ -215,9 +243,11 @@ Examples:
         nonce: Option<U256>,
     },
     #[clap(name = "namehash")]
+    #[clap(aliases = &["na", "nh"])]
     #[clap(about = "Calculate the ENS namehash of a name.")]
     Namehash { name: String },
     #[clap(name = "tx")]
+    #[clap(alias = "t")]
     #[clap(about = "Get information about a transaction.")]
     Tx {
         hash: String,
@@ -228,6 +258,7 @@ Examples:
         rpc_url: Option<String>,
     },
     #[clap(name = "receipt")]
+    #[clap(alias = "re")]
     #[clap(about = "Get the transaction receipt for a transaction.")]
     Receipt {
         #[clap(value_name = "TX_HASH")]
@@ -248,6 +279,7 @@ Examples:
         rpc_url: Option<String>,
     },
     #[clap(name = "send")]
+    #[clap(alias = "s")]
     #[clap(about = "Sign and publish a transaction.")]
     SendTx {
         #[clap(
@@ -308,6 +340,7 @@ This is automatically enabled for common networks without EIP1559."#
         resend: bool,
     },
     #[clap(name = "publish")]
+    #[clap(alias = "p")]
     #[clap(about = "Publish a raw transaction to the network.")]
     PublishTx {
         #[clap(help = "The raw transaction", value_name = "RAW_TX")]
@@ -319,6 +352,7 @@ This is automatically enabled for common networks without EIP1559."#
         eth: EthereumOpts,
     },
     #[clap(name = "estimate")]
+    #[clap(alias = "e")]
     #[clap(about = "Estimate the gas cost of a transaction.")]
     Estimate {
         #[clap(help = "The destination of the transaction.", parse(try_from_str = parse_name_or_address))]
@@ -341,6 +375,7 @@ Examples: 1ether, 10gwei, 0.01ether"#,
         eth: EthereumOpts,
     },
     #[clap(name = "--calldata-decode")]
+    #[clap(alias = "cdd")]
     #[clap(about = "Decode ABI-encoded input data.")]
     CalldataDecode {
         #[clap(help = "The function signature in the format `<name>(<in-types>)(<out-types>)`.")]
@@ -349,6 +384,7 @@ Examples: 1ether, 10gwei, 0.01ether"#,
         calldata: String,
     },
     #[clap(name = "--abi-decode")]
+    #[clap(alias = "ad")]
     #[clap(
         about = "Decode ABI-encoded input or output data",
         long_about = r#"Decode ABI-encoded input or output data.
@@ -364,6 +400,7 @@ Defaults to decoding output data. To decode input data pass --input or use cast 
         input: bool,
     },
     #[clap(name = "abi-encode")]
+    #[clap(alias = "ae")]
     #[clap(about = "ABI encode the given function argument, excluding the selector.")]
     AbiEncode {
         #[clap(help = "The function signature.")]
@@ -373,6 +410,7 @@ Defaults to decoding output data. To decode input data pass --input or use cast 
         args: Vec<String>,
     },
     #[clap(name = "index")]
+    #[clap(alias = "in")]
     #[clap(about = "Compute the storage slot for an entry in a mapping.")]
     Index {
         #[clap(help = "The mapping key type.")]
@@ -385,12 +423,14 @@ Defaults to decoding output data. To decode input data pass --input or use cast 
         slot_number: String,
     },
     #[clap(name = "4byte")]
+    #[clap(aliases = &["4", "4b"])]
     #[clap(about = "Get the function signatures for the given selector from 4byte.directory.")]
     FourByte {
         #[clap(help = "The function selector.")]
         selector: String,
     },
     #[clap(name = "4byte-decode")]
+    #[clap(aliases = &["4d", "4bd"])]
     #[clap(about = "Decode ABI-encoded calldata using 4byte.directory.")]
     FourByteDecode {
         #[clap(help = "The ABI-encoded calldata.")]
@@ -407,12 +447,14 @@ The index can also be earliest or latest."#
         id: Option<String>,
     },
     #[clap(name = "4byte-event")]
+    #[clap(aliases = &["4e", "4be"])]
     #[clap(about = "Get the event signature for a given topic 0 from 4byte.directory.")]
     FourByteEvent {
         #[clap(help = "Topic 0", value_name = "TOPIC_0")]
         topic: String,
     },
     #[clap(name = "pretty-calldata")]
+    #[clap(alias = "pc")]
     #[clap(
         about = "Pretty print calldata.",
         long_about = r#"Pretty print calldata.
@@ -426,6 +468,7 @@ Tries to decode the calldata using 4byte.directory unless --offline is passed."#
         offline: bool,
     },
     #[clap(name = "age")]
+    #[clap(alias = "a")]
     #[clap(about = "Get the timestamp of a block.")]
     Age {
         #[clap(
@@ -440,6 +483,7 @@ Tries to decode the calldata using 4byte.directory unless --offline is passed."#
         rpc_url: Option<String>,
     },
     #[clap(name = "balance")]
+    #[clap(alias = "b")]
     #[clap(about = "Get the balance of an account in wei.")]
     Balance {
         #[clap(
@@ -456,6 +500,7 @@ Tries to decode the calldata using 4byte.directory unless --offline is passed."#
         rpc_url: Option<String>,
     },
     #[clap(name = "basefee")]
+    #[clap(aliases = &["ba", "fee"])]
     #[clap(about = "Get the basefee of a block.")]
     BaseFee {
         #[clap(
@@ -470,6 +515,7 @@ Tries to decode the calldata using 4byte.directory unless --offline is passed."#
         rpc_url: Option<String>,
     },
     #[clap(name = "code")]
+    #[clap(alias = "co")]
     #[clap(about = "Get the bytecode of a contract.")]
     Code {
         #[clap(
@@ -486,15 +532,18 @@ Tries to decode the calldata using 4byte.directory unless --offline is passed."#
         rpc_url: Option<String>,
     },
     #[clap(name = "gas-price")]
+    #[clap(alias = "g")]
     #[clap(about = "Get the current gas price.")]
     GasPrice {
         #[clap(short, long, env = "ETH_RPC_URL")]
         rpc_url: Option<String>,
     },
     #[clap(name = "keccak")]
+    #[clap(alias = "k")]
     #[clap(about = "Hash arbitrary data using keccak-256.")]
     Keccak { data: String },
     #[clap(name = "resolve-name")]
+    #[clap(alias = "rn")]
     #[clap(about = "Perform an ENS lookup.")]
     ResolveName {
         #[clap(help = "The name to lookup.")]
@@ -505,6 +554,7 @@ Tries to decode the calldata using 4byte.directory unless --offline is passed."#
         verify: bool,
     },
     #[clap(name = "lookup-address")]
+    #[clap(alias = "l")]
     #[clap(about = "Perform an ENS reverse lookup.")]
     LookupAddress {
         #[clap(help = "The account to perform the lookup for.")]
@@ -518,7 +568,11 @@ Tries to decode the calldata using 4byte.directory unless --offline is passed."#
         )]
         verify: bool,
     },
-    #[clap(name = "storage", about = "Get the raw value of a contract's storage slot.")]
+    #[clap(
+        name = "storage",
+        alias = "st",
+        about = "Get the raw value of a contract's storage slot."
+    )]
     Storage {
         #[clap(help = "The contract address.", parse(try_from_str = parse_name_or_address))]
         address: NameOrAddress,
@@ -535,7 +589,11 @@ Tries to decode the calldata using 4byte.directory unless --offline is passed."#
         )]
         block: Option<BlockId>,
     },
-    #[clap(name = "proof", about = "Generate a storage proof for a given storage slot.")]
+    #[clap(
+        name = "proof",
+        alias = "pr",
+        about = "Generate a storage proof for a given storage slot."
+    )]
     Proof {
         #[clap(help = "The contract address.", parse(try_from_str = parse_name_or_address))]
         address: NameOrAddress,
@@ -553,6 +611,7 @@ Tries to decode the calldata using 4byte.directory unless --offline is passed."#
         block: Option<BlockId>,
     },
     #[clap(name = "nonce")]
+    #[clap(alias = "n")]
     #[clap(about = "Get the nonce for an account.")]
     Nonce {
         #[clap(
@@ -569,6 +628,7 @@ Tries to decode the calldata using 4byte.directory unless --offline is passed."#
         rpc_url: Option<String>,
     },
     #[clap(name = "etherscan-source")]
+    #[clap(aliases = &["et", "src"])]
     #[clap(about = "Get the source code of a contract from Etherscan.")]
     EtherscanSource {
         #[clap(flatten)]
@@ -580,13 +640,14 @@ Tries to decode the calldata using 4byte.directory unless --offline is passed."#
         #[clap(long, env = "ETHERSCAN_API_KEY")]
         etherscan_api_key: Option<String>,
     },
-    #[clap(name = "wallet", about = "Wallet management utilities.")]
+    #[clap(name = "wallet", alias = "w", about = "Wallet management utilities.")]
     Wallet {
         #[clap(subcommand)]
         command: WalletSubcommands,
     },
     #[clap(
         name = "interface",
+        alias = "i",
         about = "Generate a Solidity interface from a given ABI.",
         long_about = "Generate a Solidity interface from a given ABI. Currently does not support ABI encoder v2."
     )]
@@ -611,20 +672,25 @@ If an address is specified, then the ABI is fetched from Etherscan."#
         #[clap(flatten)]
         chain: ClapChain,
     },
-    #[clap(name = "sig", about = "Get the selector for a function.")]
+    #[clap(name = "sig", alias = "si", about = "Get the selector for a function.")]
     Sig {
         #[clap(help = "The function signature, e.g. transfer(address,uint256).")]
         sig: String,
     },
-    #[clap(name = "find-block", about = "Get the block number closest to the provided timestamp.")]
+    #[clap(
+        name = "find-block",
+        alias = "f",
+        about = "Get the block number closest to the provided timestamp."
+    )]
     FindBlock(FindBlockArgs),
-    #[clap(about = "Generate shell completions script")]
+    #[clap(alias = "com", about = "Generate shell completions script")]
     Completions {
         #[clap(arg_enum)]
         shell: clap_complete::Shell,
     },
     #[clap(
         name = "run",
+        alias = "r",
         about = "Runs a published transaction in a local environment and prints the trace."
     )]
     Run(RunArgs),
@@ -632,7 +698,7 @@ If an address is specified, then the ABI is fetched from Etherscan."#
 
 #[derive(Debug, Parser)]
 pub enum WalletSubcommands {
-    #[clap(name = "new", about = "Create a new random keypair.")]
+    #[clap(name = "new", alias = "n", about = "Create a new random keypair.")]
     New {
         #[clap(help = "If provided, then keypair will be written to an encrypted JSON keystore.")]
         path: Option<String>,
@@ -652,7 +718,7 @@ pub enum WalletSubcommands {
         )]
         unsafe_password: Option<String>,
     },
-    #[clap(name = "vanity", about = "Generate a vanity address.")]
+    #[clap(name = "vanity", alias = "va", about = "Generate a vanity address.")]
     Vanity {
         #[clap(
             long,
@@ -668,19 +734,19 @@ pub enum WalletSubcommands {
         )]
         nonce: Option<u64>, /* 2^64-1 is max possible nonce per https://eips.ethereum.org/EIPS/eip-2681 */
     },
-    #[clap(name = "address", about = "Convert a private key to an address.")]
+    #[clap(name = "address", aliases = &["a", "addr"], about = "Convert a private key to an address.")]
     Address {
         #[clap(flatten)]
         wallet: Wallet,
     },
-    #[clap(name = "sign", about = "Sign a message.")]
+    #[clap(name = "sign", alias = "s", about = "Sign a message.")]
     Sign {
         #[clap(help = "message to sign")]
         message: String,
         #[clap(flatten)]
         wallet: Wallet,
     },
-    #[clap(name = "verify", about = "Verify the signature of a message.")]
+    #[clap(name = "verify", alias = "v", about = "Verify the signature of a message.")]
     Verify {
         #[clap(help = "The original message.")]
         message: String,

@@ -219,6 +219,7 @@ forgetest_init!(can_set_config_values, |prj: TestProject, _cmd: TestCommand| {
     assert!(config.via_ir);
 });
 
+// tests that solc can be explicitly set
 forgetest!(can_set_solc_explicitly, |prj: TestProject, mut cmd: TestCommand| {
     cmd.set_current_dir(prj.root());
     prj.inner()
@@ -320,6 +321,7 @@ Compiler run successful
     ));
 });
 
+// tests that the lib triple can be parsed
 forgetest_init!(can_parse_dapp_libraries, |prj: TestProject, mut cmd: TestCommand| {
     cmd.set_current_dir(prj.root());
     cmd.set_env(
@@ -337,14 +339,28 @@ forgetest_init!(can_parse_dapp_libraries, |prj: TestProject, mut cmd: TestComman
 forgetest!(can_set_optimizer_runs, |prj: TestProject, mut cmd: TestCommand| {
     cmd.set_current_dir(prj.root());
 
-    // explicitly set gas_price
+    // explicitly set optimizer runs
     let config = Config { optimizer_runs: 1337, ..Default::default() };
     prj.write_config(config);
 
     let config = cmd.config();
-
     assert_eq!(config.optimizer_runs, 1337);
 
     let config = prj.config_from_output(["--optimizer-runs", "300"]);
     assert_eq!(config.optimizer_runs, 300);
+});
+
+// test that gas_price can be set
+forgetest!(can_set_gas_price, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.set_current_dir(prj.root());
+
+    // explicitly set gas_price
+    let config = Config { gas_price: 1337, ..Default::default() };
+    prj.write_config(config);
+
+    let config = cmd.config();
+    assert_eq!(config.gas_price, 1337);
+
+    let config = prj.config_from_output(["--gas-price", "300"]);
+    assert_eq!(config.gas_price, 300);
 });

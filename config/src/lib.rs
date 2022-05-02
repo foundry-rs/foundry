@@ -691,7 +691,12 @@ impl Config {
 
     /// Returns the default config that uses dapptools style paths
     pub fn dapptools() -> Self {
-        Self::default()
+        Config {
+            chain_id: Some(Chain::Id(99)),
+            block_timestamp: 0,
+            block_number: 0,
+            ..Config::default()
+        }
     }
 
     /// Extracts a basic subset of the config, used for initialisations.
@@ -1018,14 +1023,14 @@ impl Default for Config {
             sender: "00a329c0648769A73afAc7F9381E08FB43dBEA72".parse().unwrap(),
             tx_origin: "00a329c0648769A73afAc7F9381E08FB43dBEA72".parse().unwrap(),
             initial_balance: U256::from(0xffffffffffffffffffffffffu128),
-            block_number: 0,
+            block_number: 1,
             fork_block_number: None,
             chain_id: None,
             gas_limit: i64::MAX.into(),
             gas_price: 0,
             block_base_fee_per_gas: 0,
             block_coinbase: Address::zero(),
-            block_timestamp: 0,
+            block_timestamp: 1,
             block_difficulty: 0,
             block_gas_limit: None,
             memory_limit: 2u64.pow(25),

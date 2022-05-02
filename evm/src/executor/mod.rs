@@ -512,6 +512,7 @@ where
         should_fail ^ success
     }
 
+    /// Creates the environment to use when executing the transaction
     fn build_env(&self, caller: Address, transact_to: TransactTo, data: Bytes, value: U256) -> Env {
         Env {
             cfg: self.env.cfg.clone(),

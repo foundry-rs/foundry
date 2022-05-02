@@ -35,7 +35,7 @@ fn sign(private_key: U256, digest: H256, chain_id: U256) -> Result<Bytes, Bytes>
     let wallet = LocalWallet::from(key).with_chain_id(chain_id.as_u64());
 
     // The `ecrecover` precompile does not use EIP-155
-    let sig = wallet.sign_hash(digest, false);
+    let sig = wallet.sign_hash(digest);
     let recovered = sig.recover(digest).map_err(|err| err.to_string().encode())?;
 
     assert_eq!(recovered, wallet.address());

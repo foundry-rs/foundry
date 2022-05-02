@@ -19,7 +19,7 @@ use crate::{
 use bytes::Bytes;
 use ethers::{
     abi::{AbiDecode, AbiEncode, RawLog},
-    types::{Address, H256},
+    types::{Address, H256, U256},
 };
 use revm::{
     opcode, BlockEnv, CallInputs, CreateInputs, Database, EVMData, Gas, Inspector, Interpreter,
@@ -41,6 +41,12 @@ pub struct Cheatcodes {
     /// Used in the cheatcode handler to overwrite the block environment separately from the
     /// execution block environment.
     pub block: Option<BlockEnv>,
+
+    /// The gas price
+    ///
+    /// Used in the cheatcode handler to overwrite the gas price separately from the gas price
+    /// in the execution environment.
+    pub gas_price: Option<U256>,
 
     /// Address labels
     pub labels: BTreeMap<Address, String>,
@@ -65,8 +71,8 @@ pub struct Cheatcodes {
 }
 
 impl Cheatcodes {
-    pub fn new(ffi: bool, block: BlockEnv) -> Self {
-        Self { ffi, block: Some(block), ..Default::default() }
+    pub fn new(ffi: bool, block: BlockEnv, gas_price: U256) -> Self {
+        Self { ffi, block: Some(block), gas_price: Some(gas_price), ..Default::default() }
     }
 
     fn apply_cheatcode<DB: Database>(
@@ -158,6 +164,9 @@ where
         // so we apply our actual block data with the correct fees and all.
         if let Some(block) = self.block.take() {
             data.env.block = block;
+        }
+        if let Some(gas_price) = self.gas_price.take() {
+            data.env.tx.gas_price = gas_price;
         }
 
         Return::Continue
