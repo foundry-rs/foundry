@@ -669,14 +669,20 @@ contract CTest is DSTest {
     assert_eq!(cache, cache_after);
 });
 
-
-forgetest!(can_deploy_with_script, |_: TestProject, mut cmd: TestCommand| {
+forgetest!(can_deploy_script_without_lib, |_: TestProject, mut cmd: TestCommand| {
     let current_dir = std::env::current_dir().unwrap();
     let root_path = current_dir.join("../testdata");
     let root = root_path.clone().to_string_lossy().to_string();
     let target_contract =
         root_path.clone().join("./cheats/Broadcast.t.sol").to_string_lossy().to_string();
     let url = "http://localhost:8545".to_string();
+    let provider = Provider::<Http>::try_from("http://localhost:8545").unwrap();
+    let runtime = RuntimeOrHandle::new();
+
+    let account_a = Address::from_str("0x90F8bf6A479f320ead074411a4B0e7944Ea8c9C1").unwrap();
+    let priv_account_a = "4f3edf983ac636a65a842ce7c78d9aa706d3b113bce9c46f30d7d21715b23b1d";
+    let account_b = Address::from_str("0xFFcf8FDEE72ac11b5c542428B35EEF5769C409f0").unwrap();
+    let priv_account_b = "6cbed15c793ce57650b9877cf6fa156fbef513c4e6134f022a85b1ffdd59b2a1";
 
     cmd.args([
         "script",
@@ -688,34 +694,73 @@ forgetest!(can_deploy_with_script, |_: TestProject, mut cmd: TestCommand| {
         "--tc",
         "BroadcastTest",
         "--sig",
-        "deploy()",
+        "deployNoLib()",
         "-vvv",
         "--legacy", // only necessary for ganache
     ]);
 
     assert!(cmd.stdout_lossy().contains("SIMULATION COMPLETE. To send these"));
 
-    cmd.args([
-        "--execute",
-        "--private-keys",
-        "4f3edf983ac636a65a842ce7c78d9aa706d3b113bce9c46f30d7d21715b23b1d",
-        "6cbed15c793ce57650b9877cf6fa156fbef513c4e6134f022a85b1ffdd59b2a1",
-    ]);
+    let prev_nonce_a = runtime.block_on(provider.get_transaction_count(account_a, None)).unwrap();
+    let prev_nonce_b = runtime.block_on(provider.get_transaction_count(account_b, None)).unwrap();
 
-    assert!(cmd.stdout_lossy().contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
+    cmd.args(["--execute", "--private-keys", priv_account_a, "--private-keys", priv_account_b]);
+    let output = cmd.stdout_lossy();
 
-    let provider = Provider::<Http>::try_from("http://localhost:8545").unwrap();
-
-    let account_a = Address::from_str("0x90F8bf6A479f320ead074411a4B0e7944Ea8c9C1").unwrap();
-    let account_b = Address::from_str("0xFFcf8FDEE72ac11b5c542428B35EEF5769C409f0").unwrap();
-
-    let runtime = RuntimeOrHandle::new();
+    assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
 
     let nonce_a = runtime.block_on(provider.get_transaction_count(account_a, None)).unwrap();
     let nonce_b = runtime.block_on(provider.get_transaction_count(account_b, None)).unwrap();
 
-    assert!(nonce_a.as_u32() == 1);
-    assert!(nonce_b.as_u32() == 1);
+    assert!(nonce_a.as_u32() == 1 + prev_nonce_a.as_u32());
+    assert!(nonce_b.as_u32() == 1 + prev_nonce_b.as_u32());
+});
+
+forgetest!(can_deploy_script_with_lib, |_: TestProject, mut cmd: TestCommand| {
+    let current_dir = std::env::current_dir().unwrap();
+    let root_path = current_dir.join("../testdata");
+    let root = root_path.clone().to_string_lossy().to_string();
+    let target_contract =
+        root_path.clone().join("./cheats/Broadcast.t.sol").to_string_lossy().to_string();
+    let url = "http://localhost:8545".to_string();
+    let provider = Provider::<Http>::try_from("http://localhost:8545").unwrap();
+    let runtime = RuntimeOrHandle::new();
+
+    let account_a = Address::from_str("0x90F8bf6A479f320ead074411a4B0e7944Ea8c9C1").unwrap();
+    let priv_account_a = "4f3edf983ac636a65a842ce7c78d9aa706d3b113bce9c46f30d7d21715b23b1d";
+    let account_b = Address::from_str("0xFFcf8FDEE72ac11b5c542428B35EEF5769C409f0").unwrap();
+    let priv_account_b = "6cbed15c793ce57650b9877cf6fa156fbef513c4e6134f022a85b1ffdd59b2a1";
+
+    cmd.args([
+        "script",
+        target_contract.as_str(),
+        "--root",
+        root.as_str(),
+        "--fork-url",
+        url.as_str(),
+        "--tc",
+        "BroadcastTest",
+        "--sig",
+        "deployLib()",
+        "-vvv",
+        "--legacy", // only necessary for ganache
+    ]);
+
+    assert!(cmd.stdout_lossy().contains("SIMULATION COMPLETE. To send these"));
+
+    let prev_nonce_a = runtime.block_on(provider.get_transaction_count(account_a, None)).unwrap();
+    let prev_nonce_b = runtime.block_on(provider.get_transaction_count(account_b, None)).unwrap();
+
+    cmd.args(["--execute", "--private-keys", priv_account_a, "--private-keys", priv_account_b]);
+    let output = cmd.stdout_lossy();
+
+    assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
+
+    let nonce_a = runtime.block_on(provider.get_transaction_count(account_a, None)).unwrap();
+    let nonce_b = runtime.block_on(provider.get_transaction_count(account_b, None)).unwrap();
+
+    assert!(nonce_a.as_u32() == 1 + prev_nonce_a.as_u32());
+    assert!(nonce_b.as_u32() == 1 + prev_nonce_b.as_u32());
 });
 
 forgetest!(can_resume_script, |_: TestProject, mut cmd: TestCommand| {

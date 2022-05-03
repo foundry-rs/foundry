@@ -33,18 +33,24 @@ contract BroadcastTest is DSTest {
     // ganache-cli -d 2nd
     address public ACCOUNT_B = 0xFFcf8FDEE72ac11b5c542428B35EEF5769C409f0;
 
-    function deploy() public {
-        // 1st ganache
+    function deployLib() public {
         cheats.broadcast(ACCOUNT_A);
         Test test = new Test();
 
         // this wont generate tx to sign
         uint256 b = test.t(4);
 
-        // 2nd ganache
         // this will
         cheats.broadcast(ACCOUNT_B);
-        test.t(b);     
+        test.t(2);     
+    }
+
+    function deployNoLib() public {
+        cheats.broadcast(ACCOUNT_A);
+        Test test = new Test();
+
+        cheats.broadcast(ACCOUNT_B);
+        test.t(2);   
     }
 
     function deployWithResume() public {
