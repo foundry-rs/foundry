@@ -55,8 +55,8 @@ forgetest_ignore!(can_cache_clean_chain, |_: TestProject, mut cmd: TestCommand| 
     assert!(!path.exists());
 });
 
-// checks that `cache clean <chain> --blocks 100,101` can be invoked and cleans the chain block caches
-// this test is not isolated and modifies ~ so it is ignored
+// checks that `cache clean <chain> --blocks 100,101` can be invoked and cleans the chain block
+// caches this test is not isolated and modifies ~ so it is ignored
 forgetest_ignore!(can_cache_clean_blocks, |_: TestProject, mut cmd: TestCommand| {
     let chain = Chain::Named(ethers::prelude::Chain::Mainnet);
     let block1 = 100;

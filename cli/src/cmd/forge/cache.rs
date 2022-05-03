@@ -6,8 +6,7 @@ use std::str::FromStr;
 use crate::cmd::Cmd;
 use ethers::prelude::Chain;
 use eyre::Result;
-use foundry_config::Chain as FoundryConfigChain;
-use foundry_config::Config;
+use foundry_config::{Chain as FoundryConfigChain, Config};
 
 #[derive(Debug, Parser)]
 pub struct CacheArgs {

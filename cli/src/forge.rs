@@ -5,7 +5,10 @@ mod suggestions;
 mod term;
 mod utils;
 
-use crate::cmd::{forge::cache::CacheSubcommands, forge::watch, Cmd};
+use crate::cmd::{
+    forge::{cache::CacheSubcommands, watch},
+    Cmd,
+};
 use opts::forge::{Dependency, Opts, Subcommands};
 use std::process::Command;
 
