@@ -1,6 +1,10 @@
 use anvil_server::ServerConfig;
 use clap::Parser;
 use ethers::utils::WEI_IN_ETHER;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
 use tracing::log::trace;
 
 use crate::{config::DEFAULT_MNEMONIC, AccountGenerator, NodeConfig, CHAIN_ID};
@@ -87,14 +91,19 @@ impl NodeArgs {
 
         // sets the signal handler to gracefully shutdown.
         let fork = api.get_fork().cloned();
+        let running = Arc::new(AtomicUsize::new(0));
+
         ctrlc::set_handler(move || {
-            // cleaning up and shutting down
-            // this will make sure that the fork RPC cache is flushed if caching is configured
-            trace!("received shutdown signal, shutting down");
-            if let Some(ref fork) = fork {
-                fork.database.flush_cache();
+            let prev = running.fetch_add(1, Ordering::SeqCst);
+            if prev == 0 {
+                // cleaning up and shutting down
+                // this will make sure that the fork RPC cache is flushed if caching is configured
+                trace!("received shutdown signal, shutting down");
+                if let Some(ref fork) = fork {
+                    fork.database.flush_cache();
+                }
+                std::process::exit(0);
             }
-            std::process::exit(0);
         })
         .expect("Error setting Ctrl-C handler");
 
