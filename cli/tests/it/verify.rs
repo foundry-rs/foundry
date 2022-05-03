@@ -128,3 +128,8 @@ forgetest!(can_verify_random_contract_goerli, |prj: TestProject, cmd: TestComman
 forgetest!(can_verify_random_contract_fantom_testnet, |prj: TestProject, cmd: TestCommand| {
     verify_on_chain(EnvExternalities::ftm_testnet(), prj, cmd);
 });
+
+// tests verify on Optimism kovan if correct env vars are set
+forgetest!(can_verify_random_contract_optimism_kovan, |prj: TestProject, cmd: TestCommand| {
+    verify_on_chain(EnvExternalities::optimism_kovan(), prj, cmd);
+});
