@@ -31,7 +31,8 @@ forgetest!(can_clean_non_existing, |prj: TestProject, mut cmd: TestCommand| {
 });
 
 // checks that `cache clean` can be invoked and cleans the foundry cache
-forgetest!(can_cache_clean, |_: TestProject, mut cmd: TestCommand| {
+// this test is not isolated and modifies ~ so it is ignored
+forgetest_ignore!(can_cache_clean, |_: TestProject, mut cmd: TestCommand| {
     let cache_dir = Config::foundry_cache_dir().unwrap();
     let path = cache_dir.as_path();
     fs::create_dir_all(path).unwrap();
@@ -42,7 +43,8 @@ forgetest!(can_cache_clean, |_: TestProject, mut cmd: TestCommand| {
 });
 
 // checks that `cache clean <chain>` can be invoked and cleans the chain cache
-forgetest!(can_cache_clean_chain, |_: TestProject, mut cmd: TestCommand| {
+// this test is not isolated and modifies ~ so it is ignored
+forgetest_ignore!(can_cache_clean_chain, |_: TestProject, mut cmd: TestCommand| {
     let cache_dir =
         Config::foundry_chain_cache_dir(Chain::Named(ethers::prelude::Chain::Mainnet)).unwrap();
     let path = cache_dir.as_path();
@@ -54,7 +56,8 @@ forgetest!(can_cache_clean_chain, |_: TestProject, mut cmd: TestCommand| {
 });
 
 // checks that `cache clean <chain> --blocks 100,101` can be invoked and cleans the chain block caches
-forgetest!(can_cache_clean_blocks, |_: TestProject, mut cmd: TestCommand| {
+// this test is not isolated and modifies ~ so it is ignored
+forgetest_ignore!(can_cache_clean_blocks, |_: TestProject, mut cmd: TestCommand| {
     let chain = Chain::Named(ethers::prelude::Chain::Mainnet);
     let block1 = 100;
     let block2 = 102;
