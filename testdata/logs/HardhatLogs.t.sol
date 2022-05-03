@@ -81,8 +81,8 @@ contract HardhatLogsTest {
 		console.logBytes28(bytes28("28"));
 		console.logBytes29(bytes29("29"));
 		console.logBytes30(bytes30("30"));
-		console.logBytes30(bytes30("31"));
-		console.logBytes30(bytes30("32"));
+		console.logBytes31(bytes31("31"));
+		console.logBytes32(bytes32("32"));
 	}
 
 	function testConsoleLogUint() public view {
