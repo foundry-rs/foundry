@@ -415,7 +415,7 @@ impl Backend {
         request: CallRequest,
         fee_details: FeeDetails,
     ) -> (Return, TransactOut, u64, State) {
-        trace!(target: "backend", "calling [{:?}] fees={:?}", request, fee_details);
+        trace!(target: "backend", "calling from [{:?}] fees={:?}", request.from, fee_details);
         let CallRequest { from, to, gas, value, data, nonce, access_list, .. } = request;
 
         let FeeDetails { gas_price, max_fee_per_gas, max_priority_fee_per_gas } = fee_details;
@@ -445,7 +445,7 @@ impl Backend {
             access_list: to_access_list(access_list.unwrap_or_default().0),
         };
 
-        trace!(target: "backend", "calling with {:?}", env.tx);
+        trace!(target: "backend", "calling with tx env from={:?} gas-limit={:?}, gas-price={:?}", env.tx.caller,  env.tx.gas_limit, env.tx.gas_limit);
 
         let db = self.db.read();
         let mut evm = revm::EVM::new();
