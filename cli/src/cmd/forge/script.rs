@@ -79,10 +79,16 @@ pub struct ScriptArgs {
     #[clap(flatten, next_help_heading = "EVM OPTIONS")]
     pub evm_opts: EvmArgs,
 
-    #[clap(long, help = "resumes previous transaction batch. does NOT simulate execution. respects nonce constraint ")]
+    #[clap(
+        long,
+        help = "resumes previous transaction batch. does NOT simulate execution. respects nonce constraint "
+    )]
     pub resume: bool,
 
-    #[clap(long, help = "resumes previous transactions batch. does NOT simulate execution. does not respect nonce constraint")]
+    #[clap(
+        long,
+        help = "resumes previous transactions batch. does NOT simulate execution. does not respect nonce constraint"
+    )]
     pub force_resume: bool,
 }
 

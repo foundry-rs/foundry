@@ -1,15 +1,21 @@
 //! Contains various tests for checking forge's commands
-use ethers::solc::{
-    artifacts::{BytecodeHash, Metadata},
-    ConfigurableContractArtifact,
+use ansi_term::Colour;
+use ethers::{
+    abi::Address,
+    prelude::{Http, Middleware, Provider, U256},
+    solc::{
+        artifacts::{BytecodeHash, Metadata},
+        ConfigurableContractArtifact,
+    },
 };
 use foundry_cli_test_utils::{
     ethers_solc::PathStyle,
     forgetest, forgetest_ignore, forgetest_init,
     util::{pretty_err, read_string, TestCommand, TestProject},
 };
-use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
-use std::{env, fs};
+use foundry_config::{parse_with_profile, BasicConfig, Config, SolidityErrorCode};
+use foundry_utils::RuntimeOrHandle;
+use std::{env, fs, str::FromStr};
 use yansi::Paint;
 
 // import forge utils as mod
@@ -661,4 +667,87 @@ contract CTest is DSTest {
     // ensure unchanged cache file
     let cache_after = fs::read_to_string(prj.cache_path()).unwrap();
     assert_eq!(cache, cache_after);
+});
+
+
+forgetest!(can_deploy_with_script, |_: TestProject, mut cmd: TestCommand| {
+    let current_dir = std::env::current_dir().unwrap();
+    let root_path = current_dir.join("../testdata");
+    let root = root_path.clone().to_string_lossy().to_string();
+    let target_contract =
+        root_path.clone().join("./cheats/Broadcast.t.sol").to_string_lossy().to_string();
+    let url = "http://localhost:8545".to_string();
+
+    cmd.args([
+        "script",
+        target_contract.as_str(),
+        "--root",
+        root.as_str(),
+        "--fork-url",
+        url.as_str(),
+        "--tc",
+        "BroadcastTest",
+        "--sig",
+        "deploy()",
+        "-vvv",
+        "--legacy", // only necessary for ganache
+    ]);
+
+    assert!(cmd.stdout_lossy().contains("SIMULATION COMPLETE. To send these"));
+
+    cmd.args([
+        "--execute",
+        "--private-keys",
+        "4f3edf983ac636a65a842ce7c78d9aa706d3b113bce9c46f30d7d21715b23b1d",
+        "6cbed15c793ce57650b9877cf6fa156fbef513c4e6134f022a85b1ffdd59b2a1",
+    ]);
+
+    assert!(cmd.stdout_lossy().contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
+
+    let provider = Provider::<Http>::try_from("http://localhost:8545").unwrap();
+
+    let account_a = Address::from_str("0x90F8bf6A479f320ead074411a4B0e7944Ea8c9C1").unwrap();
+    let account_b = Address::from_str("0xFFcf8FDEE72ac11b5c542428B35EEF5769C409f0").unwrap();
+
+    let runtime = RuntimeOrHandle::new();
+
+    let nonce_a = runtime.block_on(provider.get_transaction_count(account_a, None)).unwrap();
+    let nonce_b = runtime.block_on(provider.get_transaction_count(account_b, None)).unwrap();
+
+    assert!(nonce_a.as_u32() == 1);
+    assert!(nonce_b.as_u32() == 1);
+});
+
+forgetest!(can_resume_script, |_: TestProject, mut cmd: TestCommand| {
+    let current_dir = std::env::current_dir().unwrap();
+    let root_path = current_dir.join("../testdata");
+    let root = root_path.clone().to_string_lossy().to_string();
+    let target_contract =
+        root_path.clone().join("./cheats/Broadcast.t.sol").to_string_lossy().to_string();
+
+    cmd.args([
+        "script",
+        target_contract.as_str(),
+        "--root",
+        root.as_str(),
+        "--fork-url",
+        "http://localhost:8545",
+        "--tc",
+        "BroadcastTest",
+        "--sig",
+        "deployWithResume()",
+        "-vvv",
+        "--legacy", // only necessary for ganache
+    ]);
+
+    assert!(cmd.stdout_lossy().contains("SIMULATION COMPLETE. To send these"));
+
+    cmd.args([
+        "--resume",
+        "--private-keys",
+        "4f3edf983ac636a65a842ce7c78d9aa706d3b113bce9c46f30d7d21715b23b1d",
+        "6cbed15c793ce57650b9877cf6fa156fbef513c4e6134f022a85b1ffdd59b2a1",
+    ]);
+
+    assert!(cmd.stdout_lossy().contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
 });

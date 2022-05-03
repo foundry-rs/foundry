@@ -28,15 +28,34 @@ library F {
 contract BroadcastTest is DSTest {
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
 
+    // ganache-cli -d 1st
+    address public ACCOUNT_A = 0x90F8bf6A479f320ead074411a4B0e7944Ea8c9C1;
+    // ganache-cli -d 2nd
+    address public ACCOUNT_B = 0xFFcf8FDEE72ac11b5c542428B35EEF5769C409f0;
+
     function deploy() public {
-        cheats.broadcast(address(0x1337));
+        // 1st ganache
+        cheats.broadcast(ACCOUNT_A);
         Test test = new Test();
 
         // this wont generate tx to sign
         uint256 b = test.t(4);
 
+        // 2nd ganache
         // this will
-        cheats.broadcast(address(0x1338));
+        cheats.broadcast(ACCOUNT_B);
+        test.t(b);     
+    }
+
+    function deployWithResume() public {
+        cheats.broadcast(ACCOUNT_B);
+        Test test = new Test();
+
+        // this wont generate tx to sign
+        uint256 b = test.t(5);
+
+        // this will
+        cheats.broadcast(ACCOUNT_A);
         test.t(b);     
     }
 
