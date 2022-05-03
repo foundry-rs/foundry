@@ -687,6 +687,8 @@ forgetest!(can_deploy_script_without_lib, |_: TestProject, mut cmd: TestCommand|
     cmd.args([
         "script",
         target_contract.as_str(),
+        "--sender",
+        account_a.to_string().as_str(),
         "--root",
         root.as_str(),
         "--fork-url",
