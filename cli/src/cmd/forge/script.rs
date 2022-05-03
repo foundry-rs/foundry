@@ -100,11 +100,8 @@ impl Cmd for ScriptArgs {
         let verbosity = evm_opts.verbosity;
         let config = Config::from_provider(figment).sanitized();
 
-        let mut nonce = if let Some(ref fork_url) = evm_opts.fork_url {
-            foundry_utils::next_nonce(evm_opts.sender, fork_url, None)?
-        } else {
-            U256::zero()
-        };
+        let fork_url = evm_opts.fork_url.as_ref().expect("No url provided.");
+        let mut nonce = foundry_utils::next_nonce(evm_opts.sender, fork_url, None)?;
 
         let BuildOutput {
             target,
@@ -169,11 +166,8 @@ impl Cmd for ScriptArgs {
             if let Some(new_sender) = new_sender {
                 // if we had a new sender that requires relinking, we need to
                 // get the nonce mainnet for accurate addresses for predeploy libs
-                let mut nonce = if let Some(ref fork_url) = evm_opts.fork_url {
-                    foundry_utils::next_nonce(new_sender, fork_url, None)?
-                } else {
-                    U256::zero()
-                };
+                let mut nonce = foundry_utils::next_nonce(new_sender, fork_url, None)?;
+
                 // relink with new sender
                 let BuildOutput {
                     target: _,
@@ -345,7 +339,7 @@ impl Cmd for ScriptArgs {
                         let mut deployment_sequence =
                             ScriptSequence::new(txs, &self.sig, &target, &config.out)?;
                         deployment_sequence.save()?;
-    
+
                         if self.execute {
                             self.send_transactions(&mut deployment_sequence)?;
                         } else {
