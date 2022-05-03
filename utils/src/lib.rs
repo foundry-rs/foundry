@@ -130,29 +130,6 @@ pub struct PostLinkInput<'a, T, U> {
     pub dependencies: Vec<ethers_core::types::Bytes>,
 }
 
-pub fn link<T, U>(
-    contracts: BTreeMap<ArtifactId, CompactContractBytecode>,
-    known_contracts: &mut BTreeMap<ArtifactId, T>,
-    sender: Address,
-    extra: &mut U,
-    link_key_construction: impl Fn(String, String) -> (String, String, String),
-    post_link: impl Fn(PostLinkInput<T, U>) -> eyre::Result<()>,
-) -> eyre::Result<()> {
-    // we dont use mainnet state for evm_opts.sender so this will always be 1
-    // I am leaving this here so that in the future if this needs to change,
-    // its easy to find.
-    let nonce = U256::zero();
-    link_with_nonce(
-        contracts,
-        known_contracts,
-        sender,
-        nonce,
-        extra,
-        link_key_construction,
-        post_link,
-    )
-}
-
 pub fn link_with_nonce<T, U>(
     contracts: BTreeMap<ArtifactId, CompactContractBytecode>,
     known_contracts: &mut BTreeMap<ArtifactId, T>,
@@ -296,7 +273,7 @@ pub fn recurse_link<'a>(
             // to this one, but wont appear in our deployment vector. It probably should
             // here, but it doesn't.
             let addr =
-                ethers_core::utils::get_contract_address(sender, init_nonce + 1 + deployment.len());
+                ethers_core::utils::get_contract_address(sender, init_nonce + deployment.len());
 
             // link the dependency to the target
             target_bytecode.0.link(file.clone(), key.clone(), addr);
@@ -1141,10 +1118,11 @@ mod tests {
             .expect("could not get bytecode as str")
             .to_string();
 
-        link(
+        link_with_nonce(
             contracts,
             &mut known_contracts,
             Address::default(),
+            U256::one(),
             &mut deployable_contracts,
             |file, key| (format!("{key}.json:{key}"), file, key),
             |post_link_input| {

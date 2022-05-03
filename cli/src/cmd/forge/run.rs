@@ -293,10 +293,11 @@ impl RunArgs {
             true
         };
 
-        foundry_utils::link(
+        foundry_utils::link_with_nonce(
             contracts,
             &mut highlevel_known_contracts,
             evm_opts.sender,
+            U256::one(),
             &mut ExtraLinkingInfo {
                 no_target_name,
                 target_fname,
