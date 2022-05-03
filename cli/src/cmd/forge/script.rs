@@ -337,16 +337,20 @@ impl Cmd for ScriptArgs {
                 if let Ok(gas_filled_txs) =
                     self.execute_transactions(txs.clone(), &evm_opts, &config, &mut decoder)
                 {
-                    let txs = gas_filled_txs;
-                    let mut deployment_sequence =
-                        ScriptSequence::new(txs, &self.sig, &target, &config.out)?;
-                    deployment_sequence.save()?;
-
-                    if self.execute {
-                        self.send_transactions(&mut deployment_sequence)?;
+                    println!("\n\n==========================");
+                    if !result.success {
+                        panic!("\nSIMULATION FAILED");
                     } else {
-                        println!("\n\n==========================");
-                        println!("\nSIMULATION COMPLETE. To send these transaction onchain, add `--execute` & wallet configuration(s) to the previously ran command. See forge script --help for more.");
+                        let txs = gas_filled_txs;
+                        let mut deployment_sequence =
+                            ScriptSequence::new(txs, &self.sig, &target, &config.out)?;
+                        deployment_sequence.save()?;
+    
+                        if self.execute {
+                            self.send_transactions(&mut deployment_sequence)?;
+                        } else {
+                            println!("\nSIMULATION COMPLETE. To send these transaction onchain, add `--execute` & wallet configuration(s) to the previously ran command. See forge script --help for more.");
+                        }
                     }
                 } else {
                     panic!("One or more transactions failed when simulating the on-chain version. Check the trace via rerunning with `-vvv`")
