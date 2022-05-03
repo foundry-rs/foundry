@@ -35,6 +35,7 @@ use foundry_utils::{encode_args, IntoFunction, PostLinkInput, RuntimeOrHandle};
 use std::{
     collections::{BTreeMap, VecDeque},
     path::PathBuf,
+    str::FromStr,
 };
 use yansi::Paint;
 
@@ -101,7 +102,7 @@ impl Cmd for ScriptArgs {
         let config = Config::from_provider(figment).sanitized();
 
         let fork_url = evm_opts.fork_url.as_ref().expect("No url provided.");
-        let mut nonce = foundry_utils::next_nonce(evm_opts.sender, fork_url, None)?;
+        let nonce = foundry_utils::next_nonce(evm_opts.sender, fork_url, None)?;
 
         let BuildOutput {
             target,
@@ -166,7 +167,7 @@ impl Cmd for ScriptArgs {
             if let Some(new_sender) = new_sender {
                 // if we had a new sender that requires relinking, we need to
                 // get the nonce mainnet for accurate addresses for predeploy libs
-                let mut nonce = foundry_utils::next_nonce(new_sender, fork_url, None)?;
+                let nonce = foundry_utils::next_nonce(new_sender, fork_url, None)?;
 
                 // relink with new sender
                 let BuildOutput {
@@ -211,8 +212,6 @@ impl Cmd for ScriptArgs {
                     })
                     .collect();
 
-                let default_sender_offset: U256 = predeploy_libraries.len().into();
-
                 result.transactions = Some(lib_deploy);
 
                 let result2 = self.execute(
@@ -232,15 +231,9 @@ impl Cmd for ScriptArgs {
                 result.labeled_addresses.extend(result2.labeled_addresses);
                 match (&mut result.transactions, result2.transactions) {
                     (Some(txs), Some(new_txs)) => {
-                        new_txs.iter().enumerate().for_each(|(i, tx)| {
-                            let mut tx = into_legacy(tx.clone());
-                            if tx.from.expect("no sender") == new_sender {
-                                tx.nonce =
-                                    Some(tx.nonce.unwrap_or_default() + default_sender_offset);
-                            }
-                            txs.push_back(TypedTransaction::Legacy(tx));
+                        new_txs.iter().for_each(|tx| {
+                            txs.push_back(TypedTransaction::Legacy(into_legacy(tx.clone())));
                         });
-                        nonce += new_txs.len().into();
                     }
                     (None, Some(new_txs)) => {
                         result.transactions = Some(new_txs);
@@ -261,16 +254,10 @@ impl Cmd for ScriptArgs {
                     })
                     .collect();
 
-                let default_sender_offset: U256 = predeploy_libraries.len().into();
-
                 // prepend predeploy libraries
                 if let Some(txs) = &mut result.transactions {
-                    txs.iter().enumerate().for_each(|(i, tx)| {
-                        let mut tx = into_legacy(tx.clone());
-                        if tx.from.expect("no sender") == evm_opts.sender {
-                            tx.nonce = Some(tx.nonce.unwrap_or_default() + default_sender_offset);
-                        }
-                        lib_deploy.push_back(TypedTransaction::Legacy(tx));
+                    txs.iter().for_each(|tx| {
+                        lib_deploy.push_back(TypedTransaction::Legacy(into_legacy(tx.clone())));
                     });
                     *txs = lib_deploy;
                 }
@@ -843,7 +830,6 @@ impl<DB: DatabaseRef> Runner<DB> {
         setup: bool,
     ) -> eyre::Result<(Address, ScriptResult)> {
         // We max out their balance so that they can deploy and make calls.
-        self.executor.set_balance(self.sender, U256::MAX);
         self.executor.set_balance(*CALLER, U256::MAX);
 
         // Deploy libraries
@@ -867,7 +853,7 @@ impl<DB: DatabaseRef> Runner<DB> {
             traces: constructor_traces,
             debug: constructor_debug,
             ..
-        } = self.executor.deploy(self.sender, code.0, 0u32.into()).expect("couldn't deploy");
+        } = self.executor.deploy(*CALLER, code.0, 0u32.into()).expect("couldn't deploy");
         traces.extend(constructor_traces.map(|traces| (TraceKind::Deployment, traces)).into_iter());
         self.executor.set_balance(address, self.initial_balance);
 
@@ -932,7 +918,7 @@ impl<DB: DatabaseRef> Runner<DB> {
     pub fn script(&mut self, address: Address, calldata: Bytes) -> eyre::Result<ScriptResult> {
         let RawCallResult {
             reverted, gas, stipend, logs, traces, labels, debug, transactions, ..
-        } = self.executor.call_raw(self.sender, address, calldata.0, 0.into())?;
+        } = self.executor.call_raw(*CALLER, address, calldata.0, 0.into())?;
         Ok(ScriptResult {
             success: !reverted,
             gas: gas.overflowing_sub(stipend).0,

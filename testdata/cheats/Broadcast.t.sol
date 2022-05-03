@@ -33,7 +33,7 @@ contract BroadcastTest is DSTest {
     // ganache-cli -d 2nd
     address public ACCOUNT_B = 0xFFcf8FDEE72ac11b5c542428B35EEF5769C409f0;
 
-    function deployLib() public {
+    function deploy() public {
         cheats.broadcast(ACCOUNT_A);
         Test test = new Test();
 
@@ -43,14 +43,6 @@ contract BroadcastTest is DSTest {
         // this will
         cheats.broadcast(ACCOUNT_B);
         test.t(2);     
-    }
-
-    function deployNoLib() public {
-        cheats.broadcast(ACCOUNT_A);
-        Test test = new Test();
-
-        cheats.broadcast(ACCOUNT_B);
-        test.t(2);   
     }
 
     function deployWithResume() public {
@@ -120,14 +112,20 @@ contract NoLink is DSTest {
 contract BroadcastTestNoLinking is DSTest {
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
 
+    // ganache-cli -d 1st
+    address public ACCOUNT_A = 0x90F8bf6A479f320ead074411a4B0e7944Ea8c9C1;
+
+    // ganache-cli -d 2nd
+    address public ACCOUNT_B = 0xFFcf8FDEE72ac11b5c542428B35EEF5769C409f0;
+
     function deployDoesntPanic() public {
-        cheats.broadcast(address(0x1337));
+        cheats.broadcast(address(ACCOUNT_A));
         NoLink test = new NoLink();
 
-        cheats.broadcast(address(0x1338));
+        cheats.broadcast(address(ACCOUNT_B));
         new NoLink();
 
-        cheats.broadcast(address(0x1338));
+        cheats.broadcast(address(ACCOUNT_B));
         test.t(0);     
     }
 }
