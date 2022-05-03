@@ -58,6 +58,15 @@ impl EnvExternalities {
         })
     }
 
+    pub fn optimism_kovan() -> Option<Self> {
+        Some(Self {
+            chain: Chain::OptimismKovan,
+            rpc: network_rpc_key("op_kovan")?,
+            pk: network_private_key("op_kovan")?,
+            etherscan: etherscan_key(Chain::OptimismKovan)?,
+        })
+    }
+
     /// Returns the arguments required to deploy the contract
     pub fn create_args(&self) -> Vec<String> {
         vec![
