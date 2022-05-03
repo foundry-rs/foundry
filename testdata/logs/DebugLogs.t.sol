@@ -59,35 +59,35 @@ contract DebugLogsTest is DSTest {
     }
 
     function testLogNamedAddress() public {
-        emit log_named_address('address', address(1));
+        emit log_named_address("address", address(1));
     }
 
     function testLogNamedBytes32() public {
-        emit log_named_bytes32('abcd', bytes32("abcd"));
+        emit log_named_bytes32("abcd", bytes32("abcd"));
     }
 
     function testLogNamedDecimalInt() public {
-        emit log_named_decimal_int('amount', 1 ether, 18);
+        emit log_named_decimal_int("amount", 1 ether, 18);
     }
 
     function testLogNamedDecimalUint() public {
-        emit log_named_decimal_uint('amount', 1 ether, 18);
+        emit log_named_decimal_uint("amount", 1 ether, 18);
     }
 
     function testLogNamedInt() public {
-        emit log_named_int('amount', 1 ether);
+        emit log_named_int("amount", 1 ether);
     }
 
     function testLogNamedUint() public {
-        emit log_named_int('amount', 1 ether);
+        emit log_named_int("amount", 1 ether);
     }
 
     function testLogNamedBytes() public {
-        emit log_named_bytes('abcd', bytes('abcd'));
+        emit log_named_bytes("abcd", bytes("abcd"));
     }
 
     function testLogNamedString() public {
-        emit log_named_string('key', 'val');
+        emit log_named_string("key", "val");
     }
 
 }

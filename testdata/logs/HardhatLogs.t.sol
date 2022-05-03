@@ -35,7 +35,7 @@ contract HardhatLogsTest {
 	}
 
 	function testLogString() public view {
-		console.logString(string('testString'));
+		console.logString(string("testString"));
 	}
 
 	function testLogBool() public view {
@@ -47,58 +47,62 @@ contract HardhatLogsTest {
 	}
 
 	function testLogBytes() public view {
-		console.logBytes(bytes('abcd'));
+		console.logBytes(bytes("abcd"));
 	}
 
 	function testLogBytes1Through32() public view {
 		console.logBytes1(bytes1("1"));
-		console.logBytes2(bytes2('2'));
-		console.logBytes3(bytes3('3'));
-		console.logBytes4(bytes4('4'));
-		console.logBytes5(bytes5('5'));
-		console.logBytes6(bytes6('6'));
-		console.logBytes7(bytes7('7'));
-		console.logBytes8(bytes8('8'));
-		console.logBytes9(bytes9('9'));
-		console.logBytes10(bytes10('10'));
-		console.logBytes11(bytes11('11'));
-		console.logBytes12(bytes12('12'));
-		console.logBytes13(bytes13('13'));
-		console.logBytes14(bytes14('14'));
-		console.logBytes15(bytes15('15'));
-		console.logBytes16(bytes16('16'));
-		console.logBytes17(bytes17('17'));
-		console.logBytes18(bytes18('18'));
-		console.logBytes19(bytes19('19'));
-		console.logBytes20(bytes20('20'));
-		console.logBytes21(bytes21('21'));
-		console.logBytes22(bytes22('22'));
-		console.logBytes23(bytes23('23'));
-		console.logBytes24(bytes24('24'));
-		console.logBytes25(bytes25('25'));
-		console.logBytes26(bytes26('26'));
-		console.logBytes27(bytes27('27'));
-		console.logBytes28(bytes28('28'));
-		console.logBytes29(bytes29('29'));
-		console.logBytes30(bytes30('30'));
-		console.logBytes30(bytes30('31'));
-		console.logBytes30(bytes30('32'));
+		console.logBytes2(bytes2("2"));
+		console.logBytes3(bytes3("3"));
+		console.logBytes4(bytes4("4"));
+		console.logBytes5(bytes5("5"));
+		console.logBytes6(bytes6("6"));
+		console.logBytes7(bytes7("7"));
+		console.logBytes8(bytes8("8"));
+		console.logBytes9(bytes9("9"));
+		console.logBytes10(bytes10("10"));
+		console.logBytes11(bytes11("11"));
+		console.logBytes12(bytes12("12"));
+		console.logBytes13(bytes13("13"));
+		console.logBytes14(bytes14("14"));
+		console.logBytes15(bytes15("15"));
+		console.logBytes16(bytes16("16"));
+		console.logBytes17(bytes17("17"));
+		console.logBytes18(bytes18("18"));
+		console.logBytes19(bytes19("19"));
+		console.logBytes20(bytes20("20"));
+		console.logBytes21(bytes21("21"));
+		console.logBytes22(bytes22("22"));
+		console.logBytes23(bytes23("23"));
+		console.logBytes24(bytes24("24"));
+		console.logBytes25(bytes25("25"));
+		console.logBytes26(bytes26("26"));
+		console.logBytes27(bytes27("27"));
+		console.logBytes28(bytes28("28"));
+		console.logBytes29(bytes29("29"));
+		console.logBytes30(bytes30("30"));
+		console.logBytes30(bytes30("31"));
+		console.logBytes30(bytes30("32"));
 	}
 
 	function testConsoleLogUint() public view {
-		console.log(uint(1 ether));
+		console.log(string("log(uint)"), uint(1 ether));
 	}
 
 	function testConsoleLogString() public view {
-		console.log(string('testString'));
+		console.log(string("log(string)"), string("testString"));
 	}
 
 	function testConsoleLogBool() public view {
-		console.log(false);
+		console.log(string("log(bool)"), bool(false));
 	}
 
 	function testConsoleLogAddress() public view {
-		console.log(address(1));
+		console.log(string("log(address)"), address(1));
+	}
+
+	function testLogUintUint() public view {
+		console.log(string("log(uint,uint)"), uint(1 ether), uint(2 ether));
 	}
 
 }
